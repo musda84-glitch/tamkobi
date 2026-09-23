@@ -64,7 +64,6 @@ import {
   remainingLeaveDays,
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
-  workplaceDetailsToggleIcon,
   employeeCardChrome,
   employeeCardPayKind,
   initLocMode,
@@ -94,7 +93,12 @@ import {
   validateLeave,
   validateOvertime,
   validateTaskAssign,
+  attendanceGroupToggleLabel,
+  attendanceRecordsForEmployee,
+  groupAttendanceRecords,
+  workplaceDetailsToggleIcon,
   type AttendancePayload,
+  type AttendanceRecord,
   type AttendanceSummary,
   type Employee,
   type EmployeeBalance,
@@ -115,6 +119,75 @@ import { fieldWorkplaceFromProjects, workplaceHint, workplaceShort, type Workpla
 
 type Tab = "payroll" | "attendance" | "leaves" | "calc" | "extras";
 
+function AttendanceRecCard({
+  r,
+  canEdit,
+  onDecide,
+  hideName,
+}: {
+  r: AttendanceRecord;
+  canEdit: boolean;
+  onDecide: (it: PendingRequest, approved: boolean | "ack" | "deduct") => void;
+  hideName?: boolean;
+}) {
+  const early = r.early_leave_request?.status === "pending";
+  const intra = r.intraday_leave_request?.status === "pending";
+  const yevAdj = r.yevmiye_adjustment_request?.status === "pending";
+  const locExit = r.location_exit_request?.status === "pending";
+  const yevLine = yevmiyeStatusLine(r);
+  return (
+    <View testID={`att-rec-${idOf(r)}`} style={{ paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border, marginTop: 8 }}>
+      {hideName ? null : <Text style={{ fontWeight: "800", color: colors.text }}>{r.employee_name || "Personel"}</Text>}
+      <Muted>
+        {[r.date, r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"}` : r.status === "absent" ? "Devamsız" : "İzinli"].join(" · ")}
+        {r.hours != null ? ` · ${r.hours} sa` : ""}
+        {r.late_minutes ? ` · ${r.late_minutes} dk geç` : ""}
+      </Muted>
+      {early ? <Muted testID={`att-early-${idOf(r)}`}>Erken çıkış talebi {r.early_leave_request?.planned_time || ""} {r.early_leave_request?.reason ? `· ${r.early_leave_request.reason}` : ""}</Muted> : null}
+      {intra ? <Muted testID={`att-intra-${idOf(r)}`}>Gün içi izin {r.intraday_leave_request?.out_time || ""}–{r.intraday_leave_request?.return_time || ""} {r.intraday_leave_request?.reason ? `· ${r.intraday_leave_request.reason}` : ""}</Muted> : null}
+      {yevLine ? <Muted testID={`att-yevmiye-adj-${idOf(r)}`}>{yevLine}</Muted> : null}
+      {locExit ? (
+        <Muted testID={`att-loc-exit-${idOf(r)}`}>
+          Konum dışı{r.location_exit_request?.place ? ` · ${r.location_exit_request.place}` : ""}
+          {r.location_exit_request?.distance_m != null ? ` · ${r.location_exit_request.distance_m} m` : ""}
+          {r.location_exit_request?.tolerance_hours ? ` · tolerans ${r.location_exit_request.tolerance_hours} sa` : ""}
+          {` · kesinti: ${r.location_exit_request?.wage_deduction == null ? "bekliyor" : r.location_exit_request.wage_deduction ? "olsun" : "olmasın"}`}
+        </Muted>
+      ) : null}
+      {canEdit && (early || intra || yevAdj || locExit) ? (
+        <Row>
+          {early ? (
+            <>
+              <PrimaryButton title="Erken çıkış onayla" color={colors.primary} testID={`att-early-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "early_leave" }, true)} />
+              <PrimaryButton title="Reddet" color={colors.danger} testID={`att-early-no-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "early_leave" }, false)} />
+            </>
+          ) : null}
+          {intra ? (
+            <>
+              <PrimaryButton title="Gün içi onayla" color={colors.primary} testID={`att-intra-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "intraday_leave" }, true)} />
+              <PrimaryButton title="Reddet" color={colors.danger} testID={`att-intra-no-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "intraday_leave" }, false)} />
+            </>
+          ) : null}
+          {yevAdj ? (
+            <>
+              <PrimaryButton title="Ücret kes" color={colors.warning} testID={`att-yevmiye-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "yevmiye_adjustment" }, true)} />
+              <PrimaryButton title="Ücret kesme" color={colors.primary} testID={`att-yevmiye-no-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "yevmiye_adjustment" }, false)} />
+            </>
+          ) : null}
+          {locExit ? (
+            <>
+              <PrimaryButton title="Haberim var" color={colors.secondary} testID={`att-loc-exit-ack-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "location_exit" }, "ack")} />
+              <PrimaryButton title="Kesinti olmasın" color={colors.primary} testID={`att-loc-exit-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "location_exit" }, true)} />
+              <PrimaryButton title="Kesinti olsun" color={colors.warning} testID={`att-loc-exit-deduct-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "location_exit" }, "deduct")} />
+              <PrimaryButton title="Reddet" color={colors.danger} testID={`att-loc-exit-no-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "location_exit" }, false)} />
+            </>
+          ) : null}
+        </Row>
+      ) : null}
+    </View>
+  );
+}
+
 export function PersonnelScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/personnel", "edit");
@@ -131,6 +204,7 @@ export function PersonnelScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [workplaceOpen, setWorkplaceOpen] = useState<Record<string, boolean>>({});
+  const [attRecOpen, setAttRecOpen] = useState<Record<string, boolean>>({});
   const [movesPeriod, setMovesPeriod] = useState<PayMovesPeriod>("30d");
   const [movesMonth, setMovesMonth] = useState(new Date().toISOString().slice(0, 7));
   const [balances, setBalances] = useState<Record<string, EmployeeBalance>>({});
@@ -1254,66 +1328,51 @@ export function PersonnelScreen() {
                   <PrimaryButton title="Devamsız" color={colors.danger} testID={`att-absent-${s.employee_id}`} onPress={() => attAct(s.employee_id || "", { status: "absent" })} />
                 </Row>
               ) : null}
+              {(() => {
+                const recs = attendanceRecordsForEmployee(attendance?.records, s.employee_id, s.employee_name);
+                if (!recs.length) return null;
+                const open = !!attRecOpen[s.employee_id || ""];
+                return (
+                  <View testID={`att-rec-group-${s.employee_id}`}>
+                    <Pressable
+                      testID={`att-recs-toggle-${s.employee_id}`}
+                      onPress={() => setAttRecOpen((m) => ({ ...m, [s.employee_id || ""]: !m[s.employee_id || ""] }))}
+                      accessibilityLabel={attendanceGroupToggleLabel(open, recs.length)}
+                      style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 }}
+                    >
+                      <Text style={{ fontWeight: "800", color: colors.indigo, fontSize: 12 }}>{attendanceGroupToggleLabel(open, recs.length)}</Text>
+                      <Ionicons name={workplaceDetailsToggleIcon(open)} size={16} color={colors.indigo} />
+                    </Pressable>
+                    {open ? recs.map((r) => (
+                      <AttendanceRecCard key={idOf(r)} r={r} canEdit={canEdit} onDecide={decideRequest} hideName />
+                    )) : null}
+                  </View>
+                );
+              })()}
             </Card>
           ))}
-          {(attendance?.records || []).slice(0, 30).map((r) => {
-            const early = r.early_leave_request?.status === "pending";
-            const intra = r.intraday_leave_request?.status === "pending";
-            const yevAdj = r.yevmiye_adjustment_request?.status === "pending";
-            const locExit = r.location_exit_request?.status === "pending";
-            const yevLine = yevmiyeStatusLine(r);
-            return (
-              <Card key={idOf(r)} testID={`att-rec-${idOf(r)}`}>
-                <Text style={{ fontWeight: "800", color: colors.text }}>{r.employee_name || "Personel"}</Text>
-                <Muted>
-                  {[r.date, r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"}` : r.status === "absent" ? "Devamsız" : "İzinli"].join(" · ")}
-                  {r.hours != null ? ` · ${r.hours} sa` : ""}
-                  {r.late_minutes ? ` · ${r.late_minutes} dk geç` : ""}
-                </Muted>
-                {early ? <Muted testID={`att-early-${idOf(r)}`}>Erken çıkış talebi {r.early_leave_request?.planned_time || ""} {r.early_leave_request?.reason ? `· ${r.early_leave_request.reason}` : ""}</Muted> : null}
-                {intra ? <Muted testID={`att-intra-${idOf(r)}`}>Gün içi izin {r.intraday_leave_request?.out_time || ""}–{r.intraday_leave_request?.return_time || ""} {r.intraday_leave_request?.reason ? `· ${r.intraday_leave_request.reason}` : ""}</Muted> : null}
-                {yevLine ? <Muted testID={`att-yevmiye-adj-${idOf(r)}`}>{yevLine}</Muted> : null}
-                {locExit ? (
-                  <Muted testID={`att-loc-exit-${idOf(r)}`}>
-                    Konum dışı{r.location_exit_request?.place ? ` · ${r.location_exit_request.place}` : ""}
-                    {r.location_exit_request?.distance_m != null ? ` · ${r.location_exit_request.distance_m} m` : ""}
-                    {r.location_exit_request?.tolerance_hours ? ` · tolerans ${r.location_exit_request.tolerance_hours} sa` : ""}
-                    {` · kesinti: ${r.location_exit_request?.wage_deduction == null ? "bekliyor" : r.location_exit_request.wage_deduction ? "olsun" : "olmasın"}`}
-                  </Muted>
-                ) : null}
-                {canEdit && (early || intra || yevAdj || locExit) ? (
-                  <Row>
-                    {early ? (
-                      <>
-                        <PrimaryButton title="Erken çıkış onayla" color={colors.primary} testID={`att-early-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "early_leave" }, true)} />
-                        <PrimaryButton title="Reddet" color={colors.danger} testID={`att-early-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "early_leave" }, false)} />
-                      </>
-                    ) : null}
-                    {intra ? (
-                      <>
-                        <PrimaryButton title="Gün içi onayla" color={colors.primary} testID={`att-intra-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "intraday_leave" }, true)} />
-                        <PrimaryButton title="Reddet" color={colors.danger} testID={`att-intra-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "intraday_leave" }, false)} />
-                      </>
-                    ) : null}
-                    {yevAdj ? (
-                      <>
-                        <PrimaryButton title="Ücret kes" color={colors.warning} testID={`att-yevmiye-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "yevmiye_adjustment" }, true)} />
-                        <PrimaryButton title="Ücret kesme" color={colors.primary} testID={`att-yevmiye-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "yevmiye_adjustment" }, false)} />
-                      </>
-                    ) : null}
-                    {locExit ? (
-                      <>
-                        <PrimaryButton title="Haberim var" color={colors.secondary} testID={`att-loc-exit-ack-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, "ack")} />
-                        <PrimaryButton title="Kesinti olmasın" color={colors.primary} testID={`att-loc-exit-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, true)} />
-                        <PrimaryButton title="Kesinti olsun" color={colors.warning} testID={`att-loc-exit-deduct-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, "deduct")} />
-                        <PrimaryButton title="Reddet" color={colors.danger} testID={`att-loc-exit-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, false)} />
-                      </>
-                    ) : null}
-                  </Row>
-                ) : null}
-              </Card>
-            );
-          })}
+          {groupAttendanceRecords(attendance?.records)
+            .filter((g) => !(attendance?.summary || []).some((s) => String(s.employee_id) === g.employee_id))
+            .map((g) => {
+              const open = !!attRecOpen[g.employee_id];
+              return (
+                <Card key={g.employee_id} testID={`att-rec-group-${g.employee_id}`}>
+                  <Text style={{ fontWeight: "800", color: colors.text }}>{g.employee_name}</Text>
+                  <Pressable
+                    testID={`att-recs-toggle-${g.employee_id}`}
+                    onPress={() => setAttRecOpen((m) => ({ ...m, [g.employee_id]: !m[g.employee_id] }))}
+                    accessibilityLabel={attendanceGroupToggleLabel(open, g.records.length)}
+                    style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 }}
+                  >
+                    <Text style={{ fontWeight: "800", color: colors.indigo, fontSize: 12 }}>{attendanceGroupToggleLabel(open, g.records.length)}</Text>
+                    <Ionicons name={workplaceDetailsToggleIcon(open)} size={16} color={colors.indigo} />
+                  </Pressable>
+                  {open ? g.records.map((r) => (
+                    <AttendanceRecCard key={idOf(r)} r={r} canEdit={canEdit} onDecide={decideRequest} hideName />
+                  )) : null}
+                </Card>
+              );
+            })}
         </>
       ) : null}
 
