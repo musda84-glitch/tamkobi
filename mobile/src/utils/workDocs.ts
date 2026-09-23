@@ -726,6 +726,11 @@ export function projectTaskSummary(tasks?: ProjectTask[] | null) {
   };
 }
 
+/** Kart özet çipleri proje formuna değil, görev/takip paneline gider. */
+export function projectCardChipTarget(kind: "tasks" | "track"): "team" | "track" {
+  return kind === "tasks" ? "team" : "track";
+}
+
 export function emptyProjectTask(id?: string): ProjectTask {
   return { id: id || newTaskId(), title: "", done: false, assignee_id: null, assignee_name: null };
 }

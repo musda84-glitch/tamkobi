@@ -25,6 +25,7 @@ import {
   quotesForProject,
   projectPayload,
   projectTaskRows,
+  projectCardChipTarget,
   projectTaskSummary,
   projectTrackingPayload,
   quoteListSubtitle,
@@ -452,6 +453,8 @@ describe("workDocs", () => {
       { id: "t2", title: "Montaj", assignee_id: "e2" },
       { id: "t3", title: "  " },
     ])).toEqual({ done: 1, total: 2, assigned: 2, label: "1/2 görev · 2 atanmış" });
+    expect(projectCardChipTarget("tasks")).toBe("team");
+    expect(projectCardChipTarget("track")).toBe("track");
     const rows = projectTaskRows([]);
     expect(rows).toHaveLength(1);
     expect(rows[0].title).toBe("");
