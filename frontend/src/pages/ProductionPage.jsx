@@ -449,6 +449,12 @@ export default function ProductionPage() {
                   <div className="font-mono text-[10px] text-slate-400">{r.code}</div>
                   <div className="font-bold text-slate-900 truncate">{r.name}</div>
                   <div className="text-slate-500 flex items-center gap-1"><Package className="w-3 h-3" /> {r.finished_product_name} • {r.target_quantity} {r.unit}</div>
+                  {(r.contact_name || r.job_file_name) ? (
+                    <div className="text-[11px] text-indigo-700 mt-0.5 space-y-0.5" data-testid={`recipe-customer-job-${r.code}`}>
+                      {r.contact_name ? <div>Müşteri: <span className="font-semibold">{r.contact_name}</span></div> : null}
+                      {r.job_file_name ? <div>İş dosyası: <span className="font-semibold">{r.job_file_name}</span></div> : null}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <button type="button" onClick={() => copyRecipe(r)} className="p-1.5 border rounded-lg hover:bg-indigo-50 hover:border-indigo-200 text-slate-600 hover:text-indigo-700" title="Kopyala" data-testid={`recipe-copy-${r.code}`}><Copy className="w-3.5 h-3.5" /></button>
