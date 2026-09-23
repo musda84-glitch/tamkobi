@@ -1,4 +1,4 @@
-import { locationCellCaption, locationControllerLabel, locationTrackingEnabled, requestsDetailsToggleLabel, todayAttendanceParts } from "./employeeCardStatus";
+import { cardPunchConfirmMessage, locationCellCaption, locationControllerLabel, locationTrackingEnabled, requestsDetailsToggleLabel, todayAttendanceParts } from "./employeeCardStatus";
 
 describe("employeeCardStatus", () => {
   test("location controller and today punches", () => {
@@ -12,5 +12,7 @@ describe("employeeCardStatus", () => {
       checkIn: "01:37", checkOut: "10:26", late: 0, empty: false,
     });
     expect(todayAttendanceParts(null).empty).toBe(true);
+    expect(cardPunchConfirmMessage("check_in", "Davut")).toBe("Davut için giriş kaydı şimdi yazılsın mı?");
+    expect(cardPunchConfirmMessage("check_out")).toMatch(/çıkış kaydı/);
   });
 });

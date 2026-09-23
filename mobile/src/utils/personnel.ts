@@ -141,6 +141,13 @@ export function todayAttendanceParts(today?: AttendanceToday | null): {
   };
 }
 
+export function cardPunchConfirmMessage(action: "check_in" | "check_out", name?: string): string {
+  const who = String(name || "").trim();
+  const prefix = who ? `${who} için ` : "";
+  if (action === "check_in") return `${prefix}giriş kaydı şimdi yazılsın mı?`;
+  return `${prefix}çıkış kaydı şimdi yazılsın mı? Yanlışlıkla bastıysanız vazgeçin.`;
+}
+
 export function advanceFormToggleIcon(open: boolean): "eye-off-outline" | "eye-outline" {
   return open ? "eye-off-outline" : "eye-outline";
 }

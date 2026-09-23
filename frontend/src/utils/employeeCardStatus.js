@@ -36,3 +36,10 @@ export function todayAttendanceParts(today) {
     empty,
   };
 }
+
+export function cardPunchConfirmMessage(action, name) {
+  const who = String(name || "").trim();
+  const prefix = who ? `${who} için ` : "";
+  if (action === "check_in") return `${prefix}giriş kaydı şimdi yazılsın mı?`;
+  return `${prefix}çıkış kaydı şimdi yazılsın mı? Yanlışlıkla bastıysanız vazgeçin.`;
+}

@@ -15,7 +15,7 @@ import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
-import { locationCellCaption, locationControllerLabel, locationTrackingEnabled, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
+import { cardPunchConfirmMessage, locationCellCaption, locationControllerLabel, locationTrackingEnabled, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
 import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, fmtCardMoney, remainingLeaveDays } from "../utils/personnelCard";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
@@ -63,6 +63,8 @@ export default function PersonnelPage() {
   const [employees, setEmployees] = useState([]);
   const [attToday, setAttToday] = useState({});
   const [locBusyId, setLocBusyId] = useState(null);
+  const [punchConfirm, setPunchConfirm] = useState(null);
+  const [punchBusyId, setPunchBusyId] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "payroll";
   const setTab = (t) => setSearchParams({ tab: t }, { replace: true });
@@ -208,6 +210,23 @@ export default function PersonnelPage() {
       toast.error(err.response?.data?.detail || "Konum ayarı kaydedilemedi.");
     } finally {
       setLocBusyId(null);
+    }
+  };
+
+  const cardPunch = async (emp, action) => {
+    const id = empIdOf(emp);
+    if (!id) return;
+    setPunchBusyId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance`, { employee_id: id, action });
+      toast.success(r.data?.message || (action === "check_in" ? "Giriş kaydedildi." : "Çıkış kaydedildi."));
+      if (r.data?.overtime_hours) toast.info(`${r.data.overtime_hours} sa fazla mesai otomatik yazıldı.`);
+      setPunchConfirm(null);
+      await loadPersonnelData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Puantaj kaydedilemedi.");
+    } finally {
+      setPunchBusyId(null);
     }
   };
   const refreshPersonnelSilent = useCallback(() => loadPersonnelData(), [loadPersonnelData]);
@@ -710,17 +729,53 @@ export default function PersonnelPage() {
                           {locBusyId === empKey ? "…" : locationCellCaption(locOn)}
                         </div>
                       </button>
-                      <div className="min-w-0 rounded-md bg-white px-1.5 py-0.5" data-testid={`employee-card-today-${empKey}`}>
+                      <div className="min-w-0 col-span-2 grid grid-cols-2 gap-0.5" data-testid={`employee-card-today-${empKey}`}>
+                      <button
+                        type="button"
+                        onClick={() => setPunchConfirm({ id: empKey, action: "check_in", name: emp.full_name || "" })}
+                        disabled={punchBusyId === empKey}
+                        className={`min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "bg-emerald-100" : "bg-white"}`}
+                        data-testid={`employee-card-today-in-${empKey}`}
+                      >
                         <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Giriş</div>
                         <div className="text-[12px] font-black text-slate-900 leading-tight">
                           {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
                         </div>
-                      </div>
-                      <div className="min-w-0 rounded-md bg-white px-1.5 py-0.5">
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPunchConfirm({ id: empKey, action: "check_out", name: emp.full_name || "" })}
+                        disabled={punchBusyId === empKey}
+                        className={`min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_out" ? "bg-rose-100" : "bg-white"}`}
+                        data-testid={`employee-card-today-out-${empKey}`}
+                      >
                         <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Çıkış</div>
                         <div className="text-[12px] font-black text-slate-900 leading-tight">{punch.checkOut}</div>
+                      </button>
                       </div>
                     </div>
+                    {punchConfirm?.id === empKey ? (
+                      <div className="flex items-center gap-1.5 px-1 pt-1" data-testid={`employee-card-punch-confirm-${empKey}`}>
+                        <span className="min-w-0 flex-1 text-[10px] text-slate-600">{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</span>
+                        <button
+                          type="button"
+                          onClick={() => cardPunch(emp, punchConfirm.action)}
+                          disabled={punchBusyId === empKey}
+                          className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold text-white disabled:opacity-50 ${punchConfirm.action === "check_out" ? "bg-rose-600" : "bg-emerald-600"}`}
+                          data-testid={`employee-card-punch-yes-${empKey}`}
+                        >
+                          {punchBusyId === empKey ? "…" : "Onayla"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPunchConfirm(null)}
+                          className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700"
+                          data-testid={`employee-card-punch-no-${empKey}`}
+                        >
+                          Vazgeç
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })()}
