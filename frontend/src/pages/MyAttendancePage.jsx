@@ -12,6 +12,9 @@ import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } fro
 import { workplaceHint } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnelWage";
 import { fmtDmy } from "../utils/dateFormat";
+import { LocationConsentCard } from "../components/LocationConsentCard";
+import { LocationSignal } from "../components/LocationSignal";
+import { locationConsentAccepted, locationUnavailablePayload } from "../utils/locationConsent";
 
 
 const Stat = ({ label, value, sub, tone = "slate", testId }) => (
@@ -69,8 +72,52 @@ export default function MyAttendancePage() {
   const [intraOut, setIntraOut] = useState("");
   const [intraReturn, setIntraReturn] = useState("");
   const [outArmed, setOutArmed] = useState(false);
-  const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => setData(r.data)).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
+  const [consentBusy, setConsentBusy] = useState(false);
+  const [signal, setSignal] = useState(null);
+  const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => { setData(r.data); setSignal(r.data.location_signal || null); }).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
   useEffect(() => { load(); }, [load]);
+
+  const reportLocation = useCallback(async (reason) => {
+    let coords;
+    try {
+      coords = await getPos();
+    } catch (err) {
+      try {
+        const r = await axios.post(`${API_URL}/personnel/attendance/self/location-unavailable`, locationUnavailablePayload(reason || err?.message || "Konum alınamadı"), { withCredentials: true });
+        if (r.data.location_signal) setSignal(r.data.location_signal);
+        if (r.data.message) toast.message(r.data.message);
+      } catch {
+        /* yönetici bildirimi gönderilemedi */
+      }
+      return false;
+    }
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/self/location`, {
+        latitude: coords.latitude, longitude: coords.longitude, accuracy_m: coords.accuracy,
+      }, { withCredentials: true });
+      if (r.data.location_signal) setSignal(r.data.location_signal);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!locationConsentAccepted(data?.location_consent)) return undefined;
+    reportLocation();
+    return undefined;
+  }, [data?.location_consent?.accepted, reportLocation]);
+  useEffect(() => {
+    const tracking = data?.active_location_tracking || data?.location_tracking;
+    const onDuty = Boolean(data?.today?.check_in && !data?.today?.check_out);
+    const field = data?.workplace?.kind === "task";
+    if (!locationConsentAccepted(data?.location_consent) || !tracking?.enabled || !onDuty || !field) return undefined;
+    reportLocation();
+    const mins = Number(tracking.interval_minutes);
+    const ms = tracking.continuous || mins === 0 ? 60_000 : Math.max(1, mins) * 60_000;
+    const id = setInterval(() => { reportLocation(); }, ms);
+    return () => clearInterval(id);
+  }, [data?.today?.check_in, data?.today?.check_out, data?.workplace?.kind, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
   useEffect(() => {
     if (!outArmed) return undefined;
     const t = setTimeout(() => setOutArmed(false), CHECKOUT_ARM_MS);
@@ -98,14 +145,19 @@ export default function MyAttendancePage() {
         trackingEnabled: action === "check_out" ? !!activeLt?.enabled : activeLt?.enabled !== false,
       });
       if (geoMode === "required") {
-        const c = await getPos();
-        coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
+        try {
+          const c = await getPos();
+          coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
+        } catch (geoErr) {
+          await reportLocation(geoErr?.message || "Konum izni verilmedi.");
+          throw geoErr;
+        }
       } else if (geoMode === "attach") {
         try {
           const c = await getPos();
           coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
-        } catch {
-          /* çıkış her yerden butonla */
+        } catch (geoErr) {
+          await reportLocation(geoErr?.message || "Konum alınamadı");
         }
       }
       const r = await axios.post(`${API_URL}/personnel/attendance/self`, { action, ...coords }, { withCredentials: true });
@@ -171,8 +223,23 @@ export default function MyAttendancePage() {
     } catch (err) { toast.error(err.response?.data?.detail || "İptal edilemedi."); }
     finally { setBusy(null); }
   };
+  const acceptConsent = async ({ accept_kvkk, accept_share }) => {
+    setConsentBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/me/location-consent`, { accept_kvkk, accept_share }, { withCredentials: true });
+      toast.success(r.data.message || "Sözleşmeler kabul edildi. Personel paneli kullanıma açıldı.");
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Sözleşme kaydedilemedi.");
+    } finally {
+      setConsentBusy(false);
+    }
+  };
+
   if (!data) return <div className="p-8 text-sm text-slate-400">Yükleniyor…</div>;
   const s = data.summary, t = data.today, sch = data.schedule;
+  const consentOk = locationConsentAccepted(data.location_consent);
+  const liveSignal = signal || data.location_signal;
   const workDays = sch ? sch.work_days.map((d) => data.day_labels[d]).join(", ") : "";
   const earlyOk = earlyLeaveApproved(t);
   const checkoutOn = data?.checkout_unlocked != null
@@ -186,10 +253,25 @@ export default function MyAttendancePage() {
       </div>
       {!data.employee && <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800 space-y-1" data-testid="my-att-no-employee"><p>Giriş/çıkış, <b>erken çıkış</b> ve <b>gün içi izin</b> talebi için yöneticinizin Personel → Personel Kartı → <b>Sistem Kullanıcısı</b> bölümünden hesabınızı personel kartınıza bağlaması gerekir.</p><p className="text-amber-700/80">Bağlantı sonrası bugün kartta “Gün içi izin talep et” görünür (çıkış yapılmış olsa da).</p></div>}
       {data.employee && (
+        <LocationConsentCard
+          consent={data.location_consent}
+          signal={liveSignal}
+          onAccept={acceptConsent}
+          busy={consentBusy}
+          testId="my-att-consent"
+        />
+      )}
+      {data.employee && !consentOk && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 text-xs text-slate-600" data-testid="my-att-consent-lock">
+          KVKK (K) ve konum paylaşımı (KK) sözleşmelerini işaretleyip kabul edince giriş / çıkış paneli açılır.
+        </div>
+      )}
+      {data.employee && consentOk && (
         <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 sm:p-6 shadow-lg space-y-5" data-testid="my-att-today">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div className="text-center sm:text-left">
               <div className="text-5xl sm:text-4xl font-black font-mono tracking-tight" data-testid="my-att-clock">{data.now}</div>
+              <div className="mt-2"><LocationSignal signal={liveSignal} className="text-white/90" testId="my-att-signal" /></div>
               <div className="text-xs text-slate-300 mt-1">{new Date(data.today_date + "T00:00:00").toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" })}{sch.work_days.includes((new Date(data.today_date + "T00:00:00").getDay() + 6) % 7) ? "" : " · tatil günü (çalışma = fazla mesai)"}</div>
             </div>
             <div className="text-[11px] text-slate-300 flex flex-wrap justify-center sm:justify-end gap-x-4 gap-y-1">

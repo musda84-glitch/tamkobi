@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+import location_consent
 import personnel_wage
 
 router = APIRouter(prefix="/api")
@@ -138,6 +139,12 @@ def self_checkout_unlocked(rec: Optional[dict] = None, schedule: Optional[dict] 
         return hm_reached_end(_hm(str(stamp)[:5]), _hm(str(end)[:5]), _hm(str(start)[:5]))
     except Exception:
         return True
+
+
+async def mark_employee_location_signal(emp_id: str, ok: bool) -> dict:
+    patch = {"location_last_ok": bool(ok), "location_last_at": _now()}
+    await _db.employees.update_one({"_id": emp_id}, {"$set": patch})
+    return location_consent.location_signal_view(patch)
 
 
 def checkout_distance_blocks() -> bool:
@@ -1013,7 +1020,9 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
             "company_location": company.get("location"), "location_tracking": lt,
             "active_location_tracking": active_lt,
             "now": now_s, "today_date": today_s,
-            "checkout_unlocked": self_checkout_unlocked(today_e or today, schedule, now_s)}
+            "checkout_unlocked": self_checkout_unlocked(today_e or today, schedule, now_s),
+            "location_consent": location_consent.normalize_location_consent(emp.get("location_consent")),
+            "location_signal": location_consent.location_signal_view(emp)}
 
 
 @router.post("/personnel/attendance/self")
@@ -1025,6 +1034,8 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     emp = await employee_for_user(user)
     if not emp:
         raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    if not location_consent.location_consent_accepted(emp):
+        raise HTTPException(status_code=403, detail=location_consent.location_consent_denied_detail())
     company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
     schedule = merge_schedule(company, emp)
     workplace = await workplace_for_employee(emp, company)
@@ -1106,6 +1117,7 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     if geo:
         extra[f"geo_{action}"] = geo
         rec[f"geo_{action}"] = geo
+        await mark_employee_location_signal(emp["_id"], True)
     if extra:
         await _db.attendance.update_one({"_id": rec["id"]}, {"$set": extra})
     msg = f"{'Giriş' if action == 'check_in' else 'Çıkış'} {now_s} olarak kaydedildi."
@@ -1241,6 +1253,8 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
     emp = await employee_for_user(user)
     if not emp:
         raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    if not location_consent.location_consent_accepted(emp):
+        raise HTTPException(status_code=403, detail=location_consent.location_consent_denied_detail())
     try:
         lat, lng = float(req["latitude"]), float(req["longitude"])
     except (KeyError, TypeError, ValueError):
@@ -1263,6 +1277,7 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
     if loc:
         dist = round(haversine_m(lat, lng, loc["latitude"], loc["longitude"]))
         outside = dist > float(loc.get("radius_m") or 300)
+    signal = await mark_employee_location_signal(emp["_id"], True)
     return {
         "status": "success",
         "outside": outside,
@@ -1271,6 +1286,51 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
         "request": opened,
         "workplace": workplace,
         "active_location_tracking": active_lt,
+        "location_signal": signal,
+    }
+
+
+@router.post("/personnel/attendance/self/location-unavailable")
+async def self_location_unavailable(req: Dict[str, Any], request: Request):
+    """Personel konum alamayınca yöneticiye günde bir kez haber gider."""
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    if not location_consent.location_consent_accepted(emp):
+        raise HTTPException(status_code=403, detail=location_consent.location_consent_denied_detail())
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    schedule = merge_schedule(company, emp)
+    today = _today(schedule)
+    reason = (req.get("reason") or "Konum izni kapalı veya GPS alınamadı.").strip()[:200]
+    signal = await mark_employee_location_signal(emp["_id"], False)
+    note = await notify_managers(
+        emp["company_id"],
+        "location_unavailable",
+        f"Konum alınamadı: {emp.get('full_name')}",
+        f"{emp.get('full_name')} konum verisi gönderemedi. {reason}".strip(),
+        link="/personnel?tab=attendance",
+        dedupe_key=f"locfail:{emp['_id']}:{today}",
+    )
+    msg = "Yöneticiye konum alınamadığı bildirildi." if note.get("status") != "duplicate" else "Konum alınamadı; yöneticiye bugün zaten bildirildi."
+    return {"status": "success", "message": msg, "location_signal": signal, "notified": note.get("status") != "duplicate"}
+
+
+@router.post("/personnel/me/location-consent")
+async def accept_location_consent(req: Dict[str, Any], request: Request):
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    invalid = location_consent.validate_location_consent(req)
+    if invalid:
+        raise HTTPException(status_code=400, detail=invalid)
+    stored = location_consent.location_consent_store(req, _now())
+    await _db.employees.update_one({"_id": emp["_id"]}, {"$set": {"location_consent": stored}})
+    return {
+        "status": "success",
+        "message": "Sözleşmeler kabul edildi. Personel paneli kullanıma açıldı.",
+        "location_consent": location_consent.normalize_location_consent(stored),
     }
 
 
