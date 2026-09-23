@@ -32,7 +32,7 @@ import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
 import { CargoLabel } from "../components/CargoLabel";
 import { ApproveOrderModal } from "../components/ApproveOrderModal";
 import { CreateShipmentModal } from "../components/CreateShipmentModal";
-import { channelTr, statusTr } from "../utils/labels";
+import { channelTr, statusTr, orderStatusBadgeClass } from "../utils/labels";
 import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
 import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components/OrderCreateModals";
 import { AutoShipModal } from "../components/AutoShipModal";
@@ -553,12 +553,21 @@ export default function OrdersB2BPage() {
                 {visibleOrders.map((ord) => (
                   <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""}`} data-testid={`order-row-${ord.order_number}`}>
                     <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(ord.id)} onChange={() => toggleSel(ord.id)} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
-                    <td className="px-4 py-3 font-medium overflow-hidden">
+                    <td className="px-4 py-3 font-medium overflow-hidden" data-testid={`order-no-cell-${ord.order_number}`}>
                       <div className="font-bold text-slate-900 font-mono">{ord.order_number}</div>
                       {ord.customer_order_number ? <div className="text-[10px] text-slate-500 font-mono" data-testid={`order-customer-no-${ord.order_number}`}>Müşteri no: {ord.customer_order_number}</div> : null}
-                      <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded">
-                        {channelTr(ord.channel)}
-                      </span>
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
+                          {channelTr(ord.channel)}
+                        </span>
+                        <span
+                          className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded border ${orderStatusBadgeClass(ord.order_status)}`}
+                          data-testid={`order-status-chip-${ord.order_number}`}
+                          title={`Durum: ${statusTr(ord.order_status)}`}
+                        >
+                          {statusTr(ord.order_status)}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-4 py-3 cursor-pointer group overflow-hidden" onClick={() => goContact(ord)} title="Cariye git" data-testid={`order-customer-${ord.order_number}`}>
                       <div className="font-semibold text-slate-900 group-hover:text-indigo-700 group-hover:underline decoration-dotted truncate">{ord.customer_name}</div>
@@ -587,7 +596,7 @@ export default function OrdersB2BPage() {
                     <td className="px-4 py-3">
                       {ord.channel && !["b2b", "manual"].includes(ord.channel) ? (
                         <div data-testid={`order-status-badge-${ord.order_number}`} title="Durum pazaryerinden otomatik güncellenir">
-                          <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold ${["shipped", "completed"].includes(ord.order_status) ? "bg-emerald-50 text-emerald-700" : ["cancelled", "returned", "partially_returned"].includes(ord.order_status) ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{statusTr(ord.order_status)}</span>
+                          <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`}>{statusTr(ord.order_status)}</span>
                           {ord.marketplace_status && <div className="text-[10px] text-slate-400 mt-0.5">{channelTr(ord.channel)}: {ord.marketplace_status}</div>}
                           {ord.channel === "shopphp" && <button onClick={async () => { try { const r = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/push-shopphp`); toast.success(r.data.message); loadData(); } catch (e) { toast.error(e.response?.data?.detail || "Bildirilemedi."); } }} className={`mt-1 text-[10px] font-semibold underline ${ord.shopphp_push?.ok ? "text-emerald-700" : ord.shopphp_push?.ok === false ? "text-rose-600" : "text-indigo-600"}`} title={ord.shopphp_push ? `Son bildirim: ${new Date(ord.shopphp_push.at).toLocaleString("tr-TR")}${ord.shopphp_push.error ? " — " + ord.shopphp_push.error : ""}` : "Onay/kargo/fatura bilgisini ShopPHP mağazasına yaz"} data-testid={`shopphp-push-${ord.order_number}`}>{ord.shopphp_push?.ok ? "Mağazaya bildirildi ✓" : ord.shopphp_push?.ok === false ? "Bildirim hatası — tekrar dene" : "Mağazaya Bildir"}</button>}
                         </div>
