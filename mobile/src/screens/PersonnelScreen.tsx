@@ -72,6 +72,7 @@ import {
   DEFAULT_LOC_MODE,
   type LocMode,
   filterPayMoves,
+  payMovesPeriodHint,
   payMovesPeriodLabel,
   type PayMovesPeriod,
   pendingRequestDecision,
@@ -131,6 +132,7 @@ export function PersonnelScreen() {
   const [busy, setBusy] = useState(false);
   const [workplaceOpen, setWorkplaceOpen] = useState<Record<string, boolean>>({});
   const [movesPeriod, setMovesPeriod] = useState<PayMovesPeriod>("30d");
+  const [movesMonth, setMovesMonth] = useState(new Date().toISOString().slice(0, 7));
   const [balances, setBalances] = useState<Record<string, EmployeeBalance>>({});
   const [payItem, setPayItem] = useState<Payroll | null>(null);
   const [payAccount, setPayAccount] = useState("");
@@ -781,6 +783,7 @@ export function PersonnelScreen() {
     setMovesEmp(emp);
     setMoves([]);
     setMovesPeriod("30d");
+    setMovesMonth(month || new Date().toISOString().slice(0, 7));
     setMovesBusy(true);
     try {
       const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
@@ -1521,31 +1524,48 @@ export function PersonnelScreen() {
         subtitle={movesEmp?.full_name}
         onClose={() => { setMovesEmp(null); setMoves([]); }}
         testID="emp-pay-moves-sheet"
+        header={(
+          <View testID="emp-pay-moves-period" style={{ gap: 8 }}>
+            <Row style={{ flexWrap: "wrap", gap: 8 }}>
+              {(["30d", "month", "all"] as PayMovesPeriod[]).map((key) => (
+                <Pressable
+                  key={key}
+                  testID={`emp-pay-moves-period-${key}`}
+                  onPress={() => setMovesPeriod(key)}
+                  style={{
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 999,
+                    backgroundColor: movesPeriod === key ? colors.indigo50 : colors.slate50,
+                    borderWidth: 1,
+                    borderColor: movesPeriod === key ? colors.indigo : colors.border,
+                  }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: movesPeriod === key ? colors.indigo : colors.text }}>
+                    {payMovesPeriodLabel(key)}
+                  </Text>
+                </Pressable>
+              ))}
+            </Row>
+            {movesPeriod === "month" ? (
+              <Field
+                dense
+                label="Dönem"
+                testID="emp-pay-moves-month"
+                value={movesMonth}
+                onChangeText={setMovesMonth}
+                placeholder="YYYY-AA"
+              />
+            ) : null}
+            <Muted testID="emp-pay-moves-count">
+              {payMovesPeriodHint(filterPayMoves(moves, movesPeriod, new Date(), movesMonth).length, moves.length, movesPeriod)}
+            </Muted>
+          </View>
+        )}
       >
-        <Row style={{ flexWrap: "wrap", gap: 8, marginBottom: 8 }} testID="emp-pay-moves-period">
-          {(["30d", "month", "all"] as PayMovesPeriod[]).map((key) => (
-            <Pressable
-              key={key}
-              testID={`emp-pay-moves-period-${key}`}
-              onPress={() => setMovesPeriod(key)}
-              style={{
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 999,
-                backgroundColor: movesPeriod === key ? colors.indigo50 : colors.slate50,
-                borderWidth: 1,
-                borderColor: movesPeriod === key ? colors.indigo : colors.border,
-              }}
-            >
-              <Text style={{ fontSize: 11, fontWeight: "800", color: movesPeriod === key ? colors.indigo : colors.text }}>
-                {payMovesPeriodLabel(key)}
-              </Text>
-            </Pressable>
-          ))}
-        </Row>
         {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
-        {!movesBusy && !filterPayMoves(moves, movesPeriod, new Date(), month).length ? <Muted>Bu dönemde ödeme hareketi yok.</Muted> : null}
-        {filterPayMoves(moves, movesPeriod, new Date(), month).map((row) => (
+        {!movesBusy && !filterPayMoves(moves, movesPeriod, new Date(), movesMonth).length ? <Muted>Bu dönemde ödeme hareketi yok.</Muted> : null}
+        {filterPayMoves(moves, movesPeriod, new Date(), movesMonth).map((row) => (
           <View
             key={row.id}
             testID={`emp-pay-move-${row.id}`}

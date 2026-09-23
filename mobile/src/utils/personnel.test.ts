@@ -77,6 +77,7 @@ import {
   locModeSummary,
   filterPayMoves,
   payMoveInPeriod,
+  payMovesPeriodHint,
   payMovesPeriodLabel,
   companyBonusPayload,
   bonusesPeriodTotal,
@@ -155,6 +156,8 @@ describe("employee draft", () => {
     expect(workplaceDetailsSummary({ hasFieldDuty: true, fieldLabel: "aa", taskCount: 4 })).toBe("aa · 4 açık görev");
     expect(workplaceDetailsSummary({ taskCount: 1 })).toBe("1 açık görev");
     expect(payMovesPeriodLabel("30d")).toBe("Son 30 gün");
+    expect(payMovesPeriodHint(8, 24, "30d")).toBe("8 / 24 hareket");
+    expect(payMovesPeriodHint(12, 12, "all")).toBe("12 hareket");
     expect(payMoveInPeriod({ date: "2026-09-20" }, "30d", new Date("2026-09-22T12:00:00"), "2026-09")).toBe(true);
     expect(payMoveInPeriod({ date: "2026-07-01" }, "30d", new Date("2026-09-22T12:00:00"), "2026-09")).toBe(false);
     expect(payMoveInPeriod({ date: "2026-09" }, "month", new Date("2026-09-22"), "2026-09")).toBe(true);

@@ -10,6 +10,7 @@ export function B2BSheet({
   subtitle,
   onClose,
   children,
+  header,
   testID,
 }: {
   visible: boolean;
@@ -17,6 +18,7 @@ export function B2BSheet({
   subtitle?: string;
   onClose: () => void;
   children: React.ReactNode;
+  header?: React.ReactNode;
   testID?: string;
 }) {
   const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll(visible);
@@ -37,6 +39,7 @@ export function B2BSheet({
               <Ionicons name="close" size={22} color={colors.muted} />
             </Pressable>
           </View>
+          {header ? <View style={{ marginBottom: 10 }}>{header}</View> : null}
           <ScrollView
             ref={scrollRef}
             {...scrollProps}

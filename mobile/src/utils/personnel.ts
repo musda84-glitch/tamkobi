@@ -472,6 +472,11 @@ export function filterPayMoves(
   return (rows || []).filter((row) => payMoveInPeriod(row, period, now, month));
 }
 
+export function payMovesPeriodHint(shown: number, total: number, period: PayMovesPeriod): string {
+  if (period === "all" || shown === total) return `${total} hareket`;
+  return `${shown} / ${total} hareket`;
+}
+
 export function employeeCardChrome(emp?: Pick<Employee, "pay_type" | "daily_wage"> | null): {
   backgroundColor: string;
   borderColor: string;
