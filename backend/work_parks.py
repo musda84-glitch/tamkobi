@@ -147,4 +147,6 @@ def office_assignment_view(task: dict) -> dict:
         "project_number": "",
         "duration_days": None,
         "due_date": task.get("due_date"),
+        "workflow": [],
+        "photos": [],
     }

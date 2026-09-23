@@ -4,12 +4,13 @@ import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import React, { useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { fileUrl, put, upload } from "../api/client";
+import { fileUrl, post, put, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors, radius } from "../theme";
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import { appendUploadBlob, imageUploadRequest, resolveUploadBlob, uploadedImageUrl } from "../utils/formDataFile";
 import { idOf } from "../utils/money";
+import { photoVisibility, photoVisibilityLabel } from "../utils/assignedDuty";
 import {
   appendStagePhoto,
   removeStagePhoto,
@@ -91,6 +92,17 @@ export function ProjectStagePhotos({
       setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
     } finally {
       setBusyKey(null);
+    }
+  };
+
+  const setVisibility = async (url: string, visible: boolean) => {
+    if (!id) return;
+    try {
+      const r = await post<{ stage_photos?: StagePhoto[] }>(client, `/projects/${id}/stage-photos/visibility`, { url, visible });
+      onChanged({ stage_photos: r.stage_photos || project.stage_photos || [], images: project.images || [] });
+      setError(null);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Onay kaydedilemedi."));
     }
   };
 
@@ -177,14 +189,26 @@ export function ProjectStagePhotos({
                       <Image source={{ uri: fileUrl(client.baseUrl, item.url) }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
                     </Pressable>
                     {editable ? (
-                      <Pressable
-                        testID={`${tid}-remove`}
-                        onPress={() => remove(item.url)}
-                        style={{ position: "absolute", top: -5, right: -5, width: 16, height: 16, borderRadius: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" }}
-                      >
-                        <Ionicons name="close" size={10} color={colors.danger} />
-                      </Pressable>
-                    ) : null}
+                      <>
+                        <Pressable
+                          testID={`${tid}-remove`}
+                          onPress={() => remove(item.url)}
+                          style={{ position: "absolute", top: -5, right: -5, width: 16, height: 16, borderRadius: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" }}
+                        >
+                          <Ionicons name="close" size={10} color={colors.danger} />
+                        </Pressable>
+                        <View style={{ position: "absolute", left: 0, right: 0, bottom: -18, flexDirection: "row", justifyContent: "center", gap: 2 }}>
+                          <Pressable testID={`${tid}-show`} onPress={() => setVisibility(item.url, true)}>
+                            <Text style={{ fontSize: 8, fontWeight: "800", color: photoVisibility(item) === "show" ? colors.primaryHover : colors.muted }}>Görsün</Text>
+                          </Pressable>
+                          <Pressable testID={`${tid}-hide`} onPress={() => setVisibility(item.url, false)}>
+                            <Text style={{ fontSize: 8, fontWeight: "800", color: photoVisibility(item) === "hide" ? colors.danger : colors.muted }}>Görmesin</Text>
+                          </Pressable>
+                        </View>
+                      </>
+                    ) : (
+                      <Text style={{ fontSize: 8, fontWeight: "700", color: colors.muted }}>{photoVisibilityLabel(item)}</Text>
+                    )}
                   </View>
                 ))}
               </ScrollView>
@@ -261,9 +285,9 @@ export function ProjectWorkPreview({
               {row.label}
             </Text>
             {row.current && !row.done ? <Text style={{ color: "#2563EB", fontSize: 10, fontWeight: "800" }}>ŞU ANKİ ADIM</Text> : null}
-            {row.items.length ? (
+            {row.items.filter((item) => photoVisibility(item) === "show").length ? (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                {row.items.map((item) => (
+                {row.items.filter((item) => photoVisibility(item) === "show").map((item) => (
                   <Pressable
                     key={item.url}
                     testID={`${testID}-img`}

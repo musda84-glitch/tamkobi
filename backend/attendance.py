@@ -635,7 +635,23 @@ def _duration_days_of(task: Optional[dict]) -> Optional[int]:
     return n if n > 0 else None
 
 
+def project_workflow(proj: Optional[dict] = None) -> list:
+    out = []
+    for t in (proj or {}).get("tasks") or []:
+        if not isinstance(t, dict):
+            continue
+        out.append({
+            "id": t.get("id") or t.get("_id"),
+            "title": t.get("title") or t.get("name") or "Adım",
+            "done": bool(t.get("done") or t.get("status") in ("done", "completed", "tamamlandi")),
+            "assignee_name": t.get("assignee_name") or "",
+            "kind": task_kind_of(t),
+        })
+    return out
+
+
 def assignment_from_project(proj: dict, task: dict) -> dict:
+    import project_photos as _pp
     return {
         "id": task.get("id") or task.get("_id"),
         "title": task.get("title") or task.get("name") or "Görev",
@@ -653,6 +669,8 @@ def assignment_from_project(proj: dict, task: dict) -> dict:
         "address": proj.get("address"),
         "location_url": proj.get("location_url"),
         "radius_m": proj.get("radius_m"),
+        "workflow": project_workflow(proj),
+        "photos": _pp.assignment_photos(proj),
     }
 
 

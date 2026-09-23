@@ -22,7 +22,7 @@ describe("stagePhotos", () => {
       { url: "/api/files/ok.jpg", stage: "active!", stage_label: "Devam" },
       { url: "https://evil.example/x.jpg", stage: "active" },
       "nope",
-    ])).toEqual([{
+    ])).toMatchObject([{
       url: "/api/files/ok.jpg",
       stage: "active",
       stage_label: "Devam",
@@ -67,7 +67,7 @@ describe("stagePhotos", () => {
     );
     expect(added.stage_photos).toHaveLength(2);
     expect(added.images).toEqual(["/api/files/a.jpg", "/api/files/b.jpg"]);
-    expect(removeStagePhoto(added.stage_photos, added.images, "/api/files/a.jpg")).toEqual({
+    expect(removeStagePhoto(added.stage_photos, added.images, "/api/files/a.jpg")).toMatchObject({
       stage_photos: [{ url: "/api/files/b.jpg", stage: "active", stage_label: "Devam Ediyor", created_at: "" }],
       images: ["/api/files/b.jpg"],
     });

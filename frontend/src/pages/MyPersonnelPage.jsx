@@ -10,6 +10,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
 import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
 import { LocationConsentCard } from "../components/LocationConsentCard";
+import { AssignedDutyCard } from "../components/AssignedDutyCard";
 
 const money = (n) => `${formatTrAmount(Number(n || 0))} ₺`;
 const statusTr = {
@@ -334,36 +335,20 @@ export default function MyPersonnelPage() {
           {tasks.length === 0 ? (
             <div className="p-6 text-xs text-slate-400 text-center">Size atanmış proje görevi yok.</div>
           ) : (
-            <ul className="divide-y text-xs">
+            <div className="p-3 space-y-3">
               {tasks.map((t, i) => (
-                <li key={t.id || i} className={`px-4 py-3 flex gap-3 items-start ${t.done ? "opacity-60" : ""}`} data-testid={`my-pers-task-${i}`}>
-                  {t.done ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" /> : <Circle className="w-4 h-4 text-slate-300 shrink-0 mt-0.5" />}
-                  <div className="min-w-0 flex-1">
-                    <div className={`font-semibold text-slate-800 ${t.done ? "line-through" : ""}`}>{t.title}</div>
-                    <div className="text-slate-500 mt-0.5">
-                      {t.park_name || (t.project_number ? `${t.project_number} · ` : "")}{!t.park_name ? (t.project_name || "Proje") : ""}
-                      {t.due_date ? ` · son ${t.due_date}` : ""}
-                    </div>
-                    {!t.done && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <Link to="/atolye" className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-bold" data-testid={`my-pers-task-atolye-${i}`}>
-                          Atölyeye git
-                        </Link>
-                        <button
-                          type="button"
-                          disabled={taskBusyId === t.id}
-                          onClick={() => completeTask(t)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-50"
-                          data-testid={`my-pers-task-approve-${i}`}
-                        >
-                          {taskBusyId === t.id ? "Onaylanıyor…" : "Onayla"}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </li>
+                <AssignedDutyCard
+                  key={t.id || i}
+                  duty={t}
+                  index={i}
+                  testId={`my-pers-task-${i}`}
+                  showAtolye
+                  approveBusy={taskBusyId === t.id}
+                  onApprove={() => completeTask(t)}
+                  onChanged={() => load()}
+                />
               ))}
-            </ul>
+            </div>
           )}
         </div>
       )}

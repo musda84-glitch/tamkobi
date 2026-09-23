@@ -3,10 +3,11 @@ import React, { useCallback, useMemo, useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { colors, radius, spacing } from "../theme";
-import { dutyStatusLabel, dutySubtitle, openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
+import { openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
 import { idOf } from "../utils/money";
 import type { Employee } from "../utils/personnel";
 import {
@@ -302,27 +303,15 @@ export function AtolyeScreen() {
         <View testID="shopfloor-duties">
           <Text style={{ fontWeight: "800", color: colors.text }}>Atanan Görevler ({openDuties.length} açık)</Text>
           {duties.map((t, i) => (
-            <Card key={t.id || String(i)} testID={`shopfloor-duty-${t.id || i}`} style={t.done ? { opacity: 0.7 } : undefined}>
-              <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ fontWeight: "800", color: colors.text }} numberOfLines={2}>{t.title || "Görev"}</Text>
-                  <Muted>{dutySubtitle(t)}</Muted>
-                </View>
-                <Badge label={dutyStatusLabel(t)} tone={t.done ? "green" : "indigo"} />
-              </Row>
-              {!t.done ? (
-                <PrimaryButton
-                  title="Onayla"
-                  onPress={() => approveDuty(t)}
-                  disabled={dutyBusyId === t.id}
-                  loading={dutyBusyId === t.id}
-                  color={colors.primary}
-                  testID={`shopfloor-duty-approve-${t.id || i}`}
-                />
-              ) : (
-                <Muted>Görev onaylandı.</Muted>
-              )}
-            </Card>
+            <AssignedDutyCard
+              key={t.id || String(i)}
+              duty={t}
+              index={i}
+              testID={`shopfloor-duty-${t.id || i}`}
+              approveBusy={dutyBusyId === t.id}
+              onApprove={() => approveDuty(t)}
+              onChanged={() => load()}
+            />
           ))}
         </View>
       ) : null}

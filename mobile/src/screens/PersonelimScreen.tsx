@@ -4,6 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { DateField } from "../components/DateField";
+import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
@@ -11,7 +12,7 @@ import { colors } from "../theme";
 import { normalizeYmd } from "../utils/calendar";
 import { leaveTr, statusTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
-import { dutyStatusLabel, dutySubtitle, type AssignedDuty } from "../utils/assignedDuty";
+import { type AssignedDuty } from "../utils/assignedDuty";
 import { locationConsentPayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
 import { advanceRequestPayload, leaveDays, selfLeavePayload, validateAdvance, validateSelfLeave } from "../utils/personnel";
 
@@ -463,36 +464,17 @@ export function PersonelimScreen() {
               testID="personelim-goto-atolye"
             />
             {tasks.map((t, i) => (
-              <Card key={t.id || String(i)} testID={`personelim-task-${t.id || i}`}>
-                <ListRow
-                  title={t.title || "Görev"}
-                  subtitle={dutySubtitle(t)}
-                  right={dutyStatusLabel(t)}
-                  rightColor={t.done ? colors.primary : colors.muted}
-                />
-                {!t.done ? (
-                  <Row>
-                    <View style={{ flex: 1 }}>
-                      <PrimaryButton
-                        title="Atölyeye git"
-                        onPress={() => go("Atolye")}
-                        color={colors.indigo}
-                        testID={`personelim-task-atolye-${t.id || i}`}
-                      />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <PrimaryButton
-                        title="Onayla"
-                        onPress={() => completeTask(t)}
-                        disabled={taskBusyId === t.id}
-                        loading={taskBusyId === t.id}
-                        color={colors.primary}
-                        testID={`personelim-task-approve-${t.id || i}`}
-                      />
-                    </View>
-                  </Row>
-                ) : null}
-              </Card>
+              <AssignedDutyCard
+                key={t.id || String(i)}
+                duty={t}
+                index={i}
+                testID={`personelim-task-${t.id || i}`}
+                showAtolye
+                onAtolye={() => go("Atolye")}
+                approveBusy={taskBusyId === t.id}
+                onApprove={() => completeTask(t)}
+                onChanged={() => load()}
+              />
             ))}
           </>
         )

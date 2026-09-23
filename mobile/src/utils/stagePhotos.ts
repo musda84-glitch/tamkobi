@@ -7,6 +7,11 @@ export type StagePhoto = {
   stage: string;
   stage_label?: string;
   created_at?: string;
+  source?: string;
+  customer_visible?: boolean;
+  visibility?: string;
+  visibility_label?: string;
+  approval?: string;
 };
 
 export type StagePhotoGroup = {
@@ -40,6 +45,11 @@ export function sanitizeStagePhotos(raw: unknown): StagePhoto[] {
       stage: cleanStageKey(rec.stage) || "other",
       stage_label: String(rec.stage_label || "").slice(0, 60),
       created_at: String(rec.created_at || "").slice(0, 40),
+      source: String(rec.source || ""),
+      customer_visible: rec.customer_visible === true ? true : rec.customer_visible === false ? false : undefined,
+      visibility: String(rec.visibility || ""),
+      visibility_label: String(rec.visibility_label || ""),
+      approval: String(rec.approval || ""),
     });
   }
   return out;

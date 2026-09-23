@@ -60,6 +60,17 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
     }
   };
 
+  const setVisibility = async (url, visible) => {
+    if (!id) return;
+    try {
+      const r = await axios.post(`${API_URL}/projects/${id}/stage-photos/visibility`, { url, visible });
+      toast.success(r.data.message || (visible ? "Müşteri görür." : "Müşteri görmez."));
+      onUpdated?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Onay kaydedilemedi.");
+    }
+  };
+
   const remove = async (url) => {
     const next = photos.filter((p) => p.url !== url);
     const images = (project.images || []).filter((u) => u !== url);
@@ -75,7 +86,7 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
   return (
     <div className="space-y-1.5 border border-slate-200 rounded-xl p-2 bg-slate-50/70" data-testid={`project-stage-photos-${number}`}>
       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Aşama fotoğrafları</div>
-      <p className="text-[10px] text-slate-400 leading-snug">Müşteri takip sayfasında, işin yapıldığı aşamanın altında görünür.</p>
+      <p className="text-[10px] text-slate-400 leading-snug">Personel yüklemeleri onay bekler. <b>Görsün / Görmesin</b> ile müşteri takip sayfasını açın veya kapatın.</p>
       {(() => {
         const current = (stages || []).find((s) => s.key === project.status) || (stages || [])[0];
         if (!current) return null;
@@ -100,6 +111,10 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
                 <button type="button" onClick={() => remove(item.url)} className="absolute -top-1 -right-1 bg-white border border-slate-200 rounded-full p-0.5 text-slate-400 hover:text-rose-600" title="Kaldır" data-testid={`project-stage-remove-${number}`}>
                   <X className="w-2.5 h-2.5" />
                 </button>
+                <div className="absolute left-0 right-0 -bottom-4 flex justify-center gap-1">
+                  <button type="button" onClick={() => setVisibility(item.url, true)} className={`text-[8px] font-bold ${item.visibility === "show" || item.customer_visible ? "text-emerald-700" : "text-slate-400"}`} data-testid={`project-stage-show-${number}`}>Görsün</button>
+                  <button type="button" onClick={() => setVisibility(item.url, false)} className={`text-[8px] font-bold ${item.visibility === "hide" ? "text-rose-600" : "text-slate-400"}`} data-testid={`project-stage-hide-${number}`}>Görmesin</button>
+                </div>
               </span>
             ))}
             <label className={`w-10 h-10 rounded-lg border-2 border-dashed flex items-center justify-center cursor-pointer shrink-0 ${busy === stage.key ? "opacity-50 border-slate-200" : "border-slate-300 hover:border-emerald-500 text-slate-400 bg-white"}`} title={`${stage.label} aşamasına fotoğraf yükle`}>

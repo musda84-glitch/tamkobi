@@ -22,6 +22,26 @@ def is_photo_url(value: Any) -> bool:
     return url.startswith("/api/files/")
 
 
+def photo_visibility(row: Any) -> str:
+    """pending | show | hide — eski kayıtlarda alan yoksa müşteri görür."""
+    rec = row if isinstance(row, dict) else {}
+    if rec.get("customer_visible") is True or rec.get("approval") == "approved":
+        return "show"
+    if rec.get("approval") == "rejected":
+        return "hide"
+    if rec.get("source") == "employee" or rec.get("customer_visible") is False:
+        return "pending"
+    return "show"
+
+
+def photo_visibility_label(state: str) -> str:
+    return {"show": "Müşteri görür", "hide": "Müşteri görmez", "pending": "Onay bekliyor"}.get(state or "", "Onay bekliyor")
+
+
+def customer_can_see_photo(row: Any) -> bool:
+    return photo_visibility(row) == "show"
+
+
 def sanitize_stage_photos(raw: Any) -> List[dict]:
     if not isinstance(raw, list):
         return []
@@ -33,11 +53,19 @@ def sanitize_stage_photos(raw: Any) -> List[dict]:
         if not is_photo_url(url):
             continue
         stage = clean_stage_key(row.get("stage")) or "other"
+        vis = photo_visibility(row)
         out.append({
             "url": url,
             "stage": stage,
             "stage_label": str(row.get("stage_label") or "")[:60],
             "created_at": str(row.get("created_at") or "")[:40],
+            "source": str(row.get("source") or "")[:20],
+            "uploaded_by": str(row.get("uploaded_by") or "")[:40],
+            "task_id": str(row.get("task_id") or "")[:40],
+            "customer_visible": vis == "show",
+            "approval": "approved" if vis == "show" else ("rejected" if vis == "hide" else "pending"),
+            "visibility": vis,
+            "visibility_label": photo_visibility_label(vis),
         })
     return out
 
@@ -65,11 +93,15 @@ def group_stage_photos(stage_photos: Any, images: Any, stages: Any) -> List[dict
             groups[key].append(url)
 
     tagged = set()
+    hidden = set()
     for row in stage_photos or []:
         if not isinstance(row, dict):
             continue
         url = str(row.get("url") or "")
         if not is_photo_url(url):
+            continue
+        if not customer_can_see_photo(row):
+            hidden.add(url)
             continue
         key = clean_stage_key(row.get("stage")) or "other"
         if row.get("stage_label") and key not in label_by:
@@ -77,7 +109,7 @@ def group_stage_photos(stage_photos: Any, images: Any, stages: Any) -> List[dict
         add(key, url)
         tagged.add(url)
     for url in images or []:
-        if is_photo_url(url) and url not in tagged:
+        if is_photo_url(url) and url not in tagged and url not in hidden:
             add("other", str(url))
     if not groups:
         return []
@@ -95,3 +127,44 @@ def group_stage_photos(stage_photos: Any, images: Any, stages: Any) -> List[dict
             "images": groups[key],
         })
     return out
+
+
+def employee_photo_row(url: str, *, stage: str, stage_label: str, created_at: str, uploaded_by: str, task_id: str) -> dict:
+    return sanitize_stage_photos([{
+        "url": url,
+        "stage": stage,
+        "stage_label": stage_label,
+        "created_at": created_at,
+        "source": "employee",
+        "uploaded_by": uploaded_by,
+        "task_id": task_id,
+        "customer_visible": False,
+        "approval": "pending",
+    }])[0]
+
+
+def apply_photo_visibility(raw: Any, url: str, visible: bool) -> List[dict]:
+    target = str(url or "").strip()
+    next_rows = []
+    found = False
+    for row in sanitize_stage_photos(raw):
+        if row["url"] == target:
+            found = True
+            row["customer_visible"] = bool(visible)
+            row["approval"] = "approved" if visible else "rejected"
+            row["visibility"] = "show" if visible else "hide"
+            row["visibility_label"] = photo_visibility_label(row["visibility"])
+        next_rows.append(row)
+    if not found and is_photo_url(target):
+        next_rows.append(sanitize_stage_photos([{
+            "url": target,
+            "stage": "other",
+            "source": "manager",
+            "customer_visible": bool(visible),
+            "approval": "approved" if visible else "rejected",
+        }])[0])
+    return next_rows
+
+
+def assignment_photos(proj: Optional[dict] = None) -> List[dict]:
+    return sanitize_stage_photos((proj or {}).get("stage_photos"))
