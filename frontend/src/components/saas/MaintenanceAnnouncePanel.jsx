@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Loader2, Megaphone, Save, Trash2, Wrench } from "lucide-react";
+import { Eye, Loader2, Megaphone, Save, Trash2, Wrench } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { Toggle, inputCls } from "./saasUi";
+import { PlatformNoticeModal } from "../PlatformNoticeModal";
 import {
   fromDatetimeLocalValue,
+  pickVisibleNotice,
   toDatetimeLocalValue,
 } from "../../utils/platformNotices";
 
@@ -15,27 +17,45 @@ const emptyAnnounce = () => ({
   starts_at: toDatetimeLocalValue(new Date().toISOString()),
   ends_at: "",
   active: true,
+  status: "draft",
+  audience: "all",
+  company_ids: [],
 });
 
-/** Platform: bakım zamanı + şirketlere pop-up duyuru. */
+/** Platform: bakım zamanı + şirketlere pop-up duyuru (hedefli + taslak/demo). */
 export function MaintenanceAnnouncePanel() {
   const [m, setM] = useState(null);
   const [list, setList] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [form, setForm] = useState(emptyAnnounce);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [previewCompanyId, setPreviewCompanyId] = useState("");
+
+  const companyById = useMemo(() => {
+    const map = new Map();
+    companies.forEach((c) => map.set(c.id || c._id, c));
+    return map;
+  }, [companies]);
 
   const load = async () => {
     try {
-      const [mr, ar] = await Promise.all([
+      const [mr, ar, cr] = await Promise.all([
         axios.get(`${API_URL}/system/maintenance`),
         axios.get(`${API_URL}/system/announcements`),
+        axios.get(`${API_URL}/system/companies`).catch(() => ({ data: [] })),
       ]);
       setM({
         ...mr.data,
         starts_local: toDatetimeLocalValue(mr.data.starts_at),
         ends_local: toDatetimeLocalValue(mr.data.ends_at),
+        audience: mr.data.audience || "all",
+        company_ids: Array.isArray(mr.data.company_ids) ? mr.data.company_ids : [],
       });
       setList(Array.isArray(ar.data) ? ar.data : []);
+      const rows = Array.isArray(cr.data) ? cr.data : (cr.data?.companies || []);
+      setCompanies(rows);
+      if (!previewCompanyId && rows[0]) setPreviewCompanyId(rows[0].id || rows[0]._id || "");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Ayarlar yüklenemedi.");
     }
@@ -56,11 +76,15 @@ export function MaintenanceAnnouncePanel() {
         ends_at: fromDatetimeLocalValue(m.ends_local),
         support_email: m.support_email || null,
         support_phone: m.support_phone || null,
+        audience: m.audience || "all",
+        company_ids: m.audience === "selected" ? (m.company_ids || []) : [],
       });
       setM({
         ...r.data,
         starts_local: toDatetimeLocalValue(r.data.starts_at),
         ends_local: toDatetimeLocalValue(r.data.ends_at),
+        audience: r.data.audience || "all",
+        company_ids: Array.isArray(r.data.company_ids) ? r.data.company_ids : [],
       });
       toast.success(r.data.message || "Kaydedildi.");
       load();
@@ -71,10 +95,13 @@ export function MaintenanceAnnouncePanel() {
     }
   };
 
-  const publishAnnounce = async (e) => {
-    e.preventDefault();
+  const saveAnnounce = async (status) => {
     if (!form.title.trim() || !form.body.trim()) {
       toast.error("Başlık ve metin zorunlu.");
+      return;
+    }
+    if (form.audience === "selected" && !(form.company_ids || []).length) {
+      toast.error("Seçili şirketler için en az bir şirket işaretleyin.");
       return;
     }
     setBusy(true);
@@ -83,14 +110,17 @@ export function MaintenanceAnnouncePanel() {
         title: form.title.trim(),
         body: form.body.trim(),
         active: !!form.active,
+        status,
+        audience: form.audience || "all",
+        company_ids: form.audience === "selected" ? form.company_ids : [],
         starts_at: fromDatetimeLocalValue(form.starts_at) || new Date().toISOString(),
         ends_at: fromDatetimeLocalValue(form.ends_at),
       });
-      toast.success(r.data.message || "Duyuru yayınlandı.");
+      toast.success(r.data.message || (status === "draft" ? "Taslak kaydedildi." : "Yayınlandı."));
       setForm(emptyAnnounce());
       load();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Yayınlanamadı.");
+      toast.error(err.response?.data?.detail || "Kaydedilemedi.");
     } finally {
       setBusy(false);
     }
@@ -116,6 +146,68 @@ export function MaintenanceAnnouncePanel() {
     }
   };
 
+  const publishRow = async (row) => {
+    try {
+      const r = await axios.post(`${API_URL}/system/announcements/${row.id}/publish`);
+      toast.success(r.data.message || "Yayınlandı.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Yayınlanamadı.");
+    }
+  };
+
+  const openDemoPreview = async () => {
+    setBusy(true);
+    try {
+      const r = await axios.get(`${API_URL}/system/announcements/preview`, {
+        params: previewCompanyId ? { company_id: previewCompanyId } : {},
+      });
+      const notice = pickVisibleNotice(r.data, { getItem: () => null });
+      if (!notice) {
+        toast.info("Bu şirket için görünür duyuru/bakım yok (taslaklar dahil).");
+        return;
+      }
+      setPreview({ ...notice, _demo: true });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Önizleme alınamadı.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleCompany = (cid, target, setTarget) => {
+    const cur = new Set(target.company_ids || []);
+    if (cur.has(cid)) cur.delete(cid);
+    else cur.add(cid);
+    setTarget({ ...target, company_ids: [...cur] });
+  };
+
+  const audienceBlock = (state, setState, testPrefix) => (
+    <div className="space-y-2 sm:col-span-2" data-testid={`${testPrefix}-audience`}>
+      <label className="block font-semibold text-slate-700">Hedef şirketler</label>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => setState({ ...state, audience: "all", company_ids: [] })} className={`px-3 py-1.5 rounded-lg border font-semibold ${state.audience !== "selected" ? "bg-slate-900 text-white border-slate-900" : "bg-white"}`} data-testid={`${testPrefix}-audience-all`}>Tüm şirketler</button>
+        <button type="button" onClick={() => setState({ ...state, audience: "selected" })} className={`px-3 py-1.5 rounded-lg border font-semibold ${state.audience === "selected" ? "bg-slate-900 text-white border-slate-900" : "bg-white"}`} data-testid={`${testPrefix}-audience-selected`}>Seçili şirketler</button>
+      </div>
+      {state.audience === "selected" && (
+        <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-xl p-2 space-y-1 bg-slate-50" data-testid={`${testPrefix}-company-list`}>
+          {!companies.length && <p className="text-slate-400 px-1">Şirket listesi boş.</p>}
+          {companies.map((c) => {
+            const id = c.id || c._id;
+            const checked = (state.company_ids || []).includes(id);
+            return (
+              <label key={id} className="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-white cursor-pointer">
+                <input type="checkbox" checked={checked} onChange={() => toggleCompany(id, state, setState)} data-testid={`${testPrefix}-company-${id}`} />
+                <span className="font-semibold text-slate-800 truncate">{c.name || id}</span>
+                <span className="text-[10px] text-slate-400 ml-auto">{c.plan_name || c.license?.plan_name || ""}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
   if (!m) {
     return <div className="text-xs text-slate-400">Yükleniyor…</div>;
   }
@@ -129,7 +221,7 @@ export function MaintenanceAnnouncePanel() {
               <Wrench className="w-4 h-4 text-teal-600" /> Güncelleme / Bakım Penceresi
             </h3>
             <p className="text-[11px] text-slate-500 mt-1">
-              Zamanı belirleyin. Aktifken şirketlerde hata sayfası yerine bilgilendirme pop-up’ı çıkar.
+              Zamanı ve hedef şirketleri belirleyin. Aktifken hata yerine bilgilendirme pop-up’ı çıkar.
               {m.active ? <span className="ml-1 font-semibold text-amber-700">Şu an aktif.</span> : null}
               {m.upcoming ? <span className="ml-1 font-semibold text-sky-700">Zamanlandı (bekliyor).</span> : null}
             </p>
@@ -164,6 +256,7 @@ export function MaintenanceAnnouncePanel() {
             <label className="block font-semibold text-slate-700 mb-1">Destek telefon</label>
             <input value={m.support_phone || ""} onChange={(e) => setM({ ...m, support_phone: e.target.value })} className={inputCls} data-testid="maint-phone" />
           </div>
+          {audienceBlock(m, setM, "maint")}
           <label className="flex items-center gap-2 sm:col-span-2">
             <Toggle on={m.notify_popup !== false} onChange={(v) => setM({ ...m, notify_popup: v })} testId="maint-notify-popup" />
             <span>Şirketlere bilgilendirme pop-up’ı göster (zamanlanmış veya aktif)</span>
@@ -176,16 +269,16 @@ export function MaintenanceAnnouncePanel() {
         </div>
       </form>
 
-      <form onSubmit={publishAnnounce} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="announce-compose">
         <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
-          <Megaphone className="w-4 h-4 text-amber-600" /> Anlık Duyuru Pop-up’ı
+          <Megaphone className="w-4 h-4 text-amber-600" /> Duyuru Pop-up’ı
         </h3>
         <p className="text-[11px] text-slate-500">
-          Resimdeki gibi başlıklı bilgilendirme: şirket panellerinde “Bir Daha Gösterme” / “Kapat” ile çıkar.
+          Önce <b>taslak</b> kaydedip demo önizleyin; sonra yayınlayın. Hedefi tüm şirketler veya seçili şirketler olabilir.
         </p>
         <div>
           <label className="block font-semibold text-slate-700 mb-1">Başlık</label>
-          <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputCls} placeholder="Örn. İki Aşamalı Doğrulama (2FA) Sistemine Geçiyoruz" data-testid="announce-title" />
+          <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={inputCls} placeholder="Örn. İki Aşamalı Doğrulama (2FA)" data-testid="announce-title" />
         </div>
         <div>
           <label className="block font-semibold text-slate-700 mb-1">Metin</label>
@@ -200,28 +293,59 @@ export function MaintenanceAnnouncePanel() {
             <label className="block font-semibold text-slate-700 mb-1">Bitiş (opsiyonel)</label>
             <input type="datetime-local" value={form.ends_at} onChange={(e) => setForm({ ...form, ends_at: e.target.value })} className={inputCls} data-testid="announce-ends" />
           </div>
+          {audienceBlock(form, setForm, "announce")}
         </div>
-        <div className="flex justify-end">
-          <button type="submit" disabled={busy} className="px-5 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="announce-publish">
+        <div className="flex flex-wrap justify-end gap-2">
+          <button type="button" disabled={busy} onClick={() => saveAnnounce("draft")} className="px-4 py-2 border border-slate-200 rounded-xl font-bold hover:bg-slate-50 disabled:opacity-60" data-testid="announce-draft">Taslak kaydet</button>
+          <button type="button" disabled={busy} onClick={() => saveAnnounce("published")} className="px-5 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="announce-publish">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Megaphone className="w-4 h-4" />} Yayınla
           </button>
         </div>
-      </form>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2" data-testid="announce-demo-box">
+        <h3 className="font-bold text-amber-900 text-sm flex items-center gap-1.5"><Eye className="w-4 h-4" /> Demo önizleme</h3>
+        <p className="text-[11px] text-amber-800">Yayınlamadan önce seçili şirketin göreceği pop-up’ı (taslaklar dahil) kontrol edin.</p>
+        <div className="flex flex-wrap gap-2 items-end">
+          <div className="flex-1 min-w-[12rem]">
+            <label className="block font-semibold text-amber-900 mb-1">Şirket olarak gör</label>
+            <select value={previewCompanyId} onChange={(e) => setPreviewCompanyId(e.target.value)} className={inputCls} data-testid="announce-demo-company">
+              <option value="">— şirket seç —</option>
+              {companies.map((c) => <option key={c.id || c._id} value={c.id || c._id}>{c.name}</option>)}
+            </select>
+          </div>
+          <button type="button" disabled={busy} onClick={openDemoPreview} className="px-4 py-2 bg-amber-600 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="announce-demo-btn">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Demo aç
+          </button>
+        </div>
+      </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-2" data-testid="announce-list">
-        <h3 className="font-bold text-slate-900 text-sm">Yayınlanan duyurular</h3>
+        <h3 className="font-bold text-slate-900 text-sm">Duyurular</h3>
         {!list.length && <p className="text-slate-400">Henüz duyuru yok.</p>}
         {list.map((row) => (
           <div key={row.id} className="border border-slate-100 rounded-xl p-3 flex gap-3 items-start" data-testid={`announce-row-${row.id}`}>
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-slate-800 truncate">{row.title}</div>
               <div className="text-[10px] text-slate-400 mt-0.5">
-                {row.kind || "info"} · {row.active ? "aktif" : "pasif"}
+                {row.kind || "info"} · {row.status === "draft" ? "taslak" : "yayında"} · {row.active ? "aktif" : "pasif"}
+                {" · "}
+                {row.audience === "selected"
+                  ? `seçili (${(row.company_ids || []).length})`
+                  : "tüm şirketler"}
                 {row.starts_at ? ` · ${new Date(row.starts_at).toLocaleString("tr-TR")}` : ""}
               </div>
               <p className="text-[11px] text-slate-600 mt-1 line-clamp-2 whitespace-pre-wrap">{row.body}</p>
+              {row.audience === "selected" && (row.company_ids || []).length > 0 && (
+                <p className="text-[10px] text-slate-400 mt-1 truncate">
+                  {(row.company_ids || []).map((id) => companyById.get(id)?.name || id).join(", ")}
+                </p>
+              )}
             </div>
             <div className="flex flex-col gap-1 shrink-0">
+              {row.status === "draft" && (
+                <button type="button" onClick={() => publishRow(row)} className="px-2 py-1 bg-emerald-600 text-white rounded-lg font-semibold" data-testid={`announce-publish-row-${row.id}`}>Yayınla</button>
+              )}
               <button type="button" onClick={() => toggleActive(row)} className="px-2 py-1 border rounded-lg font-semibold" data-testid={`announce-toggle-${row.id}`}>
                 {row.active ? "Pasifleştir" : "Aktifleştir"}
               </button>
@@ -232,6 +356,14 @@ export function MaintenanceAnnouncePanel() {
           </div>
         ))}
       </div>
+
+      {preview && (
+        <PlatformNoticeModal
+          notice={preview}
+          onClose={() => setPreview(null)}
+          onDontShowAgain={() => setPreview(null)}
+        />
+      )}
     </div>
   );
 }

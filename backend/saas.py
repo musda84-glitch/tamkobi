@@ -683,8 +683,40 @@ async def _detach_company_users(company_id: str) -> Dict[str, int]:
 
 # ---------------- System endpoints ----------------
 @router.get("/system/logs")
-async def system_logs(category: Optional[str] = None, event: Optional[str] = None, email: Optional[str] = None, limit: int = 100, _: dict = Depends(require_super_admin)):
-    return applog.query_logs(category=category, event=event, user_email=email, limit=limit)
+async def system_logs(
+    category: Optional[str] = None,
+    event: Optional[str] = None,
+    email: Optional[str] = None,
+    level: Optional[str] = None,
+    company_id: Optional[str] = None,
+    limit: int = 100,
+    _: dict = Depends(require_super_admin),
+):
+    return applog.query_logs(
+        category=category, event=event, user_email=email,
+        level=level, company_id=company_id, limit=limit,
+    )
+
+
+@router.post("/system/client-errors")
+async def system_client_errors(req: Dict[str, Any], admin: dict = Depends(require_super_admin)):
+    """Platform / panel React hatalarını system_logs'a yazar."""
+    msg = str(req.get("message") or req.get("error") or "client_error")[:500]
+    details = {
+        "stack": str(req.get("stack") or "")[:4000],
+        "component": str(req.get("component") or req.get("label") or "")[:200],
+        "path": str(req.get("path") or "")[:300],
+        "user_agent": str(req.get("user_agent") or "")[:300],
+    }
+    applog.log_error(
+        "panel_error",
+        msg,
+        user_id=admin.get("_id") or admin.get("id"),
+        user_email=admin.get("email"),
+        company_id=req.get("company_id"),
+        details=details,
+    )
+    return {"status": "ok"}
 
 
 @router.post("/system/logs/rotate")

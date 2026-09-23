@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { API_URL } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 import { PlatformNoticeModal } from "./PlatformNoticeModal";
 import {
   UPDATE_FALLBACK_NOTICE,
@@ -16,6 +17,8 @@ const POLL_MS = 60_000;
  * 502–504 veya ağ hatasında hata yerine güncelleme bilgilendirmesi gösterir.
  */
 export function PlatformNoticesHost({ disabled = false }) {
+  const { activeCompany } = useAuth() || {};
+  const companyId = activeCompany?.id || activeCompany?._id || "";
   const [payload, setPayload] = useState(null);
   const [transportNotice, setTransportNotice] = useState(null);
   const [closedIds, setClosedIds] = useState(() => new Set());
@@ -23,7 +26,10 @@ export function PlatformNoticesHost({ disabled = false }) {
   const refresh = useCallback(async () => {
     if (disabled) return;
     try {
-      const r = await axios.get(`${API_URL}/platform/notices`, { timeout: 12_000 });
+      const r = await axios.get(`${API_URL}/platform/notices`, {
+        timeout: 12_000,
+        params: companyId ? { company_id: companyId } : {},
+      });
       setPayload(r.data);
       setTransportNotice(null);
     } catch (err) {
@@ -31,7 +37,7 @@ export function PlatformNoticesHost({ disabled = false }) {
         setTransportNotice(UPDATE_FALLBACK_NOTICE);
       }
     }
-  }, [disabled]);
+  }, [disabled, companyId]);
 
   useEffect(() => {
     if (disabled) return undefined;
