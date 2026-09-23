@@ -1074,9 +1074,9 @@ export function PersonnelScreen() {
                     ))}
                   </View>
                 ) : null}
-                <Row testID={`emp-comp-${eid}`} style={{ alignItems: "flex-start", gap: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.border }}>
+                <Row testID={`emp-comp-${eid}`} style={{ alignItems: "stretch", gap: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.border }}>
                   {employeeCompGroups(comp).map((group) => (
-                    <View key={group.key} testID={`emp-comp-group-${group.key}-${eid}`} style={{ flex: 1, minWidth: 0, gap: 4, padding: 6, borderRadius: 8, backgroundColor: colors.slate50 }}>
+                    <View key={group.key} testID={`emp-comp-group-${group.key}-${eid}`} style={{ flex: 1, minWidth: 0, gap: 4, padding: 6, borderRadius: 8, backgroundColor: colors.slate50, justifyContent: "space-between" }}>
                       <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>{group.title}</Text>
                       {group.rows.map((row) => (
                         <View key={row.key} style={{ gap: 0 }}>
