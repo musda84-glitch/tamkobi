@@ -1,6 +1,5 @@
-import { Ionicons } from "@expo/vector-icons";
 import { Stack, useLocalSearchParams } from "expo-router";
-import { Text, View } from "react-native";
+import { iconHeaderOptions } from "@/components/StackHeader";
 import { WorkFormScreen } from "@/screens/WorkFormScreen";
 import { colors } from "@/theme";
 
@@ -9,15 +8,13 @@ export default function QuoteDetail() {
   return (
     <>
       <Stack.Screen
-        options={{
+        options={iconHeaderOptions({
           title: "Teklif",
-          headerTitle: () => (
-            <View testID="quote-header-title" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Ionicons name="create" size={22} color={colors.warning} />
-              <Text style={{ fontWeight: "800", fontSize: 17, color: colors.text }}>Teklif</Text>
-            </View>
-          ),
-        }}
+          icon: "create",
+          color: colors.warning,
+          testID: "quote-header-title",
+          fallback: "/quotes",
+        })}
       />
       <WorkFormScreen kind="quote" docId={id} />
     </>

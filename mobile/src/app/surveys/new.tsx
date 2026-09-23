@@ -1,22 +1,18 @@
-import { Ionicons } from "@expo/vector-icons";
 import { Stack } from "expo-router";
-import { Text, View } from "react-native";
+import { iconHeaderOptions } from "@/components/StackHeader";
 import { WorkFormScreen } from "@/screens/WorkFormScreen";
-import { colors } from "@/theme";
 
 export default function SurveyNew() {
   return (
     <>
       <Stack.Screen
-        options={{
+        options={iconHeaderOptions({
           title: "Yeni keşif",
-          headerTitle: () => (
-            <View testID="survey-new-header-title" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Ionicons name="construct" size={22} color="#0EA5E9" />
-              <Text style={{ fontWeight: "800", fontSize: 17, color: colors.text }}>Yeni keşif</Text>
-            </View>
-          ),
-        }}
+          icon: "construct",
+          color: "#0EA5E9",
+          testID: "survey-new-header-title",
+          fallback: "/surveys",
+        })}
       />
       <WorkFormScreen kind="survey" />
     </>
