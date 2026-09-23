@@ -98,3 +98,24 @@ def test_announcement_targets_company():
     assert announcement_targets_company(sel, None) is False
     assert announcement_targets_company(sel, "comp_a") is True
     assert announcement_targets_company(sel, "comp_z") is False
+
+
+def test_demo_only_then_expand_to_all_fields():
+    """DEMO’ya yayın → sonra tüm şirketlere aç: audience/company_ids dönüşümü."""
+    demo_pub = {
+        "audience": AUDIENCE_SELECTED,
+        "company_ids": ["comp_demo"],
+        "status": STATUS_PUBLISHED,
+        "active": True,
+    }
+    assert announcement_targets_company(demo_pub, "comp_demo") is True
+    assert announcement_targets_company(demo_pub, "comp_other") is False
+
+    expanded = {
+        "audience": normalize_audience("all", []),
+        "company_ids": [],
+        "status": STATUS_PUBLISHED,
+    }
+    assert expanded["audience"] == AUDIENCE_ALL
+    assert announcement_targets_company(expanded, "comp_other") is True
+    assert announcement_targets_company(expanded, "comp_demo") is True
