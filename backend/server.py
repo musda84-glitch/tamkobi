@@ -5361,7 +5361,14 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
 async def update_product_images(product_id: str, req: Dict[str, Any]):
     images = req.get("images", [])
     image_url = req.get("image_url") or (images[0] if images else None)
-    await db.products.update_one({"_id": product_id}, {"$set": {"images": images, "image_url": image_url}})
+    update: Dict[str, Any] = {"images": images, "image_url": image_url}
+    if "label_image_url" in req:
+        label = req.get("label_image_url") or None
+        if label and images and label not in images and label != image_url:
+            # Still allow if it's a valid URL string; gallery may temporarily lag
+            pass
+        update["label_image_url"] = label
+    await db.products.update_one({"_id": product_id}, {"$set": update})
     updated = await db.products.find_one({"_id": product_id})
     if not updated:
         raise HTTPException(status_code=404, detail="Ürün bulunamadı.")

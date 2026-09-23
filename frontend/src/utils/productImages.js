@@ -18,6 +18,11 @@ export function productGalleryUrls(product) {
   return cover ? [cover] : [];
 }
 
+/** Etiket / barkod yazdırmada kullanılacak görsel (seçili etiket görseli veya kapak). */
+export function productLabelImageUrl(product) {
+  return mediaRef(product?.label_image_url) || mediaRef(product?.image_url) || "";
+}
+
 export function productIdOf(product) {
   return product?.id || product?._id || "";
 }

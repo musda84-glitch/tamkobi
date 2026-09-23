@@ -1,28 +1,44 @@
-
 import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ImagePlus, Star, Trash2, Loader2, ImageIcon, X } from "lucide-react";
+import { ImagePlus, Star, Trash2, Loader2, ImageIcon, X, Tag } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { compressImageFile } from "../utils/compressImage";
-import { productGalleryUrls, productIdOf, mediaRef } from "../utils/productImages";
+import { compressProductImageFile } from "../utils/compressImage";
+import { productGalleryUrls, productIdOf, mediaRef, productLabelImageUrl } from "../utils/productImages";
+import { ImageCropModal } from "./ImageCropModal";
 
 export const ProductImageGallery = ({ product, onUpdated }) => {
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState("");
   const [broken, setBroken] = useState({});
+  const [cropFile, setCropFile] = useState(null);
   const pid = productIdOf(product);
   const images = productGalleryUrls(product);
   const cover = mediaRef(product?.image_url);
+  const labelImg = productLabelImageUrl(product);
 
-  const handleUpload = async (e) => {
+  const pickFile = (e) => {
     const raw = e.target.files?.[0];
     e.target.value = "";
     if (!raw || !pid) return;
+    if (!raw.type?.startsWith("image/")) {
+      toast.error("Lütfen bir görsel dosyası seçin.");
+      return;
+    }
+    // GIF/HEIC: kırpma canvas desteklemez — doğrudan yükle
+    if (raw.type === "image/gif" || raw.type === "image/heic" || raw.type === "image/heif") {
+      uploadFile(raw);
+      return;
+    }
+    setCropFile(raw);
+  };
+
+  const uploadFile = async (raw) => {
+    if (!raw || !pid) return;
     setUploading(true);
     try {
-      const file = await compressImageFile(raw);
+      const file = await compressProductImageFile(raw);
       const form = new FormData();
       form.append("file", file);
       const res = await axios.post(`${API_URL}/products/${pid}/image`, form, { withCredentials: true });
@@ -32,20 +48,24 @@ export const ProductImageGallery = ({ product, onUpdated }) => {
         return;
       }
       const savedPct = res.data?.saved_pct;
-      toast.success(savedPct ? `Görsel yüklendi (≈%${savedPct} küçültüldü).` : "Görsel yüklendi.");
+      const kb = Math.max(1, Math.round((file.size || 0) / 1024));
+      toast.success(savedPct ? `Görsel yüklendi (≈%${savedPct} küçültüldü, ${kb} KB).` : `Görsel yüklendi (${kb} KB).`);
       onUpdated(saved);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Görsel yüklenemedi.");
     } finally {
       setUploading(false);
+      setCropFile(null);
       try { window.scrollTo(0, window.scrollY); } catch { /* iOS file-picker */ }
     }
   };
 
-  const saveImages = async (nextImages, nextCover) => {
+  const saveImages = async (nextImages, nextCover, nextLabel) => {
     if (!pid) return;
     try {
-      const res = await axios.put(`${API_URL}/products/${pid}/images`, { images: nextImages, image_url: nextCover }, { withCredentials: true });
+      const payload = { images: nextImages, image_url: nextCover };
+      if (nextLabel !== undefined) payload.label_image_url = nextLabel || null;
+      const res = await axios.put(`${API_URL}/products/${pid}/images`, payload, { withCredentials: true });
       if (!res.data || !productIdOf(res.data)) {
         toast.error("Görseller güncellenemedi.");
         return;
@@ -61,9 +81,10 @@ export const ProductImageGallery = ({ product, onUpdated }) => {
       <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
         {images.map((img, i) => {
           const isCover = img === cover;
+          const isLabel = img === labelImg;
           const src = resolveImageUrl(img);
           return (
-            <div key={`${i}-${img}`} className={`relative group aspect-square rounded-xl overflow-hidden border-2 bg-slate-50 ${isCover ? "border-emerald-500" : "border-slate-200"}`} data-testid="product-image-item">
+            <div key={`${i}-${img}`} className={`relative group aspect-square rounded-xl overflow-hidden border-2 bg-slate-50 ${isCover ? "border-emerald-500" : isLabel ? "border-indigo-400" : "border-slate-200"}`} data-testid="product-image-item">
               {broken[img] || !src ? (
                 <div className="w-full h-full flex items-center justify-center text-slate-300"><ImageIcon className="w-8 h-8" /></div>
               ) : (
@@ -76,20 +97,31 @@ export const ProductImageGallery = ({ product, onUpdated }) => {
                   />
                 </button>
               )}
-              {isCover && (
-                <span className="absolute top-1.5 left-1.5 bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md pointer-events-none">Kapak</span>
-              )}
+              <div className="absolute top-1.5 left-1.5 flex flex-col gap-0.5 pointer-events-none">
+                {isCover && <span className="bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">Kapak</span>}
+                {isLabel && <span className="bg-indigo-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">Etiket</span>}
+              </div>
               <div className="absolute inset-x-0 bottom-0 bg-slate-900/55 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity flex items-center justify-center gap-1.5 py-1.5">
                 {!isCover && (
-                  <button type="button" onClick={() => saveImages(images, img)} className="p-1.5 bg-white rounded-lg text-amber-600 hover:bg-amber-50" title="Kapak Yap" data-testid="set-cover-image-btn">
+                  <button type="button" onClick={() => saveImages(images, img, product.label_image_url)} className="p-1.5 bg-white rounded-lg text-amber-600 hover:bg-amber-50" title="Kapak Yap" data-testid="set-cover-image-btn">
                     <Star className="w-4 h-4" />
                   </button>
                 )}
                 <button
                   type="button"
+                  onClick={() => saveImages(images, cover, isLabel ? null : img)}
+                  className={`p-1.5 bg-white rounded-lg hover:bg-indigo-50 ${isLabel ? "text-indigo-700" : "text-indigo-500"}`}
+                  title={isLabel ? "Etiket görselini kaldır" : "Etiket görseli yap"}
+                  data-testid="set-label-image-btn"
+                >
+                  <Tag className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
                   onClick={() => {
                     const next = images.filter((u) => u !== img);
-                    saveImages(next, isCover ? next[0] || null : cover);
+                    const nextLabel = isLabel ? (next[0] || null) : (product.label_image_url === img ? null : product.label_image_url);
+                    saveImages(next, isCover ? next[0] || null : cover, nextLabel);
                   }}
                   className="p-1.5 bg-white rounded-lg text-rose-600 hover:bg-rose-50"
                   title="Kaldır"
@@ -111,14 +143,24 @@ export const ProductImageGallery = ({ product, onUpdated }) => {
             type="file"
             accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,image/*"
             className="sr-only"
-            onChange={handleUpload}
+            onChange={pickFile}
             disabled={uploading}
             data-testid="product-image-file-input"
           />
         </label>
       </div>
       {images.length === 0 && (
-        <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><ImageIcon className="w-3.5 h-3.5" /> Henüz görsel yok. JPG, PNG veya WEBP (maks. 5 MB) yükleyebilirsiniz.</p>
+        <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><ImageIcon className="w-3.5 h-3.5" /> Henüz görsel yok. Yüklerken kırpabilir; WebP/JPEG olarak sıkıştırılır (maks. 5 MB).</p>
+      )}
+      {images.length > 0 && (
+        <p className="text-[11px] text-slate-500">Kapak: liste/kart. <span className="text-indigo-600 font-semibold">Etiket</span>: barkod etiket tasarımında kullanılan görsel (etiket ikonuna tıklayın).</p>
+      )}
+      {cropFile && (
+        <ImageCropModal
+          file={cropFile}
+          onCancel={() => setCropFile(null)}
+          onConfirm={async (cropped) => { await uploadFile(cropped); }}
+        />
       )}
       {preview ? (
         <div

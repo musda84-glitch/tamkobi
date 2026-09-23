@@ -7,6 +7,7 @@ import { Printer, X, Tag } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { isEan13 } from "../utils/barcodeFormat";
 import { fmtMoney } from "../utils/money";
+import { productGalleryUrls, productLabelImageUrl } from "../utils/productImages";
 
 const SIZES = [
   { key: "40x20", label: "40 × 20 mm (Raf)", w: 40, h: 20, img: false },
@@ -39,17 +40,24 @@ export const Barcode = ({ value, height = 40, width = 1.6, fontSize = 11, displa
 
 export const BarcodeLabelPrint = ({ product, company, onClose }) => {
   useEscape(onClose);
-  const targets = useMemo(() => [{ id: "main", name: product.name, sku: product.sku, barcode: product.barcode, price: product.sale_price, image_url: product.image_url, tags: product.tags || [] },
-    ...(product.variants || []).map((v) => ({ id: v.variant_id || v.sku, name: `${product.name} - ${v.name}`, sku: v.sku, barcode: v.barcode, price: v.sale_price ?? product.sale_price, image_url: v.image_url || product.image_url, tags: product.tags || [] }))], [product]);
+  const gallery = useMemo(() => productGalleryUrls(product), [product]);
+  const defaultLabelImg = productLabelImageUrl(product);
+  const targets = useMemo(() => [{ id: "main", name: product.name, sku: product.sku, barcode: product.barcode, price: product.sale_price, image_url: defaultLabelImg || product.image_url, tags: product.tags || [] },
+    ...(product.variants || []).map((v) => ({ id: v.variant_id || v.sku, name: `${product.name} - ${v.name}`, sku: v.sku, barcode: v.barcode, price: v.sale_price ?? product.sale_price, image_url: v.image_url || defaultLabelImg || product.image_url, tags: product.tags || [] }))], [product, defaultLabelImg]);
   const [target, setTarget] = useState(targets[0]);
   const [size, setSize] = useState(SIZES[1]);
   const [copies, setCopies] = useState(4);
   const [extra, setExtra] = useState("");
+  const [labelImage, setLabelImage] = useState(defaultLabelImg || target.image_url || "");
   const [opts, setOpts] = useState({ name: true, price: true, sku: true, image: true, company: true, tags: false, qr: false, extra: false });
+  useEffect(() => {
+    setLabelImage(target.image_url || defaultLabelImg || "");
+  }, [target.id, target.image_url, defaultLabelImg]);
   const ccy = product.currency || company?.currency || "TRY";
   const fmt = (n) => fmtMoney(n, ccy);
-  const showImg = opts.image && size.img && target.image_url;
-  const labelProps = { t: target, size, opts, showImg, company, fmt, extra };
+  const printTarget = { ...target, image_url: labelImage || target.image_url };
+  const showImg = opts.image && size.img && printTarget.image_url;
+  const labelProps = { t: printTarget, size, opts, showImg, company, fmt, extra };
 
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static">
@@ -77,6 +85,24 @@ export const BarcodeLabelPrint = ({ product, company, onClose }) => {
               <Check k="price" label="Satış fiyatı" opts={opts} setOpts={setOpts} />
               <Check k="sku" label="Stok kodu (SKU)" opts={opts} setOpts={setOpts} />
               <Check k="image" label={`Ürün resmi${size.img ? "" : " (bu boyutta yok)"}`} opts={opts} setOpts={setOpts} />
+              {opts.image && size.img && gallery.length > 1 && (
+                <div className="pl-5 space-y-1" data-testid="label-image-picker">
+                  <div className="text-[10px] font-semibold text-slate-500">Etiket görseli</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {gallery.map((u) => (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={() => setLabelImage(u)}
+                        className={`w-10 h-10 rounded-lg overflow-hidden border-2 ${labelImage === u ? "border-indigo-500" : "border-slate-200"}`}
+                        data-testid="label-image-option"
+                      >
+                        <img src={resolveImageUrl(u)} alt="" className="w-full h-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <Check k="company" label="Firma adı" opts={opts} setOpts={setOpts} />
               <Check k="qr" label="QR kod (barkod yanında)" opts={opts} setOpts={setOpts} />
               <Check k="tags" label={`Ürün etiketleri${target.tags.length ? ` (${target.tags.join(", ")})` : " (yok)"}`} opts={opts} setOpts={setOpts} />

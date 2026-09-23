@@ -137,6 +137,7 @@ class Product(BaseDocument):
     variants: List[ProductVariant] = []
     image_url: Optional[str] = None
     images: List[str] = []
+    label_image_url: Optional[str] = None  # Barkod etiket tasarımında kullanılan görsel
     gtip: Optional[str] = None
     origin_country: Optional[str] = None
     desi: Optional[float] = None
