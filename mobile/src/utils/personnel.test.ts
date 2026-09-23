@@ -199,6 +199,7 @@ describe("employee draft", () => {
     expect(requestsDetailsToggleLabel(true)).toBe("Gizle");
     expect(requestsDetailsToggleIcon(false)).toBe("chevron-down");
     expect(requestsDetailsSummary([{ kind: "leave", title: "Yıllık" }, { kind: "advance", title: "Avans" }])).toBe("İzin · Yıllık · +1");
+    expect(requestsDetailsSummary([])).toBe("Talep yok");
     expect(locationCellCaption(true)).toBe("Açık");
     expect(locationCellCaption(false)).toBe("Kapalı");
     expect(companyBonusPayload("e1", "second_salary", "2000", "2026-09", "", "not").type).toBe("second_salary");

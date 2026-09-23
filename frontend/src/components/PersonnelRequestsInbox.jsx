@@ -34,12 +34,14 @@ export function EmployeeRequestChips({
   maxVisible = 3,
 }) {
   const [open, setOpen] = useState(false);
-  if (!items?.length) return null;
-  const shown = items.slice(0, maxVisible);
-  const extra = items.length - shown.length;
-  const first = items[0];
-  const firstMeta = KIND_META[first.kind] || KIND_META.leave;
-  const summary = `${firstMeta.label} · ${first.title || "Talep"}${items.length > 1 ? ` · +${items.length - 1}` : ""}`;
+  const rows = items || [];
+  const shown = rows.slice(0, maxVisible);
+  const extra = rows.length - shown.length;
+  const first = rows[0];
+  const firstMeta = first ? (KIND_META[first.kind] || KIND_META.leave) : null;
+  const summary = first
+    ? `${firstMeta.label} · ${first.title || "Talep"}${rows.length > 1 ? ` · +${rows.length - 1}` : ""}`
+    : "Talep yok";
   return (
     <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 space-y-1.5" data-testid={testId}>
       <button
@@ -50,7 +52,7 @@ export function EmployeeRequestChips({
         data-testid={`${testId}-toggle`}
       >
         <Bell className="w-3 h-3 text-amber-800 shrink-0" />
-        <span className="text-[11px] font-extrabold text-amber-900 shrink-0">Talepler ({items.length})</span>
+        <span className="text-[11px] font-extrabold text-amber-900 shrink-0">Talepler ({rows.length})</span>
         <span className="min-w-0 flex-1 truncate text-[10px] font-semibold text-slate-500 text-left">{summary}</span>
         <span className="inline-flex w-6 h-6 rounded-full bg-amber-200 text-amber-900 items-center justify-center shrink-0" data-testid={`${testId}-toggle-icon`}>
           {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -58,6 +60,9 @@ export function EmployeeRequestChips({
       </button>
       {open ? (
       <>
+      {!rows.length ? (
+        <div className="text-[11px] text-slate-500" data-testid={`${testId}-empty`}>Bekleyen talep yok</div>
+      ) : null}
       {shown.map((it) => {
         const meta = KIND_META[it.kind] || KIND_META.leave;
         const Icon = meta.Icon;
