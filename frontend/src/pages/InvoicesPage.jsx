@@ -11,6 +11,7 @@ import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
+import { ExpenseSlipPrint } from "../components/ExpenseSlipPrint";
 import { SearchSelect } from "../components/SearchSelect";
 import { DocumentLineEditor } from "../components/DocumentLineEditor";
 import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
@@ -755,7 +756,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
 
       <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={handleDeleteInvoice} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} />
       {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
-      {printInv && <PrintDocument docType="invoice" doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} onEditTemplate={() => setEditTpl(true)} />}
+      {printInv && printInv.e_type === "expense_slip" && (
+        <ExpenseSlipPrint doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} />
+      )}
+      {printInv && printInv.e_type !== "expense_slip" && (
+        <PrintDocument docType="invoice" doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} onEditTemplate={() => setEditTpl(true)} />
+      )}
       {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="invoice" onClose={() => setEditTpl(false)} />}
       {notifyInvoice && (() => {
         const c = contacts.find(cnt => cnt.id === notifyInvoice.contact_id) || {};
@@ -1073,7 +1079,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 </div>
                 <div className="text-right">
                   <div className="inline-block px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded">
-                    {previewInvoice.e_type === 'e_export' || previewInvoice.trade_kind === 'export' ? 'e-İHRACAT' : previewInvoice.e_type === 'e_invoice' ? 'E-FATURA' : previewInvoice.e_type === 'paper' ? 'FATURA' : previewInvoice.e_type === 'e_dispatch' ? 'E-İRSALİYE' : previewInvoice.trade_kind === 'import' ? 'İTHALAT FATURASI' : 'E-ARŞİV FATURA'}
+                    {previewInvoice.e_type === 'expense_slip' ? 'GİDER PUSULASI' : previewInvoice.e_type === 'e_export' || previewInvoice.trade_kind === 'export' ? 'e-İHRACAT' : previewInvoice.e_type === 'e_invoice' ? 'E-FATURA' : previewInvoice.e_type === 'paper' ? 'FATURA' : previewInvoice.e_type === 'e_dispatch' ? 'E-İRSALİYE' : previewInvoice.trade_kind === 'import' ? 'İTHALAT FATURASI' : 'E-ARŞİV FATURA'}
                   </div>
                   <div className="font-mono text-xs font-bold mt-2 text-slate-900">{previewInvoice.invoice_number}</div>
                   <div className="text-xs text-slate-500">Tarih: {previewInvoice.issue_date}</div>

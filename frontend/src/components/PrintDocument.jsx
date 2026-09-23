@@ -31,8 +31,9 @@ const printThumbUrl = (raw) => {
 
 
 const fmt = (n) => formatTrAmount((n || 0));
-const TITLES = { invoice: "FATURA", order: "SİPARİŞ FORMU", quote: "FİYAT TEKLİFİ", dispatch: "İRSALİYE" };
+const TITLES = { invoice: "FATURA", order: "SİPARİŞ FORMU", quote: "FİYAT TEKLİFİ", dispatch: "İRSALİYE", expense_slip: "GİDER PUSULASI" };
 const docTitle = (docType, doc) => {
+  if (doc?.e_type === "expense_slip" || docType === "expense_slip") return "GİDER PUSULASI";
   if (doc.e_type === "e_export" || doc.trade_kind === "export") return "e-İHRACAT FATURASI";
   if (doc.trade_kind === "import") return "İTHALAT FATURASI";
   return TITLES[docType];

@@ -79,8 +79,8 @@ def _tl(n: float) -> str:
     return f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " ₺"
 
 
-_PDF_TITLES = {"e_invoice": "e-FATURA", "e_archive": "e-ARŞİV FATURA", "paper": "FATURA", "e_dispatch": "e-İRSALİYE"}
-_PDF_SCENARIO = {"e_invoice": "e-Fatura / Satış", "e_archive": "e-Arşiv / Satış", "paper": "Kağıt / Satış", "e_dispatch": "e-İrsaliye"}
+_PDF_TITLES = {"e_invoice": "e-FATURA", "e_archive": "e-ARŞİV FATURA", "paper": "FATURA", "e_dispatch": "e-İRSALİYE", "expense_slip": "GİDER PUSULASI"}
+_PDF_SCENARIO = {"e_invoice": "e-Fatura / Satış", "e_archive": "e-Arşiv / Satış", "paper": "Kağıt / Satış", "e_dispatch": "e-İrsaliye", "expense_slip": "Gider Pusulası / Alış"}
 _PDF_FOOTER = {
     "e_invoice": "e-Fatura – GİB e-Fatura uygulaması kapsamında oluşturulmuştur. İrsaliye yerine geçmez.",
     "e_archive": "e-Arşiv Fatura – GİB e-Arşiv uygulaması kapsamında oluşturulmuştur. İrsaliye yerine geçmez.",

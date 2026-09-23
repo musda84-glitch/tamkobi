@@ -337,7 +337,7 @@ export const InvoiceContextMenu = (props) => {
         </div>
       )}
       <Item icon={Eye} label="Görüntüle" onClick={() => onPreview(inv)} testId="ctx-preview" />
-      <Item icon={Printer} label="Şablonlu Yazdır" onClick={() => onPrint(inv)} testId="ctx-print" />
+      <Item icon={Printer} label={inv.e_type === "expense_slip" ? "Gider Pusulası Yazdır" : "Şablonlu Yazdır"} onClick={() => onPrint(inv)} testId="ctx-print" />
       <Item icon={MessageSquare} label="SMS / E-posta Gönder" onClick={() => onNotify(inv)} testId="ctx-notify" />
       {onDispatch && inv.invoice_type === "sales" && (
         <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />

@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { workMapsLink } from "../utils/mapsLink";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
+import { ExpenseSlipPrint } from "./ExpenseSlipPrint";
 import { ReceiptPrint } from "./ReceiptPrint";
 import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
@@ -771,7 +772,12 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
           )}
         </div>
-        {printDoc && <PrintDocument docType={printDoc._docType || (printDoc.order_number ? "order" : "invoice")} doc={printDoc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(printDoc.order_number ? "order" : "invoice")} />}
+        {printDoc && printDoc.e_type === "expense_slip" && (
+          <ExpenseSlipPrint doc={printDoc} company={activeCompany} onClose={() => setPrintDoc(null)} />
+        )}
+        {printDoc && printDoc.e_type !== "expense_slip" && (
+          <PrintDocument docType={printDoc._docType || (printDoc.order_number ? "order" : "invoice")} doc={printDoc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(printDoc.order_number ? "order" : "invoice")} />
+        )}
         {editTpl && <PrintTemplateEditor companyId={c.company_id} docType={editTpl} onClose={() => setEditTpl(null)} />}
         {receipt && <ReceiptPrint tx={receipt} contact={c} company={activeCompany} onClose={() => setReceipt(null)} />}
         {statementView?.mode === "reconciliation" && (
