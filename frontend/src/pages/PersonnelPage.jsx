@@ -16,6 +16,8 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
 import { locationCellCaption, locationControllerLabel, locationTrackingEnabled, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
+import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, fmtCardMoney, remainingLeaveDays } from "../utils/personnelCard";
+import { LocationSignal } from "../components/LocationSignal";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
@@ -674,6 +676,10 @@ export default function PersonnelPage() {
                   <Mail className="w-3.5 h-3.5 text-slate-400" />
                   <span>{emp.email || '-'}</span>
                 </div>
+                <div className="text-[11px] text-slate-500" data-testid={`employee-leave-${empKey}`}>
+                  Kalan izin: {emp.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {emp.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
+                  {emp.performance?.overall != null ? ` · performans %${emp.performance.overall}` : ""}
+                </div>
               </div>
               {(() => {
                 const locOn = locationTrackingEnabled(emp.location_tracking);
@@ -697,9 +703,11 @@ export default function PersonnelPage() {
                           <MapPin className="w-3 h-3 shrink-0" />
                           {locBusyId === empKey ? "…" : locationCellCaption(locOn)}
                         </div>
-                        <div className="text-[9px] font-semibold text-slate-500 truncate" data-testid={`employee-card-loc-signal-${empKey}`}>
-                          {emp.location_last_ok === true ? "Konum alındı" : emp.location_last_ok === false ? "Konum alınamadı" : "Konum bekleniyor"}
-                        </div>
+                        <LocationSignal
+                          signal={{ ok: emp.location_last_ok, at: emp.location_last_at }}
+                          testId={`employee-card-loc-signal-${empKey}`}
+                          className="text-[9px] text-slate-500 gap-1"
+                        />
                       </button>
                       <div className="min-w-0 rounded-lg bg-white px-1.5 py-1" data-testid={`employee-card-today-${empKey}`}>
                         <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Giriş</div>
@@ -730,26 +738,53 @@ export default function PersonnelPage() {
               onViewDispute={() => setTab("attendance")}
             />
 
-            <div className="pt-2 border-t border-slate-100 space-y-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">{isDailyWage(emp) ? "Yevmiye:" : "Net Maaş:"}</span>
-                <span className="text-sm font-bold text-slate-900">{isDailyWage(emp) ? `${Number(emp.daily_wage || 0).toLocaleString("tr-TR")} ₺ / gün` : `${emp.salary?.toLocaleString("tr-TR")} ₺`}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs" data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
-                <span className="text-slate-400">Kalan Alacak:</span>
-                <span className={`text-sm font-bold ${(Number(emp.balance?.remaining) || 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>
-                  {Number(emp.balance?.remaining || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-xs" data-testid={`employee-bonus-due-${emp.tc_kimlik || empKey}`}>
-                <span className="text-slate-400">{isDailyWage(emp) ? `Yevmiye günü · ${yevmiyeDaysOf(emp)} gün:` : "Prim hakedişi:"}</span>
-                <span className="text-sm font-bold text-amber-800">{Number((isDailyWage(emp) && emp.yevmiye_due) || emp.balance?.bonus_pending || 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺</span>
-              </div>
-              <div className="flex items-center justify-between text-xs" data-testid={`employee-ot-due-${emp.tc_kimlik || empKey}`}>
-                <span className="text-slate-400">Fazla mesai ücreti:</span>
-                <span className="text-sm font-bold text-violet-800">{Number(emp.balance?.overtime_due ?? emp.balance?.overtime_pay ?? 0).toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₺</span>
-              </div>
+            <div className="grid grid-cols-3 gap-1 pt-2 border-t border-slate-100" data-testid={`employee-comp-${empKey}`}>
+              {employeeCompGroups(employeeCompRows(emp, emp.balance)).map((group) => (
+                <div
+                  key={group.key}
+                  className="min-w-0 rounded-lg bg-slate-50 px-1.5 py-1 space-y-0.5"
+                  data-testid={`employee-comp-group-${group.key}-${empKey}`}
+                >
+                  <div className="text-[9px] font-extrabold uppercase tracking-wide text-slate-400">{group.title}</div>
+                  {group.rows.map((row) => (
+                    <div key={row.key} className="flex items-baseline justify-between gap-1">
+                      <span
+                        className="min-w-0 truncate text-[10px] text-slate-500"
+                        data-testid={row.key === "bonus" && row.days != null ? `employee-comp-bonus-days-${empKey}` : undefined}
+                      >
+                        {employeeCompRowCaption(row, isDailyWage(emp))}
+                      </span>
+                      <span
+                        className={`shrink-0 text-[11px] font-extrabold ${row.key === "total" ? "text-emerald-700" : "text-slate-900"}`}
+                        data-testid={
+                          row.key === "total" ? `employee-remaining-${empKey}`
+                            : row.key === "bonus" ? `employee-bonus-due-${emp.tc_kimlik || empKey}`
+                              : row.key === "overtime" ? `employee-ot-due-${emp.tc_kimlik || empKey}`
+                                : `employee-comp-${row.key}-${empKey}`
+                        }
+                      >
+                        {fmtCardMoney(row.value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
             </div>
+            {emp.balance?.remaining != null || emp.balance?.advances ? (
+              <div className="flex items-center justify-between text-[11px] px-0.5">
+                {emp.balance?.remaining != null ? (
+                  <span data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
+                    <span className="text-slate-400">Kalan alacak </span>
+                    <span className={`font-extrabold ${(Number(emp.balance.remaining) || 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>
+                      {fmtCardMoney(emp.balance.remaining)}
+                    </span>
+                  </span>
+                ) : <span />}
+                {emp.balance?.advances ? (
+                  <span className="text-amber-800 font-extrabold">Avans {fmtCardMoney(emp.balance.advances)}</span>
+                ) : null}
+              </div>
+            ) : null}
             <div className="space-y-1.5">
             <div className="grid grid-cols-2 gap-1.5">
               <button

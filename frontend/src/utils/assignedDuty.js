@@ -54,6 +54,7 @@ export function dutyFromCurrent({ tasks, current, workplace } = {}) {
     park_name: matched?.park_name,
   };
 }
+
 export const DUTY_PHOTOS_HINT = "İş fotoğrafları — müşteri görmesi yönetici onayına bağlı";
 export const DUTY_PHOTO_SHOW = "Görsün";
 export const DUTY_PHOTO_HIDE = "Görmesin";
