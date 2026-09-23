@@ -59,6 +59,17 @@ def test_location_mode_for_workplace():
     assert field["interval_minutes"] == 5
 
 
+def test_normalize_field_exit_tolerance_hours():
+    lt = normalize_location_tracking({
+        "enabled": True, "interval_minutes": 15,
+        "field": {"enabled": True, "continuous": True, "interval_minutes": 0, "exit_tolerance_hours": 3},
+    })
+    assert lt["field"]["exit_tolerance_hours"] == 3
+    assert location_mode_for(lt, {"kind": "task"})["exit_tolerance_hours"] == 3
+    clamped = normalize_location_tracking({"field": {"exit_tolerance_hours": 99}})
+    assert clamped["field"]["exit_tolerance_hours"] == 12
+
+
 def test_merge_schedule_require_geo_follows_employee_location_tracking():
     company = {"work_schedule": {"require_geo": True, "start": "09:00", "end": "18:00"}}
     emp_off = {"location_tracking": {"enabled": False, "continuous": True, "interval_minutes": 10}}

@@ -38,25 +38,30 @@ export type LocMode = {
   enabled: boolean;
   continuous: boolean;
   interval_minutes: number | "";
+  exit_tolerance_hours?: number | "";
 };
 
 export type LocationTracking = {
   enabled?: boolean;
   continuous?: boolean;
   interval_minutes?: number;
-  field?: { enabled?: boolean; continuous?: boolean; interval_minutes?: number };
+  exit_tolerance_hours?: number;
+  field?: { enabled?: boolean; continuous?: boolean; interval_minutes?: number; exit_tolerance_hours?: number };
 };
 
-export const DEFAULT_LOC_MODE: LocMode = { enabled: true, continuous: false, interval_minutes: 15 };
+export const DEFAULT_LOC_MODE: LocMode = { enabled: true, continuous: false, interval_minutes: 15, exit_tolerance_hours: 0 };
 
 export function initLocMode(raw?: Partial<LocMode> | LocationTracking | null): LocMode {
   const n = Number((raw as LocMode | undefined)?.interval_minutes);
   const continuous = !!(raw as LocMode | undefined)?.continuous || n === 0;
   const interval = continuous || n === 0 ? 0 : (Number.isFinite(n) && n > 0 ? n : 15);
+  const hoursRaw = Number((raw as LocMode | undefined)?.exit_tolerance_hours);
+  const hours = Number.isFinite(hoursRaw) ? Math.max(0, Math.min(12, hoursRaw)) : 0;
   return {
     enabled: (raw as LocMode | undefined)?.enabled !== false,
     continuous: continuous || interval === 0,
     interval_minutes: interval,
+    exit_tolerance_hours: hours,
   };
 }
 
@@ -75,11 +80,13 @@ export function patchLocMode(prev: LocMode, key: keyof LocMode, value: boolean |
   return next;
 }
 
-export function serializeLocMode(mode: LocMode): { enabled: boolean; continuous: boolean; interval_minutes: number } {
+export function serializeLocMode(mode: LocMode): { enabled: boolean; continuous: boolean; interval_minutes: number; exit_tolerance_hours: number } {
   const rawInterval = mode.interval_minutes === "" ? 15 : Number(mode.interval_minutes);
   const interval = Math.max(0, Math.min(120, Number.isFinite(rawInterval) ? rawInterval : 15));
   const continuous = !!mode.enabled && (interval === 0 || !!mode.continuous);
-  return { enabled: !!mode.enabled, continuous, interval_minutes: continuous ? 0 : interval };
+  const hoursRaw = mode.exit_tolerance_hours === "" ? 0 : Number(mode.exit_tolerance_hours);
+  const hours = Math.max(0, Math.min(12, Number.isFinite(hoursRaw) ? hoursRaw : 0));
+  return { enabled: !!mode.enabled, continuous, interval_minutes: continuous ? 0 : interval, exit_tolerance_hours: hours };
 }
 
 export function locationTrackingPayload(company: LocMode, field: LocMode): LocationTracking {
@@ -480,9 +487,14 @@ export function payMovesPeriodHint(shown: number, total: number, period: PayMove
 export function employeeCardChrome(emp?: Pick<Employee, "pay_type" | "daily_wage"> | null): {
   backgroundColor: string;
   borderColor: string;
+  borderWidth: number;
 } {
-  if (isDailyWage(emp)) return { backgroundColor: "#FFFBEB", borderColor: "#F59E0B" };
-  return { backgroundColor: "#F0FDF4", borderColor: "#059669" };
+  if (isDailyWage(emp)) return { backgroundColor: "#FEF3C7", borderColor: "#D97706", borderWidth: 2 };
+  return { backgroundColor: "#D1FAE5", borderColor: "#059669", borderWidth: 2 };
+}
+
+export function employeeCardPayKind(emp?: Pick<Employee, "pay_type" | "daily_wage"> | null): "daily" | "monthly" {
+  return isDailyWage(emp) ? "daily" : "monthly";
 }
 
 export type EmployeeDraft = {

@@ -16,7 +16,7 @@ _current_user = None
 DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "days": {}, "late_tolerance_minutes": 10, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul",
                     "overtime_method": "legal", "overtime_multiplier": 1.5, "holiday_multiplier": 2.0, "monthly_hours_divisor": 225, "notify_missing_checkin": True, "notify_late_checkin": True}
 # Personel kartı: konum izleme (iş yeri + dış görev ayrı).
-DEFAULT_LOCATION_MODE = {"enabled": True, "continuous": False, "interval_minutes": 15}
+DEFAULT_LOCATION_MODE = {"enabled": True, "continuous": False, "interval_minutes": 15, "exit_tolerance_hours": 0}
 DEFAULT_LOCATION_TRACKING = {**DEFAULT_LOCATION_MODE, "field": dict(DEFAULT_LOCATION_MODE)}
 OVERTIME_METHODS = {"legal": "Yasal (brüt/225 × katsayı)", "fixed": "Sabit saatlik mesai ücreti"}
 DAY_LABELS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
@@ -76,6 +76,14 @@ def _normalize_location_mode(raw: Optional[dict] = None, fallback: Optional[dict
         except (TypeError, ValueError):
             mins = base["interval_minutes"]
         base["interval_minutes"] = max(0, min(120, mins))
+    if raw.get("exit_tolerance_hours") not in (None, ""):
+        try:
+            hours = int(raw["exit_tolerance_hours"])
+        except (TypeError, ValueError):
+            hours = int(base.get("exit_tolerance_hours") or 0)
+        base["exit_tolerance_hours"] = max(0, min(12, hours))
+    elif "exit_tolerance_hours" not in base:
+        base["exit_tolerance_hours"] = 0
     if not base["enabled"]:
         base["continuous"] = False
         return base
@@ -100,7 +108,12 @@ def location_mode_for(lt: Optional[dict], workplace: Optional[dict] = None) -> d
     full = normalize_location_tracking(lt)
     if workplace and workplace.get("kind") == "task":
         return dict(full.get("field") or DEFAULT_LOCATION_MODE)
-    return {"enabled": full["enabled"], "continuous": full["continuous"], "interval_minutes": full["interval_minutes"]}
+    return {
+        "enabled": full["enabled"],
+        "continuous": full["continuous"],
+        "interval_minutes": full["interval_minutes"],
+        "exit_tolerance_hours": full.get("exit_tolerance_hours", 0),
+    }
 
 
 def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:

@@ -65,6 +65,7 @@ import {
   workplaceDetailsToggleLabel,
   workplaceDetailsToggleIcon,
   employeeCardChrome,
+  employeeCardPayKind,
   initLocMode,
   patchLocMode,
   locationTrackingPayload,
@@ -1081,6 +1082,10 @@ export function PersonnelScreen() {
             });
             return (
               <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`} style={employeeCardChrome(emp)}>
+                <View
+                  testID={`emp-card-pay-${employeeCardPayKind(emp)}-${eid}`}
+                  style={{ height: 6, marginHorizontal: -12, marginTop: -12, marginBottom: 8, backgroundColor: employeeCardChrome(emp).borderColor, borderTopLeftRadius: 16, borderTopRightRadius: 16 }}
+                />
                 <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
                   <EmployeeAvatar
                     name={emp.full_name}
@@ -1733,7 +1738,7 @@ export function PersonnelScreen() {
           mode={locField}
           onChange={(key, value) => setLocField((prev) => patchLocMode(prev, key, value))}
         />
-        <Muted testID="emp-location-hint">Kapalı olsa da çıkış her yerden yapılır. 0 dk = sürekli izle.</Muted>
+        <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından; çıkış her yerden. Sürekli açıkken konum aralığında kontrol edilir. Dış görevde konum dışına çıkınca tolerans kadar saat sonra çıkış sayılır.</Muted>
         <PrimaryButton title="Kaydet" testID="emp-location-save" color="#047857" loading={busy} onPress={saveLocSettings} />
       </B2BSheet>
 
@@ -2236,6 +2241,16 @@ function LocModeBlock({
         keyboardType="number-pad"
         placeholder="0 = sürekli"
       />
+      {prefix === "field" ? (
+        <Field
+          label="Konum dışı çıkış toleransı (saat)"
+          testID="emp-loc-field-exit-hours"
+          value={String(mode.exit_tolerance_hours ?? 0)}
+          onChangeText={(v) => onChange("exit_tolerance_hours", v === "" ? "" : Number(v.replace(/\D/g, "").slice(0, 2)))}
+          keyboardType="number-pad"
+          placeholder="0 = yok"
+        />
+      ) : null}
     </View>
   );
 }

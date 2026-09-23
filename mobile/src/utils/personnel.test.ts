@@ -69,6 +69,7 @@ import {
   workplaceDetailsToggleLabel,
   workplaceDetailsToggleIcon,
   employeeCardChrome,
+  employeeCardPayKind,
   employeeCompGroups,
   initLocMode,
   patchLocMode,
@@ -162,8 +163,11 @@ describe("employee draft", () => {
     expect(payMoveInPeriod({ date: "2026-07-01" }, "30d", new Date("2026-09-22T12:00:00"), "2026-09")).toBe(false);
     expect(payMoveInPeriod({ date: "2026-09" }, "month", new Date("2026-09-22"), "2026-09")).toBe(true);
     expect(filterPayMoves([{ id: "1", kind: "bonus", title: "Avans", subtitle: "", amount: 1, date: "2026-07-01" }], "30d", new Date("2026-09-22"), "2026-09")).toHaveLength(0);
-    expect(employeeCardChrome({ pay_type: "daily", daily_wage: 500 }).borderColor).toBe("#F59E0B");
-    expect(employeeCardChrome({ pay_type: "monthly" }).backgroundColor).toBe("#F0FDF4");
+    expect(employeeCardChrome({ pay_type: "daily", daily_wage: 500 }).borderColor).toBe("#D97706");
+    expect(employeeCardChrome({ pay_type: "monthly" }).backgroundColor).toBe("#D1FAE5");
+    expect(employeeCardChrome({ pay_type: "daily", daily_wage: 500 }).borderWidth).toBe(2);
+    expect(employeeCardPayKind({ pay_type: "daily", daily_wage: 500 })).toBe("daily");
+    expect(employeeCardPayKind({ pay_type: "monthly" })).toBe("monthly");
   });
 });
 
@@ -225,13 +229,16 @@ describe("payroll helpers", () => {
     ]);
     expect(employeeCompGroups(employeeCompRows({ pay_type: "daily", daily_wage: 500 })).find((g) => g.key === "wage")?.title).toBe("Yevmiye");
     expect(initLocMode(null).interval_minutes).toBe(15);
-    expect(initLocMode({ enabled: false, continuous: true, interval_minutes: 0 })).toEqual({ enabled: false, continuous: true, interval_minutes: 0 });
+    expect(initLocMode({ enabled: false, continuous: true, interval_minutes: 0 })).toMatchObject({ enabled: false, continuous: true, interval_minutes: 0 });
     expect(patchLocMode({ enabled: true, continuous: false, interval_minutes: 15 }, "continuous", true).interval_minutes).toBe(0);
-    expect(serializeLocMode({ enabled: true, continuous: true, interval_minutes: 10 })).toEqual({ enabled: true, continuous: true, interval_minutes: 0 });
+    expect(serializeLocMode({ enabled: true, continuous: true, interval_minutes: 10 })).toEqual({ enabled: true, continuous: true, interval_minutes: 0, exit_tolerance_hours: 0 });
     expect(locationTrackingPayload(
       { enabled: false, continuous: false, interval_minutes: 15 },
-      { enabled: true, continuous: true, interval_minutes: 0 },
-    )).toEqual({ enabled: false, continuous: false, interval_minutes: 15, field: { enabled: true, continuous: true, interval_minutes: 0 } });
+      { enabled: true, continuous: true, interval_minutes: 0, exit_tolerance_hours: 2 },
+    )).toEqual({
+      enabled: false, continuous: false, interval_minutes: 15, exit_tolerance_hours: 0,
+      field: { enabled: true, continuous: true, interval_minutes: 0, exit_tolerance_hours: 2 },
+    });
     expect(locModeSummary({ enabled: false })).toBe("Kapalı");
     expect(locModeSummary({ enabled: true, continuous: true, interval_minutes: 0 })).toBe("Sürekli");
     expect(locModeSummary({ enabled: true, interval_minutes: 15 })).toBe("15 dk");
