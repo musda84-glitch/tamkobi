@@ -6,9 +6,11 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Cal
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
+import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnelWage";
+
 
 const Stat = ({ label, value, sub, tone = "slate", testId }) => (
   <div className={`rounded-2xl border p-4 bg-white ${tone === "indigo" ? "border-indigo-200" : tone === "rose" ? "border-rose-200" : "border-slate-200"}`} data-testid={testId}>
@@ -61,20 +63,41 @@ export default function MyAttendancePage() {
   const [intraReason, setIntraReason] = useState("");
   const [intraOut, setIntraOut] = useState("");
   const [intraReturn, setIntraReturn] = useState("");
+  const [outArmed, setOutArmed] = useState(false);
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => setData(r.data)).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!outArmed) return undefined;
+    const t = setTimeout(() => setOutArmed(false), CHECKOUT_ARM_MS);
+    return () => clearTimeout(t);
+  }, [outArmed]);
   const act = async (action) => {
     setBusy(action);
     try {
       let coords = {};
-      // Konum yalnızca girişte zorunlu; çıkış her yerden yapılabilir.
+      // Konum yalnızca girişte zorunlu; çıkış her yerden yapılabilir (konum kapalı olsa da).
       if (action === "check_in" && data?.location && data?.schedule?.require_geo !== false) {
         const c = await getPos();
         coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
       }
       const r = await axios.post(`${API_URL}/personnel/attendance/self`, { action, ...coords }, { withCredentials: true });
-      toast.success(r.data.message, { duration: 6000 }); load();
+      toast.success(r.data.message, { duration: 6000 });
+      if (action === "check_out") setOutArmed(false);
+      load();
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "İşlem başarısız."); } finally { setBusy(null); }
+  };
+  const onCheckoutClick = () => {
+    const canCheckout = !busy && !!data?.today?.check_in && !data?.today?.check_out;
+    const next = resolveCheckoutClick({ armed: outArmed, canCheckout });
+    if (next === "arm") {
+      setOutArmed(true);
+      toast.message("Çıkışı onaylamak için tekrar tıklayın.", { duration: CHECKOUT_ARM_MS });
+      return;
+    }
+    if (next === "fire") {
+      setOutArmed(false);
+      act("check_out");
+    }
   };
   const confirm = async (r) => { try { await axios.post(`${API_URL}/personnel/attendance/${r.id}/confirm`, {}, { withCredentials: true }); toast.success("Kayıt onaylandı."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } };
   const dispute = async (r, note) => { try { await axios.post(`${API_URL}/personnel/attendance/${r.id}/dispute`, { note }, { withCredentials: true }); toast.success("İtirazınız yöneticiye iletildi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Gönderilemedi."); } };
@@ -148,8 +171,20 @@ export default function MyAttendancePage() {
             <button onClick={() => act("check_in")} disabled={!!busy || !!t?.check_in} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
               {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">Giriş Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{t?.check_in ? `Giriş ${t.check_in}` : "henüz giriş yok"}</span>
             </button>
-            <button onClick={() => act("check_out")} disabled={!!busy || !t?.check_in || !!t?.check_out} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-rose-500 hover:bg-rose-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkout">
-              {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}<span className="text-lg sm:text-base">Çıkış Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-out">{t?.check_out ? `Çıkış ${t.check_out}` : t?.check_in ? "çıkış bekleniyor" : "önce giriş yapın"}</span>
+            <button
+              type="button"
+              onClick={onCheckoutClick}
+              disabled={!!busy || !t?.check_in || !!t?.check_out}
+              className={`flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition ${outArmed ? "bg-amber-500 hover:bg-amber-400 ring-2 ring-amber-200 ring-offset-2 ring-offset-slate-900" : "bg-rose-500 hover:bg-rose-400"}`}
+              data-testid="my-att-checkout"
+              aria-pressed={outArmed}
+              title={outArmed ? "Onaylamak için tekrar tıklayın" : "Çıkış için iki kez tıklayın"}
+            >
+              {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}
+              <span className="text-lg sm:text-base">{outArmed ? "Tekrar tıklayın" : "Çıkış Yap"}</span>
+              <span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-out">
+                {t?.check_out ? `Çıkış ${t.check_out}` : t?.check_in ? (outArmed ? "onay için tekrar tıklayın" : "çift tıklayın · çıkış bekleniyor") : "önce giriş yapın"}
+              </span>
             </button>
           </div>
           {(t?.hours || t?.late_minutes || t?.assigned_overtime_hours || t?.intraday_leave_minutes || t?.yevmiye_full_amount || t?.yevmiye_adjustment_request) ? (
@@ -251,7 +286,7 @@ export default function MyAttendancePage() {
             })()}
           </div>
 
-          <div className="text-[11px] text-slate-400 text-center sm:text-left">Açık proje görevi varsa giriş <b className="text-indigo-200">görev yerinden</b> yapılır (dış görev). Çıkış her konumdan yapılabilir; kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır. Erken çıkmak için önce talep edin. Gün içinde çıkıp dönecekseniz <b className="text-sky-300">gün içi izin</b> talebine çıkış ve dönüş saatini yazın.</div>
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Açık proje görevi varsa giriş <b className="text-indigo-200">görev yerinden</b> yapılır (dış görev). Çıkış her konumdan yapılabilir (konum özelliği kapalı olsa da); yanlışlıkla basılmasın diye <b className="text-rose-200">çift tıklama</b> ister. Kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır. Erken çıkmak için önce talep edin. Gün içinde çıkıp dönecekseniz <b className="text-sky-300">gün içi izin</b> talebine çıkış ve dönüş saatini yazın.</div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">

@@ -15,6 +15,8 @@ _current_user = None
 
 DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "days": {}, "late_tolerance_minutes": 10, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul",
                     "overtime_method": "legal", "overtime_multiplier": 1.5, "holiday_multiplier": 2.0, "monthly_hours_divisor": 225, "notify_missing_checkin": True, "notify_late_checkin": True}
+# Personel kartı: konum izleme tercihleri (girişte geo; çıkış her zaman serbest).
+DEFAULT_LOCATION_TRACKING = {"enabled": True, "continuous": False, "interval_minutes": 15}
 OVERTIME_METHODS = {"legal": "Yasal (brüt/225 × katsayı)", "fixed": "Sabit saatlik mesai ücreti"}
 DAY_LABELS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
 
@@ -58,6 +60,26 @@ def _clean(d: dict) -> dict:
     return d
 
 
+def normalize_location_tracking(raw: Optional[dict] = None) -> dict:
+    """Personel konum izleme tercihlerini güvenli varsayılanlara çevirir."""
+    base = dict(DEFAULT_LOCATION_TRACKING)
+    if not isinstance(raw, dict):
+        return base
+    if "enabled" in raw:
+        base["enabled"] = bool(raw.get("enabled"))
+    if "continuous" in raw:
+        base["continuous"] = bool(raw.get("continuous"))
+    if raw.get("interval_minutes") not in (None, ""):
+        try:
+            mins = int(raw["interval_minutes"])
+        except (TypeError, ValueError):
+            mins = base["interval_minutes"]
+        base["interval_minutes"] = max(1, min(120, mins))
+    if not base["enabled"]:
+        base["continuous"] = False
+    return base
+
+
 def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
     s = {**DEFAULT_SCHEDULE, **((company or {}).get("work_schedule") or {})}
     s["days"] = dict(s.get("days") or {})
@@ -66,6 +88,12 @@ def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
         s = {**s, **{k: v for k, v in ov.items() if k != "days" and v not in (None, "", [])}}
         if ov.get("days"):
             s["days"] = {**s["days"], **{k: v for k, v in ov["days"].items() if v}}
+    if employee is not None:
+        lt = normalize_location_tracking(employee.get("location_tracking"))
+        s["location_tracking"] = lt
+        # Personelde konum kapalıysa girişte geo zorunlu olmaz; çıkış her zaman serbest.
+        if not lt["enabled"]:
+            s["require_geo"] = False
     return s
 
 
@@ -759,10 +787,12 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
     today = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today_s})
     workplace = await workplace_for_employee(emp, company, today_s)
     loc = geo_target(workplace)
+    lt = normalize_location_tracking(emp.get("location_tracking"))
     return {"employee": {"id": emp["_id"], "full_name": emp["full_name"], "department": emp.get("department"), "position": emp.get("position")},
             "month": month, "records": [_clean(r) for r in rows], "summary": summarize(rows), "today": _clean(today) if today else None,
             "schedule": schedule, "day_labels": DAY_LABELS, "location": loc, "workplace": workplace,
-            "company_location": company.get("location"), "now": now_hm(schedule), "today_date": today_s}
+            "company_location": company.get("location"), "location_tracking": lt,
+            "now": now_hm(schedule), "today_date": today_s}
 
 
 @router.post("/personnel/attendance/self")

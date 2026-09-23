@@ -12014,7 +12014,7 @@ async def create_employee(emp: Employee):
     return clean_doc(doc)
 
 EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "pay_type", "daily_wage", "start_date", "end_date", "status", "annual_leave_days", "used_leave_days",
-                      "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
+                      "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "location_tracking", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
                       "meal_allowance", "transport_allowance", "sgk_number"}
 EMPLOYEE_NUMERIC = {"salary", "daily_wage", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
 MEAL_CAT = "Yemek"
@@ -12179,6 +12179,13 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
             if ws.get("start") and ws.get("end") and attendance._hm(ws["end"]) <= attendance._hm(ws["start"]):
                 raise HTTPException(status_code=400, detail="Mesai bitişi başlangıçtan sonra olmalı.")
             v = ws or None
+        if k == "location_tracking":
+            if v is None:
+                v = None
+            elif not isinstance(v, dict):
+                raise HTTPException(status_code=400, detail="location_tracking nesne olmalı.")
+            else:
+                v = attendance.normalize_location_tracking(v)
         if k == "sgk_number":
             v = str(v or "").strip() or None
         if k == "iban":
