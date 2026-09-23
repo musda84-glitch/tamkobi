@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { MapPin, LogIn, LogOut, Loader2, Crosshair, Smartphone } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { selfAttendanceGeoMode } from "../utils/attendanceSelf";
 
 export const getPos = () => new Promise((res, rej) => { if (!navigator.geolocation) return rej(new Error("Bu cihaz konum desteklemiyor.")); navigator.geolocation.getCurrentPosition((p) => res(p.coords), (e) => rej(new Error(e.code === 1 ? "Konum izni verilmedi. Tarayıcı ayarlarından konum iznini açın." : "Konum alınamadı.")), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }); });
 
@@ -17,9 +18,21 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
     setBusy(action);
     try {
       let body = { company_id: companyId, action };
-      if (action === "check_in") {
+      const geoMode = selfAttendanceGeoMode(action, {
+        hasTarget: Boolean(st?.location || st?.workplace?.kind === "task"),
+        requireGeo: true,
+        trackingEnabled: true,
+      });
+      if (geoMode === "required") {
         const c = await getPos();
         body = { ...body, latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
+      } else if (geoMode === "attach") {
+        try {
+          const c = await getPos();
+          body = { ...body, latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
+        } catch {
+          /* çıkış her yerden butonla */
+        }
       }
       const r = await axios.post(`${API_URL}/personnel/attendance/geo`, body, { withCredentials: true });
       toast.success(r.data.message); load(); onChanged?.();

@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MessageSquareWarning, DoorOpen, ArrowLeftRight } from "lucide-react";
+import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MapPin, MessageSquareWarning, DoorOpen, ArrowLeftRight } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSettings";
 import { ShiftPlanner } from "./ShiftPlanner";
@@ -55,6 +55,13 @@ export const AttendancePanel = ({ companyId }) => {
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/yevmiye-decision`, { decision }, { withCredentials: true });
       toast.success(r.data.message || (decision === "approve" ? "Yevmiye onaylandı." : "Kart ücreti bırakıldı."));
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
+  };
+  const decideLocationExit = async (id, decision, wageDeduction) => {
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/location-exit-decision`, { decision, wage_deduction: !!wageDeduction }, { withCredentials: true });
+      toast.success(r.data.message || "Konum dışı çıkış yanıtlandı.");
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
   };
@@ -120,6 +127,17 @@ export const AttendancePanel = ({ companyId }) => {
                   <button type="button" onClick={() => decideYevmiye(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-yevmiye-reject-${r.id}`}>Kart ücreti</button>
                 </>
               ) : null}
+            </span>
+          )}
+          {r.location_exit_request?.status === "pending" && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] flex-wrap" data-testid={`att-locexit-pending-${r.id}`}>
+              <MapPin className="w-3 h-3 text-emerald-700" />
+              <span className="font-semibold text-emerald-800">Konum dışı{r.location_exit_request.place ? ` · ${r.location_exit_request.place}` : ""}</span>
+              <span className="text-slate-500">kesinti bekliyor</span>
+              <button type="button" onClick={() => decideLocationExit(r.id, "ack", false)} className="px-1.5 py-0.5 rounded bg-slate-800 text-white font-bold" data-testid={`att-locexit-ack-${r.id}`}>Haberim var</button>
+              <button type="button" onClick={() => decideLocationExit(r.id, "approve", false)} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-locexit-ok-${r.id}`}>Kesinti olmasın</button>
+              <button type="button" onClick={() => decideLocationExit(r.id, "approve", true)} className="px-1.5 py-0.5 rounded bg-amber-500 text-white font-bold" data-testid={`att-locexit-deduct-${r.id}`}>Kesinti olsun</button>
+              <button type="button" onClick={() => decideLocationExit(r.id, "reject", false)} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-locexit-no-${r.id}`}>Reddet</button>
             </span>
           )}
           {r.intraday_leave_request?.status === "pending" && (

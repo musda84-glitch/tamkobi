@@ -103,6 +103,16 @@ def normalize_location_tracking(raw: Optional[dict] = None) -> dict:
     return {**company, "field": field}
 
 
+def checkout_distance_blocks() -> bool:
+    """Çıkış butonla her yerden; uzaklık veya otomatik algı çıkışı durdurmaz."""
+    return False
+
+
+def location_ping_checks_out() -> bool:
+    """Sürekli takip yalnızca konum dışı bildirir; Giriş/Çıkış basılmaz."""
+    return False
+
+
 def location_mode_for(lt: Optional[dict], workplace: Optional[dict] = None) -> dict:
     """Etkin iş yerine göre kullanılacak konum modu (iş yeri veya dış görev)."""
     full = normalize_location_tracking(lt)
@@ -170,11 +180,56 @@ def build_location_exit_request(
         "radius_m": int(round(radius_m)),
         "tolerance_hours": max(0, int(tolerance_hours or 0)),
         "place": workplace_place_label(workplace),
+        "wage_deduction": None,
+        "deduction_amount": 0,
         "requested_at": stamp,
         "decided_at": None,
         "decided_by": None,
         "decision": "",
     }
+
+
+def _truthy_flag(value: Any) -> bool:
+    return value in (True, 1, "1", "true", "True", "yes", "evet", "on")
+
+
+def parse_location_exit_decision(req: Optional[dict] = None) -> dict:
+    """Karar + ücret kesintisi: ack / approve / reject ve wage_deduction evet-hayır."""
+    raw = req if isinstance(req, dict) else {}
+    decision = str(raw.get("decision") or "").strip().lower()
+    aliases = {
+        "ack": "ack",
+        "acknowledged": "ack",
+        "haberim": "ack",
+        "approve": "approve",
+        "approved": "approve",
+        "reject": "reject",
+        "rejected": "reject",
+        "deduct": "approve",
+        "kesinti": "approve",
+    }
+    if decision not in aliases:
+        raise ValueError("decision: ack, approve, reject veya deduct olmalı.")
+    status = aliases[decision]
+    deduct_raw = raw.get("wage_deduction", raw.get("deduct", raw.get("kesinti")))
+    if deduct_raw is None:
+        deduct = decision in ("deduct", "kesinti")
+    else:
+        deduct = _truthy_flag(deduct_raw)
+    return {"decision": status, "wage_deduction": bool(deduct)}
+
+
+def location_exit_decision_message(decision: str, wage_deduction: bool = False, amount: float = 0) -> str:
+    if decision == "ack":
+        return "Konum dışı çıkış: haberim var." + (" Kesinti yok." if not wage_deduction else "")
+    if decision == "reject":
+        return "Konum dışı çıkış reddedildi." + (" Kesinti yok." if not wage_deduction else "")
+    if wage_deduction:
+        amt = float(amount or 0)
+        if amt > 0:
+            return f"Konum dışı çıkış: ücretten {amt:g} ₺ kesinti uygulandı."
+        return "Konum dışı çıkış: ücretten kesinti uygulandı."
+    return "Konum dışı çıkış onaylandı (kesinti yok)."
 
 
 def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
@@ -939,8 +994,8 @@ async def self_attendance(req: Dict[str, Any], request: Request):
                 raise HTTPException(status_code=400, detail=f"Görev yerine ({place}) {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). Dış görev girişi görev konumundan yapılmalıdır.")
             raise HTTPException(status_code=400, detail=f"Firma konumuna {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). Giriş yapılamadı.")
         geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": True, "workplace_kind": loc.get("kind")}
-    elif action == "check_out":
-        # Çıkışta konum zorunlu değil; gönderilmişse etkin iş yerine (dış görev yeri) göre kayda ekle.
+    elif action == "check_out" and not checkout_distance_blocks():
+        # Çıkış yalnız butonla, her yerden. Konum açıksa GPS kayda eklenir; mesafe asla reddetmez. Otomatik giriş-çıkış yok.
         ref = workplace if workplace and workplace.get("kind") == "task" else (loc or workplace)
         try:
             lat, lng = float(req["latitude"]), float(req["longitude"])
@@ -1097,7 +1152,7 @@ async def maybe_open_location_exit(
         f"Konum dışı: {emp.get('full_name')}",
         f"{emp.get('full_name')} dış görev yerinden {int(dist)} m uzakta (izin {int(radius)} m"
         + (f", tolerans {int(mode.get('exit_tolerance_hours') or 0)} sa" if mode.get("exit_tolerance_hours") else "")
-        + "). Haberim var / onayla / reddet.",
+        + "). Haberim var / onayla / reddet · kesinti olsun / olmasın.",
         link="/personnel?tab=attendance",
         dedupe_key=f"locexit:{emp.get('_id')}:{rec.get('date')}",
     )
@@ -1106,7 +1161,7 @@ async def maybe_open_location_exit(
 
 @router.post("/personnel/attendance/self/location")
 async def self_location_ping(req: Dict[str, Any], request: Request):
-    """Sürekli/aralıklı takip: konum ping. Dış görevde tolerans dolunca yönetici talebi açar."""
+    """Sürekli/aralıklı takip: konum ping. Çıkış basılmaz; tolerans dolunca yönetici talebi açar."""
     user = await _current_user(request)
     emp = await employee_for_user(user)
     if not emp:
@@ -1144,6 +1199,43 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
     }
 
 
+async def apply_location_exit_wage_deduction(emp: dict, rec: dict, ler: dict) -> dict:
+    """Kesinti evet ise günlük ücret kadar borç (borc) yazar."""
+    amount = round(float(personnel_wage.reference_daily_wage(emp) or 0), 2)
+    ler["deduction_amount"] = amount
+    if amount <= 0:
+        return ler
+    att_id = rec.get("id") or rec.get("_id")
+    existing_id = ler.get("deduction_bonus_id")
+    if existing_id:
+        existing = await _db.bonus_payments.find_one({"_id": existing_id})
+        if existing:
+            return ler
+    date = rec.get("date") or _today()
+    period = date[:7] if date else datetime.now(timezone.utc).strftime("%Y-%m")
+    bonus_id = str(uuid.uuid4())
+    doc = {
+        "_id": bonus_id,
+        "company_id": emp["company_id"],
+        "employee_id": emp["_id"],
+        "employee_name": emp.get("full_name") or rec.get("employee_name"),
+        "type": "borc",
+        "type_label": "Borç",
+        "period": period,
+        "date": date,
+        "amount": amount,
+        "note": f"Konum dışı çıkış kesintisi · {personnel_wage.wage_line(1, amount)}",
+        "status": "pending",
+        "source": "location_exit",
+        "attendance_id": att_id,
+        "is_official": False,
+        "created_at": _now(),
+    }
+    await _db.bonus_payments.insert_one(doc)
+    ler["deduction_bonus_id"] = bonus_id
+    return ler
+
+
 @router.post("/personnel/attendance/{att_id}/location-exit-decision")
 async def decide_location_exit(att_id: str, req: Dict[str, Any], request: Request):
     user = await _current_user(request)
@@ -1155,13 +1247,16 @@ async def decide_location_exit(att_id: str, req: Dict[str, Any], request: Reques
     ler = rec.get("location_exit_request") or {}
     if ler.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bekleyen konum dışı çıkış yok.")
-    decision = (req.get("decision") or "").strip().lower()
-    if decision not in ("ack", "approve", "reject", "approved", "rejected", "acknowledged"):
-        raise HTTPException(status_code=400, detail="decision: ack, approve veya reject olmalı.")
-    if decision in ("ack", "acknowledged"):
+    try:
+        parsed = parse_location_exit_decision(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    decision = parsed["decision"]
+    deduct = bool(parsed["wage_deduction"])
+    if decision == "ack":
         status = "acked"
         label = "haberim var"
-    elif decision in ("approve", "approved"):
+    elif decision == "approve":
         status = "approved"
         label = "onaylandı"
     else:
@@ -1171,32 +1266,33 @@ async def decide_location_exit(att_id: str, req: Dict[str, Any], request: Reques
         **ler,
         "status": status,
         "decision": status,
+        "wage_deduction": deduct,
         "decided_at": _now(),
         "decided_by": str(user.get("_id") or user.get("id") or ""),
         "decision_note": (req.get("note") or "")[:300],
     }
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id")}) or {}
+    if deduct:
+        ler = await apply_location_exit_wage_deduction(emp, rec, ler)
+    amount = float(ler.get("deduction_amount") or 0)
     await _db.attendance.update_one(
         {"_id": att_id},
         {"$set": {"location_exit_request": ler, "updated_at": _now()}},
     )
     import notify as _notify
+    msg = location_exit_decision_message(decision, deduct, amount)
     await _notify.insert_notification(_db, {
         "_id": str(uuid.uuid4()),
         "company_id": rec["company_id"],
-        "user_id": rec.get("employee_id"),
+        "user_id": emp.get("user_id") or rec.get("employee_id"),
         "type": "location_exit_decision",
-        "title": f"Konum dışı çıkış {label}",
-        "message": f"{rec.get('employee_name')} — {label}. {ler.get('decision_note') or ''}".strip(),
+        "title": f"Konum dışı çıkış {label}" + (" · kesinti" if deduct else " · kesinti yok"),
+        "message": f"{rec.get('employee_name')} — {msg} {ler.get('decision_note') or ''}".strip(),
         "link": "/mesai",
         "is_read": False,
         "created_at": _now(),
     })
-    messages = {
-        "acked": "Konum dışı çıkış: haberim var.",
-        "approved": "Konum dışı çıkış onaylandı.",
-        "rejected": "Konum dışı çıkış reddedildi.",
-    }
-    return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id})), "message": messages[status]}
+    return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id})), "message": msg, "wage_deduction": deduct, "deduction_amount": amount}
 
 
 async def accrue_task_yevmiye(emp: dict, rec: dict, workplace: Optional[dict], schedule: dict) -> Optional[dict]:

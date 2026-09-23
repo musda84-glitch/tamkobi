@@ -3,11 +3,20 @@ from attendance import (
     DEFAULT_LOCATION_MODE,
     DEFAULT_LOCATION_TRACKING,
     build_location_exit_request,
+    checkout_distance_blocks,
+    location_exit_decision_message,
     location_exit_should_notify,
+    location_ping_checks_out,
+    parse_location_exit_decision,
     location_mode_for,
     merge_schedule,
     normalize_location_tracking,
 )
+
+
+def test_checkout_is_button_only_anywhere():
+    assert checkout_distance_blocks() is False
+    assert location_ping_checks_out() is False
 
 
 def test_normalize_defaults():
@@ -123,6 +132,23 @@ def test_location_exit_should_notify_after_tolerance():
     assert req["status"] == "pending"
     assert req["distance_m"] == 850
     assert req["tolerance_hours"] == 2
+    assert req["wage_deduction"] is None
+
+
+def test_parse_location_exit_decision_wage_deduction():
+    assert parse_location_exit_decision({"decision": "ack"}) == {"decision": "ack", "wage_deduction": False}
+    assert parse_location_exit_decision({"decision": "approve"}) == {"decision": "approve", "wage_deduction": False}
+    assert parse_location_exit_decision({"decision": "deduct"}) == {"decision": "approve", "wage_deduction": True}
+    assert parse_location_exit_decision({"decision": "approve", "wage_deduction": True}) == {"decision": "approve", "wage_deduction": True}
+    assert parse_location_exit_decision({"decision": "reject", "wage_deduction": "evet"}) == {"decision": "reject", "wage_deduction": True}
+    assert location_exit_decision_message("ack", False) == "Konum dışı çıkış: haberim var. Kesinti yok."
+    assert location_exit_decision_message("approve", False) == "Konum dışı çıkış onaylandı (kesinti yok)."
+    assert location_exit_decision_message("approve", True, 1500) == "Konum dışı çıkış: ücretten 1500 ₺ kesinti uygulandı."
+    try:
+        parse_location_exit_decision({"decision": "nope"})
+        assert False
+    except ValueError:
+        pass
 
 
 def test_merge_schedule_without_employee_keeps_company_require_geo():

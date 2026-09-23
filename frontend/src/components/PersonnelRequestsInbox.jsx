@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Bell, CalendarDays, Check, Clock, Coins, Loader2, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight } from "lucide-react";
+import { Bell, CalendarDays, Check, Clock, Coins, Loader2, MapPin, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 
@@ -13,6 +13,7 @@ export const KIND_META = {
   dispute: { label: "İtiraz", Icon: MessageSquareWarning, chip: "bg-rose-50 text-rose-700 border-rose-100" },
   advance: { label: "Avans", Icon: Wallet, chip: "bg-amber-50 text-amber-800 border-amber-100" },
   yevmiye_adjustment: { label: "Yevmiye", Icon: Coins, chip: "bg-amber-50 text-amber-900 border-amber-200" },
+  location_exit: { label: "Konum dışı", Icon: MapPin, chip: "bg-emerald-50 text-emerald-800 border-emerald-200" },
 };
 
 const chipBtn = "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold disabled:opacity-50";
@@ -26,6 +27,7 @@ export function EmployeeRequestChips({
   onDecideIntraday,
   onDecideAdvance,
   onDecideYevmiye,
+  onDecideLocationExit,
   onViewDispute,
   maxVisible = 3,
 }) {
@@ -100,6 +102,22 @@ export function EmployeeRequestChips({
                   </button>
                   <button type="button" disabled={busy} onClick={() => onDecideYevmiye?.(it.id, "reject")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-yevmiye-${it.id}`}>
                     <X className="w-2.5 h-2.5" /> Kart ücreti
+                  </button>
+                </>
+              )}
+              {it.kind === "location_exit" && (
+                <>
+                  <button type="button" disabled={busy} onClick={() => onDecideLocationExit?.(it.id, "ack", false)} className={`${chipBtn} bg-slate-800 text-white hover:bg-slate-900`} data-testid={`card-ack-locexit-${it.id}`}>
+                    Haberim var
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideLocationExit?.(it.id, "approve", false)} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-locexit-${it.id}`}>
+                    Kesinti olmasın
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideLocationExit?.(it.id, "approve", true)} className={`${chipBtn} bg-amber-500 text-white hover:bg-amber-600`} data-testid={`card-deduct-locexit-${it.id}`}>
+                    Kesinti olsun
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideLocationExit?.(it.id, "reject", false)} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-locexit-${it.id}`}>
+                    <X className="w-2.5 h-2.5" /> Reddet
                   </button>
                 </>
               )}
@@ -187,6 +205,20 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     }
   };
 
+  const decideLocationExit = async (id, decision, wageDeduction) => {
+    setBusyId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/location-exit-decision`, { decision, wage_deduction: !!wageDeduction });
+      toast.success(r.data?.message || "Konum dışı çıkış yanıtlandı.");
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const decideYevmiye = async (id, decision) => {
     setBusyId(id);
     try {
@@ -251,7 +283,7 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
         </div>
       ) : items.length === 0 ? (
         <div className="px-4 py-6 text-center text-slate-400 text-xs" data-testid="personnel-requests-empty">
-          Şu an onay bekleyen izin, avans, yevmiye, erken çıkış, gün içi izin veya puantaj itirazı yok.
+          Şu an onay bekleyen izin, avans, yevmiye, konum dışı, erken çıkış, gün içi izin veya puantaj itirazı yok.
         </div>
       ) : (
         <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto" data-testid="personnel-requests-list">
@@ -319,6 +351,22 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                       </button>
                       <button type="button" disabled={busy} onClick={() => decideYevmiye(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-yevmiye-${it.id}`}>
                         <X className="w-3 h-3" /> Kart ücreti
+                      </button>
+                    </>
+                  )}
+                  {it.kind === "location_exit" && (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => decideLocationExit(it.id, "ack", false)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800 text-white text-[10px] font-bold hover:bg-slate-900 disabled:opacity-50" data-testid={`inbox-ack-locexit-${it.id}`}>
+                        Haberim var
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideLocationExit(it.id, "approve", false)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-locexit-${it.id}`}>
+                        Kesinti olmasın
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideLocationExit(it.id, "approve", true)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500 text-white text-[10px] font-bold hover:bg-amber-600 disabled:opacity-50" data-testid={`inbox-deduct-locexit-${it.id}`}>
+                        Kesinti olsun
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideLocationExit(it.id, "reject", false)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-locexit-${it.id}`}>
+                        <X className="w-3 h-3" /> Reddet
                       </button>
                     </>
                   )}

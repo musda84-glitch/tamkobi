@@ -812,7 +812,7 @@ export function PersonnelScreen() {
     }
   };
 
-  const decideRequest = async (it: PendingRequest, approved: boolean | "ack") => {
+  const decideRequest = async (it: PendingRequest, approved: boolean | "ack" | "deduct") => {
     const spec = pendingRequestDecision(it, approved);
     if (!spec) {
       setTab("attendance");
@@ -941,7 +941,7 @@ export function PersonnelScreen() {
                     <PrimaryButton
                       key={btn.key}
                       title={btn.title}
-                      color={btn.color === "danger" ? colors.danger : btn.color === "secondary" ? colors.secondary : colors.primary}
+                      color={btn.color === "danger" ? colors.danger : btn.color === "warning" ? colors.warning : btn.color === "secondary" ? colors.secondary : colors.primary}
                       testID={`${btn.key}-req-${it.id}`}
                       onPress={() => decideRequest(it, btn.decision)}
                     />
@@ -1092,7 +1092,7 @@ export function PersonnelScreen() {
                               <PrimaryButton
                                 key={btn.key}
                                 title={btn.title}
-                                color={btn.color === "danger" ? colors.danger : btn.color === "secondary" ? colors.secondary : colors.primary}
+                                color={btn.color === "danger" ? colors.danger : btn.color === "warning" ? colors.warning : btn.color === "secondary" ? colors.secondary : colors.primary}
                                 testID={`card-${btn.key}-${it.kind}-${it.id}`}
                                 onPress={() => decideRequest(it, btn.decision)}
                               />
@@ -1273,6 +1273,7 @@ export function PersonnelScreen() {
                     Konum dışı{r.location_exit_request?.place ? ` · ${r.location_exit_request.place}` : ""}
                     {r.location_exit_request?.distance_m != null ? ` · ${r.location_exit_request.distance_m} m` : ""}
                     {r.location_exit_request?.tolerance_hours ? ` · tolerans ${r.location_exit_request.tolerance_hours} sa` : ""}
+                    {` · kesinti: ${r.location_exit_request?.wage_deduction == null ? "bekliyor" : r.location_exit_request.wage_deduction ? "olsun" : "olmasın"}`}
                   </Muted>
                 ) : null}
                 {canEdit && (early || intra || yevAdj || locExit) ? (
@@ -1298,7 +1299,8 @@ export function PersonnelScreen() {
                     {locExit ? (
                       <>
                         <PrimaryButton title="Haberim var" color={colors.secondary} testID={`att-loc-exit-ack-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, "ack")} />
-                        <PrimaryButton title="Onayla" color={colors.primary} testID={`att-loc-exit-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, true)} />
+                        <PrimaryButton title="Kesinti olmasın" color={colors.primary} testID={`att-loc-exit-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, true)} />
+                        <PrimaryButton title="Kesinti olsun" color={colors.warning} testID={`att-loc-exit-deduct-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, "deduct")} />
                         <PrimaryButton title="Reddet" color={colors.danger} testID={`att-loc-exit-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, false)} />
                       </>
                     ) : null}
@@ -1681,7 +1683,7 @@ export function PersonnelScreen() {
           mode={locField}
           onChange={(key, value) => setLocField((prev) => patchLocMode(prev, key, value))}
         />
-        <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından; çıkış her yerden. Sürekli açıkken konum aralığında kontrol edilir. Dış görevde konum dışına çıkınca tolerans kadar saat sonra yöneticiye haber gider — Haberim var / Onayla / Reddet.</Muted>
+        <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından. Çıkış yalnız Mesaim butonuyla, her yerden; konum açıksa çıkışta konum alınır, otomatik giriş-çıkış basılmaz. Dış görevde konum dışına çıkınca tolerans kadar saat sonra yöneticiye haber gider — Haberim var / Kesinti olmasın / Kesinti olsun / Reddet.</Muted>
         <PrimaryButton title="Kaydet" testID="emp-location-save" color="#047857" loading={busy} onPress={saveLocSettings} />
       </B2BSheet>
 

@@ -1,4 +1,4 @@
-import { checkoutConfirmMessage, earlyLeavePayload, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { checkoutConfirmMessage, earlyLeavePayload, selfAttendanceGeoMode, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -26,6 +26,19 @@ describe("intraday leave request", () => {
       out_time: "09:05",
       return_time: "11:00",
     });
+  });
+});
+
+describe("selfAttendanceGeoMode", () => {
+  it("requires geo only on check-in near a target", () => {
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("required");
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: true })).toBe("none");
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: false })).toBe("none");
+  });
+  it("attaches checkout geo when tracking is on and never requires it", () => {
+    expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true, hasTarget: true })).toBe("attach");
+    expect(selfAttendanceGeoMode("check_out", { trackingEnabled: false })).toBe("none");
+    expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true })).not.toBe("required");
   });
 });
 

@@ -6,6 +6,7 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Cal
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
+import { selfAttendanceGeoMode } from "../utils/attendanceSelf";
 import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
@@ -75,13 +76,22 @@ export default function MyAttendancePage() {
     setBusy(action);
     try {
       let coords = {};
-      // Konum yalnızca girişte; etkin iş yerine göre (iş yeri / dış görev) ayar.
       const activeLt = data?.active_location_tracking || data?.location_tracking;
-      const needGeo = action === "check_in" && data?.location && activeLt?.enabled !== false
-        && (data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false);
-      if (needGeo) {
+      const geoMode = selfAttendanceGeoMode(action, {
+        hasTarget: Boolean(data?.location || data?.workplace?.kind === "task"),
+        requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
+        trackingEnabled: action === "check_out" ? !!activeLt?.enabled : activeLt?.enabled !== false,
+      });
+      if (geoMode === "required") {
         const c = await getPos();
         coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
+      } else if (geoMode === "attach") {
+        try {
+          const c = await getPos();
+          coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
+        } catch {
+          /* çıkış her yerden butonla */
+        }
       }
       const r = await axios.post(`${API_URL}/personnel/attendance/self`, { action, ...coords }, { withCredentials: true });
       toast.success(r.data.message, { duration: 6000 });
