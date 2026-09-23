@@ -15,6 +15,7 @@ import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
+import { locationControllerLabel, locationTrackingEnabled, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
@@ -46,6 +47,7 @@ import {
   Image as ImageIcon,
   ChevronDown,
   ChevronUp,
+  MapPin,
 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
@@ -58,6 +60,8 @@ const isBankAcc = (a) => {
 export default function PersonnelPage() {
   const { activeCompany } = useAuth();
   const [employees, setEmployees] = useState([]);
+  const [attToday, setAttToday] = useState({});
+  const [locBusyId, setLocBusyId] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "payroll";
   const setTab = (t) => setSearchParams({ tab: t }, { replace: true });
@@ -166,14 +170,20 @@ export default function PersonnelPage() {
   const loadPersonnelData = useCallback(async () => {
     try {
       setLoading(true);
-      const [empRes, payRes, bankRes] = await Promise.all([
+      const [empRes, payRes, bankRes, attRes] = await Promise.all([
         axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`),
         axios.get(`${API_URL}/personnel/payrolls?company_id=${companyId}`),
-        axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)
+        axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`),
+        axios.get(`${API_URL}/personnel/attendance?company_id=${companyId}`).catch(() => ({ data: { summary: [] } })),
       ]);
       setEmployees(empRes.data);
       setPayrolls(payRes.data);
       setBankAccounts(bankRes.data);
+      const todayMap = {};
+      for (const s of attRes.data?.summary || []) {
+        if (s.employee_id) todayMap[s.employee_id] = s.today || null;
+      }
+      setAttToday(todayMap);
       if (bankRes.data.length > 0) setSelectedBankId(bankRes.data[0].id || bankRes.data[0]._id);
     } catch (err) {
       toast.error("Personel verileri yüklenemedi.");
@@ -182,6 +192,23 @@ export default function PersonnelPage() {
     }
   }, [companyId]);
   useEffect(() => { loadPersonnelData(); }, [loadPersonnelData]);
+
+  const toggleCardLocation = async (emp, enabled) => {
+    const id = empIdOf(emp);
+    if (!id) return;
+    setLocBusyId(id);
+    try {
+      await axios.put(`${API_URL}/personnel/employees/${id}`, {
+        location_tracking: locationTrackingTogglePayload(emp.location_tracking, enabled),
+      });
+      toast.success(`${emp.full_name}: ${locationControllerLabel(enabled)}.`);
+      await loadPersonnelData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Konum ayarı kaydedilemedi.");
+    } finally {
+      setLocBusyId(null);
+    }
+  };
   const refreshPersonnelSilent = useCallback(() => loadPersonnelData(), [loadPersonnelData]);
   useDataRefresh(refreshPersonnelSilent, { companyId, scopes: ["cash", "expenses", "contacts"] });
 
@@ -648,6 +675,44 @@ export default function PersonnelPage() {
                   <span>{emp.email || '-'}</span>
                 </div>
               </div>
+              {(() => {
+                const locOn = locationTrackingEnabled(emp.location_tracking);
+                const punch = todayAttendanceParts(attToday[empKey]);
+                return (
+                  <div
+                    className={`rounded-xl border p-2.5 space-y-2 ${locOn ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"}`}
+                    data-testid={`employee-card-loc-${empKey}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleCardLocation(emp, !locOn)}
+                        disabled={locBusyId === empKey}
+                        className="inline-flex items-center gap-1.5 text-xs font-bold disabled:opacity-50"
+                        data-testid={`employee-card-loc-toggle-${empKey}`}
+                      >
+                        <span className={`inline-flex w-7 h-7 rounded-full items-center justify-center ${locOn ? "bg-emerald-200 text-emerald-800" : "bg-slate-200 text-slate-500"}`}>
+                          <MapPin className="w-3.5 h-3.5" />
+                        </span>
+                        <span className={locOn ? "text-emerald-800" : "text-slate-500"}>{locBusyId === empKey ? "Kaydediliyor…" : locationControllerLabel(locOn)}</span>
+                      </button>
+                      <span className="text-[10px] font-semibold text-slate-500" data-testid={`employee-card-loc-signal-${empKey}`}>
+                        {emp.location_last_ok === true ? "Konum alındı" : emp.location_last_ok === false ? "Konum alınamadı" : "Konum bekleniyor"}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5" data-testid={`employee-card-today-${empKey}`}>
+                      <div className="rounded-lg bg-white border border-emerald-100 px-2 py-1.5">
+                        <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Giriş</div>
+                        <div className="text-sm font-black text-slate-900">{punch.checkIn}</div>
+                      </div>
+                      <div className="rounded-lg bg-white border border-emerald-100 px-2 py-1.5">
+                        <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Çıkış</div>
+                        <div className="text-sm font-black text-slate-900">{punch.checkOut}</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <EmployeeRequestChips

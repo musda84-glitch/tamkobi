@@ -84,7 +84,7 @@ import {
   locationTrackingEnabled,
   locationControllerLabel,
   locationTrackingTogglePayload,
-  todayAttendanceLine,
+  todayAttendanceParts,
   locModeSummary,
   DEFAULT_LOC_MODE,
   type LocMode,
@@ -1180,46 +1180,68 @@ export function PersonnelScreen() {
                       Kalan izin: {cards[eid]?.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {cards[eid]?.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
                       {cards[eid]?.performance?.overall != null ? ` · performans %${cards[eid]?.performance?.overall}` : ""}
                     </Muted>
-                    {(() => {
-                      const locOn = locationTrackingEnabled(emp.location_tracking || cards[eid]?.employee?.location_tracking);
-                      const today = (attendance?.summary || []).find((s) => s.employee_id === eid)?.today || null;
-                      return (
-                        <View testID={`emp-card-loc-${eid}`} style={{ gap: 4, marginTop: 6 }}>
-                          <Pressable
-                            testID={`emp-card-loc-toggle-${eid}`}
-                            disabled={!canEdit || locBusy === eid}
-                            onPress={() => toggleCardLocation(emp, !locOn)}
-                            accessibilityLabel={locationControllerLabel(locOn)}
-                            style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
-                          >
-                            <View
-                              style={{
-                                width: 28,
-                                height: 28,
-                                borderRadius: 14,
-                                alignItems: "center",
-                                justifyContent: "center",
-                                backgroundColor: locOn ? colors.emerald100 : colors.slate100,
-                              }}
-                            >
-                              <Ionicons name={locOn ? "location" : "location-outline"} size={16} color={locOn ? "#047857" : colors.muted} />
-                            </View>
-                            <Text style={{ fontSize: 12, fontWeight: "800", color: locOn ? "#047857" : colors.muted }}>
-                              {locBusy === eid ? "Kaydediliyor…" : locationControllerLabel(locOn)}
-                            </Text>
-                          </Pressable>
-                          {(emp.location_last_ok != null || emp.location_last_at || cards[eid]?.employee?.location_last_ok != null) ? (
-                            <LocationSignalDot
-                              signal={{ ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok ?? null, at: emp.location_last_at ?? cards[eid]?.employee?.location_last_at ?? null }}
-                              testID={`emp-card-loc-signal-${eid}`}
-                            />
-                          ) : null}
-                          <Muted testID={`emp-card-today-${eid}`}>{todayAttendanceLine(today)}</Muted>
-                        </View>
-                      );
-                    })()}
                   </View>
                 </View>
+                {(() => {
+                  const locOn = locationTrackingEnabled(emp.location_tracking || cards[eid]?.employee?.location_tracking);
+                  const today = (attendance?.summary || []).find((s) => s.employee_id === eid)?.today || null;
+                  const punch = todayAttendanceParts(today);
+                  return (
+                    <View
+                      testID={`emp-card-loc-${eid}`}
+                      style={{
+                        padding: 10,
+                        borderRadius: 12,
+                        backgroundColor: locOn ? "#ECFDF5" : "#F8FAFC",
+                        borderWidth: 1,
+                        borderColor: locOn ? "#6EE7B7" : colors.border,
+                        gap: 8,
+                      }}
+                    >
+                      <Row style={{ alignItems: "center", justifyContent: "space-between" }}>
+                        <Pressable
+                          testID={`emp-card-loc-toggle-${eid}`}
+                          disabled={!canEdit || locBusy === eid}
+                          onPress={() => toggleCardLocation(emp, !locOn)}
+                          accessibilityLabel={locationControllerLabel(locOn)}
+                          style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}
+                        >
+                          <View
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: 14,
+                              alignItems: "center",
+                              justifyContent: "center",
+                              backgroundColor: locOn ? "#A7F3D0" : colors.slate100,
+                            }}
+                          >
+                            <Ionicons name={locOn ? "location" : "location-outline"} size={16} color={locOn ? "#047857" : colors.muted} />
+                          </View>
+                          <Text style={{ fontSize: 12, fontWeight: "800", color: locOn ? "#047857" : colors.muted }}>
+                            {locBusy === eid ? "Kaydediliyor…" : locationControllerLabel(locOn)}
+                          </Text>
+                        </Pressable>
+                        <LocationSignalDot
+                          signal={{ ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok ?? null, at: emp.location_last_at ?? cards[eid]?.employee?.location_last_at ?? null }}
+                          testID={`emp-card-loc-signal-${eid}`}
+                        />
+                      </Row>
+                      <Row style={{ gap: 8 }} testID={`emp-card-today-${eid}`}>
+                        <View style={{ flex: 1, minWidth: 0, padding: 8, borderRadius: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: locOn ? "#A7F3D0" : colors.border }}>
+                          <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>GİRİŞ</Text>
+                          <Text style={{ fontWeight: "800", fontSize: 16, color: colors.text }}>{punch.checkIn}</Text>
+                        </View>
+                        <View style={{ flex: 1, minWidth: 0, padding: 8, borderRadius: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: locOn ? "#A7F3D0" : colors.border }}>
+                          <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>ÇIKIŞ</Text>
+                          <Text style={{ fontWeight: "800", fontSize: 16, color: colors.text }}>{punch.checkOut}</Text>
+                        </View>
+                      </Row>
+                      {punch.late ? <Muted>{punch.late} dk geç</Muted> : null}
+                      {punch.empty ? <Muted>Bugün henüz giriş / çıkış yok</Muted> : null}
+                    </View>
+                  );
+                })()}
                 {emp.workplace?.kind === "task" || openEmployeeTasks(cards[eid]).length ? (
                   <View
                     testID={`emp-card-workplace-${eid}`}

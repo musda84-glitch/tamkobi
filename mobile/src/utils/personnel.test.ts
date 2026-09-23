@@ -90,6 +90,7 @@ import {
   locationControllerLabel,
   locationTrackingTogglePayload,
   todayAttendanceLine,
+  todayAttendanceParts,
   advanceFormToggleIcon,
   advanceFormToggleLabel,
   filterPayMoves,
@@ -330,6 +331,10 @@ describe("payroll helpers", () => {
     expect(locationTrackingTogglePayload({ enabled: true, field: { enabled: true } }, false).enabled).toBe(false);
     expect(todayAttendanceLine({ check_in: "08:50", check_out: "18:05" })).toBe("Bugün 08:50 → 18:05");
     expect(todayAttendanceLine(null)).toBe("Bugün giriş / çıkış yok");
+    expect(todayAttendanceParts({ check_in: "01:37", check_out: "10:26", late_minutes: 0 })).toEqual({
+      checkIn: "01:37", checkOut: "10:26", late: 0, empty: false,
+    });
+    expect(todayAttendanceParts(null).empty).toBe(true);
     expect(advanceFormToggleIcon(true)).toBe("eye-off-outline");
     expect(advanceFormToggleLabel(false)).toBe("Göster");
     expect(employeeCompRows({ daily_wage: 1500 }, { bonus_pending: 3000 }).find((r) => r.key === "bonus")).toMatchObject({
