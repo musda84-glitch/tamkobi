@@ -21,6 +21,28 @@ export function parkSelectGroups(parks?: unknown) {
   return [{ label: "Parkurlar", options: rows.map((p) => ({ value: p.id, label: p.name })) }];
 }
 
+/** Atölye istasyon filtresi: parkur adları; parkur yoksa iş emri istasyonları. */
+export function stationNamesFromParks(parks?: unknown, fallback?: string[]): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const p of normalizeWorkParks(parks)) {
+    const name = p.name.trim();
+    const key = name.toLocaleLowerCase("tr-TR");
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  if (names.length) return names;
+  for (const s of fallback || []) {
+    const name = String(s || "").trim();
+    const key = name.toLocaleLowerCase("tr-TR");
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  return names;
+}
+
 export function findWorkPark(parks: unknown, parkId?: string | null): WorkPark | null {
   return normalizeWorkParks(parks).find((p) => p.id === String(parkId || "")) || null;
 }

@@ -19,6 +19,27 @@ export function parkSelectGroups(parks) {
   return [{ label: "Parkurlar", options: rows.map((p) => ({ value: p.id, label: p.name })) }];
 }
 
+export function stationNamesFromParks(parks, fallback) {
+  const names = [];
+  const seen = new Set();
+  for (const p of normalizeWorkParks(parks)) {
+    const name = p.name.trim();
+    const key = name.toLocaleLowerCase("tr-TR");
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  if (names.length) return names;
+  for (const s of fallback || []) {
+    const name = String(s || "").trim();
+    const key = name.toLocaleLowerCase("tr-TR");
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  return names;
+}
+
 export function findWorkPark(parks, parkId) {
   return normalizeWorkParks(parks).find((p) => p.id === String(parkId || "")) || null;
 }

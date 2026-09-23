@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { stationNamesFromParks } from "../utils/workParks";
 
 const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
 
@@ -32,13 +33,15 @@ export default function ShopFloorPage() {
 
   const load = useCallback(async () => {
     try {
-      const [w, e, s, me] = await Promise.all([
+      const [w, e, s, parks, me] = await Promise.all([
         axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/production/work-orders/stations?company_id=${companyId}`).catch(() => ({ data: [] })),
+        axios.get(`${API_URL}/companies/${companyId}/work-parks`).catch(() => ({ data: { parks: [] } })),
         axios.get(`${API_URL}/personnel/me`, { withCredentials: true }).catch(() => ({ data: { tasks: [] } })),
       ]);
-      setWos(w.data || []); setEmployees(e.data || []); setStations(s.data || []);
+      setWos(w.data || []); setEmployees(e.data || []);
+      setStations(stationNamesFromParks(parks.data?.parks, Array.isArray(s.data) ? s.data : []));
       setDuties(Array.isArray(me.data?.tasks) ? me.data.tasks : []);
     } catch { /* keep last */ }
   }, [companyId, station]);
