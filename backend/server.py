@@ -13519,6 +13519,8 @@ async def get_ai_cashflow_forecast(company_id: Optional[str] = "comp_nexus_main_
 # Include router
 rbac.init(db, _mail_account, get_current_user)
 saas.init(db, get_current_user)
+import platform_notices
+platform_notices.init(db)
 import user_erase
 user_erase.init(db)
 import company_reset
@@ -13623,6 +13625,7 @@ app.include_router(migration.router)
 app.include_router(pricing.router)
 app.include_router(edocs.router)
 app.include_router(saas.router)
+app.include_router(platform_notices.router)
 app.include_router(user_erase.router)
 app.include_router(company_reset.router)
 app.include_router(storage_manager.router)

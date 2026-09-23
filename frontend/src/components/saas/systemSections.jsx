@@ -9,7 +9,7 @@
  * Grupların sırası ve etiketleri navGroups.js → SYSTEM_NAV_GROUPS'ta.
  */
 import React from "react";
-import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive, UserX } from "lucide-react";
+import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive, UserX, Megaphone } from "lucide-react";
 import { SaasOverview } from "./SaasOverview";
 import { CompaniesTable } from "./CompaniesTable";
 import { PlansPanel } from "./PlansPanel";
@@ -26,6 +26,7 @@ import { PlatformMailPanel } from "./PlatformMailPanel";
 import { AddonsPanel } from "./AddonsPanel";
 import { SupportTicketsPanel } from "./SupportTicketsPanel";
 import { DatabasePanel } from "./DatabasePanel";
+import { MaintenanceAnnouncePanel } from "./MaintenanceAnnouncePanel";
 
 /** `key` yol sonudur: "" → /sistem, "kotalar" → /sistem/kotalar. */
 export const sectionPath = (key) => (key ? `/sistem/${key}` : "/sistem");
@@ -45,6 +46,7 @@ export const SYSTEM_SECTIONS = [
   { key: "talepler", label: "Yükseltme Talepleri", icon: Inbox, badge: "pending_requests", render: (c) => <RequestsPanel requests={c.requests} onChanged={c.changed} onOpenCompany={c.openCompany} /> },
   { key: "odemeler", label: "Ödemeler", icon: CreditCard, render: () => <PaymentsPanel /> },
   { key: "hatirlatmalar", label: "Hatırlatmalar", icon: Bell, render: () => <RemindersPanel /> },
+  { key: "duyurular", label: "Güncelleme & Duyuru", icon: Megaphone, render: () => <MaintenanceAnnouncePanel /> },
   { key: "posta", label: "Posta Sunucusu", icon: Mail, render: () => <PlatformMailPanel /> },
   { key: "ai", label: "AI Entegrasyonu", icon: Sparkles, render: () => <AiProviderPanel /> },
   { key: "araclar", label: "AI & Destek", icon: Bot, render: () => <AddonsPanel /> },

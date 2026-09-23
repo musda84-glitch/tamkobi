@@ -90,9 +90,15 @@ COLLECTIONS = {
     },
     "platform_settings": {
         "scope": SCOPE_PLATFORM,
-        "description": "Tek satırlık platform ayarı (_id=platform): marka, deneme, GİB paketleri, AI.",
-        "keys": ("_id", "brand_name", "trial_days", "trial_plan_id", "gib_packs", "ai", "public_url"),
+        "description": "Tek satırlık platform ayarı (_id=platform): marka, deneme, GİB paketleri, AI, bakım penceresi.",
+        "keys": ("_id", "brand_name", "trial_days", "trial_plan_id", "gib_packs", "ai", "public_url", "maintenance"),
         "refs": ("saas_plans._id",),
+    },
+    "platform_announcements": {
+        "scope": SCOPE_PLATFORM,
+        "description": "Şirket panellerinde çıkan bilgilendirme pop-up duyuruları.",
+        "keys": ("_id", "title", "body", "active", "kind", "starts_at", "ends_at", "created_by"),
+        "refs": (),
     },
     "saas_plans": {
         "scope": SCOPE_PLATFORM,
