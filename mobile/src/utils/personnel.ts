@@ -110,6 +110,10 @@ export function locationControllerLabel(on: boolean): string {
   return on ? "Konum açık" : "Konum kapalı";
 }
 
+export function locationCellCaption(on: boolean): string {
+  return on ? "Açık" : "Kapalı";
+}
+
 export function locationTrackingTogglePayload(raw: LocationTracking | null | undefined, enabled: boolean): LocationTracking {
   const company = initLocMode(raw);
   const field = initLocMode(raw?.field || raw);
@@ -357,6 +361,22 @@ export function requestsForEmployee(items: PendingRequest[] | null | undefined, 
   const id = String(empId || "");
   if (!id) return [];
   return (items || []).filter((it) => String(it.employee_id || "") === id);
+}
+
+export function requestsDetailsToggleLabel(open: boolean): string {
+  return open ? "Gizle" : "Büyüt";
+}
+
+export function requestsDetailsToggleIcon(open: boolean): "chevron-up" | "chevron-down" {
+  return open ? "chevron-up" : "chevron-down";
+}
+
+export function requestsDetailsSummary(items: PendingRequest[] | null | undefined): string {
+  const rows = items || [];
+  if (!rows.length) return "Talep yok";
+  const first = rows[0];
+  const head = `${requestKindLabel(first.kind)} · ${first.title || "Talep"}`;
+  return rows.length > 1 ? `${head} · +${rows.length - 1}` : head;
 }
 
 export function employeeStatusLabel(status?: string | null): string {

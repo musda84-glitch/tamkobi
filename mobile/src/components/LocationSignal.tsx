@@ -12,18 +12,22 @@ const DOT = {
 export function LocationSignalDot({
   signal,
   testID = "loc-signal",
+  compact = false,
 }: {
   signal?: LocationSignal | null;
   testID?: string;
+  compact?: boolean;
 }) {
   const view = normalizeLocationSignal(signal);
   return (
-    <View testID={testID} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+    <View testID={testID} style={{ flexDirection: "row", alignItems: "center", gap: compact ? 4 : 8 }}>
       <View
         testID={`${testID}-dot`}
-        style={{ width: 10, height: 10, borderRadius: 999, backgroundColor: DOT[view.tone] }}
+        style={{ width: compact ? 7 : 10, height: compact ? 7 : 10, borderRadius: 999, backgroundColor: DOT[view.tone] }}
       />
-      <Text style={{ fontWeight: "700", fontSize: 12, color: colors.text }}>{view.label}</Text>
+      <Text style={{ fontWeight: "700", fontSize: compact ? 9 : 12, color: compact ? colors.muted : colors.text }} numberOfLines={1}>
+        {view.label}
+      </Text>
     </View>
   );
 }

@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Bell, CalendarDays, Check, Clock, Coins, Loader2, MapPin, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight } from "lucide-react";
+import { Bell, CalendarDays, Check, ChevronDown, ChevronUp, Clock, Coins, Loader2, MapPin, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
+import { requestsDetailsToggleLabel } from "../utils/employeeCardStatus";
 
 export const KIND_META = {
   leave: { label: "İzin", Icon: CalendarDays, chip: "bg-indigo-50 text-indigo-700 border-indigo-100" },
@@ -32,14 +33,31 @@ export function EmployeeRequestChips({
   onViewDispute,
   maxVisible = 3,
 }) {
+  const [open, setOpen] = useState(false);
   if (!items?.length) return null;
   const shown = items.slice(0, maxVisible);
   const extra = items.length - shown.length;
+  const first = items[0];
+  const firstMeta = KIND_META[first.kind] || KIND_META.leave;
+  const summary = `${firstMeta.label} · ${first.title || "Talep"}${items.length > 1 ? ` · +${items.length - 1}` : ""}`;
   return (
-    <div className="space-y-1.5 pt-2 border-t border-amber-100" data-testid={testId}>
-      <div className="flex items-center gap-1 text-[10px] font-bold text-amber-800 uppercase tracking-wide">
-        <Bell className="w-3 h-3" /> Talepler ({items.length})
-      </div>
+    <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 space-y-1.5" data-testid={testId}>
+      <button
+        type="button"
+        onClick={() => setOpen((cur) => !cur)}
+        aria-label={requestsDetailsToggleLabel(open)}
+        className="flex w-full items-center gap-1.5 min-h-7"
+        data-testid={`${testId}-toggle`}
+      >
+        <Bell className="w-3 h-3 text-amber-800 shrink-0" />
+        <span className="text-[11px] font-extrabold text-amber-900 shrink-0">Talepler ({items.length})</span>
+        <span className="min-w-0 flex-1 truncate text-[10px] font-semibold text-slate-500 text-left">{summary}</span>
+        <span className="inline-flex w-6 h-6 rounded-full bg-amber-200 text-amber-900 items-center justify-center shrink-0" data-testid={`${testId}-toggle-icon`}>
+          {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        </span>
+      </button>
+      {open ? (
+      <>
       {shown.map((it) => {
         const meta = KIND_META[it.kind] || KIND_META.leave;
         const Icon = meta.Icon;
@@ -144,6 +162,8 @@ export function EmployeeRequestChips({
           +{extra} talep daha — üstteki Personel Talepleri kutusundan bakın
         </div>
       )}
+      </>
+      ) : null}
     </div>
   );
 }
