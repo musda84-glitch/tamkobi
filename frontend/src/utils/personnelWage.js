@@ -137,11 +137,11 @@ export function yevmiyeStatusLine(rec) {
     return `Yevmiye ${proposed} ₺ önerildi — yönetici onayı bekleniyor`;
   }
   if (adj.status === "approved") {
-    return `Yevmiye ${adj.final_amount ?? proposed} ₺ (geç/erken onaylandı)`;
+    return `Yevmiye ${adj.final_amount ?? proposed} ₺ (ücret kesildi)`;
   }
   if (adj.status === "rejected" && full) {
-    return `Yevmiye ${full} ₺ (kart ücreti)`;
+    return `Yevmiye ${full} ₺ (ücret kesilmedi)`;
   }
-  if (full) return `Yevmiye ${full} ₺ (kart ücreti)`;
+  if (full) return `Yevmiye ${full} ₺`;
   return "";
 }

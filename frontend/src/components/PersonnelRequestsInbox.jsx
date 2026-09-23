@@ -12,7 +12,7 @@ export const KIND_META = {
   intraday_leave: { label: "Gün içi izin", Icon: ArrowLeftRight, chip: "bg-sky-50 text-sky-800 border-sky-100" },
   dispute: { label: "İtiraz", Icon: MessageSquareWarning, chip: "bg-rose-50 text-rose-700 border-rose-100" },
   advance: { label: "Avans", Icon: Wallet, chip: "bg-amber-50 text-amber-800 border-amber-100" },
-  yevmiye_adjustment: { label: "Yevmiye", Icon: Coins, chip: "bg-amber-50 text-amber-900 border-amber-200" },
+  yevmiye_adjustment: { label: "Geç giriş ücreti", Icon: Coins, chip: "bg-amber-50 text-amber-900 border-amber-200" },
   location_exit: { label: "Konum dışı", Icon: MapPin, chip: "bg-emerald-50 text-emerald-800 border-emerald-200" },
 };
 
@@ -98,11 +98,11 @@ export function EmployeeRequestChips({
               )}
               {it.kind === "yevmiye_adjustment" && (
                 <>
-                  <button type="button" disabled={busy} onClick={() => onDecideYevmiye?.(it.id, "approve")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-yevmiye-${it.id}`}>
-                    <Check className="w-2.5 h-2.5" /> Onayla
+                  <button type="button" disabled={busy} onClick={() => onDecideYevmiye?.(it.id, "approve")} className={`${chipBtn} bg-amber-500 text-white hover:bg-amber-600`} data-testid={`card-approve-yevmiye-${it.id}`}>
+                    Ücret kes
                   </button>
-                  <button type="button" disabled={busy} onClick={() => onDecideYevmiye?.(it.id, "reject")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-yevmiye-${it.id}`}>
-                    <X className="w-2.5 h-2.5" /> Kart ücreti
+                  <button type="button" disabled={busy} onClick={() => onDecideYevmiye?.(it.id, "reject")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-reject-yevmiye-${it.id}`}>
+                    Ücret kesme
                   </button>
                 </>
               )}
@@ -232,7 +232,7 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     setBusyId(id);
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/yevmiye-decision`, { decision });
-      toast.success(r.data?.message || (decision === "approve" ? "Yevmiye onaylandı." : "Kart ücreti bırakıldı."));
+      toast.success(r.data?.message || (decision === "approve" ? "Ücret kesildi." : "Ücret kesilmedi."));
       await load();
       onChanged?.();
     } catch (err) {
@@ -369,11 +369,11 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                   )}
                   {it.kind === "yevmiye_adjustment" && (
                     <>
-                      <button type="button" disabled={busy} onClick={() => decideYevmiye(it.id, "approve")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-yevmiye-${it.id}`}>
-                        <Check className="w-3 h-3" /> Onayla
+                      <button type="button" disabled={busy} onClick={() => decideYevmiye(it.id, "approve")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500 text-white text-[10px] font-bold hover:bg-amber-600 disabled:opacity-50" data-testid={`inbox-approve-yevmiye-${it.id}`}>
+                        Ücret kes
                       </button>
-                      <button type="button" disabled={busy} onClick={() => decideYevmiye(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-yevmiye-${it.id}`}>
-                        <X className="w-3 h-3" /> Kart ücreti
+                      <button type="button" disabled={busy} onClick={() => decideYevmiye(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-reject-yevmiye-${it.id}`}>
+                        Ücret kesme
                       </button>
                     </>
                   )}

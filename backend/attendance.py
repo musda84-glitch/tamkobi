@@ -1376,8 +1376,8 @@ async def sync_yevmiye_adjustment(emp: dict, rec: dict, schedule: dict) -> Optio
     await notify_managers(
         emp["company_id"],
         "yevmiye_adjustment",
-        f"Yevmiye düzeltmesi: {emp.get('full_name')}",
-        f"{emp.get('full_name')} {rec.get('date')}: kart {wage} ₺ → önerilen {proposed} ₺"
+        f"Geç giriş ücreti: {emp.get('full_name')}",
+        f"{emp.get('full_name')} {rec.get('date')}: tam {wage} ₺ → kesilecek {proposed} ₺ · Ücret kes / ücret kesme"
         + (f" · {late} dk geç" if late else "")
         + (f" · {early} dk erken" if early else ""),
         link="/personnel?tab=attendance",
@@ -1428,7 +1428,7 @@ async def decide_yevmiye_adjustment(att_id: str, req: Dict[str, Any], request: R
         "company_id": rec["company_id"],
         "user_id": emp_row.get("user_id") or rec.get("employee_id"),
         "type": "yevmiye_adjustment",
-        "title": "Yevmiye " + ("onaylandı" if approved else "kart ücreti kaldı"),
+        "title": "Ücret kesildi" if approved else "Ücret kesilmedi",
         "message": f"{rec.get('employee_name')} — {final_amt} ₺",
         "link": "/mesai",
         "is_read": False,
@@ -1438,7 +1438,7 @@ async def decide_yevmiye_adjustment(att_id: str, req: Dict[str, Any], request: R
     })
     return {
         "status": "success",
-        "message": f"Yevmiye {final_amt} ₺ olarak " + ("onaylandı." if approved else "kart ücretiyle bırakıldı."),
+        "message": ("Ücret kesildi." if approved else "Ücret kesilmedi.") + f" Yevmiye {final_amt:g} ₺.",
         "amount": final_amt,
         "approved": approved,
     }

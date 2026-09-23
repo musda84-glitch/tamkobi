@@ -1297,8 +1297,8 @@ export function PersonnelScreen() {
                     ) : null}
                     {yevAdj ? (
                       <>
-                        <PrimaryButton title="Yevmiye onayla" color={colors.primary} testID={`att-yevmiye-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "yevmiye_adjustment" }, true)} />
-                        <PrimaryButton title="Kart ücreti" color={colors.danger} testID={`att-yevmiye-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "yevmiye_adjustment" }, false)} />
+                        <PrimaryButton title="Ücret kes" color={colors.warning} testID={`att-yevmiye-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "yevmiye_adjustment" }, true)} />
+                        <PrimaryButton title="Ücret kesme" color={colors.primary} testID={`att-yevmiye-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "yevmiye_adjustment" }, false)} />
                       </>
                     ) : null}
                     {locExit ? (
