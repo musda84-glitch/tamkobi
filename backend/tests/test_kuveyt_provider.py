@@ -139,6 +139,66 @@ def test_kuveyt_normalize_connection_secrets_on_save():
     assert other["client_id"] == " a "
 
 
+def _rsa_pkcs1_pem() -> str:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+
+
+def test_kuveyt_load_private_key_pkcs8_and_pkcs1():
+    pkcs8 = _rsa_pem()
+    pkcs1 = _rsa_pkcs1_pem()
+    assert bp._kuveyt_load_private_key(pkcs8) is not None
+    assert bp._kuveyt_load_private_key(pkcs1) is not None
+    # Bare base64 body (headers stripped) still loads
+    body = "".join(
+        ln for ln in pkcs8.splitlines()
+        if ln and not ln.startswith("-----")
+    )
+    assert bp._kuveyt_load_private_key(body) is not None
+
+
+def test_kuveyt_load_private_key_rejects_public_key():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub = key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+    try:
+        bp._kuveyt_load_private_key(pub)
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "PUBLIC KEY" in str(e) or "genel anahtar" in str(e)
+
+
+def test_kuveyt_load_private_key_markdown_fence():
+    pem = _rsa_pem()
+    fenced = f"```\n{pem}\n```"
+    assert bp._kuveyt_load_private_key(fenced) is not None
+
+
+def test_kuveyt_normalize_connection_secrets_wraps_bare_private_key():
+    pem = _rsa_pem()
+    body = "".join(ln for ln in pem.splitlines() if ln and not ln.startswith("-----"))
+    out = bp.normalize_kuveyt_connection_secrets({
+        "provider": "kuveytturk",
+        "private_key": body,
+    })
+    assert "BEGIN PRIVATE KEY" in out["private_key"]
+    assert bp._kuveyt_load_private_key(out["private_key"]) is not None
+
+
+def test_kuveyt_api_key_uuid_not_used_as_private_key():
+    pem = bp._kuveyt_private_key_pem({
+        "provider": "kuveytturk",
+        "api_key": "cc44b566-8006-4712-bf45-1e1b7c64b4da",
+    })
+    assert pem == ""
+
+
 def test_kuveyt_cred_swap_hints_client_id_equals_api_key():
     key = "cc44b566-8006-4712-bf45-1e1b7c64b4da"
     hints = bp._kuveyt_cred_swap_hints(key, "long-opaque-secret-value-here", key)
