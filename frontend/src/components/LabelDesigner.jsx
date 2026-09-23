@@ -9,6 +9,7 @@ import { Barcode } from "./BarcodeLabelPrint";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
 import { formatTrAmount, moneySuffix } from "../utils/money";
+import { productLabelImageUrl } from "../utils/productImages";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
@@ -48,7 +49,8 @@ const builtinTemplates = () => BUILTIN_SIZES.map(([w, h]) => ({
 const cardPrintTargets = (product) => {
   if (!product) return [];
   const pid = product.id || product._id;
-  const main = { ...product, id: pid, variant_name: "" };
+  const labelImg = productLabelImageUrl(product);
+  const main = { ...product, id: pid, variant_name: "", image_url: labelImg || product.image_url };
   const variants = (product.variants || []).map((v) => ({
     ...product,
     id: v.variant_id || v.sku || `${pid}-${v.name}`,
@@ -56,7 +58,7 @@ const cardPrintTargets = (product) => {
     sku: v.sku || product.sku,
     barcode: v.barcode || product.barcode,
     sale_price: v.sale_price ?? v.price ?? product.sale_price,
-    image_url: v.image_url || product.image_url,
+    image_url: v.image_url || labelImg || product.image_url,
     variant_name: v.name,
     variants: undefined,
   }));
