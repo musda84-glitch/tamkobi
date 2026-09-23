@@ -223,6 +223,37 @@ const UserEraseSection = () => {
 
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setSelected(null)} className="px-3 py-2 rounded-xl border border-slate-200 font-semibold text-slate-600">İptal</button>
+            <button
+              type="button"
+              disabled={busy || !(selected?.company_ids || []).length}
+              onClick={async () => {
+                const cid = (selected.company_ids || [])[0];
+                if (!cid) { toast.error("Şirket bulunamadı."); return; }
+                setBusy(true);
+                try {
+                  const r = await axios.post(
+                    `${API_URL}/system/companies/${cid}/deletion-confirmations`,
+                    {
+                      kind: "user_erase",
+                      subject: "Kullanıcı verisi silme onayı",
+                      body: `Platform yönetimi “${selected.email}” kullanıcısının kişisel verilerini silmek için onayınızı istiyor. Destek Talepleri ekranından yanıtınızı yazın.`,
+                      target_label: selected.email,
+                      target_user_id: selected.id,
+                    },
+                    cred,
+                  );
+                  toast.success(r.data.message || "Onay talebi gönderildi.");
+                } catch (e) {
+                  toast.error(e.response?.data?.detail || "Talep gönderilemedi.");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              className="px-3 py-2 rounded-xl border border-rose-300 text-rose-800 bg-rose-50 font-semibold disabled:opacity-50"
+              data-testid="sys-erase-request-confirm"
+            >
+              Müşteriden onay iste
+            </button>
             <button type="submit" disabled={!ready || busy} className="px-4 py-2 rounded-xl bg-rose-600 text-white font-bold inline-flex items-center gap-1.5 disabled:opacity-50" data-testid="sys-erase-submit">
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
               Kalıcı olarak sil
@@ -564,6 +595,34 @@ const CompanyResetSection = () => {
 
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setSelected(null)} className="px-3 py-2 rounded-xl border border-slate-200 font-semibold text-slate-600">İptal</button>
+            <button
+              type="button"
+              disabled={busy || previewLoading}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const r = await axios.post(
+                    `${API_URL}/system/companies/${selected.id}/deletion-confirmations`,
+                    {
+                      kind: "company_reset",
+                      subject: "Şirket veri sıfırlama onayı",
+                      body: `Platform yönetimi “${selected.name}” için veri sıfırlama onayı istiyor. Destek Talepleri ekranından onay veya red yanıtınızı yazın.`,
+                      target_label: selected.name,
+                    },
+                    cred,
+                  );
+                  toast.success(r.data.message || "Onay talebi gönderildi.");
+                } catch (e) {
+                  toast.error(e.response?.data?.detail || "Talep gönderilemedi.");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              className="px-3 py-2 rounded-xl border border-rose-300 text-rose-800 bg-rose-50 font-semibold disabled:opacity-50"
+              data-testid="sys-reset-request-confirm"
+            >
+              Müşteriden onay iste
+            </button>
             <button type="submit" disabled={!ready || busy || previewLoading} className="px-4 py-2 rounded-xl bg-amber-600 text-white font-bold inline-flex items-center gap-1.5 disabled:opacity-50" data-testid="sys-reset-submit">
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
               Seçili kapsamı sıfırla

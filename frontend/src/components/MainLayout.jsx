@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
@@ -58,7 +58,83 @@ import {
   Headset,
   PanelLeftClose,
   PanelLeft,
+  Unplug,
 } from "lucide-react";
+
+const formatElapsed = (startedAt) => {
+  if (!startedAt) return "";
+  const start = new Date(startedAt).getTime();
+  if (!Number.isFinite(start)) return "";
+  const sec = Math.max(0, Math.floor((Date.now() - start) / 1000));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}s ${String(m).padStart(2, "0")}dk`;
+  if (m > 0) return `${m}dk ${String(s).padStart(2, "0")}sn`;
+  return `${s}sn`;
+};
+
+/** Sticky header: yönetim paneli bağlantısı (süre + kapat). */
+const SupportConnectionChip = ({ companyId, impersonation, isAdmin, onExitImpersonation }) => {
+  const [session, setSession] = useState(null);
+  const [elapsed, setElapsed] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    if (!companyId) return;
+    try {
+      const r = await axios.get(`${API_URL}/companies/${companyId}/support-session`, { withCredentials: true });
+      setSession(r.data.session || null);
+    } catch { setSession(null); }
+  }, [companyId]);
+  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
+  const active = impersonation || session;
+  const startedAt = impersonation?.started_at || session?.started_at;
+  const byName = impersonation?.name || impersonation?.by || session?.name || session?.by;
+  useEffect(() => {
+    if (!active) { setElapsed(""); return undefined; }
+    const tick = () => setElapsed(formatElapsed(startedAt));
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [active, startedAt]);
+  if (!active) return null;
+  const close = async () => {
+    setBusy(true);
+    try {
+      if (impersonation) {
+        await onExitImpersonation();
+        return;
+      }
+      if (!isAdmin) { toast.error("Bağlantıyı yalnızca yönetici kapatabilir."); return; }
+      if (!window.confirm("Yönetim paneli bağlantısı kapatılsın mı?")) return;
+      const r = await axios.post(`${API_URL}/companies/${companyId}/support-session/close`, {}, { withCredentials: true });
+      toast.success(r.data.message || "Bağlantı kapatıldı.");
+      setSession(null);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Kapatılamadı.");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="flex items-center gap-1.5 sm:gap-2 rounded-lg bg-slate-900 text-amber-200 px-2 sm:px-2.5 py-1 text-[10px] sm:text-[11px] font-semibold max-w-[min(420px,55vw)]" data-testid="support-connection-chip">
+      <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-amber-300" />
+      <span className="truncate" data-testid="support-connection-info">
+        Yönetim paneli bağlı{byName ? ` · ${byName}` : ""}
+        {elapsed ? <span className="text-amber-100/80"> · {elapsed}</span> : null}
+      </span>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={close}
+        className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 text-slate-900 font-bold hover:bg-amber-300 disabled:opacity-50"
+        data-testid={impersonation ? "impersonation-exit" : "support-connection-close"}
+        title="Bağlantıyı kapat"
+      >
+        <Unplug className="w-3 h-3" />
+        <span className="hidden sm:inline">Bağlantıyı kapat</span>
+      </button>
+    </div>
+  );
+};
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, activeCompany, logout, feature, license, moduleOn, addonOn, loading, menuItems: orderedMenu, moveModulePath, permPath } = useAuth();
@@ -181,15 +257,21 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
       <div className={`flex-1 flex flex-col min-w-0 transition-[padding] duration-300 ${sidebarCollapsed ? "lg:pl-16" : "lg:pl-64"}`}>
         <header className="h-16 bg-white border-b border-slate-200/80 px-4 sm:px-8 flex items-center justify-between sticky top-0 z-30 shadow-sm backdrop-blur-md bg-white/90">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <button onClick={() => setMobileMenuOpen(true)} className="lg:hidden p-2 text-slate-600 hover:bg-slate-100 rounded-lg" data-testid="mobile-menu-toggle">
               <Menu className="w-5 h-5" />
             </button>
-            <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500">
-              <span className="font-medium text-slate-700">{activeCompany?.name}</span>
+            <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 min-w-0">
+              <span className="font-medium text-slate-700 truncate max-w-[220px] lg:max-w-[280px]">{activeCompany?.name}</span>
               <span>•</span>
               <LicenseBadge license={license} />
             </div>
+            <SupportConnectionChip
+              companyId={activeCompany?.id || activeCompany?._id}
+              impersonation={user?.impersonation}
+              isAdmin={user?.role === "admin"}
+              onExitImpersonation={exitImpersonation}
+            />
           </div>
 
           <div className="flex items-center gap-2.5">
@@ -223,14 +305,6 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           </div>
         </header>
 
-        {user?.impersonation && (
-          <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-slate-900 text-amber-200 text-xs rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2" data-testid="impersonation-banner">
-            <span>
-              <ShieldCheck className="inline w-3.5 h-3.5 mr-1" /> <b>Destek modu:</b> {activeCompany?.name} şirketine {user.impersonation.name || user.impersonation.by} tarafından girildi. Yaptığınız işlemler bu şirkete kaydedilir.
-            </span>
-            <button onClick={exitImpersonation} className="px-3 py-1 bg-amber-400 text-slate-900 rounded-lg font-bold" data-testid="impersonation-exit">Destek modunu bitir</button>
-          </div>
-        )}
         <SupportContactBar companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
         {user && user.role !== "admin" && user.features && user.features.view_prices === false && (
           <div className="mx-4 sm:mx-6 lg:mx-8 mt-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl px-3 py-2" data-testid="prices-masked-banner">Rolünüz gereği fiyat, tutar ve bakiye bilgileri gizlenmiştir (0 olarak görünür).</div>

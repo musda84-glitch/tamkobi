@@ -265,7 +265,26 @@ async def get_current_user(request: Request) -> dict:
             return clean_doc(admin)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Giriş yapmanız gerekiyor.")
 
-    return await get_user_from_token(token, db)
+    user = await get_user_from_token(token, db)
+    # Revoked support sessions must not keep acting as the company
+    try:
+        import jwt as _jwt
+        from auth_utils import get_jwt_secret, JWT_ALGORITHM
+        payload = _jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        sid = payload.get("imp_session")
+        if sid:
+            import support_access
+            doc = await support_access.session_by_id(sid)
+            if not doc or doc.get("status") != "active" or not support_access.public_session(doc):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Yönetim paneli bağlantısı kapatıldı. Panele tekrar giriş yapın.",
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    return user
 
 # ----------------- AUTH ENDPOINTS -----------------
 class LoginRequest(BaseModel):
@@ -2193,7 +2212,7 @@ async def get_me(request: Request):
             "employee_id": (emp or {}).get("_id") or user.get("employee_id"),
         },
         "authenticated": True,
-        "impersonation": saas_extras.impersonation_info(request),
+        "impersonation": await saas_extras.impersonation_info(request),
         "companies": clean_docs(companies),
         "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
     }
@@ -13387,6 +13406,8 @@ staff_messages.init(db, get_current_user)
 saas_billing.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send, "wa_send": wa_send})
 gib_credits.init(db)
 saas_extras.init(db, {"mail_account": _mail_account, "smtp_send": comm_service.smtp_send})
+import support_access
+support_access.init(db, get_current_user)
 saas_docs.init(db)
 data_export.init(db, get_current_user)
 legal_docs.init(db, get_current_user)
@@ -13485,6 +13506,7 @@ app.include_router(staff_messages.router)
 app.include_router(saas_billing.router)
 app.include_router(gib_credits.router)
 app.include_router(saas_extras.router)
+app.include_router(support_access.router)
 app.include_router(saas_docs.router)
 app.include_router(trade.router)
 app.include_router(order_pick.router)
