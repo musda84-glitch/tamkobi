@@ -156,5 +156,10 @@ describe("pickerFileMeta and upload target", () => {
       path: "/files/upload",
       query: { entity: "partner_photo", entity_id: "ort1", company_id: "c1" },
     });
+    expect(imageUploaderCopy("employee").label).toMatch(/Personel/);
+    expect(imageUploadRequest("employee", "e1", "c1")).toEqual({
+      path: "/files/upload",
+      query: { entity: "employee_photo", entity_id: "e1", company_id: "c1" },
+    });
   });
 });

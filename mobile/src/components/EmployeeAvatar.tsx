@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Image, Platform, Text, View } from "react-native";
+import { Image, Platform, Pressable, Text, View } from "react-native";
 import { displayFileUrl } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { employeeInitials } from "../utils/personnel";
@@ -9,18 +9,20 @@ export function EmployeeAvatar({
   photoUrl,
   size = 48,
   testID,
+  onLongPress,
 }: {
   name?: string | null;
   photoUrl?: string | null;
   size?: number;
   testID?: string;
+  onLongPress?: () => void;
 }) {
   const { client } = useAuth();
   const src = displayFileUrl(client.baseUrl, photoUrl, Platform.OS === "web");
   const [failed, setFailed] = useState(false);
-  return (
+  const inner = (
     <View
-      testID={testID}
+      testID={onLongPress ? undefined : testID}
       accessibilityLabel={name ? `${name} fotoğrafı` : "Personel fotoğrafı"}
       style={{
         width: size,
@@ -46,5 +48,17 @@ export function EmployeeAvatar({
         </Text>
       )}
     </View>
+  );
+  if (!onLongPress) return inner;
+  return (
+    <Pressable
+      testID={testID}
+      accessibilityLabel={name ? `${name} fotoğrafı` : "Personel fotoğrafı"}
+      accessibilityHint="Fotoğraf için basılı tutun"
+      delayLongPress={350}
+      onLongPress={onLongPress}
+    >
+      {inner}
+    </Pressable>
   );
 }
