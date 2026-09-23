@@ -468,7 +468,7 @@ export default function PersonnelPage() {
     setBusyReqId(id);
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/yevmiye-decision`, { decision });
-      toast.success(r.data?.message || (decision === "approve" ? "Yevmiye onaylandı." : "Kart ücreti bırakıldı."));
+      toast.success(r.data?.message || (decision === "approve" ? "Ücret kesildi." : "Ücret kesilmedi."));
       await afterRequestDecision();
     } catch (err) {
       toast.error(err.response?.data?.detail || "İşlem başarısız.");

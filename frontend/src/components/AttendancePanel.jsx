@@ -54,7 +54,7 @@ export const AttendancePanel = ({ companyId }) => {
   const decideYevmiye = async (id, decision) => {
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/yevmiye-decision`, { decision }, { withCredentials: true });
-      toast.success(r.data.message || (decision === "approve" ? "Yevmiye onaylandı." : "Kart ücreti bırakıldı."));
+      toast.success(r.data.message || (decision === "approve" ? "Ücret kesildi." : "Ücret kesilmedi."));
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
   };
@@ -123,8 +123,8 @@ export const AttendancePanel = ({ companyId }) => {
               </span>
               {r.yevmiye_adjustment_request?.status === "pending" ? (
                 <>
-                  <button type="button" onClick={() => decideYevmiye(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-yevmiye-approve-${r.id}`}>Onayla</button>
-                  <button type="button" onClick={() => decideYevmiye(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-yevmiye-reject-${r.id}`}>Kart ücreti</button>
+                  <button type="button" onClick={() => decideYevmiye(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-amber-500 text-white font-bold" data-testid={`att-yevmiye-approve-${r.id}`}>Ücret kes</button>
+                  <button type="button" onClick={() => decideYevmiye(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-yevmiye-reject-${r.id}`}>Ücret kesme</button>
                 </>
               ) : null}
             </span>

@@ -8387,8 +8387,8 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             "id": att.get("_id") or att.get("id"),
             "employee_id": att.get("employee_id"),
             "employee_name": att.get("employee_name") or "—",
-            "title": "Yevmiye düzeltmesi",
-            "detail": f"{att.get('date') or ''} · kart {float(full_amt):,.2f} ₺ → önerilen {float(proposed):,.2f} ₺"
+            "title": "Geç giriş — ücret",
+            "detail": f"{att.get('date') or ''} · tam {float(full_amt):,.2f} ₺ → kesilecek {float(proposed):,.2f} ₺"
                       + (f" · {' · '.join(bits)}" if bits else ""),
             "created_at": adj.get("requested_at") or att.get("updated_at") or att.get("date") or "",
             "link": "/personnel?tab=attendance",

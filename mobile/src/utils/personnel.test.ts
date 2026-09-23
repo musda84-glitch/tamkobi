@@ -143,7 +143,7 @@ describe("employee draft", () => {
     expect(employeeStatusLabel("terminated")).toBe("İşten çıktı");
     expect(employeeStatusLabel("active")).toBe("Aktif");
     expect(requestKindLabel("early_leave")).toBe("Erken çıkış");
-    expect(requestKindLabel("yevmiye_adjustment")).toBe("Yevmiye");
+    expect(requestKindLabel("yevmiye_adjustment")).toBe("Geç giriş ücreti");
     expect(pendingRequestDecision({ id: "l1", kind: "leave" }, true)).toEqual({
       path: "/personnel/leaves/l1/decide", body: { status: "approved" },
     });
@@ -163,7 +163,9 @@ describe("employee draft", () => {
     expect(pendingRequestDecisionMessage({ kind: "location_exit" }, "deduct")).toBe("Konum dışı çıkış: ücretten kesinti uygulandı.");
     expect(requestDecisionActions("location_exit").map((a) => a.title)).toEqual(["Haberim var", "Kesinti olmasın", "Kesinti olsun", "Reddet"]);
     expect(pendingRequestDecisionMessage({ kind: "early_leave" }, false)).toBe("Erken çıkış reddedildi.");
-    expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, false)).toBe("Yevmiye kart ücretiyle bırakıldı.");
+    expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, true)).toBe("Ücret kesildi.");
+    expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, false)).toBe("Ücret kesilmedi.");
+    expect(requestDecisionActions("yevmiye_adjustment").map((a) => a.title)).toEqual(["Ücret kes", "Ücret kesme"]);
     expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);
     expect(companyBonusPayload("e1", "second_salary", "2000", "2026-09", "", "not").type).toBe("second_salary");
     expect(bonusesPeriodTotal([{ period: "2026-09", amount: 100 }, { period: "2026-08", amount: 50 }], "2026-09")).toBe(100);
@@ -493,6 +495,14 @@ describe("employee card actions", () => {
       yevmiye_full_amount: 1500,
       yevmiye_adjustment_request: { status: "pending", proposed_amount: 1200 },
     })).toMatch(/1200/);
+    expect(yevmiyeStatusLine({
+      yevmiye_full_amount: 1500,
+      yevmiye_adjustment_request: { status: "approved", proposed_amount: 1200, final_amount: 1200 },
+    })).toContain("ücret kesildi");
+    expect(yevmiyeStatusLine({
+      yevmiye_full_amount: 1500,
+      yevmiye_adjustment_request: { status: "rejected" },
+    })).toContain("ücret kesilmedi");
     expect(ledgerPayPayload("e1", "alacak", "2500", "2026-09", "", "fazla")).toMatchObject({
       employee_id: "e1", type: "bakiye", amount: 2500, account_id: null, note: "fazla",
     });
