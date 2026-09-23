@@ -75,6 +75,17 @@ export function lastPurchaseLabel(
   return `Son alış ${money(price)}${who}`;
 }
 
+export function lastSaleLabel(
+  p?: Pick<Product, "last_sale_price" | "sale_price" | "last_sale_contact"> | null,
+  money: (n?: number) => string = () => "",
+): string {
+  if (!p) return "";
+  const price = Number(p.last_sale_price != null ? p.last_sale_price : p.sale_price);
+  if (!Number.isFinite(price) || price <= 0) return "";
+  const who = p.last_sale_contact ? ` · ${p.last_sale_contact}` : "";
+  return `Son satış ${money(price)}${who}`;
+}
+
 export function stockRowSubtitle(
   p: Pick<Product, "sku" | "barcode" | "type" | "sale_price" | "is_active" | "category">,
   typeLabel: string,

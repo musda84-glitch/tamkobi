@@ -240,6 +240,9 @@ export type Product = {
   last_purchase_price?: number | null;
   last_purchase_date?: string | null;
   last_purchase_supplier?: string | null;
+  last_sale_price?: number | null;
+  last_sale_date?: string | null;
+  last_sale_contact?: string | null;
   purchase_vat_rate?: number;
   min_stock_alert?: number;
   show_in_b2b?: boolean;

@@ -93,6 +93,7 @@ export default function StockBarcodePage() {
   const [produceProduct, setProduceProduct] = useState(null);
   const [movesProduct, setMovesProduct] = useState(null);
   const [moves, setMoves] = useState([]);
+  const [movesMeta, setMovesMeta] = useState(null);
   const [movesBusy, setMovesBusy] = useState(false);
   const [reorder, setReorder] = useState(null);
   const [detailTab, setDetailTab] = useState("images");
@@ -119,10 +120,22 @@ export default function StockBarcodePage() {
     if (!id) return;
     setMovesProduct(prod);
     setMoves([]);
+    setMovesMeta(null);
     setMovesBusy(true);
     try {
       const r = await axios.get(`${API_URL}/products/${id}/movements`);
       setMoves(r.data?.movements || []);
+      setMovesMeta({
+        currency: r.data?.currency || prod.currency || "TRY",
+        last_purchase_price: r.data?.last_purchase_price ?? prod.purchase_price,
+        last_purchase_supplier: r.data?.last_purchase_supplier,
+        last_purchase_date: r.data?.last_purchase_date,
+        last_sale_price: r.data?.last_sale_price ?? prod.sale_price,
+        last_sale_contact: r.data?.last_sale_contact,
+        last_sale_date: r.data?.last_sale_date,
+        purchase_price: r.data?.purchase_price ?? prod.purchase_price,
+        sale_price: r.data?.sale_price ?? prod.sale_price,
+      });
     } catch (err) {
       toast.error(err.response?.data?.detail || "Stok hareketleri yüklenemedi.");
       setMovesProduct(null);
@@ -607,17 +620,59 @@ export default function StockBarcodePage() {
               </div>
               <button type="button" onClick={() => setMovesProduct(null)} className="p-1 text-slate-400 hover:text-slate-700" data-testid="stock-moves-close"><X className="w-5 h-5" /></button>
             </div>
+            {movesMeta && (
+              <div className="grid grid-cols-2 gap-2 px-4 pt-3" data-testid="stock-moves-price-summary">
+                <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2">
+                  <div className="text-[10px] font-semibold uppercase text-amber-800/80">Son alış</div>
+                  <div className="text-sm font-bold text-amber-950" data-testid="stock-moves-last-purchase">
+                    {movesMeta.last_purchase_price != null && movesMeta.last_purchase_price !== ""
+                      ? fmtMoney(Number(movesMeta.last_purchase_price), movesMeta.currency)
+                      : "—"}
+                  </div>
+                  {(movesMeta.last_purchase_supplier || movesMeta.last_purchase_date) && (
+                    <div className="text-[10px] text-amber-800/70 truncate">
+                      {[movesMeta.last_purchase_supplier, String(movesMeta.last_purchase_date || "").slice(0, 10)].filter(Boolean).join(" · ")}
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-3 py-2">
+                  <div className="text-[10px] font-semibold uppercase text-emerald-800/80">Son satış</div>
+                  <div className="text-sm font-bold text-emerald-950" data-testid="stock-moves-last-sale">
+                    {movesMeta.last_sale_price != null && movesMeta.last_sale_price !== ""
+                      ? fmtMoney(Number(movesMeta.last_sale_price), movesMeta.currency)
+                      : "—"}
+                  </div>
+                  {(movesMeta.last_sale_contact || movesMeta.last_sale_date) && (
+                    <div className="text-[10px] text-emerald-800/70 truncate">
+                      {[movesMeta.last_sale_contact, String(movesMeta.last_sale_date || "").slice(0, 10)].filter(Boolean).join(" · ")}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <div className="overflow-y-auto p-4 text-xs">
               {movesBusy && <div className="py-8 text-center text-slate-400">Yükleniyor…</div>}
               {!movesBusy && moves.length === 0 && <div className="py-8 text-center text-slate-400">Bu ürüne ait stok hareketi yok.</div>}
               {!movesBusy && moves.length > 0 && (
                 <table className="w-full text-left">
-                  <thead className="text-[10px] uppercase text-slate-500 border-b"><tr><th className="py-1.5">Tarih</th><th className="py-1.5">Açıklama</th><th className="py-1.5 text-right">Miktar</th></tr></thead>
+                  <thead className="text-[10px] uppercase text-slate-500 border-b">
+                    <tr>
+                      <th className="py-1.5">Tarih</th>
+                      <th className="py-1.5">Açıklama</th>
+                      <th className="py-1.5 text-right">Birim</th>
+                      <th className="py-1.5 text-right">Miktar</th>
+                    </tr>
+                  </thead>
                   <tbody className="divide-y divide-slate-100">
                     {moves.map((m) => (
                       <tr key={m.id || m._id} data-testid={`stock-move-${m.id || m._id}`}>
                         <td className="py-1.5 font-mono text-slate-500 whitespace-nowrap">{String(m.date || "").slice(0, 16).replace("T", " ")}</td>
                         <td className="py-1.5 text-slate-700">{m.reason || m.variant_name || "—"}</td>
+                        <td className="py-1.5 text-right text-slate-600 whitespace-nowrap">
+                          {m.unit_price != null && m.unit_price !== ""
+                            ? fmtMoney(Number(m.unit_price), m.currency || movesMeta?.currency || "TRY")
+                            : "—"}
+                        </td>
                         <td className={`py-1.5 text-right font-bold ${Number(m.change) < 0 ? "text-rose-600" : "text-emerald-700"}`}>{Number(m.change) > 0 ? "+" : ""}{m.change}</td>
                       </tr>
                     ))}
