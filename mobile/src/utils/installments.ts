@@ -1,4 +1,4 @@
-import { todayIso } from "./money";
+import { fmtMoney, todayIso } from "./money";
 
 export type Installment = {
   id?: string;
@@ -130,6 +130,19 @@ export function paymentKindLabel(p: ContactPayment): string {
   if (p.type === "inflow") return "Tahsilat";
   if (p.type === "outflow") return "Ödeme";
   return p.type || "Hareket";
+}
+
+export function paymentDeleteConfirm(p?: ContactPayment | null): {
+  title: string;
+  message: string;
+  confirmLabel: string;
+} {
+  const kind = (paymentKindLabel(p || {}) || "hareket").toLocaleLowerCase("tr-TR");
+  return {
+    title: "Hareketi sil",
+    message: `${fmtMoney(p?.amount)} tutarındaki ${kind} silinsin mi? Bakiyeler geri alınır.`,
+    confirmLabel: "Sil",
+  };
 }
 
 /** Web cari kartı: tahsilat yeşil, ödeme kırmızı. */

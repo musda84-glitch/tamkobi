@@ -1815,7 +1815,7 @@ export function PersonnelScreen() {
                 testID={`emp-pay-move-del-${row.id}`}
                 onPress={() => {
                   const ask = payMoveDeleteConfirm(row);
-                  confirmAction(ask.title, ask.message, () => { void deletePayMove(row); });
+                  confirmAction(ask.title, ask.message, () => { void deletePayMove(row); }, "Sil");
                 }}
                 style={{
                   paddingHorizontal: 12,

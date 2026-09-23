@@ -1,5 +1,6 @@
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import { BadgeProvider } from "@/auth/BadgeContext";
+import { ConfirmHost } from "@/components/ConfirmDialog";
 import { PushBridge } from "@/components/PushBridge";
 import { colors } from "@/theme";
 import { typeface } from "@/theme/softFont";
@@ -102,6 +103,7 @@ export default function RootLayout() {
       <BadgeProvider>
         <StatusBar style="auto" />
         <PushBridge />
+        <ConfirmHost />
         <RootStack />
       </BadgeProvider>
     </AuthProvider>
