@@ -1,10 +1,19 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useState } from "react";
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { loadRememberedB2bEmail, loadRememberedEmail, saveRememberedB2bEmail, saveRememberedEmail } from "../auth/storage";
+import { B2BLoginLegal } from "../components/B2BLoginLegal";
 import { Field, PrimaryButton } from "../components/kit";
 import { colors, typeface } from "../theme";
 import type { B2BForgotResult } from "../types";
+import {
+  B2B_LOGIN_LEGAL_KEY,
+  allLoginLegalAccepted,
+  parseLoginLegalAccept,
+  serializeLoginLegalAccept,
+  type LegalAcceptMap,
+} from "../utils/b2bLegal";
 import { contentBottomPad, loginSheetJustify } from "../utils/keyboardPad";
 import { emailToRemember } from "../utils/loginRemember";
 import { useKeyboardAwareScroll } from "../utils/useKeyboardAwareScroll";
@@ -52,8 +61,10 @@ export function LoginScreen() {
   const [portalLink, setPortalLink] = useState("");
   const [rememberErp, setRememberErp] = useState(true);
   const [rememberB2b, setRememberB2b] = useState(true);
+  const [legalAccept, setLegalAccept] = useState<LegalAcceptMap>({});
   const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll();
   const sheetPad = contentBottomPad(24, keyboardHeight, Platform.OS);
+  const legalOk = allLoginLegalAccepted(legalAccept);
 
   useEffect(() => {
     loadRememberedEmail().then((v) => {
@@ -64,6 +75,22 @@ export function LoginScreen() {
     });
   }, []);
   useEffect(() => setServerField(baseUrl), [baseUrl]);
+  useEffect(() => {
+    AsyncStorage.getItem(B2B_LOGIN_LEGAL_KEY).then((raw) => {
+      setLegalAccept(parseLoginLegalAccept(raw));
+    });
+  }, []);
+
+  const persistLegal = (next: LegalAcceptMap) => {
+    setLegalAccept(next);
+    AsyncStorage.setItem(B2B_LOGIN_LEGAL_KEY, serializeLoginLegalAccept(next)).catch(() => {});
+  };
+
+  const requireLegal = (): boolean => {
+    if (allLoginLegalAccepted(legalAccept)) return true;
+    setError("KVKK ve mesafeli satış sözleşmelerini işaretleyin.");
+    return false;
+  };
 
   const switchMode = async (next: Mode) => {
     setMode(next);
@@ -108,6 +135,7 @@ export function LoginScreen() {
   };
 
   const submitB2bLink = async () => {
+    if (!requireLegal()) return;
     setBusy(true);
     setError(null);
     try {
@@ -120,6 +148,7 @@ export function LoginScreen() {
   };
 
   const submitB2b = async () => {
+    if (!requireLegal()) return;
     setBusy(true);
     setError(null);
     try {
@@ -299,9 +328,10 @@ export function LoginScreen() {
                 <Field label="API adresi" testID="login-api" autoCapitalize="none" value={server} onChangeText={setServerField} placeholder="https://tamkobi.com" />
               ) : null}
               <RememberRow remember={rememberB2b} onToggle={() => setRememberB2b((v) => !v)} onForget={forgetB2b} testPrefix="b2b" />
-              <PrimaryButton testID="b2b-login-submit" title={busy ? "Giriş yapılıyor…" : "Portala Giriş"} onPress={submitB2b} loading={busy} disabled={!email || !password} color={colors.primary} />
+              <B2BLoginLegal accepted={legalAccept} onChange={persistLegal} baseUrl={server.trim() || baseUrl} />
+              <PrimaryButton testID="b2b-login-submit" title={busy ? "Giriş yapılıyor…" : "Portala Giriş"} onPress={submitB2b} loading={busy} disabled={!email || !password || !legalOk} color={colors.primary} />
               <Field label="veya portal linki / token" testID="b2b-login-link" autoCapitalize="none" value={portalLink} onChangeText={setPortalLink} placeholder="https://…/portal/…" />
-              <PrimaryButton testID="b2b-login-link-submit" title="Link ile gir" onPress={submitB2bLink} loading={busy} disabled={!portalLink.trim()} color={colors.indigo} />
+              <PrimaryButton testID="b2b-login-link-submit" title="Link ile gir" onPress={submitB2bLink} loading={busy} disabled={!portalLink.trim() || !legalOk} color={colors.indigo} />
               <Pressable onPress={() => switchMode("b2b-forgot")} testID="b2b-forgot-open" style={{ paddingTop: 12 }}>
                 <Text style={styles.forgot}>Şifremi unuttum</Text>
               </Pressable>
