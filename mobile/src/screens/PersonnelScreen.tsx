@@ -14,6 +14,7 @@ import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
 import { TimeField } from "../components/TimeField";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
+import { confirmAction } from "../components/chips";
 import { colors } from "../theme";
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import {
@@ -91,6 +92,7 @@ import {
   DEFAULT_LOC_MODE,
   type LocMode,
   filterPayMoves,
+  payMoveDeleteConfirm,
   payMovesPeriodHint,
   payMovesPeriodLabel,
   type PayMovesPeriod,
@@ -1081,7 +1083,10 @@ export function PersonnelScreen() {
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
-      <Text style={{ fontWeight: "800", color: colors.text, fontSize: 18 }} testID="personnel-title">Personel & Bordro</Text>
+      <Row style={{ alignItems: "center", gap: 8 }}>
+        <Ionicons name="people" size={22} color={colors.indigo} />
+        <Text style={{ fontWeight: "800", color: colors.text, fontSize: 18 }} testID="personnel-title">Personel & Bordro</Text>
+      </Row>
       <Muted>Aylık net maaş yükü: {fmtMoney(loadAmount)}{employees.some(isDailyWage) ? " · yevmiye × 26 gün tahmini" : ""}</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted testID="personnel-msg">{message}</Muted> : null}
@@ -1808,7 +1813,10 @@ export function PersonnelScreen() {
             {row.deletable && canEdit ? (
               <Pressable
                 testID={`emp-pay-move-del-${row.id}`}
-                onPress={() => deletePayMove(row)}
+                onPress={() => {
+                  const ask = payMoveDeleteConfirm(row);
+                  confirmAction(ask.title, ask.message, () => { void deletePayMove(row); });
+                }}
                 style={{
                   paddingHorizontal: 12,
                   paddingVertical: 10,
