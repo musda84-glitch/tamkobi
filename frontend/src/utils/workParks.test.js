@@ -1,4 +1,4 @@
-import { findWorkPark, officeTaskPayload, parkSelectGroups, validateOfficeTaskAssign, normalizeWorkParks } from "./workParks";
+import { findWorkPark, officeTaskPayload, parkSelectGroups, stationNamesFromParks, validateOfficeTaskAssign, normalizeWorkParks } from "./workParks";
 
 describe("work parks", () => {
   it("normalizes and validates office assign", () => {
@@ -11,5 +11,8 @@ describe("work parks", () => {
       park_id: "p2", park_name: "Kaynak", title: "Kaynak",
     });
     expect(parkSelectGroups(parks)[0].options.map((o) => o.label)).toEqual(["Makina parkuru", "Kaynak"]);
+    expect(stationNamesFromParks([{ name: "Genel" }, "OEMAK", { name: "OMAKSAN" }, "oemak"])).toEqual(["Genel", "OEMAK", "OMAKSAN"]);
+    expect(stationNamesFromParks([], ["Montaj Hattı 1", "QC"])).toEqual(["Montaj Hattı 1", "QC"]);
+    expect(stationNamesFromParks(["Genel"], ["QC", "Genel"])).toEqual(["Genel"]);
   });
 });

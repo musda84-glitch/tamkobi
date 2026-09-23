@@ -22,6 +22,7 @@ import {
   woStatusTr,
   type WorkOrder,
 } from "../utils/shopFloor";
+import { stationNamesFromParks } from "../utils/workParks";
 
 function WoCard({
   w,
@@ -120,18 +121,19 @@ export function AtolyeScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [w, e, s, me] = await Promise.all([
+      const [w, e, s, parks, me] = await Promise.all([
         get<WorkOrder[]>(client, "/production/work-orders", {
           company_id: companyId,
           station: station || undefined,
         }).catch(() => []),
         get<Employee[]>(client, "/personnel/employees", { company_id: companyId }).catch(() => []),
         get<string[]>(client, "/production/work-orders/stations", { company_id: companyId }).catch(() => []),
+        get<{ parks?: unknown[] }>(client, `/companies/${companyId}/work-parks`).catch(() => ({ parks: [] })),
         get<{ employee?: Employee; tasks?: AssignedDuty[] }>(client, "/personnel/me").catch(() => null),
       ]);
       setWos(Array.isArray(w) ? w : []);
       setEmployees(mergeSelfEmployee(Array.isArray(e) ? e : [], me?.employee));
-      setStations(Array.isArray(s) ? s : []);
+      setStations(stationNamesFromParks(parks?.parks, Array.isArray(s) ? s : []));
       setDuties(Array.isArray(me?.tasks) ? me.tasks : []);
       setError(null);
     } catch (err) {

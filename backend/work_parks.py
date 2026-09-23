@@ -43,6 +43,30 @@ def normalize_work_parks(raw: Any) -> list:
     return out
 
 
+def station_names_from_parks(raw: Any, fallback: Optional[list] = None) -> list:
+    """Atölye istasyon filtresi: önce şirket parkur adları, yoksa iş emri istasyonları."""
+    names: list = []
+    seen: set = set()
+    for p in normalize_work_parks(raw):
+        name = str(p.get("name") or "").strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    if names:
+        return names
+    extra: list = []
+    for s in fallback or []:
+        name = str(s or "").strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        extra.append(name)
+    return extra
+
+
 def find_park(parks: list, park_id: Optional[str]) -> Optional[dict]:
     pid = str(park_id or "")
     for p in parks or []:

@@ -11692,7 +11692,10 @@ async def list_work_orders(company_id: Optional[str] = "comp_nexus_main_01", sta
 
 @api_router.get("/production/work-orders/stations")
 async def list_stations(company_id: Optional[str] = "comp_nexus_main_01"):
-    return sorted([s for s in await db.work_orders.distinct("station", {"company_id": company_id}) if s])
+    import work_parks as wp
+    company = await db.companies.find_one({"_id": company_id}) or {}
+    wo = [s for s in await db.work_orders.distinct("station", {"company_id": company_id}) if s]
+    return wp.station_names_from_parks(company.get("work_parks"), wo)
 
 @api_router.post("/production/work-orders/shopfloor-unlock")
 async def shopfloor_unlock(req: Dict[str, Any]):

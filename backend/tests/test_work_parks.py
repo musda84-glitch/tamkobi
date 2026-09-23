@@ -7,6 +7,7 @@ from work_parks import (
     normalize_work_parks,
     office_assignment_view,
     office_task_row,
+    station_names_from_parks,
 )
 
 
@@ -17,6 +18,12 @@ def test_normalize_work_parks():
     assert parks[1] == {"id": "p2", "name": "Kaynak atölyesi"}
     assert find_park(parks, "p2")["name"] == "Kaynak atölyesi"
     assert find_park(parks, "missing") is None
+
+
+def test_station_names_from_parks():
+    assert station_names_from_parks([{"name": "Genel"}, "OEMAK", {"name": "OMAKSAN"}, "oemak"]) == ["Genel", "OEMAK", "OMAKSAN"]
+    assert station_names_from_parks([], ["Montaj Hattı 1", "QC"]) == ["Montaj Hattı 1", "QC"]
+    assert station_names_from_parks(["Genel"], ["QC", "Genel"]) == ["Genel"]
 
 
 def test_office_task_row():
