@@ -1195,43 +1195,47 @@ export function PersonnelScreen() {
                     <View
                       testID={`emp-card-loc-${eid}`}
                       style={{
-                        padding: 4,
+                        padding: 2,
                         borderRadius: 8,
                         backgroundColor: locOn ? "#ECFDF5" : colors.slate50,
                         borderWidth: 1,
                         borderColor: locOn ? "#A7F3D0" : colors.border,
                       }}
                     >
-                      <Row style={{ alignItems: "stretch", gap: 4 }}>
+                      <Row style={{ alignItems: "stretch", gap: 3 }}>
                         <Pressable
                           testID={`emp-card-loc-toggle-${eid}`}
                           disabled={!canEdit || locBusy === eid}
                           onPress={() => toggleCardLocation(emp, !locOn)}
                           accessibilityLabel={locationControllerLabel(locOn)}
-                          style={{ flex: 1, minWidth: 0, gap: 2, padding: 4, borderRadius: 8, backgroundColor: locOn ? "#D1FAE5" : "#fff" }}
+                          style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: locOn ? "#D1FAE5" : "#fff" }}
                         >
-                          <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>KONUM</Text>
+                          <Row style={{ alignItems: "center", justifyContent: "space-between", gap: 4 }}>
+                            <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>KONUM</Text>
+                            <LocationSignalDot
+                              compact
+                              hideLabel
+                              signal={{ ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok ?? null, at: emp.location_last_at ?? cards[eid]?.employee?.location_last_at ?? null }}
+                              testID={`emp-card-loc-signal-${eid}`}
+                            />
+                          </Row>
                           <Row style={{ alignItems: "center", gap: 3 }}>
                             <Ionicons name={locOn ? "location" : "location-outline"} size={12} color={locOn ? "#047857" : colors.muted} />
                             <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 11, color: locOn ? "#047857" : colors.muted, flex: 1 }}>
                               {locBusy === eid ? "…" : locationCellCaption(locOn)}
                             </Text>
                           </Row>
-                          <LocationSignalDot
-                            compact
-                            signal={{ ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok ?? null, at: emp.location_last_at ?? cards[eid]?.employee?.location_last_at ?? null }}
-                            testID={`emp-card-loc-signal-${eid}`}
-                          />
                         </Pressable>
-                        <View testID={`emp-card-today-${eid}`} style={{ flex: 2, minWidth: 0, flexDirection: "row", gap: 4 }}>
-                          <View style={{ flex: 1, minWidth: 0, gap: 2, padding: 4, borderRadius: 8, backgroundColor: "#fff" }}>
+                        <View testID={`emp-card-today-${eid}`} style={{ flex: 2, minWidth: 0, flexDirection: "row", gap: 3 }}>
+                          <View style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: "#fff" }}>
                             <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>GİRİŞ</Text>
-                            <Text style={{ fontWeight: "800", fontSize: 13, color: colors.text }}>{punch.checkIn}</Text>
-                            {punch.late ? <Text style={{ fontSize: 9, color: colors.warning }}>{punch.late} dk geç</Text> : null}
+                            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: colors.text }}>
+                              {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
+                            </Text>
                           </View>
-                          <View style={{ flex: 1, minWidth: 0, gap: 2, padding: 4, borderRadius: 8, backgroundColor: "#fff" }}>
+                          <View style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: "#fff" }}>
                             <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>ÇIKIŞ</Text>
-                            <Text style={{ fontWeight: "800", fontSize: 13, color: colors.text }}>{punch.checkOut}</Text>
+                            <Text style={{ fontWeight: "800", fontSize: 12, color: colors.text }}>{punch.checkOut}</Text>
                           </View>
                         </View>
                       </Row>
