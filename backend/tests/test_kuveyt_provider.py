@@ -117,6 +117,36 @@ def test_kuveyt_normalize_secret_strips_paste_artifacts():
     assert bp._kuveyt_normalize_secret("\ufeffsec\u200b") == "sec"
 
 
+def test_kuveyt_normalize_secret_collapses_internal_whitespace():
+    """Portal copy often inserts newlines inside Client Secret → invalid_client."""
+    assert bp._kuveyt_normalize_secret("ab\ncd\tef") == "abcdef"
+    assert bp._kuveyt_normalize_secret("  cid-36  ") == "cid-36"
+    assert bp._kuveyt_normalize_secret("sec ret with spaces") == "secretwithspaces"
+
+
+def test_kuveyt_normalize_connection_secrets_on_save():
+    out = bp.normalize_kuveyt_connection_secrets({
+        "provider": "kuveytturk",
+        "client_id": " aa\nbb ",
+        "client_secret": "s e\nc",
+        "api_key": " key ",
+    })
+    assert out["client_id"] == "aabb"
+    assert out["client_secret"] == "sec"
+    assert out["api_key"] == "key"
+    # Non-kuveyt untouched
+    other = bp.normalize_kuveyt_connection_secrets({"provider": "enpara", "client_id": " a "})
+    assert other["client_id"] == " a "
+
+
+def test_kuveyt_cred_swap_hints_client_id_equals_api_key():
+    key = "cc44b566-8006-4712-bf45-1e1b7c64b4da"
+    hints = bp._kuveyt_cred_swap_hints(key, "long-opaque-secret-value-here", key)
+    assert "client_id=api_key" in hints
+    fp = bp._kuveyt_cred_fingerprint(key, "long-opaque-secret-value-here", key)
+    assert "client_id=api_key" in fp
+
+
 def test_kuveyt_normalize_mode():
     assert bp._kuveyt_normalize_mode({"mode": "LIVE"}) == "live"
     assert bp._kuveyt_normalize_mode({"mode": "Canlı"}) == "live"
@@ -254,6 +284,34 @@ def test_kuveyt_token_invalid_client_keeps_oauth_error_not_html_404():
         # Never fall back to bare /connect/token
         assert "id.kuveytturk.com.tr/connect/token" not in msg or "/api/connect/token" in msg
         assert all(call.args[0].endswith("/api/connect/token") for call in mock_client.post.await_args_list)
+
+
+def test_kuveyt_token_invalid_client_both_hosts_includes_steps():
+    conn = {"provider": "kuveytturk", "mode": "live", "client_id": "cid", "client_secret": "wrong-secret-value"}
+    bad = MagicMock()
+    bad.status_code = 401
+    bad.content = b'{"error":"invalid_client"}'
+    bad.text = '{"error":"invalid_client"}'
+    bad.headers = {"content-type": "application/json"}
+    bad.json.return_value = {"error": "invalid_client"}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=bad)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._kuveyt_access_token(conn)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "hem Canlı hem Sandbox" in msg
+        assert "Adımlar:" in msg
+        assert "Mod=live" in msg
 
 
 def test_kuveyt_token_invalid_client_message_hints_api_key():
