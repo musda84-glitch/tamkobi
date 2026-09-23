@@ -1,10 +1,11 @@
 import React, { Suspense, lazy } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { Toaster } from "sonner";
 import MainLayout from "./components/MainLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SetupGuard from "./components/SetupGuard";
+import { PlatformNoticesHost } from "./components/PlatformNoticesHost";
 
 /** İlk boyamada gereken hafif sayfalar — geri kalanı route bazlı chunk. */
 import LoginPage from "./pages/LoginPage";
@@ -78,11 +79,19 @@ function RouteFallback() {
   );
 }
 
+/** Platform yönetim paneli duyuru yönetirken kendi pop-up'ını görmesin. */
+function NoticesGate() {
+  const { pathname } = useLocation();
+  const disabled = pathname === "/sistem" || pathname.startsWith("/sistem/");
+  return <PlatformNoticesHost disabled={disabled} />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <Toaster position="top-right" richColors closeButton />
+        <NoticesGate />
         <SetupGuard>
           <MainLayout>
             <ProtectedRoute>

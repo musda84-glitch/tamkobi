@@ -67,7 +67,7 @@ STATUSES = ("trial", "active", "suspended", "expired", "cancelled")
 STATUS_LABELS = {"trial": "Deneme", "active": "Aktif", "suspended": "Askıda", "expired": "Süresi Doldu", "cancelled": "İptal"}
 PROTECTED_COMPANY_IDS = frozenset({"comp_nexus_main_01", "comp_nexus_b2b_02"})
 _SKIP_ON_COMPANY_DELETE = frozenset({
-    "saas_plans", "platform_settings", "users", "companies", "company_licenses", "login_attempts",
+    "saas_plans", "platform_settings", "platform_announcements", "users", "companies", "company_licenses", "login_attempts",
     "platform_mail_servers", "platform_mailboxes", "platform_mail_logs",
 })
 PROTECTED_USER_EMAILS = frozenset({"admin@nexus.com"})
