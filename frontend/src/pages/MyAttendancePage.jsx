@@ -24,6 +24,8 @@ const Stat = ({ label, value, sub, tone = "slate", testId }) => (
 
 const RecordRow = ({ r, onConfirm, onDispute }) => {
   const [note, setNote] = useState("");
+  const [fixIn, setFixIn] = useState(r.check_in || "");
+  const [fixOut, setFixOut] = useState(r.check_out || "");
   const [open, setOpen] = useState(false);
   const d = new Date(r.date + "T00:00:00");
   return (
@@ -48,7 +50,7 @@ const RecordRow = ({ r, onConfirm, onDispute }) => {
             </>}
         </span>
       </div>
-      {open && <form onSubmit={(e) => { e.preventDefault(); onDispute(r, note); setOpen(false); }} className="mt-2 flex gap-2"><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Neyi düzeltmek istiyorsunuz? (örn. çıkış 19:30 olmalı)" className="flex-1 border rounded-lg p-1.5 bg-slate-50" required data-testid={`my-att-dispute-note-${r.id}`} /><button className="px-3 py-1.5 bg-rose-600 text-white rounded-lg font-semibold" data-testid={`my-att-dispute-send-${r.id}`}>Gönder</button></form>}
+      {open && <form onSubmit={(e) => { e.preventDefault(); const bits = [fixIn && `giriş ${fixIn} olmalı`, fixOut && `çıkış ${fixOut} olmalı`, note.trim()].filter(Boolean); if (!bits.length) return; onDispute(r, bits.join(" · ")); setOpen(false); }} className="mt-2 flex flex-wrap items-end gap-2"><label className="text-[10px] font-bold text-slate-500">Doğru giriş<input type="time" value={fixIn} onChange={(e) => setFixIn(e.target.value)} className="block border rounded-lg p-1.5 bg-slate-50" data-testid={`my-att-dispute-in-${r.id}`} /></label><label className="text-[10px] font-bold text-slate-500">Doğru çıkış<input type="time" value={fixOut} onChange={(e) => setFixOut(e.target.value)} className="block border rounded-lg p-1.5 bg-slate-50" data-testid={`my-att-dispute-note-${r.id}`} /></label><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Opsiyonel açıklama" className="flex-1 min-w-[140px] border rounded-lg p-1.5 bg-slate-50" data-testid={`my-att-dispute-extra-${r.id}`} /><button className="px-3 py-1.5 bg-rose-600 text-white rounded-lg font-semibold" data-testid={`my-att-dispute-send-${r.id}`}>Gönder</button></form>}
       {r.note && <div className="text-[10px] text-slate-400 mt-0.5">{r.note}</div>}
     </div>
   );

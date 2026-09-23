@@ -53,9 +53,9 @@ describe("checkoutConfirmMessage", () => {
 
 describe("attendance dispute", () => {
   it("requires a short note and only on open records", () => {
-    expect(validateAttendanceDispute("ab")).toMatch(/açıklama/);
-    expect(validateAttendanceDispute(" çıkış 19:30 olmalı ")).toBeNull();
-    expect(attendanceDisputePayload(" çıkış 19:30 olmalı ")).toEqual({ note: "çıkış 19:30 olmalı" });
+    expect(validateAttendanceDispute("")).toMatch(/saatini seçin/);
+    expect(validateAttendanceDispute("", "19:30", "")).toBeNull();
+    expect(attendanceDisputePayload("", "", "19:30")).toEqual({ note: "çıkış 19:30 olmalı" });
     expect(canRequestAttendanceFix({ id: "a1" })).toBe(true);
     expect(canRequestAttendanceFix({ id: "a1", employee_confirmed: true })).toBe(false);
     expect(canRequestAttendanceFix({ id: "a1", dispute_note: "yanlış", dispute_resolved: false })).toBe(false);

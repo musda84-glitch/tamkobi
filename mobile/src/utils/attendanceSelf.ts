@@ -52,13 +52,29 @@ export function validateIntradayLeave(reason: string, outTime?: string, returnTi
   return null;
 }
 
-export function validateAttendanceDispute(note: string): string | null {
-  if ((note || "").trim().length < 3) return "Düzeltme açıklaması en az 3 karakter olmalı.";
+export function attendanceDisputeNote(opts: { checkIn?: string; checkOut?: string; note?: string }): string {
+  const bits: string[] = [];
+  const inn = String(opts.checkIn || "").trim();
+  const out = String(opts.checkOut || "").trim();
+  if (inn) bits.push(`giriş ${inn} olmalı`);
+  if (out) bits.push(`çıkış ${out} olmalı`);
+  if (String(opts.note || "").trim()) bits.push(String(opts.note).trim());
+  return bits.join(" · ");
+}
+
+export function validateAttendanceDispute(note: string, checkIn?: string, checkOut?: string): string | null {
+  const inn = String(checkIn || "").trim();
+  const out = String(checkOut || "").trim();
+  const hm = /^\d{1,2}:\d{2}(?::\d{2})?$/;
+  if (inn && !hm.test(inn)) return "Giriş saati HH:MM formatında olmalı.";
+  if (out && !hm.test(out)) return "Çıkış saati HH:MM formatında olmalı.";
+  const composed = attendanceDisputeNote({ checkIn: inn, checkOut: out, note });
+  if (composed.length < 3) return "Düzeltilecek giriş veya çıkış saatini seçin.";
   return null;
 }
 
-export function attendanceDisputePayload(note: string) {
-  return { note: note.trim() };
+export function attendanceDisputePayload(note: string, checkIn?: string, checkOut?: string) {
+  return { note: attendanceDisputeNote({ checkIn, checkOut, note }) };
 }
 
 export function canRequestAttendanceFix(r?: {

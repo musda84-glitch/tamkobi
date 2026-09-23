@@ -81,6 +81,8 @@ export function AttendanceScreen() {
   const [intraReturn, setIntraReturn] = useState("");
   const [disputeId, setDisputeId] = useState<string | null>(null);
   const [disputeNote, setDisputeNote] = useState("");
+  const [disputeIn, setDisputeIn] = useState("");
+  const [disputeOut, setDisputeOut] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -224,15 +226,17 @@ export function AttendanceScreen() {
   };
 
   const requestDispute = async (recordId: string) => {
-    const invalid = validateAttendanceDispute(disputeNote);
+    const invalid = validateAttendanceDispute(disputeNote, disputeIn, disputeOut);
     if (invalid) { setError(invalid); return; }
     setBusy(`dispute-${recordId}`);
     setError(null);
     try {
-      const r = await post<{ message?: string }>(client, `/personnel/attendance/${recordId}/dispute`, attendanceDisputePayload(disputeNote));
+      const r = await post<{ message?: string }>(client, `/personnel/attendance/${recordId}/dispute`, attendanceDisputePayload(disputeNote, disputeIn, disputeOut));
       setMessage(r?.message || "Düzeltme talebi yöneticiye iletildi.");
       setDisputeId(null);
       setDisputeNote("");
+      setDisputeIn("");
+      setDisputeOut("");
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Düzeltme talebi gönderilemedi."));
@@ -348,12 +352,14 @@ export function AttendanceScreen() {
             </Row>
             {open ? (
               <View testID={`mesai-rec-dispute-${rid}`} style={{ gap: 8 }}>
+                <TimeField label="Doğru giriş" testID={`mesai-rec-dispute-in-${rid}`} value={disputeIn} onChangeText={setDisputeIn} optional />
+                <TimeField label="Doğru çıkış" testID={`mesai-rec-dispute-note-${rid}`} value={disputeOut} onChangeText={setDisputeOut} optional />
                 <Field
-                  label="Düzeltme açıklaması"
-                  testID={`mesai-rec-dispute-note-${rid}`}
+                  label="Ek açıklama"
+                  testID={`mesai-rec-dispute-extra-${rid}`}
                   value={disputeNote}
                   onChangeText={setDisputeNote}
-                  placeholder="Örn: çıkış 19:30 olmalı"
+                  placeholder="Opsiyonel"
                 />
                 <PrimaryButton
                   title={busy === `dispute-${rid}` ? "Gönderiliyor…" : "Talebi gönder"}
@@ -361,12 +367,12 @@ export function AttendanceScreen() {
                   color={colors.warning}
                   testID={`mesai-rec-dispute-send-${rid}`}
                 />
-                <PrimaryButton title="Vazgeç" onPress={() => { setDisputeId(null); setDisputeNote(""); }} color={colors.secondary} testID={`mesai-rec-dispute-close-${rid}`} />
+                <PrimaryButton title="Vazgeç" onPress={() => { setDisputeId(null); setDisputeNote(""); setDisputeIn(""); setDisputeOut(""); }} color={colors.secondary} testID={`mesai-rec-dispute-close-${rid}`} />
               </View>
             ) : canRequestAttendanceFix(r) ? (
               <PrimaryButton
                 title="Düzeltme talep et"
-                onPress={() => { setDisputeId(rid); setDisputeNote(""); }}
+                onPress={() => { setDisputeId(rid); setDisputeNote(""); setDisputeIn(r.check_in || ""); setDisputeOut(r.check_out || ""); }}
                 color={colors.warning}
                 testID={`mesai-rec-dispute-open-${rid}`}
               />
