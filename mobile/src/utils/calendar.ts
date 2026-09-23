@@ -47,6 +47,35 @@ export function monthGrid(year: number, month0: number): (number | null)[] {
   return cells;
 }
 
+export function parseYm(value: string): { year: number; month0: number } | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(value || "").trim().slice(0, 7));
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month0 = Number(m[2]) - 1;
+  if (month0 < 0 || month0 > 11) return null;
+  return { year, month0 };
+}
+
+export function toYm(year: number, month0: number): string {
+  return `${year}-${String(month0 + 1).padStart(2, "0")}`;
+}
+
+export function normalizeYm(value: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parsed = parseYm(raw.slice(0, 7));
+  return parsed ? toYm(parsed.year, parsed.month0) : "";
+}
+
+export function ymOrThisMonth(value?: string | null): string {
+  const now = new Date();
+  return normalizeYm(String(value || "")) || toYm(now.getFullYear(), now.getMonth());
+}
+
+export function ymTitle(year: number, month0: number): string {
+  return monthTitle(year, month0);
+}
+
 export function shiftMonth(year: number, month0: number, delta: number): { year: number; month0: number } {
   const d = new Date(year, month0 + delta, 1);
   return { year: d.getFullYear(), month0: d.getMonth() };
