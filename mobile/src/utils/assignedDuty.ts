@@ -49,14 +49,68 @@ export function dutyCompleteTitle(opts?: { done?: boolean; busy?: boolean }): st
   return opts?.busy ? DUTY_COMPLETE_BUSY : DUTY_COMPLETE_ACTION;
 }
 
-export function matchAssignedDuty<T extends { id?: string; title?: string }>(
+export function matchAssignedDuty<T extends { id?: string; title?: string; project_number?: string; project_name?: string }>(
   tasks: T[] | null | undefined,
-  current?: { id?: string; title?: string } | null,
+  current?: { id?: string; title?: string; project?: string } | null,
 ): T | null {
   if (!current) return null;
   const id = String(current.id || "").trim();
   const title = String(current.title || "").trim();
-  return (tasks || []).find((t) => (id && String(t.id || "") === id) || (title && String(t.title || "") === title)) || null;
+  const project = String(current.project || "").trim();
+  const rows = tasks || [];
+  return (
+    rows.find((t) => id && String(t.id || "") === id)
+    || rows.find((t) => title && String(t.title || "") === title)
+    || rows.find((t) => {
+      if (!project) return false;
+      const num = String(t.project_number || "");
+      const name = String(t.project_name || "");
+      return (num && project.includes(num)) || (name && project.includes(name));
+    })
+    || null
+  );
+}
+
+export function dutyFromCurrent(opts: {
+  tasks?: AssignedDuty[] | null;
+  current?: { id?: string; title?: string; project?: string; done?: boolean } | null;
+  workplace?: {
+    kind?: string;
+    task_id?: string;
+    task_title?: string;
+    project_id?: string;
+    project_name?: string;
+    project_number?: string;
+    label?: string;
+    address?: string | null;
+    latitude?: number | string | null;
+    longitude?: number | string | null;
+    location_url?: string | null;
+    due_date?: string | null;
+  } | null;
+}): AssignedDuty | null {
+  const matched = matchAssignedDuty(opts.tasks, opts.current);
+  const wp = opts.workplace?.kind === "task" ? opts.workplace : null;
+  if (!matched && !opts.current && !wp) return null;
+  const projectBits = String(opts.current?.project || "").split(" · ").map((s) => s.trim()).filter(Boolean);
+  return {
+    ...(matched || {}),
+    id: matched?.id || opts.current?.id || wp?.task_id,
+    title: matched?.title || opts.current?.title || wp?.task_title || "Görev",
+    kind: matched?.kind || "field",
+    project_id: matched?.project_id || wp?.project_id,
+    project_name: matched?.project_name || wp?.project_name || wp?.label || projectBits[1],
+    project_number: matched?.project_number || wp?.project_number || projectBits[0],
+    address: matched?.address || wp?.address,
+    latitude: matched?.latitude ?? wp?.latitude,
+    longitude: matched?.longitude ?? wp?.longitude,
+    location_url: matched?.location_url || wp?.location_url,
+    due_date: matched?.due_date || wp?.due_date || undefined,
+    done: matched?.done ?? opts.current?.done ?? false,
+    photos: matched?.photos,
+    workflow: matched?.workflow,
+    park_name: matched?.park_name,
+  };
 }
 export const DUTY_PHOTOS_HINT = "İş fotoğrafları — müşteri görmesi yönetici onayına bağlı";
 export const DUTY_PHOTO_SHOW = "Görsün";
