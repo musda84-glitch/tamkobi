@@ -27,7 +27,7 @@ PROVIDERS = {
         "token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "customer_number"],
-        "hint": "API Market: Müşteri Id=Client ID, Client Secret, Api Anahtarı (X-Gravitee-Api-Key). Token: Identity Server client_credentials (idprep/id → /api/connect/token). Her API isteği RSA-SHA256 Signature — portala yüklediğiniz public key’in PKCS8 PEM private key’ini yapıştırın. Scope önerisi: accounts public. Sandbox API: apitest.kuveytturk.com.tr/prep",
+        "hint": "API Market: Müşteri Id=Client ID, Client Secret, Api Anahtarı (X-Gravitee-Api-Key). Token: Identity Server client_credentials — resmi SDK gibi POST id(prep).kuveytturk.com.tr/api/connect/token (body: client_id, client_secret, scope=public). Her API isteği RSA-SHA256 Signature — portala yüklediğiniz public key’in PKCS8 PEM private key’ini yapıştırın. Sandbox API: apitest.kuveytturk.com.tr/prep",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -195,17 +195,20 @@ def _kuveyt_identity_host(conn: dict) -> str:
 
 
 def _kuveyt_token_urls(conn: dict) -> List[str]:
-    """Identity Server: POST {idhost}/api/connect/token — not api.kuveytturk.com.tr/oauth/token."""
+    """Official SDK: POST {idhost}/api/connect/token only (not /connect/token — that 404s)."""
     urls: List[str] = []
     custom = (conn.get("token_url") or "").strip().rstrip("/")
     if custom:
-        urls.append(custom)
-        if not custom.endswith("/token"):
-            urls.append(custom + "/api/connect/token")
-            urls.append(custom + "/connect/token")
+        if custom.endswith("/api/connect/token") or custom.endswith("/connect/token"):
+            # Normalize mistaken /connect/token → /api/connect/token
+            if custom.endswith("/connect/token") and not custom.endswith("/api/connect/token"):
+                urls.append(custom[: -len("/connect/token")] + "/api/connect/token")
+            else:
+                urls.append(custom)
+        else:
+            urls.append(custom.rstrip("/") + "/api/connect/token")
     host = _kuveyt_identity_host(conn)
     urls.append(host + "/api/connect/token")
-    urls.append(host + "/connect/token")
     seen = set()
     out = []
     for u in urls:
@@ -317,23 +320,31 @@ def _kuveyt_normalize_secret(val: str) -> str:
 
 
 def _kuveyt_scope_candidates(conn: dict) -> List[str]:
-    """Portal scopes often include accounts + public; try likely combinations."""
+    """Official JS/Android samples use scope=public for client_credentials first."""
     out: List[str] = []
     custom = (conn.get("scope") or "").strip()
     if custom:
         out.append(custom)
-    for s in ("accounts", "accounts public", "public", "public accounts", ""):
+    for s in ("public", "accounts", "accounts public", "public accounts", ""):
         if s not in out:
             out.append(s)
     return out
 
 
 def _kuveyt_token_auth_attempts(client_id: str, client_secret: str, scope: str) -> List[Dict[str, Any]]:
-    """IdentityServer: Basic-only or body credentials (try both for invalid_client)."""
+    """Official SDK: form body client_id/secret (client_secret_post). Basic as fallback."""
     form_base: Dict[str, str] = {"grant_type": "client_credentials"}
     if scope:
         form_base["scope"] = scope
     return [
+        {
+            "data": {**form_base, "client_id": client_id, "client_secret": client_secret},
+            "headers": {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+            "label": "body",
+        },
         {
             "data": dict(form_base),
             "headers": {
@@ -343,20 +354,28 @@ def _kuveyt_token_auth_attempts(client_id: str, client_secret: str, scope: str) 
             },
             "label": "basic",
         },
-        {
-            "data": {**form_base, "client_id": client_id, "client_secret": client_secret},
-            "headers": {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-            "label": "body",
-        },
     ]
 
 
+def _kuveyt_secret_looks_like_api_key(client_secret: str, api_key: str) -> bool:
+    """Portal Api Anahtarı UUID; Client Secret genelde farklı uzun/opaque bir değerdir."""
+    import re
+    uuid_re = re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        re.I,
+    )
+    sec = (client_secret or "").strip()
+    key = (api_key or "").strip()
+    if key and sec and sec == key:
+        return True
+    return bool(sec and uuid_re.match(sec) and len(sec) == 36)
+
+
 async def _kuveyt_access_token(conn: dict) -> str:
+    """Official Kuveyt Android/JS SDK: POST /api/connect/token with form body credentials."""
     client_id = _kuveyt_normalize_secret(_plain_secret(conn, "client_id"))
     client_secret = _kuveyt_normalize_secret(_plain_secret(conn, "client_secret"))
+    api_key = _kuveyt_normalize_secret(_plain_secret(conn, "api_key"))
     if not client_id or not client_secret:
         raise RuntimeError(
             "Kuveyt Türk Client ID (Müşteri Id) ve Client Secret gerekli (client_credentials). "
@@ -364,34 +383,57 @@ async def _kuveyt_access_token(conn: dict) -> str:
         )
 
     last_err = "Token uç noktası yanıt vermedi."
+    primary_err = ""
     saw_invalid_client = False
     async with httpx.AsyncClient(timeout=25) as client:
         for url in _kuveyt_token_urls(conn):
+            stop_scopes = False
             for scope in _kuveyt_scope_candidates(conn):
+                if stop_scopes:
+                    break
                 for attempt in _kuveyt_token_auth_attempts(client_id, client_secret, scope):
                     try:
                         resp = await client.post(url, data=attempt["data"], headers=attempt["headers"])
-                        if resp.status_code < 400:
-                            data = resp.json() if resp.content else {}
-                            token = (data or {}).get("access_token") or (data or {}).get("accessToken")
-                            if token:
-                                return token
-                            last_err = f"{url} [{attempt['label']}] → access_token yok"
-                            continue
-                        last_err = _oauth_error_text(resp, url) + f" [{attempt['label']}]"
-                        blob = (getattr(resp, "text", None) or "").lower()
-                        if "invalid_client" in blob:
-                            saw_invalid_client = True
-                            # Try next auth style (Basic → body); scopes won't fix bad client.
-                            continue
-                        if resp.status_code in (400, 401) and "scope" in blob:
-                            continue
                     except Exception as e:
                         last_err = f"{url} [{attempt['label']}] → {_err_text(e)}"
-                # Both auth styles exhausted with invalid_client → try next Identity URL.
-                if saw_invalid_client and "invalid_client" in last_err.lower():
-                    break
+                        continue
+                    if resp.status_code < 400:
+                        data = resp.json() if resp.content else {}
+                        token = (data or {}).get("access_token") or (data or {}).get("accessToken")
+                        if token:
+                            return token
+                        last_err = f"{url} [{attempt['label']}] → access_token yok"
+                        continue
 
+                    err_txt = _oauth_error_text(resp, url) + f" [{attempt['label']}]"
+                    last_err = err_txt
+                    blob = (getattr(resp, "text", None) or "").lower()
+                    ctype = (resp.headers.get("content-type") or "").lower()
+                    is_html = (
+                        "text/html" in ctype
+                        or blob.lstrip().startswith("<!doctype")
+                        or blob.lstrip().startswith("<html")
+                    )
+                    if resp.status_code == 404 or is_html:
+                        # Dead path — do not overwrite a prior OAuth JSON error.
+                        break
+
+                    if not primary_err or "invalid_client" in blob:
+                        primary_err = err_txt
+                    if "invalid_client" in blob:
+                        saw_invalid_client = True
+                        continue  # next auth style
+                    if resp.status_code in (400, 401) and "scope" in blob:
+                        continue
+                else:
+                    # Both auth styles done for this scope.
+                    if saw_invalid_client:
+                        stop_scopes = True
+                    continue
+                # 404/html on this URL
+                break
+
+    detail = primary_err or last_err
     hint = ""
     if saw_invalid_client:
         hint = (
@@ -400,11 +442,16 @@ async def _kuveyt_access_token(conn: dict) -> str:
             "Api Anahtarı’nı Client Secret yerine yazmayın; canlı kimlik için mod=LIVE, "
             "test için Sandbox seçin. "
         )
+        if _kuveyt_secret_looks_like_api_key(client_secret, api_key):
+            hint += (
+                "Kayıtlı Client Secret UUID formatında (Api Anahtarı gibi) — "
+                "portalden asıl Client Secret’i Client Secret alanına yapıştırın. "
+            )
     raise RuntimeError(
         "Kuveyt Türk token alınamadı (Identity Server client_credentials)."
         f"{hint}"
-        "Client ID/Secret ve ortamı kontrol edin "
-        f"(sandbox: idprep.kuveytturk.com.tr / canlı: id.kuveytturk.com.tr). ({last_err[:200]})"
+        "Resmi uç: POST …/api/connect/token (body: grant_type, client_id, client_secret, scope). "
+        f"(sandbox: idprep.kuveytturk.com.tr / canlı: id.kuveytturk.com.tr). ({detail[:220]})"
     )
 
 
