@@ -1,4 +1,4 @@
-import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimInSubtitle, mesaimLongDate, mesaimOutSubtitle, mesaimScheduleLine, mesaimWorkDaysLine, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -53,6 +53,19 @@ describe("geoConfirmHint", () => {
       geo_confirm_request: { status: "pending", action: "check_out", reason: "offsite", place: "Firma", distance_m: 1200 },
     })).toMatch(/iş yerinde değil/);
     expect(geoConfirmHint({ geo_confirm_request: { status: "approved" } })).toBe("");
+  });
+});
+
+describe("mesaim card copy", () => {
+  it("formats schedule, work days, date and punch subtitles like the web card", () => {
+    expect(mesaimScheduleLine({ start: "09:00", end: "18:00", break_minutes: 60 })).toBe("Mesai 09:00–18:00 · mola 60 dk");
+    expect(mesaimWorkDaysLine([0, 1, 4], ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"])).toBe("Pzt, Sal, Cum");
+    expect(mesaimLongDate("2026-09-23")).toMatch(/23/);
+    expect(mesaimInSubtitle("01:37")).toBe("Giriş 01:37");
+    expect(mesaimInSubtitle(null)).toBe("henüz giriş yok");
+    expect(mesaimOutSubtitle({ checkOut: "10:26" })).toBe("Çıkış 10:26");
+    expect(mesaimOutSubtitle({ checkIn: null })).toBe("önce giriş yapın");
+    expect(mesaimOutSubtitle({ checkIn: "01:37", confirming: true })).toBe("onay için tekrar basın");
   });
 });
 
