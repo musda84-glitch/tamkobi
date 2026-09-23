@@ -10,8 +10,10 @@ import { idOf } from "../utils/money";
 import {
   pendingRequestDecision,
   pendingRequestDecisionMessage,
+  requestDecisionActions,
   requestKindLabel,
   type PendingRequest,
+  type RequestDecision,
 } from "../utils/personnel";
 import { Card, Muted, Row } from "./kit";
 
@@ -93,7 +95,7 @@ export function ManagerApprovalsPanel({
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const decideStaff = async (it: PendingRequest, approved: boolean) => {
+  const decideStaff = async (it: PendingRequest, approved: RequestDecision) => {
     const spec = pendingRequestDecision(it, approved);
     if (!spec) {
       goHref("/personnel");
@@ -155,7 +157,7 @@ export function ManagerApprovalsPanel({
             const busy = busyId === key;
             return (
               <View key={key} style={{ gap: 2, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }} testID={`home-approval-${it.kind}-${it.id}`}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
                   <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13, flex: 1, minWidth: 0 }} numberOfLines={1}>
                     {it.employee_name || "Personel"} · {requestKindLabel(it.kind)}
                   </Text>
@@ -163,8 +165,16 @@ export function ManagerApprovalsPanel({
                     <Chip title="Puantajda aç" color={colors.secondary} testID={`home-approval-view-${it.id}`} onPress={() => goHref("/personnel")} />
                   ) : (
                     <>
-                      <Chip title={busy ? "…" : "Onayla"} color={colors.primary} testID={`home-approval-ok-${it.kind}-${it.id}`} onPress={() => decideStaff(it, true)} disabled={busy} />
-                      <Chip title={busy ? "…" : (it.kind === "yevmiye_adjustment" ? "Kart ücreti" : "Reddet")} color={colors.danger} testID={`home-approval-no-${it.kind}-${it.id}`} onPress={() => decideStaff(it, false)} disabled={busy} />
+                      {requestDecisionActions(it.kind).map((btn) => (
+                        <Chip
+                          key={btn.key}
+                          title={busy ? "…" : btn.title}
+                          color={btn.color === "danger" ? colors.danger : btn.color === "warning" ? colors.warning : btn.color === "secondary" ? colors.secondary : colors.primary}
+                          testID={`home-approval-${btn.key}-${it.kind}-${it.id}`}
+                          onPress={() => decideStaff(it, btn.decision)}
+                          disabled={busy}
+                        />
+                      ))}
                     </>
                   )}
                 </View>

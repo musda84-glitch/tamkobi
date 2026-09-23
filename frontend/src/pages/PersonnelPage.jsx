@@ -477,6 +477,19 @@ export default function PersonnelPage() {
     }
   };
 
+  const decideLocationExit = async (id, decision, wageDeduction) => {
+    setBusyReqId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/location-exit-decision`, { decision, wage_deduction: !!wageDeduction });
+      toast.success(r.data?.message || "Konum dışı çıkış yanıtlandı.");
+      await afterRequestDecision();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyReqId(null);
+    }
+  };
+
   const decideAdvance = async (id, status) => {
     setBusyReqId(id);
     try {
@@ -627,6 +640,7 @@ export default function PersonnelPage() {
               onDecideIntraday={decideIntraday}
               onDecideAdvance={decideAdvance}
               onDecideYevmiye={decideYevmiye}
+              onDecideLocationExit={decideLocationExit}
               onViewDispute={() => setTab("attendance")}
             />
 

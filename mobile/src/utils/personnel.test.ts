@@ -150,11 +150,18 @@ describe("employee draft", () => {
     expect(pendingRequestDecision({ id: "a1", kind: "advance" }, false)?.body).toEqual({ status: "rejected" });
     expect(pendingRequestDecision({ id: "y1", kind: "yevmiye_adjustment" }, true)?.path).toBe("/personnel/attendance/y1/yevmiye-decision");
     expect(pendingRequestDecision({ id: "x1", kind: "location_exit" }, "ack")).toEqual({
-      path: "/personnel/attendance/x1/location-exit-decision", body: { decision: "ack" },
+      path: "/personnel/attendance/x1/location-exit-decision", body: { decision: "ack", wage_deduction: "false" },
+    });
+    expect(pendingRequestDecision({ id: "x1", kind: "location_exit" }, "deduct")?.body).toEqual({
+      decision: "approve", wage_deduction: "true",
+    });
+    expect(pendingRequestDecision({ id: "x1", kind: "location_exit" }, true)?.body).toEqual({
+      decision: "approve", wage_deduction: "false",
     });
     expect(pendingRequestDecision({ id: "d1", kind: "dispute" }, true)).toBeNull();
-    expect(pendingRequestDecisionMessage({ kind: "location_exit" }, "ack")).toBe("Konum dışı çıkış: haberim var.");
-    expect(requestDecisionActions("location_exit").map((a) => a.title)).toEqual(["Haberim var", "Onayla", "Reddet"]);
+    expect(pendingRequestDecisionMessage({ kind: "location_exit" }, "ack")).toBe("Konum dışı çıkış: haberim var. Kesinti yok.");
+    expect(pendingRequestDecisionMessage({ kind: "location_exit" }, "deduct")).toBe("Konum dışı çıkış: ücretten kesinti uygulandı.");
+    expect(requestDecisionActions("location_exit").map((a) => a.title)).toEqual(["Haberim var", "Kesinti olmasın", "Kesinti olsun", "Reddet"]);
     expect(pendingRequestDecisionMessage({ kind: "early_leave" }, false)).toBe("Erken çıkış reddedildi.");
     expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, false)).toBe("Yevmiye kart ücretiyle bırakıldı.");
     expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);

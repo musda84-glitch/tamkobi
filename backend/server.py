@@ -8433,7 +8433,8 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             "detail": f"{att.get('date') or ''}"
                       + (f" · {ler.get('place')}" if ler.get("place") else "")
                       + (f" · {int(dist)} m" if dist is not None else "")
-                      + (f" · tolerans {ler.get('tolerance_hours')} sa" if ler.get("tolerance_hours") else ""),
+                      + (f" · tolerans {ler.get('tolerance_hours')} sa" if ler.get("tolerance_hours") else "")
+                      + " · kesinti: bekliyor",
             "created_at": ler.get("requested_at") or att.get("updated_at") or att.get("date") or "",
             "link": "/personnel?tab=attendance",
             "meta": {
@@ -8441,6 +8442,7 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
                 "place": ler.get("place"),
                 "distance_m": dist,
                 "tolerance_hours": ler.get("tolerance_hours"),
+                "wage_deduction": ler.get("wage_deduction"),
             },
         })
     items.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)

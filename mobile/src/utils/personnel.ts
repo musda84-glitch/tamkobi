@@ -212,7 +212,14 @@ export function requestKindLabel(kind?: string | null): string {
   return REQUEST_KIND_TR[String(kind || "")] || "Talep";
 }
 
-export type RequestDecision = boolean | "ack";
+export type RequestDecision = boolean | "ack" | "deduct";
+
+export function locationExitDecisionBody(approved: RequestDecision): { decision: string; wage_deduction: string } {
+  if (approved === "ack") return { decision: "ack", wage_deduction: "false" };
+  if (approved === "deduct") return { decision: "approve", wage_deduction: "true" };
+  if (approved) return { decision: "approve", wage_deduction: "false" };
+  return { decision: "reject", wage_deduction: "false" };
+}
 
 export function pendingRequestDecision(
   it: PendingRequest,
@@ -236,16 +243,16 @@ export function pendingRequestDecision(
     return { path: `/personnel/attendance/${id}/yevmiye-decision`, body: { decision: approved ? "approve" : "reject" } };
   }
   if (it.kind === "location_exit") {
-    const decision = approved === "ack" ? "ack" : approved ? "approve" : "reject";
-    return { path: `/personnel/attendance/${id}/location-exit-decision`, body: { decision } };
+    return { path: `/personnel/attendance/${id}/location-exit-decision`, body: locationExitDecisionBody(approved) };
   }
   return null;
 }
 
 export function pendingRequestDecisionMessage(it: PendingRequest, approved: RequestDecision): string {
   if (it.kind === "location_exit") {
-    if (approved === "ack") return "Konum dışı çıkış: haberim var.";
-    return approved ? "Konum dışı çıkış onaylandı." : "Konum dışı çıkış reddedildi.";
+    if (approved === "ack") return "Konum dışı çıkış: haberim var. Kesinti yok.";
+    if (approved === "deduct") return "Konum dışı çıkış: ücretten kesinti uygulandı.";
+    return approved ? "Konum dışı çıkış onaylandı (kesinti yok)." : "Konum dışı çıkış reddedildi.";
   }
   if (it.kind === "yevmiye_adjustment") {
     return approved ? "Yevmiye onaylandı." : "Yevmiye kart ücretiyle bırakıldı.";
@@ -254,12 +261,13 @@ export function pendingRequestDecisionMessage(it: PendingRequest, approved: Requ
   return approved ? `${label} onaylandı.` : `${label} reddedildi.`;
 }
 
-export function requestDecisionActions(kind?: string | null): { key: string; title: string; decision: RequestDecision; color: "primary" | "secondary" | "danger" }[] {
+export function requestDecisionActions(kind?: string | null): { key: string; title: string; decision: RequestDecision; color: "primary" | "secondary" | "danger" | "warning" }[] {
   if (kind === "dispute") return [];
   if (kind === "location_exit") {
     return [
       { key: "ack", title: "Haberim var", decision: "ack", color: "secondary" },
-      { key: "approve", title: "Onayla", decision: true, color: "primary" },
+      { key: "approve", title: "Kesinti olmasın", decision: true, color: "primary" },
+      { key: "deduct", title: "Kesinti olsun", decision: "deduct", color: "warning" },
       { key: "reject", title: "Reddet", decision: false, color: "danger" },
     ];
   }
@@ -731,6 +739,8 @@ export type AttendanceRecord = {
     radius_m?: number;
     tolerance_hours?: number;
     left_at?: string;
+    wage_deduction?: boolean | null;
+    deduction_amount?: number;
   };
 };
 
