@@ -2,6 +2,7 @@ import { describe, expect, test } from "@jest/globals";
 import {
   canCancelInvoice,
   canIssueExpenseSlip,
+  canEditInvoice,
   invoiceHasPayment,
   placeContextMenu,
 } from "./InvoiceContextMenu";
@@ -81,5 +82,17 @@ describe("issued invoice menu actions", () => {
       invoice_type: "purchase",
       direction: "incoming",
     })).toBe(false);
+  });
+});
+
+describe("draft edit lives in the ⋮ menu", () => {
+  test("sales drafts can be edited", () => {
+    expect(canEditInvoice({ status: "draft", invoice_type: "sales", e_type: "e_archive" })).toBe(true);
+  });
+
+  test("issued invoices and incoming e-invoices cannot be edited from the menu", () => {
+    expect(canEditInvoice(issued)).toBe(false);
+    expect(canEditInvoice({ status: "draft", invoice_type: "purchase", direction: "incoming" })).toBe(false);
+    expect(canEditInvoice({ status: "draft", invoice_type: "dispatch" })).toBe(false);
   });
 });

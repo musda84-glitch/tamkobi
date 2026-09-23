@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock,
-  Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink, Trash2, Receipt,
+  Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink, Trash2, Receipt, Pencil,
 } from "lucide-react";
 
 export const E_TYPE_LABELS = {
@@ -102,6 +102,14 @@ export function canCancelInvoice(inv) {
   return true;
 }
 
+/** Taslak satış/alış belgesi ⋮ menüden düzenlenir (satır ikonu yok). */
+export function canEditInvoice(inv) {
+  if (!inv || inv.status !== "draft") return false;
+  if (isIncomingPurchaseInvoice(inv)) return false;
+  if (inv.invoice_type === "dispatch") return false;
+  return true;
+}
+
 /** Kesilmiş satış/alış belgesinden, aynı cari ve kalemlerle gider pusulası düzenlenir. */
 export function canIssueExpenseSlip(inv) {
   if (!inv) return false;
@@ -121,7 +129,7 @@ const ISSUE_OPTIONS = [
 
 export const InvoiceContextMenu = (props) => {
   const {
-    menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onDelete, onCancel, onExpenseSlip,
+    menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onDelete, onCancel, onExpenseSlip, onEdit,
   } = props;
   const onAcceptIncoming = props.onAcceptIncoming;
   const onRejectIncoming = props.onRejectIncoming;
@@ -168,6 +176,7 @@ export const InvoiceContextMenu = (props) => {
   const issued = isGibIssued(inv);
   const canIssue = canIssueInvoice(inv);
   const deletable = canDeleteInvoice(inv);
+  const editable = canEditInvoice(inv);
   const cancellable = canCancelInvoice(inv);
   const slipable = canIssueExpenseSlip(inv);
   const paid = invoiceHasPayment(inv);
@@ -207,6 +216,9 @@ export const InvoiceContextMenu = (props) => {
         )
       ) : canIssue ? (
         <div className="border-b border-slate-100 pb-1">
+          {onEdit && editable && (
+            <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
+          )}
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-emerald-700">FATURAYI KES</div>
           {inv.status === "draft" && (
             <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-draft-issue-note">Taslak olarak kayıtlı. Kesildiğinde cariye işlenir.</p>
