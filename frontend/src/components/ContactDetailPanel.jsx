@@ -18,6 +18,8 @@ import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
 import { collectableAccounts, PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
+import { ContactPayMenu } from "./ContactPayMenu";
+import { buildContactPayForm } from "../utils/contactPayMenu";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
 import { DocumentLineEditor } from "./DocumentLineEditor";
@@ -230,14 +232,20 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [payForm, setPayForm] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [accounts, setAccounts] = useState([]);
-  const openPay = async () => {
+  const openPay = async (opts = {}) => {
     try {
       const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`);
       setAccounts(r.data);
-      const isIn = (c.balance || 0) >= 0;
-      const pool = isIn ? collectableAccounts(r.data) : r.data;
-      setPayForm({ amount: Math.max(0, c.balance || 0).toFixed(2), account_id: pool[0]?.id || "", description: isIn ? "Cari tahsilat" : "Cari ödeme", type: isIn ? "inflow" : "outflow", method: "cash", instrument: "cheque", due_date: new Date().toISOString().slice(0, 10), serial_no: "", bank_name: "", slip: "debit" });
+      setPayForm(buildContactPayForm(c, r.data, opts));
     } catch { toast.error("Hesaplar yüklenemedi."); }
+  };
+  const onCollectMenuSelect = (item) => {
+    if (!item) return;
+    if (item.action === "virman") {
+      navigate("/banking?action=virman");
+      return;
+    }
+    openPay(item.preset || {});
   };
   const savePay = async (e) => {
     e.preventDefault();
@@ -381,7 +389,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             <button type="button" onClick={() => setEditContactOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg text-xs font-semibold transition" title="Cari bilgilerini düzenle" data-testid="detail-edit-contact-btn"><Pencil className="w-3.5 h-3.5" /> Cariyi Düzenle</button>
             <button onClick={() => navigate(`/invoices?new=sales&contact_id=${c.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition" title="Bu cariye satış faturası kes" data-testid="detail-sell-btn"><ArrowUpRight className="w-3.5 h-3.5" /> Satış Yap</button>
             <button onClick={() => navigate(`/invoices?new=purchase&contact_id=${c.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg text-xs font-semibold transition" title="Bu cariden alış faturası gir" data-testid="detail-buy-btn"><ArrowDownLeft className="w-3.5 h-3.5" /> Alış Yap</button>
-            <button onClick={openPay} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition" data-testid="detail-collect-btn"><Wallet className="w-3.5 h-3.5" /> Tahsilat</button>
+            <ContactPayMenu onSelect={onCollectMenuSelect} />
             <span className="w-px h-6 bg-slate-200 mx-1" aria-hidden="true" />
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5" data-testid="detail-icon-actions">
               <button onClick={() => onMessage?.(c)} className="p-1.5 rounded-md text-slate-600 hover:bg-white hover:text-indigo-600 transition" title="SMS / E-posta / WhatsApp mesajı" data-testid="detail-message-btn"><MessageSquare className="w-4 h-4" /></button>
