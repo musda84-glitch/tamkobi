@@ -48,3 +48,9 @@ export function webKeyboardHeight(innerHeight: number, visualHeight?: number, of
 export function loginSheetJustify(keyboardHeight: number): "center" | "flex-end" {
   return (Number(keyboardHeight) || 0) > 0 ? "flex-end" : "center";
 }
+
+/** Bottom-sheet overlay inset so the composer sits above the IME (iOS uses KeyboardAvoidingView). */
+export function sheetBottomInset(keyboardHeight: number, platform: string): number {
+  const lift = contentBottomPad(0, keyboardHeight, platform);
+  return lift > 0 ? lift + 8 : 0;
+}

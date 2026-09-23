@@ -464,8 +464,49 @@ export function StaffMessagesPanel({
         subtitle={openPeer?.kind === "group" ? "Grup yazışması" : "Mesaj"}
         onClose={() => { setOpenPeer(null); setPickPeer(""); }}
         testID="home-message-thread"
+        footer={(
+          <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8 }}>
+            <TextInput
+              testID="home-thread-draft"
+              value={threadDraft}
+              onChangeText={setThreadDraft}
+              placeholder="Mesaj yazın…"
+              placeholderTextColor={colors.muted}
+              multiline
+              style={{
+                flex: 1,
+                minHeight: 44,
+                maxHeight: 96,
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 18,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                backgroundColor: "#fff",
+                color: colors.text,
+                fontSize: 14,
+              }}
+            />
+            <Pressable
+              testID="home-thread-send"
+              onPress={sendThread}
+              disabled={busy}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                backgroundColor: colors.primary,
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: busy ? 0.5 : 1,
+              }}
+            >
+              <Ionicons name="send" size={18} color="#fff" />
+            </Pressable>
+          </View>
+        )}
       >
-        <View style={{ backgroundColor: "#F1F5F9", borderRadius: 16, padding: 10, minHeight: 180 }}>
+        <View style={{ backgroundColor: "#F1F5F9", borderRadius: 16, padding: 10, minHeight: 120 }}>
           {!ordered.length ? (
             <Text style={{ color: colors.muted, fontSize: 12, textAlign: "center", paddingVertical: 24 }}>Henüz mesaj yok. Aşağıdan yazın.</Text>
           ) : ordered.map((m) => (
@@ -476,45 +517,6 @@ export function StaffMessagesPanel({
               showAuthor={openPeer?.kind === "group"}
             />
           ))}
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8, marginTop: 10 }}>
-          <TextInput
-            testID="home-thread-draft"
-            value={threadDraft}
-            onChangeText={setThreadDraft}
-            placeholder="Mesaj yazın…"
-            placeholderTextColor={colors.muted}
-            multiline
-            style={{
-              flex: 1,
-              minHeight: 44,
-              maxHeight: 96,
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: 18,
-              paddingHorizontal: 12,
-              paddingVertical: 10,
-              backgroundColor: "#fff",
-              color: colors.text,
-              fontSize: 14,
-            }}
-          />
-          <Pressable
-            testID="home-thread-send"
-            onPress={sendThread}
-            disabled={busy}
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 22,
-              backgroundColor: colors.primary,
-              alignItems: "center",
-              justifyContent: "center",
-              opacity: busy ? 0.5 : 1,
-            }}
-          >
-            <Ionicons name="send" size={18} color="#fff" />
-          </Pressable>
         </View>
       </B2BSheet>
 

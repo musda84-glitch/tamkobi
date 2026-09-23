@@ -5,6 +5,7 @@ import {
   keyboardTopFromVisualViewport,
   loginSheetJustify,
   nextScrollY,
+  sheetBottomInset,
   SCREEN_BASE_PAD,
   webKeyboardHeight,
 } from "./keyboardPad";
@@ -41,5 +42,9 @@ describe("keyboardPad", () => {
     expect(webKeyboardHeight(800, 780, 0)).toBe(0);
     expect(loginSheetJustify(0)).toBe("center");
     expect(loginSheetJustify(280)).toBe("flex-end");
+    expect(sheetBottomInset(280, "web")).toBe(288);
+    expect(sheetBottomInset(280, "android")).toBe(288);
+    expect(sheetBottomInset(280, "ios")).toBe(0);
+    expect(sheetBottomInset(0, "web")).toBe(0);
   });
 });
