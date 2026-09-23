@@ -230,6 +230,7 @@ async def perform_install(req: InstallRequest) -> dict:
                 "currency": "TRY",
                 "created_at": _now(),
                 "license_id": company_id,
+                "allow_platform_access": False,
             }
         )
         await local.users.insert_one(

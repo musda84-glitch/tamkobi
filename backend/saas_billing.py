@@ -342,7 +342,7 @@ async def public_signup(req: Dict[str, Any], response: Response):
     else:
         plan = await _db.saas_plans.find_one({"_id": st["trial_plan_id"]})
     cid = f"comp_{uuid.uuid4().hex[:8]}"; uid = f"usr_{uuid.uuid4().hex[:8]}"
-    await _db.companies.insert_one({"_id": cid, "name": cname, "tax_number": (req.get("tax_number") or "").strip(), "tax_office": "", "address": "", "city": (req.get("city") or "").strip(), "phone": (req.get("phone") or "").strip(), "email": email, "currency": "TRY", "source": "public_signup", "license_id": cid, "created_at": _now()})
+    await _db.companies.insert_one({"_id": cid, "name": cname, "tax_number": (req.get("tax_number") or "").strip(), "tax_office": "", "address": "", "city": (req.get("city") or "").strip(), "phone": (req.get("phone") or "").strip(), "email": email, "currency": "TRY", "source": "public_signup", "license_id": cid, "created_at": _now(), "allow_platform_access": False})
     await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": name, "phone": (req.get("phone") or "").strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "legal_accept": legal_docs.acceptance_record(req), "user_number": await user_numbers.next_user_number(_db), "created_at": _now()})
     await rbac.ensure_roles(cid)
     await saas.start_trial(cid, plan_id=plan["_id"] if plan else st["trial_plan_id"], days=st["trial_days"], module_overrides=overrides, extra=extra)

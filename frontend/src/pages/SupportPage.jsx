@@ -113,7 +113,7 @@ const PlatformAccessGrant = ({ companyId, canEdit }) => {
   useEffect(() => {
     axios.get(`${API_URL}/companies/${companyId}/privacy`, cred)
       .then((r) => setP(r.data))
-      .catch(() => setP({ allow_platform_access: true }));
+      .catch(() => setP({ allow_platform_access: false }));
   }, [companyId]);
   const setAllow = async (allow) => {
     if (!canEdit) { toast.error("Bu ayarı yalnızca şirket yöneticisi değiştirebilir."); return; }
