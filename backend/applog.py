@@ -260,7 +260,8 @@ def persist_record(rec: dict) -> None:
 
 
 def query_logs(category: Optional[str] = None, event: Optional[str] = None,
-               user_email: Optional[str] = None, limit: int = 100) -> list:
+               user_email: Optional[str] = None, level: Optional[str] = None,
+               company_id: Optional[str] = None, limit: int = 100) -> list:
     from mysql_store import mysql_settings_from_env
     import db_ssl
     import pymysql
@@ -281,6 +282,12 @@ def query_logs(category: Optional[str] = None, event: Optional[str] = None,
     if user_email:
         where.append("user_email=%s")
         args.append(user_email)
+    if level:
+        where.append("level=%s")
+        args.append(level)
+    if company_id:
+        where.append("company_id=%s")
+        args.append(company_id)
     sql = f"SELECT id, created_at, level, category, event, user_id, user_email, company_id, ip, method, path, status_code, duration_ms, collection_name, message, details FROM system_logs WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT %s"
     args.append(min(int(limit or 100), 500))
     try:

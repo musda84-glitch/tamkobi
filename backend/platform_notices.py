@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 import saas
 
@@ -19,6 +19,11 @@ DEFAULT_MAINTENANCE_BODY = (
     "geçici olarak kullanılamayabilir.\n\n"
     "Anlayışınız için teşekkür ederiz."
 )
+
+AUDIENCE_ALL = "all"
+AUDIENCE_SELECTED = "selected"
+STATUS_DRAFT = "draft"
+STATUS_PUBLISHED = "published"
 
 
 def init(db):
@@ -60,6 +65,52 @@ def _clean(doc: Optional[dict]) -> Optional[dict]:
     return out
 
 
+def normalize_company_ids(raw) -> List[str]:
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    out = []
+    seen = set()
+    for item in raw:
+        cid = str(item or "").strip()
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        out.append(cid)
+    return out
+
+
+def normalize_audience(raw: Optional[str], company_ids: Optional[List[str]] = None) -> str:
+    aud = (str(raw or AUDIENCE_ALL).strip().lower() or AUDIENCE_ALL)
+    if aud not in (AUDIENCE_ALL, AUDIENCE_SELECTED):
+        aud = AUDIENCE_ALL
+    if aud == AUDIENCE_SELECTED and not (company_ids or []):
+        # Seçim yoksa güvenli varsayılan: tüm şirketler
+        return AUDIENCE_ALL
+    return aud
+
+
+def normalize_status(raw: Optional[str], *, default: str = STATUS_PUBLISHED) -> str:
+    st = (str(raw or default).strip().lower() or default)
+    if st not in (STATUS_DRAFT, STATUS_PUBLISHED):
+        return default
+    return st
+
+
+def announcement_targets_company(a: Optional[dict], company_id: Optional[str]) -> bool:
+    """company_id yoksa sadece 'all' duyurular görünür (anonim / şirket seçilmemiş)."""
+    if not a:
+        return False
+    audience = normalize_audience(a.get("audience"), a.get("company_ids"))
+    if audience == AUDIENCE_ALL:
+        return True
+    ids = set(normalize_company_ids(a.get("company_ids")))
+    if not company_id:
+        return False
+    return str(company_id) in ids
+
+
 def maintenance_active(m: Optional[dict], *, now: Optional[datetime] = None) -> bool:
     if not m or not m.get("enabled"):
         return False
@@ -86,8 +137,13 @@ def maintenance_upcoming(m: Optional[dict], *, now: Optional[datetime] = None) -
     return True
 
 
-def announcement_visible(a: Optional[dict], *, now: Optional[datetime] = None) -> bool:
-    if not a or a.get("active") is False:
+def announcement_visible(a: Optional[dict], *, now: Optional[datetime] = None, include_drafts: bool = False) -> bool:
+    if not a:
+        return False
+    status = normalize_status(a.get("status"), default=STATUS_PUBLISHED)
+    if status == STATUS_DRAFT and not include_drafts:
+        return False
+    if a.get("active") is False:
         return False
     now = now or _now()
     start = _parse_iso(a.get("starts_at"))
@@ -103,6 +159,8 @@ def normalize_maintenance(raw: Optional[dict]) -> dict:
     raw = raw or {}
     title = (raw.get("title") or DEFAULT_MAINTENANCE_TITLE)
     body = (raw.get("body") or DEFAULT_MAINTENANCE_BODY)
+    company_ids = normalize_company_ids(raw.get("company_ids"))
+    audience = normalize_audience(raw.get("audience"), company_ids)
     return {
         "enabled": bool(raw.get("enabled")),
         "title": str(title).strip() or DEFAULT_MAINTENANCE_TITLE,
@@ -112,6 +170,8 @@ def normalize_maintenance(raw: Optional[dict]) -> dict:
         "support_email": (str(raw.get("support_email") or "").strip() or None),
         "support_phone": (str(raw.get("support_phone") or "").strip() or None),
         "notify_popup": bool(raw.get("notify_popup", True)),
+        "audience": audience,
+        "company_ids": company_ids if audience == AUDIENCE_SELECTED else [],
         "updated_at": raw.get("updated_at"),
     }
 
@@ -121,13 +181,17 @@ async def get_maintenance() -> dict:
     return normalize_maintenance(st.get("maintenance") or {})
 
 
-async def public_notices() -> dict:
+async def public_notices(*, company_id: Optional[str] = None, demo: bool = False) -> dict:
+    """Şirket panelleri için duyurular.
+
+    demo=True: taslaklar da dahil (yalnızca süper admin önizlemesi için kullanılır).
+    """
     m = await get_maintenance()
     now = _now()
     active = maintenance_active(m, now=now)
     upcoming = maintenance_upcoming(m, now=now)
     maintenance_payload = None
-    if active or (upcoming and m.get("notify_popup")):
+    if (active or (upcoming and m.get("notify_popup"))) and announcement_targets_company(m, company_id):
         maintenance_payload = {
             **m,
             "active": active,
@@ -135,18 +199,28 @@ async def public_notices() -> dict:
             "kind": "maintenance",
         }
     rows = await _db.platform_announcements.find({}).sort("starts_at", -1).to_list(100)
-    announcements = [_clean(a) for a in rows if announcement_visible(a, now=now)]
+    announcements = []
+    for a in rows:
+        if not announcement_visible(a, now=now, include_drafts=demo):
+            continue
+        if not announcement_targets_company(a, company_id):
+            continue
+        cleaned = _clean(a)
+        if cleaned:
+            announcements.append(cleaned)
     return {
         "maintenance": maintenance_payload,
         "announcements": announcements,
         "server_time": now.isoformat(),
+        "company_id": company_id,
+        "demo": bool(demo),
     }
 
 
 @router.get("/platform/notices")
-async def platform_notices():
+async def platform_notices(company_id: Optional[str] = Query(None)):
     """Kimlik doğrulamasız — güncelleme / duyuru pop-up'ı için."""
-    return await public_notices()
+    return await public_notices(company_id=company_id, demo=False)
 
 
 @router.get("/system/maintenance")
@@ -177,6 +251,11 @@ async def system_put_maintenance(req: Dict[str, Any], admin: dict = Depends(saas
                 patch[key] = None
             continue
         patch[key] = str(val).strip()
+    if "company_ids" in req or "audience" in req:
+        cids = normalize_company_ids(req.get("company_ids") if "company_ids" in req else patch.get("company_ids"))
+        aud = normalize_audience(req.get("audience") if "audience" in req else patch.get("audience"), cids)
+        patch["audience"] = aud
+        patch["company_ids"] = cids if aud == AUDIENCE_SELECTED else []
     if patch.get("starts_at") and _parse_iso(patch["starts_at"]) is None:
         raise HTTPException(status_code=400, detail="Geçersiz başlangıç zamanı.")
     if patch.get("ends_at") and _parse_iso(patch["ends_at"]) is None:
@@ -225,12 +304,17 @@ async def _upsert_maintenance_announcement(m: dict, admin: dict):
         contacts.append(f"Telefon: {m['support_phone']}")
     if contacts:
         body = f"{body.rstrip()}\n\n" + "\n".join(contacts)
+    audience = normalize_audience(m.get("audience"), m.get("company_ids"))
+    company_ids = normalize_company_ids(m.get("company_ids")) if audience == AUDIENCE_SELECTED else []
     doc = {
         "_id": "announce_maintenance",
         "title": title,
         "body": body,
         "active": True,
+        "status": STATUS_PUBLISHED,
         "kind": "maintenance",
+        "audience": audience,
+        "company_ids": company_ids,
         "starts_at": m.get("starts_at") or _now_iso(),
         "ends_at": m.get("ends_at"),
         "created_at": _now_iso(),
@@ -245,38 +329,84 @@ async def _upsert_maintenance_announcement(m: dict, admin: dict):
         await _db.platform_announcements.insert_one(doc)
 
 
+def _announce_fields_from_req(req: Dict[str, Any], *, partial: bool = False, existing: Optional[dict] = None) -> Dict[str, Any]:
+    base = existing or {}
+    if not partial or "title" in req:
+        title = (req.get("title") if "title" in req else base.get("title") or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Başlık zorunlu.")
+    else:
+        title = base.get("title")
+    if not partial or "body" in req:
+        body = (req.get("body") if "body" in req else base.get("body") or "").strip()
+        if not body:
+            raise HTTPException(status_code=400, detail="Metin zorunlu.")
+    else:
+        body = base.get("body")
+
+    starts_at = req.get("starts_at") if "starts_at" in req else base.get("starts_at")
+    if starts_at is None or starts_at == "":
+        starts_at = _now_iso() if not partial else base.get("starts_at")
+    if starts_at and _parse_iso(starts_at) is None:
+        raise HTTPException(status_code=400, detail="Geçersiz başlangıç zamanı.")
+    ends_at = req.get("ends_at") if "ends_at" in req else base.get("ends_at")
+    if ends_at in ("", None):
+        ends_at = None
+    elif _parse_iso(ends_at) is None:
+        raise HTTPException(status_code=400, detail="Geçersiz bitiş zamanı.")
+
+    cids = normalize_company_ids(req.get("company_ids") if "company_ids" in req else base.get("company_ids"))
+    audience = normalize_audience(req.get("audience") if "audience" in req else base.get("audience"), cids)
+    status = normalize_status(req.get("status") if "status" in req else base.get("status"), default=STATUS_PUBLISHED)
+    active = bool(req.get("active")) if "active" in req else bool(base.get("active", True))
+    kind = ((req.get("kind") if "kind" in req else base.get("kind")) or "info")
+    kind = str(kind).strip() or "info"
+
+    return {
+        "title": title,
+        "body": body,
+        "active": active,
+        "status": status,
+        "kind": kind,
+        "audience": audience,
+        "company_ids": cids if audience == AUDIENCE_SELECTED else [],
+        "starts_at": starts_at,
+        "ends_at": ends_at,
+    }
+
+
 @router.get("/system/announcements")
 async def system_list_announcements(_: dict = Depends(saas.require_super_admin)):
     rows = await _db.platform_announcements.find({}).sort("created_at", -1).to_list(200)
     return [_clean(r) for r in rows]
 
 
+@router.get("/system/announcements/preview")
+async def system_preview_notices(
+    company_id: Optional[str] = Query(None),
+    admin: dict = Depends(saas.require_super_admin),
+):
+    """Yayın öncesi demo: taslaklar dahil, seçilen şirketin göreceği pop-up listesi."""
+    return await public_notices(company_id=company_id, demo=True)
+
+
 @router.post("/system/announcements")
 async def system_create_announcement(req: Dict[str, Any], admin: dict = Depends(saas.require_super_admin)):
-    title = (req.get("title") or "").strip()
-    body = (req.get("body") or "").strip()
-    if not title or not body:
-        raise HTTPException(status_code=400, detail="Başlık ve metin zorunlu.")
-    starts_at = req.get("starts_at") or _now_iso()
-    if _parse_iso(starts_at) is None:
-        raise HTTPException(status_code=400, detail="Geçersiz başlangıç zamanı.")
-    ends_at = req.get("ends_at") or None
-    if ends_at and _parse_iso(ends_at) is None:
-        raise HTTPException(status_code=400, detail="Geçersiz bitiş zamanı.")
+    fields = _announce_fields_from_req(req, partial=False)
     doc = {
         "_id": str(uuid.uuid4()),
-        "title": title,
-        "body": body,
-        "active": bool(req.get("active", True)),
-        "kind": (req.get("kind") or "info").strip() or "info",
-        "starts_at": starts_at,
-        "ends_at": ends_at,
+        **fields,
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
         "created_by": admin.get("email") or admin.get("_id"),
     }
     await _db.platform_announcements.insert_one(doc)
-    return {"status": "success", "announcement": _clean(doc), "message": "Duyuru yayınlandı; şirketlerde pop-up görünecek."}
+    msg = (
+        "Taslak kaydedildi. Önizleyip yayınlayabilirsiniz."
+        if doc["status"] == STATUS_DRAFT
+        else "Duyuru yayınlandı; hedef şirketlerde pop-up görünecek."
+    )
+    return {"status": "success", "announcement": _clean(doc), "message": msg}
 
 
 @router.put("/system/announcements/{announce_id}")
@@ -284,31 +414,26 @@ async def system_update_announcement(announce_id: str, req: Dict[str, Any], _: d
     cur = await _db.platform_announcements.find_one({"_id": announce_id})
     if not cur:
         raise HTTPException(status_code=404, detail="Duyuru bulunamadı.")
-    patch: Dict[str, Any] = {"updated_at": _now_iso()}
-    if "title" in req:
-        t = (req.get("title") or "").strip()
-        if not t:
-            raise HTTPException(status_code=400, detail="Başlık boş olamaz.")
-        patch["title"] = t
-    if "body" in req:
-        b = (req.get("body") or "").strip()
-        if not b:
-            raise HTTPException(status_code=400, detail="Metin boş olamaz.")
-        patch["body"] = b
-    if "active" in req:
-        patch["active"] = bool(req.get("active"))
-    if "kind" in req:
-        patch["kind"] = (req.get("kind") or "info").strip() or "info"
-    if "starts_at" in req:
-        if req.get("starts_at") and _parse_iso(req.get("starts_at")) is None:
-            raise HTTPException(status_code=400, detail="Geçersiz başlangıç zamanı.")
-        patch["starts_at"] = req.get("starts_at") or None
-    if "ends_at" in req:
-        if req.get("ends_at") and _parse_iso(req.get("ends_at")) is None:
-            raise HTTPException(status_code=400, detail="Geçersiz bitiş zamanı.")
-        patch["ends_at"] = req.get("ends_at") or None
+    fields = _announce_fields_from_req(req, partial=True, existing=cur)
+    patch = {**fields, "updated_at": _now_iso()}
     await _db.platform_announcements.update_one({"_id": announce_id}, {"$set": patch})
     return {"status": "success", "announcement": _clean(await _db.platform_announcements.find_one({"_id": announce_id}))}
+
+
+@router.post("/system/announcements/{announce_id}/publish")
+async def system_publish_announcement(announce_id: str, _: dict = Depends(saas.require_super_admin)):
+    cur = await _db.platform_announcements.find_one({"_id": announce_id})
+    if not cur:
+        raise HTTPException(status_code=404, detail="Duyuru bulunamadı.")
+    await _db.platform_announcements.update_one(
+        {"_id": announce_id},
+        {"$set": {"status": STATUS_PUBLISHED, "active": True, "updated_at": _now_iso()}},
+    )
+    return {
+        "status": "success",
+        "announcement": _clean(await _db.platform_announcements.find_one({"_id": announce_id})),
+        "message": "Duyuru yayınlandı.",
+    }
 
 
 @router.delete("/system/announcements/{announce_id}")
