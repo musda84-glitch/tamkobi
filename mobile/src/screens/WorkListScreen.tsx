@@ -129,7 +129,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       onRefresh={load}
       refreshing={refreshing}
       stickyTop={(
-        <>
+        <View testID={`work-list-sticky-${kind}`} style={{ gap: 8 }}>
           {canEdit ? (
             <PrimaryButton title={newButtonLabel(kind)} onPress={() => go(meta.goNew)} color={colors.primary} testID={`new-${kind}-btn`} />
           ) : null}
@@ -147,7 +147,7 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
               ) : null}
             </>
           ) : null}
-        </>
+        </View>
       )}
     >
       <ErrorBanner message={error} />

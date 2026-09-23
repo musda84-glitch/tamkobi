@@ -37,7 +37,18 @@ export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshin
   const bottom = contentBottomPad(SCREEN_BASE_PAD, keyboardHeight, Platform.OS);
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      {stickyTop ? <View style={[styles.stickyTop, padded && styles.stickyPad]}>{stickyTop}</View> : null}
+      {stickyTop ? (
+        <View
+          testID="screen-sticky-top"
+          style={[
+            styles.stickyTop,
+            padded && styles.stickyPad,
+            Platform.OS === "web" ? { position: "sticky" as const, top: 0 } : null,
+          ]}
+        >
+          {stickyTop}
+        </View>
+      ) : null}
       <ScrollView
         ref={scrollRef}
         style={styles.flex}
@@ -269,7 +280,7 @@ export function Kpi({ label, value, sub }: { label: string; value: string; sub?:
 
 /** Minimal düzen: dar boşluklar, ince çerçeveler; dokunma hedefleri 44 px altına inmez. */
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
+  screen: { flex: 1, backgroundColor: colors.background, overflow: "hidden" },
   flex: { flex: 1 },
   content: { flexGrow: 1 },
   padded: { padding: spacing.sm + 4, gap: spacing.sm + 2 },
