@@ -71,3 +71,6 @@ def test_assignment_includes_workflow_and_photos():
     assert row["latitude"] == 40.1
     assert len(row["workflow"]) == 2
     assert row["photos"][0]["visibility"] == "pending"
+    assert [p["url"] for p in row["photos"]] == ["/api/files/work.jpg"]
+    other = assignment_from_project(proj, {"id": "t2", "title": "Teslim", "done": True})
+    assert other["photos"] == []

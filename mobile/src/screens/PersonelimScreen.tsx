@@ -165,10 +165,10 @@ export function PersonelimScreen() {
     setMessage(null);
     try {
       const r = await post<{ message?: string }>(client, `/personnel/me/tasks/${t.id}/complete`, {});
-      setMessage(r.message || "Görev onaylandı.");
+      setMessage(r.message || "Görev tamamlandı.");
       await load();
     } catch (err) {
-      setError(apiErrorMessage(err, "Görev onaylanamadı."));
+      setError(apiErrorMessage(err, "Görev tamamlanamadı."));
     } finally {
       setTaskBusyId(null);
     }

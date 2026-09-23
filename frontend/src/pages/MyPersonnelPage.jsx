@@ -122,10 +122,10 @@ export default function MyPersonnelPage() {
     setTaskBusyId(t.id);
     try {
       const r = await axios.post(`${API_URL}/personnel/me/tasks/${t.id}/complete`, {}, { withCredentials: true });
-      toast.success(r.data?.message || "Görev onaylandı.");
+      toast.success(r.data?.message || "Görev tamamlandı.");
       load();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Görev onaylanamadı.");
+      toast.error(err.response?.data?.detail || "Görev tamamlanamadı.");
     } finally {
       setTaskBusyId(null);
     }

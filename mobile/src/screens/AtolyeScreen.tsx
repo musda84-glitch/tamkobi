@@ -258,7 +258,7 @@ export function AtolyeScreen() {
     setDutyBusyId(t.id);
     try {
       const r = await post<{ message?: string }>(client, `/personnel/me/tasks/${t.id}/complete`, {});
-      setNotice(r.message || "Görev onaylandı.");
+      setNotice(r.message || "Görev tamamlandı.");
       setError(null);
       await load();
     } catch (err) {

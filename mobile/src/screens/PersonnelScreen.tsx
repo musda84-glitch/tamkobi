@@ -6,6 +6,7 @@ import { Platform, Pressable, Text, View } from "react-native";
 import { del, get, post, put, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
+import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
@@ -124,6 +125,7 @@ import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { findWorkPark, officeTaskPayload, parkSelectGroups, validateOfficeTaskAssign, type WorkPark } from "../utils/workParks";
 import { fmtDmy } from "../utils/calendar";
 import { fieldWorkplaceFromProjects, workplaceHint, workplaceShort, type Workplace } from "../utils/workplace";
+import { pendingDutyPhotoCount, type AssignedDuty } from "../utils/assignedDuty";
 
 type Tab = "payroll" | "attendance" | "leaves" | "extras";
 
@@ -1184,14 +1186,24 @@ export function PersonnelScreen() {
                             {t.kind === "office" ? ` · iç görev${t.park_name ? ` · ${t.park_name}` : ""}` : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${t.due_date}` : ""}
                           </Muted>
                         ))}
+                        {pendingDutyPhotoCount(cards[eid]?.tasks as AssignedDuty[]) ? (
+                          <Muted testID={`emp-card-photo-pending-${eid}`}>
+                            {pendingDutyPhotoCount(cards[eid]?.tasks as AssignedDuty[])} iş fotoğrafı müşteri onayı bekliyor
+                          </Muted>
+                        ) : null}
                       </>
                     ) : (
                       <Muted testID={`emp-card-workplace-summary-${eid}`}>
-                        {workplaceDetailsSummary({
-                          hasFieldDuty: emp.workplace?.kind === "task",
-                          fieldLabel: emp.workplace?.kind === "task" ? workplaceShort(emp.workplace) : "",
-                          taskCount: openEmployeeTasks(cards[eid]).length,
-                        })}
+                        {[
+                          workplaceDetailsSummary({
+                            hasFieldDuty: emp.workplace?.kind === "task",
+                            fieldLabel: emp.workplace?.kind === "task" ? workplaceShort(emp.workplace) : "",
+                            taskCount: openEmployeeTasks(cards[eid]).length,
+                          }),
+                          pendingDutyPhotoCount(cards[eid]?.tasks as AssignedDuty[])
+                            ? `${pendingDutyPhotoCount(cards[eid]?.tasks as AssignedDuty[])} foto onay bekliyor`
+                            : "",
+                        ].filter(Boolean).join(" · ")}
                       </Muted>
                     )}
                   </View>
@@ -1775,6 +1787,22 @@ export function PersonnelScreen() {
       >
         {dutiesEmp ? (() => {
           const board = employeeDutyBoard(dutiesEmp, cards[idOf(dutiesEmp)]);
+          const dutyRows = (cards[idOf(dutiesEmp)]?.tasks || []) as AssignedDuty[];
+          const pendingPhotos = pendingDutyPhotoCount(dutyRows);
+          const patchDuty = (next?: AssignedDuty) => {
+            if (!next?.id) return;
+            const eid = idOf(dutiesEmp);
+            setCards((prev) => {
+              const card = prev[eid] || {};
+              return {
+                ...prev,
+                [eid]: {
+                  ...card,
+                  tasks: (card.tasks || []).map((t) => (t.id === next.id ? { ...t, ...next } : t)),
+                },
+              };
+            });
+          };
           return (
             <View testID={`emp-duties-board-${idOf(dutiesEmp)}`} style={{ gap: 10 }}>
               <View
@@ -1800,8 +1828,24 @@ export function PersonnelScreen() {
                 ) : (
                   <Muted testID="emp-duties-empty">Aktif görev yok.</Muted>
                 )}
+                {pendingPhotos ? (
+                  <Muted testID="emp-duties-photo-pending">{pendingPhotos} iş fotoğrafı müşteri onayı bekliyor</Muted>
+                ) : null}
               </View>
-              {board.open.filter((t) => !t.current).length ? (
+              {dutyRows.length ? (
+                <View testID="emp-duties-cards" style={{ gap: 8 }}>
+                  {dutyRows.map((t, i) => (
+                    <AssignedDutyCard
+                      key={t.id || String(i)}
+                      duty={t}
+                      index={i}
+                      testID={`emp-duties-card-${t.id || i}`}
+                      reviewPhotos
+                      onChanged={patchDuty}
+                    />
+                  ))}
+                </View>
+              ) : board.open.filter((t) => !t.current).length ? (
                 <View testID="emp-duties-open" style={{ gap: 8 }}>
                   <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Diğer açık görevler ({board.open.filter((t) => !t.current).length})</Text>
                   {board.open.filter((t) => !t.current).map((t) => (
