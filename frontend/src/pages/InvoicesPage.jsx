@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued } from "../components/InvoiceContextMenu";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { GibContactLookup } from "../components/GibContactLookup";
@@ -46,7 +46,7 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
-  FileCheck2, Pencil, Trash2, CheckCircle, XCircle } from "lucide-react";
+  FileCheck2, CheckCircle, XCircle } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const typeBadge = (inv) => {
@@ -692,26 +692,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       ) : (() => {
                         const incoming = isIncomingPurchaseInvoice(inv);
                         return (
-                      <div className="grid grid-cols-[repeat(9,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
-                        {(inv.status === "draft" || canDeleteInvoice(inv)) ? (
-                          <>
-                            {inv.status === "draft" ? (
-                              <button onClick={() => openEditInvoice(inv)} className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-lg" title="Taslağı düzenle" data-testid={`edit-inv-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
-                            ) : <span className="w-7 h-7" aria-hidden="true" />}
-                            {canDeleteInvoice(inv) ? (
-                              <button onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg" title={inv.status === "draft" ? "Taslağı sil (çöp kutusu)" : "Kağıt faturayı sil (çöp kutusu)"} data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
-                            ) : <span className="w-7 h-7" aria-hidden="true" />}
-                            {inv.status === "draft" && !incoming ? (
-                              <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
-                            ) : <span className="w-7 h-7" aria-hidden="true" />}
-                          </>
-                        ) : (
-                          <>
-                            <span className="w-7 h-7" aria-hidden="true" />
-                            <span className="w-7 h-7" aria-hidden="true" />
-                            <span className="w-7 h-7" aria-hidden="true" />
-                          </>
-                        )}
+                      <div className="grid grid-cols-[repeat(7,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
+                        {inv.status === "draft" && !incoming ? (
+                          <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
+                        ) : <span className="w-7 h-7" aria-hidden="true" />}
                         <button
                           onClick={() => setPreviewInvoice(inv)}
                           className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
@@ -769,7 +753,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         )}
       </div>
 
-      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onDelete={handleDeleteInvoice} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} />
+      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={handleDeleteInvoice} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} />
       {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && <PrintDocument docType="invoice" doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} onEditTemplate={() => setEditTpl(true)} />}
       {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="invoice" onClose={() => setEditTpl(false)} />}
