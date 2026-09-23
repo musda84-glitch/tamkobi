@@ -24,5 +24,8 @@ describe("field picker routing", () => {
     expect(fieldUsesTimePicker("ot-note-input", "Not", "Opsiyonel")).toBe(false);
     expect(fieldUsesTimePicker("emp-ledger-amount", "Tutar (₺)", "Örn: 2500")).toBe(false);
     expect(fieldUsesTimePicker("emp-ledger-amount", "Tutar (₺)", "Kalan bakiye")).toBe(false);
+    expect(fieldUsesTimePicker("mesai-rec-dispute-note-abc", "Düzeltme açıklaması", "Örn: çıkış 19:30 olmalı")).toBe(true);
+    expect(fieldUsesTimePicker("mesai-rec-dispute-in-abc", "Doğru giriş")).toBe(true);
+    expect(fieldUsesTimePicker("mesai-rec-dispute-extra-abc", "Ek açıklama", "Opsiyonel")).toBe(false);
   });
 });
