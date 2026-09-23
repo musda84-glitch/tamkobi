@@ -33,8 +33,10 @@ def test_kuveyt_provider_identity_and_api_hosts():
 def test_kuveyt_token_urls_sandbox_and_live():
     sand = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "sandbox"})
     assert sand[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
+    assert len(sand) == 1
     live = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "live"})
     assert live[0] == "https://id.kuveytturk.com.tr/api/connect/token"
+    assert len(live) == 1
     custom = bp._kuveyt_token_urls({
         "provider": "kuveytturk", "mode": "live",
         "token_url": "https://id.kuveytturk.com.tr/api/connect/token",
@@ -115,9 +117,20 @@ def test_kuveyt_normalize_secret_strips_paste_artifacts():
     assert bp._kuveyt_normalize_secret("\ufeffsec\u200b") == "sec"
 
 
-def test_kuveyt_scope_candidates_prefer_accounts():
-    assert bp._kuveyt_scope_candidates({})[0] == "accounts"
+def test_kuveyt_scope_candidates_prefer_public():
+    assert bp._kuveyt_scope_candidates({})[0] == "public"
     assert bp._kuveyt_scope_candidates({"scope": "payments cards"})[0] == "payments cards"
+
+
+def test_kuveyt_token_urls_only_api_connect_token():
+    live = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "live"})
+    assert live == ["https://id.kuveytturk.com.tr/api/connect/token"]
+    fixed = bp._kuveyt_token_urls({
+        "provider": "kuveytturk", "mode": "live",
+        "token_url": "https://id.kuveytturk.com.tr/connect/token",
+    })
+    assert fixed[0] == "https://id.kuveytturk.com.tr/api/connect/token"
+    assert all("/connect/token" not in u or u.endswith("/api/connect/token") for u in fixed)
 
 
 def test_kuveyt_token_posts_client_credentials_to_identity():
@@ -141,25 +154,27 @@ def test_kuveyt_token_posts_client_credentials_to_identity():
     args, kwargs = mock_client.post.await_args
     assert args[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
     assert kwargs["data"]["grant_type"] == "client_credentials"
-    # First attempt: HTTP Basic, credentials not in body; default scope=accounts
-    assert "client_id" not in kwargs["data"]
-    assert "client_secret" not in kwargs["data"]
-    assert kwargs["data"].get("scope") == "accounts"
-    assert kwargs["headers"]["Authorization"].startswith("Basic ")
+    # Official SDK: body credentials first; default scope=public
+    assert kwargs["data"]["client_id"] == "cid"
+    assert kwargs["data"]["client_secret"] == "sec"
+    assert kwargs["data"].get("scope") == "public"
+    assert "Authorization" not in kwargs["headers"]
 
 
-def test_kuveyt_token_falls_back_to_body_credentials():
+def test_kuveyt_token_falls_back_to_basic_auth():
     conn = {"provider": "kuveytturk", "mode": "live", "client_id": "cid", "client_secret": "sec"}
     bad = MagicMock()
     bad.status_code = 401
     bad.content = b'{"error":"invalid_client"}'
     bad.text = '{"error":"invalid_client"}'
+    bad.headers = {"content-type": "application/json"}
     bad.json.return_value = {"error": "invalid_client"}
 
     good = MagicMock()
     good.status_code = 200
-    good.content = b'{"access_token":"body-tok"}'
-    good.json.return_value = {"access_token": "body-tok"}
+    good.content = b'{"access_token":"basic-tok"}'
+    good.json.return_value = {"access_token": "basic-tok"}
+    good.headers = {"content-type": "application/json"}
 
     mock_client = AsyncMock()
     mock_client.post = AsyncMock(side_effect=[bad, good])
@@ -171,13 +186,48 @@ def test_kuveyt_token_falls_back_to_body_credentials():
             return await bp._kuveyt_access_token(conn)
 
     token = asyncio.run(_run())
-    assert token == "body-tok"
+    assert token == "basic-tok"
     assert mock_client.post.await_count == 2
     second = mock_client.post.await_args_list[1]
     assert second.args[0] == "https://id.kuveytturk.com.tr/api/connect/token"
-    assert second.kwargs["data"]["client_id"] == "cid"
-    assert second.kwargs["data"]["client_secret"] == "sec"
-    assert "Authorization" not in second.kwargs["headers"]
+    assert "client_id" not in second.kwargs["data"]
+    assert second.kwargs["headers"]["Authorization"].startswith("Basic ")
+
+
+def test_kuveyt_token_invalid_client_keeps_oauth_error_not_html_404():
+    conn = {
+        "provider": "kuveytturk", "mode": "live",
+        "client_id": "cid", "client_secret": "cc44b566-8006-4712-bf45-1e1b7c64b4da",
+        "api_key": "cc44b566-8006-4712-bf45-1e1b7c64b4da",
+    }
+    bad = MagicMock()
+    bad.status_code = 401
+    bad.content = b'{"error":"invalid_client"}'
+    bad.text = "invalid_client:"
+    bad.headers = {"content-type": "application/json"}
+    bad.json.return_value = {"error": "invalid_client"}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=bad)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._kuveyt_access_token(conn)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "invalid_client" in msg
+        assert "/api/connect/token" in msg
+        assert "<!DOCTYPE" not in msg
+        assert "Api Anahtarı" in msg or "UUID" in msg
+        # Never fall back to bare /connect/token
+        assert "id.kuveytturk.com.tr/connect/token" not in msg or "/api/connect/token" in msg
+        assert all(call.args[0].endswith("/api/connect/token") for call in mock_client.post.await_args_list)
 
 
 def test_kuveyt_token_invalid_client_message_hints_api_key():
@@ -186,6 +236,7 @@ def test_kuveyt_token_invalid_client_message_hints_api_key():
     bad.status_code = 401
     bad.content = b'{"error":"invalid_client"}'
     bad.text = "invalid_client:"
+    bad.headers = {"content-type": "application/json"}
     bad.json.return_value = {"error": "invalid_client"}
 
     mock_client = AsyncMock()
@@ -205,6 +256,7 @@ def test_kuveyt_token_invalid_client_message_hints_api_key():
         assert "invalid_client" in msg
         assert "Api Anahtarı" in msg or "Client Secret" in msg
         assert "id.kuveytturk.com.tr" in msg
+        assert "/api/connect/token" in msg
 
 
 def test_kuveyt_probe_signs_banks_get():
