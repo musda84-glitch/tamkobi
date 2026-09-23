@@ -197,7 +197,7 @@ export default function OrdersB2BPage() {
       try {
         if (action === "invoice" || action === "invoice_create") {
           if (o.is_invoiced || o.invoice_id) { skipped++; continue; }
-          await axios.post(`${API_URL}/e-invoice/create`, { order_id: o.id || o._id, e_type: "e_archive" });
+          await axios.post(`${API_URL}/orders/${o.id || o._id}/convert-to-invoice`, { e_type: "e_archive", as_draft: true });
         } else if (action === "einvoice_create") {
           if (o.is_invoiced || o.invoice_id) { skipped++; continue; }
           await axios.post(`${API_URL}/e-invoice/create`, { order_id: o.id || o._id, e_type: "e_invoice", scenario: "TICARI" });
@@ -325,16 +325,14 @@ export default function OrdersB2BPage() {
   const [expandedItems, setExpandedItems] = useState(null);
   const handleConvertToInvoice = async (orderId, eType) => {
     try {
-      // Tek adım: sipariş → fatura → GİB (e_invoice servisi)
-      const res = await axios.post(`${API_URL}/e-invoice/create`, {
-        order_id: orderId,
+      const res = await axios.post(`${API_URL}/orders/${orderId}/convert-to-invoice`, {
         e_type: eType || "e_archive",
-        scenario: eType === "e_invoice" ? "TICARI" : undefined,
+        as_draft: true,
       });
-      toast.success(res.data.message || "E-belge kesildi.");
+      toast.success(res.data.message || "Taslak fatura kaydedildi.");
       loadData();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Faturaya dönüştürme / e-belge kesimi başarısız.");
+      toast.error(err.response?.data?.detail || "Taslak fatura oluşturulamadı.");
     }
   };
 
@@ -466,7 +464,7 @@ export default function OrdersB2BPage() {
         <div className="sticky top-16 z-20 bg-slate-900 text-white rounded-2xl px-4 py-2.5 flex flex-wrap items-center gap-2 text-xs shadow-xl" data-testid="orders-bulk-bar">
           <span className="font-bold">{selected.length} sipariş seçildi</span>
           <button onClick={() => bulk("approve")} className="px-3 py-1.5 bg-emerald-600 rounded-lg font-semibold" data-testid="bulk-approve-btn">Toplu Onayla (entegrasyona yansır)</button>
-          <button onClick={() => bulk("invoice")} className="px-3 py-1.5 bg-blue-600 rounded-lg font-semibold" data-testid="bulk-invoice-btn">Toplu Fatura Kes</button>
+          <button onClick={() => bulk("invoice")} className="px-3 py-1.5 bg-blue-600 rounded-lg font-semibold" data-testid="bulk-invoice-btn">Toplu Taslak Fatura</button>
           <button onClick={() => bulk("thermal")} className="px-3 py-1.5 bg-amber-500 rounded-lg font-semibold flex items-center gap-1" data-testid="bulk-thermal-btn"><Printer className="w-3.5 h-3.5" /> Termal Etiket (100×150)</button>
           <button onClick={() => bulk("labels")} className="px-3 py-1.5 border border-amber-400 text-amber-200 rounded-lg font-semibold" data-testid="bulk-labels-btn">A4 Etiket</button>
           <button onClick={() => bulk("delete")} className="px-3 py-1.5 bg-rose-600 rounded-lg font-semibold flex items-center gap-1" data-testid="bulk-delete-btn"><Trash2 className="w-3.5 h-3.5" /> Sil</button>
@@ -613,12 +611,22 @@ export default function OrdersB2BPage() {
                       <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>
                         {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
+                          ord.invoice_id ? (
+                            <span
+                              className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-amber-50 text-amber-700 border border-amber-200"
+                              title={`Taslak fatura${ord.invoice_number ? `: ${ord.invoice_number}` : ""}`}
+                              aria-label="Taslak fatura"
+                              data-testid={`draft-inv-badge-${ord.order_number}`}
+                            >
+                              <FileText className="w-4 h-4" />
+                            </span>
+                          ) : (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <button
                                 type="button"
                                 className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm"
-                                title="Faturala"
+                                title="Taslak fatura oluştur"
                                 aria-label="Faturala"
                                 data-testid={`convert-inv-btn-${ord.order_number}`}
                               >
@@ -626,7 +634,7 @@ export default function OrdersB2BPage() {
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" sideOffset={8} collisionPadding={24} className="z-[80] w-52 rounded-xl p-1.5 shadow-lg" data-testid={`inv-type-chooser-${ord.order_number}`}>
-                              <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">Nasıl kesilsin?</div>
+                              <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">Taslak fatura türü</div>
                               {[["e_invoice", "E-Fatura", "Mükellef alıcı"], ["e_archive", "E-Arşiv", "Nihai tüketici / pazaryeri"], ["paper", "Kağıt Fatura", "Matbu"]].map(([k, l, sub]) => (
                                 <DropdownMenuItem key={k} onSelect={() => handleConvertToInvoice(ord.id || ord._id, k)} className="flex-col items-start gap-0 py-1.5" data-testid={`inv-type-${k}-${ord.order_number}`}>
                                   <span className="text-xs font-semibold text-slate-800">{l}</span>
@@ -640,6 +648,7 @@ export default function OrdersB2BPage() {
                               )}
                             </DropdownMenuContent>
                           </DropdownMenu>
+                          )
                         ) : (
                           <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700" title="Faturalandı" aria-label="Faturalandı" data-testid={`invoiced-badge-${ord.order_number}`}>
                             <CheckCircle2 className="w-4 h-4" />
