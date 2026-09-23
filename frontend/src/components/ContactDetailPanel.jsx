@@ -19,16 +19,19 @@ import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableCol
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
 import { collectableAccounts, PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { ContactPayMenu } from "./ContactPayMenu";
+import { ContactStatementMenu } from "./ContactStatementMenu";
+import { StatementShareBar, StatementPrint, buildStatementRows } from "./StatementShare";
+import { shareStatementLink } from "../utils/statementShare";
 import { buildContactPayForm } from "../utils/contactPayMenu";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
+import { fmtMoney } from "../utils/money";
 import { DocumentLineEditor } from "./DocumentLineEditor";
 import { documentLineTotals, hydrateLine } from "../utils/documentLines";
 import { orderFooterTotals } from "../utils/orderMoney";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { ContactForm } from "./ContactForm";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { fmtMoney } from "../utils/money";
 import { orderEditBlockedReason, orderLinesLocked as orderChannelLocked } from "../utils/orderEdit";
 
 const fmt = (n, c = "TRY") => fmtMoney(n, c);
@@ -247,6 +250,40 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     }
     openPay(item.preset || {});
   };
+  const [statementBusy, setStatementBusy] = useState(false);
+  const [statementView, setStatementView] = useState(null);
+  const loadStatementBundle = async () => {
+    const r = await axios.get(`${API_URL}/contacts/${c.id}/statement`);
+    return {
+      ...r.data,
+      cheques: data?.cheques || r.data.cheques || [],
+    };
+  };
+  const onStatementMenuSelect = async (item) => {
+    if (!item) return;
+    if (item.action === "link") {
+      setStatementBusy(true);
+      try { await shareStatementLink(c); }
+      catch (err) { toast.error(err.response?.data?.detail || "Ekstre linki oluşturulamadı."); }
+      finally { setStatementBusy(false); }
+      return;
+    }
+    setStatementBusy(true);
+    try {
+      const bundle = await loadStatementBundle();
+      const detailed = item.action === "detailed";
+      const rows = buildStatementRows(bundle, { includeCheques: detailed });
+      if (item.action === "reconciliation") {
+        setStatementView({ mode: "reconciliation", rows, bundle });
+      } else {
+        setStatementView({ mode: detailed ? "detailed" : "statement", rows, bundle });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Ekstre yüklenemedi.");
+    } finally {
+      setStatementBusy(false);
+    }
+  };
   const savePay = async (e) => {
     e.preventDefault();
     try {
@@ -390,6 +427,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             <button onClick={() => navigate(`/invoices?new=sales&contact_id=${c.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition" title="Bu cariye satış faturası kes" data-testid="detail-sell-btn"><ArrowUpRight className="w-3.5 h-3.5" /> Satış Yap</button>
             <button onClick={() => navigate(`/invoices?new=purchase&contact_id=${c.id}`)} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg text-xs font-semibold transition" title="Bu cariden alış faturası gir" data-testid="detail-buy-btn"><ArrowDownLeft className="w-3.5 h-3.5" /> Alış Yap</button>
             <ContactPayMenu onSelect={onCollectMenuSelect} />
+            <ContactStatementMenu onSelect={onStatementMenuSelect} busy={statementBusy} />
             <span className="w-px h-6 bg-slate-200 mx-1" aria-hidden="true" />
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5" data-testid="detail-icon-actions">
               <button onClick={() => onMessage?.(c)} className="p-1.5 rounded-md text-slate-600 hover:bg-white hover:text-indigo-600 transition" title="SMS / E-posta / WhatsApp mesajı" data-testid="detail-message-btn"><MessageSquare className="w-4 h-4" /></button>
@@ -736,6 +774,52 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {printDoc && <PrintDocument docType={printDoc._docType || (printDoc.order_number ? "order" : "invoice")} doc={printDoc} company={activeCompany} onClose={() => setPrintDoc(null)} onEditTemplate={() => setEditTpl(printDoc.order_number ? "order" : "invoice")} />}
         {editTpl && <PrintTemplateEditor companyId={c.company_id} docType={editTpl} onClose={() => setEditTpl(null)} />}
         {receipt && <ReceiptPrint tx={receipt} contact={c} company={activeCompany} onClose={() => setReceipt(null)} />}
+        {statementView?.mode === "reconciliation" && (
+          <StatementPrint
+            contact={c}
+            rows={statementView.rows}
+            company={activeCompany}
+            variant="reconciliation"
+            onClose={() => setStatementView(null)}
+          />
+        )}
+        {statementView && statementView.mode !== "reconciliation" && (
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setStatementView(null)} data-testid="detail-statement-modal">
+            <div className="bg-white rounded-2xl max-w-[min(960px,calc(100vw-2rem))] w-full p-5 space-y-3 text-xs shadow-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between border-b pb-2 gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">{c.name} — {statementView.mode === "detailed" ? "Detaylı Ekstre" : "Cari Ekstre"}</h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">VKN: {c.tax_number_or_id} • Bakiye: {fmt(c.balance)}</p>
+                </div>
+                <button type="button" onClick={() => setStatementView(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
+              </div>
+              <StatementShareBar contact={c} rows={statementView.rows} companyId={c.company_id} />
+              <table className="w-full text-left" data-testid="detail-statement-table">
+                <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold text-[10px]">
+                  <tr>
+                    <th className="py-2 px-2">Tarih</th>
+                    <th className="py-2 px-2">Belge / Açıklama</th>
+                    <th className="py-2 px-2 text-right">Borç</th>
+                    <th className="py-2 px-2 text-right">Alacak</th>
+                    <th className="py-2 px-2 text-right">Bakiye</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {statementView.rows.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Hareket yok.</td></tr>}
+                  {statementView.rows.map((r, idx) => (
+                    <tr key={`${r.kind}-${idx}`} className={r.kind === "payment" ? "bg-emerald-50/40" : r.kind === "cheque" ? "bg-indigo-50/40" : ""}>
+                      <td className="py-1.5 px-2 font-mono text-slate-500">{r.date}</td>
+                      <td className="py-1.5 px-2 font-semibold text-slate-800">{r.doc}</td>
+                      <td className="py-1.5 px-2 text-right text-rose-700">{r.debit ? fmt(r.debit) : "—"}</td>
+                      <td className="py-1.5 px-2 text-right text-emerald-700">{r.credit ? fmt(r.credit) : "—"}</td>
+                      <td className={`py-1.5 px-2 text-right font-bold ${r.balance > 0 ? "text-rose-700" : "text-emerald-700"}`}>{fmt(r.balance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
         <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} companyId={activeCompany?.id || activeCompany?._id || c?.company_id} onIssue={(inv, eType) => sendToGib(inv, eType)} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onEdit={(inv) => setEditInv({ ...inv })} onDelete={deleteInvoice} onCancel={cancelInvoice} onExpenseSlip={issueExpenseSlip} apiBase={API_URL} />
         {termsOpen && <ContactTermsModal contact={c} onClose={() => setTermsOpen(false)} onSaved={load} />}
         {balancePlan && <InstallmentPlanModal kind="balance" doc={{ id: c.id, contact_name: c.name, grand_total: Math.abs(c.balance || 0), invoice_number: "Açık Bakiye", direction: c.balance >= 0 ? "receivable" : "payable" }} accounts={accounts} companyId={c.company_id} onClose={() => setBalancePlan(false)} onChanged={() => { load(); loadInsts(); }} />}
