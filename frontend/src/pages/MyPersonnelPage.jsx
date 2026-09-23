@@ -9,6 +9,7 @@ import {
 import { API_URL, useAuth } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
 import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
+import { LocationConsentCard } from "../components/LocationConsentCard";
 
 const money = (n) => `${formatTrAmount(Number(n || 0))} ₺`;
 const statusTr = {
@@ -48,6 +49,7 @@ export default function MyPersonnelPage() {
   const [advanceNote, setAdvanceNote] = useState("");
   const [advanceBusy, setAdvanceBusy] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState(null);
+  const [consentBusy, setConsentBusy] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -98,6 +100,19 @@ export default function MyPersonnelPage() {
       toast.error(err.response?.data?.detail || "Avans talebi gönderilemedi.");
     } finally {
       setAdvanceBusy(false);
+    }
+  };
+
+  const acceptConsent = async ({ accept_kvkk, accept_share }) => {
+    setConsentBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/me/location-consent`, { accept_kvkk, accept_share }, { withCredentials: true });
+      toast.success(r.data.message || "Sözleşmeler kabul edildi. Personel paneli kullanıma açıldı.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Sözleşme kaydedilemedi.");
+    } finally {
+      setConsentBusy(false);
     }
   };
 
@@ -176,6 +191,15 @@ export default function MyPersonnelPage() {
         <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Aylık dönem<input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-xl p-2 text-xs font-semibold text-slate-800 normal-case tracking-normal" data-testid="my-personnel-month" /></label>
       </div>
       <StaffMessagesPanel compact testId="my-personnel-messages" />
+      {emp ? (
+        <LocationConsentCard
+          consent={data?.location_consent}
+          signal={data?.location_signal}
+          onAccept={acceptConsent}
+          busy={consentBusy}
+          testId="my-personnel-consent"
+        />
+      ) : null}
 
       {!emp && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800" data-testid="my-personnel-no-employee">

@@ -13,6 +13,7 @@ def test_personnel_me_skipped_from_rbac():
     assert any(p.startswith("/api/personnel/messages") for p in SKIP_PREFIXES)
     assert any(p.startswith("/api/personnel/bonuses/self") for p in SKIP_PREFIXES)
     assert any(p.startswith("/api/personnel/attendance/intraday-leave-request") for p in SKIP_PREFIXES)
+    assert any(p.startswith("/api/personnel/attendance/self") for p in SKIP_PREFIXES)
 
 
 def test_personelim_aliases_mesai_license():

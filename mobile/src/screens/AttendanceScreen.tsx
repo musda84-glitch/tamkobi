@@ -10,6 +10,9 @@ import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeSt
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
+import { LocationConsentCard } from "../components/LocationConsentCard";
+import { LocationSignalDot } from "../components/LocationSignal";
+import { locationConsentAccepted, locationConsentPayload, locationUnavailablePayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
 import { workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
 
@@ -58,6 +61,8 @@ type AttendancePayload = {
   }[];
   summary?: { days?: number; hours?: number };
   checkout_unlocked?: boolean;
+  location_consent?: LocationConsent | null;
+  location_signal?: LocationSignal | null;
 };
 
 async function coords() {
@@ -85,12 +90,15 @@ export function AttendanceScreen() {
   const [disputeNote, setDisputeNote] = useState("");
   const [disputeIn, setDisputeIn] = useState("");
   const [disputeOut, setDisputeOut] = useState("");
+  const [consentBusy, setConsentBusy] = useState(false);
+  const [signal, setSignal] = useState<LocationSignal | null>(null);
 
   const load = useCallback(async () => {
     try {
       const month = new Date().toISOString().slice(0, 7);
       const res = await get<AttendancePayload>(client, "/personnel/attendance/me", { company_id: companyId, month });
       setData(res);
+      setSignal(res.location_signal || null);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Puantaj yüklenemedi."));
@@ -110,24 +118,51 @@ export function AttendanceScreen() {
     return () => clearInterval(t);
   }, [client, load, data?.today?.check_in, data?.today?.check_out, data?.today?.early_leave_request?.status, data?.checkout_unlocked]);
 
+  const reportLocation = useCallback(async (reason?: string) => {
+    let c: { latitude: number; longitude: number; accuracy_m?: number | null };
+    try {
+      c = await coords();
+    } catch (err) {
+      try {
+        const r = await post<{ location_signal?: LocationSignal; message?: string }>(
+          client,
+          "/personnel/attendance/self/location-unavailable",
+          locationUnavailablePayload(reason || apiErrorMessage(err, "Konum alınamadı")),
+        );
+        if (r.location_signal) setSignal(r.location_signal);
+        if (r.message) setMessage(r.message);
+      } catch {
+        /* bildirim gönderilemedi */
+      }
+      return false;
+    }
+    try {
+      const r = await post<{ location_signal?: LocationSignal }>(client, "/personnel/attendance/self/location", {
+        latitude: c.latitude,
+        longitude: c.longitude,
+        accuracy_m: c.accuracy_m ?? undefined,
+      });
+      if (r.location_signal) setSignal(r.location_signal);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (!locationConsentAccepted(data?.location_consent)) return;
+    reportLocation();
+  }, [data?.location_consent?.accepted, reportLocation]);
+
   useEffect(() => {
     const tracking = data?.active_location_tracking || data?.location_tracking;
     const onDuty = Boolean(data?.today?.check_in && !data?.today?.check_out);
     const field = data?.workplace?.kind === "task";
-    if (!tracking?.enabled || !onDuty || !field) return;
+    if (!locationConsentAccepted(data?.location_consent) || !tracking?.enabled || !onDuty || !field) return;
     let cancelled = false;
     const ping = async () => {
-      try {
-        const c = await coords();
-        if (cancelled) return;
-        await post(client, "/personnel/attendance/self/location", {
-          latitude: c.latitude,
-          longitude: c.longitude,
-          accuracy_m: c.accuracy_m ?? undefined,
-        });
-      } catch {
-        /* izin yok veya konum kapalı */
-      }
+      if (cancelled) return;
+      await reportLocation();
     };
     ping();
     const mins = Number(tracking.interval_minutes);
@@ -137,7 +172,7 @@ export function AttendanceScreen() {
       cancelled = true;
       clearInterval(t);
     };
-  }, [client, data?.today?.check_in, data?.today?.check_out, data?.workplace?.kind, data?.active_location_tracking, data?.location_tracking]);
+  }, [client, data?.today?.check_in, data?.today?.check_out, data?.workplace?.kind, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
 
   const act = async (action: "check_in" | "check_out") => {
     setBusy(action);
@@ -150,14 +185,19 @@ export function AttendanceScreen() {
         trackingEnabled: Boolean(data?.active_location_tracking?.enabled ?? data?.location_tracking?.enabled),
       });
       if (geoMode === "required") {
-        const c = await coords();
-        extra = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
+        try {
+          const c = await coords();
+          extra = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
+        } catch (err) {
+          await reportLocation(apiErrorMessage(err, "Konum izni verilmedi."));
+          throw err;
+        }
       } else if (geoMode === "attach") {
         try {
           const c = await coords();
           extra = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
-        } catch {
-          /* çıkış her yerden butonla; konum alınamazsa yine kaydedilir */
+        } catch (err) {
+          await reportLocation(apiErrorMessage(err, "Konum alınamadı"));
         }
       }
       const r = await post<{ message?: string }>(client, "/personnel/attendance/self", { action, ...extra });
@@ -258,6 +298,20 @@ export function AttendanceScreen() {
     }
   };
 
+  const acceptConsent = async () => {
+    setConsentBusy(true);
+    setError(null);
+    try {
+      const r = await post<{ message?: string; location_consent?: LocationConsent }>(client, "/personnel/me/location-consent", locationConsentPayload());
+      setMessage(r.message || "Sözleşmeler kabul edildi. Personel paneli kullanıma açıldı.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Sözleşme kaydedilemedi."));
+    } finally {
+      setConsentBusy(false);
+    }
+  };
+
   const today = data?.today;
   const checkedIn = Boolean(today?.check_in);
   const checkedOut = Boolean(today?.check_out);
@@ -277,6 +331,8 @@ export function AttendanceScreen() {
       checkIn: today?.check_in,
       earlyApproved: earlyOk,
     });
+  const consentOk = locationConsentAccepted(data?.location_consent);
+  const liveSignal = signal || data?.location_signal;
 
   return (
     <Screen onRefresh={load}>
@@ -284,8 +340,23 @@ export function AttendanceScreen() {
       <Muted>{data?.employee?.full_name || "Personel kartı bağlı değilse giriş yapılamaz."}</Muted>
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
-      <Card>
+      {data?.employee ? (
+        <LocationConsentCard
+          consent={data.location_consent}
+          signal={liveSignal}
+          onAccept={acceptConsent}
+          busy={consentBusy}
+          testID="mesai-consent"
+        />
+      ) : null}
+      {!consentOk && data?.employee ? (
+        <Card testID="mesai-consent-lock">
+          <Muted>KVKK (K) ve konum paylaşımı (KK) sözleşmelerini kabul edince giriş / çıkış paneli açılır.</Muted>
+        </Card>
+      ) : null}
+      {(consentOk || !data?.employee) ? <Card>
         <Text style={{ fontSize: 42, fontWeight: "900", color: colors.text, textAlign: "center" }}>{data?.now || "--:--"}</Text>
+        {consentOk ? <LocationSignalDot signal={liveSignal} testID="mesai-signal" /> : null}
         <Muted>{fmtDmy(data?.today_date)}</Muted>
         <Muted testID="mesai-workplace">{workplaceHint(data?.workplace || data?.location, data?.schedule?.require_geo !== false)}</Muted>
         <Muted testID="mesai-checkout-hint">
@@ -367,8 +438,8 @@ export function AttendanceScreen() {
             <PrimaryButton title="Gün ortası çıkış / giriş" onPress={() => setIntraOpen(true)} color="#0284C7" testID="mesai-intraday-open" />
           )}
         </View>
-      </Card>
-      {(data?.records || []).slice(0, 14).map((r) => {
+      </Card> : null}
+      {consentOk ? (data?.records || []).slice(0, 14).map((r) => {
         const rid = idOf(r);
         const open = disputeId === rid;
         const status = attendanceDisputeStatus(r);
@@ -411,7 +482,7 @@ export function AttendanceScreen() {
             ) : null}
           </Card>
         );
-      })}
+      }) : null}
     </Screen>
   );
 }

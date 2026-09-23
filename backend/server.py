@@ -74,6 +74,7 @@ from card_match import sanitize_card_fields
 import cheques
 import fx
 import attendance
+import location_consent
 import personnel_wage
 import trash
 import migration
@@ -9134,6 +9135,8 @@ async def geo_status(company_id: str = "comp_nexus_main_01", user: dict = Depend
         "now": now_s,
         "schedule": {"start": (sched or {}).get("start"), "end": (sched or {}).get("end")},
         "checkout_unlocked": attendance.self_checkout_unlocked(rec, sched, now_s),
+        "location_consent": location_consent.normalize_location_consent((emp or {}).get("location_consent")),
+        "location_signal": location_consent.location_signal_view(emp),
     }
 
 @api_router.post("/personnel/attendance/geo")
@@ -12441,6 +12444,8 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
         "tasks": tasks,
         "work_orders": work_orders,
         "workplace": await attendance.workplace_for_employee(emp),
+        "location_consent": location_consent.normalize_location_consent(emp.get("location_consent")),
+        "location_signal": location_consent.location_signal_view(emp),
     }
 
 

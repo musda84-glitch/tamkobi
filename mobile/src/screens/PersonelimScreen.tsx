@@ -4,6 +4,7 @@ import { Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { DateField } from "../components/DateField";
+import { LocationConsentCard } from "../components/LocationConsentCard";
 import { Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -11,6 +12,7 @@ import { normalizeYmd } from "../utils/calendar";
 import { leaveTr, statusTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
 import { dutyStatusLabel, dutySubtitle, type AssignedDuty } from "../utils/assignedDuty";
+import { locationConsentPayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
 import { advanceRequestPayload, leaveDays, selfLeavePayload, validateAdvance, validateSelfLeave } from "../utils/personnel";
 
 type TabId = "ozet" | "alacak" | "gorevler" | "emirler" | "mesai";
@@ -53,6 +55,8 @@ type PersonelimPayload = {
   } | null;
   tasks?: AssignedDuty[];
   work_orders?: { id?: string; order_code?: string; product_name?: string; station?: string; step_no?: number; status?: string; planned_date?: string; qty?: number }[];
+  location_consent?: LocationConsent | null;
+  location_signal?: LocationSignal | null;
 };
 
 const TABS: { id: TabId; label: string }[] = [
@@ -117,6 +121,7 @@ export function PersonelimScreen() {
   const [advanceNote, setAdvanceNote] = useState("");
   const [advanceBusy, setAdvanceBusy] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState<string | null>(null);
+  const [consentBusy, setConsentBusy] = useState(false);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -224,6 +229,21 @@ export function PersonelimScreen() {
     }
   };
 
+  const acceptConsent = async () => {
+    setConsentBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const r = await post<{ message?: string }>(client, "/personnel/me/location-consent", locationConsentPayload());
+      setMessage(r.message || "Sözleşmeler kabul edildi. Personel paneli kullanıma açıldı.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Sözleşme kaydedilemedi."));
+    } finally {
+      setConsentBusy(false);
+    }
+  };
+
   const cancelAdvance = async (id: string) => {
     setAdvanceBusy(true);
     setError(null);
@@ -278,6 +298,15 @@ export function PersonelimScreen() {
       />
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
+      {emp ? (
+        <LocationConsentCard
+          consent={data?.location_consent}
+          signal={data?.location_signal}
+          onAccept={acceptConsent}
+          busy={consentBusy}
+          testID="personelim-consent"
+        />
+      ) : null}
 
       {!emp ? (
         <Card testID="personelim-no-employee">
