@@ -8,7 +8,6 @@ import { StockToolbar, applyStockFilters, stockFiltersFromSearch, isCriticalStoc
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { ProductProfitPanel } from "../components/ProductProfitPanel";
 import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
-import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { ProductDetailModal } from "../components/ProductDetailModal";
 import { cachedList, productFilter, patchCached } from "../utils/dataSync";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
@@ -80,7 +79,6 @@ export default function StockBarcodePage() {
   // Modals & Scanner state
   const [showAddModal, setShowAddModal] = useState(false);
   const [aiStockImport, setAiStockImport] = useState(false);
-  const [printBarcodeProduct, setPrintBarcodeProduct] = useState(null);
   const [showScannerModal, setShowScannerModal] = useState(searchParams.get("scan") === "true");
   const [scannedBarcode, setScannedBarcode] = useState("");
   const [scanResultProduct, setScanResultProduct] = useState(null);
@@ -628,7 +626,6 @@ export default function StockBarcodePage() {
           </div>
         </div>
       )}
-      {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} company={activeCompany} onClose={() => setLabelQuickProduct(null)} onOpenDesigner={() => { setLabelQuickProduct(null); setPageTab("labels"); }} />}
       {reorder && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" data-testid="stock-reorder-modal">
           <div className="bg-white rounded-2xl max-w-3xl w-full p-5 space-y-3 shadow-2xl max-h-[90vh] overflow-y-auto text-xs">
@@ -672,8 +669,15 @@ export default function StockBarcodePage() {
           </div>
         </div>
       )}
-      {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} products={products} company={activeCompany} onClose={() => setLabelQuickProduct(null)} onOpenDesigner={() => { setLabelQuickProduct(null); setPageTab("labels"); }} />}
-      {labelQuickProduct && <LabelQuickPrint companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={labelQuickProduct} products={products} company={activeCompany} onClose={() => setLabelQuickProduct(null)} />}
+      {labelQuickProduct && (
+        <LabelQuickPrint
+          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          product={labelQuickProduct}
+          company={activeCompany}
+          onClose={() => setLabelQuickProduct(null)}
+          onOpenDesigner={() => { setLabelQuickProduct(null); setPageTab("labels"); }}
+        />
+      )}
       {pageTab === "labels" && <LabelDesigner companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} products={products} company={activeCompany} />}
       {pageTab === "count" && <StockCountPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} warehouses={[]} />}
       {pageTab === "products" && (<>
@@ -845,11 +849,8 @@ export default function StockBarcodePage() {
                             <DropdownMenuItem onSelect={() => openDetail(prod, "variants")} data-testid={`variants-btn-${prod.sku}`}>
                               <Layers className="w-4 h-4" /> Varyantlar
                             </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => setLabelQuickProduct(prod)} data-testid={`label-quick-btn-${prod.sku}`}>
-                              <Tag className="w-4 h-4" /> Etiket yazdır
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => setPrintBarcodeProduct(prod)} data-testid={`print-barcode-btn-${prod.sku}`}>
-                              <Printer className="w-4 h-4" /> Hızlı barkod
+                            <DropdownMenuItem onSelect={() => setLabelQuickProduct(prod)} data-testid={`print-barcode-btn-${prod.sku}`}>
+                              <Printer className="w-4 h-4" /> Barkod etiket yazdır
                             </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => openReorder([prod.id || prod._id])} data-testid={`reorder-btn-${prod.sku}`}>
                               <ShoppingCart className="w-4 h-4" /> Tedarikçiden al
@@ -1031,38 +1032,6 @@ export default function StockBarcodePage() {
       )}
 
       </>)}
-
-      {/* PRINT BARCODE MODAL */}
-      {printBarcodeProduct && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-slate-200 text-center" data-testid="print-barcode-modal">
-            <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="text-sm font-bold text-slate-900">Barkod Etiketi Önizleme</h3>
-              <button onClick={() => setPrintBarcodeProduct(null)} className="text-slate-400">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 border-2 border-dashed border-slate-300 rounded-xl bg-white space-y-2">
-              <div className="font-bold text-xs text-slate-900 truncate">{printBarcodeProduct.name}</div>
-              <div className="text-[10px] text-slate-500 font-mono">SKU: {printBarcodeProduct.sku}</div>
-              <BarcodeRenderer code={printBarcodeProduct.barcode} width={180} height={45} />
-              <div className="text-sm font-bold text-slate-900 pt-1">
-                Fiyat: {fmtMoney(printBarcodeProduct.sale_price, printBarcodeProduct.currency || "TRY")} <span className="text-[10px] text-slate-500 font-normal">(KDV Dahil)</span>
-              </div>
-            </div>
-
-            <div className="flex justify-center gap-2 pt-2">
-              <button
-                onClick={() => window.print()}
-                className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-semibold hover:bg-slate-800"
-              >
-                <Printer className="w-3.5 h-3.5" /> Yazdır (Termal / A4)
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {detailProduct && (
         <ProductDetailModal

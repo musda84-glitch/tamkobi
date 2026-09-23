@@ -26,10 +26,12 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
     vat_exemption_code: product.vat_exemption_code || "", tags: product.tags || [],
     desi: pkgNum(product.desi), weight: pkgNum(product.weight), length: pkgNum(product.length),
     width: pkgNum(product.width), height: pkgNum(product.height), package_count: product.package_count || 1,
+    label_template_id: product.label_template_id || "",
   });
   const ccy = f.currency || "TRY";
   const ccyLabel = moneySuffix(ccy);
   const [units, setUnits] = useState([]);
+  const [labelTpls, setLabelTpls] = useState([]);
   const [tagInput, setTagInput] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF({ ...f, [k]: v });
@@ -39,6 +41,9 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
     let cancelled = false;
     axios.get(`${API_URL}/products/units?company_id=${companyId}`)
       .then((r) => { if (!cancelled) setUnits(Array.isArray(r.data) ? r.data : []); })
+      .catch(() => {});
+    axios.get(`${API_URL}/label-templates?company_id=${companyId}`)
+      .then((r) => { if (!cancelled) setLabelTpls(Array.isArray(r.data) ? r.data : []); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [companyId]);
@@ -55,6 +60,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
       const r = await axios.put(`${API_URL}/products/${product.id}`, {
         ...f,
         unit,
+        label_template_id: f.label_template_id || null,
         vat_rate: Number(f.vat_rate), purchase_price: Number(f.purchase_price), sale_price: Number(f.sale_price),
         min_stock_alert: Number(f.min_stock_alert), stock_quantity: Number(f.stock_quantity),
         desi: n(f.desi), weight: n(f.weight), length: n(f.length), width: n(f.width), height: n(f.height),
@@ -79,6 +85,24 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
         <F label="SKU"><input value={f.sku} onChange={(e) => set("sku", e.target.value)} className={`${inputCls} font-mono`} data-testid="edit-sku-input" /></F>
         <F label="Barkod (EAN-13)"><div className="flex gap-1"><input value={f.barcode} onChange={(e) => set("barcode", e.target.value)} className={`${inputCls} font-mono`} data-testid="edit-barcode-input" /><button type="button" onClick={genBarcode} className="px-2 border rounded-lg hover:bg-slate-50" title="Yeni barkod üret" data-testid="regen-barcode-btn"><RefreshCw className="w-3.5 h-3.5" /></button><ScanButton size="sm" onScan={(code) => set("barcode", code)} title="Ürün barkodunu kamerayla okut" /></div></F>
       </div>
+      <F label="Etiket tasarımı">
+        <select
+          value={f.label_template_id || ""}
+          onChange={(e) => set("label_template_id", e.target.value)}
+          className={inputCls}
+          data-testid="edit-label-template-select"
+        >
+          <option value="">— Firma varsayılanı / hazır şablon —</option>
+          {labelTpls.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.is_default ? "★ " : ""}{t.name} ({t.width_mm}×{t.height_mm} mm)
+            </option>
+          ))}
+        </select>
+        <p className="text-[10px] text-slate-400 mt-0.5">
+          Barkod / etiket yazdırmada bu şablon kullanılır. Şablon yoksa Stok → Etiket Tasarımı sekmesinden kaydedin.
+        </p>
+      </F>
       <div className="grid grid-cols-3 gap-2">
         <F label="Kategori"><input list="product-categories-list" value={f.category} onChange={(e) => set("category", e.target.value)} className={inputCls} data-testid="edit-category-input" /></F>
         <F label="Tür"><select value={f.type} onChange={(e) => set("type", e.target.value)} className={inputCls}><option value="product">Ticari Mal</option><option value="raw_material">Hammadde</option><option value="finished_good">Mamul</option><option value="service">Hizmet</option></select></F>
