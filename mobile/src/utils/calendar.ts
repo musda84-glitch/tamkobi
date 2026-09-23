@@ -76,6 +76,17 @@ export function ymTitle(year: number, month0: number): string {
   return monthTitle(year, month0);
 }
 
+/** YYYY-MM-DD → 23.09.2026 (gün.ay.yıl). */
+export function fmtDmy(value?: string | null): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "—";
+  const parsed = parseYmd(raw.slice(0, 10));
+  if (!parsed) return raw.slice(0, 10);
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  return `${day}.${month}.${parsed.getFullYear()}`;
+}
+
 export function shiftMonth(year: number, month0: number, delta: number): { year: number; month0: number } {
   const d = new Date(year, month0 + delta, 1);
   return { year: d.getFullYear(), month0: d.getMonth() };

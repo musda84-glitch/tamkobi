@@ -1,4 +1,4 @@
-import { monthGrid, normalizeYm, normalizeYmd, parseYm, parseYmd, shiftMonth, toYm, toYmd, weekdayLabels, ymOrThisMonth, ymdOrToday } from "./calendar";
+import { fmtDmy, monthGrid, normalizeYm, normalizeYmd, parseYm, parseYmd, shiftMonth, toYm, toYmd, weekdayLabels, ymOrThisMonth, ymdOrToday } from "./calendar";
 
 describe("calendar", () => {
   it("parses and formats YYYY-MM-DD", () => {
@@ -29,6 +29,12 @@ describe("calendar", () => {
     expect(normalizeYm("2026-13")).toBe("");
     expect(ymOrThisMonth("2026-09")).toBe("2026-09");
     expect(ymOrThisMonth("")).toBe(toYm(new Date().getFullYear(), new Date().getMonth()));
+  });
+
+  it("prints days as gün.ay.yıl", () => {
+    expect(fmtDmy("2026-09-23")).toBe("23.09.2026");
+    expect(fmtDmy("2026-09-23T12:38:00")).toBe("23.09.2026");
+    expect(fmtDmy("")).toBe("—");
   });
 
   it("shifts months across years", () => {
