@@ -40,9 +40,10 @@ const RecordRow = ({ r, onConfirm, onDispute }) => {
         <span className="ml-auto flex items-center gap-2">
           {r.employee_confirmed ? <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3.5 h-3.5" /> Onaylandı</span>
             : <>
-              {r.dispute_note && <span className="inline-flex items-center gap-1 text-rose-600 font-semibold" title={r.dispute_note}><MessageSquareWarning className="w-3.5 h-3.5" /> İtiraz edildi</span>}
-              <button onClick={() => onConfirm(r)} className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700" data-testid={`my-att-confirm-${r.id}`}>{r.dispute_note ? "Yine de Onayla" : "Onayla"}</button>
-              {!r.dispute_note && <button onClick={() => setOpen(!open)} className="px-2.5 py-1 border rounded-lg font-semibold hover:bg-slate-50" data-testid={`my-att-dispute-toggle-${r.id}`}>İtiraz</button>}
+              {r.dispute_note && !r.dispute_resolved && <span className="inline-flex items-center gap-1 text-rose-600 font-semibold" title={r.dispute_note}><MessageSquareWarning className="w-3.5 h-3.5" /> İtiraz edildi</span>}
+              {r.dispute_note && r.dispute_resolved && <span className="inline-flex items-center gap-1 text-slate-500 font-semibold" title={r.dispute_note}><MessageSquareWarning className="w-3.5 h-3.5" /> İtiraz kapatıldı{r.dispute_resolution === "rejected" ? " (red)" : ""}</span>}
+              <button onClick={() => onConfirm(r)} className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700" data-testid={`my-att-confirm-${r.id}`}>{r.dispute_note && !r.dispute_resolved ? "Yine de Onayla" : "Onayla"}</button>
+              {(!r.dispute_note || r.dispute_resolved) && <button onClick={() => setOpen(!open)} className="px-2.5 py-1 border rounded-lg font-semibold hover:bg-slate-50" data-testid={`my-att-dispute-toggle-${r.id}`}>İtiraz</button>}
             </>}
         </span>
       </div>
