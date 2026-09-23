@@ -40,12 +40,19 @@ export function earlyLeaveApproved(rec?: { early_leave_approved?: boolean; early
   return rec.early_leave_request?.status === "approved";
 }
 
+export function hmReachedEnd(now: number, end: number, start?: number | null): boolean {
+  if (start != null && end < start) return now < start && now >= end;
+  return now >= end;
+}
+
 export function selfCheckoutUnlocked(opts: {
   checkedIn?: boolean;
   checkedOut?: boolean;
   nowHm?: string;
+  scheduleStart?: string;
   scheduleEnd?: string;
   expectedEnd?: string;
+  checkIn?: string;
   earlyApproved?: boolean;
   offDay?: boolean;
 }): boolean {
@@ -53,8 +60,9 @@ export function selfCheckoutUnlocked(opts: {
   if (opts.earlyApproved || opts.offDay) return true;
   const now = hmToMinutes(opts.nowHm);
   const end = hmToMinutes(opts.expectedEnd || opts.scheduleEnd);
+  const start = hmToMinutes(opts.scheduleStart || opts.checkIn);
   if (now == null || end == null) return true;
-  return now >= end;
+  return hmReachedEnd(now, end, start);
 }
 
 export function selfCheckoutLockedHint(opts: { checkedIn?: boolean; earlyPending?: boolean }): string {

@@ -58,6 +58,8 @@ describe("selfCheckoutUnlocked", () => {
     expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "18:00", scheduleEnd: "18:00" })).toBe(true);
     expect(selfCheckoutUnlocked({ checkedIn: false, nowHm: "19:00", scheduleEnd: "18:00" })).toBe(false);
     expect(selfCheckoutUnlocked({ checkedIn: true, checkedOut: true, earlyApproved: true })).toBe(false);
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleStart: "09:00", expectedEnd: "00:00" })).toBe(false);
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "00:00", scheduleStart: "09:00", expectedEnd: "00:00" })).toBe(true);
     expect(earlyLeaveApproved({ early_leave_request: { status: "approved" } })).toBe(true);
     expect(earlyLeaveApproved({ early_leave_request: { status: "pending" } })).toBe(false);
     expect(selfCheckoutLockedHint({ checkedIn: true, earlyPending: true })).toMatch(/onaylanınca/);

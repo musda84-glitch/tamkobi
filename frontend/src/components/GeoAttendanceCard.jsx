@@ -63,7 +63,7 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
   const earlyOk = earlyLeaveApproved(t);
   const checkoutOn = st?.checkout_unlocked != null
     ? Boolean(st.checkout_unlocked) && !t?.check_out
-    : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: st?.now, scheduleEnd: st?.schedule?.end, expectedEnd: t?.expected_end, earlyApproved: earlyOk });
+    : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: st?.now, scheduleStart: st?.schedule?.start, scheduleEnd: st?.schedule?.end, expectedEnd: t?.expected_end, checkIn: t?.check_in, earlyApproved: earlyOk });
   return (
     <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center gap-4 shadow-lg" data-testid="geo-attendance-card">
       <div className="flex-1 min-w-0">

@@ -110,6 +110,13 @@ def early_leave_is_approved(rec: Optional[dict] = None) -> bool:
     return (rec.get("early_leave_request") or {}).get("status") == "approved"
 
 
+def hm_reached_end(now_m: int, end_m: int, start_m: Optional[int] = None) -> bool:
+    """Aynı gün HH:MM. Beklenen çıkış geceye sardıysa (18:00+6s → 00:00) gündüz now≥end ile açılmaz."""
+    if start_m is not None and end_m < start_m:
+        return now_m < start_m and now_m >= end_m
+    return now_m >= end_m
+
+
 def self_checkout_unlocked(rec: Optional[dict] = None, schedule: Optional[dict] = None, now_s: Optional[str] = None) -> bool:
     """Mesai bitmeden self çıkış kilitli; onaylı erken çıkışta buton açılır. Saat/konum basınca yazılır."""
     rec = rec or {}
@@ -125,9 +132,10 @@ def self_checkout_unlocked(rec: Optional[dict] = None, schedule: Optional[dict] 
     except Exception:
         pass
     end = rec.get("expected_end") or sched.get("end") or DEFAULT_SCHEDULE["end"]
+    start = sched.get("start") or rec.get("check_in") or DEFAULT_SCHEDULE["start"]
     stamp = now_s or now_hm(sched)
     try:
-        return _hm(str(stamp)[:5]) >= _hm(str(end)[:5])
+        return hm_reached_end(_hm(str(stamp)[:5]), _hm(str(end)[:5]), _hm(str(start)[:5]))
     except Exception:
         return True
 

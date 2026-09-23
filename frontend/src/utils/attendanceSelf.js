@@ -10,13 +10,19 @@ export function earlyLeaveApproved(rec) {
   return rec.early_leave_request?.status === "approved";
 }
 
-export function selfCheckoutUnlocked({ checkedIn, checkedOut, nowHm, scheduleEnd, expectedEnd, earlyApproved, offDay } = {}) {
+export function hmReachedEnd(now, end, start) {
+  if (start != null && end < start) return now < start && now >= end;
+  return now >= end;
+}
+
+export function selfCheckoutUnlocked({ checkedIn, checkedOut, nowHm, scheduleStart, scheduleEnd, expectedEnd, checkIn, earlyApproved, offDay } = {}) {
   if (!checkedIn || checkedOut) return false;
   if (earlyApproved || offDay) return true;
   const now = hmToMinutes(nowHm);
   const end = hmToMinutes(expectedEnd || scheduleEnd);
+  const start = hmToMinutes(scheduleStart || checkIn);
   if (now == null || end == null) return true;
-  return now >= end;
+  return hmReachedEnd(now, end, start);
 }
 
 export const CHECKOUT_UNLOCK_WATCH_MS = 12_000;

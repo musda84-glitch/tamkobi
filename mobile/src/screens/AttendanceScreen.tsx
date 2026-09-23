@@ -271,8 +271,10 @@ export function AttendanceScreen() {
       checkedIn,
       checkedOut,
       nowHm: data?.now,
+      scheduleStart: data?.schedule?.start,
       scheduleEnd: data?.schedule?.end,
       expectedEnd: today?.expected_end,
+      checkIn: today?.check_in,
       earlyApproved: earlyOk,
     });
 

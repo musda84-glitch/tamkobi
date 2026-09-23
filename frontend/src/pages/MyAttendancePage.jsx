@@ -117,7 +117,7 @@ export default function MyAttendancePage() {
   const onCheckoutClick = () => {
     const canCheckout = !busy && (data?.checkout_unlocked != null
       ? Boolean(data.checkout_unlocked) && !data?.today?.check_out
-      : selfCheckoutUnlocked({ checkedIn: !!data?.today?.check_in, checkedOut: !!data?.today?.check_out, nowHm: data?.now, scheduleEnd: data?.schedule?.end, expectedEnd: data?.today?.expected_end, earlyApproved: earlyLeaveApproved(data?.today) }));
+      : selfCheckoutUnlocked({ checkedIn: !!data?.today?.check_in, checkedOut: !!data?.today?.check_out, nowHm: data?.now, scheduleStart: data?.schedule?.start, scheduleEnd: data?.schedule?.end, expectedEnd: data?.today?.expected_end, checkIn: data?.today?.check_in, earlyApproved: earlyLeaveApproved(data?.today) }));
     const next = resolveCheckoutClick({ armed: outArmed, canCheckout });
     if (next === "arm") {
       setOutArmed(true);
@@ -177,7 +177,7 @@ export default function MyAttendancePage() {
   const earlyOk = earlyLeaveApproved(t);
   const checkoutOn = data?.checkout_unlocked != null
     ? Boolean(data.checkout_unlocked) && !t?.check_out
-    : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: data?.now, scheduleEnd: sch?.end, expectedEnd: t?.expected_end, earlyApproved: earlyOk });
+    : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: data?.now, scheduleStart: sch?.start, scheduleEnd: sch?.end, expectedEnd: t?.expected_end, checkIn: t?.check_in, earlyApproved: earlyOk });
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-5" data-testid="my-attendance-page">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
