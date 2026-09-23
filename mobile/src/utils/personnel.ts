@@ -117,11 +117,24 @@ export function locationTrackingTogglePayload(raw: LocationTracking | null | und
 }
 
 export function todayAttendanceLine(today?: AttendanceToday | null): string {
-  if (!today || (!today.check_in && !today.check_out && today.status !== "present")) {
-    return "Bugün giriş / çıkış yok";
-  }
-  const late = today.late_minutes ? ` · ${today.late_minutes} dk geç` : "";
-  return `Bugün ${today.check_in || "--:--"} → ${today.check_out || "--:--"}` + late;
+  const parts = todayAttendanceParts(today);
+  if (parts.empty) return "Bugün giriş / çıkış yok";
+  return `Bugün ${parts.checkIn} → ${parts.checkOut}` + (parts.late ? ` · ${parts.late} dk geç` : "");
+}
+
+export function todayAttendanceParts(today?: AttendanceToday | null): {
+  checkIn: string;
+  checkOut: string;
+  late: number;
+  empty: boolean;
+} {
+  const empty = !today || (!today.check_in && !today.check_out && today.status !== "present");
+  return {
+    checkIn: today?.check_in || "--:--",
+    checkOut: today?.check_out || "--:--",
+    late: Number(today?.late_minutes) || 0,
+    empty,
+  };
 }
 
 export function advanceFormToggleIcon(open: boolean): "eye-off-outline" | "eye-outline" {
