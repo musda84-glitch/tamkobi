@@ -1,7 +1,7 @@
 import { splitPaymentTarget } from "./finance";
 import { idOf } from "./money";
 import { hoursFromTimeRange } from "./overtimeRange";
-import type { Workplace } from "./workplace";
+import { workplaceDays, workplaceHint, type Workplace } from "./workplace";
 
 export type Employee = {
   id?: string;
@@ -257,6 +257,117 @@ export function employeeStatusLabel(status?: string | null): string {
 
 export function openEmployeeTasks(card?: EmployeeCard | null) {
   return (card?.tasks || []).filter((t) => !t.done);
+}
+
+export type EmployeeDutyRow = {
+  id: string;
+  title: string;
+  kindLabel: string;
+  project: string;
+  due: string;
+  days: number;
+  park: string;
+  current: boolean;
+  done: boolean;
+  lines: string[];
+};
+
+export type EmployeeDutyBoard = {
+  current: EmployeeDutyRow | null;
+  open: EmployeeDutyRow[];
+  done: EmployeeDutyRow[];
+  headline: string;
+  currentHint: string;
+};
+
+function dutyLines(opts: {
+  kindLabel: string;
+  project?: string;
+  days?: number;
+  due?: string;
+  park?: string;
+  address?: string;
+}): string[] {
+  const lines = [opts.kindLabel];
+  if (opts.project) lines.push(opts.project);
+  if (opts.days) lines.push(`${opts.days} gün`);
+  if (opts.due) lines.push(`Bitiş ${opts.due}`);
+  if (opts.park) lines.push(`Parkur: ${opts.park}`);
+  if (opts.address) lines.push(opts.address);
+  return lines;
+}
+
+export function employeeDutyHeadline(board: Pick<EmployeeDutyBoard, "current" | "open">): string {
+  if (board.current) return `Şu an: ${board.current.title}`;
+  if (board.open.length === 1) return "1 açık görev";
+  if (board.open.length > 1) return `${board.open.length} açık görev`;
+  return "Atanmış görev yok";
+}
+
+export function employeeDutyBoard(emp?: Employee | null, card?: EmployeeCard | null): EmployeeDutyBoard {
+  const workplace = emp?.workplace || card?.workplace || null;
+  const currentId = workplace?.kind === "task" ? String(workplace.task_id || "") : "";
+  const currentTitle = workplace?.kind === "task" ? String(workplace.task_title || "") : "";
+  const rows: EmployeeDutyRow[] = (card?.tasks || []).map((t) => {
+    const id = String(t.id || t.title || "");
+    const kindLabel = taskKindLabel(t.kind);
+    const project = [t.project_number, t.project_name].filter(Boolean).join(" · ");
+    const days = Number(t.duration_days) || 0;
+    const due = String(t.due_date || "").slice(0, 10);
+    const park = String(t.park_name || "");
+    const current = (!!currentId && id === currentId) || (!!currentTitle && String(t.title || "") === currentTitle);
+    return {
+      id,
+      title: t.title || "Görev",
+      kindLabel,
+      project,
+      due,
+      days,
+      park,
+      current,
+      done: !!t.done,
+      lines: dutyLines({ kindLabel, project, days, due, park }),
+    };
+  });
+
+  let current = rows.find((r) => r.current && !r.done) || null;
+  if (!current && workplace?.kind === "task") {
+    const kindLabel = "Dış görev";
+    const project = [workplace.project_number, workplace.project_name || workplace.label].filter(Boolean).join(" · ");
+    const days = workplaceDays(workplace);
+    const due = String(workplace.due_date || "").slice(0, 10);
+    current = {
+      id: String(workplace.task_id || workplace.task_title || "current"),
+      title: workplace.task_title || "Dış görev",
+      kindLabel,
+      project,
+      due,
+      days,
+      park: "",
+      current: true,
+      done: false,
+      lines: dutyLines({ kindLabel, project, days, due, address: workplace.address }),
+    };
+    if (!rows.some((r) => r.id === current!.id || r.title === current!.title)) rows.unshift(current);
+  }
+  if (!current) {
+    const firstOpen = rows.find((r) => !r.done) || null;
+    current = firstOpen ? { ...firstOpen, current: true } : null;
+  }
+
+  const open = rows
+    .filter((r) => !r.done)
+    .map((r) => (current && (r.id === current.id || r.title === current.title) ? { ...r, current: true } : { ...r, current: false }));
+  const done = rows.filter((r) => r.done);
+  const board: EmployeeDutyBoard = {
+    current,
+    open,
+    done,
+    headline: "",
+    currentHint: current && workplace?.kind === "task" ? workplaceHint(workplace, true) : "",
+  };
+  board.headline = employeeDutyHeadline(board);
+  return board;
 }
 
 export function workplaceDetailsToggleLabel(open: boolean): string {
@@ -1324,6 +1435,7 @@ export const EMPLOYEE_CARD_ACTION_ICONS: Record<string, string> = {
   overtime: "add-circle-outline",
   location: "location-outline",
   expense: "receipt-outline",
+  duties: "checkbox-outline",
 };
 
 export function employeeCardActionIcon(key: string): string {

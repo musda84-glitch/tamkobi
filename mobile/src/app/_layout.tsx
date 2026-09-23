@@ -71,6 +71,7 @@ function RootStack() {
         <Stack.Screen name="surveys/new" options={{ title: "Yeni keşif" }} />
         <Stack.Screen name="surveys/[id]" options={{ title: "Keşif" }} />
         <Stack.Screen name="personnel/index" options={{ title: "Personel & Bordro" }} />
+        <Stack.Screen name="personnel/new" options={{ title: "Yeni personel" }} />
         <Stack.Screen name="settings" options={{ title: "Ayarlar" }} />
       </Stack.Protected>
       <Stack.Protected guard={onB2b}>

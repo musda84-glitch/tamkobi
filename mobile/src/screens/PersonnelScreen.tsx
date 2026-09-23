@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
@@ -55,10 +55,8 @@ import {
   overtimeDue,
   personnelExpensePayload,
   assignEmployeeToTasks,
-  emptyEmployeeDraft,
-  employeePayload,
+  employeeDutyBoard,
   employeeStatusLabel,
-  hasEmployeeDetails,
   openEmployeeTasks,
   remainingLeaveDays,
   workplaceDetailsSummary,
@@ -89,7 +87,6 @@ import {
   closedProjectCount,
   taskSelectGroups,
   validateAdvance,
-  validateEmployee,
   validateIsoDate,
   validateLeave,
   validateOvertime,
@@ -98,7 +95,6 @@ import {
   type AttendanceSummary,
   type Employee,
   type EmployeeBalance,
-  type EmployeeDraft,
   type EmployeeBonus,
   type EmployeeCard,
   type EmployeePayMove,
@@ -178,9 +174,6 @@ export function PersonnelScreen() {
   const [ledgerAmount, setLedgerAmount] = useState("");
   const [ledgerNote, setLedgerNote] = useState("");
   const [yevmiyeEditId, setYevmiyeEditId] = useState("");
-  const [empOpen, setEmpOpen] = useState(false);
-  const [empDraft, setEmpDraft] = useState<EmployeeDraft>(() => emptyEmployeeDraft(todayIso()));
-  const [showEmpDetails, setShowEmpDetails] = useState(false);
   const [pendingReqs, setPendingReqs] = useState<PendingRequest[]>([]);
   const [cards, setCards] = useState<Record<string, EmployeeCard>>({});
   const [calcMode, setCalcMode] = useState<"gross" | "net">("gross");
@@ -194,6 +187,7 @@ export function PersonnelScreen() {
   const [locEmp, setLocEmp] = useState<Employee | null>(null);
   const [locCompany, setLocCompany] = useState<LocMode>(DEFAULT_LOC_MODE);
   const [locField, setLocField] = useState<LocMode>(DEFAULT_LOC_MODE);
+  const [dutiesEmp, setDutiesEmp] = useState<Employee | null>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -798,29 +792,6 @@ export function PersonnelScreen() {
     }
   };
 
-  const saveEmployee = async () => {
-    const invalid = validateEmployee(empDraft);
-    if (invalid) {
-      if (invalid.includes("IBAN")) setShowEmpDetails(true);
-      setError(invalid);
-      return;
-    }
-    setBusy(true);
-    try {
-      await post(client, "/personnel/employees", employeePayload(empDraft, companyId));
-      setEmpOpen(false);
-      setShowEmpDetails(false);
-      setEmpDraft(emptyEmployeeDraft(todayIso()));
-      setMessage("Personel kaydedildi.");
-      setError(null);
-      await load();
-    } catch (err) {
-      setError(apiErrorMessage(err, "Personel kaydedilemedi."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const generatePayroll = async () => {
     setBusy(true);
     try {
@@ -942,26 +913,19 @@ export function PersonnelScreen() {
       <ErrorBanner message={error} />
       {message ? <Muted testID="personnel-msg">{message}</Muted> : null}
 
-      {canEdit && !empOpen ? (
+      {canEdit ? (
         <Row style={{ flexWrap: "wrap", gap: 8 }}>
           <PrimaryButton title="Aylık bordro hesapla" onPress={generatePayroll} loading={busy} color={colors.indigo} testID="generate-payroll-btn" />
           <PrimaryButton
             title="Yeni personel ekle"
-            onPress={() => {
-              const draft = emptyEmployeeDraft(todayIso());
-              setEmpDraft(draft);
-              setShowEmpDetails(false);
-              setEmpOpen(true);
-              setTab("payroll");
-              setError(null);
-            }}
+            onPress={() => router.push("/personnel/new")}
             color={colors.primary}
             testID="personnel-add-btn"
           />
         </Row>
       ) : null}
 
-      {!empOpen && pendingReqs.length ? (
+      {pendingReqs.length ? (
         <Card testID="personnel-requests-inbox">
           <Text style={{ fontWeight: "800", color: colors.text }}>Personel talepleri ({pendingReqs.length})</Text>
           {pendingReqs.slice(0, 8).map((it) => (
@@ -981,77 +945,7 @@ export function PersonnelScreen() {
         </Card>
       ) : null}
 
-      {empOpen ? (
-        <Card testID="personnel-add-form">
-          <Muted>Yeni personel</Muted>
-          <Field label="Ad soyad" testID="emp-name" value={empDraft.full_name} onChangeText={(v) => setEmpDraft({ ...empDraft, full_name: v })} />
-          <Field label="TC kimlik" testID="emp-tc" value={empDraft.tc_kimlik} onChangeText={(v) => setEmpDraft({ ...empDraft, tc_kimlik: v })} keyboardType="number-pad" />
-          <Field label="Departman" testID="emp-dept" value={empDraft.department} onChangeText={(v) => setEmpDraft({ ...empDraft, department: v })} />
-          <Field label="Pozisyon" testID="emp-pos" value={empDraft.position} onChangeText={(v) => setEmpDraft({ ...empDraft, position: v })} />
-          <Field label="Telefon" testID="emp-phone" value={empDraft.phone} onChangeText={(v) => setEmpDraft({ ...empDraft, phone: v })} keyboardType="phone-pad" />
-          <Field label="E-posta" testID="emp-email" value={empDraft.email} onChangeText={(v) => setEmpDraft({ ...empDraft, email: v })} autoCapitalize="none" keyboardType="email-address" />
-          <Row>
-            {(["monthly", "daily"] as const).map((k) => (
-              <Pressable
-                key={k}
-                testID={k === "monthly" ? "employee-pay-monthly" : "employee-pay-daily"}
-                onPress={() => setEmpDraft({ ...empDraft, pay_type: k })}
-                style={{
-                  flex: 1,
-                  minHeight: 36,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: empDraft.pay_type === k ? (k === "daily" ? "#F59E0B" : colors.primary) : colors.border,
-                  backgroundColor: empDraft.pay_type === k ? (k === "daily" ? "#F59E0B" : colors.primary) : colors.surface,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Text style={{ fontWeight: "700", fontSize: 12, color: empDraft.pay_type === k ? "#fff" : colors.muted }}>
-                  {k === "monthly" ? "Aylık maaş" : "Günlük yevmiye"}
-                </Text>
-              </Pressable>
-            ))}
-          </Row>
-          {empDraft.pay_type === "daily" ? (
-            <>
-              <Field label="Günlük yevmiye (₺)" testID="emp-daily-wage" value={empDraft.daily_wage} onChangeText={(v) => setEmpDraft({ ...empDraft, daily_wage: v })} keyboardType="decimal-pad" />
-              <Muted>Bordro = yevmiye × o ay gelen gün. Tahmini ay: {fmtMoney((Number(empDraft.daily_wage) || 0) * 26)} (26 gün).</Muted>
-            </>
-          ) : (
-            <Field label="Net maaş (₺)" testID="emp-salary" value={empDraft.salary} onChangeText={(v) => setEmpDraft({ ...empDraft, salary: v })} keyboardType="decimal-pad" />
-          )}
-          <Pressable
-            testID="emp-details-toggle"
-            onPress={() => setShowEmpDetails((v) => !v)}
-            style={{ paddingVertical: 6 }}
-          >
-            <Text style={{ fontWeight: "700", color: colors.indigo, fontSize: 13 }}>
-              {showEmpDetails || hasEmployeeDetails(empDraft) ? "Ayrıntıları gizle" : "Ayrıntılar"}
-              {String(empDraft.sgk_number || "").trim() ? " · SGK" : ""}
-            </Text>
-          </Pressable>
-          {showEmpDetails ? (
-            <>
-              <Field label="SGK sicil no" testID="emp-sgk" value={empDraft.sgk_number} onChangeText={(v) => setEmpDraft({ ...empDraft, sgk_number: v.replace(/\D/g, "").slice(0, 13) })} keyboardType="number-pad" />
-              <Field label={String(empDraft.sgk_number || "").trim() ? "IBAN (zorunlu)" : "IBAN"} testID="emp-iban" value={empDraft.iban} onChangeText={(v) => setEmpDraft({ ...empDraft, iban: v })} autoCapitalize="characters" />
-              <Field label="Yemek ücreti (aylık ₺)" testID="emp-meal" value={empDraft.meal_allowance} onChangeText={(v) => setEmpDraft({ ...empDraft, meal_allowance: v })} keyboardType="decimal-pad" />
-              <Field label="Yol ödemesi (aylık ₺)" testID="emp-transport" value={empDraft.transport_allowance} onChangeText={(v) => setEmpDraft({ ...empDraft, transport_allowance: v })} keyboardType="decimal-pad" />
-              <Field label="Doğum tarihi" testID="emp-birth" value={empDraft.birth_date} onChangeText={(v) => setEmpDraft({ ...empDraft, birth_date: v })} placeholder="YYYY-AA-GG" />
-              <Field label="Acil durum iletişim" testID="emp-emergency" value={empDraft.emergency_contact} onChangeText={(v) => setEmpDraft({ ...empDraft, emergency_contact: v })} />
-              <Field label="Adres" testID="emp-address" value={empDraft.address} onChangeText={(v) => setEmpDraft({ ...empDraft, address: v })} />
-              <Field label="Notlar" testID="emp-notes" value={empDraft.notes} onChangeText={(v) => setEmpDraft({ ...empDraft, notes: v })} />
-              <Field label="İşe başlama" testID="emp-start" value={empDraft.start_date} onChangeText={(v) => setEmpDraft({ ...empDraft, start_date: v })} placeholder="YYYY-AA-GG" />
-            </>
-          ) : (
-            <Field label="İşe başlama" testID="emp-start" value={empDraft.start_date} onChangeText={(v) => setEmpDraft({ ...empDraft, start_date: v })} placeholder="YYYY-AA-GG" />
-          )}
-          <PrimaryButton title="Kaydet" onPress={saveEmployee} loading={busy} color={colors.primary} testID="personnel-add-save" />
-          <PrimaryButton title="Vazgeç" onPress={() => { setEmpOpen(false); setShowEmpDetails(false); }} testID="personnel-add-cancel" />
-        </Card>
-      ) : null}
-
-      {empOpen ? null : <TabStrip
+      <TabStrip
         testID="personnel-tab"
         value={tab}
         onChange={setTab}
@@ -1062,9 +956,9 @@ export function PersonnelScreen() {
           { key: "calc", label: "Maaş", icon: "calculator" },
           { key: "extras", label: "Prim", icon: "gift", count: bonuses.length || undefined },
         ]}
-      />}
+      />
 
-      {!empOpen && tab === "payroll" ? (
+      {tab === "payroll" ? (
         <>
           {!employees.length ? (
             <Empty icon="people-outline" title="Çalışan yok" />
@@ -1242,6 +1136,14 @@ export function PersonnelScreen() {
                         <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
                       ))}
                       <PayChip
+                        title="Atanan görevler"
+                        icon={employeeCardActionIcon("duties")}
+                        color="#4338CA"
+                        bg="#EEF2FF"
+                        testID={`emp-card-duties-btn-${eid}`}
+                        onPress={() => setDutiesEmp(emp)}
+                      />
+                      <PayChip
                         title="Konum Ayarları"
                         icon={employeeCardActionIcon("location")}
                         color="#047857"
@@ -1284,7 +1186,7 @@ export function PersonnelScreen() {
         </>
       ) : null}
 
-      {!empOpen && tab === "attendance" ? (
+      {tab === "attendance" ? (
         <>
           <Field label="Ay" testID="attendance-month-input" value={month} onChangeText={setMonth} placeholder="2026-09" />
           {!(attendance?.summary || []).length ? (
@@ -1367,7 +1269,7 @@ export function PersonnelScreen() {
         </>
       ) : null}
 
-      {!empOpen && tab === "leaves" ? (
+      {tab === "leaves" ? (
         <>
           {canEdit ? (
             <Card testID="leave-form">
@@ -1415,7 +1317,7 @@ export function PersonnelScreen() {
         </>
       ) : null}
 
-      {!empOpen && tab === "calc" ? (
+      {tab === "calc" ? (
         <Card testID="salary-calculator">
           <Text style={{ fontWeight: "800", color: colors.text }}>Maaş hesaplama (Brüt ⇄ Net)</Text>
           <Row>
@@ -1463,7 +1365,7 @@ export function PersonnelScreen() {
         </Card>
       ) : null}
 
-      {!empOpen && tab === "extras" ? (
+      {tab === "extras" ? (
         <>
           <Card testID="bonus-panel">
             <Text style={{ fontWeight: "800", color: colors.text }}>Prim / ikinci maaş</Text>
@@ -1740,6 +1642,78 @@ export function PersonnelScreen() {
         />
         <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından; çıkış her yerden. Sürekli açıkken konum aralığında kontrol edilir. Dış görevde konum dışına çıkınca tolerans kadar saat sonra çıkış sayılır.</Muted>
         <PrimaryButton title="Kaydet" testID="emp-location-save" color="#047857" loading={busy} onPress={saveLocSettings} />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!dutiesEmp}
+        title="Atanan görevler"
+        subtitle={dutiesEmp ? dutiesEmp.full_name : undefined}
+        onClose={() => setDutiesEmp(null)}
+        testID="emp-duties-sheet"
+      >
+        {dutiesEmp ? (() => {
+          const board = employeeDutyBoard(dutiesEmp, cards[idOf(dutiesEmp)]);
+          return (
+            <View testID={`emp-duties-board-${idOf(dutiesEmp)}`} style={{ gap: 10 }}>
+              <View
+                testID="emp-duties-current"
+                style={{
+                  padding: 12,
+                  borderRadius: 12,
+                  backgroundColor: board.current ? "#EEF2FF" : colors.slate50,
+                  borderWidth: 1,
+                  borderColor: board.current ? "#C7D2FE" : colors.border,
+                  gap: 4,
+                }}
+              >
+                <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 12 }}>Şu anda yaptığı iş</Text>
+                {board.current ? (
+                  <>
+                    <Text style={{ fontWeight: "800", color: colors.text, fontSize: 15 }}>{board.current.title}</Text>
+                    {board.current.lines.map((line) => (
+                      <Muted key={line}>{line}</Muted>
+                    ))}
+                    {board.currentHint ? <Muted testID="emp-duties-current-hint">{board.currentHint}</Muted> : null}
+                  </>
+                ) : (
+                  <Muted testID="emp-duties-empty">Aktif görev yok.</Muted>
+                )}
+              </View>
+              {board.open.filter((t) => !t.current).length ? (
+                <View testID="emp-duties-open" style={{ gap: 8 }}>
+                  <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Diğer açık görevler ({board.open.filter((t) => !t.current).length})</Text>
+                  {board.open.filter((t) => !t.current).map((t) => (
+                    <View
+                      key={t.id || t.title}
+                      testID={`emp-duties-open-${t.id || t.title}`}
+                      style={{ padding: 10, borderRadius: 12, backgroundColor: colors.slate50, borderWidth: 1, borderColor: colors.border, gap: 2 }}
+                    >
+                      <Text style={{ fontWeight: "700", color: colors.text }}>{t.title}</Text>
+                      {t.lines.map((line) => (
+                        <Muted key={line}>{line}</Muted>
+                      ))}
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+              {board.done.length ? (
+                <Muted testID="emp-duties-done">{board.done.length} tamamlanan görev</Muted>
+              ) : null}
+              {canEdit ? (
+                <PrimaryButton
+                  title="Yeni görev ata"
+                  testID="emp-duties-assign"
+                  color={colors.indigo}
+                  onPress={() => {
+                    const emp = dutiesEmp;
+                    setDutiesEmp(null);
+                    if (emp) openTaskAssign(emp);
+                  }}
+                />
+              ) : null}
+            </View>
+          );
+        })() : null}
       </B2BSheet>
 
       <B2BSheet

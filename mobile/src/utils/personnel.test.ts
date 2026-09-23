@@ -68,6 +68,8 @@ import {
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
   workplaceDetailsToggleIcon,
+  employeeDutyBoard,
+  employeeDutyHeadline,
   employeeCardChrome,
   employeeCardPayKind,
   employeeCompGroups,
@@ -156,6 +158,33 @@ describe("employee draft", () => {
     expect(workplaceDetailsToggleIcon(true)).toBe("chevron-up");
     expect(workplaceDetailsSummary({ hasFieldDuty: true, fieldLabel: "aa", taskCount: 4 })).toBe("aa · 4 açık görev");
     expect(workplaceDetailsSummary({ taskCount: 1 })).toBe("1 açık görev");
+    const duties = employeeDutyBoard(
+      {
+        workplace: {
+          kind: "task",
+          task_id: "t1",
+          task_title: "Montaj",
+          project_number: "PRJ-2026-0012",
+          project_name: "Villa",
+          duration_days: 3,
+          due_date: "2026-09-26",
+          address: "Kadıköy",
+        },
+      },
+      {
+        tasks: [
+          { id: "t1", title: "Montaj", project_number: "PRJ-2026-0012", project_name: "Villa", duration_days: 3, due_date: "2026-09-26", kind: "field" },
+          { id: "t2", title: "Keşif", project_name: "Ofis", kind: "office", park_name: "Makina" },
+          { id: "t3", title: "Eski", done: true },
+        ],
+      },
+    );
+    expect(duties.headline).toBe("Şu an: Montaj");
+    expect(duties.current?.title).toBe("Montaj");
+    expect(duties.current?.lines).toEqual(["Dış görev", "PRJ-2026-0012 · Villa", "3 gün", "Bitiş 2026-09-26"]);
+    expect(duties.open.map((t) => t.title)).toEqual(["Montaj", "Keşif"]);
+    expect(duties.done).toHaveLength(1);
+    expect(employeeDutyHeadline({ current: null, open: [] })).toBe("Atanmış görev yok");
     expect(payMovesPeriodLabel("30d")).toBe("Son 30 gün");
     expect(payMovesPeriodHint(8, 24, "30d")).toBe("8 / 24 hareket");
     expect(payMovesPeriodHint(12, 12, "all")).toBe("12 hareket");
@@ -353,6 +382,7 @@ describe("employee card actions", () => {
     expect(employeeCardActionIcon("advance")).toBe("cash-outline");
     expect(employeeCardActionIcon("location")).toBe("location-outline");
     expect(employeeCardActionIcon("expense")).toBe("receipt-outline");
+    expect(employeeCardActionIcon("duties")).toBe("checkbox-outline");
     expect(employeeCardActionTitles({ pay_type: "daily" })).toEqual([
       "Avans", "Bakiye öde", "Yemek", "Yol", "Yevmiye günü", "Mesai öde", "Görev ata", "+ Mesai",
     ]);
