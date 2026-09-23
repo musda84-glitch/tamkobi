@@ -6,7 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
 import { Badge, Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
@@ -40,6 +40,7 @@ type AttendancePayload = {
     yevmiye_full_amount?: number;
     yevmiye_adjustment_request?: { status?: string; full_amount?: number; proposed_amount?: number; final_amount?: number } | null;
     expected_end?: string;
+    geo_confirm_request?: { status?: string; action?: string; reason?: string; proposed_time?: string; place?: string; distance_m?: number | null } | null;
   } | null;
   location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
   workplace?: Workplace | null;
@@ -196,20 +197,13 @@ export function AttendanceScreen() {
         requireGeo: data?.schedule?.require_geo !== false,
         trackingEnabled: Boolean(data?.active_location_tracking?.enabled ?? data?.location_tracking?.enabled),
       });
-      if (geoMode === "required") {
+      if (geoMode === "required" || geoMode === "attach") {
         try {
           const c = await coords();
           extra = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
         } catch (err) {
-          await reportLocation(apiErrorMessage(err, "Konum izni verilmedi."));
-          throw err;
-        }
-      } else if (geoMode === "attach") {
-        try {
-          const c = await coords();
-          extra = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
-        } catch (err) {
-          await reportLocation(apiErrorMessage(err, "Konum alınamadı"));
+          await reportLocation(apiErrorMessage(err, geoMode === "required" ? "Konum izni verilmedi." : "Konum alınamadı"));
+          if (geoMode === "required") throw err;
         }
       }
       const r = await post<{ message?: string }>(client, "/personnel/attendance/self", { action, ...extra });
@@ -341,6 +335,9 @@ export function AttendanceScreen() {
   const today = data?.today;
   const checkedIn = Boolean(today?.check_in);
   const checkedOut = Boolean(today?.check_out);
+  const geoPending = geoConfirmPending(today);
+  const geoPendingAction = today?.geo_confirm_request?.action;
+  const geoPendingHint = geoConfirmHint(today);
   const early = today?.early_leave_request;
   const intra = today?.intraday_leave_request;
   const yevLine = yevmiyeStatusLine(today);
@@ -396,11 +393,13 @@ export function AttendanceScreen() {
         <Row style={{ justifyContent: "center", gap: 8 }}>
           {checkedIn ? <Badge label={`Giriş ${today?.check_in}`} tone="green" /> : <Badge label="Giriş yok" />}
           {checkedOut ? <Badge label={`Çıkış ${today?.check_out}`} tone="indigo" /> : null}
+          {geoPending ? <Badge label="Yönetici teyidi bekliyor" tone="amber" /> : null}
           {today?.late_minutes ? <Badge label={`${today.late_minutes} dk geç`} tone="red" /> : null}
           {yevLine ? <Badge label={yevLine} tone="amber" /> : null}
         </Row>
         <View style={{ gap: 10, marginTop: 8 }}>
-          <PrimaryButton title={busy === "check_in" ? "Kaydediliyor…" : "Giriş"} onPress={() => act("check_in")} disabled={checkedIn} color={colors.accent} testID="mesai-in" />
+          {geoPendingHint ? <Muted testID="mesai-geo-confirm-pending">{geoPendingHint}</Muted> : null}
+          <PrimaryButton title={busy === "check_in" ? "Kaydediliyor…" : "Giriş"} onPress={() => act("check_in")} disabled={checkedIn || (geoPending && geoPendingAction === "check_in")} color={colors.accent} testID="mesai-in" />
           {outConfirm && checkoutOn ? (
             <View testID="mesai-out-confirm" style={{ gap: 8 }}>
               <Muted testID="mesai-out-confirm-text">{checkoutConfirmMessage(today?.check_in)}</Muted>
@@ -417,7 +416,7 @@ export function AttendanceScreen() {
             <PrimaryButton
               title={busy === "check_out" ? "Kaydediliyor…" : (earlyOk && !checkedOut ? "Çıkış (onaylı erken)" : "Çıkış")}
               onPress={() => setOutConfirm(true)}
-              disabled={!checkoutOn}
+              disabled={!checkoutOn || (geoPending && geoPendingAction === "check_out")}
               color={earlyOk && !checkedOut ? colors.danger : colors.secondary}
               testID="mesai-out"
             />

@@ -546,6 +546,19 @@ export default function PersonnelPage() {
     }
   };
 
+  const decideGeoConfirm = async (id, decision) => {
+    setBusyReqId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/geo-confirm-decision`, { decision });
+      toast.success(r.data?.message || (decision === "approve" ? "Teyit edildi." : "Reddedildi."));
+      await afterRequestDecision();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyReqId(null);
+    }
+  };
+
   const decideLocationExit = async (id, decision, wageDeduction) => {
     setBusyReqId(id);
     try {
@@ -795,6 +808,7 @@ export default function PersonnelPage() {
               onDecideAdvance={decideAdvance}
               onDecideYevmiye={decideYevmiye}
               onDecideLocationExit={decideLocationExit}
+              onDecideGeoConfirm={decideGeoConfirm}
               onDecideDispute={decideDispute}
               onViewDispute={() => setTab("attendance")}
             />

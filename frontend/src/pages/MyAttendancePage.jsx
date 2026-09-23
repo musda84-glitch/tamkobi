@@ -6,7 +6,7 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Cal
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
@@ -148,20 +148,13 @@ export default function MyAttendancePage() {
         requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
         trackingEnabled: action === "check_out" ? !!activeLt?.enabled : activeLt?.enabled !== false,
       });
-      if (geoMode === "required") {
+      if (geoMode === "required" || geoMode === "attach") {
         try {
           const c = await getPos();
           coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
         } catch (geoErr) {
-          await reportLocation(geoErr?.message || "Konum izni verilmedi.");
-          throw geoErr;
-        }
-      } else if (geoMode === "attach") {
-        try {
-          const c = await getPos();
-          coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
-        } catch (geoErr) {
-          await reportLocation(geoErr?.message || "Konum alınamadı");
+          await reportLocation(geoErr?.message || (geoMode === "required" ? "Konum izni verilmedi." : "Konum alınamadı"));
+          if (geoMode === "required") throw geoErr;
         }
       }
       const r = await axios.post(`${API_URL}/personnel/attendance/self`, { action, ...coords }, { withCredentials: true });
@@ -288,13 +281,13 @@ export default function MyAttendancePage() {
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => act("check_in")} disabled={!!busy || !!t?.check_in} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
+            <button onClick={() => act("check_in")} disabled={!!busy || !!t?.check_in || (geoConfirmPending(t) && t?.geo_confirm_request?.action === "check_in")} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
               {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">Giriş Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{t?.check_in ? `Giriş ${t.check_in}` : "henüz giriş yok"}</span>
             </button>
             <button
               type="button"
               onClick={onCheckoutClick}
-              disabled={!!busy || !checkoutOn}
+              disabled={!!busy || !checkoutOn || (geoConfirmPending(t) && t?.geo_confirm_request?.action === "check_out")}
               className={`flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition ${outArmed ? "bg-amber-500 hover:bg-amber-400 ring-2 ring-amber-200 ring-offset-2 ring-offset-slate-900" : "bg-rose-500 hover:bg-rose-400"}`}
               data-testid="my-att-checkout"
               aria-pressed={outArmed}
@@ -307,6 +300,9 @@ export default function MyAttendancePage() {
               </span>
             </button>
           </div>
+          {geoConfirmHint(t) ? (
+            <div className="rounded-xl bg-amber-500/20 border border-amber-300/30 px-3 py-2 text-xs text-amber-100 font-semibold" data-testid="my-att-geo-confirm-pending">{geoConfirmHint(t)}</div>
+          ) : null}
           {(t?.hours || t?.late_minutes || t?.assigned_overtime_hours || t?.intraday_leave_minutes || t?.yevmiye_full_amount || t?.yevmiye_adjustment_request || t?.time_order_invalid) ? (
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs">
               {t?.time_order_invalid ? <span className="px-2.5 py-1 rounded-lg bg-rose-500/40 text-rose-100 font-bold" data-testid="my-att-time-order-invalid">Çıkış girişten önce — süre hesaplanmadı (kayıt düzeltilmeli)</span> : null}

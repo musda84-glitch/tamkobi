@@ -218,14 +218,31 @@ class TestSelfService:
 
     def test_self_checkin_requires_geo(self, c):
         r = c.post(f"{API}/personnel/attendance/self", json={"action": "check_in"})
-        assert r.status_code == 400, r.text
-        assert "Konum gerekli" in r.json()["detail"]
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d.get("status") == "pending"
+        assert "yönetici onayına" in (d.get("message") or "").lower() or "teyit" in (d.get("message") or "").lower()
+        rec = d.get("record") or {}
+        gcr = rec.get("geo_confirm_request") or {}
+        assert gcr.get("status") == "pending"
+        assert gcr.get("reason") == "location_off"
+        assert not rec.get("check_in")
+        dec = c.post(f"{API}/personnel/attendance/{rec['id']}/geo-confirm-decision", json={"decision": "reject"})
+        assert dec.status_code == 200, dec.text
 
     def test_self_checkin_far_location(self, c):
         r = c.post(f"{API}/personnel/attendance/self",
                    json={"action": "check_in", "latitude": 39.9, "longitude": 32.8})
-        assert r.status_code == 400, r.text
-        assert "uzaktasınız" in r.json()["detail"]
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d.get("status") == "pending"
+        rec = d.get("record") or {}
+        gcr = rec.get("geo_confirm_request") or {}
+        assert gcr.get("status") == "pending"
+        assert gcr.get("reason") == "offsite"
+        assert not rec.get("check_in")
+        dec = c.post(f"{API}/personnel/attendance/{rec['id']}/geo-confirm-decision", json={"decision": "reject"})
+        assert dec.status_code == 200, dec.text
 
     def test_self_checkin_and_checkout(self, c, company_loc):
         assert company_loc, "company location missing"

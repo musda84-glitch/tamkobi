@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MapPin, MessageSquareWarning, DoorOpen, ArrowLeftRight, ChevronDown, ChevronUp } from "lucide-react";
+import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MapPin, MessageSquareWarning, DoorOpen, ArrowLeftRight, ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSettings";
 import { ShiftPlanner } from "./ShiftPlanner";
@@ -65,6 +65,13 @@ export const AttendancePanel = ({ companyId }) => {
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/location-exit-decision`, { decision, wage_deduction: !!wageDeduction }, { withCredentials: true });
       toast.success(r.data.message || "Konum dışı çıkış yanıtlandı.");
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
+  };
+  const decideGeoConfirm = async (id, decision) => {
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/geo-confirm-decision`, { decision }, { withCredentials: true });
+      toast.success(r.data.message || (decision === "approve" ? "Teyit edildi." : "Reddedildi."));
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
   };
@@ -172,6 +179,15 @@ export const AttendancePanel = ({ companyId }) => {
               <button type="button" onClick={() => decideLocationExit(r.id, "approve", false)} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-locexit-ok-${r.id}`}>Kesinti olmasın</button>
               <button type="button" onClick={() => decideLocationExit(r.id, "approve", true)} className="px-1.5 py-0.5 rounded bg-amber-500 text-white font-bold" data-testid={`att-locexit-deduct-${r.id}`}>Kesinti olsun</button>
               <button type="button" onClick={() => decideLocationExit(r.id, "reject", false)} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-locexit-no-${r.id}`}>Reddet</button>
+            </span>
+          )}
+          {r.geo_confirm_request?.status === "pending" && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] flex-wrap" data-testid={`att-geoconfirm-pending-${r.id}`}>
+              <ShieldCheck className="w-3 h-3 text-violet-700" />
+              <span className="font-semibold text-violet-800">Yönetici teyitli {r.geo_confirm_request.action === "check_out" ? "çıkış" : "giriş"}{r.geo_confirm_request.proposed_time ? ` · ${r.geo_confirm_request.proposed_time}` : ""}</span>
+              <span className="text-slate-500">{r.geo_confirm_request.reason === "location_off" ? "konum kapalı" : r.geo_confirm_request.reason === "offsite" ? "iş yerinde değil" : "konum"}{r.geo_confirm_request.place ? ` · ${r.geo_confirm_request.place}` : ""}{r.geo_confirm_request.distance_m != null ? ` · ${r.geo_confirm_request.distance_m} m` : ""}</span>
+              <button type="button" onClick={() => decideGeoConfirm(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-geoconfirm-approve-${r.id}`}>Teyit et</button>
+              <button type="button" onClick={() => decideGeoConfirm(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-geoconfirm-reject-${r.id}`}>Reddet</button>
             </span>
           )}
           {r.intraday_leave_request?.status === "pending" && (

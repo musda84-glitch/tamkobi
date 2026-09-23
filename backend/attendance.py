@@ -713,6 +713,85 @@ def workplace_place_label(loc: Optional[dict]) -> str:
     return loc.get("label") or "firma"
 
 
+def parse_self_coords(req: Optional[dict] = None) -> tuple:
+    """latitude / longitude / accuracy_m — yoksa (None, None, None)."""
+    raw = req if isinstance(req, dict) else {}
+    try:
+        lat, lng = float(raw["latitude"]), float(raw["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return None, None, None
+    try:
+        acc = float(raw.get("accuracy_m") or 0)
+    except (TypeError, ValueError):
+        acc = 0.0
+    return lat, lng, acc
+
+
+def classify_self_punch_geo(loc: Optional[dict], lat: Optional[float], lng: Optional[float]) -> dict:
+    """İş yeri hedefi varsa: onsite / offsite / location_off. Hedef yoksa skip (anında kayıt)."""
+    if not loc or loc.get("latitude") is None or loc.get("longitude") is None:
+        return {"verdict": "skip", "distance_m": None, "radius_m": None, "place": ""}
+    place = workplace_place_label(loc)
+    try:
+        radius = float(loc.get("radius_m") or 300)
+    except (TypeError, ValueError):
+        radius = 300.0
+    if lat is None or lng is None:
+        return {"verdict": "location_off", "distance_m": None, "radius_m": radius, "place": place}
+    dist = round(haversine_m(lat, lng, loc["latitude"], loc["longitude"]))
+    if dist > radius:
+        return {"verdict": "offsite", "distance_m": dist, "radius_m": radius, "place": place}
+    return {"verdict": "onsite", "distance_m": dist, "radius_m": radius, "place": place}
+
+
+def geo_confirm_needs_manager(verdict: Optional[str]) -> bool:
+    return verdict in ("offsite", "location_off")
+
+
+def geo_confirm_reason_tr(reason: Optional[str]) -> str:
+    if reason == "location_off":
+        return "konum kapalı"
+    if reason == "offsite":
+        return "iş yerinde değil"
+    return (reason or "").strip() or "konum doğrulanamadı"
+
+
+def geo_confirm_action_tr(action: Optional[str]) -> str:
+    return "Giriş" if action == "check_in" else "Çıkış"
+
+
+def build_geo_confirm_request(
+    *,
+    action: str,
+    reason: str,
+    proposed_time: str,
+    place: str = "",
+    distance_m: Optional[float] = None,
+    radius_m: Optional[float] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    accuracy_m: Optional[float] = None,
+    user_id: str = "",
+) -> dict:
+    return {
+        "status": "pending",
+        "action": action,
+        "reason": reason,
+        "proposed_time": proposed_time,
+        "place": place or "",
+        "distance_m": distance_m,
+        "radius_m": radius_m,
+        "latitude": latitude,
+        "longitude": longitude,
+        "accuracy_m": accuracy_m,
+        "requested_at": _now(),
+        "requested_by": user_id,
+        "decided_at": None,
+        "decided_by": None,
+        "decision_note": "",
+    }
+
+
 def _duration_days_of(task: Optional[dict]) -> Optional[int]:
     if not isinstance(task, dict):
         return None
@@ -877,7 +956,7 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
            "assigned_overtime_hours": assigned_ot}
     if rec["status"] in ("absent", "leave"):
         rec.update({"check_in": None, "check_out": None})
-    for k in ("early_leave_request", "early_leave_approved", "intraday_leave_request", "intraday_leave_approved"):
+    for k in ("early_leave_request", "early_leave_approved", "intraday_leave_request", "intraday_leave_approved", "geo_confirm_request", "manager_confirmed"):
         if k in patch:
             rec[k] = patch[k]
         elif existing.get(k) is not None:
@@ -1155,39 +1234,17 @@ async def self_attendance(req: Dict[str, Any], request: Request):
         enforce_geo = bool(active_lt.get("enabled"))
     else:
         enforce_geo = bool(schedule.get("require_geo", True)) and bool(active_lt.get("enabled"))
+    lat, lng, acc = parse_self_coords(req)
+    verdict = classify_self_punch_geo(loc, lat, lng)
     geo = None
-    # Konum zorunluluğu yalnızca girişte; açık dış görev / etkin dış görev varsa görev yeri iş yeri sayılır.
-    # Çıkış: konum zorunlu değil ama referans her zaman etkin iş yeri (dış görevde görev yeri;
-    # iş yerinde dış görev atanmışsa çıkış da dış görev yerini referans alır).
-    if action == "check_in" and loc and enforce_geo:
-        try:
-            lat, lng = float(req["latitude"]), float(req["longitude"])
-        except (KeyError, TypeError, ValueError):
-            place = workplace_place_label(loc)
-            if loc.get("kind") == "task":
-                raise HTTPException(status_code=400, detail=f"Konum gerekli: telefon konum iznini açın. Dış görev atandığı için giriş yalnızca görev yeri ({place}) yakınından yapılabilir.")
-            raise HTTPException(status_code=400, detail="Konum gerekli: telefon konum iznini açın. Firma konumu tanımlı olduğundan giriş yalnızca firma yakınından yapılabilir.")
-        dist = haversine_m(lat, lng, loc["latitude"], loc["longitude"])
-        radius = float(loc.get("radius_m") or 300)
-        if dist > radius:
-            place = workplace_place_label(loc)
-            if loc.get("kind") == "task":
-                raise HTTPException(status_code=400, detail=f"Görev yerine ({place}) {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). Dış görev girişi görev konumundan yapılmalıdır.")
-            raise HTTPException(status_code=400, detail=f"Firma konumuna {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). Giriş yapılamadı.")
-        geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": True, "workplace_kind": loc.get("kind")}
-    elif action == "check_out" and not checkout_distance_blocks():
-        # Çıkış butonla her yerden. Konum açıksa GPS kayda eklenir; mesafe asla reddetmez.
-        ref = workplace if workplace and workplace.get("kind") == "task" else (loc or workplace)
-        try:
-            lat, lng = float(req["latitude"]), float(req["longitude"])
-        except (KeyError, TypeError, ValueError):
-            lat = lng = None
-        if lat is not None and lng is not None:
-            if ref and ref.get("has_coords") and ref.get("latitude") is not None:
-                dist = haversine_m(lat, lng, ref["latitude"], ref["longitude"])
-                geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": False, "workplace_kind": ref.get("kind"), "reference": "field" if ref.get("kind") == "task" else "company"}
-            else:
-                geo = {"latitude": lat, "longitude": lng, "distance_m": None, "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": False}
+    if verdict["verdict"] == "onsite" and lat is not None and lng is not None:
+        geo = {
+            "latitude": lat, "longitude": lng, "distance_m": verdict["distance_m"],
+            "accuracy_m": acc or 0, "at": _now(), "enforced": bool(enforce_geo and action == "check_in"),
+            "workplace_kind": (loc or {}).get("kind"),
+        }
+    elif action == "check_out" and verdict["verdict"] == "skip" and lat is not None and lng is not None:
+        geo = {"latitude": lat, "longitude": lng, "distance_m": None, "accuracy_m": acc or 0, "at": _now(), "enforced": False}
     today = _today(schedule)
     existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
     if action == "check_in" and existing.get("check_in"):
@@ -1210,6 +1267,16 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             raise
         except Exception:
             pass
+    pending = existing.get("geo_confirm_request") or {}
+    if pending.get("status") == "pending":
+        if pending.get("action") == action:
+            raise HTTPException(status_code=400, detail=f"Bekleyen yönetici teyitli {geo_confirm_action_tr(action).lower()} talebiniz var.")
+        if action == "check_out" and pending.get("action") == "check_in":
+            raise HTTPException(status_code=400, detail="Önce bekleyen yönetici teyitli giriş talebinizin onaylanması gerekir.")
+    if geo_confirm_needs_manager(verdict.get("verdict")):
+        return await open_geo_confirm_request(
+            emp, user, existing, today, action, now_s, verdict, lat, lng, acc, workplace,
+        )
     patch = {"status": "present", action: now_s}
     rec = await apply_day(emp, today, patch, source="self", confirmed=True)
     extra = {}
@@ -1300,6 +1367,163 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     except Exception:
         pass
     return {"status": "success", "record": rec, "message": msg, "workplace": workplace, "yevmiye": yev}
+
+
+async def open_geo_confirm_request(
+    emp: dict,
+    user: dict,
+    existing: dict,
+    today: str,
+    action: str,
+    now_s: str,
+    verdict: dict,
+    lat: Optional[float],
+    lng: Optional[float],
+    acc: Optional[float],
+    workplace: Optional[dict],
+) -> dict:
+    """Konum kapalı veya iş yerinde değilken giriş/çıkış yönetici teyidine düşer; saat onayda yazılır."""
+    reason = verdict.get("verdict") or "location_off"
+    gcr = build_geo_confirm_request(
+        action=action,
+        reason=reason,
+        proposed_time=now_s,
+        place=verdict.get("place") or workplace_place_label(workplace),
+        distance_m=verdict.get("distance_m"),
+        radius_m=verdict.get("radius_m"),
+        latitude=lat,
+        longitude=lng,
+        accuracy_m=acc,
+        user_id=str(user.get("_id") or user.get("id") or ""),
+    )
+    extra = {"geo_confirm_request": gcr, "updated_at": _now()}
+    if workplace:
+        extra["workplace"] = workplace
+    if existing.get("_id"):
+        await _db.attendance.update_one({"_id": existing["_id"]}, {"$set": extra})
+        rec = _clean(await _db.attendance.find_one({"_id": existing["_id"]}))
+    else:
+        doc_id = str(uuid.uuid4())
+        stub = {
+            "_id": doc_id,
+            "company_id": emp["company_id"],
+            "employee_id": emp["_id"],
+            "employee_name": emp["full_name"],
+            "date": today,
+            "status": "absent",
+            "check_in": None,
+            "check_out": None,
+            "source": "self",
+            "employee_confirmed": False,
+            "created_at": _now(),
+            **extra,
+        }
+        await _db.attendance.insert_one(stub)
+        rec = _clean(await _db.attendance.find_one({"_id": doc_id}))
+    if reason == "location_off":
+        await mark_employee_location_signal(emp["_id"], False)
+    label = geo_confirm_action_tr(action)
+    why = geo_confirm_reason_tr(reason)
+    dist_bit = f" · {int(gcr['distance_m'])} m" if gcr.get("distance_m") is not None else ""
+    place = gcr.get("place") or ""
+    await notify_managers(
+        emp["company_id"],
+        "geo_confirm_request",
+        f"Yönetici teyitli {label.lower()}: {emp.get('full_name')}",
+        f"{emp.get('full_name')} {now_s} {label.lower()} bastı ({why}{(' · ' + place) if place else ''}{dist_bit}). Onaylarsanız kayıt yazılır.",
+        link="/personnel?tab=attendance",
+        dedupe_key=f"geoconfirm:{emp['_id']}:{today}:{action}",
+    )
+    msg = f"{label} {now_s} yönetici onayına iletildi ({why}). Onaylanınca yönetici teyitli kayıt yazılır."
+    return {"status": "pending", "record": rec, "message": msg, "workplace": workplace, "geo_confirm": gcr}
+
+
+@router.post("/personnel/attendance/{att_id}/geo-confirm-decision")
+async def decide_geo_confirm(att_id: str, req: Dict[str, Any], request: Request):
+    user = await _current_user(request)
+    if user.get("role") not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="Yönetici teyitli girişi onaylamak için yönetici yetkisi gerekir.")
+    rec = await _db.attendance.find_one({"_id": att_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+    gcr = rec.get("geo_confirm_request") or {}
+    if gcr.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen yönetici teyitli giriş/çıkış talebi yok.")
+    decision = (req.get("decision") or "").strip().lower()
+    if decision not in ("approve", "reject", "approved", "rejected"):
+        raise HTTPException(status_code=400, detail="decision: approve veya reject olmalı.")
+    approved = decision in ("approve", "approved")
+    gcr = {
+        **gcr,
+        "status": "approved" if approved else "rejected",
+        "decided_at": _now(),
+        "decided_by": str(user.get("_id") or user.get("id") or ""),
+        "decision_note": (req.get("note") or "")[:300],
+    }
+    action = gcr.get("action") if gcr.get("action") in ("check_in", "check_out") else "check_in"
+    when = (gcr.get("proposed_time") or "")[:5]
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id")})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    company = await _db.companies.find_one({"_id": rec.get("company_id")}) or {}
+    schedule = merge_schedule(company, emp) if emp else merge_schedule(company)
+    if approved:
+        if not when:
+            raise HTTPException(status_code=400, detail="Talebin saati eksik.")
+        if action == "check_out" and rec.get("check_in"):
+            try:
+                if _hm(when) < _hm(str(rec["check_in"])[:5]):
+                    raise HTTPException(status_code=400, detail=f"Çıkış saati ({when}) girişten ({rec['check_in']}) önce olamaz.")
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+        patch = {"status": "present", action: when, "geo_confirm_request": gcr, "manager_confirmed": True}
+        rec = await apply_day(emp, rec.get("date"), patch, source="manager_confirm", confirmed=True)
+        extra = {"manager_confirmed": True, "geo_confirm_request": gcr}
+        lat, lng = gcr.get("latitude"), gcr.get("longitude")
+        geo = None
+        if lat is not None and lng is not None:
+            geo = {
+                "latitude": lat, "longitude": lng, "distance_m": gcr.get("distance_m"),
+                "accuracy_m": gcr.get("accuracy_m") or 0, "at": gcr.get("requested_at") or _now(),
+                "enforced": False, "manager_confirmed": True,
+            }
+            extra[f"geo_{action}"] = geo
+        workplace = rec.get("workplace") or await workplace_for_employee(emp, company)
+        if workplace:
+            extra["workplace"] = workplace
+        await _db.attendance.update_one({"_id": att_id}, {"$set": extra})
+        rec = _clean(await _db.attendance.find_one({"_id": att_id}))
+        try:
+            if action == "check_in":
+                await accrue_task_yevmiye(emp, rec, workplace, schedule)
+            elif action == "check_out":
+                await sync_yevmiye_adjustment(emp, rec, schedule)
+        except Exception:
+            pass
+        rec = _clean(await _db.attendance.find_one({"_id": att_id}))
+        msg = f"Yönetici teyitli {geo_confirm_action_tr(action).lower()} {when} kaydedildi."
+    else:
+        await _db.attendance.update_one(
+            {"_id": att_id},
+            {"$set": {"geo_confirm_request": gcr, "updated_at": _now()}},
+        )
+        rec = _clean(await _db.attendance.find_one({"_id": att_id}))
+        msg = f"Yönetici teyitli {geo_confirm_action_tr(action).lower()} reddedildi."
+    import notify as _notify
+    await _notify.insert_notification(_db, {
+        "_id": str(uuid.uuid4()),
+        "company_id": rec["company_id"],
+        "user_id": rec.get("employee_id"),
+        "type": "geo_confirm_decision",
+        "title": f"{geo_confirm_action_tr(action)} " + ("onaylandı" if approved else "reddedildi"),
+        "message": f"{rec.get('employee_name')} — {gcr['status']}. {gcr.get('decision_note') or ''}".strip(),
+        "link": "/mesai",
+        "is_read": False,
+        "created_at": _now(),
+    })
+    return {"status": "success", "record": rec, "message": msg, "approved": approved}
 
 
 async def maybe_open_location_exit(

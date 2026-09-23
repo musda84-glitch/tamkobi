@@ -1,16 +1,43 @@
 export type SelfAttendanceAction = "check_in" | "check_out";
 export type SelfAttendanceGeoMode = "required" | "attach" | "none";
 
-/** Giriş: iş yeri/görev yakınında konum zorunlu. Çıkış: buton her yerden; konum açıksa GPS eklenir. Konum ping otomatik basabilir. */
+/** Giriş/çıkış butonu konum yüzünden kapanmaz. GPS varsa eklenir; yoksa veya uzaktaysa yönetici teyidi. */
 export function selfAttendanceGeoMode(
   action: SelfAttendanceAction,
   opts?: { hasTarget?: boolean; trackingEnabled?: boolean; requireGeo?: boolean },
 ): SelfAttendanceGeoMode {
-  if (action === "check_in") {
-    if (opts?.hasTarget && opts?.requireGeo !== false && opts?.trackingEnabled !== false) return "required";
-    return "none";
-  }
-  return opts?.trackingEnabled ? "attach" : "none";
+  if (opts?.hasTarget || opts?.trackingEnabled) return "attach";
+  return "none";
+}
+
+export type GeoConfirmRequest = {
+  status?: string;
+  action?: SelfAttendanceAction | string;
+  reason?: string;
+  proposed_time?: string;
+  place?: string;
+  distance_m?: number | null;
+};
+
+export function geoConfirmPending(rec?: { geo_confirm_request?: GeoConfirmRequest | null } | null): boolean {
+  return rec?.geo_confirm_request?.status === "pending";
+}
+
+export function geoConfirmReasonTr(reason?: string | null): string {
+  if (reason === "location_off") return "konum kapalı";
+  if (reason === "offsite") return "iş yerinde değil";
+  return (reason || "").trim() || "konum doğrulanamadı";
+}
+
+export function geoConfirmHint(rec?: { geo_confirm_request?: GeoConfirmRequest | null } | null): string {
+  const g = rec?.geo_confirm_request;
+  if (!g || g.status !== "pending") return "";
+  const label = g.action === "check_out" ? "Çıkış" : "Giriş";
+  const when = g.proposed_time ? ` ${g.proposed_time}` : "";
+  const why = geoConfirmReasonTr(g.reason);
+  const place = g.place ? ` · ${g.place}` : "";
+  const dist = g.distance_m != null ? ` · ${g.distance_m} m` : "";
+  return `${label}${when} yönetici onayında (${why}${place}${dist}). Onaylanınca yönetici teyitli kayıt yazılır.`;
 }
 
 export function validateEarlyLeave(reason: string, plannedTime?: string): string | null {

@@ -168,6 +168,11 @@ describe("employee draft", () => {
     expect(employeeStatusLabel("terminated")).toBe("İşten çıktı");
     expect(employeeStatusLabel("active")).toBe("Aktif");
     expect(requestKindLabel("early_leave")).toBe("Erken çıkış");
+    expect(requestKindLabel("geo_confirm")).toBe("Teyitli giriş");
+    expect(pendingRequestDecision({ id: "g1", kind: "geo_confirm" }, true)).toEqual({
+      path: "/personnel/attendance/g1/geo-confirm-decision", body: { decision: "approve" },
+    });
+    expect(pendingRequestDecisionMessage({ kind: "geo_confirm" }, true)).toBe("Teyitli giriş onaylandı.");
     expect(requestKindLabel("yevmiye_adjustment")).toBe("Geç giriş ücreti");
     expect(pendingRequestDecision({ id: "l1", kind: "leave" }, true)).toEqual({
       path: "/personnel/leaves/l1/decide", body: { status: "approved" },
