@@ -201,8 +201,9 @@ export default function MyAttendancePage() {
               </span>
             </button>
           </div>
-          {(t?.hours || t?.late_minutes || t?.assigned_overtime_hours || t?.intraday_leave_minutes || t?.yevmiye_full_amount || t?.yevmiye_adjustment_request) ? (
+          {(t?.hours || t?.late_minutes || t?.assigned_overtime_hours || t?.intraday_leave_minutes || t?.yevmiye_full_amount || t?.yevmiye_adjustment_request || t?.time_order_invalid) ? (
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs">
+              {t?.time_order_invalid ? <span className="px-2.5 py-1 rounded-lg bg-rose-500/40 text-rose-100 font-bold" data-testid="my-att-time-order-invalid">Çıkış girişten önce — süre hesaplanmadı (kayıt düzeltilmeli)</span> : null}
               {t?.hours ? <span className="px-2.5 py-1 rounded-lg bg-white/10">Bugün <b>{t.hours} sa</b> çalışıldı</span> : null}
               {t?.assigned_overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-violet-500/30 text-violet-100 font-bold" data-testid="my-att-assigned-ot">Atanan +{t.assigned_overtime_hours} sa · beklenen çıkış {t.expected_end || sch.end}</span> : null}
               {t?.overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-indigo-500/30 text-indigo-200 font-bold">+{t.overtime_hours} sa fazla mesai</span> : null}
