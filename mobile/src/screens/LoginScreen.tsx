@@ -15,9 +15,7 @@ import {
   type LegalAcceptMap,
 } from "../utils/b2bLegal";
 import { contentBottomPad, loginSheetJustify } from "../utils/keyboardPad";
-import { appVersionLabel } from "../utils/appVersion";
 import { emailToRemember } from "../utils/loginRemember";
-import { previewTamkobiNotify } from "../utils/notifyPreview";
 import { useKeyboardAwareScroll } from "../utils/useKeyboardAwareScroll";
 
 type Mode = "erp" | "erp-forgot" | "erp-reset" | "b2b" | "b2b-forgot" | "b2b-reset";
@@ -342,10 +340,6 @@ export function LoginScreen() {
           <Pressable onPress={() => setShowServer((v) => !v)} style={{ paddingTop: 10 }} testID="login-toggle-server">
             <Text style={styles.server}>{showServer ? "Sunucu alanını gizle" : `Sunucu: ${baseUrl.replace(/^https?:\/\//, "")}`}</Text>
           </Pressable>
-          <Text style={styles.version} testID="login-app-version">Sürüm {appVersionLabel()}</Text>
-          <Pressable onPress={() => { void previewTamkobiNotify(); }} style={{ paddingTop: 8 }} testID="login-notify-preview">
-            <Text style={styles.forgot}>Bildirim sesini dene</Text>
-          </Pressable>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -362,7 +356,6 @@ const styles = StyleSheet.create({
   hint: { color: colors.muted, marginBottom: 16, marginTop: 4, ...typeface("400") },
   error: { color: colors.danger, marginBottom: 8, ...typeface("700") },
   server: { textAlign: "center", color: colors.muted, fontSize: 12, ...typeface("600") },
-  version: { textAlign: "center", color: colors.slate800, fontSize: 13, marginTop: 10, ...typeface("800") },
   footerRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignItems: "center", marginTop: 14 },
   footer: { textAlign: "center", color: colors.muted, fontSize: 12, ...typeface("600") },
   b2bLink: { color: colors.indigo, ...typeface("800") },
