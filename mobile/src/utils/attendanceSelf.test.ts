@@ -1,4 +1,4 @@
-import { checkoutConfirmMessage, earlyLeavePayload, selfAttendanceGeoMode, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeavePayload, selfAttendanceGeoMode, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -48,5 +48,18 @@ describe("checkoutConfirmMessage", () => {
     expect(checkoutConfirmMessage("12:25")).toMatch(/geri alınamaz/);
     expect(checkoutConfirmMessage("")).toMatch(/Yanlışlıkla bastıysanız vazgeçin/);
     expect(checkoutConfirmMessage(null)).not.toContain("giriş");
+  });
+});
+
+describe("attendance dispute", () => {
+  it("requires a short note and only on open records", () => {
+    expect(validateAttendanceDispute("ab")).toMatch(/açıklama/);
+    expect(validateAttendanceDispute(" çıkış 19:30 olmalı ")).toBeNull();
+    expect(attendanceDisputePayload(" çıkış 19:30 olmalı ")).toEqual({ note: "çıkış 19:30 olmalı" });
+    expect(canRequestAttendanceFix({ id: "a1" })).toBe(true);
+    expect(canRequestAttendanceFix({ id: "a1", employee_confirmed: true })).toBe(false);
+    expect(canRequestAttendanceFix({ id: "a1", dispute_note: "yanlış", dispute_resolved: false })).toBe(false);
+    expect(canRequestAttendanceFix({ id: "a1", dispute_note: "yanlış", dispute_resolved: true })).toBe(true);
+    expect(attendanceDisputeStatus({ dispute_note: "yanlış", dispute_resolved: false })).toBe("Düzeltme talebi iletildi");
   });
 });

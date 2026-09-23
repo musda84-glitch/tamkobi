@@ -4,10 +4,12 @@ import { Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
-import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Badge, Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { checkoutConfirmMessage, earlyLeavePayload, selfAttendanceGeoMode, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeavePayload, selfAttendanceGeoMode, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
+import { idOf } from "../utils/money";
 import { workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
 
@@ -40,7 +42,19 @@ type AttendancePayload = {
   schedule?: { require_geo?: boolean; start?: string; end?: string; location_tracking?: LocationTracking };
   location_tracking?: LocationTracking;
   active_location_tracking?: LocationTracking;
-  records?: { id?: string; date: string; check_in?: string; check_out?: string; hours?: number; status?: string }[];
+  records?: {
+    id?: string;
+    _id?: string;
+    date: string;
+    check_in?: string;
+    check_out?: string;
+    hours?: number;
+    status?: string;
+    employee_confirmed?: boolean;
+    dispute_note?: string;
+    dispute_resolved?: boolean;
+    dispute_resolution?: string;
+  }[];
   summary?: { days?: number; hours?: number };
 };
 
@@ -65,6 +79,8 @@ export function AttendanceScreen() {
   const [intraReason, setIntraReason] = useState("");
   const [intraOut, setIntraOut] = useState("");
   const [intraReturn, setIntraReturn] = useState("");
+  const [disputeId, setDisputeId] = useState<string | null>(null);
+  const [disputeNote, setDisputeNote] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -207,6 +223,24 @@ export function AttendanceScreen() {
     }
   };
 
+  const requestDispute = async (recordId: string) => {
+    const invalid = validateAttendanceDispute(disputeNote);
+    if (invalid) { setError(invalid); return; }
+    setBusy(`dispute-${recordId}`);
+    setError(null);
+    try {
+      const r = await post<{ message?: string }>(client, `/personnel/attendance/${recordId}/dispute`, attendanceDisputePayload(disputeNote));
+      setMessage(r?.message || "Düzeltme talebi yöneticiye iletildi.");
+      setDisputeId(null);
+      setDisputeNote("");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Düzeltme talebi gönderilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const today = data?.today;
   const checkedIn = Boolean(today?.check_in);
   const checkedOut = Boolean(today?.check_out);
@@ -222,7 +256,7 @@ export function AttendanceScreen() {
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
       <Card>
         <Text style={{ fontSize: 42, fontWeight: "900", color: colors.text, textAlign: "center" }}>{data?.now || "--:--"}</Text>
-        <Muted>{data?.today_date}</Muted>
+        <Muted>{fmtDmy(data?.today_date)}</Muted>
         <Muted testID="mesai-workplace">{workplaceHint(data?.workplace || data?.location, data?.schedule?.require_geo !== false)}</Muted>
         <Muted testID="mesai-checkout-hint">Giriş iş yeri / görev yakınından. Çıkış yalnız butonla, her yerden; konum açıksa çıkışta konum alınır, otomatik giriş-çıkış yok.</Muted>
         <Row style={{ justifyContent: "center", gap: 8 }}>
@@ -298,9 +332,48 @@ export function AttendanceScreen() {
           )}
         </View>
       </Card>
-      {(data?.records || []).slice(0, 14).map((r) => (
-        <ListRow key={r.id || r.date} title={r.date} subtitle={`${r.check_in || "--:--"} → ${r.check_out || "--:--"}`} right={r.hours ? `${r.hours} sa` : statusTr(r.status)} />
-      ))}
+      {(data?.records || []).slice(0, 14).map((r) => {
+        const rid = idOf(r);
+        const open = disputeId === rid;
+        const status = attendanceDisputeStatus(r);
+        return (
+          <Card key={rid || r.date} testID={`mesai-rec-${rid || r.date}`}>
+            <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: "800", color: colors.text }}>{fmtDmy(r.date)}</Text>
+                <Muted>{`${r.check_in || "--:--"} → ${r.check_out || "--:--"}`}</Muted>
+                {status ? <Muted testID={`mesai-rec-status-${rid}`}>{status}{r.dispute_note && !r.dispute_resolved ? ` · ${r.dispute_note}` : ""}</Muted> : null}
+              </View>
+              <Text style={{ fontWeight: "800", color: colors.text }}>{r.hours ? `${r.hours} sa` : statusTr(r.status)}</Text>
+            </Row>
+            {open ? (
+              <View testID={`mesai-rec-dispute-${rid}`} style={{ gap: 8 }}>
+                <Field
+                  label="Düzeltme açıklaması"
+                  testID={`mesai-rec-dispute-note-${rid}`}
+                  value={disputeNote}
+                  onChangeText={setDisputeNote}
+                  placeholder="Örn: çıkış 19:30 olmalı"
+                />
+                <PrimaryButton
+                  title={busy === `dispute-${rid}` ? "Gönderiliyor…" : "Talebi gönder"}
+                  onPress={() => requestDispute(rid)}
+                  color={colors.warning}
+                  testID={`mesai-rec-dispute-send-${rid}`}
+                />
+                <PrimaryButton title="Vazgeç" onPress={() => { setDisputeId(null); setDisputeNote(""); }} color={colors.secondary} testID={`mesai-rec-dispute-close-${rid}`} />
+              </View>
+            ) : canRequestAttendanceFix(r) ? (
+              <PrimaryButton
+                title="Düzeltme talep et"
+                onPress={() => { setDisputeId(rid); setDisputeNote(""); }}
+                color={colors.warning}
+                testID={`mesai-rec-dispute-open-${rid}`}
+              />
+            ) : null}
+          </Card>
+        );
+      })}
     </Screen>
   );
 }

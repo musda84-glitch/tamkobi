@@ -52,6 +52,43 @@ export function validateIntradayLeave(reason: string, outTime?: string, returnTi
   return null;
 }
 
+export function validateAttendanceDispute(note: string): string | null {
+  if ((note || "").trim().length < 3) return "Düzeltme açıklaması en az 3 karakter olmalı.";
+  return null;
+}
+
+export function attendanceDisputePayload(note: string) {
+  return { note: note.trim() };
+}
+
+export function canRequestAttendanceFix(r?: {
+  id?: string;
+  _id?: string;
+  employee_confirmed?: boolean;
+  dispute_note?: string;
+  dispute_resolved?: boolean;
+} | null): boolean {
+  if (!r || !(r.id || r._id)) return false;
+  if (r.employee_confirmed) return false;
+  if (r.dispute_note && !r.dispute_resolved) return false;
+  return true;
+}
+
+export function attendanceDisputeStatus(r?: {
+  employee_confirmed?: boolean;
+  dispute_note?: string;
+  dispute_resolved?: boolean;
+  dispute_resolution?: string;
+} | null): string {
+  if (!r) return "";
+  if (r.employee_confirmed) return "Onaylandı";
+  if (r.dispute_note && !r.dispute_resolved) return "Düzeltme talebi iletildi";
+  if (r.dispute_note && r.dispute_resolved) {
+    return r.dispute_resolution === "rejected" ? "Düzeltme talebi reddedildi" : "Düzeltme kapatıldı";
+  }
+  return "";
+}
+
 export function intradayLeavePayload(reason: string, outTime: string, returnTime: string) {
   const norm = (t: string) => {
     const m = /^(\d{1,2}):(\d{2})/.exec((t || "").trim());

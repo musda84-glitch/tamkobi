@@ -10,6 +10,7 @@ import { AssignOvertimeModal } from "./AssignOvertimeModal";
 import { formatTrAmount } from "../utils/money";
 import { isDailyWage, yevmiyeStatusLine } from "../utils/personnelWage";
 import { workplaceShort } from "../utils/workplace";
+import { fmtDmy } from "../utils/dateFormat";
 
 export const AttendancePanel = ({ companyId }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -106,7 +107,7 @@ export const AttendancePanel = ({ companyId }) => {
           </tr>))}</tbody></table></div></div>
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden"><div className="px-4 py-2.5 border-b font-bold text-slate-900 flex items-center justify-between"><span>Günlük Kayıtlar ({data.records.length})</span><span className="text-[10px] text-slate-400 font-normal">Personel kendi kaydını Personel Giriş Çıkış Kayıtları ekranından onaylar veya itiraz eder</span></div><div className="max-h-72 overflow-y-auto divide-y divide-slate-100">{data.records.map((r) => (
         <div key={r.id} className={`px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 ${r.is_off_day ? "bg-amber-50/40" : ""}`} data-testid={`att-rec-${r.id}`}>
-          <span><b>{r.employee_name}</b> <span className="text-slate-400 font-mono">{r.date}</span></span>
+          <span><b>{r.employee_name}</b> <span className="text-slate-400 font-mono">{fmtDmy(r.date)}</span></span>
           <span className="font-mono">{r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"} • ${r.hours || 0} sa` : r.status === "absent" ? "Devamsız" : "İzinli"}</span>
           {r.assigned_overtime_hours > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">atanan +{r.assigned_overtime_hours} sa</span>}{r.overtime_hours > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">+{r.overtime_hours} sa mesai{r.is_off_day ? " (tatil)" : ""}</span>}
           {r.late_minutes > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">{r.late_minutes} dk geç</span>}

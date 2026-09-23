@@ -111,6 +111,7 @@ import {
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { findWorkPark, officeTaskPayload, parkSelectGroups, validateOfficeTaskAssign, type WorkPark } from "../utils/workParks";
+import { fmtDmy } from "../utils/calendar";
 import { fieldWorkplaceFromProjects, workplaceHint, workplaceShort, type Workplace } from "../utils/workplace";
 
 type Tab = "payroll" | "attendance" | "leaves" | "calc" | "extras";
@@ -1266,7 +1267,7 @@ export function PersonnelScreen() {
               <Card key={idOf(r)} testID={`att-rec-${idOf(r)}`}>
                 <Text style={{ fontWeight: "800", color: colors.text }}>{r.employee_name || "Personel"}</Text>
                 <Muted>
-                  {[r.date, r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"}` : r.status === "absent" ? "Devamsız" : "İzinli"].join(" · ")}
+                  {[fmtDmy(r.date), r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"}` : r.status === "absent" ? "Devamsız" : "İzinli"].join(" · ")}
                   {r.hours != null ? ` · ${r.hours} sa` : ""}
                   {r.late_minutes ? ` · ${r.late_minutes} dk geç` : ""}
                 </Muted>
