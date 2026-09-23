@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { LogIn, ShoppingCart, FileSpreadsheet, Truck, Wallet, KeyRound, ArrowLeft } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { LegalConsent, allLegalChecked, emptyLegalConsent, loadStoredLegalConsent, saveStoredLegalConsent } from "../components/LegalConsent";
 import { REMEMBER_B2B_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
 
 export default function B2BLoginPage() {
@@ -12,6 +13,7 @@ export default function B2BLoginPage() {
   const [mode, setMode] = useState("login");
   const [resetInfo, setResetInfo] = useState(null);
   const [remember, setRemember] = useState(true);
+  const [consent, setConsent] = useState(emptyLegalConsent);
 
   useEffect(() => {
     const saved = loadRememberedEmail(REMEMBER_B2B_KEY);
@@ -19,7 +21,13 @@ export default function B2BLoginPage() {
       setF((cur) => ({ ...cur, email: saved }));
       setRemember(true);
     }
+    setConsent(loadStoredLegalConsent());
   }, []);
+
+  const persistConsent = (next) => {
+    setConsent(next);
+    saveStoredLegalConsent(next);
+  };
 
   const forgetMe = () => {
     clearRememberedEmail(REMEMBER_B2B_KEY);
@@ -29,7 +37,12 @@ export default function B2BLoginPage() {
   };
 
   const submit = async (e) => {
-    e.preventDefault(); setBusy(true); setErr("");
+    e.preventDefault();
+    if (!allLegalChecked(consent)) {
+      setErr("KVKK ve mesafeli satış sözleşmelerini işaretleyin.");
+      return;
+    }
+    setBusy(true); setErr("");
     try {
       const r = await axios.post(`${API_URL}/public/b2b/login`, f);
       if (remember) saveRememberedEmail(REMEMBER_B2B_KEY, f.email);
@@ -86,8 +99,9 @@ export default function B2BLoginPage() {
               </label>
               <button type="button" onClick={forgetMe} className="text-xs text-slate-600 hover:text-rose-700 font-semibold underline-offset-2 hover:underline px-1.5 py-0.5" data-testid="b2b-forget">Beni unut</button>
             </div>
+            <LegalConsent value={consent} onChange={persistConsent} prefix="b2b-login-" required className="bg-slate-50 border border-slate-200 rounded-xl p-2.5" />
             {err && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2" data-testid="b2b-login-error">{err}</div>}
-            <button disabled={busy} className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="b2b-login-submit"><LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Portala Giriş"}</button>
+            <button disabled={busy || !allLegalChecked(consent)} className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="b2b-login-submit"><LogIn className="w-4 h-4" /> {busy ? "Giriş yapılıyor…" : "Portala Giriş"}</button>
             <button type="button" onClick={() => { setMode("forgot"); setErr(""); }} className="w-full text-[11px] text-emerald-700 font-semibold" data-testid="b2b-forgot-open">Şifremi unuttum</button>
             <p className="text-[11px] text-slate-400 text-center">Şifrenizi bilmiyorsanız tedarikçinizden B2B erişimi isteyin.</p>
           </form>
