@@ -1683,7 +1683,7 @@ export function PersonnelScreen() {
           mode={locField}
           onChange={(key, value) => setLocField((prev) => patchLocMode(prev, key, value))}
         />
-        <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından; çıkış her yerden. Sürekli açıkken konum aralığında kontrol edilir. Dış görevde konum dışına çıkınca tolerans kadar saat sonra yöneticiye haber gider — Haberim var / Kesinti olmasın / Kesinti olsun / Reddet.</Muted>
+        <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından. Çıkış yalnız Mesaim butonuyla, her yerden; konum açıksa çıkışta konum alınır, otomatik giriş-çıkış basılmaz. Dış görevde konum dışına çıkınca tolerans kadar saat sonra yöneticiye haber gider — Haberim var / Kesinti olmasın / Kesinti olsun / Reddet.</Muted>
         <PrimaryButton title="Kaydet" testID="emp-location-save" color="#047857" loading={busy} onPress={saveLocSettings} />
       </B2BSheet>
 

@@ -3,13 +3,20 @@ from attendance import (
     DEFAULT_LOCATION_MODE,
     DEFAULT_LOCATION_TRACKING,
     build_location_exit_request,
+    checkout_distance_blocks,
     location_exit_decision_message,
     location_exit_should_notify,
+    location_ping_checks_out,
     parse_location_exit_decision,
     location_mode_for,
     merge_schedule,
     normalize_location_tracking,
 )
+
+
+def test_checkout_is_button_only_anywhere():
+    assert checkout_distance_blocks() is False
+    assert location_ping_checks_out() is False
 
 
 def test_normalize_defaults():

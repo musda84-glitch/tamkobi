@@ -6,7 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { checkoutConfirmMessage, earlyLeavePayload, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { checkoutConfirmMessage, earlyLeavePayload, selfAttendanceGeoMode, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { statusTr } from "../utils/labels";
 import { workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
@@ -113,12 +113,21 @@ export function AttendanceScreen() {
     setError(null);
     try {
       let extra: { latitude?: number; longitude?: number; accuracy_m?: number } = {};
-      const needGeo = action === "check_in"
-        ? Boolean(data?.location && data?.schedule?.require_geo !== false)
-        : Boolean(data?.workplace?.kind === "task" || data?.active_location_tracking?.enabled);
-      if (needGeo) {
+      const geoMode = selfAttendanceGeoMode(action, {
+        hasTarget: Boolean(data?.location),
+        requireGeo: data?.schedule?.require_geo !== false,
+        trackingEnabled: Boolean(data?.active_location_tracking?.enabled ?? data?.location_tracking?.enabled),
+      });
+      if (geoMode === "required") {
         const c = await coords();
         extra = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
+      } else if (geoMode === "attach") {
+        try {
+          const c = await coords();
+          extra = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
+        } catch {
+          /* çıkış her yerden butonla; konum alınamazsa yine kaydedilir */
+        }
       }
       const r = await post<{ message?: string }>(client, "/personnel/attendance/self", { action, ...extra });
       setMessage(r.message || "Kaydedildi.");
@@ -215,6 +224,7 @@ export function AttendanceScreen() {
         <Text style={{ fontSize: 42, fontWeight: "900", color: colors.text, textAlign: "center" }}>{data?.now || "--:--"}</Text>
         <Muted>{data?.today_date}</Muted>
         <Muted testID="mesai-workplace">{workplaceHint(data?.workplace || data?.location, data?.schedule?.require_geo !== false)}</Muted>
+        <Muted testID="mesai-checkout-hint">Giriş iş yeri / görev yakınından. Çıkış yalnız butonla, her yerden; konum açıksa çıkışta konum alınır, otomatik giriş-çıkış yok.</Muted>
         <Row style={{ justifyContent: "center", gap: 8 }}>
           {checkedIn ? <Badge label={`Giriş ${today?.check_in}`} tone="green" /> : <Badge label="Giriş yok" />}
           {checkedOut ? <Badge label={`Çıkış ${today?.check_out}`} tone="indigo" /> : null}

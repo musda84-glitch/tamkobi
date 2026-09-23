@@ -1,3 +1,18 @@
+export type SelfAttendanceAction = "check_in" | "check_out";
+export type SelfAttendanceGeoMode = "required" | "attach" | "none";
+
+/** Giriş: iş yeri/görev yakınında konum zorunlu. Çıkış: yalnız buton, her yerden; konum açıksa GPS eklenir, mesafe bloklamaz. Otomatik giriş-çıkış yok. */
+export function selfAttendanceGeoMode(
+  action: SelfAttendanceAction,
+  opts?: { hasTarget?: boolean; trackingEnabled?: boolean; requireGeo?: boolean },
+): SelfAttendanceGeoMode {
+  if (action === "check_in") {
+    if (opts?.hasTarget && opts?.requireGeo !== false && opts?.trackingEnabled !== false) return "required";
+    return "none";
+  }
+  return opts?.trackingEnabled ? "attach" : "none";
+}
+
 export function validateEarlyLeave(reason: string, plannedTime?: string): string | null {
   if ((reason || "").trim().length < 3) return "Erken çıkış nedeni en az 3 karakter olmalı.";
   const time = (plannedTime || "").trim();

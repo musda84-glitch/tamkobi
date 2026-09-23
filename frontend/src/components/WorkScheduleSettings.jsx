@@ -235,7 +235,7 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
             <LocModeFields mode={locField} onChange={setFieldLt} prefix="field" />
           </div>
         </div>
-        <p className="text-[10px] text-slate-500">Kapalı olsa da Mesaim çıkış düğmesi aktif kalır; çıkış her yerden yapılır. Çıkış yanlışlıkla basılmasın diye çift tıklama / onay ister. Aralık 0 = sürekli izle.</p>
+        <p className="text-[10px] text-slate-500">Çıkış yalnız butonla, her yerden. Konum açıksa çıkışta konum alınır; otomatik giriş-çıkış yok. Çıkış yanlışlıkla basılmasın diye çift tıklama / onay ister. Aralık 0 = sürekli izle.</p>
       </div>
       <div className="flex justify-between pt-1"><button type="button" onClick={() => save("clear")} disabled={busy} className="px-3 py-1.5 border rounded-lg text-slate-600" data-testid="emp-ws-clear">Firma saatlerine dön</button><button type="button" onClick={() => save("save")} disabled={busy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="emp-ws-save">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Kaydet</button></div>
     </div>

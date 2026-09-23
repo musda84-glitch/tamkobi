@@ -103,6 +103,16 @@ def normalize_location_tracking(raw: Optional[dict] = None) -> dict:
     return {**company, "field": field}
 
 
+def checkout_distance_blocks() -> bool:
+    """Çıkış butonla her yerden; uzaklık veya otomatik algı çıkışı durdurmaz."""
+    return False
+
+
+def location_ping_checks_out() -> bool:
+    """Sürekli takip yalnızca konum dışı bildirir; Giriş/Çıkış basılmaz."""
+    return False
+
+
 def location_mode_for(lt: Optional[dict], workplace: Optional[dict] = None) -> dict:
     """Etkin iş yerine göre kullanılacak konum modu (iş yeri veya dış görev)."""
     full = normalize_location_tracking(lt)
@@ -984,8 +994,8 @@ async def self_attendance(req: Dict[str, Any], request: Request):
                 raise HTTPException(status_code=400, detail=f"Görev yerine ({place}) {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). Dış görev girişi görev konumundan yapılmalıdır.")
             raise HTTPException(status_code=400, detail=f"Firma konumuna {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). Giriş yapılamadı.")
         geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": True, "workplace_kind": loc.get("kind")}
-    elif action == "check_out":
-        # Çıkışta konum zorunlu değil; gönderilmişse etkin iş yerine (dış görev yeri) göre kayda ekle.
+    elif action == "check_out" and not checkout_distance_blocks():
+        # Çıkış yalnız butonla, her yerden. Konum açıksa GPS kayda eklenir; mesafe asla reddetmez. Otomatik giriş-çıkış yok.
         ref = workplace if workplace and workplace.get("kind") == "task" else (loc or workplace)
         try:
             lat, lng = float(req["latitude"]), float(req["longitude"])
@@ -1151,7 +1161,7 @@ async def maybe_open_location_exit(
 
 @router.post("/personnel/attendance/self/location")
 async def self_location_ping(req: Dict[str, Any], request: Request):
-    """Sürekli/aralıklı takip: konum ping. Dış görevde tolerans dolunca yönetici talebi açar."""
+    """Sürekli/aralıklı takip: konum ping. Çıkış basılmaz; tolerans dolunca yönetici talebi açar."""
     user = await _current_user(request)
     emp = await employee_for_user(user)
     if not emp:
