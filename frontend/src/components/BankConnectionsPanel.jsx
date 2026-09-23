@@ -252,10 +252,6 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
         </div>
       </div>
 
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800" data-testid="bank-sim-notice">
-        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Kuveyt Türk</b> Identity Server <code className="font-mono">client_credentials</code> + her istekte <b>RSA-SHA256 Signature</b> (PKCS8 PEM) kullanır. <b>Enpara</b> Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır; Enpara API çağrıları tarayıcıdan yapılmaz. IBAN 26 hane.
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {connections.map((c) => (
           <div key={c.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-sm" data-testid={`bank-conn-card-${c.id}`}>
