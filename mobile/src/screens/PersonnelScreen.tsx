@@ -1235,7 +1235,7 @@ export function PersonnelScreen() {
                         <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
                       ))}
                       <PayChip
-                        title="Konum"
+                        title="Konum Ayarları"
                         color="#047857"
                         bg="#ECFDF5"
                         testID={`emp-card-location-btn-${eid}`}
