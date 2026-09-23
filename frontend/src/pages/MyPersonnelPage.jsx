@@ -173,7 +173,7 @@ export default function MyPersonnelPage() {
               : `${user?.name || ""} — hesabınız bir personel kartına bağlı değil`}
           </p>
         </div>
-        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-xl p-2 text-xs" data-testid="my-personnel-month" />
+        <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Aylık dönem<input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-xl p-2 text-xs font-semibold text-slate-800 normal-case tracking-normal" data-testid="my-personnel-month" /></label>
       </div>
       <StaffMessagesPanel compact testId="my-personnel-messages" />
 

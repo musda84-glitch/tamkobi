@@ -269,7 +269,7 @@ export function PersonelimScreen() {
           : "Hesabınız bir personel kartına bağlı değil"}
       </Muted>
       <Field
-        label="Dönem (YYYY-AA)"
+        label="Aylık dönem"
         testID="personelim-month"
         value={month}
         onChangeText={setMonth}

@@ -1219,7 +1219,7 @@ export function PersonnelScreen() {
 
       {tab === "attendance" ? (
         <>
-          <Field label="Ay" testID="attendance-month-input" value={month} onChangeText={setMonth} placeholder="2026-09" />
+          <Field label="Aylık dönem" testID="attendance-month-input" value={month} onChangeText={setMonth} placeholder="2026-09" />
           {!(attendance?.summary || []).length ? (
             <Empty icon="time-outline" title="Puantaj yok" hint="Çalışan ekleyince giriş/çıkış burada görünür." />
           ) : (attendance?.summary || []).map((s: AttendanceSummary) => (
