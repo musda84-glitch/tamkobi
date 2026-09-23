@@ -128,13 +128,24 @@ async def finalize_create_result(
     out.setdefault("invoice_number", inv.get("invoice_number"))
     out.setdefault("company_id", company_id or inv.get("company_id"))
     out.setdefault("message", out.get("message") or "Fatura GİB sistemine başarıyla iletildi.")
+    oid = order_id or inv.get("order_id")
+    if oid and out.get("status") != "error":
+        await _db.orders.update_one(
+            {"_id": oid},
+            {"$set": {
+                "is_invoiced": True,
+                "invoice_id": invoice_id,
+                "invoice_number": inv.get("invoice_number"),
+            }},
+        )
+        out.setdefault("order_id", oid)
     await record_e_invoice(
         company_id=out.get("company_id"),
         invoice_id=invoice_id,
-        order_id=order_id,
+        order_id=oid,
         result=out,
     )
-    logger.info("E-Fatura oluşturuldu: %s (sipariş=%s)", out.get("invoice_number"), order_id or "-")
+    logger.info("E-Fatura oluşturuldu: %s (sipariş=%s)", out.get("invoice_number"), oid or "-")
     return out
 
 
@@ -380,6 +391,11 @@ async def create_from_order(order_id: str, req: Dict[str, Any]) -> Dict[str, Any
         inv_id = converted.get("invoice_id")
         if not inv_id:
             raise HTTPException(status_code=400, detail=converted.get("message") or "Sipariş faturaya dönüştürülemedi.")
+    apply_effects = _deps.get("apply_effects")
+    inv = await _db.invoices.find_one({"_id": inv_id})
+    if apply_effects and inv and inv.get("status") == "draft" and not inv.get("effects_applied"):
+        await apply_effects(inv)
+        await _db.invoices.update_one({"_id": inv_id}, {"$set": {"effects_applied": True}})
     result = await issue_invoice(inv_id, e_type=req.get("e_type"), scenario=req.get("scenario"))
     return await finalize_create_result(result, inv_id, order_id=order_id, company_id=company_id or order.get("company_id"))
 

@@ -5786,10 +5786,29 @@ async def approve_invoice(invoice_id: str):
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     if inv.get("status") != "draft":
+        if inv.get("order_id") and not (await db.orders.find_one({"_id": inv["order_id"], "is_invoiced": True})):
+            await _mark_order_invoiced_from_invoice(inv)
         return {"status": "success", "message": "Fatura zaten onaylı."}
     await _apply_invoice_effects(inv)
     await db.invoices.update_one({"_id": invoice_id}, {"$set": {"status": "approved", "effects_applied": True, "gib_status": inv.get("gib_status") if inv.get("gib_status") not in (None, "Taslak") else ("Kağıt Fatura (Matbu)" if inv.get("e_type") == "paper" else "Onaylandı"), "approved_at": datetime.now(timezone.utc).isoformat()}})
-    return {"status": "success", "message": "Fatura onaylandı; cari bakiyesi ve stok işlendi."}
+    inv = await db.invoices.find_one({"_id": invoice_id}) or inv
+    await _mark_order_invoiced_from_invoice(inv)
+    return {"status": "success", "message": "Fatura onaylandı; cari bakiyesi ve stok işlendi.", "invoice_id": invoice_id, "order_id": inv.get("order_id")}
+
+
+async def _mark_order_invoiced_from_invoice(inv: dict) -> None:
+    """Onaylı / e-belge kesilmiş faturayı siparişe bağla (is_invoiced)."""
+    oid = inv.get("order_id")
+    if not oid:
+        return
+    await db.orders.update_one(
+        {"_id": oid},
+        {"$set": {
+            "is_invoiced": True,
+            "invoice_id": inv.get("_id"),
+            "invoice_number": inv.get("invoice_number"),
+        }},
+    )
 
 @api_router.get("/gib/lookup")
 async def gib_lookup(tax_id: str, company_id: Optional[str] = "comp_nexus_main_01"):
