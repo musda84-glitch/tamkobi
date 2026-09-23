@@ -547,6 +547,7 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
         "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "",
         "email": req.get("email") or parent.get("email") or "", "currency": parent.get("currency") or "TRY",
         "license_id": lid, "parent_company_id": parent_company_id, "created_at": _now(),
+        "allow_platform_access": False,
     })
     await rbac.ensure_roles(cid)
     admins = await _db.users.find({"company_ids": parent_company_id, "role": "admin", "is_super_admin": {"$ne": True}}).to_list(50)
@@ -651,7 +652,9 @@ async def _company_row(c: dict) -> Dict[str, Any]:
         parent_name = (p or {}).get("name")
     ei = await _db.einvoice_settings.find_one({"company_id": c["_id"]}) or {}
     einvoice = {"provider": ei.get("provider") or "", "status": ei.get("status") or "simulated", "mode": ei.get("mode") or "test", "username": ei.get("username") or "", "has_password": bool(ei.get("password_enc"))}
-    return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "license_id": lid, "parent_company_id": parent_id, "parent_company_name": parent_name, "is_primary": c["_id"] == lid, "license_companies": siblings, "protected": c["_id"] in PROTECTED_COMPANY_IDS, "allow_platform_access": c.get("allow_platform_access", True) is not False, "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"]), "einvoice": einvoice}
+    # Alan yoksa (eski kayıt) açık; yeni şirketlerde False yazılır.
+    allow_panel = True if "allow_platform_access" not in c else bool(c.get("allow_platform_access"))
+    return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "license_id": lid, "parent_company_id": parent_id, "parent_company_name": parent_name, "is_primary": c["_id"] == lid, "license_companies": siblings, "protected": c["_id"] in PROTECTED_COMPANY_IDS, "allow_platform_access": allow_panel, "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"]), "einvoice": einvoice}
 
 
 def _restore_active_status(lic: Optional[dict]) -> str:
@@ -944,7 +947,7 @@ async def create_company(req: Dict[str, Any], _: dict = Depends(require_super_ad
     if not await _db.saas_plans.find_one({"_id": plan_id}):
         raise HTTPException(status_code=400, detail="Geçersiz paket.")
     cid = f"comp_{uuid.uuid4().hex[:8]}"
-    await _db.companies.insert_one({"_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "", "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "", "email": email, "currency": "TRY", "license_id": cid, "created_at": _now()})
+    await _db.companies.insert_one({"_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "", "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "", "email": email, "currency": "TRY", "license_id": cid, "created_at": _now(), "allow_platform_access": False})
     uid = f"usr_{uuid.uuid4().hex[:8]}"
     await _db.users.insert_one({"_id": uid, "email": email, "password_hash": hash_password(pwd), "name": (req.get("admin_name") or name).strip(), "role": "admin", "company_ids": [cid], "active_company_id": cid, "is_active": True, "preferences": {}, "user_number": await user_numbers.next_user_number(_db), "created_at": _now()})
     trial_days = int(req.get("trial_days") or 0)

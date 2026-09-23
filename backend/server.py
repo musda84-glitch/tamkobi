@@ -2158,6 +2158,7 @@ async def register(req: RegisterRequest, response: Response):
     )
     mongo = new_company.to_mongo()
     mongo["license_id"] = company_id
+    mongo["allow_platform_access"] = False
     await db.companies.insert_one(mongo)
 
     user_id = f"usr_{uuid.uuid4().hex[:8]}"

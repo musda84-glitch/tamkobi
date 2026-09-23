@@ -37,10 +37,16 @@ def _now() -> str:
 
 
 def platform_access_allowed(company: Optional[Dict[str, Any]]) -> bool:
-    """Company admins can opt out of platform 'Şirket Olarak Gir' (default: allowed)."""
-    if not company:
-        return True
-    return company.get("allow_platform_access", True) is not False
+    """'Şirket Olarak Gir' izni. Yeni şirketlerde False kaydedilir; alan yoksa (eski) açık."""
+    if company is None:
+        return False
+    if "allow_platform_access" not in company:
+        return True  # legacy kayıtlar: alan yokken açık kalsın
+    return bool(company.get("allow_platform_access"))
+
+
+# Yeni şirket insert’lerinde ortak varsayılan (kapalı).
+DEFAULT_ALLOW_PLATFORM_ACCESS = False
 
 
 def privacy_view(company: Optional[Dict[str, Any]]) -> Dict[str, Any]:
