@@ -68,9 +68,51 @@ def test_create_expense_slip_from_issued_sales_invoice():
     assert inserted["status"] == "approved"
     assert inserted["source_invoice_id"] == "inv_nx"
     assert inserted["contact_name"] == "ERSAY HOME"
+    assert inserted.get("withholding_rate") == 0
     link = mock_db.invoices.update_one.await_args.args
     assert link[0] == {"_id": "inv_nx"}
     assert link[1]["$set"]["expense_slip_number"] == "GP-2026-0007"
+
+
+def test_create_expense_slip_copies_withholding():
+    import server
+
+    inv = {
+        "_id": "inv_wh",
+        "company_id": "comp",
+        "status": "approved",
+        "e_type": "e_archive",
+        "invoice_type": "sales",
+        "invoice_number": "NX1",
+        "contact_id": "c1",
+        "contact_name": "Satıcı",
+        "contact_tax_id": "11111111111",
+        "contact_tax_office": "Kadıköy",
+        "grand_total": 90,
+        "subtotal": 100,
+        "vat_total": 0,
+        "withholding_rate": 0.2,
+        "withholding_code": "GVK94",
+        "withholding_amount": 20,
+        "items": [{"name": "Hizmet", "quantity": 1, "unit_price": 100}],
+        "currency": "TRY",
+    }
+    mock_db = MagicMock()
+    mock_db.invoices.find_one = AsyncMock(return_value=inv)
+    mock_db.invoices.insert_one = AsyncMock()
+    mock_db.invoices.update_one = AsyncMock()
+
+    with patch.object(server, "db", mock_db), patch.object(
+        server, "_next_number", AsyncMock(return_value="GP-2026-0008")
+    ), patch.object(server, "_apply_invoice_effects", AsyncMock()):
+        result = _run(server.create_expense_slip_from_invoice("inv_wh"))
+
+    inserted = mock_db.invoices.insert_one.await_args.args[0]
+    assert result["status"] == "success"
+    assert inserted["withholding_rate"] == 0.2
+    assert inserted["withholding_amount"] == 20
+    assert inserted["contact_tax_office"] == "Kadıköy"
+    assert inserted["contact_tax_id"] == "11111111111"
 
 
 def test_expense_slip_rejects_draft():
