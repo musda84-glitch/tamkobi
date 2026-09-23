@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 import saas
 
@@ -421,19 +421,62 @@ async def system_update_announcement(announce_id: str, req: Dict[str, Any], _: d
 
 
 @router.post("/system/announcements/{announce_id}/publish")
-async def system_publish_announcement(announce_id: str, _: dict = Depends(saas.require_super_admin)):
+async def system_publish_announcement(
+    announce_id: str,
+    req: Optional[Dict[str, Any]] = Body(default=None),
+    _: dict = Depends(saas.require_super_admin),
+):
+    """Taslağı yayınla. İsteğe bağlı audience/company_ids ile önce yalnızca DEMO’ya açılabilir."""
     cur = await _db.platform_announcements.find_one({"_id": announce_id})
     if not cur:
         raise HTTPException(status_code=404, detail="Duyuru bulunamadı.")
-    await _db.platform_announcements.update_one(
-        {"_id": announce_id},
-        {"$set": {"status": STATUS_PUBLISHED, "active": True, "updated_at": _now_iso()}},
-    )
-    return {
-        "status": "success",
-        "announcement": _clean(await _db.platform_announcements.find_one({"_id": announce_id})),
-        "message": "Duyuru yayınlandı.",
+    req = req or {}
+    patch: Dict[str, Any] = {"status": STATUS_PUBLISHED, "active": True, "updated_at": _now_iso()}
+    if "audience" in req or "company_ids" in req:
+        cids = normalize_company_ids(req.get("company_ids") if "company_ids" in req else cur.get("company_ids"))
+        aud = normalize_audience(req.get("audience") if "audience" in req else cur.get("audience"), cids)
+        patch["audience"] = aud
+        patch["company_ids"] = cids if aud == AUDIENCE_SELECTED else []
+    await _db.platform_announcements.update_one({"_id": announce_id}, {"$set": patch})
+    doc = await _db.platform_announcements.find_one({"_id": announce_id})
+    aud = (doc or {}).get("audience") or AUDIENCE_ALL
+    n = len((doc or {}).get("company_ids") or [])
+    if aud == AUDIENCE_SELECTED:
+        msg = f"Duyuru yayınlandı (yalnızca {n} seçili şirket)."
+    else:
+        msg = "Duyuru tüm şirketlere yayınlandı."
+    return {"status": "success", "announcement": _clean(doc), "message": msg}
+
+
+@router.post("/system/announcements/{announce_id}/retarget")
+async def system_retarget_announcement(
+    announce_id: str,
+    req: Dict[str, Any],
+    _: dict = Depends(saas.require_super_admin),
+):
+    """Yayın sonrası hedefi değiştir: örn. DEMO’dan tüm şirketlere genişlet."""
+    cur = await _db.platform_announcements.find_one({"_id": announce_id})
+    if not cur:
+        raise HTTPException(status_code=404, detail="Duyuru bulunamadı.")
+    cids = normalize_company_ids(req.get("company_ids") if "company_ids" in req else cur.get("company_ids"))
+    aud = normalize_audience(req.get("audience") if "audience" in req else cur.get("audience"), cids)
+    if aud == AUDIENCE_SELECTED and not cids:
+        raise HTTPException(status_code=400, detail="Seçili şirketler için en az bir şirket gerekli.")
+    patch = {
+        "audience": aud,
+        "company_ids": cids if aud == AUDIENCE_SELECTED else [],
+        "updated_at": _now_iso(),
     }
+    if req.get("publish"):
+        patch["status"] = STATUS_PUBLISHED
+        patch["active"] = True
+    await _db.platform_announcements.update_one({"_id": announce_id}, {"$set": patch})
+    doc = await _db.platform_announcements.find_one({"_id": announce_id})
+    if aud == AUDIENCE_ALL:
+        msg = "Hedef tüm şirketlere genişletildi."
+    else:
+        msg = f"Hedef güncellendi ({len(cids)} şirket)."
+    return {"status": "success", "announcement": _clean(doc), "message": msg}
 
 
 @router.delete("/system/announcements/{announce_id}")
