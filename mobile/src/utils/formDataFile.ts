@@ -1,6 +1,6 @@
 /** Expo SDK 58 winter fetch Blob / {bytes()} kabul eder; {uri,name,type} Unsupported FormDataPart atar. */
 
-export type ImageEntity = "survey" | "project" | "quote" | "product" | "partner";
+export type ImageEntity = "survey" | "project" | "quote" | "product" | "partner" | "employee";
 
 export type PickerAssetLike = {
   uri?: string;
@@ -109,7 +109,7 @@ export function imageUploadRequest(
   if (entity === "product") {
     return { path: `/products/${entityId}/image`, query: undefined as Record<string, string> | undefined };
   }
-  const apiEntity = entity === "partner" ? "partner_photo" : entity;
+  const apiEntity = entity === "partner" ? "partner_photo" : entity === "employee" ? "employee_photo" : entity;
   const query: Record<string, string> = { entity: apiEntity, entity_id: entityId, company_id: companyId || "" };
   if (extra?.stage) query.stage = extra.stage;
   if (extra?.stage_label) query.stage_label = extra.stage_label;
@@ -130,6 +130,7 @@ const COPY: Record<ImageEntity, { label: string; hint: string }> = {
   quote: { label: "Teklif fotoğrafları", hint: "Fotoğraflar WebP olarak küçültülür; web’deki teklif kartında da görünür." },
   product: { label: "Stok kartı fotoğrafları", hint: "Fotoğraflar WebP olarak küçültülür; web’deki stok kartında da görünür." },
   partner: { label: "Ortak fotoğrafı", hint: "Fotoğraf ortak kartında görünür." },
+  employee: { label: "Personel fotoğrafı", hint: "Fotoğraf personel kartında görünür." },
 };
 
 export function imageUploaderCopy(entity: ImageEntity) {

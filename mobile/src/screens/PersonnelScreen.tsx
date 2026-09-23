@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import React, { useCallback, useState } from "react";
-import { Pressable, Text, View } from "react-native";
-import { del, get, post, put } from "../api/client";
+import { Platform, Pressable, Text, View } from "react-native";
+import { del, get, post, put, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
@@ -11,6 +12,14 @@ import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
 import { colors } from "../theme";
+import { compressPickerAsset } from "../utils/compressUploadImage";
+import {
+  appendUploadBlob,
+  imageUploadRequest,
+  pickBrowserImages,
+  resolveUploadBlob,
+  uploadedImageUrl,
+} from "../utils/formDataFile";
 import {
   LEAVE_TYPES,
   employeeSelectGroups,
@@ -252,6 +261,7 @@ export function PersonnelScreen() {
   const [yevmiyeEditId, setYevmiyeEditId] = useState("");
   const [pendingReqs, setPendingReqs] = useState<PendingRequest[]>([]);
   const [cards, setCards] = useState<Record<string, EmployeeCard>>({});
+  const [photoEmp, setPhotoEmp] = useState<Employee | null>(null);
   const [bonuses, setBonuses] = useState<EmployeeBonus[]>([]);
   const [bonusForm, setBonusForm] = useState({ employee_id: "", type: "bonus", amount: "", period: new Date().toISOString().slice(0, 7), note: "" });
   const [expenseEmp, setExpenseEmp] = useState<Employee | null>(null);
@@ -901,6 +911,52 @@ export function PersonnelScreen() {
     }
   };
 
+  const uploadEmployeePhoto = async (fromCamera: boolean) => {
+    const emp = photoEmp;
+    const eid = emp ? idOf(emp) : "";
+    if (!eid) return;
+    setBusy(true);
+    try {
+      let assets: { uri?: string; fileName?: string | null; mimeType?: string | null; file?: Blob }[] = [];
+      if (!fromCamera && Platform.OS === "web") {
+        assets = await pickBrowserImages(undefined, false);
+      } else {
+        const perm = fromCamera
+          ? await ImagePicker.requestCameraPermissionsAsync()
+          : await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (perm.status !== "granted") {
+          setError(fromCamera ? "Kamera izni verilmedi." : "Galeri izni verilmedi.");
+          return;
+        }
+        const res = fromCamera
+          ? await ImagePicker.launchCameraAsync({ quality: 0.8, exif: false })
+          : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
+        if (res.canceled || !res.assets?.length) return;
+        assets = res.assets;
+      }
+      const asset = assets[0];
+      if (!asset) return;
+      const form = new FormData();
+      const compact = await compressPickerAsset(asset);
+      const { blob, name } = await resolveUploadBlob(compact);
+      appendUploadBlob(form, blob, name);
+      const { path, query } = imageUploadRequest("employee", eid, companyId);
+      const res = await upload(client, path, form, query);
+      if (!uploadedImageUrl(res)) {
+        setError("Fotoğraf yüklendi ama adres dönmedi.");
+        return;
+      }
+      setPhotoEmp(null);
+      setMessage("Fotoğraf yüklendi.");
+      setError(null);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const saveCompanyBonus = async () => {
     const empId = bonusForm.employee_id || idOf(employees[0]);
     if (!empId) { setError("Çalışan seçin."); return; }
@@ -1055,6 +1111,7 @@ export function PersonnelScreen() {
                     photoUrl={emp.photo_url}
                     size={56}
                     testID={`emp-card-photo-${eid}`}
+                    onLongPress={canEdit ? () => setPhotoEmp(emp) : undefined}
                   />
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
@@ -1465,6 +1522,30 @@ export function PersonnelScreen() {
           ))}
         </>
       ) : null}
+
+      <B2BSheet
+        visible={!!photoEmp}
+        title="Personel fotoğrafı"
+        subtitle={photoEmp?.full_name}
+        onClose={() => setPhotoEmp(null)}
+        testID="emp-photo-sheet"
+      >
+        <Muted>Kamerayla çekin veya galeriden seçin. Kartta hemen görünür.</Muted>
+        <PrimaryButton
+          title={busy ? "Yükleniyor…" : "Kamerayla çek"}
+          onPress={() => uploadEmployeePhoto(true)}
+          loading={busy}
+          color={colors.indigo}
+          testID="emp-photo-camera"
+        />
+        <PrimaryButton
+          title={busy ? "Yükleniyor…" : "Galeriden seç"}
+          onPress={() => uploadEmployeePhoto(false)}
+          disabled={busy}
+          color={colors.primary}
+          testID="emp-photo-gallery"
+        />
+      </B2BSheet>
 
       <B2BSheet
         visible={!!movesEmp}
