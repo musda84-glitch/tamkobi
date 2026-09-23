@@ -38,6 +38,8 @@ import {
   validateLeave,
   validateSelfLeave,
   validateOvertime,
+  positionOptionsFromRoles,
+  positionSelectGroups,
   validateTaskAssign,
   isFieldTask,
   normalizeTaskKind,
@@ -105,6 +107,13 @@ describe("employee draft", () => {
     expect(validateEmployee(d)).toBe("Lütfen ad soyad ve TC kimlik no girin.");
     d.tc_kimlik = "12345678901";
     expect(validateEmployee(d)).toBeNull();
+  });
+
+  it("builds position options from company roles", () => {
+    const roles = [{ code: "production", name: "Üretim" }, { code: "sales", name: "Satış" }];
+    expect(positionOptionsFromRoles(roles).map((o) => o.value)).toEqual(["Üretim", "Satış"]);
+    expect(positionOptionsFromRoles(roles, "Uzman")[0].label).toContain("kayıtlı");
+    expect(positionSelectGroups(roles)[0].label).toBe("Roller");
   });
 
   it("maps an existing card and posts salary as number", () => {

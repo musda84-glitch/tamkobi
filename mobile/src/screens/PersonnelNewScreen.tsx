@@ -1,8 +1,9 @@
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Pressable, Text } from "react-native";
-import { post } from "../api/client";
+import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import { fmtMoney, todayIso } from "../utils/money";
@@ -10,16 +11,27 @@ import {
   emptyEmployeeDraft,
   employeePayload,
   hasEmployeeDetails,
+  positionSelectGroups,
   validateEmployee,
 } from "../utils/personnel";
+
+type RoleOpt = { code?: string; name?: string };
 
 export function PersonnelNewScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/personnel", "edit");
   const [draft, setDraft] = useState(() => emptyEmployeeDraft(todayIso()));
+  const [roles, setRoles] = useState<RoleOpt[]>([]);
   const [showDetails, setShowDetails] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!companyId) return;
+    get<{ roles?: RoleOpt[] }>(client, "/personnel/role-options", { company_id: companyId })
+      .then((r) => setRoles(r?.roles || []))
+      .catch(() => setRoles([]));
+  }, [client, companyId]);
 
   const leaveList = () => {
     if (router.canGoBack()) router.back();
@@ -64,7 +76,14 @@ export function PersonnelNewScreen() {
         <Field label="Ad soyad" testID="emp-name" value={draft.full_name} onChangeText={(v) => setDraft({ ...draft, full_name: v })} />
         <Field label="TC kimlik" testID="emp-tc" value={draft.tc_kimlik} onChangeText={(v) => setDraft({ ...draft, tc_kimlik: v })} keyboardType="number-pad" />
         <Field label="Departman" testID="emp-dept" value={draft.department} onChangeText={(v) => setDraft({ ...draft, department: v })} />
-        <Field label="Pozisyon" testID="emp-pos" value={draft.position} onChangeText={(v) => setDraft({ ...draft, position: v })} />
+        <GroupedSelect
+          label="Pozisyon / Görev"
+          testID="emp-pos"
+          value={draft.position}
+          onChange={(v) => setDraft({ ...draft, position: v })}
+          groups={positionSelectGroups(roles, draft.position)}
+          emptyLabel="Rol seçin…"
+        />
         <Field label="Telefon" testID="emp-phone" value={draft.phone} onChangeText={(v) => setDraft({ ...draft, phone: v })} keyboardType="phone-pad" />
         <Field label="E-posta" testID="emp-email" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} autoCapitalize="none" keyboardType="email-address" />
         <Row>

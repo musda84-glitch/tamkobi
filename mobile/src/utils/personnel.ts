@@ -785,11 +785,11 @@ export function emptyEmployeeDraft(today: string): EmployeeDraft {
   return {
     full_name: "",
     tc_kimlik: "",
-    department: "Satış & Pazarlama",
-    position: "Uzman",
+    department: "",
+    position: "",
     phone: "",
     email: "",
-    salary: "35000",
+    salary: "",
     start_date: today,
     pay_type: "monthly",
     daily_wage: "",
@@ -802,6 +802,32 @@ export function emptyEmployeeDraft(today: string): EmployeeDraft {
     emergency_contact: "",
     notes: "",
   };
+}
+
+export function positionOptionsFromRoles(
+  roles: { code?: string; name?: string }[] | null | undefined,
+  current = "",
+): { value: string; label: string; code: string }[] {
+  const seen = new Set<string>();
+  const opts: { value: string; label: string; code: string }[] = [];
+  for (const r of roles || []) {
+    const name = String(r?.name || "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    opts.push({ value: name, label: name, code: String(r.code || "") });
+  }
+  const cur = String(current || "").trim();
+  if (cur && !seen.has(cur)) {
+    opts.unshift({ value: cur, label: `${cur} (kayıtlı)`, code: "" });
+  }
+  return opts;
+}
+
+export function positionSelectGroups(
+  roles: { code?: string; name?: string }[] | null | undefined,
+  current = "",
+): { label: string; options: { value: string; label: string }[] }[] {
+  return [{ label: "Roller", options: positionOptionsFromRoles(roles, current) }];
 }
 
 export function draftFromEmployee(emp: Employee, today: string): EmployeeDraft {
