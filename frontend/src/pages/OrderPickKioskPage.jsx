@@ -7,8 +7,10 @@ import { ScanButton } from "../components/CameraScanner";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { notifyDataChanged } from "../utils/dataRefresh";
 
+import { Barcode } from "../components/BarcodeLabelPrint";
+import { expandPickLabelJobs } from "../utils/pickLabels";
 import {
-  ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, RefreshCw, ScanLine, Truck,
+  ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, Printer, RefreshCw, ScanLine, Truck,
 } from "lucide-react";
 
 
@@ -91,6 +93,7 @@ export default function OrderPickKioskPage() {
   const [busy, setBusy] = useState(false);
   const [qtyDrafts, setQtyDrafts] = useState({});
   const [overscanFlash, setOverscanFlash] = useState(null);
+  const [labelJobs, setLabelJobs] = useState(null);
   const inputRef = useRef(null);
   const overscanTimer = useRef(null);
   const qtyCancelRef = useRef(false);
@@ -144,6 +147,14 @@ export default function OrderPickKioskPage() {
   }, []);
 
   const back = () => { setSes(null); setParams({}, { replace: true }); loadList(); };
+
+  const printLabels = (items) => {
+    const jobs = expandPickLabelJobs(items);
+    if (!jobs.length) { toast.error("Yazdırılacak etiket yok."); return; }
+    setLabelJobs(jobs);
+    toast.success(`${jobs.length} ürün etiketi yazdırmaya gönderildi.`);
+    setTimeout(() => window.print(), 250);
+  };
 
   const scan = async (raw) => {
     const c = String(raw || code).trim();
@@ -301,7 +312,7 @@ export default function OrderPickKioskPage() {
   return (
     <div className="fixed inset-0 z-[80] bg-slate-100 flex flex-col" data-testid="order-pick-session">
       {overscanFlash && (
-        <>
+        <div className="print:hidden">
           <div className="absolute inset-0 z-[89] bg-rose-600/45 animate-pulse pointer-events-none" data-testid="pick-overscan-flash" />
           <div className="absolute inset-x-0 top-0 z-[90] pointer-events-none" data-testid="pick-overscan-alert">
             <div className="m-3 rounded-2xl border-2 border-rose-500 bg-rose-600 text-white px-4 py-4 shadow-2xl animate-pulse">
@@ -309,22 +320,25 @@ export default function OrderPickKioskPage() {
               <div className="text-sm font-semibold mt-1 opacity-95">{overscanFlash.message}</div>
             </div>
           </div>
-        </>
+        </div>
       )}
-      <div className="bg-slate-900 text-white px-3 py-3 flex items-center gap-2">
+      <div className="bg-slate-900 text-white px-3 py-3 flex items-center gap-2 print:hidden">
         <button onClick={back} className="p-2 rounded-lg bg-white/10" data-testid="pick-back"><ArrowLeft className="w-5 h-5" /></button>
         <div className="min-w-0 flex-1">
           <div className="font-mono font-bold truncate">{ses.order_number}</div>
           <div className="text-[11px] text-slate-300 truncate">{ses.customer_name} · {ses.city || ""}</div>
         </div>
         <div className="text-right"><div className="text-lg font-black">{pct}%</div><div className="text-[10px] text-slate-400">{prog.picked}/{prog.ordered}</div></div>
+        <button type="button" disabled={busy || !(ses.items || []).length} onClick={() => printLabels(ses.items)} className="px-3 py-2 rounded-lg bg-white/10 font-bold text-xs flex items-center gap-1.5" data-testid="pick-print-labels">
+          <Printer className="w-4 h-4" /> Etiket yazdır
+        </button>
       </div>
-      <form className="bg-white border-b p-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); scan(); }}>
+      <form className="bg-white border-b p-3 flex gap-2 print:hidden" onSubmit={(e) => { e.preventDefault(); scan(); }}>
         <input ref={inputRef} value={code} onChange={(e) => setCode(e.target.value)} onFocus={unlockOverscanAudio} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="text" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
         <ScanButton onScan={(t) => scan(t)} continuous title="Sipariş barkodu" label="Kamera" className="!py-3" />
         <button type="submit" disabled={busy} className="px-4 bg-emerald-600 text-white rounded-xl font-bold" data-testid="pick-scan-btn">Okut</button>
       </form>
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+      <div className="flex-1 overflow-y-auto p-3 space-y-2 print:hidden">
         {(ses.items || []).map((it, idx) => {
           const done = isLineComplete(it);
           const img = resolveImageUrl(it.image_url);
@@ -380,12 +394,13 @@ export default function OrderPickKioskPage() {
                   <div className="text-[10px] text-slate-400">/ {it.ordered_qty}</div>
                 </div>
                 <button onClick={() => bump(it, 1)} className={`w-11 h-11 rounded-xl font-bold ${done ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-800"}`} data-testid={`pick-plus-${idx}`}><Plus className="w-5 h-5 mx-auto" /></button>
+                <button type="button" onClick={() => printLabels([it])} className="w-11 h-11 rounded-xl bg-slate-900 text-white" title="Etiket yazdır" data-testid={`pick-label-${idx}`}><Printer className="w-4 h-4 mx-auto" /></button>
               </div>
             </div>
           );
         })}
       </div>
-      <div className="bg-white border-t p-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="bg-white border-t p-3 grid grid-cols-2 sm:grid-cols-4 gap-2 print:hidden">
         <button disabled={busy} onClick={() => act("notify-missing", {}, "Bildirildi")} className="py-3 rounded-xl bg-amber-50 text-amber-900 font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-notify-missing"><Bell className="w-4 h-4" /> Eksikleri bildir</button>
         <button disabled={busy} onClick={() => act("to-production", {}, "Üretime alındı")} className="py-3 rounded-xl bg-indigo-50 text-indigo-900 font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-to-production"><Factory className="w-4 h-4" /> Üretime al</button>
         <button disabled={busy} onClick={() => act("complete", { mode: "partial" }, "Kısmi teslim")} className="py-3 rounded-xl bg-violet-600 text-white font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-partial"><Package className="w-4 h-4" /> Kısmi teslim</button>
@@ -394,6 +409,19 @@ export default function OrderPickKioskPage() {
         </button>
       </div>
       <button type="button" onClick={() => navigate("/orders")} className="sr-only">siparişler</button>
+      {labelJobs?.length ? (
+        <div id="pick-label-print" className="hidden print:block bg-white text-slate-900" data-testid="pick-label-print">
+          <style>{`@page{size:50mm 30mm;margin:0}.pick-product-label{width:50mm;height:30mm;box-sizing:border-box;padding:1.4mm 1.6mm;page-break-after:always;overflow:hidden;display:flex;flex-direction:column;gap:0.5mm}`}</style>
+          {labelJobs.map((job, i) => (
+            <div key={`${job.code || job.sku || job.name}-${i}`} className="pick-product-label" data-testid="pick-product-label">
+              {activeCompany?.name ? <div className="text-[7px] font-extrabold uppercase tracking-wide text-slate-500 truncate">{activeCompany.name}</div> : null}
+              <div className="text-[10px] font-extrabold leading-tight line-clamp-2">{job.name}</div>
+              {job.sku ? <div className="font-mono text-[8px] text-slate-600">{job.sku}</div> : null}
+              {job.code ? <div className="mt-auto"><Barcode value={job.code} height={28} width={1.15} fontSize={8} /></div> : <div className="text-[8px] font-bold text-rose-700">Barkod yok</div>}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

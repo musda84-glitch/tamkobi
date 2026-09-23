@@ -23,10 +23,11 @@ import {
   type PickLine,
   type PickSession,
 } from "../utils/orderPick";
+import { printPickProductLabels } from "../utils/pickLabelPrint";
 import { ProgressBar } from "./SevkScreen";
 
 export function SevkPickScreen() {
-  const { client, can } = useAuth();
+  const { client, can, activeCompany } = useAuth();
   const canEdit = can("/sevk", "edit");
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const [session, setSession] = useState<PickSession | null>(null);
@@ -114,6 +115,22 @@ export function SevkPickScreen() {
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, fallback));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const printLabels = async (lines: PickLine[]) => {
+    setBusy(true);
+    try {
+      const res = await printPickProductLabels(lines, activeCompany?.name, session?.order_number);
+      if (!res.count) setError("Yazdırılacak etiket yok.");
+      else if (res.ok) {
+        setMessage(`${res.count} ürün etiketi yazdırmaya gönderildi.`);
+        setError(null);
+      } else setError("Etiket yazdırılamadı.");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Etiket yazdırılamadı."));
     } finally {
       setBusy(false);
     }
@@ -217,12 +234,24 @@ export function SevkPickScreen() {
                 <View style={{ flex: 1 }}>
                   <PrimaryButton title="Tümü" onPress={() => adjust(line, ordered)} disabled={busy || done} color={colors.indigo} testID={`sevk-all-${line.line_index ?? idx}`} />
                 </View>
+                <View style={{ flex: 1 }}>
+                  <PrimaryButton title="Etiket" onPress={() => printLabels([line])} disabled={busy} color={colors.secondary} testID={`sevk-label-${line.line_index ?? idx}`} />
+                </View>
               </Row>
             ) : null}
           </Card>
         );
       })}
 
+      {items.length ? (
+        <PrimaryButton
+          title={busy ? "Hazırlanıyor…" : "Etiket yazdır"}
+          onPress={() => printLabels(items)}
+          loading={busy}
+          color={colors.indigo}
+          testID="sevk-print-labels"
+        />
+      ) : null}
       {canEdit && items.length ? (
         <ActionTiles
           columns={4}
