@@ -403,7 +403,24 @@ async def list_users(company_id: str = "comp_nexus_main_01"):
         await user_numbers.ensure_user_number(_db, u)
     users = [_clean(u) for u in raw_users]
     invites = [_clean(i) for i in await _db.user_invites.find({"company_id": company_id, "accepted_at": None}).sort("created_at", -1).to_list(100)]
-    return {"users": [{**u, "role_name": names.get(u.get("role"), u.get("role")), "is_active": u.get("is_active", True)} for u in users], "invites": invites}
+    emp_ids = {u.get("employee_id") for u in users if u.get("employee_id")} | {i.get("employee_id") for i in invites if i.get("employee_id")}
+    emp_names = {}
+    if emp_ids:
+        async for e in _db.employees.find({"_id": {"$in": list(emp_ids)}}, {"full_name": 1}):
+            emp_names[str(e.get("_id"))] = e.get("full_name") or ""
+
+    def _enrich(row: dict) -> dict:
+        eid = row.get("employee_id")
+        return {
+            **row,
+            "role_name": names.get(row.get("role"), row.get("role")),
+            "employee_name": emp_names.get(str(eid), "") if eid else "",
+        }
+
+    return {
+        "users": [{**_enrich(u), "is_active": u.get("is_active", True)} for u in users],
+        "invites": [_enrich(i) for i in invites],
+    }
 
 
 @router.put("/users/{user_id}")

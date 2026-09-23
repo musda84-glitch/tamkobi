@@ -13,6 +13,7 @@ import { EmployeeAssignTaskModal } from "./EmployeeAssignTaskModal";
 import { EmployeeLedgerModal } from "./EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "./EmployeeYevmiyeModal";
 import { empStatusLabel, formatTrDate, performanceTone, remainingTone } from "../utils/employeeCardSummary";
+import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
 import { employeePayActionTitle, isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
 import { workplaceHint, workplaceShort } from "../utils/workplace";
@@ -73,27 +74,83 @@ const Docs = ({ card, companyId, reload }) => {
 
 const UserTab = ({ card, reload }) => {
   const { user: me } = useAuth();
+  const emp = card.employee || {};
+  const companyId = emp.company_id;
   const [roles, setRoles] = useState([]);
-  const [form, setForm] = useState({ email: card.employee.email || "", role: "sales", password: "", mode: "invite" });
+  const [form, setForm] = useState({ email: emp.email || "", role: "sales", password: "", mode: "invite" });
   const [busy, setBusy] = useState(false);
-  useEffect(() => { axios.get(`${API_URL}/roles?company_id=${card.employee.company_id}`).then((r) => setRoles(r.data.roles)).catch(() => {}); }, [card.employee.company_id]);
+  const [roleBusy, setRoleBusy] = useState(false);
+  useEffect(() => {
+    if (!companyId) return;
+    axios.get(`${API_URL}/personnel/role-options`, { params: { company_id: companyId } })
+      .then((r) => {
+        const list = r.data?.roles || [];
+        setRoles(list);
+        setForm((f) => ({ ...f, role: roleCodeFromPosition(list, emp.position, f.role || "sales") }));
+      })
+      .catch(() => setRoles([]));
+  }, [companyId, emp.position]);
   const create = async (e) => {
     e.preventDefault(); setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/personnel/employees/${card.employee.id}/create-user`, { email: form.email, role: form.role, password: form.mode === "password" ? form.password : undefined, base_url: window.location.origin, invited_by: me?.id });
+      const r = await axios.post(`${API_URL}/personnel/employees/${emp.id}/create-user`, { email: form.email, role: form.role, password: form.mode === "password" ? form.password : undefined, base_url: window.location.origin, invited_by: me?.id });
       toast.success(r.data.message); reload();
     } catch (err) { toast.error(err.response?.data?.detail || "Oluşturulamadı."); } finally { setBusy(false); }
   };
-  if (card.user) return (
-    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs space-y-1" data-testid="emp-user-linked">
-      <div className="font-bold text-emerald-800 flex items-center gap-1.5"><KeyRound className="w-4 h-4" /> Sistem kullanıcısı bağlı</div>
-      <div><b>E-posta:</b> {card.user.email}</div><div><b>Rol:</b> {card.user.role}</div><div><b>Durum:</b> {card.user.is_active ? "Aktif" : "Pasif"}</div><div><b>Son giriş:</b> {card.user.last_login_at ? new Date(card.user.last_login_at).toLocaleString("tr-TR") : "-"}</div>
-      <div className="text-slate-500 pt-1">Rol/şifre değişikliği için Firma Ayarları → Kullanıcılar & Roller.</div>
-    </div>
-  );
+  const changeRole = async (role) => {
+    if (!card.user?.id || role === card.user.role) return;
+    setRoleBusy(true);
+    try {
+      await axios.put(`${API_URL}/users/${card.user.id}`, { role });
+      toast.success("Rol güncellendi.");
+      reload();
+    } catch (err) { toast.error(err.response?.data?.detail || "Rol güncellenemedi."); } finally { setRoleBusy(false); }
+  };
+  const cancelInvite = async () => {
+    const invId = card.pending_invite?.id || card.pending_invite?._id;
+    if (!invId) return;
+    if (!window.confirm("Bekleyen davet iptal edilsin mi?")) return;
+    setBusy(true);
+    try {
+      await axios.delete(`${API_URL}/users/invite/${invId}`);
+      toast.success("Davet iptal edildi.");
+      reload();
+    } catch (err) { toast.error(err.response?.data?.detail || "İptal edilemedi."); } finally { setBusy(false); }
+  };
+  if (card.user) {
+    const roleLabel = card.user.role_name || roles.find((r) => r.code === card.user.role)?.name || card.user.role;
+    return (
+      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs space-y-2" data-testid="emp-user-linked">
+        <div className="font-bold text-emerald-800 flex items-center gap-1.5"><KeyRound className="w-4 h-4" /> Sistem kullanıcısı bağlı</div>
+        <div><b>E-posta:</b> {card.user.email}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <b>Rol:</b>
+          <select
+            value={card.user.role}
+            disabled={roleBusy || !roles.length}
+            onChange={(e) => changeRole(e.target.value)}
+            className="border rounded-lg p-1.5 bg-white min-w-[10rem]"
+            data-testid="emp-user-linked-role"
+          >
+            {roles.length ? roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>) : <option value={card.user.role}>{roleLabel}</option>}
+          </select>
+          {roleBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" /> : null}
+        </div>
+        <div><b>Durum:</b> {card.user.is_active ? "Aktif" : "Pasif"}</div>
+        <div><b>Son giriş:</b> {card.user.last_login_at ? new Date(card.user.last_login_at).toLocaleString("tr-TR") : "-"}</div>
+        <div className="text-slate-500 pt-1">Şifre ve aktif/pasif için Firma Ayarları → Kullanıcılar & Roller.</div>
+      </div>
+    );
+  }
   return (
     <form onSubmit={create} className="space-y-3 text-xs" data-testid="emp-create-user-form">
-      {card.pending_invite && <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800">Bekleyen davet var: {card.pending_invite.email} — <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(card.pending_invite.link); toast.success("Link kopyalandı."); } catch { window.prompt("Davet linki:", card.pending_invite.link); } }} className="underline">linki kopyala</button></div>}
+      {card.pending_invite && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800 flex flex-wrap items-center gap-2" data-testid="emp-pending-invite">
+          <span>Bekleyen davet: {card.pending_invite.email}{card.pending_invite.role_name || card.pending_invite.role ? ` · ${card.pending_invite.role_name || roles.find((r) => r.code === card.pending_invite.role)?.name || card.pending_invite.role}` : ""}</span>
+          <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(card.pending_invite.link); toast.success("Link kopyalandı."); } catch { window.prompt("Davet linki:", card.pending_invite.link); } }} className="underline" data-testid="emp-invite-copy">linki kopyala</button>
+          <button type="button" disabled={busy} onClick={cancelInvite} className="ml-auto text-rose-700 font-semibold underline" data-testid="emp-invite-cancel">İptal et</button>
+        </div>
+      )}
       <div><label className="block font-semibold mb-1">E-posta (giriş adı)</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-email" /></div>
       <div><label className="block font-semibold mb-1">Rol</label><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-full border rounded-lg p-2" data-testid="emp-user-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
       <div className="flex gap-2">{[["invite", "E-posta ile davet gönder"], ["password", "Şifreyi ben belirleyeyim"]].map(([k, l]) => <button type="button" key={k} onClick={() => setForm({ ...form, mode: k })} className={`flex-1 border rounded-lg p-2 font-semibold ${form.mode === k ? "bg-slate-900 text-white" : "bg-white"}`} data-testid={`emp-user-mode-${k}`}>{l}</button>)}</div>
