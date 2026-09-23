@@ -58,6 +58,7 @@ def privacy_view(company: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 @router.post("/system/companies/{company_id}/impersonate")
 async def impersonate(company_id: str, request: Request, response: Response, admin: dict = Depends(saas.require_super_admin)):
     import addons as _addons
+    import support_access
     if not await _addons.is_on(company_id, "support.impersonate"):
         raise HTTPException(status_code=403, detail="Bu müşteri için 'şirket olarak gir' destek aracı kapalı.")
     target = await _db.users.find_one({"company_ids": company_id, "role": "admin", "is_active": {"$ne": False}}) or await _db.users.find_one({"company_ids": company_id})
@@ -66,29 +67,98 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
     company = await _db.companies.find_one({"_id": company_id}) or {}
     if not platform_access_allowed(company):
         raise HTTPException(status_code=403, detail="Bu şirket gizlilik ayarından yönetim paneli erişimini kapatmış. Destek girişi yapılamaz.")
-    payload = {"sub": target["_id"], "email": target["email"], "role": target.get("role", "admin"), "type": "access", "imp_by": admin["email"], "imp_name": admin.get("name"), "exp": datetime.now(timezone.utc) + timedelta(hours=2)}
+    now = datetime.now(timezone.utc)
+    session = await support_access.create_session(
+        company_id=company_id,
+        by_email=admin["email"],
+        by_name=admin.get("name"),
+        target_user_email=target.get("email"),
+        hours=2,
+    )
+    payload = {
+        "sub": target["_id"],
+        "email": target["email"],
+        "role": target.get("role", "admin"),
+        "type": "access",
+        "imp_by": admin["email"],
+        "imp_name": admin.get("name"),
+        "imp_session": session["_id"],
+        "imp_company": company_id,
+        "imp_started": session["started_at"],
+        "exp": now + timedelta(hours=2),
+    }
     token = jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
     current = request.cookies.get("access_token") or request.headers.get("Authorization", "")[7:]
     response.set_cookie(key="sa_return", value=current, httponly=True, max_age=7200, path="/")
     response.set_cookie(key="access_token", value=token, httponly=True, max_age=7200, path="/")
     await _db.users.update_one({"_id": target["_id"]}, {"$set": {"active_company_id": company_id}})
     await _db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "user_id": admin.get("id") or admin.get("_id"), "user_name": admin.get("name"), "method": "IMPERSONATE", "path": f"/system/companies/{company_id}/impersonate", "module": "/settings", "status": 200, "target_user": target["email"], "created_at": _now()})
-    return {"status": "success", "message": f"{company.get('name')} şirketine {target.get('name')} ({target['email']}) olarak giriş yapıldı. Destek modu 2 saat geçerlidir.", "company_name": company.get("name"), "as_user": target["email"]}
+    return {
+        "status": "success",
+        "message": f"{company.get('name')} şirketine {target.get('name')} ({target['email']}) olarak giriş yapıldı. Destek modu 2 saat geçerlidir.",
+        "company_name": company.get("name"),
+        "as_user": target["email"],
+        "session_id": session["_id"],
+        "started_at": session["started_at"],
+        "expires_at": session["expires_at"],
+    }
 
 
-def impersonation_info(request: Request) -> Optional[Dict[str, Any]]:
+async def impersonation_info(request: Request) -> Optional[Dict[str, Any]]:
     token = request.cookies.get("access_token")
+    if not token:
+        auth = request.headers.get("Authorization") or ""
+        token = auth[7:] if auth.startswith("Bearer ") else None
     if not token:
         return None
     try:
         p = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
     except jwt.InvalidTokenError:
         return None
-    return {"by": p["imp_by"], "name": p.get("imp_name")} if p.get("imp_by") else None
+    if not p.get("imp_by"):
+        return None
+    import support_access
+    sid = p.get("imp_session")
+    started = p.get("imp_started")
+    expires = None
+    company_id = p.get("imp_company")
+    if sid:
+        doc = await support_access.session_by_id(sid)
+        if not doc or doc.get("status") != "active":
+            return None
+        pub = support_access.public_session(doc)
+        if not pub:
+            return None
+        started = pub.get("started_at") or started
+        expires = pub.get("expires_at")
+        company_id = pub.get("company_id") or company_id
+    elif p.get("exp"):
+        try:
+            expires = datetime.fromtimestamp(p["exp"], tz=timezone.utc).isoformat()
+        except Exception:
+            expires = None
+    return {
+        "by": p["imp_by"],
+        "name": p.get("imp_name"),
+        "session_id": sid,
+        "company_id": company_id,
+        "started_at": started,
+        "expires_at": expires,
+    }
 
 
 @router.post("/auth/impersonate/exit")
 async def impersonate_exit(request: Request, response: Response):
+    import support_access
+    token = request.cookies.get("access_token")
+    if token:
+        try:
+            p = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+            sid = p.get("imp_session")
+            if sid:
+                await support_access.close_session(sid, ended_by=p.get("imp_by") or "support", reason="exited")
+        except jwt.InvalidTokenError:
+            pass
     back = request.cookies.get("sa_return")
     if not back:
         raise HTTPException(status_code=400, detail="Destek oturumu bulunamadı.")
