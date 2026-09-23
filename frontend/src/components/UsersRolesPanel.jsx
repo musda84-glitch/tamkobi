@@ -223,6 +223,16 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
           </div>
         </div>
         {role?.code === "admin" && <div className="text-[11px] text-slate-500 mb-2">Yönetici tüm modüllerde tam yetkilidir; değiştirilemez.</div>}
+        {(rolesData.level_meta || []).length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-2 text-[10px] text-slate-600" data-testid="role-level-legend">
+            {(rolesData.level_meta || []).map((lv) => (
+              <div key={lv.key} className={`rounded-lg border px-2 py-1 ${LEVEL_CLS[lv.key] || "bg-slate-50"}`}>
+                <span className="font-bold">{lv.label}</span>
+                {lv.help ? <span className="ml-1 font-normal opacity-80">— {lv.help}</span> : null}
+              </div>
+            ))}
+          </div>
+        )}
         {rolesData.features && (
           <div className="mb-3 border border-amber-200 bg-amber-50/40 rounded-xl p-2.5" data-testid="role-features">
             <div className="font-bold text-slate-900 mb-1.5 flex items-center gap-1.5"><Eye className="w-3.5 h-3.5 text-amber-600" /> Özellik Yetkileri (fiyat görünürlüğü & üst bar hızlı işlemler)</div>
@@ -238,9 +248,12 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
               {g.label && <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1.5 px-0.5">{g.label}</div>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                 {g.items.map((m) => (
-                  <div key={m.key} className="flex items-center justify-between border rounded-lg px-2.5 py-1.5" data-testid={`perm-row-${m.key}`}>
-                    <span className="font-semibold text-slate-700">{m.label}</span>
-                    <div className="flex gap-0.5">{rolesData.levels.map((l) => <button key={l} disabled={role?.code === "admin"} onClick={() => setLevel(m.key, l)} className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${role?.permissions?.[m.key] === l ? LEVEL_CLS[l] + " ring-1 ring-current" : "text-slate-400 hover:bg-slate-100"}`} data-testid={`perm-${m.key}-${l}`}>{LEVEL_LABEL[l]}</button>)}</div>
+                  <div key={m.key} className="flex items-start justify-between gap-2 border rounded-lg px-2.5 py-1.5" data-testid={`perm-row-${m.key}`}>
+                    <div className="min-w-0 pr-1">
+                      <div className="font-semibold text-slate-700">{m.label}</div>
+                      {m.help ? <div className="text-[10px] text-slate-500 leading-snug mt-0.5" data-testid={`perm-help-${m.key}`}>{m.help}</div> : null}
+                    </div>
+                    <div className="flex gap-0.5 shrink-0 pt-0.5">{rolesData.levels.map((l) => <button key={l} disabled={role?.code === "admin"} onClick={() => setLevel(m.key, l)} className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${role?.permissions?.[m.key] === l ? LEVEL_CLS[l] + " ring-1 ring-current" : "text-slate-400 hover:bg-slate-100"}`} data-testid={`perm-${m.key}-${l}`}>{LEVEL_LABEL[l]}</button>)}</div>
                   </div>
                 ))}
               </div>

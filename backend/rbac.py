@@ -17,13 +17,96 @@ _db = None
 _mail_account: Optional[Callable[..., Awaitable[dict]]] = None
 _current_user = None
 
-MODULES = [("/", "Genel Bakış"), ("/invoices", "Faturalar"), ("/edoc-inbox", "Gelen e-Belgeler"), ("/dis-ticaret", "İthalat / İhracat"), ("/dispatches", "İrsaliyeler"), ("/contacts", "Cari Hesaplar"), ("/b2b-yonetim", "B2B Portal Yönetimi"), ("/installments", "Taksitler"), ("/reports", "Raporlar"), ("/banking", "Banka & Kasa"), ("/expenses", "Masraflar"), ("/loans", "Krediler"), ("/cheques", "Çek / Senet"),
-           ("/stock", "Stoklar & Ürünler"), ("/purchase-orders", "Verilen Siparişler"), ("/sayim", "Stok Sayımı"), ("/quotes", "Teklifler"), ("/projects", "Projeler"), ("/surveys", "Keşifler"), ("/ecommerce", "E-Ticaret"), ("/cargo", "Kargo"), ("/orders", "Siparişler"), ("/hizli-satis", "Hızlı Satış"), ("/saha", "Saha Sipariş"), ("/sevk", "Depo Sevkiyatı"), ("/warehouses", "Depo"),
-           ("/production", "Üretim & Reçete"), ("/atolye", "Atölye Ekranı"), ("/personnel", "Personel & Bordro"), ("/mesai", "Mesaim"), ("/communication", "İletişim"), ("/support", "Destek Talepleri"), ("/ai-advisor", "AI Danışman"),
-           ("/accountant", "Mali Müşavir Paneli"), ("/settings", "Firma Ayarları"), ("/trash", "Çöp Kutusu")]
+MODULES = [
+    ("/", "Genel Bakış"),
+    ("/invoices", "Faturalar"),
+    ("/edoc-inbox", "Gelen e-Belgeler"),
+    ("/dis-ticaret", "İthalat / İhracat"),
+    ("/dispatches", "İrsaliyeler"),
+    ("/contacts", "Cari Hesaplar"),
+    ("/b2b-yonetim", "B2B Portal Yönetimi"),
+    ("/installments", "Taksitler"),
+    ("/reports", "Raporlar"),
+    ("/banking", "Banka & Kasa & POS"),
+    ("/expenses", "Masraflar"),
+    ("/loans", "Krediler"),
+    ("/cheques", "Çek / Senet"),
+    ("/stock", "Stoklar & Ürünler"),
+    ("/purchase-orders", "Verilen Siparişler"),
+    ("/sayim", "Stok Sayımı"),
+    ("/quotes", "Teklifler"),
+    ("/projects", "Projeler"),
+    ("/surveys", "Keşifler"),
+    ("/ecommerce", "E-Ticaret"),
+    ("/cargo", "Kargo"),
+    ("/orders", "Siparişler"),
+    ("/hizli-satis", "Hızlı Satış"),
+    ("/saha", "Saha Sipariş"),
+    ("/sevk", "Depo Sevkiyatı"),
+    ("/warehouses", "Depo & Transfer"),
+    ("/production", "Üretim & Reçete"),
+    ("/atolye", "Atölye Ekranı"),
+    ("/personnel", "Personel & Bordro"),
+    ("/mesai", "Mesaim"),
+    ("/communication", "İletişim"),
+    ("/support", "Destek Talepleri"),
+    ("/ai-advisor", "AI Danışman"),
+    ("/accountant", "Mali Müşavir Paneli"),
+    ("/settings", "Firma Ayarları"),
+    ("/trash", "Çöp Kutusu"),
+]
+# Kısa açıklamalar — roller matrisi ve paket vitrini. /personelim, /panel yetkisi /mesai ve / üzerinden gelir.
+MODULE_HELP = {
+    "/": "Özet paneli, KPI kartları ve hızlı işlemler (web/mobil ana sayfa).",
+    "/invoices": "Satış/alış faturaları, e-Fatura, e-Arşiv; mobil fatura listesi ve oluşturma.",
+    "/edoc-inbox": "GİB gelen e-Fatura / e-İrsaliye kutusu, onay ve aktarım.",
+    "/dis-ticaret": "İthalat/ihracat dosyası, GTIP, rejim, DAB, ticari fatura.",
+    "/dispatches": "e-İrsaliye oluşturma ve takip.",
+    "/contacts": "Müşteri/tedarikçi kartları, ekstre, bakiye; mobil cari ve tahsilat.",
+    "/b2b-yonetim": "Bayi B2B portalı, fiyat listesi, sipariş onayı (web + mobil B2B).",
+    "/installments": "Taksitli satış ve ödeme planları.",
+    "/reports": "Satış, alış, stok, nakit akışı, KDV ve kârlılık raporları.",
+    "/banking": "Banka, kasa, POS, virman, canlı banka eşleme; mobil kasa işlemleri.",
+    "/expenses": "Masraf fişleri ve bütçe; mobil masraf girişi.",
+    "/loans": "Kredi ve kredi kartı takibi.",
+    "/cheques": "Alınan/verilen çek-senet, tahsil, ciro, karşılıksız; mobil çek ekranı.",
+    "/stock": "Stok kartı, barkod, etiket; mobil stok ve ürün formu.",
+    "/purchase-orders": "Tedarikçiye verilen siparişler ve yeniden sipariş.",
+    "/sayim": "Tablet stok sayımı, barkod tarama ve fark raporu.",
+    "/quotes": "Satış teklifi, müşteri onayı, faturaya çevirme; mobil teklif.",
+    "/projects": "İş/saha projesi, bütçe, aşama fotoğrafları; mobil proje.",
+    "/surveys": "Keşif, ölçü alma ve teklife dönüştürme.",
+    "/ecommerce": "Trendyol, ShopPHP ve pazaryeri entegrasyonu; ürün/sipariş senkronu.",
+    "/cargo": "Geliver ve kargo firmaları; gönderi oluşturma ve takip.",
+    "/orders": "Sipariş yönetimi, faturalama, kargo; mobil sipariş ve aksiyonlar.",
+    "/hizli-satis": "Perakende POS, tartı ve termal fiş.",
+    "/saha": "Tablet/mobil saha siparişi ve müşteri ziyareti.",
+    "/sevk": "Depo sevkiyat kiosk, sipariş toplama (web + mobil sevk).",
+    "/warehouses": "Çoklu depo, transfer ve stok lokasyonları.",
+    "/production": "Reçete (BOM), üretim emirleri ve eksik malzeme planı.",
+    "/atolye": "Tablet/mobil atölye ekranı, iş emri ve PIN ile operatör.",
+    "/personnel": "İK: personel kartı, bordro, vardiya, izin (yönetici).",
+    "/mesai": "Puantaj, giriş-çıkış, fazla mesai. Benim Sayfam (/personelim) de bu yetkiye bağlıdır.",
+    "/communication": "SMS, e-posta, WhatsApp Business merkezleri.",
+    "/support": "Destek talepleri, ekler, yönetim paneli erişim ve silme onayı.",
+    "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım.",
+    "/accountant": "Mali müşavir paneli ve beyanname özetleri.",
+    "/settings": "Firma ayarları, kullanıcı/rol, entegrasyonlar (yalnızca yöneticiler).",
+    "/trash": "Silinen kayıtlar; 30 gün içinde geri alma.",
+}
 LEVELS = ("none", "view", "edit")
-FEATURES = [("view_prices", "Fiyat ve tutarları görebilir", "Kapalıysa tüm API yanıtlarında fiyat/tutar/bakiye alanları maskelenir (0 gösterilir); ürün, sipariş, fatura, kârlılık tutarları gizlenir."),
-            ("header_barcode", "Üst bar: Hızlı barkod tarama", ""), ("header_virman", "Üst bar: Hızlı virman", ""), ("header_invoice", "Üst bar: Hızlı fatura oluştur", ""), ("header_ai", "Üst bar: AI asistan", "")]
+LEVEL_META = [
+    {"key": "none", "label": "Yok", "help": "Menüde görünmez; API erişimi engellenir."},
+    {"key": "view", "label": "Görüntüle", "help": "Liste ve detay okunur; oluşturma/düzenleme/silme kapalı."},
+    {"key": "edit", "label": "Düzenle", "help": "Tam işlem: ekleme, güncelleme, silme ve onaylar."},
+]
+FEATURES = [
+    ("view_prices", "Fiyat ve tutarları görebilir", "Kapalıysa tüm API yanıtlarında fiyat/tutar/bakiye alanları maskelenir (0 gösterilir); ürün, sipariş, fatura, kârlılık tutarları gizlenir."),
+    ("header_barcode", "Üst bar: Hızlı barkod tarama", "Web üst çubuğundaki Barkod Oku kısayolu. Kapalıysa buton gizlenir."),
+    ("header_virman", "Üst bar: Hızlı virman", "Web üst çubuğundan hesaplar arası virman. Kapalıysa buton gizlenir."),
+    ("header_invoice", "Üst bar: Hızlı fatura oluştur", "Web üst çubuğundaki Yeni Fatura kısayolu."),
+    ("header_ai", "Üst bar: AI asistan", "Web üst çubuğundaki AI Danışman kısayolu (lisans eklentisi de gerekir)."),
+]
 MONEY_KEYS = {"sale_price", "purchase_price", "unit_price", "price", "list_price", "local_price", "local_total", "fx_rate", "total", "grand_total", "subtotal", "vat_total", "total_amount", "amount", "paid_amount", "balance", "current_balance", "revenue", "net_profit", "gross_profit",
               "commission", "commission_vat", "service_fee", "cargo_fee", "product_cost", "cost", "fees", "deductions", "net", "gross", "salary", "payroll_salary", "net_salary", "gross_salary", "second_salary", "credit_limit", "discount_total", "vat_amount", "price_diff",
               "cost_price", "last_purchase_price", "avg_purchase_price", "card_purchase_price", "margin_pct", "profit", "monthly_payment", "principal", "remaining", "line_total", "opening_balance", "budget", "spent", "overtime_pay", "hourly_rate", "total_revenue", "total_expense", "net_cash", "receivables", "payables", "sale_price_incl_vat", "total_bank_balance", "total_receivables", "total_payables", "total_stock_value", "monthly_sales", "monthly_expenses", "gelir", "gider",
@@ -57,8 +140,10 @@ DEFAULT_ROLES = [
         "/contacts": "edit", "/installments": "edit", "/banking": "edit", "/expenses": "edit",
         "/loans": "edit", "/cheques": "edit", "/purchase-orders": "edit", "/reports": "edit",
         "/accountant": "edit", "/personnel": "view", "/mesai": "view", "/support": "edit",
+        "/b2b-yonetim": "view", "/quotes": "view", "/projects": "view", "/orders": "view",
         "/settings": "none", "/production": "none", "/atolye": "none", "/ecommerce": "none",
         "/cargo": "none", "/saha": "none", "/sevk": "none", "/hizli-satis": "none", "/ai-advisor": "none",
+        "/sayim": "none",
     }},
     {"code": "sales", "name": "Satış", "is_system": True, "permissions": {
         **_all("none"),
@@ -66,22 +151,24 @@ DEFAULT_ROLES = [
         "/contacts": "edit", "/b2b-yonetim": "edit", "/quotes": "edit", "/projects": "edit", "/surveys": "edit",
         "/orders": "edit", "/hizli-satis": "edit", "/saha": "edit", "/stock": "view", "/purchase-orders": "view",
         "/installments": "view", "/sevk": "view", "/communication": "edit", "/support": "edit",
-        "/ecommerce": "view", "/cargo": "edit", "/mesai": "view",
+        "/ecommerce": "view", "/cargo": "edit", "/mesai": "view", "/reports": "view",
+        "/banking": "view", "/cheques": "view", "/expenses": "view",
     }},
     {"code": "warehouse", "name": "Depo", "is_system": True, "permissions": {
         **_all("none"),
         "/": "view", "/stock": "edit", "/purchase-orders": "edit", "/sayim": "edit", "/warehouses": "edit",
         "/orders": "edit", "/sevk": "edit", "/cargo": "edit", "/dispatches": "edit", "/contacts": "view",
-        "/mesai": "view", "/support": "view",
+        "/mesai": "view", "/support": "view", "/production": "view", "/atolye": "view",
     }},
     {"code": "production", "name": "Üretim", "is_system": True, "permissions": {
         **_all("none"),
         "/": "view", "/production": "edit", "/atolye": "edit", "/warehouses": "view", "/orders": "view",
-        "/sevk": "view", "/mesai": "view", "/support": "view",
+        "/sevk": "view", "/mesai": "view", "/support": "view", "/purchase-orders": "view",
     }},
     {"code": "personel", "name": "Personel", "is_system": True, "permissions": {
         **_all("none"),
         "/": "view", "/mesai": "edit", "/atolye": "edit", "/communication": "view", "/support": "view",
+        "/saha": "view",
     }},
     {"code": "advisor", "name": "Mali Müşavir", "is_system": True, "permissions": {
         **_all("none"),
@@ -342,7 +429,14 @@ async def list_roles(company_id: str = "comp_nexus_main_01"):
         counts[u.get("role", "admin")] = counts.get(u.get("role", "admin"), 0) + 1
     company = await _db.companies.find_one({"_id": company_id}) or {}
     policies = {"cash_dual_approval": bool(company.get("cash_dual_approval"))}
-    return {"modules": [{"key": k, "label": l} for k, l in MODULES], "levels": list(LEVELS), "features": [{"key": k, "label": l, "help": h} for k, l, h in FEATURES], "policies": policies, "roles": [{**r, "features": role_features(r), "user_count": counts.get(r["code"], 0)} for r in roles]}
+    return {
+        "modules": [{"key": k, "label": l, "help": MODULE_HELP.get(k, "")} for k, l in MODULES],
+        "levels": list(LEVELS),
+        "level_meta": list(LEVEL_META),
+        "features": [{"key": k, "label": l, "help": h} for k, l, h in FEATURES],
+        "policies": policies,
+        "roles": [{**r, "features": role_features(r), "user_count": counts.get(r["code"], 0)} for r in roles],
+    }
 
 
 @router.put("/roles/policies")
