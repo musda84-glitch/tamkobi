@@ -250,41 +250,182 @@ def _kuveyt_token_urls(conn: dict) -> List[str]:
     return out
 
 
+def _kuveyt_pem_body_b64(raw: str) -> str:
+    """Strip PEM fences/labels; return contiguous base64 (or empty)."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    lines = []
+    for line in s.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        t = line.strip()
+        if not t or t.startswith("-----"):
+            continue
+        if t.startswith("Proc-Type:") or t.startswith("DEK-Info:"):
+            continue
+        lines.append("".join(t.split()))
+    return "".join(lines)
+
+
+def _kuveyt_wrap_pem(body_b64: str, label: str) -> str:
+    wrapped = "\n".join(body_b64[i:i + 64] for i in range(0, len(body_b64), 64))
+    return f"-----BEGIN {label}-----\n{wrapped}\n-----END {label}-----"
+
+
+def _kuveyt_clean_pem_paste(raw: str) -> str:
+    """Paste artifacts: BOM, zero-width, markdown fences, smart quotes."""
+    s = (raw or "").replace("\ufeff", "").replace("\u200b", "").replace("\u00a0", " ")
+    s = s.strip().replace("\r\n", "\n").replace("\r", "\n")
+    if s.startswith("```"):
+        lines = s.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        s = "\n".join(lines).strip()
+    # Smart quotes sometimes wrap the whole PEM
+    if len(s) >= 2 and ((s[0] == s[-1] == '"') or (s[0] == s[-1] == "'") or (s[0] == "\u201c" and s[-1] == "\u201d")):
+        s = s[1:-1].strip()
+    return s
+
+
+def _kuveyt_pem_kind(raw: str) -> str:
+    """Classify pasted PEM: private|rsa_private|encrypted|public|cert|openssh|unknown|bare."""
+    u = (raw or "").upper()
+    if "BEGIN ENCRYPTED PRIVATE KEY" in u:
+        return "encrypted"
+    if "BEGIN OPENSSH PRIVATE KEY" in u:
+        return "openssh"
+    if "BEGIN RSA PRIVATE KEY" in u:
+        return "rsa_private"
+    if "BEGIN PRIVATE KEY" in u:
+        return "private"
+    if "BEGIN PUBLIC KEY" in u or "BEGIN RSA PUBLIC KEY" in u:
+        return "public"
+    if "BEGIN CERTIFICATE" in u:
+        return "cert"
+    if "BEGIN" in u:
+        return "unknown"
+    return "bare"
+
+
 def _kuveyt_normalize_pem(raw: str) -> str:
-    s = (raw or "").strip().replace("\r\n", "\n")
-    if "BEGIN" in s:
+    """Return a PEM string suitable for load attempts (may still need alternate labels)."""
+    s = _kuveyt_clean_pem_paste(raw)
+    if not s:
+        return ""
+    kind = _kuveyt_pem_kind(s)
+    if kind in ("private", "rsa_private", "encrypted", "openssh"):
         return s
-    body = "".join(s.split())
+    if kind in ("public", "cert", "unknown"):
+        return s  # loader will raise a clear error
+    body = _kuveyt_pem_body_b64(s) if "BEGIN" in s.upper() else "".join(s.split())
     if not body:
         return ""
-    wrapped = "\n".join(body[i:i + 64] for i in range(0, len(body), 64))
-    return f"-----BEGIN PRIVATE KEY-----\n{wrapped}\n-----END PRIVATE KEY-----"
+    # Prefer PKCS8 label for bare base64; loader also tries PKCS1.
+    return _kuveyt_wrap_pem(body, "PRIVATE KEY")
 
 
-def _kuveyt_private_key_pem(conn: dict) -> str:
-    """PKCS8 (BEGIN PRIVATE KEY) or PKCS1 (BEGIN RSA PRIVATE KEY). api_key only if it looks like PEM."""
+def _kuveyt_pem_candidates(raw: str) -> List[str]:
+    """Ordered PEM variants to try when loading a private key."""
+    s = _kuveyt_clean_pem_paste(raw)
+    if not s:
+        return []
+    kind = _kuveyt_pem_kind(s)
+    out: List[str] = []
+    if kind in ("private", "rsa_private", "encrypted", "openssh"):
+        out.append(s)
+        return out
+    if kind in ("public", "cert"):
+        out.append(s)
+        return out
+    body = _kuveyt_pem_body_b64(s) if "BEGIN" in s.upper() else "".join(s.split())
+    if not body:
+        return []
+    # Bare DER-as-base64: try PKCS8 then classic PKCS1 RSA.
+    for label in ("PRIVATE KEY", "RSA PRIVATE KEY"):
+        out.append(_kuveyt_wrap_pem(body, label))
+    return out
+
+
+def _kuveyt_private_key_raw(conn: dict) -> str:
+    """Raw private key paste from private_key (preferred) or PEM-looking api_key."""
     for key in ("private_key", "api_key"):
         raw = _plain_secret(conn, key)
         if not raw:
             continue
-        if key == "api_key" and "BEGIN" not in raw and "MII" not in raw:
-            continue
-        pem = _kuveyt_normalize_pem(raw)
-        if pem:
-            return pem
+        if key == "api_key":
+            # Gravitee Api Anahtarı is a short UUID — never treat as RSA key.
+            if "BEGIN" not in raw.upper() and "MII" not in raw:
+                continue
+            if _kuveyt_looks_like_uuid(raw):
+                continue
+        return raw
     return ""
 
 
+def _kuveyt_private_key_pem(conn: dict) -> str:
+    """Cleaned RSA private key paste (headers optional); empty if missing."""
+    raw = _kuveyt_private_key_raw(conn)
+    return _kuveyt_clean_pem_paste(raw) if raw else ""
+
+
 def _kuveyt_load_private_key(pem: str):
-    from cryptography.hazmat.primitives.serialization import load_pem_private_key
-    try:
-        return load_pem_private_key(pem.encode("utf-8"), password=None)
-    except Exception as e:
+    from cryptography.hazmat.primitives.serialization import (
+        load_pem_private_key,
+        load_der_private_key,
+        load_ssh_private_key,
+    )
+
+    raw = _kuveyt_clean_pem_paste(pem)
+    kind = _kuveyt_pem_kind(raw)
+    if kind == "public":
         raise RuntimeError(
-            "Kuveyt Türk RSA özel anahtarı okunamadı. PKCS8 PEM "
-            "(-----BEGIN PRIVATE KEY-----) beklenir. "
-            f"{_err_text(e)}"
-        ) from e
+            "Kuveyt Türk RSA alanı genel anahtar (PUBLIC KEY) içeriyor. "
+            "Portal’dan özel anahtar (PRIVATE KEY / PKCS8) yapıştırın — "
+            "-----BEGIN PRIVATE KEY----- ile başlamalı."
+        )
+    if kind == "cert":
+        raise RuntimeError(
+            "Kuveyt Türk RSA alanı sertifika (CERTIFICATE) içeriyor. "
+            "İmza için özel anahtar PEM gerekli (-----BEGIN PRIVATE KEY-----)."
+        )
+    if kind == "encrypted":
+        raise RuntimeError(
+            "Kuveyt Türk RSA özel anahtarı şifreli (ENCRYPTED PRIVATE KEY). "
+            "Şifresiz PKCS8 PEM kullanın veya anahtarı parola olmadan dışa aktarın."
+        )
+
+    errors: List[str] = []
+    candidates = _kuveyt_pem_candidates(raw) or ([raw] if raw else [])
+    for cand in candidates:
+        ck = _kuveyt_pem_kind(cand)
+        try:
+            if ck == "openssh":
+                return load_ssh_private_key(cand.encode("utf-8"), password=None)
+            return load_pem_private_key(cand.encode("utf-8"), password=None)
+        except Exception as e:
+            errors.append(_err_text(e))
+        try:
+            body = _kuveyt_pem_body_b64(cand)
+            if body:
+                der = base64.b64decode(body, validate=False)
+                if der:
+                    return load_der_private_key(der, password=None)
+        except Exception as e:
+            errors.append(f"DER:{_err_text(e)}")
+
+    hint = errors[-1] if errors else "boş veya geçersiz"
+    if any("no BEGIN/END delimiters for a private key" in e for e in errors):
+        hint = (
+            "Yapıştırılan metinde PRIVATE KEY başlığı yok "
+            "(genel anahtar, sertifika veya bozuk yapıştırma olabilir)."
+        )
+    raise RuntimeError(
+        "Kuveyt Türk RSA özel anahtarı okunamadı. PKCS8 PEM "
+        "(-----BEGIN PRIVATE KEY-----) veya PKCS1 "
+        "(-----BEGIN RSA PRIVATE KEY-----) beklenir. "
+        f"{hint}"
+    ) from None
 
 
 def _kuveyt_query_string(params: Optional[Dict[str, Any]]) -> str:
@@ -366,6 +507,16 @@ def normalize_kuveyt_connection_secrets(conn: dict) -> dict:
         raw = out.get(key)
         if raw and not is_masked_secret(raw):
             out[key] = _kuveyt_normalize_secret(str(raw))
+    pk = out.get("private_key")
+    if pk and not is_masked_secret(pk):
+        cleaned = _kuveyt_clean_pem_paste(str(pk))
+        # Persist with proper PEM fences when user pasted bare base64.
+        kind = _kuveyt_pem_kind(cleaned)
+        if kind == "bare" and cleaned:
+            body = "".join(cleaned.split())
+            if body:
+                cleaned = _kuveyt_wrap_pem(body, "PRIVATE KEY")
+        out["private_key"] = cleaned
     return out
 
 

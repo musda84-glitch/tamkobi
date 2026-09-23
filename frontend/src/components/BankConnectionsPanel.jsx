@@ -49,7 +49,7 @@ const FIELD_LABELS = {
   access_token: "Access Token",
   refresh_token: "Refresh Token",
   api_key: "Api Anahtarı (X-Gravitee-Api-Key)",
-  private_key: "RSA Private Key (PKCS8 PEM)",
+  private_key: "RSA Private Key (PKCS8 / PKCS1 PEM)",
   customer_number: "Müşteri Numarası",
   base_url: "API Base URL",
   token_url: "Token URL",
@@ -58,14 +58,46 @@ const SECRET_FIELDS = ["client_id", "client_secret", "access_token", "refresh_to
 const emptySecrets = () => Object.fromEntries(SECRET_FIELDS.map((k) => [k, ""]));
 const credentialsOnFile = (c) => SECRET_FIELDS.some((k) => !!c?.[k]);
 
-/** Kuveyt invalid_client duvar metnini kartta kısa checklist’e çevir. */
+/** Kuveyt invalid_client / RSA PEM duvar metnini kartta kısa checklist’e çevir. */
 function ConnErrorBox({ connection, onEdit }) {
   const err = connection?.last_error || "";
   if (!err) return null;
   const isKuveyt = connection?.provider === "kuveytturk";
   const invalidClient = /invalid_client/i.test(err);
-  if (!isKuveyt || !invalidClient) {
+  const rsaBad = /RSA özel anahtar|PRIVATE KEY|PKCS8|PKCS1|PUBLIC KEY|CERTIFICATE|imza anahtar/i.test(err);
+  if (!isKuveyt || (!invalidClient && !rsaBad)) {
     return <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2" data-testid="conn-last-error">{err}</div>;
+  }
+  if (rsaBad && !invalidClient) {
+    const isPublic = /PUBLIC KEY|genel anahtar/i.test(err);
+    const isCert = /CERTIFICATE|sertifika/i.test(err);
+    return (
+      <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg p-2.5 space-y-1.5" data-testid="conn-last-error-kuveyt-rsa">
+        <div className="font-bold flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5 shrink-0" /> RSA imza anahtarı okunamadı</div>
+        <p className="text-rose-700 leading-snug">
+          {isPublic
+            ? "Yapıştırılan metin genel anahtar (PUBLIC KEY). İmza için özel anahtar gerekir."
+            : isCert
+              ? "Yapıştırılan metin sertifika. İmza için PRIVATE KEY PEM gerekir."
+              : "RSA Private Key alanı boş, bozuk veya yanlış formatta."}
+        </p>
+        <ol className="list-decimal list-inside text-rose-700 space-y-0.5 pl-0.5">
+          <li>API Market → uygulamanız → <b>özel anahtar</b> (private key) dosyasını açın.</li>
+          <li>İlk satır <b>-----BEGIN PRIVATE KEY-----</b> veya <b>-----BEGIN RSA PRIVATE KEY-----</b> olmalı.</li>
+          <li><b>PUBLIC KEY</b> / sertifika / Api Anahtarı UUID’sini bu alana yapıştırmayın.</li>
+          <li>Düzenle → RSA alanını temizleyip yeniden yapıştırın → Kaydet &amp; Test Et.</li>
+        </ol>
+        {onEdit && (
+          <button type="button" onClick={onEdit} className="mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-rose-600 text-white font-semibold hover:bg-rose-700" data-testid="conn-error-edit-rsa-btn">
+            <Pencil className="w-3 h-3" /> Düzenle &amp; RSA anahtarını yenile
+          </button>
+        )}
+        <details className="text-[10px] text-rose-500">
+          <summary className="cursor-pointer select-none">Teknik ayrıntı</summary>
+          <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-rose-600/90">{err}</pre>
+        </details>
+      </div>
+    );
   }
   const bothHosts = /hem Canlı.*Sandbox|hem Canlı hem Sandbox/i.test(err);
   const modeMismatch = /aynı Müşteri Id\/Secret|Sandbox.*Identity|prep-identity|idprep/i.test(err) && !bothHosts;
@@ -463,11 +495,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <div key={f}>
                   <label className="block font-semibold mb-1">{FIELD_LABELS[f] || f}{" "}
                     <span className="text-slate-400 font-normal">
-                      {f === "access_token" ? "(Enpara için önerilir)" : f === "private_key" ? "(PKCS8 PEM — RSA-SHA256 imza)" : f === "api_key" ? "(X-Gravitee — token değil)" : "(opsiyonel — boşsa simüle)"}
+                      {f === "access_token" ? "(Enpara için önerilir)" : f === "private_key" ? "(özel anahtar — PUBLIC KEY değil)" : f === "api_key" ? "(X-Gravitee — token değil)" : "(opsiyonel — boşsa simüle)"}
                     </span>
                   </label>
                   {f === "private_key" ? (
-                    <textarea className={`${inputCls} font-mono min-h-[88px]`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} autoComplete="off" placeholder="-----BEGIN PRIVATE KEY-----" spellCheck={false} />
+                    <textarea className={`${inputCls} font-mono min-h-[88px]`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} autoComplete="off" placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"} spellCheck={false} />
                   ) : (
                     <input type={SECRET_FIELDS.includes(f) ? "password" : "text"} className={`${inputCls} font-mono`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} autoComplete="new-password" />
                   )}
@@ -541,9 +573,9 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                     <>
                       <div><label className="block font-semibold mb-1">Api Anahtarı <span className="text-slate-400 font-normal">(X-Gravitee-Api-Key — boş bırakırsanız değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.api_key} onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })} data-testid="edit-conn-api-key" autoComplete="new-password" placeholder="Portal Api Anahtarı UUID" /></div>
                       <div>
-                        <label className="block font-semibold mb-1">RSA Private Key (PKCS8 PEM) <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label>
-                        <textarea className={`${inputCls} font-mono min-h-[88px]`} value={editForm.private_key} onChange={(e) => setEditForm({ ...editForm, private_key: e.target.value })} data-testid="edit-conn-private-key" autoComplete="off" placeholder="-----BEGIN PRIVATE KEY-----" spellCheck={false} />
-                      </div>
+                        <label className="block font-semibold mb-1">RSA Private Key (PKCS8 / PKCS1) <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label>
+                        <textarea className={`${inputCls} font-mono min-h-[88px]`} value={editForm.private_key} onChange={(e) => setEditForm({ ...editForm, private_key: e.target.value })} data-testid="edit-conn-private-key" autoComplete="off" placeholder={"-----BEGIN PRIVATE KEY-----\n(özel anahtar — PUBLIC KEY değil)\n-----END PRIVATE KEY-----"} spellCheck={false} />
+                        <p className="text-[10px] text-slate-500 mt-1">İlk satır BEGIN PRIVATE KEY veya BEGIN RSA PRIVATE KEY olmalı. Genel anahtar / Api Anahtarı UUID buraya gelmez.</p>                      </div>
                       <div><label className="block font-semibold mb-1">Scope <span className="text-slate-400 font-normal">(opsiyonel — örn. accounts public)</span></label><input className={`${inputCls} font-mono`} value={editForm.scope || ""} onChange={(e) => setEditForm({ ...editForm, scope: e.target.value })} data-testid="edit-conn-scope" autoComplete="off" placeholder="accounts public" /></div>
                     </>
                   ) : (
