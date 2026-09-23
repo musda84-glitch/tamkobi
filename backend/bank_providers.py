@@ -21,14 +21,16 @@ import httpx
 PROVIDERS = {
     "kuveytturk": {
         "name": "Kuveyt Türk API Market",
-        "sandbox_url": "https://apitest.kuveytturk.com.tr/prep",
-        "live_url": "https://api.kuveytturk.com.tr",
-        "identity_sandbox_url": "https://idprep.kuveytturk.com.tr",
-        "identity_live_url": "https://id.kuveytturk.com.tr",
-        "token_path": "/api/connect/token",
+        # 2026 OIDC discovery: prep-identity / identity (eski idprep/id zaman aşımı).
+        # Token path: /connect/token (eski /api/connect/token yeni host’ta 404).
+        "sandbox_url": "https://prep-gateway.kuveytturk.com.tr",
+        "live_url": "https://gateway.kuveytturk.com.tr",
+        "identity_sandbox_url": "https://prep-identity.kuveytturk.com.tr",
+        "identity_live_url": "https://identity.kuveytturk.com.tr",
+        "token_path": "/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "customer_number"],
-        "hint": "API Market: Müşteri Id=Client ID, Client Secret (≠Api Anahtarı), Api Anahtarı=X-Gravitee-Api-Key. Token: resmi SDK gibi yalnızca POST id(prep).kuveytturk.com.tr/api/connect/token body (grant_type=client_credentials, client_id, client_secret, scope=public) — HTTP Basic yok. invalid_client → Canlı/Sandbox kimlik karışması veya yanlış secret. RSA-SHA256 Signature için PKCS8 PEM. Sandbox API: apitest.kuveytturk.com.tr/prep",
+        "hint": "API Market: Müşteri Id=Client ID, Client Secret (≠Api Anahtarı), Api Anahtarı=X-Gravitee-Api-Key. Token: POST prep-identity|identity.kuveytturk.com.tr/connect/token (grant_type=client_credentials, scope=public). Sandbox API: prep-gateway; Canlı: gateway. Eski idprep/apitest uçları kullanılmaz. RSA-SHA256 Signature için PKCS8 PEM.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -214,21 +216,30 @@ def _kuveyt_alt_identity_host(conn: dict) -> str:
     return (meta["identity_sandbox_url"] if live else meta["identity_live_url"]).rstrip("/")
 
 
+def _kuveyt_token_path() -> str:
+    return PROVIDERS["kuveytturk"].get("token_path") or "/connect/token"
+
+
+def _kuveyt_normalize_token_url(url: str) -> str:
+    """Yeni Identity /connect/token; eski /api/connect/token → /connect/token."""
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return ""
+    if u.endswith("/api/connect/token"):
+        return u[: -len("/api/connect/token")] + "/connect/token"
+    if u.endswith("/connect/token"):
+        return u
+    return u + _kuveyt_token_path()
+
+
 def _kuveyt_token_urls(conn: dict) -> List[str]:
-    """Official SDK (iuysal/Android): POST {idhost}/api/connect/token only (not /connect/token — that 404s)."""
+    """OIDC discovery (2026): POST {prep-identity|identity}/connect/token."""
     urls: List[str] = []
-    custom = (conn.get("token_url") or "").strip().rstrip("/")
+    custom = (conn.get("token_url") or "").strip()
     if custom:
-        if custom.endswith("/api/connect/token") or custom.endswith("/connect/token"):
-            # Normalize mistaken /connect/token → /api/connect/token
-            if custom.endswith("/connect/token") and not custom.endswith("/api/connect/token"):
-                urls.append(custom[: -len("/connect/token")] + "/api/connect/token")
-            else:
-                urls.append(custom)
-        else:
-            urls.append(custom.rstrip("/") + "/api/connect/token")
+        urls.append(_kuveyt_normalize_token_url(custom))
     host = _kuveyt_identity_host(conn)
-    urls.append(host + "/api/connect/token")
+    urls.append(host.rstrip("/") + _kuveyt_token_path())
     seen = set()
     out = []
     for u in urls:
@@ -376,11 +387,7 @@ def _kuveyt_scope_candidates(conn: dict) -> List[str]:
 
 
 def _kuveyt_token_auth_attempts(client_id: str, client_secret: str, scope: str) -> List[Dict[str, Any]]:
-    """Official SDK (iuysal/kuveytturk): form body only — no HTTP Basic.
-
-    Basic auth is not used by Kuveyt samples and previously made errors look like
-    \"invalid_client: [basic]\" even when body already failed with the same code.
-    """
+    """OIDC: client_secret_post önce; discovery ayrıca client_secret_basic destekliyor."""
     form_base: Dict[str, str] = {"grant_type": "client_credentials"}
     if scope:
         form_base["scope"] = scope
@@ -392,6 +399,15 @@ def _kuveyt_token_auth_attempts(client_id: str, client_secret: str, scope: str) 
                 "Accept": "application/json",
             },
             "label": "body",
+        },
+        {
+            "data": {**form_base},
+            "headers": {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+                "Authorization": _basic_auth_header(client_id, client_secret),
+            },
+            "label": "basic",
         },
     ]
 
@@ -487,15 +503,11 @@ async def _kuveyt_post_token(
 
 
 async def _kuveyt_access_token(conn: dict) -> str:
-    """Official Kuveyt Python/Android: POST /api/connect/token with form body credentials.
+    """Kuveyt Identity (2026 OIDC): POST {prep-identity|identity}/connect/token.
 
-    Research notes (2026):
-    - Endpoint is only /api/connect/token ( /connect/token → HTML 404 ).
-    - client_credentials body: grant_type, client_id, client_secret, scope=public
-      (iuysal/kuveytturk, huseyinbuyukdere samples — no HTTP Basic).
-    - invalid_client almost always means wrong secret for that Identity host, or
-      LIVE app credentials used against sandbox (or vice versa), or Api Anahtarı
-      pasted into Client Secret. Cross-check the other Identity host to diagnose.
+    - Discovery: /connect/token (eski /api/connect/token yeni host’ta 404).
+    - Auth: client_secret_post önce, sonra client_secret_basic.
+    - invalid_client → yanlış secret veya Canlı/Sandbox kimlik karışması.
     """
     client_id = _kuveyt_normalize_secret(_plain_secret(conn, "client_id"))
     client_secret = _kuveyt_normalize_secret(_plain_secret(conn, "client_secret"))
@@ -538,12 +550,12 @@ async def _kuveyt_access_token(conn: dict) -> str:
         alt_hint = ""
         if saw_invalid_client:
             alt_host = _kuveyt_alt_identity_host(conn)
-            alt_url = alt_host + "/api/connect/token"
+            alt_url = alt_host.rstrip("/") + _kuveyt_token_path()
             alt_token, alt_err, _ = await _kuveyt_post_token(
                 client, alt_url, client_id, client_secret, "public"
             )
             if alt_token:
-                other = "Sandbox (idprep)" if mode == "live" else "Canlı (id)"
+                other = "Sandbox (prep-identity)" if mode == "live" else "Canlı (identity)"
                 current = "Canlı" if mode == "live" else "Sandbox"
                 alt_hint = (
                     f" Teşhis: aynı Müşteri Id/Secret {other} Identity’de token aldı, "
@@ -552,8 +564,8 @@ async def _kuveyt_access_token(conn: dict) -> str:
                 )
             elif alt_err and "invalid_client" in alt_err.lower():
                 alt_hint = (
-                    " Teşhis: hem Canlı hem Sandbox Identity invalid_client döndü — "
-                    "Müşteri Id / Client Secret portaldeki değerlerle eşleşmiyor. "
+                    " Teşhis: hem Canlı (identity) hem Sandbox (prep-identity) invalid_client "
+                    "döndü — Müşteri Id / Client Secret portaldeki değerlerle eşleşmiyor. "
                 )
 
     detail = primary_err or last_err
@@ -579,16 +591,16 @@ async def _kuveyt_access_token(conn: dict) -> str:
         if alt_hint and "eşleşmiyor" in alt_hint:
             hint += (
                 "Adımlar: 1) Düzenle → Müşteri Id + Client Secret’i portalden tek satır "
-                "olarak yeniden yapıştırın (Api Anahtarı değil). 2) Canlı uygulama için "
-                "mod=Canlı, test uygulaması için Sandbox. 3) Kaydet & Test Et. "
+                "olarak yeniden yapıştırın (Api Anahtarı değil). 2) Prep/test uygulaması → "
+                "Sandbox; canlı onaylı uygulama → Canlı. 3) Kaydet & Test Et. "
             )
     fp = _kuveyt_cred_fingerprint(client_id, client_secret, api_key)
     raise RuntimeError(
         "Kuveyt Türk token alınamadı (Identity Server client_credentials)."
         f"{hint}"
         f"Mod={mode}; {fp}. "
-        "Resmi uç: POST …/api/connect/token (body: grant_type, client_id, client_secret, scope=public). "
-        f"(sandbox: idprep.kuveytturk.com.tr / canlı: id.kuveytturk.com.tr). ({detail[:220]})"
+        "Resmi uç: POST …/connect/token (body: grant_type, client_id, client_secret, scope=public). "
+        f"(sandbox: prep-identity.kuveytturk.com.tr / canlı: identity.kuveytturk.com.tr). ({detail[:220]})"
     )
 
 
