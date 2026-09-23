@@ -1307,15 +1307,14 @@ export function PersonnelScreen() {
                 ) : null}
                 {(() => {
                   const empReqs = requestsForEmployee(pendingReqs, eid);
-                  if (!empReqs.length) return null;
                   const reqOpen = !!requestsOpen[eid];
                   return (
-                    <View testID={`emp-card-requests-${eid}`} style={{ padding: 6, borderRadius: 8, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A", gap: 4 }}>
+                    <View testID={`emp-card-requests-${eid}`} style={{ paddingVertical: 4, paddingHorizontal: 6, borderRadius: 8, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A", gap: 4 }}>
                       <Pressable
                         testID={`emp-card-requests-toggle-${eid}`}
                         onPress={() => setRequestsOpen((cur) => ({ ...cur, [eid]: !cur[eid] }))}
                         accessibilityLabel={requestsDetailsToggleLabel(reqOpen)}
-                        style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+                        style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 28 }}
                       >
                         <Text style={{ fontWeight: "800", color: "#92400E", fontSize: 12 }}>Talepler ({empReqs.length})</Text>
                         <Text numberOfLines={1} style={{ flex: 1, fontSize: 11, color: colors.muted }}>{requestsDetailsSummary(empReqs)}</Text>
@@ -1333,8 +1332,9 @@ export function PersonnelScreen() {
                           <Ionicons name={requestsDetailsToggleIcon(reqOpen)} size={16} color="#92400E" />
                         </View>
                       </Pressable>
-                      {reqOpen
-                        ? empReqs.slice(0, 3).map((it) => (
+                      {reqOpen ? (
+                        empReqs.length ? (
+                          empReqs.slice(0, 3).map((it) => (
                             <View key={`${it.kind}-${it.id}`} style={{ gap: 4 }}>
                               <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
                               {canEdit ? (
@@ -1355,7 +1355,10 @@ export function PersonnelScreen() {
                               ) : null}
                             </View>
                           ))
-                        : null}
+                        ) : (
+                          <Muted testID={`emp-card-requests-empty-${eid}`}>Bekleyen talep yok</Muted>
+                        )
+                      ) : null}
                     </View>
                   );
                 })()}
