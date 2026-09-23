@@ -1,4 +1,4 @@
-import { selfAttendanceGeoMode } from "./attendanceSelf";
+import { earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked } from "./attendanceSelf";
 
 describe("selfAttendanceGeoMode", () => {
   test("requires geo only on check-in near a target", () => {
@@ -10,5 +10,14 @@ describe("selfAttendanceGeoMode", () => {
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true })).toBe("attach");
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: false })).toBe("none");
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true })).not.toBe("required");
+  });
+});
+
+describe("selfCheckoutUnlocked", () => {
+  test("unlocks after early leave approval or schedule end", () => {
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00" })).toBe(false);
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00", earlyApproved: true })).toBe(true);
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "18:05", scheduleEnd: "18:00" })).toBe(true);
+    expect(earlyLeaveApproved({ early_leave_request: { status: "approved" } })).toBe(true);
   });
 });

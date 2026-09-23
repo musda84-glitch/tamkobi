@@ -1,4 +1,4 @@
-import { checkoutConfirmMessage, earlyLeavePayload, selfAttendanceGeoMode, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -48,5 +48,17 @@ describe("checkoutConfirmMessage", () => {
     expect(checkoutConfirmMessage("12:25")).toMatch(/geri alınamaz/);
     expect(checkoutConfirmMessage("")).toMatch(/Yanlışlıkla bastıysanız vazgeçin/);
     expect(checkoutConfirmMessage(null)).not.toContain("giriş");
+  });
+});
+
+describe("selfCheckoutUnlocked", () => {
+  it("stays locked before schedule end unless early leave is approved", () => {
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00" })).toBe(false);
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00", earlyApproved: true })).toBe(true);
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "18:00", scheduleEnd: "18:00" })).toBe(true);
+    expect(selfCheckoutUnlocked({ checkedIn: false, nowHm: "19:00", scheduleEnd: "18:00" })).toBe(false);
+    expect(selfCheckoutUnlocked({ checkedIn: true, checkedOut: true, earlyApproved: true })).toBe(false);
+    expect(earlyLeaveApproved({ early_leave_request: { status: "approved" } })).toBe(true);
+    expect(selfCheckoutLockedHint({ checkedIn: true, earlyPending: true })).toMatch(/onaylanınca/);
   });
 });

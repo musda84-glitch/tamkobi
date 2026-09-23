@@ -6,7 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { checkoutConfirmMessage, earlyLeavePayload, selfAttendanceGeoMode, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { statusTr } from "../utils/labels";
 import { workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
@@ -34,6 +34,7 @@ type AttendancePayload = {
     intraday_leave_request?: { status?: string; reason?: string; out_time?: string; return_time?: string; decision_note?: string } | null;
     yevmiye_full_amount?: number;
     yevmiye_adjustment_request?: { status?: string; full_amount?: number; proposed_amount?: number; final_amount?: number } | null;
+    expected_end?: string;
   } | null;
   location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
   workplace?: Workplace | null;
@@ -42,6 +43,7 @@ type AttendancePayload = {
   active_location_tracking?: LocationTracking;
   records?: { id?: string; date: string; check_in?: string; check_out?: string; hours?: number; status?: string }[];
   summary?: { days?: number; hours?: number };
+  checkout_unlocked?: boolean;
 };
 
 async function coords() {
@@ -213,6 +215,17 @@ export function AttendanceScreen() {
   const early = today?.early_leave_request;
   const intra = today?.intraday_leave_request;
   const yevLine = yevmiyeStatusLine(today);
+  const earlyOk = earlyLeaveApproved(today);
+  const checkoutOn = data?.checkout_unlocked != null
+    ? Boolean(data.checkout_unlocked) && !checkedOut
+    : selfCheckoutUnlocked({
+      checkedIn,
+      checkedOut,
+      nowHm: data?.now,
+      scheduleEnd: data?.schedule?.end,
+      expectedEnd: today?.expected_end,
+      earlyApproved: earlyOk,
+    });
 
   return (
     <Screen onRefresh={load}>
@@ -224,7 +237,13 @@ export function AttendanceScreen() {
         <Text style={{ fontSize: 42, fontWeight: "900", color: colors.text, textAlign: "center" }}>{data?.now || "--:--"}</Text>
         <Muted>{data?.today_date}</Muted>
         <Muted testID="mesai-workplace">{workplaceHint(data?.workplace || data?.location, data?.schedule?.require_geo !== false)}</Muted>
-        <Muted testID="mesai-checkout-hint">Giriş iş yeri / görev yakınından. Çıkış yalnız butonla, her yerden; konum açıksa çıkışta konum alınır, otomatik giriş-çıkış yok.</Muted>
+        <Muted testID="mesai-checkout-hint">
+          {checkoutOn
+            ? (earlyOk
+              ? "Onaylı erken çıkış: çıkış butonu açık. Saat ve konum basınca kaydedilir; plan saati yazılmaz."
+              : "Giriş iş yeri / görev yakınından. Çıkış yalnız butonla, her yerden; konum açıksa çıkışta konum alınır.")
+            : selfCheckoutLockedHint({ checkedIn, earlyPending: early?.status === "pending" })}
+        </Muted>
         <Row style={{ justifyContent: "center", gap: 8 }}>
           {checkedIn ? <Badge label={`Giriş ${today?.check_in}`} tone="green" /> : <Badge label="Giriş yok" />}
           {checkedOut ? <Badge label={`Çıkış ${today?.check_out}`} tone="indigo" /> : null}
@@ -233,7 +252,7 @@ export function AttendanceScreen() {
         </Row>
         <View style={{ gap: 10, marginTop: 8 }}>
           <PrimaryButton title={busy === "check_in" ? "Kaydediliyor…" : "Giriş"} onPress={() => act("check_in")} disabled={checkedIn} color={colors.accent} testID="mesai-in" />
-          {outConfirm && checkedIn && !checkedOut ? (
+          {outConfirm && checkoutOn ? (
             <View testID="mesai-out-confirm" style={{ gap: 8 }}>
               <Muted testID="mesai-out-confirm-text">{checkoutConfirmMessage(today?.check_in)}</Muted>
               <PrimaryButton
@@ -247,9 +266,10 @@ export function AttendanceScreen() {
             </View>
           ) : (
             <PrimaryButton
-              title={busy === "check_out" ? "Kaydediliyor…" : "Çıkış"}
+              title={busy === "check_out" ? "Kaydediliyor…" : (earlyOk && !checkedOut ? "Çıkış (onaylı erken)" : "Çıkış")}
               onPress={() => setOutConfirm(true)}
-              disabled={!checkedIn || checkedOut}
+              disabled={!checkoutOn}
+              color={earlyOk && !checkedOut ? colors.danger : colors.secondary}
               testID="mesai-out"
             />
           )}
@@ -258,11 +278,10 @@ export function AttendanceScreen() {
               <Muted>Erken çıkış talebi bekliyor{early.planned_time ? ` · plan ${early.planned_time}` : ""}{early.reason ? ` · ${early.reason}` : ""}</Muted>
               <PrimaryButton title={busy === "early-cancel" ? "İptal ediliyor…" : "Talebi iptal et"} onPress={cancelEarly} color={colors.danger} testID="mesai-early-cancel" />
             </View>
+          ) : earlyOk && !checkedOut ? (
+            <Muted testID="mesai-early-approved">Erken çıkış onaylandı — çıkış butonu açık. Saat ve konum çıkışa basınca kaydedilir{early?.planned_time ? ` (plan ${early.planned_time})` : ""}.</Muted>
           ) : earlyOpen ? (
             <View testID="mesai-early-form" style={{ gap: 8 }}>
-              {early?.status === "approved" || today?.early_leave_approved ? (
-                <Muted testID="mesai-early-approved">Erken çıkış onaylandı — çıkış yapabilirsiniz{early?.planned_time ? ` (plan ${early.planned_time})` : ""}.</Muted>
-              ) : null}
               {early?.status === "rejected" ? <Muted>Önceki talep reddedildi{early.decision_note ? `: ${early.decision_note}` : ""}.</Muted> : null}
               {!checkedIn ? <Muted>Talebi göndermeden önce giriş yapın.</Muted> : null}
               {checkedOut ? <Muted>Bugün zaten çıkış yapılmış — yeni talep gönderilemez.</Muted> : null}

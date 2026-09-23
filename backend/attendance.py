@@ -103,6 +103,35 @@ def normalize_location_tracking(raw: Optional[dict] = None) -> dict:
     return {**company, "field": field}
 
 
+def early_leave_is_approved(rec: Optional[dict] = None) -> bool:
+    rec = rec or {}
+    if rec.get("early_leave_approved"):
+        return True
+    return (rec.get("early_leave_request") or {}).get("status") == "approved"
+
+
+def self_checkout_unlocked(rec: Optional[dict] = None, schedule: Optional[dict] = None, now_s: Optional[str] = None) -> bool:
+    """Mesai bitmeden self çıkış kilitli; onaylı erken çıkışta buton açılır. Saat/konum basınca yazılır."""
+    rec = rec or {}
+    if not rec.get("check_in") or rec.get("check_out"):
+        return False
+    if early_leave_is_approved(rec):
+        return True
+    sched = schedule or DEFAULT_SCHEDULE
+    try:
+        wd = datetime.strptime(str(rec.get("date") or _today(sched)), "%Y-%m-%d").weekday()
+        if wd not in (sched.get("work_days") or DEFAULT_SCHEDULE["work_days"]):
+            return True
+    except Exception:
+        pass
+    end = rec.get("expected_end") or sched.get("end") or DEFAULT_SCHEDULE["end"]
+    stamp = now_s or now_hm(sched)
+    try:
+        return _hm(str(stamp)[:5]) >= _hm(str(end)[:5])
+    except Exception:
+        return True
+
+
 def checkout_distance_blocks() -> bool:
     """Çıkış butonla her yerden; uzaklık veya otomatik algı çıkışı durdurmaz."""
     return False
@@ -969,12 +998,14 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
         schedule = {**schedule, "require_geo": bool(active_lt.get("enabled"))}
     elif not active_lt.get("enabled"):
         schedule = {**schedule, "require_geo": False}
+    now_s = now_hm(schedule)
     return {"employee": {"id": emp["_id"], "full_name": emp["full_name"], "department": emp.get("department"), "position": emp.get("position")},
             "month": month, "records": enriched, "summary": summarize(enriched), "today": _clean(today_e) if today_e else None,
             "schedule": schedule, "day_labels": DAY_LABELS, "location": loc, "workplace": workplace,
             "company_location": company.get("location"), "location_tracking": lt,
             "active_location_tracking": active_lt,
-            "now": now_hm(schedule), "today_date": today_s}
+            "now": now_s, "today_date": today_s,
+            "checkout_unlocked": self_checkout_unlocked(today_e or today, schedule, now_s)}
 
 
 @router.post("/personnel/attendance/self")
@@ -1039,6 +1070,8 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     if action == "check_out" and existing.get("check_out"):
         raise HTTPException(status_code=400, detail=f"Bugün {existing['check_out']} saatinde çıkış yapılmış.")
     now_s = now_hm(schedule)
+    if action == "check_out" and not self_checkout_unlocked(existing, schedule, now_s):
+        raise HTTPException(status_code=400, detail="Mesai bitmeden çıkış için önce erken çıkış talebinin onaylanması gerekir. Onaydan sonra çıkış butonu açılır; saat ve konum o anda kaydedilir.")
     if action == "check_out" and existing.get("check_in"):
         try:
             if _hm(now_s) < _hm(str(existing["check_in"])[:5]):
@@ -1591,7 +1624,7 @@ async def decide_early_leave(att_id: str, req: Dict[str, Any], request: Request)
         "created_at": _now(),
     })
     return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id})),
-            "message": "Erken çıkış talebi onaylandı." if approved else "Erken çıkış talebi reddedildi."}
+            "message": "Erken çıkış onaylandı. Personel çıkış butonuyla gerçek saat ve konumu kaydedecek." if approved else "Erken çıkış talebi reddedildi."}
 
 
 def _req_hhmm(v: Any, label: str) -> str:

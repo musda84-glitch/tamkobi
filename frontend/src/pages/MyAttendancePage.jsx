@@ -6,7 +6,7 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Cal
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { selfAttendanceGeoMode } from "../utils/attendanceSelf";
+import { earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked } from "../utils/attendanceSelf";
 import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
@@ -188,7 +188,7 @@ export default function MyAttendancePage() {
             <button
               type="button"
               onClick={onCheckoutClick}
-              disabled={!!busy || !t?.check_in || !!t?.check_out}
+              disabled={!!busy || !(data?.checkout_unlocked != null ? data.checkout_unlocked : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: data?.now, scheduleEnd: sch?.end, expectedEnd: t?.expected_end, earlyApproved: earlyLeaveApproved(t) }))}
               className={`flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition ${outArmed ? "bg-amber-500 hover:bg-amber-400 ring-2 ring-amber-200 ring-offset-2 ring-offset-slate-900" : "bg-rose-500 hover:bg-rose-400"}`}
               data-testid="my-att-checkout"
               aria-pressed={outArmed}
@@ -233,7 +233,7 @@ export default function MyAttendancePage() {
                   );
                 }
                 if (elr.status === "approved" || t.early_leave_approved) {
-                  return <div className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1.5" data-testid="my-att-early-approved"><DoorOpen className="w-3.5 h-3.5" /> Erken çıkış onaylandı — çıkış yapabilirsiniz{elr.planned_time ? ` (plan ${elr.planned_time})` : ""}</div>;
+                  return <div className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1.5" data-testid="my-att-early-approved"><DoorOpen className="w-3.5 h-3.5" /> Erken çıkış onaylandı — çıkış butonu açık. Saat ve konum basınca kaydedilir{elr.planned_time ? ` (plan ${elr.planned_time})` : ""}</div>;
                 }
                 if (elr.status === "rejected") {
                   return <div className="text-xs text-rose-200" data-testid="my-att-early-rejected">Erken çıkış talebi reddedildi{elr.decision_note ? `: ${elr.decision_note}` : ""}. Yeniden talep edebilirsiniz.</div>;

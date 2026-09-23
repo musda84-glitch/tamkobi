@@ -4,7 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { MapPin, LogIn, LogOut, Loader2, Crosshair, Smartphone } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
-import { selfAttendanceGeoMode } from "../utils/attendanceSelf";
+import { earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked } from "../utils/attendanceSelf";
 
 export const getPos = () => new Promise((res, rej) => { if (!navigator.geolocation) return rej(new Error("Bu cihaz konum desteklemiyor.")); navigator.geolocation.getCurrentPosition((p) => res(p.coords), (e) => rej(new Error(e.code === 1 ? "Konum izni verilmedi. Tarayıcı ayarlarından konum iznini açın." : "Konum alınamadı.")), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }); });
 
@@ -63,7 +63,7 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => act("check_in")} disabled={!!busy || !st?.employee || !!t?.check_in || (!st?.location && st?.workplace?.kind !== "task")} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 rounded-xl text-xs font-bold" data-testid="geo-checkin-btn">{busy === "check_in" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />} Giriş Yap</button>
-        <button onClick={() => act("check_out")} disabled={!!busy || !st?.employee || !t?.check_in || !!t?.check_out} className="flex items-center gap-1.5 px-4 py-2 bg-rose-500 hover:bg-rose-400 disabled:opacity-40 rounded-xl text-xs font-bold" data-testid="geo-checkout-btn">{busy === "check_out" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />} Çıkış Yap</button>
+        <button onClick={() => act("check_out")} disabled={!!busy || !st?.employee || !(st?.checkout_unlocked != null ? st.checkout_unlocked : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: st?.now, scheduleEnd: st?.schedule?.end, expectedEnd: t?.expected_end, earlyApproved: earlyLeaveApproved(t) }))} className="flex items-center gap-1.5 px-4 py-2 bg-rose-500 hover:bg-rose-400 disabled:opacity-40 rounded-xl text-xs font-bold" data-testid="geo-checkout-btn">{busy === "check_out" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />} {earlyLeaveApproved(t) && t && !t.check_out ? "Çıkış (onaylı erken)" : "Çıkış Yap"}</button>
         {isAdmin && <button onClick={pin} disabled={!!busy} className="flex items-center gap-1.5 px-3 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-semibold" title="Bulunduğunuz noktayı firma konumu olarak kaydet" data-testid="geo-pin-btn">{busy === "pin" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crosshair className="w-4 h-4" />} {st?.location ? "Firma Konumunu Güncelle" : "Firma Konumunu Sabitle"}</button>}
       </div>
     </div>

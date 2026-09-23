@@ -9123,12 +9123,17 @@ async def geo_status(company_id: str = "comp_nexus_main_01", user: dict = Depend
     today = attendance._today(attendance.merge_schedule(company, emp))
     rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": today}) if emp else None
     workplace = await attendance.workplace_for_employee(emp, company, today) if emp else None
+    sched = attendance.merge_schedule(company, emp)
+    now_s = attendance.now_hm(sched)
     return {
         "location": attendance.geo_target(workplace) if workplace else company.get("location"),
         "company_location": company.get("location"),
         "workplace": workplace,
         "employee": {"id": emp["_id"], "full_name": emp["full_name"]} if emp else None,
         "today": clean_doc(rec) if rec else None,
+        "now": now_s,
+        "schedule": {"end": (sched or {}).get("end")},
+        "checkout_unlocked": attendance.self_checkout_unlocked(rec, sched, now_s),
     }
 
 @api_router.post("/personnel/attendance/geo")
