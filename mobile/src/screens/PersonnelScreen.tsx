@@ -935,7 +935,7 @@ export function PersonnelScreen() {
             <View key={`${it.kind}-${it.id}`} style={{ paddingTop: 8, gap: 4, borderTopWidth: 1, borderTopColor: colors.border }} testID={`personnel-request-${it.kind}-${it.id}`}>
               <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
               {it.detail ? <Muted>{it.detail}</Muted> : null}
-              {it.kind !== "dispute" && canEdit ? (
+              {canEdit ? (
                 <Row style={{ flexWrap: "wrap" }}>
                   {requestDecisionActions(it.kind).map((btn) => (
                     <PrimaryButton
@@ -946,10 +946,13 @@ export function PersonnelScreen() {
                       onPress={() => decideRequest(it, btn.decision)}
                     />
                   ))}
+                  {it.kind === "dispute" ? (
+                    <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`view-req-${it.id}`} onPress={() => setTab("attendance")} />
+                  ) : null}
                 </Row>
-              ) : (
+              ) : it.kind === "dispute" ? (
                 <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`view-req-${it.id}`} onPress={() => setTab("attendance")} />
-              )}
+              ) : null}
             </View>
           ))}
         </Card>
@@ -1086,7 +1089,7 @@ export function PersonnelScreen() {
                     {requestsForEmployee(pendingReqs, eid).slice(0, 3).map((it) => (
                       <View key={`${it.kind}-${it.id}`} style={{ gap: 4 }}>
                         <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
-                        {it.kind !== "dispute" && canEdit ? (
+                        {canEdit ? (
                           <Row style={{ flexWrap: "wrap" }}>
                             {requestDecisionActions(it.kind).map((btn) => (
                               <PrimaryButton
@@ -1097,6 +1100,9 @@ export function PersonnelScreen() {
                                 onPress={() => decideRequest(it, btn.decision)}
                               />
                             ))}
+                            {it.kind === "dispute" ? (
+                              <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`card-view-dispute-${it.id}`} onPress={() => setTab("attendance")} />
+                            ) : null}
                           </Row>
                         ) : null}
                       </View>

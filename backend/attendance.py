@@ -1778,6 +1778,12 @@ async def confirm_attendance(att_id: str, request: Request, req: Dict[str, Any] 
     upd = {"employee_confirmed": True, "employee_confirmed_at": _now()}
     if note:
         upd["employee_note"] = note
+    # Personel itiraz sonrası "yine de onayla" derse kutudan düşür
+    if (rec.get("dispute_note") or "").strip() and not rec.get("dispute_resolved"):
+        upd["dispute_resolved"] = True
+        upd["dispute_resolution"] = "employee_confirmed"
+        upd["dispute_resolved_at"] = _now()
+        upd["dispute_resolved_by"] = str(user.get("_id") or user.get("id") or "")
     await _db.attendance.update_one({"_id": att_id}, {"$set": upd})
     return _clean(await _db.attendance.find_one({"_id": att_id}))
 
@@ -1794,11 +1800,83 @@ async def dispute_attendance(att_id: str, req: Dict[str, Any], request: Request)
     note = (req.get("note") or "").strip()
     if not note:
         raise HTTPException(status_code=400, detail="İtiraz açıklaması gerekli.")
-    await _db.attendance.update_one({"_id": att_id}, {"$set": {"employee_confirmed": False, "dispute_note": note, "disputed_at": _now()}})
+    await _db.attendance.update_one(
+        {"_id": att_id},
+        {
+            "$set": {
+                "employee_confirmed": False,
+                "dispute_note": note,
+                "disputed_at": _now(),
+                "dispute_resolved": False,
+                "dispute_resolution": None,
+                "dispute_resolved_at": None,
+                "dispute_resolved_by": None,
+                "dispute_decision_note": None,
+            }
+        },
+    )
     import notify as _notify
     await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": rec["company_id"], "type": "attendance_dispute", "title": "Puantaj itirazı",
                                         "message": f"{rec.get('employee_name')} {rec.get('date')} kaydına itiraz etti: {note[:120]}", "link": "/personnel?tab=attendance", "is_read": False, "created_at": _now()})
     return _clean(await _db.attendance.find_one({"_id": att_id}))
+
+
+@router.post("/personnel/attendance/{att_id}/dispute-decision")
+async def decide_attendance_dispute(att_id: str, req: Dict[str, Any], request: Request):
+    """Yönetici puantaj itirazını sonlandırır: Düzeltildi (approve) veya Reddet."""
+    user = await _current_user(request)
+    if user.get("role") not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="İtirazı yanıtlamak için yönetici yetkisi gerekir.")
+    rec = await _db.attendance.find_one({"_id": att_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+    note = (rec.get("dispute_note") or "").strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="Bu kayıtta açık itiraz yok.")
+    if rec.get("dispute_resolved"):
+        raise HTTPException(status_code=400, detail="İtiraz zaten sonlandırılmış.")
+    decision = (req.get("decision") or "").strip().lower()
+    if decision not in ("approve", "reject", "approved", "rejected", "resolve", "dismiss"):
+        raise HTTPException(status_code=400, detail="decision: approve (düzeltildi) veya reject olmalı.")
+    accepted = decision in ("approve", "approved", "resolve")
+    decision_note = (req.get("note") or "")[:300]
+    upd = {
+        "dispute_resolved": True,
+        "dispute_resolution": "accepted" if accepted else "rejected",
+        "dispute_resolved_at": _now(),
+        "dispute_resolved_by": str(user.get("_id") or user.get("id") or ""),
+        "dispute_decision_note": decision_note,
+        "updated_at": _now(),
+    }
+    # Düzeltildi: personel güncel saatleri yeniden onaylasın
+    if accepted:
+        upd["employee_confirmed"] = False
+        upd["employee_confirmed_at"] = None
+    await _db.attendance.update_one({"_id": att_id}, {"$set": upd})
+    import notify as _notify
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id")}) or {}
+    title = "Puantaj itirazı düzeltildi" if accepted else "Puantaj itirazı reddedildi"
+    msg = (
+        f"{rec.get('employee_name')} — {rec.get('date') or ''} itirazı "
+        f"{'düzeltildi; kaydı yeniden onaylayın' if accepted else 'reddedildi'}."
+        + (f" {decision_note}" if decision_note else "")
+    ).strip()
+    await _notify.insert_notification(_db, {
+        "_id": str(uuid.uuid4()),
+        "company_id": rec["company_id"],
+        "user_id": emp.get("user_id") or rec.get("employee_id"),
+        "type": "attendance_dispute_decision",
+        "title": title,
+        "message": msg,
+        "link": "/mesai",
+        "is_read": False,
+        "created_at": _now(),
+    })
+    return {
+        "status": "success",
+        "record": _clean(await _db.attendance.find_one({"_id": att_id})),
+        "message": "İtiraz düzeltildi olarak kapatıldı." if accepted else "İtiraz reddedildi.",
+    }
 
 
 # ---------- Yönetici bildirimleri ----------

@@ -29,7 +29,7 @@ const TYPE_ROLES: Record<string, string[]> = {
 export const TILE_NOTIFICATION_TYPES: Record<string, string[]> = {
   orders: ["b2b_order"],
   sevk: ["order_pick_missing", "order_pick_production"],
-  personnel: ["leave_request", "advance_request", "attendance_late", "attendance_missing", "attendance_dispute", "early_leave_request", "early_leave_decision", "intraday_leave_request", "intraday_leave_decision"],
+  personnel: ["leave_request", "advance_request", "attendance_late", "attendance_missing", "attendance_dispute", "attendance_dispute_decision", "early_leave_request", "early_leave_decision", "intraday_leave_request", "intraday_leave_decision"],
   banking: ["cash_approval", "bank_sync"],
 };
 

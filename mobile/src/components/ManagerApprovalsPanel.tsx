@@ -162,7 +162,19 @@ export function ManagerApprovalsPanel({
                     {it.employee_name || "Personel"} · {requestKindLabel(it.kind)}
                   </Text>
                   {it.kind === "dispute" ? (
-                    <Chip title="Puantajda aç" color={colors.secondary} testID={`home-approval-view-${it.id}`} onPress={() => goHref("/personnel")} />
+                    <>
+                      {requestDecisionActions(it.kind).map((btn) => (
+                        <Chip
+                          key={btn.key}
+                          title={busy ? "…" : btn.title}
+                          color={btn.color === "danger" ? colors.danger : colors.primary}
+                          testID={`home-approval-${btn.key}-${it.kind}-${it.id}`}
+                          onPress={() => decideStaff(it, btn.decision)}
+                          disabled={busy}
+                        />
+                      ))}
+                      <Chip title="Puantajda aç" color={colors.secondary} testID={`home-approval-view-${it.id}`} onPress={() => goHref("/personnel")} />
+                    </>
                   ) : (
                     <>
                       {requestDecisionActions(it.kind).map((btn) => (

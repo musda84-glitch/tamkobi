@@ -72,6 +72,13 @@ export const AttendancePanel = ({ companyId }) => {
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
   };
+  const decideDispute = async (id, decision) => {
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/dispute-decision`, { decision }, { withCredentials: true });
+      toast.success(r.data.message || (decision === "approve" ? "İtiraz düzeltildi." : "İtiraz reddedildi."));
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
+  };
 
   if (!data) return null;
   return (
@@ -149,7 +156,25 @@ export const AttendancePanel = ({ companyId }) => {
               <button type="button" onClick={() => decideIntraday(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-intraday-reject-${r.id}`}>Reddet</button>
             </span>
           )}
-          <span className="ml-auto flex items-center gap-2 text-[10px]">{r.source === "self" && <span className="text-slate-400">telefon/self</span>}{r.dispute_note ? <span className="inline-flex items-center gap-1 text-rose-600 font-semibold" title={r.dispute_note}><MessageSquareWarning className="w-3 h-3" /> İtiraz: {r.dispute_note}</span> : r.employee_confirmed ? <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3 h-3" /> Personel onayladı</span> : <span className="text-amber-600 font-semibold">Onay bekliyor</span>}</span>
+          <span className="ml-auto flex items-center gap-2 text-[10px] flex-wrap justify-end">
+            {r.source === "self" && <span className="text-slate-400">telefon/self</span>}
+            {r.dispute_note && !r.dispute_resolved ? (
+              <span className="inline-flex items-center gap-1.5 text-rose-600 font-semibold" data-testid={`att-dispute-pending-${r.id}`}>
+                <MessageSquareWarning className="w-3 h-3" />
+                <span title={r.dispute_note}>İtiraz: {r.dispute_note}</span>
+                <button type="button" onClick={() => decideDispute(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-dispute-approve-${r.id}`}>Düzeltildi</button>
+                <button type="button" onClick={() => decideDispute(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-dispute-reject-${r.id}`}>Reddet</button>
+              </span>
+            ) : r.dispute_note && r.dispute_resolved ? (
+              <span className="inline-flex items-center gap-1 text-slate-500 font-semibold" title={r.dispute_note}>
+                <MessageSquareWarning className="w-3 h-3" /> İtiraz kapatıldı{r.dispute_resolution === "rejected" ? " (red)" : ""}
+              </span>
+            ) : r.employee_confirmed ? (
+              <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3 h-3" /> Personel onayladı</span>
+            ) : (
+              <span className="text-amber-600 font-semibold">Onay bekliyor</span>
+            )}
+          </span>
         </div>))}{data.records.length === 0 && <div className="p-6 text-center text-slate-400">Bu ay kayıt yok.</div>}</div></div>
       
       {otAssign && (

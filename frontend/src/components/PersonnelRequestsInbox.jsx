@@ -28,6 +28,7 @@ export function EmployeeRequestChips({
   onDecideAdvance,
   onDecideYevmiye,
   onDecideLocationExit,
+  onDecideDispute,
   onViewDispute,
   maxVisible = 3,
 }) {
@@ -122,9 +123,17 @@ export function EmployeeRequestChips({
                 </>
               )}
               {it.kind === "dispute" && (
-                <button type="button" onClick={() => onViewDispute?.(it)} className="px-1.5 py-0.5 rounded-md border border-slate-200 text-[9px] font-bold text-slate-700 hover:bg-white" data-testid={`card-view-dispute-${it.id}`}>
-                  Puantajda aç
-                </button>
+                <>
+                  <button type="button" disabled={busy} onClick={() => onDecideDispute?.(it.id, "approve")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-dispute-${it.id}`}>
+                    <Check className="w-2.5 h-2.5" /> Düzeltildi
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideDispute?.(it.id, "reject")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-dispute-${it.id}`}>
+                    <X className="w-2.5 h-2.5" /> Reddet
+                  </button>
+                  <button type="button" onClick={() => onViewDispute?.(it)} className="px-1.5 py-0.5 rounded-md border border-slate-200 text-[9px] font-bold text-slate-700 hover:bg-white" data-testid={`card-view-dispute-${it.id}`}>
+                    Puantajda aç
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -238,6 +247,20 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/intraday-leave-decision`, { decision });
       toast.success(r.data?.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const decideDispute = async (id, decision) => {
+    setBusyId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/dispute-decision`, { decision });
+      toast.success(r.data?.message || (decision === "approve" ? "İtiraz düzeltildi." : "İtiraz reddedildi."));
       await load();
       onChanged?.();
     } catch (err) {
@@ -371,9 +394,17 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                     </>
                   )}
                   {it.kind === "dispute" && (
-                    <button type="button" onClick={() => navigate(it.link || "/personnel?tab=attendance")} className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] font-bold text-slate-700 hover:bg-slate-50" data-testid={`inbox-view-dispute-${it.id}`}>
-                      Puantajda aç
-                    </button>
+                    <>
+                      <button type="button" disabled={busy} onClick={() => decideDispute(it.id, "approve")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-dispute-${it.id}`}>
+                        <Check className="w-3 h-3" /> Düzeltildi
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideDispute(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-dispute-${it.id}`}>
+                        <X className="w-3 h-3" /> Reddet
+                      </button>
+                      <button type="button" onClick={() => navigate(it.link || "/personnel?tab=attendance")} className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] font-bold text-slate-700 hover:bg-slate-50" data-testid={`inbox-view-dispute-${it.id}`}>
+                        Puantajda aç
+                      </button>
+                    </>
                   )}
                 </div>
               </li>

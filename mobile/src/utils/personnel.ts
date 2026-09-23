@@ -245,6 +245,9 @@ export function pendingRequestDecision(
   if (it.kind === "location_exit") {
     return { path: `/personnel/attendance/${id}/location-exit-decision`, body: locationExitDecisionBody(approved) };
   }
+  if (it.kind === "dispute") {
+    return { path: `/personnel/attendance/${id}/dispute-decision`, body: { decision: approved ? "approve" : "reject" } };
+  }
   return null;
 }
 
@@ -257,12 +260,20 @@ export function pendingRequestDecisionMessage(it: PendingRequest, approved: Requ
   if (it.kind === "yevmiye_adjustment") {
     return approved ? "Yevmiye onaylandı." : "Yevmiye kart ücretiyle bırakıldı.";
   }
+  if (it.kind === "dispute") {
+    return approved ? "İtiraz düzeltildi olarak kapatıldı." : "İtiraz reddedildi.";
+  }
   const label = requestKindLabel(it.kind);
   return approved ? `${label} onaylandı.` : `${label} reddedildi.`;
 }
 
 export function requestDecisionActions(kind?: string | null): { key: string; title: string; decision: RequestDecision; color: "primary" | "secondary" | "danger" | "warning" }[] {
-  if (kind === "dispute") return [];
+  if (kind === "dispute") {
+    return [
+      { key: "approve", title: "Düzeltildi", decision: true, color: "primary" },
+      { key: "reject", title: "Reddet", decision: false, color: "danger" },
+    ];
+  }
   if (kind === "location_exit") {
     return [
       { key: "ack", title: "Haberim var", decision: "ack", color: "secondary" },

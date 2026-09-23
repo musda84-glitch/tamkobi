@@ -477,6 +477,19 @@ export default function PersonnelPage() {
     }
   };
 
+  const decideDispute = async (id, decision) => {
+    setBusyReqId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/dispute-decision`, { decision });
+      toast.success(r.data?.message || (decision === "approve" ? "İtiraz düzeltildi." : "İtiraz reddedildi."));
+      await afterRequestDecision();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyReqId(null);
+    }
+  };
+
   const decideLocationExit = async (id, decision, wageDeduction) => {
     setBusyReqId(id);
     try {
@@ -641,6 +654,7 @@ export default function PersonnelPage() {
               onDecideAdvance={decideAdvance}
               onDecideYevmiye={decideYevmiye}
               onDecideLocationExit={decideLocationExit}
+              onDecideDispute={decideDispute}
               onViewDispute={() => setTab("attendance")}
             />
 
