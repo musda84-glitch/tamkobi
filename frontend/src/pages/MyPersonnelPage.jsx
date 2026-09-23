@@ -155,9 +155,11 @@ export default function MyPersonnelPage() {
         data-testid="my-personnel-advance-toggle"
       >
         <Wallet className="w-3.5 h-3.5" /> Avans talebi{pendingAdvance ? " · bekleyen talep" : ""}
-        <span className="ml-auto inline-flex items-center gap-1 normal-case tracking-normal text-amber-800">
-          {advanceOpen ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+        <span className="ml-auto inline-flex items-center gap-1.5 normal-case tracking-normal text-amber-800 font-bold">
           {advanceOpen ? "Gizle" : "Göster"}
+          <span className="inline-flex w-7 h-7 rounded-full bg-amber-200 items-center justify-center">
+            {advanceOpen ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </span>
         </span>
       </button>
       {!advanceOpen ? (
