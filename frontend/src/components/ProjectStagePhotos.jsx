@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ImagePlus, X } from "lucide-react";
+import { Eye, EyeOff, ImagePlus, X } from "lucide-react";
+import { photoFaded } from "../utils/assignedDuty";
 import { API_URL } from "../context/AuthContext";
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
@@ -86,7 +87,7 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
   return (
     <div className="space-y-1.5 border border-slate-200 rounded-xl p-2 bg-slate-50/70" data-testid={`project-stage-photos-${number}`}>
       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Aşama fotoğrafları</div>
-      <p className="text-[10px] text-slate-400 leading-snug">Personel yüklemeleri onay bekler. <b>Görsün / Görmesin</b> ile müşteri takip sayfasını açın veya kapatın.</p>
+      <p className="text-[10px] text-slate-400 leading-snug">Personel yükleri silik durur. Fotoğrafa basılı tutun (veya üzerine gelin): <b>göz</b> görsün, <b>üstü çizili göz</b> görmesin.</p>
       {(() => {
         const current = (stages || []).find((s) => s.key === project.status) || (stages || [])[0];
         if (!current) return null;
@@ -106,14 +107,18 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
             <span title={stage.label} className={`h-10 flex items-center whitespace-nowrap text-[10px] font-semibold px-1.5 rounded ${stage.key === project.status ? "bg-emerald-100 text-emerald-800" : "bg-white text-slate-500 border border-slate-200"}`}>{stage.label}</span>
             <div className="flex items-center gap-1.5 flex-wrap min-w-0">
             {items.map((item) => (
-              <span key={item.url} className="relative inline-flex">
-                <HoverImageThumb src={item.url} className="w-10 h-10 rounded-lg object-cover border bg-white" testId={`project-stage-thumb-${number}`} />
+              <span key={item.url} className="relative inline-flex group">
+                <HoverImageThumb src={item.url} className={`w-10 h-10 rounded-lg object-cover border bg-white ${photoFaded(item) ? "opacity-35" : ""}`} testId={`project-stage-thumb-${number}`} />
                 <button type="button" onClick={() => remove(item.url)} className="absolute -top-1 -right-1 bg-white border border-slate-200 rounded-full p-0.5 text-slate-400 hover:text-rose-600" title="Kaldır" data-testid={`project-stage-remove-${number}`}>
                   <X className="w-2.5 h-2.5" />
                 </button>
-                <div className="absolute left-0 right-0 -bottom-4 flex justify-center gap-1">
-                  <button type="button" onClick={() => setVisibility(item.url, true)} className={`text-[8px] font-bold ${item.visibility === "show" || item.customer_visible ? "text-emerald-700" : "text-slate-400"}`} data-testid={`project-stage-show-${number}`}>Görsün</button>
-                  <button type="button" onClick={() => setVisibility(item.url, false)} className={`text-[8px] font-bold ${item.visibility === "hide" ? "text-rose-600" : "text-slate-400"}`} data-testid={`project-stage-hide-${number}`}>Görmesin</button>
+                <div className="absolute inset-0 rounded-lg bg-slate-900/55 hidden group-hover:flex group-focus-within:flex items-center justify-center gap-1">
+                  <button type="button" onClick={() => setVisibility(item.url, true)} title="Görsün" className="w-5 h-5 rounded-full bg-white text-emerald-700 flex items-center justify-center" data-testid={`project-stage-show-${number}`}>
+                    <Eye className="w-3 h-3" />
+                  </button>
+                  <button type="button" onClick={() => setVisibility(item.url, false)} title="Görmesin" className="w-5 h-5 rounded-full bg-white text-rose-600 flex items-center justify-center" data-testid={`project-stage-hide-${number}`}>
+                    <EyeOff className="w-3 h-3" />
+                  </button>
                 </div>
               </span>
             ))}

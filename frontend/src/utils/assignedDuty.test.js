@@ -15,6 +15,7 @@ import {
   dutyShowSite,
   dutyWorkflowProgress,
   pendingDutyPhotoCount,
+  photoFaded,
   photoVisibility,
   photoVisibilityLabel,
 } from "./assignedDuty";
@@ -52,6 +53,7 @@ describe("assigned duty field extras", () => {
     expect(workMapsLink(t)).toContain("40.1");
     expect(dutyWorkflowProgress(t)).toEqual({ done: 1, total: 2 });
     expect(photoVisibility(t.photos[0])).toBe("pending");
+    expect(photoFaded(t.photos[0])).toBe(true);
     expect(photoVisibilityLabel(t.photos[0])).toBe("Onay bekliyor");
     expect(pendingDutyPhotoCount([t])).toBe(1);
   });

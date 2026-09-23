@@ -1,3 +1,4 @@
+import { photoVisibility } from "./assignedDuty";
 import { normalizeProjectStages, type ProjectStage } from "./projectStages";
 
 export const SURVEY_STAGE_PHOTO_LABEL = "Keşif fotoğrafı";
@@ -160,6 +161,15 @@ export function stagePhotoRows(
     items: [...(by.other || []), ...loose],
   });
   return rows;
+}
+
+/** Personel yükü / onaysız foto müşteriye açılana kadar silik. */
+export function stagePhotoFaded(photo?: StagePhoto | null): boolean {
+  return photoVisibility(photo) !== "show";
+}
+
+export function stagePhotoHoldHint(): string {
+  return "Basılı tutun: müşteri görsün / görmesin";
 }
 
 export function stagePhotoCount(project: { stage_photos?: StagePhoto[]; images?: string[] } | null | undefined): number {

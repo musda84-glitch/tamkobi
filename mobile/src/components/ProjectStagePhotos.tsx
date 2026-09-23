@@ -15,6 +15,8 @@ import {
   appendStagePhoto,
   removeStagePhoto,
   stagePhotoCount,
+  stagePhotoFaded,
+  stagePhotoHoldHint,
   stagePhotoRows,
   SURVEY_STAGE_PHOTO_LABEL,
   type StagePhoto,
@@ -53,6 +55,7 @@ export function ProjectStagePhotos({
   const rows = stagePhotoRows(project, stages);
   const count = stagePhotoCount(project);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [holdUrl, setHoldUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const pick = async (stage: { key: string; label: string }, fromCamera: boolean) => {
@@ -133,7 +136,7 @@ export function ProjectStagePhotos({
       <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <View style={{ flex: 1, paddingRight: 8 }}>
           <Text style={{ fontWeight: "800", color: colors.text, fontSize: 12 }}>Aşama fotoğrafları</Text>
-          <Muted>Müşteri takip sayfasında, yapılan işin altında görünür.</Muted>
+          <Muted>Müşteri takip sayfasında, yapılan işin altında görünür. {stagePhotoHoldHint()}</Muted>
         </View>
         {onPreview ? (
           <Pressable onPress={onPreview} testID={`${tid}-preview`} style={{ backgroundColor: "#fff", borderWidth: 1, borderColor: "#BAE6FD", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6 }}>
@@ -179,14 +182,23 @@ export function ProjectStagePhotos({
                 style={{ flex: 1, minWidth: CELL, maxHeight: CELL + 8 }}
                 contentContainerStyle={{ flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 2 }}
               >
-                {row.items.map((item) => (
+                {row.items.map((item) => {
+                  const faded = stagePhotoFaded(item);
+                  const holding = holdUrl === item.url;
+                  return (
                   <View key={item.url} style={{ position: "relative", width: CELL, height: CELL }}>
                     <Pressable
                       testID={`${tid}-thumb`}
-                      onPress={() => Linking.openURL(fileUrl(client.baseUrl, item.url)).catch(() => null)}
-                      style={{ width: CELL, height: CELL, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff" }}
+                      delayLongPress={280}
+                      onPress={() => {
+                        if (holding) { setHoldUrl(null); return; }
+                        Linking.openURL(fileUrl(client.baseUrl, item.url)).catch(() => null);
+                      }}
+                      onLongPress={editable ? () => setHoldUrl(item.url) : undefined}
+                      accessibilityLabel={faded ? "Müşteri görmüyor — basılı tutun" : "Müşteri görür"}
+                      style={{ width: CELL, height: CELL, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: faded ? "#CBD5E1" : colors.border, backgroundColor: "#fff" }}
                     >
-                      <Image source={{ uri: fileUrl(client.baseUrl, item.url) }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
+                      <Image source={{ uri: fileUrl(client.baseUrl, item.url) }} style={{ width: "100%", height: "100%", opacity: faded ? 0.35 : 1 }} contentFit="cover" />
                     </Pressable>
                     {editable ? (
                       <>
@@ -197,20 +209,36 @@ export function ProjectStagePhotos({
                         >
                           <Ionicons name="close" size={10} color={colors.danger} />
                         </Pressable>
-                        <View style={{ position: "absolute", left: 0, right: 0, bottom: -18, flexDirection: "row", justifyContent: "center", gap: 2 }}>
-                          <Pressable testID={`${tid}-show`} onPress={() => setVisibility(item.url, true)}>
-                            <Text style={{ fontSize: 8, fontWeight: "800", color: photoVisibility(item) === "show" ? colors.primaryHover : colors.muted }}>Görsün</Text>
-                          </Pressable>
-                          <Pressable testID={`${tid}-hide`} onPress={() => setVisibility(item.url, false)}>
-                            <Text style={{ fontSize: 8, fontWeight: "800", color: photoVisibility(item) === "hide" ? colors.danger : colors.muted }}>Görmesin</Text>
-                          </Pressable>
-                        </View>
+                        {holding ? (
+                          <View
+                            testID={`${tid}-hold-${item.url}`}
+                            style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, borderRadius: 8, backgroundColor: "rgba(15,23,42,0.55)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 }}
+                          >
+                            <Pressable
+                              testID={`${tid}-show`}
+                              accessibilityLabel="Görsün"
+                              onPress={() => { setVisibility(item.url, true); setHoldUrl(null); }}
+                              style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
+                            >
+                              <Ionicons name="eye" size={12} color={colors.primary} />
+                            </Pressable>
+                            <Pressable
+                              testID={`${tid}-hide`}
+                              accessibilityLabel="Görmesin"
+                              onPress={() => { setVisibility(item.url, false); setHoldUrl(null); }}
+                              style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: "#fff", alignItems: "center", justifyContent: "center" }}
+                            >
+                              <Ionicons name="eye-off" size={12} color={colors.danger} />
+                            </Pressable>
+                          </View>
+                        ) : null}
                       </>
                     ) : (
                       <Text style={{ fontSize: 8, fontWeight: "700", color: colors.muted }}>{photoVisibilityLabel(item)}</Text>
                     )}
                   </View>
-                ))}
+                  );
+                })}
               </ScrollView>
               {editable ? (
                 <View style={{ flexDirection: "row", flexShrink: 0, gap: 4 }}>
