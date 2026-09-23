@@ -291,8 +291,6 @@ export type B2BForgotResult = {
   message?: string;
   mail_status?: string;
   detail?: string;
-  reset_url?: string;
-  reset_token?: string;
 };
 
 export type B2BProduct = {

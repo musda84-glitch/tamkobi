@@ -168,7 +168,7 @@ export function LoginScreen() {
     try {
       const res = kind === "erp" ? await forgotErp(email.trim(), "login") : await forgotB2b(email.trim());
       setResetInfo(res);
-      if (res.reset_token) setResetToken(res.reset_token);
+      // reset_token istemciye dönülmez (e-posta doğrulamasını atlatır).
     } catch (err) {
       setError(apiErrorMessage(err, "İstek gönderilemedi."));
     } finally {
@@ -246,11 +246,8 @@ export function LoginScreen() {
                 <View style={styles.okBox} testID="login-forgot-result">
                   <Text style={styles.okText}>{resetInfo.message}</Text>
                   {resetInfo.mail_status === "sent" ? <Text style={styles.okText}>E-postanızı kontrol edin (1 saat geçerli).</Text> : null}
-                  {resetInfo.detail && resetInfo.mail_status !== "sent" ? <Text style={styles.okText}>{resetInfo.detail}</Text> : null}
-                  {resetInfo.reset_token ? (
-                    <Pressable onPress={() => { setMode("erp-reset"); setError(null); }} testID="login-forgot-link">
-                      <Text style={[styles.okText, { fontWeight: "800", textDecorationLine: "underline" }]}>E-posta gönderilemedi — şifreyi buradan sıfırlayın</Text>
-                    </Pressable>
+                  {resetInfo.mail_status && resetInfo.mail_status !== "sent" ? (
+                    <Text style={styles.okText} testID="login-forgot-mail-fail">{resetInfo.detail || "E-posta gönderilemedi. Mail ayarlarını kontrol edip tekrar deneyin."}</Text>
                   ) : null}
                 </View>
               ) : null}
@@ -286,11 +283,8 @@ export function LoginScreen() {
                 <View style={styles.okBox} testID="b2b-forgot-result">
                   <Text style={styles.okText}>{resetInfo.message}</Text>
                   {resetInfo.mail_status === "sent" ? <Text style={styles.okText}>E-postanızı kontrol edin (1 saat geçerli).</Text> : null}
-                  {resetInfo.detail && resetInfo.mail_status !== "sent" ? <Text style={styles.okText}>{resetInfo.detail}</Text> : null}
-                  {resetInfo.reset_token ? (
-                    <Pressable onPress={() => { setMode("b2b-reset"); setError(null); }} testID="b2b-forgot-link">
-                      <Text style={[styles.okText, { fontWeight: "800", textDecorationLine: "underline" }]}>E-posta gönderilemedi — şifreyi buradan sıfırlayın</Text>
-                    </Pressable>
+                  {resetInfo.mail_status && resetInfo.mail_status !== "sent" ? (
+                    <Text style={styles.okText} testID="b2b-forgot-mail-fail">{resetInfo.detail || "E-posta gönderilemedi. Mail ayarlarını kontrol edip tekrar deneyin."}</Text>
                   ) : null}
                 </View>
               ) : null}

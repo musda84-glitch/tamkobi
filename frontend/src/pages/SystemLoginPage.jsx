@@ -67,7 +67,9 @@ export default function SystemLoginPage() {
             <div className="text-xs text-emerald-200 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2 space-y-1" data-testid="sys-forgot-result">
               <div>{resetInfo.message}</div>
               {resetInfo.mail_status === "sent" && <div>E-postanızı kontrol edin (1 saat geçerli).</div>}
-              {resetInfo.reset_url && <a href={resetInfo.reset_url} className="block font-semibold text-amber-300 underline" data-testid="sys-forgot-link">E-posta gönderilemedi — şifreyi buradan sıfırlayın</a>}
+              {resetInfo.mail_status && resetInfo.mail_status !== "sent" && (
+                <div className="text-amber-200" data-testid="sys-forgot-mail-fail">{resetInfo.detail || "E-posta gönderilemedi. Mail ayarlarını kontrol edip tekrar deneyin."}</div>
+              )}
             </div>
           )}
           <button disabled={busy} className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-60" data-testid="sys-forgot-submit"><KeyRound className="w-4 h-4" /> {busy ? "Gönderiliyor…" : "Sıfırlama Bağlantısı Gönder"}</button>
