@@ -12279,6 +12279,25 @@ async def employee_card(emp_id: str):
     expected = attendance.expected_work_dates(month, schedule.get("work_days"), emp.get("start_date"), emp.get("end_date"))
     perf = attendance.performance_scores(att, leaves, tasks, work_orders, expected, month)
     workplace = attendance.workplace_payload(company.get("location"), attendance.pick_field_assignment(tasks, attendance._today(schedule)))
+    role_names = {}
+    if user or invite:
+        await rbac.ensure_roles(emp.get("company_id"))
+        async for r in db.roles.find({"company_id": emp.get("company_id")}, {"code": 1, "name": 1}):
+            if r.get("code"):
+                role_names[r["code"]] = r.get("name") or r["code"]
+    user_payload = None
+    if user:
+        user_payload = {
+            "id": user["_id"],
+            "email": user.get("email"),
+            "role": user.get("role"),
+            "role_name": role_names.get(user.get("role"), user.get("role")),
+            "is_active": user.get("is_active", True),
+            "last_login_at": user.get("last_login_at"),
+        }
+    invite_payload = clean_doc(invite) if invite else None
+    if invite_payload:
+        invite_payload["role_name"] = role_names.get(invite_payload.get("role"), invite_payload.get("role"))
     return {"employee": clean_doc(emp), "payrolls": payrolls, "leaves": leaves, "bonuses": bonuses,
             "leave_balance": {"annual": emp.get("annual_leave_days", 14), "used": used or emp.get("used_leave_days", 0), "remaining": emp.get("annual_leave_days", 14) - (used or emp.get("used_leave_days", 0)), "pending": sum(1 for l in leaves if l.get("status") == "pending")},
             "attendance": {"month": month, **att_sum},
@@ -12288,8 +12307,8 @@ async def employee_card(emp_id: str):
             "tasks": tasks,
             "workplace": workplace,
             "documents": [{**d, "url": f"/api/files/{d['storage_path']}"} for d in docs],
-            "user": {"id": user["_id"], "email": user.get("email"), "role": user.get("role"), "is_active": user.get("is_active", True), "last_login_at": user.get("last_login_at")} if user else None,
-            "pending_invite": clean_doc(invite) if invite else None,
+            "user": user_payload,
+            "pending_invite": invite_payload,
             "totals": {"paid_salary": round(sum(p.get("net_salary", 0) for p in payrolls if p.get("status") == "paid"), 2), "bonus_total": round(sum(b.get("amount", 0) for b in bonuses), 2)},
             "balance": await _employee_receivable({**emp, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]}, payrolls, bonuses, month)}
 

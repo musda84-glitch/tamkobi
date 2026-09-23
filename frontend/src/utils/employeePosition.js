@@ -14,3 +14,19 @@ export function positionOptionsFromRoles(roles = [], current = "") {
   }
   return opts;
 }
+
+/** Pozisyon adına göre rol kodu (Sistem Kullanıcısı davet/oluşturma için). */
+export function roleCodeFromPosition(roles = [], position = "", fallback = "sales") {
+  const pos = String(position || "").trim().toLocaleLowerCase("tr");
+  if (!pos) return fallback;
+  for (const r of roles || []) {
+    const name = String(r?.name || "").trim().toLocaleLowerCase("tr");
+    const code = String(r?.code || "").trim();
+    if (name && name === pos && code) return code;
+  }
+  for (const r of roles || []) {
+    const code = String(r?.code || "").trim();
+    if (code && code.toLocaleLowerCase("tr") === pos) return code;
+  }
+  return fallback;
+}

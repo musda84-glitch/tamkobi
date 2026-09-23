@@ -760,6 +760,56 @@ export type AttendancePayload = {
   records?: AttendanceRecord[];
 };
 
+export type AttendanceRecordGroup<T = AttendanceRecord> = {
+  employee_id: string;
+  employee_name: string;
+  records: T[];
+};
+
+export function attendanceEmployeeKey(r?: { employee_id?: string; employee_name?: string } | null): string {
+  return String(r?.employee_id || r?.employee_name || "unknown");
+}
+
+export function groupAttendanceRecords<T extends { employee_id?: string; employee_name?: string; date?: string }>(
+  records?: T[] | null,
+): AttendanceRecordGroup<T>[] {
+  const map = new Map<string, AttendanceRecordGroup<T>>();
+  for (const r of records || []) {
+    const key = attendanceEmployeeKey(r);
+    const g = map.get(key);
+    if (g) g.records.push(r);
+    else {
+      map.set(key, {
+        employee_id: String(r.employee_id || key),
+        employee_name: r.employee_name || "Personel",
+        records: [r],
+      });
+    }
+  }
+  const groups = [...map.values()];
+  for (const g of groups) {
+    g.records.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  }
+  groups.sort((a, b) => a.employee_name.localeCompare(b.employee_name, "tr"));
+  return groups;
+}
+
+export function attendanceRecordsForEmployee<T extends { employee_id?: string; employee_name?: string; date?: string }>(
+  records: T[] | null | undefined,
+  employeeId?: string,
+  employeeName?: string,
+): T[] {
+  const key = attendanceEmployeeKey({ employee_id: employeeId, employee_name: employeeName });
+  return (records || [])
+    .filter((r) => attendanceEmployeeKey(r) === key)
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+}
+
+export function attendanceGroupToggleLabel(open: boolean, count = 0): string {
+  const n = Number(count) || 0;
+  return open ? `Kayıtları gizle (${n})` : `Kayıtlar (${n})`;
+}
+
 export type SalaryCalc = {
   gross?: number;
   sgk_employee?: number;

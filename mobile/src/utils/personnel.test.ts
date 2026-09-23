@@ -71,6 +71,9 @@ import {
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
   workplaceDetailsToggleIcon,
+  attendanceGroupToggleLabel,
+  attendanceRecordsForEmployee,
+  groupAttendanceRecords,
   employeeDutyBoard,
   employeeDutyHeadline,
   employeeCardChrome,
@@ -183,6 +186,16 @@ describe("employee draft", () => {
     expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);
     expect(companyBonusPayload("e1", "second_salary", "2000", "2026-09", "", "not").type).toBe("second_salary");
     expect(bonusesPeriodTotal([{ period: "2026-09", amount: 100 }, { period: "2026-08", amount: 50 }], "2026-09")).toBe(100);
+    expect(attendanceGroupToggleLabel(false, 3)).toBe("Kayıtlar (3)");
+    expect(attendanceGroupToggleLabel(true, 3)).toBe("Kayıtları gizle (3)");
+    const grouped = groupAttendanceRecords([
+      { id: "2", employee_id: "e1", employee_name: "Ali", date: "2026-09-20" },
+      { id: "1", employee_id: "e2", employee_name: "Zeynep", date: "2026-09-21" },
+      { id: "3", employee_id: "e1", employee_name: "Ali", date: "2026-09-23" },
+    ]);
+    expect(grouped.map((g) => g.employee_name)).toEqual(["Ali", "Zeynep"]);
+    expect(grouped[0].records.map((r) => r.id)).toEqual(["3", "2"]);
+    expect(attendanceRecordsForEmployee(grouped.flatMap((g) => g.records), "e2").map((r) => r.id)).toEqual(["1"]);
     expect(workplaceDetailsToggleLabel(false)).toBe("Aç");
     expect(workplaceDetailsToggleLabel(true)).toBe("Gizle");
     expect(workplaceDetailsToggleIcon(false)).toBe("chevron-down");

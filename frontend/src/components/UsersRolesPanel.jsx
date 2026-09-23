@@ -57,7 +57,8 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
           <div className="text-xs font-bold text-slate-700">Bekleyen davetler ({data.invites.length})</div>
           {data.invites.map((i) => (
             <div key={i.id} className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" data-testid={`invite-row-${i.email}`}>
-              <span className="font-semibold text-slate-800">{i.name || "-"}</span><span className="text-slate-500">{i.email}</span><span className="px-1.5 py-0.5 rounded bg-white border text-[10px]">{roles.find((r) => r.code === i.role)?.name || i.role}</span>
+              <span className="font-semibold text-slate-800">{i.name || "-"}</span><span className="text-slate-500">{i.email}</span><span className="px-1.5 py-0.5 rounded bg-white border text-[10px]">{roles.find((r) => r.code === i.role)?.name || i.role_name || i.role}</span>
+              {i.employee_name ? <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] font-semibold" data-testid={`invite-emp-${i.email}`} title="Bağlı personel">Personel: {i.employee_name}</span> : null}
               <span className={`text-[10px] ${i.mail?.status === "sent" ? "text-emerald-700" : "text-amber-700"}`}>{i.mail?.status === "sent" ? "E-posta gönderildi" : "E-posta gönderilmedi — linki iletin"}</span>
               <button onClick={() => copy(i.link)} className="ml-auto p-1 rounded hover:bg-white" title="Linki kopyala" data-testid={`invite-copy-${i.email}`}><Copy className="w-3.5 h-3.5" /></button>
               <button onClick={async () => { await axios.delete(`${API_URL}/users/invite/${i.id}`); reload(); }} className="p-1 rounded hover:bg-white text-rose-600" title="İptal" data-testid={`invite-cancel-${i.email}`}><Trash2 className="w-3.5 h-3.5" /></button>
@@ -66,12 +67,17 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
         </div>
       )}
       <table className="w-full text-xs" data-testid="users-table">
-        <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-2">ID</th><th className="text-left py-2">Kullanıcı</th><th className="text-left">Rol</th><th className="text-left">Durum</th><th className="text-left">Son Giriş</th><th className="text-right">İşlem</th></tr></thead>
+        <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-2">ID</th><th className="text-left py-2">Kullanıcı</th><th className="text-left">Personel</th><th className="text-left">Rol</th><th className="text-left">Durum</th><th className="text-left">Son Giriş</th><th className="text-right">İşlem</th></tr></thead>
         <tbody className="divide-y">
           {data.users.map((u) => (
             <tr key={u.id} data-testid={`user-row-${u.email}`}>
               <td className="py-2 font-mono text-[11px] font-semibold text-slate-700" data-testid={`user-number-${u.email}`}>{u.user_number || "—"}</td>
               <td className="py-2"><div className="font-semibold text-slate-900">{u.name}</div><div className="text-slate-500">{u.email}</div></td>
+              <td className="py-2" data-testid={`user-emp-${u.email}`}>
+                {u.employee_name
+                  ? <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] font-semibold" title="Personel kartına bağlı"><UserCheck className="w-3 h-3" />{u.employee_name}</span>
+                  : <span className="text-slate-300">—</span>}
+              </td>
               <td><select value={u.role} onChange={(e) => patch(u, { role: e.target.value }, "Rol güncellendi.")} className="border rounded-lg p-1.5 bg-white" data-testid={`user-role-${u.email}`}>{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></td>
               <td><button onClick={() => patch(u, { is_active: !u.is_active }, u.is_active ? "Kullanıcı pasife alındı." : "Kullanıcı aktif.")} className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${u.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`} data-testid={`user-active-${u.email}`}>{u.is_active ? "Aktif" : "Pasif"}</button></td>
               <td className="text-slate-500">{u.last_login_at ? new Date(u.last_login_at).toLocaleString("tr-TR") : "-"}</td>
