@@ -117,9 +117,26 @@ def test_kuveyt_normalize_secret_strips_paste_artifacts():
     assert bp._kuveyt_normalize_secret("\ufeffsec\u200b") == "sec"
 
 
+def test_kuveyt_normalize_mode():
+    assert bp._kuveyt_normalize_mode({"mode": "LIVE"}) == "live"
+    assert bp._kuveyt_normalize_mode({"mode": "Canlı"}) == "live"
+    assert bp._kuveyt_normalize_mode({"mode": "sandbox"}) == "sandbox"
+    assert bp._kuveyt_normalize_mode({}) == "sandbox"
+
+
 def test_kuveyt_scope_candidates_prefer_public():
     assert bp._kuveyt_scope_candidates({})[0] == "public"
-    assert bp._kuveyt_scope_candidates({"scope": "payments cards"})[0] == "payments cards"
+    # CC için public önce; özel scope ikinci sırada denenir
+    assert bp._kuveyt_scope_candidates({"scope": "payments cards"})[0] == "public"
+    assert "payments cards" in bp._kuveyt_scope_candidates({"scope": "payments cards"})
+
+
+def test_kuveyt_token_auth_attempts_body_only_no_basic():
+    attempts = bp._kuveyt_token_auth_attempts("cid", "sec", "public")
+    assert len(attempts) == 1
+    assert attempts[0]["label"] == "body"
+    assert "Authorization" not in attempts[0]["headers"]
+    assert attempts[0]["data"]["client_id"] == "cid"
 
 
 def test_kuveyt_token_urls_only_api_connect_token():
@@ -154,15 +171,16 @@ def test_kuveyt_token_posts_client_credentials_to_identity():
     args, kwargs = mock_client.post.await_args
     assert args[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
     assert kwargs["data"]["grant_type"] == "client_credentials"
-    # Official SDK: body credentials first; default scope=public
+    # Official SDK: body credentials; default scope=public
     assert kwargs["data"]["client_id"] == "cid"
     assert kwargs["data"]["client_secret"] == "sec"
     assert kwargs["data"].get("scope") == "public"
     assert "Authorization" not in kwargs["headers"]
 
 
-def test_kuveyt_token_falls_back_to_basic_auth():
-    conn = {"provider": "kuveytturk", "mode": "live", "client_id": "cid", "client_secret": "sec"}
+def test_kuveyt_token_detects_live_sandbox_mismatch():
+    """invalid_client on LIVE but same secrets work on sandbox → teşhis mesajı."""
+    conn = {"provider": "kuveytturk", "mode": "LIVE", "client_id": "cid", "client_secret": "sec"}
     bad = MagicMock()
     bad.status_code = 401
     bad.content = b'{"error":"invalid_client"}'
@@ -172,11 +190,13 @@ def test_kuveyt_token_falls_back_to_basic_auth():
 
     good = MagicMock()
     good.status_code = 200
-    good.content = b'{"access_token":"basic-tok"}'
-    good.json.return_value = {"access_token": "basic-tok"}
+    good.content = b'{"access_token":"sand-tok"}'
+    good.json.return_value = {"access_token": "sand-tok"}
     good.headers = {"content-type": "application/json"}
+    good.text = ""
 
     mock_client = AsyncMock()
+    # 1) live body fails → 2) alt host (sandbox) succeeds for diagnosis only (still raise)
     mock_client.post = AsyncMock(side_effect=[bad, good])
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -185,13 +205,19 @@ def test_kuveyt_token_falls_back_to_basic_auth():
         with patch.object(httpx, "AsyncClient", return_value=mock_client):
             return await bp._kuveyt_access_token(conn)
 
-    token = asyncio.run(_run())
-    assert token == "basic-tok"
-    assert mock_client.post.await_count == 2
-    second = mock_client.post.await_args_list[1]
-    assert second.args[0] == "https://id.kuveytturk.com.tr/api/connect/token"
-    assert "client_id" not in second.kwargs["data"]
-    assert second.kwargs["headers"]["Authorization"].startswith("Basic ")
+    try:
+        asyncio.run(_run())
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "invalid_client" in msg
+        assert "Teşhis" in msg
+        assert "Sandbox" in msg or "idprep" in msg
+        assert "Mod=live" in msg
+        urls = [c.args[0] for c in mock_client.post.await_args_list]
+        assert urls[0] == "https://id.kuveytturk.com.tr/api/connect/token"
+        assert urls[1] == "https://idprep.kuveytturk.com.tr/api/connect/token"
+        assert all("Authorization" not in c.kwargs["headers"] for c in mock_client.post.await_args_list)
 
 
 def test_kuveyt_token_invalid_client_keeps_oauth_error_not_html_404():
@@ -224,7 +250,7 @@ def test_kuveyt_token_invalid_client_keeps_oauth_error_not_html_404():
         assert "invalid_client" in msg
         assert "/api/connect/token" in msg
         assert "<!DOCTYPE" not in msg
-        assert "Api Anahtarı" in msg or "UUID" in msg
+        assert "Api Anahtarı" in msg or "UUID" in msg or "secret≈uuid" in msg
         # Never fall back to bare /connect/token
         assert "id.kuveytturk.com.tr/connect/token" not in msg or "/api/connect/token" in msg
         assert all(call.args[0].endswith("/api/connect/token") for call in mock_client.post.await_args_list)
@@ -257,6 +283,7 @@ def test_kuveyt_token_invalid_client_message_hints_api_key():
         assert "Api Anahtarı" in msg or "Client Secret" in msg
         assert "id.kuveytturk.com.tr" in msg
         assert "/api/connect/token" in msg
+        assert "[basic]" not in msg
 
 
 def test_kuveyt_probe_signs_banks_get():

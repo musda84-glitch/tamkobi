@@ -27,7 +27,7 @@ PROVIDERS = {
         "token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "customer_number"],
-        "hint": "API Market: Müşteri Id=Client ID, Client Secret, Api Anahtarı (X-Gravitee-Api-Key). Token: Identity Server client_credentials — resmi SDK gibi POST id(prep).kuveytturk.com.tr/api/connect/token (body: client_id, client_secret, scope=public). Her API isteği RSA-SHA256 Signature — portala yüklediğiniz public key’in PKCS8 PEM private key’ini yapıştırın. Sandbox API: apitest.kuveytturk.com.tr/prep",
+        "hint": "API Market: Müşteri Id=Client ID, Client Secret (≠Api Anahtarı), Api Anahtarı=X-Gravitee-Api-Key. Token: resmi SDK gibi yalnızca POST id(prep).kuveytturk.com.tr/api/connect/token body (grant_type=client_credentials, client_id, client_secret, scope=public) — HTTP Basic yok. invalid_client → Canlı/Sandbox kimlik karışması veya yanlış secret. RSA-SHA256 Signature için PKCS8 PEM. Sandbox API: apitest.kuveytturk.com.tr/prep",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -145,7 +145,11 @@ def _base_url(conn: dict) -> str:
     meta = PROVIDERS.get(conn.get("provider"), PROVIDERS["other"])
     if conn.get("base_url"):
         return conn["base_url"].rstrip("/")
-    return (meta["live_url"] if conn.get("mode") == "live" else meta["sandbox_url"]).rstrip("/")
+    if conn.get("provider") == "kuveytturk":
+        live = _kuveyt_normalize_mode(conn) == "live"
+    else:
+        live = conn.get("mode") == "live"
+    return (meta["live_url"] if live else meta["sandbox_url"]).rstrip("/")
 
 
 def has_credentials(conn: dict) -> bool:
@@ -188,14 +192,29 @@ async def _oauth_token(conn: dict) -> str:
         return token
 
 
+def _kuveyt_normalize_mode(conn: dict) -> str:
+    """UI/API may send LIVE / Canlı / production — Identity host seçimi için normalize et."""
+    m = str(conn.get("mode") or "sandbox").strip().lower()
+    if m in ("live", "prod", "production", "canli", "canlı", "prd"):
+        return "live"
+    return "sandbox"
+
+
 def _kuveyt_identity_host(conn: dict) -> str:
     meta = PROVIDERS["kuveytturk"]
-    live = conn.get("mode") == "live"
+    live = _kuveyt_normalize_mode(conn) == "live"
     return (meta["identity_live_url"] if live else meta["identity_sandbox_url"]).rstrip("/")
 
 
+def _kuveyt_alt_identity_host(conn: dict) -> str:
+    """Seçili ortamın tersi — invalid_client’ta ortam/kimlik uyumsuzluğunu teşhis için."""
+    meta = PROVIDERS["kuveytturk"]
+    live = _kuveyt_normalize_mode(conn) == "live"
+    return (meta["identity_sandbox_url"] if live else meta["identity_live_url"]).rstrip("/")
+
+
 def _kuveyt_token_urls(conn: dict) -> List[str]:
-    """Official SDK: POST {idhost}/api/connect/token only (not /connect/token — that 404s)."""
+    """Official SDK (iuysal/Android): POST {idhost}/api/connect/token only (not /connect/token — that 404s)."""
     urls: List[str] = []
     custom = (conn.get("token_url") or "").strip().rstrip("/")
     if custom:
@@ -320,19 +339,28 @@ def _kuveyt_normalize_secret(val: str) -> str:
 
 
 def _kuveyt_scope_candidates(conn: dict) -> List[str]:
-    """Official JS/Android samples use scope=public for client_credentials first."""
+    """Official Python/JS samples: client_credentials uses scope=public first.
+
+    Hesap hareketleri (accounts) genelde authorization_code ister; CC için public dene.
+    """
     out: List[str] = []
     custom = (conn.get("scope") or "").strip()
-    if custom:
-        out.append(custom)
-    for s in ("public", "accounts", "accounts public", "public accounts", ""):
+    # Prefer public for CC even if user typed accounts — try custom after public if custom ≠ public
+    for s in ("public", custom, "accounts", "accounts public", "public accounts", ""):
+        if s is None:
+            continue
+        s = str(s).strip()
         if s not in out:
             out.append(s)
     return out
 
 
 def _kuveyt_token_auth_attempts(client_id: str, client_secret: str, scope: str) -> List[Dict[str, Any]]:
-    """Official SDK: form body client_id/secret (client_secret_post). Basic as fallback."""
+    """Official SDK (iuysal/kuveytturk): form body only — no HTTP Basic.
+
+    Basic auth is not used by Kuveyt samples and previously made errors look like
+    \"invalid_client: [basic]\" even when body already failed with the same code.
+    """
     form_base: Dict[str, str] = {"grant_type": "client_credentials"}
     if scope:
         form_base["scope"] = scope
@@ -344,15 +372,6 @@ def _kuveyt_token_auth_attempts(client_id: str, client_secret: str, scope: str) 
                 "Accept": "application/json",
             },
             "label": "body",
-        },
-        {
-            "data": dict(form_base),
-            "headers": {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-                "Authorization": _basic_auth_header(client_id, client_secret),
-            },
-            "label": "basic",
         },
     ]
 
@@ -371,11 +390,75 @@ def _kuveyt_secret_looks_like_api_key(client_secret: str, api_key: str) -> bool:
     return bool(sec and uuid_re.match(sec) and len(sec) == 36)
 
 
+def _kuveyt_cred_fingerprint(client_id: str, client_secret: str, api_key: str) -> str:
+    """Log/UI için gizli değerleri göstermeden kimlik özeti."""
+    parts = [
+        f"client_id={len(client_id)}kr",
+        f"secret={len(client_secret)}kr",
+        f"api_key={'var' if api_key else 'yok'}",
+    ]
+    if _kuveyt_secret_looks_like_api_key(client_secret, api_key):
+        parts.append("secret≈uuid")
+    return ", ".join(parts)
+
+
+async def _kuveyt_post_token(
+    client: httpx.AsyncClient,
+    url: str,
+    client_id: str,
+    client_secret: str,
+    scope: str,
+) -> tuple[Optional[str], Optional[str], int]:
+    """Returns (access_token | None, error_text | None, status_code)."""
+    attempts = _kuveyt_token_auth_attempts(client_id, client_secret, scope)
+    last_err = None
+    last_code = 0
+    for attempt in attempts:
+        try:
+            resp = await client.post(url, data=attempt["data"], headers=attempt["headers"])
+        except Exception as e:
+            last_err = f"{url} [{attempt['label']}] → {_err_text(e)}"
+            last_code = 0
+            continue
+        last_code = resp.status_code
+        if resp.status_code < 400:
+            data = resp.json() if resp.content else {}
+            token = (data or {}).get("access_token") or (data or {}).get("accessToken")
+            if token:
+                return str(token), None, resp.status_code
+            last_err = f"{url} [{attempt['label']}] → access_token yok"
+            continue
+        err_txt = _oauth_error_text(resp, url) + f" [{attempt['label']}]"
+        last_err = err_txt
+        blob = (getattr(resp, "text", None) or "").lower()
+        ctype = (resp.headers.get("content-type") or "").lower()
+        is_html = (
+            "text/html" in ctype
+            or blob.lstrip().startswith("<!doctype")
+            or blob.lstrip().startswith("<html")
+        )
+        if resp.status_code == 404 or is_html:
+            return None, err_txt, resp.status_code
+        if "invalid_client" in blob:
+            return None, err_txt, resp.status_code
+    return None, last_err, last_code
+
+
 async def _kuveyt_access_token(conn: dict) -> str:
-    """Official Kuveyt Android/JS SDK: POST /api/connect/token with form body credentials."""
+    """Official Kuveyt Python/Android: POST /api/connect/token with form body credentials.
+
+    Research notes (2026):
+    - Endpoint is only /api/connect/token ( /connect/token → HTML 404 ).
+    - client_credentials body: grant_type, client_id, client_secret, scope=public
+      (iuysal/kuveytturk, huseyinbuyukdere samples — no HTTP Basic).
+    - invalid_client almost always means wrong secret for that Identity host, or
+      LIVE app credentials used against sandbox (or vice versa), or Api Anahtarı
+      pasted into Client Secret. Cross-check the other Identity host to diagnose.
+    """
     client_id = _kuveyt_normalize_secret(_plain_secret(conn, "client_id"))
     client_secret = _kuveyt_normalize_secret(_plain_secret(conn, "client_secret"))
     api_key = _kuveyt_normalize_secret(_plain_secret(conn, "api_key"))
+    mode = _kuveyt_normalize_mode(conn)
     if not client_id or not client_secret:
         raise RuntimeError(
             "Kuveyt Türk Client ID (Müşteri Id) ve Client Secret gerekli (client_credentials). "
@@ -391,66 +474,66 @@ async def _kuveyt_access_token(conn: dict) -> str:
             for scope in _kuveyt_scope_candidates(conn):
                 if stop_scopes:
                     break
-                for attempt in _kuveyt_token_auth_attempts(client_id, client_secret, scope):
-                    try:
-                        resp = await client.post(url, data=attempt["data"], headers=attempt["headers"])
-                    except Exception as e:
-                        last_err = f"{url} [{attempt['label']}] → {_err_text(e)}"
-                        continue
-                    if resp.status_code < 400:
-                        data = resp.json() if resp.content else {}
-                        token = (data or {}).get("access_token") or (data or {}).get("accessToken")
-                        if token:
-                            return token
-                        last_err = f"{url} [{attempt['label']}] → access_token yok"
-                        continue
-
-                    err_txt = _oauth_error_text(resp, url) + f" [{attempt['label']}]"
-                    last_err = err_txt
-                    blob = (getattr(resp, "text", None) or "").lower()
-                    ctype = (resp.headers.get("content-type") or "").lower()
-                    is_html = (
-                        "text/html" in ctype
-                        or blob.lstrip().startswith("<!doctype")
-                        or blob.lstrip().startswith("<html")
-                    )
-                    if resp.status_code == 404 or is_html:
-                        # Dead path — do not overwrite a prior OAuth JSON error.
-                        break
-
-                    if not primary_err or "invalid_client" in blob:
-                        primary_err = err_txt
+                token, err, code = await _kuveyt_post_token(client, url, client_id, client_secret, scope)
+                if token:
+                    return token
+                if err:
+                    last_err = err
+                    blob = err.lower()
                     if "invalid_client" in blob:
                         saw_invalid_client = True
-                        continue  # next auth style
-                    if resp.status_code in (400, 401) and "scope" in blob:
-                        continue
-                else:
-                    # Both auth styles done for this scope.
-                    if saw_invalid_client:
+                        primary_err = err
                         stop_scopes = True
-                    continue
-                # 404/html on this URL
+                        break
+                    if not primary_err:
+                        primary_err = err
+                    if code == 404 or "html" in blob:
+                        break
+            if saw_invalid_client:
                 break
+
+        # Ortam uyumsuzluğu teşhisi: aynı kimlik diğer Identity host’ta çalışıyor mu?
+        alt_hint = ""
+        if saw_invalid_client:
+            alt_host = _kuveyt_alt_identity_host(conn)
+            alt_url = alt_host + "/api/connect/token"
+            alt_token, alt_err, _ = await _kuveyt_post_token(
+                client, alt_url, client_id, client_secret, "public"
+            )
+            if alt_token:
+                other = "Sandbox (idprep)" if mode == "live" else "Canlı (id)"
+                current = "Canlı" if mode == "live" else "Sandbox"
+                alt_hint = (
+                    f" Teşhis: aynı Müşteri Id/Secret {other} Identity’de token aldı, "
+                    f"ama bağlantı modu={current}. Portalden {current} uygulama kimliklerini "
+                    f"kopyalayın veya bağlantı modunu {other.split()[0]} yapın. "
+                )
+            elif alt_err and "invalid_client" in alt_err.lower():
+                alt_hint = (
+                    " Teşhis: hem Canlı hem Sandbox Identity invalid_client döndü — "
+                    "Müşteri Id / Client Secret portaldeki değerlerle eşleşmiyor. "
+                )
 
     detail = primary_err or last_err
     hint = ""
     if saw_invalid_client:
         hint = (
-            " invalid_client: Müşteri Id / Client Secret hatalı veya uygulama bu ortamda "
-            "client_credentials grant’ına kapalı. Portalden Client Secret’i yeniden kopyalayın; "
-            "Api Anahtarı’nı Client Secret yerine yazmayın; canlı kimlik için mod=LIVE, "
-            "test için Sandbox seçin. "
-        )
+            " invalid_client: Müşteri Id / Client Secret bu Identity ortamında geçersiz "
+            "(veya uygulamada client_credentials kapalı). "
+            "Portalden Client Secret’i yeniden kopyalayın; Api Anahtarı’nı Client Secret "
+            "yerine yazmayın. "
+        ) + alt_hint
         if _kuveyt_secret_looks_like_api_key(client_secret, api_key):
             hint += (
                 "Kayıtlı Client Secret UUID formatında (Api Anahtarı gibi) — "
                 "portalden asıl Client Secret’i Client Secret alanına yapıştırın. "
             )
+    fp = _kuveyt_cred_fingerprint(client_id, client_secret, api_key)
     raise RuntimeError(
         "Kuveyt Türk token alınamadı (Identity Server client_credentials)."
         f"{hint}"
-        "Resmi uç: POST …/api/connect/token (body: grant_type, client_id, client_secret, scope). "
+        f"Mod={mode}; {fp}. "
+        "Resmi uç: POST …/api/connect/token (body: grant_type, client_id, client_secret, scope=public). "
         f"(sandbox: idprep.kuveytturk.com.tr / canlı: id.kuveytturk.com.tr). ({detail[:220]})"
     )
 
@@ -458,6 +541,7 @@ async def _kuveyt_access_token(conn: dict) -> str:
 async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
     token = await _kuveyt_access_token(conn)
     pem = _kuveyt_private_key_pem(conn)
+    mode = _kuveyt_normalize_mode(conn)
     extra = " RSA-SHA256 imza anahtarı yok — hesap hareketi için PKCS8 PEM gerekli."
     if pem:
         base = _base_url(conn)
@@ -477,7 +561,12 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
     return {
         "ok": True,
         "simulated": False,
-        "message": f"Kuveyt Türk Identity Server client_credentials doğrulandı.{extra}",
+        "mode": mode,
+        "identity_host": _kuveyt_identity_host(conn),
+        "message": (
+            f"Kuveyt Türk Identity Server client_credentials doğrulandı "
+            f"(mod={mode}, {_kuveyt_identity_host(conn)}).{extra}"
+        ),
     }
 
 

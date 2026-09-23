@@ -445,11 +445,12 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               </p>
             )}
             {editForm.provider === "kuveytturk" && (
-              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                Kuveyt Türk API Market (resmi SDK): <b>Müşteri Id</b> → Client ID, <b>Client Secret</b> (Api Anahtarı değil!), <b>Api Anahtarı</b> → Gravitee.
-                Token: <code className="font-mono">POST …/api/connect/token</code> body’de <code className="font-mono">client_credentials</code> + <code className="font-mono">scope=public</code>.
-                API isteklerine RSA-SHA256 <b>Signature</b> (PKCS8 PEM).
-                <code className="font-mono">invalid_client</code> = yanlış secret veya Api Anahtarının Secret yerine yazılması; canlı uygulama portalde onaylı olmalı.
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="kuveyt-edit-hint">
+                Araştırma (resmi SDK): token yalnızca <code className="font-mono">POST …/api/connect/token</code> body
+                (<code className="font-mono">client_credentials</code> + <code className="font-mono">scope=public</code>) —
+                HTTP Basic kullanılmaz. <b>Müşteri Id</b>≠Api Anahtarı; <b>Client Secret</b>≠Api Anahtarı.
+                <code className="font-mono">invalid_client</code> çoğunlukla Canlı/Sandbox kimlik karışması veya yanlış secret:
+                Sandbox kimliği → Sandbox mod; Canlı uygulama onayı + canlı secret → Canlı mod.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">
