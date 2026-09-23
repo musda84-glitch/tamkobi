@@ -6,7 +6,7 @@ import { ProductEditForm } from "./ProductEditForm";
 import LotManager from "./LotManager";
 import { ProductImageGallery } from "./ProductImageGallery";
 import { VariantManager } from "./VariantManager";
-import { BarcodeLabelPrint } from "./BarcodeLabelPrint";
+import { LabelQuickPrint } from "./LabelDesigner";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { useAuth } from "../context/AuthContext";
 
@@ -26,7 +26,14 @@ export const ProductDetailModal = ({ product, initialTab = "images", onClose, on
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-      {showLabel && <BarcodeLabelPrint product={product} company={activeCompany} onClose={() => setShowLabel(false)} />}
+      {showLabel && (
+        <LabelQuickPrint
+          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          product={product}
+          company={activeCompany}
+          onClose={() => setShowLabel(false)}
+        />
+      )}
       {showProduce && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={product} onClose={() => setShowProduce(false)} />}
       <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200" data-testid="product-detail-modal" onClick={(ev) => ev.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-6 py-4">

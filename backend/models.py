@@ -138,6 +138,7 @@ class Product(BaseDocument):
     image_url: Optional[str] = None
     images: List[str] = []
     label_image_url: Optional[str] = None  # Barkod etiket tasarımında kullanılan görsel
+    label_template_id: Optional[str] = None  # Etiket Tasarımı şablonu (label_templates._id)
     gtip: Optional[str] = None
     origin_country: Optional[str] = None
     desi: Optional[float] = None
