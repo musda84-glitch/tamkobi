@@ -727,6 +727,16 @@ export function filterPayMoves(
   return (rows || []).filter((row) => payMoveInPeriod(row, period, now, month));
 }
 
+export const PAY_MOVE_DELETE_TITLE = "Kaydı sil";
+
+export function payMoveDeleteConfirm(row?: { title?: string } | null): { title: string; message: string } {
+  const name = String(row?.title || "Kayıt").trim() || "Kayıt";
+  return {
+    title: PAY_MOVE_DELETE_TITLE,
+    message: `${name} silinsin mi? Bu işlem geri alınamaz.`,
+  };
+}
+
 export function payMovesPeriodHint(shown: number, total: number, period: PayMovesPeriod): string {
   if (period === "all" || shown === total) return `${total} hareket`;
   return `${shown} / ${total} hareket`;
