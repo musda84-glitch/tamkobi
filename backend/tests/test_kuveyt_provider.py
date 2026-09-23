@@ -21,33 +21,33 @@ def _rsa_pem() -> str:
 
 def test_kuveyt_provider_identity_and_api_hosts():
     meta = bp.PROVIDERS["kuveytturk"]
-    assert meta["sandbox_url"] == "https://apitest.kuveytturk.com.tr/prep"
-    assert meta["live_url"] == "https://api.kuveytturk.com.tr"
-    assert meta["identity_sandbox_url"] == "https://idprep.kuveytturk.com.tr"
-    assert meta["identity_live_url"] == "https://id.kuveytturk.com.tr"
-    assert meta["token_path"] == "/api/connect/token"
+    assert meta["sandbox_url"] == "https://prep-gateway.kuveytturk.com.tr"
+    assert meta["live_url"] == "https://gateway.kuveytturk.com.tr"
+    assert meta["identity_sandbox_url"] == "https://prep-identity.kuveytturk.com.tr"
+    assert meta["identity_live_url"] == "https://identity.kuveytturk.com.tr"
+    assert meta["token_path"] == "/connect/token"
     assert "private_key" in meta["fields"]
     assert "RSA-SHA256" in meta["hint"] or "RSA-SHA256" in meta["hint"].replace(" ", "") or "Signature" in meta["hint"]
 
 
 def test_kuveyt_token_urls_sandbox_and_live():
     sand = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "sandbox"})
-    assert sand[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
+    assert sand[0] == "https://prep-identity.kuveytturk.com.tr/connect/token"
     assert len(sand) == 1
     live = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "live"})
-    assert live[0] == "https://id.kuveytturk.com.tr/api/connect/token"
+    assert live[0] == "https://identity.kuveytturk.com.tr/connect/token"
     assert len(live) == 1
     custom = bp._kuveyt_token_urls({
         "provider": "kuveytturk", "mode": "live",
-        "token_url": "https://id.kuveytturk.com.tr/api/connect/token",
+        "token_url": "https://identity.kuveytturk.com.tr/connect/token",
     })
-    assert custom[0] == "https://id.kuveytturk.com.tr/api/connect/token"
-    assert custom.count("https://id.kuveytturk.com.tr/api/connect/token") == 1
+    assert custom[0] == "https://identity.kuveytturk.com.tr/connect/token"
+    assert custom.count("https://identity.kuveytturk.com.tr/connect/token") == 1
 
 
 def test_kuveyt_base_url_prep_sandbox():
-    assert bp._base_url({"provider": "kuveytturk", "mode": "sandbox"}) == "https://apitest.kuveytturk.com.tr/prep"
-    assert bp._base_url({"provider": "kuveytturk", "mode": "live"}) == "https://api.kuveytturk.com.tr"
+    assert bp._base_url({"provider": "kuveytturk", "mode": "sandbox"}) == "https://prep-gateway.kuveytturk.com.tr"
+    assert bp._base_url({"provider": "kuveytturk", "mode": "live"}) == "https://gateway.kuveytturk.com.tr"
 
 
 def test_kuveyt_query_string_order():
@@ -161,23 +161,26 @@ def test_kuveyt_scope_candidates_prefer_public():
     assert "payments cards" in bp._kuveyt_scope_candidates({"scope": "payments cards"})
 
 
-def test_kuveyt_token_auth_attempts_body_only_no_basic():
+def test_kuveyt_token_auth_attempts_body_then_basic():
     attempts = bp._kuveyt_token_auth_attempts("cid", "sec", "public")
-    assert len(attempts) == 1
+    assert len(attempts) == 2
     assert attempts[0]["label"] == "body"
     assert "Authorization" not in attempts[0]["headers"]
     assert attempts[0]["data"]["client_id"] == "cid"
+    assert attempts[1]["label"] == "basic"
+    assert attempts[1]["headers"]["Authorization"].startswith("Basic ")
 
 
-def test_kuveyt_token_urls_only_api_connect_token():
+def test_kuveyt_token_urls_oidc_connect_token():
     live = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "live"})
-    assert live == ["https://id.kuveytturk.com.tr/api/connect/token"]
+    assert live == ["https://identity.kuveytturk.com.tr/connect/token"]
+    # Eski /api/connect/token → /connect/token normalize
     fixed = bp._kuveyt_token_urls({
         "provider": "kuveytturk", "mode": "live",
-        "token_url": "https://id.kuveytturk.com.tr/connect/token",
+        "token_url": "https://identity.kuveytturk.com.tr/api/connect/token",
     })
-    assert fixed[0] == "https://id.kuveytturk.com.tr/api/connect/token"
-    assert all("/connect/token" not in u or u.endswith("/api/connect/token") for u in fixed)
+    assert fixed[0] == "https://identity.kuveytturk.com.tr/connect/token"
+    assert all(u.endswith("/connect/token") and not u.endswith("/api/connect/token") for u in fixed)
 
 
 def test_kuveyt_token_posts_client_credentials_to_identity():
@@ -199,9 +202,8 @@ def test_kuveyt_token_posts_client_credentials_to_identity():
     token = asyncio.run(_run())
     assert token == "kt-token"
     args, kwargs = mock_client.post.await_args
-    assert args[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
+    assert args[0] == "https://prep-identity.kuveytturk.com.tr/connect/token"
     assert kwargs["data"]["grant_type"] == "client_credentials"
-    # Official SDK: body credentials; default scope=public
     assert kwargs["data"]["client_id"] == "cid"
     assert kwargs["data"]["client_secret"] == "sec"
     assert kwargs["data"].get("scope") == "public"
@@ -242,11 +244,11 @@ def test_kuveyt_token_detects_live_sandbox_mismatch():
         msg = str(e)
         assert "invalid_client" in msg
         assert "Teşhis" in msg
-        assert "Sandbox" in msg or "idprep" in msg
+        assert "Sandbox" in msg or "prep-identity" in msg
         assert "Mod=live" in msg
         urls = [c.args[0] for c in mock_client.post.await_args_list]
-        assert urls[0] == "https://id.kuveytturk.com.tr/api/connect/token"
-        assert urls[1] == "https://idprep.kuveytturk.com.tr/api/connect/token"
+        assert urls[0] == "https://identity.kuveytturk.com.tr/connect/token"
+        assert urls[1] == "https://prep-identity.kuveytturk.com.tr/connect/token"
         assert all("Authorization" not in c.kwargs["headers"] for c in mock_client.post.await_args_list)
 
 
@@ -278,12 +280,11 @@ def test_kuveyt_token_invalid_client_keeps_oauth_error_not_html_404():
     except RuntimeError as e:
         msg = str(e)
         assert "invalid_client" in msg
-        assert "/api/connect/token" in msg
+        assert "/connect/token" in msg
         assert "<!DOCTYPE" not in msg
         assert "Api Anahtarı" in msg or "UUID" in msg or "secret≈uuid" in msg
-        # Never fall back to bare /connect/token
-        assert "id.kuveytturk.com.tr/connect/token" not in msg or "/api/connect/token" in msg
-        assert all(call.args[0].endswith("/api/connect/token") for call in mock_client.post.await_args_list)
+        assert all(call.args[0].endswith("/connect/token") for call in mock_client.post.await_args_list)
+        assert not any(call.args[0].endswith("/api/connect/token") for call in mock_client.post.await_args_list)
 
 
 def test_kuveyt_token_invalid_client_both_hosts_includes_steps():
@@ -309,9 +310,10 @@ def test_kuveyt_token_invalid_client_both_hosts_includes_steps():
         assert False, "expected RuntimeError"
     except RuntimeError as e:
         msg = str(e)
-        assert "hem Canlı hem Sandbox" in msg
+        assert "hem Canlı" in msg and "Sandbox" in msg
         assert "Adımlar:" in msg
         assert "Mod=live" in msg
+        assert "prep-identity" in msg or "identity.kuveytturk" in msg
 
 
 def test_kuveyt_token_invalid_client_message_hints_api_key():
@@ -339,9 +341,8 @@ def test_kuveyt_token_invalid_client_message_hints_api_key():
         msg = str(e)
         assert "invalid_client" in msg
         assert "Api Anahtarı" in msg or "Client Secret" in msg
-        assert "id.kuveytturk.com.tr" in msg
-        assert "/api/connect/token" in msg
-        assert "[basic]" not in msg
+        assert "identity.kuveytturk.com.tr" in msg
+        assert "/connect/token" in msg
 
 
 def test_kuveyt_probe_signs_banks_get():
@@ -375,7 +376,7 @@ def test_kuveyt_probe_signs_banks_get():
     assert out["simulated"] is False
     assert "client_credentials" in out["message"]
     get_args, get_kwargs = mock_client.get.await_args
-    assert get_args[0] == "https://apitest.kuveytturk.com.tr/prep/v1/data/banks"
+    assert get_args[0] == "https://prep-gateway.kuveytturk.com.tr/v1/data/banks"
     assert get_kwargs["headers"]["Authorization"] == "Bearer tokAAA"
     assert get_kwargs["headers"]["Signature"]
 

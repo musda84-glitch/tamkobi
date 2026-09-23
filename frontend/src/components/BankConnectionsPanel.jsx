@@ -67,8 +67,8 @@ function ConnErrorBox({ connection, onEdit }) {
   if (!isKuveyt || !invalidClient) {
     return <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2" data-testid="conn-last-error">{err}</div>;
   }
-  const bothHosts = /hem Canlı hem Sandbox/i.test(err);
-  const modeMismatch = /aynı Müşteri Id\/Secret|Sandbox.*Identity|idprep/i.test(err) && !bothHosts;
+  const bothHosts = /hem Canlı.*Sandbox|hem Canlı hem Sandbox/i.test(err);
+  const modeMismatch = /aynı Müşteri Id\/Secret|Sandbox.*Identity|prep-identity|idprep/i.test(err) && !bothHosts;
   const secretUuid = /secret≈uuid|UUID formatında|secret=api_key/i.test(err);
   const idIsKey = /client_id=api_key|Müşteri Id ile Api Anahtarı aynı/i.test(err);
   return (
@@ -502,10 +502,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             {editForm.provider === "kuveytturk" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="kuveyt-edit-hint">
                 Portal alanları: <b>Müşteri Id</b> → Client ID, <b>Client Secret</b> (Api Anahtarı değil),
-                <b> Api Anahtarı</b> → X-Gravitee-Api-Key. Token: <code className="font-mono">POST …/api/connect/token</code> body
+                <b> Api Anahtarı</b> → X-Gravitee-Api-Key. Token: <code className="font-mono">POST prep-identity|identity…/connect/token</code>
                 (<code className="font-mono">client_credentials</code> + <code className="font-mono">scope=public</code>).
+                API: Sandbox <code className="font-mono">prep-gateway</code>, Canlı <code className="font-mono">gateway</code>.
                 Yapıştırırken satır sonu/boşluk bırakmayın. <code className="font-mono">invalid_client</code> → yanlış secret
-                veya Canlı/Sandbox kimlik karışması: Sandbox kimliği → Sandbox; Canlı onaylı uygulama → Canlı.
+                veya Canlı/Sandbox kimlik karışması: Prep uygulaması → Sandbox; canlı onaylı → Canlı.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">
