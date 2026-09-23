@@ -9,10 +9,24 @@ import { QuickMessageModal } from "./QuickMessageModal";
 import { downloadStatementPdf, fetchStatementShare, statementPdfFile } from "../utils/statementShare";
 import { fmtMoney } from "../utils/money";
 
-export const buildStatementRows = (data) => {
+export const buildStatementRows = (data, { includeCheques = false } = {}) => {
   const rows = [];
   (data.invoices || []).filter((i) => i.status !== "cancelled").forEach((i) => rows.push({ date: i.issue_date, doc: `${i.invoice_number} • ${i.invoice_type === "sales" ? "Satış Faturası" : "Alış Faturası"}`, debit: i.invoice_type === "sales" ? i.grand_total : 0, credit: i.invoice_type === "sales" ? 0 : i.grand_total, kind: "invoice" }));
   (data.payments || []).filter((p) => p.type !== "transfer").forEach((p) => rows.push({ date: p.date, doc: `${p.type === "inflow" ? "Tahsilat" : "Ödeme"} • ${p.account_name}${p.description ? " • " + p.description : ""}`, debit: p.type === "inflow" ? 0 : p.amount, credit: p.type === "inflow" ? p.amount : 0, kind: "payment" }));
+  if (includeCheques) {
+    (data.cheques || []).forEach((ch) => {
+      const kind = ch.instrument === "promissory" ? "Senet" : "Çek";
+      const dir = ch.direction === "received" || ch.direction === "inflow" ? "Alınan" : "Verilen";
+      const received = ch.direction === "received" || ch.direction === "inflow";
+      rows.push({
+        date: ch.due_date || ch.issue_date || ch.date || "",
+        doc: `${dir} ${kind}${ch.serial_no ? ` • ${ch.serial_no}` : ""}${ch.bank_name ? ` • ${ch.bank_name}` : ""}`,
+        debit: received ? 0 : Number(ch.amount) || 0,
+        credit: received ? Number(ch.amount) || 0 : 0,
+        kind: "cheque",
+      });
+    });
+  }
   rows.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   let bal = 0;
   return rows.map((r) => { bal += (r.debit || 0) - (r.credit || 0); return { ...r, balance: bal }; });
@@ -158,32 +172,40 @@ export const StatementShareBar = ({ contact, rows, companyId }) => {
   );
 };
 
-export const StatementPrint = ({ contact, rows, company, onClose }) => {
+export const StatementPrint = ({ contact, rows, company, onClose, variant = "statement" }) => {
   useEscape(onClose);
   const bal = rows.length ? rows[rows.length - 1].balance : contact.balance || 0;
   const totD = rows.reduce((s, r) => s + (r.debit || 0), 0), totC = rows.reduce((s, r) => s + (r.credit || 0), 0);
   const ccy = contact?.currency || company?.currency || "TRY";
   const money = (n) => fmtMoney(n, ccy);
+  const isRecon = variant === "reconciliation";
+  const title = isRecon ? "CARİ HESAP MUTABAKAT MEKTUBU" : "CARİ HESAP EKSTRESİ";
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" onClick={onClose}>
-      <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" onClick={(e) => e.stopPropagation()} data-testid="statement-print-modal">
+      <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" onClick={(e) => e.stopPropagation()} data-testid={isRecon ? "reconciliation-print-modal" : "statement-print-modal"}>
         <div className="flex items-center justify-between px-5 py-3 border-b no-print">
-          <span className="text-xs font-bold text-slate-700">Ekstre Önizleme</span>
+          <span className="text-xs font-bold text-slate-700">{isRecon ? "Mutabakat Önizleme" : "Ekstre Önizleme"}</span>
           <div className="flex items-center gap-2"><button onClick={() => window.print()} className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold" data-testid="statement-print-now-btn"><Printer className="w-3.5 h-3.5" /> Yazdır / PDF Kaydet</button><button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button></div>
         </div>
         <div id="print-area" className="p-10 text-xs text-slate-800">
           <div className="flex justify-between items-start border-b-4 border-slate-900 pb-4">
             <div><div className="text-lg font-bold">{company?.name}</div><div className="text-slate-500">{company?.address} {company?.city}</div><div className="text-slate-500">VD: {company?.tax_office} • VKN: {company?.tax_number}</div><div className="text-slate-500">{company?.phone} • {company?.email}</div></div>
-            <div className="text-right"><div className="text-2xl font-black tracking-tight">CARİ HESAP EKSTRESİ</div><div className="text-slate-500">Tarih: {new Date().toLocaleDateString("tr-TR")}</div></div>
+            <div className="text-right"><div className="text-2xl font-black tracking-tight">{title}</div><div className="text-slate-500">Tarih: {new Date().toLocaleDateString("tr-TR")}</div></div>
           </div>
           <div className="mt-5"><div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Sayın</div><div className="font-bold text-base">{contact.name}</div><div className="text-slate-500">VKN/TCKN: {contact.tax_number_or_id} {contact.tax_office && `• ${contact.tax_office}`}</div>{contact.address && <div className="text-slate-500">{contact.address} {contact.city}</div>}</div>
+          {isRecon && (
+            <p className="mt-4 text-slate-600 leading-relaxed" data-testid="reconciliation-letter-body">
+              Yukarıdaki cari hesap bakiyemize göre kayıtlarda görünen tutarın mutabakatını rica ederiz.
+              Aşağıdaki hareket listesini kontrol ederek 7 gün içinde yazılı veya elektronik olarak onayınızı bildirmenizi saygılarımızla arz ederiz.
+            </p>
+          )}
           <table className="w-full mt-6 border-collapse">
             <thead><tr className="bg-slate-900 text-white"><th className="text-left p-2 rounded-l">Tarih</th><th className="text-left p-2">Belge / Açıklama</th><th className="text-right p-2">Borç</th><th className="text-right p-2">Alacak</th><th className="text-right p-2 rounded-r">Bakiye</th></tr></thead>
             <tbody>{rows.map((r, i) => <tr key={i} className={`border-b border-slate-100 ${i % 2 ? "bg-slate-50" : ""}`}><td className="p-2 font-mono text-slate-500">{r.date}</td><td className="p-2">{r.doc}</td><td className="p-2 text-right">{r.debit ? money(r.debit) : ""}</td><td className="p-2 text-right">{r.credit ? money(r.credit) : ""}</td><td className="p-2 text-right font-semibold">{money(r.balance)}</td></tr>)}</tbody>
             <tfoot><tr className="border-t-2 border-slate-900 font-bold"><td className="p-2" colSpan={2}>TOPLAM</td><td className="p-2 text-right">{money(totD)}</td><td className="p-2 text-right">{money(totC)}</td><td className="p-2 text-right">{money(bal)}</td></tr></tfoot>
           </table>
           <div className="mt-6 flex justify-end"><div className={`rounded-xl px-4 py-3 text-right ${bal > 0 ? "bg-rose-50" : "bg-emerald-50"}`}><div className="text-[10px] uppercase font-bold text-slate-400">Güncel Bakiye</div><div className={`text-xl font-black ${bal > 0 ? "text-rose-700" : "text-emerald-700"}`}>{money(Math.abs(bal))} <span className="text-xs font-semibold">{bal > 0 ? "Borçlu" : bal < 0 ? "Alacaklı" : ""}</span></div></div></div>
-          <div className="mt-10 text-slate-400 italic">Bu ekstre {company?.name} tarafından {new Date().toLocaleString("tr-TR")} tarihinde oluşturulmuştur. Mutabakat için lütfen 7 gün içinde geri dönüş yapınız.</div>
+          <div className="mt-10 text-slate-400 italic">Bu {isRecon ? "mutabakat mektubu" : "ekstre"} {company?.name} tarafından {new Date().toLocaleString("tr-TR")} tarihinde oluşturulmuştur. Mutabakat için lütfen 7 gün içinde geri dönüş yapınız.</div>
         </div>
       </div>
     </div>
