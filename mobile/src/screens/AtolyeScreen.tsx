@@ -6,6 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { colors, radius, spacing } from "../theme";
+import { dutyStatusLabel, dutySubtitle, openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
 import { idOf } from "../utils/money";
 import type { Employee } from "../utils/personnel";
 import {
@@ -113,6 +114,8 @@ export function AtolyeScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [duties, setDuties] = useState<AssignedDuty[]>([]);
+  const [dutyBusyId, setDutyBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -121,14 +124,15 @@ export function AtolyeScreen() {
         get<WorkOrder[]>(client, "/production/work-orders", {
           company_id: companyId,
           station: station || undefined,
-        }),
+        }).catch(() => []),
         get<Employee[]>(client, "/personnel/employees", { company_id: companyId }).catch(() => []),
         get<string[]>(client, "/production/work-orders/stations", { company_id: companyId }).catch(() => []),
-        get<{ employee?: Employee }>(client, "/personnel/me").catch(() => null),
+        get<{ employee?: Employee; tasks?: AssignedDuty[] }>(client, "/personnel/me").catch(() => null),
       ]);
       setWos(Array.isArray(w) ? w : []);
       setEmployees(mergeSelfEmployee(Array.isArray(e) ? e : [], me?.employee));
       setStations(Array.isArray(s) ? s : []);
+      setDuties(Array.isArray(me?.tasks) ? me.tasks : []);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "İş emirleri yüklenemedi."));
@@ -241,6 +245,25 @@ export function AtolyeScreen() {
   );
 
   const finishLast = finishing && finishing.step_no === finishing.step_count && (finishing.step_count || 0) > 0;
+  const openDuties = useMemo(() => openAssignedDuties(duties), [duties]);
+
+  const approveDuty = async (t: AssignedDuty) => {
+    if (!t.id) {
+      setError("Görev numarası yok.");
+      return;
+    }
+    setDutyBusyId(t.id);
+    try {
+      const r = await post<{ message?: string }>(client, `/personnel/me/tasks/${t.id}/complete`, {});
+      setNotice(r.message || "Görev onaylandı.");
+      setError(null);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Görev onaylanamadı."));
+    } finally {
+      setDutyBusyId(null);
+    }
+  };
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
@@ -273,6 +296,35 @@ export function AtolyeScreen() {
           <Text style={{ fontWeight: "700", color: colors.primaryHover }}>{notice}</Text>
         </Card>
       ) : null}
+      {duties.length ? (
+        <View testID="shopfloor-duties">
+          <Text style={{ fontWeight: "800", color: colors.text }}>Atanan Görevler ({openDuties.length} açık)</Text>
+          {duties.map((t, i) => (
+            <Card key={t.id || String(i)} testID={`shopfloor-duty-${t.id || i}`} style={t.done ? { opacity: 0.7 } : undefined}>
+              <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontWeight: "800", color: colors.text }} numberOfLines={2}>{t.title || "Görev"}</Text>
+                  <Muted>{dutySubtitle(t)}</Muted>
+                </View>
+                <Badge label={dutyStatusLabel(t)} tone={t.done ? "green" : "indigo"} />
+              </Row>
+              {!t.done ? (
+                <PrimaryButton
+                  title="Onayla"
+                  onPress={() => approveDuty(t)}
+                  disabled={dutyBusyId === t.id}
+                  loading={dutyBusyId === t.id}
+                  color={colors.primary}
+                  testID={`shopfloor-duty-approve-${t.id || i}`}
+                />
+              ) : (
+                <Muted>Görev onaylandı.</Muted>
+              )}
+            </Card>
+          ))}
+        </View>
+      ) : null}
+
       <StatRows
         testID="shopfloor-kpis"
         items={[

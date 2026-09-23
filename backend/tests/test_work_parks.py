@@ -1,4 +1,13 @@
-from work_parks import find_park, normalize_work_parks, office_assignment_view, office_task_row
+from work_parks import (
+    clear_duty_if_task,
+    find_park,
+    is_assignment_done,
+    mark_office_task_done,
+    mark_project_task_done,
+    normalize_work_parks,
+    office_assignment_view,
+    office_task_row,
+)
 
 
 def test_normalize_work_parks():
@@ -28,3 +37,30 @@ def test_office_task_row():
     view = office_assignment_view(named)
     assert view["kind"] == "office"
     assert view["project_name"] == "Makina parkuru"
+
+
+def test_mark_office_task_done():
+    open_row = office_task_row({"_id": "e1", "full_name": "Ali"}, {"id": "cnc", "name": "CNC OEMAK"}, "kesim yap", "ot_kesim")
+    tasks, found = mark_office_task_done([open_row], "ot_kesim")
+    assert found["done"] is True
+    assert found["status"] == "completed"
+    assert is_assignment_done(tasks[0])
+    missing, none = mark_office_task_done(tasks, "other")
+    assert none is None
+    assert missing[0]["id"] == "ot_kesim"
+
+
+def test_mark_project_task_done_and_clear_duty():
+    rows = [
+        {"id": "t1", "assignee_id": "e1", "title": "Keşif", "done": False},
+        {"id": "t2", "assignee_id": "e2", "title": "Başka", "done": False},
+    ]
+    updated, found = mark_project_task_done(rows, "t1", "e1")
+    assert found["done"] is True
+    assert updated[1]["done"] is False
+    stolen, miss = mark_project_task_done(rows, "t1", "e9")
+    assert miss is None
+    assert stolen[0]["done"] is False
+    duty = {"task_id": "t1", "kind": "field"}
+    assert clear_duty_if_task(duty, "t1") is None
+    assert clear_duty_if_task(duty, "t9") == duty

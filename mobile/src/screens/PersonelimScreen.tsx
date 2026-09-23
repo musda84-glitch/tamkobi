@@ -10,6 +10,7 @@ import { colors } from "../theme";
 import { normalizeYmd } from "../utils/calendar";
 import { leaveTr, statusTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
+import { dutyStatusLabel, dutySubtitle, type AssignedDuty } from "../utils/assignedDuty";
 import { advanceRequestPayload, leaveDays, selfLeavePayload, validateAdvance, validateSelfLeave } from "../utils/personnel";
 
 type TabId = "ozet" | "alacak" | "gorevler" | "emirler" | "mesai";
@@ -50,7 +51,7 @@ type PersonelimPayload = {
     transport_due?: number;
     advances?: number;
   } | null;
-  tasks?: { id?: string; title?: string; done?: boolean; due_date?: string; project_name?: string; project_number?: string }[];
+  tasks?: AssignedDuty[];
   work_orders?: { id?: string; order_code?: string; product_name?: string; station?: string; step_no?: number; status?: string; planned_date?: string; qty?: number }[];
 };
 
@@ -115,6 +116,7 @@ export function PersonelimScreen() {
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceNote, setAdvanceNote] = useState("");
   const [advanceBusy, setAdvanceBusy] = useState(false);
+  const [taskBusyId, setTaskBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -149,6 +151,22 @@ export function PersonelimScreen() {
   const leaves = data?.leaves || [];
   const pendingAdvance = bonuses.find((b) => b.type === "advance" && b.source === "self" && b.status === "pending");
   const leaveDayCount = leaveDays(startDate, endDate || startDate);
+
+  const completeTask = async (t: AssignedDuty) => {
+    if (!t.id) { setError("Görev numarası yok."); return; }
+    setTaskBusyId(t.id);
+    setError(null);
+    setMessage(null);
+    try {
+      const r = await post<{ message?: string }>(client, `/personnel/me/tasks/${t.id}/complete`, {});
+      setMessage(r.message || "Görev onaylandı.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Görev onaylanamadı."));
+    } finally {
+      setTaskBusyId(null);
+    }
+  };
 
   const submitLeave = async () => {
     const start = normalizeYmd(startDate);
@@ -398,16 +416,56 @@ export function PersonelimScreen() {
 
       {emp && tab === "gorevler" ? (
         !tasks.length ? (
-          <Empty icon="checkbox-outline" title="Size atanmış proje görevi yok." />
-        ) : (
-          tasks.map((t, i) => (
-            <ListRow
-              key={t.id || String(i)}
-              title={t.title || "Görev"}
-              subtitle={[t.project_number, t.project_name, t.due_date ? `son ${t.due_date}` : null].filter(Boolean).join(" · ")}
-              right={t.done ? "Tamam" : "Açık"}
+          <>
+            <PrimaryButton
+              title="Atölye ekranı"
+              onPress={() => go("Atolye")}
+              color={colors.secondary}
+              testID="personelim-goto-atolye"
             />
-          ))
+            <Empty icon="checkbox-outline" title="Size atanmış proje görevi yok." />
+          </>
+        ) : (
+          <>
+            <PrimaryButton
+              title="Atölye ekranı"
+              onPress={() => go("Atolye")}
+              color={colors.secondary}
+              testID="personelim-goto-atolye"
+            />
+            {tasks.map((t, i) => (
+              <Card key={t.id || String(i)} testID={`personelim-task-${t.id || i}`}>
+                <ListRow
+                  title={t.title || "Görev"}
+                  subtitle={dutySubtitle(t)}
+                  right={dutyStatusLabel(t)}
+                  rightColor={t.done ? colors.primary : colors.muted}
+                />
+                {!t.done ? (
+                  <Row>
+                    <View style={{ flex: 1 }}>
+                      <PrimaryButton
+                        title="Atölyeye git"
+                        onPress={() => go("Atolye")}
+                        color={colors.indigo}
+                        testID={`personelim-task-atolye-${t.id || i}`}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <PrimaryButton
+                        title="Onayla"
+                        onPress={() => completeTask(t)}
+                        disabled={taskBusyId === t.id}
+                        loading={taskBusyId === t.id}
+                        color={colors.primary}
+                        testID={`personelim-task-approve-${t.id || i}`}
+                      />
+                    </View>
+                  </Row>
+                ) : null}
+              </Card>
+            ))}
+          </>
         )
       ) : null}
 
