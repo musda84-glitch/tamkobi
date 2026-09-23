@@ -58,6 +58,49 @@ const SECRET_FIELDS = ["client_id", "client_secret", "access_token", "refresh_to
 const emptySecrets = () => Object.fromEntries(SECRET_FIELDS.map((k) => [k, ""]));
 const credentialsOnFile = (c) => SECRET_FIELDS.some((k) => !!c?.[k]);
 
+/** Kuveyt invalid_client duvar metnini kartta kısa checklist’e çevir. */
+function ConnErrorBox({ connection, onEdit }) {
+  const err = connection?.last_error || "";
+  if (!err) return null;
+  const isKuveyt = connection?.provider === "kuveytturk";
+  const invalidClient = /invalid_client/i.test(err);
+  if (!isKuveyt || !invalidClient) {
+    return <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2" data-testid="conn-last-error">{err}</div>;
+  }
+  const bothHosts = /hem Canlı hem Sandbox/i.test(err);
+  const modeMismatch = /aynı Müşteri Id\/Secret|Sandbox.*Identity|idprep/i.test(err) && !bothHosts;
+  const secretUuid = /secret≈uuid|UUID formatında|secret=api_key/i.test(err);
+  const idIsKey = /client_id=api_key|Müşteri Id ile Api Anahtarı aynı/i.test(err);
+  return (
+    <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg p-2.5 space-y-1.5" data-testid="conn-last-error-kuveyt">
+      <div className="font-bold flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5 shrink-0" /> Token alınamadı — invalid_client</div>
+      <p className="text-rose-700 leading-snug">
+        {bothHosts
+          ? "Canlı ve Sandbox Identity aynı kimlikleri reddetti: Müşteri Id / Client Secret portaldeki değerlerle eşleşmiyor."
+          : modeMismatch
+            ? "Kimlik diğer ortamda çalışıyor olabilir — bağlantı modunu (Canlı/Sandbox) portal uygulamasıyla eşleştirin."
+            : "Identity Server Müşteri Id / Client Secret’i kabul etmedi."}
+      </p>
+      <ol className="list-decimal list-inside text-rose-700 space-y-0.5 pl-0.5">
+        <li>Portalden <b>Müşteri Id</b> ve <b>Client Secret</b>’i yeniden kopyalayın (Api Anahtarı değil).</li>
+        <li>Canlı uygulama → mod <b>Canlı</b>; test uygulaması → <b>Sandbox</b>.</li>
+        {secretUuid && <li className="font-semibold">Kayıtlı Client Secret UUID gibi — Api Anahtarı yanlışlıkla Secret alanına yazılmış olabilir.</li>}
+        {idIsKey && <li className="font-semibold">Müşteri Id = Api Anahtarı — alanları karıştırmayın.</li>}
+        <li>Düzenle → yapıştır → Kaydet &amp; Test Et.</li>
+      </ol>
+      {onEdit && (
+        <button type="button" onClick={onEdit} className="mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-rose-600 text-white font-semibold hover:bg-rose-700" data-testid="conn-error-edit-btn">
+          <Pencil className="w-3 h-3" /> Düzenle &amp; kimlikleri yenile
+        </button>
+      )}
+      <details className="text-[10px] text-rose-500">
+        <summary className="cursor-pointer select-none">Teknik ayrıntı</summary>
+        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-rose-600/90">{err}</pre>
+      </details>
+    </div>
+  );
+}
+
 const StatusBadge = ({ status }) => {
   const map = {
     connected: ["bg-emerald-50 text-emerald-700 border-emerald-200", "CANLI BAĞLI", CheckCircle2],
@@ -122,7 +165,17 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
 
   const testConn = async (id) => {
     setBusy(id + "-test");
-    try { const r = await axios.post(`${API_URL}/banking/connections/${id}/test`); toast[r.data.ok ? "success" : "error"](r.data.message); load(); }
+    try {
+      const r = await axios.post(`${API_URL}/banking/connections/${id}/test`);
+      if (r.data.ok) toast.success(r.data.message);
+      else {
+        const msg = String(r.data.message || "Test başarısız.");
+        toast.error(/invalid_client/i.test(msg)
+          ? "Kuveyt: invalid_client — Müşteri Id / Client Secret’i portalden yeniden yapıştırıp test edin (Api Anahtarı değil)."
+          : msg.length > 180 ? `${msg.slice(0, 180)}…` : msg);
+      }
+      load();
+    }
     catch { toast.error("Test başarısız."); } finally { setBusy(null); }
   };
 
@@ -165,7 +218,13 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       setEditForm((f) => ({ ...f, ...emptySecrets() }));
       setEditConn(null);
       const r = await axios.post(`${API_URL}/banking/connections/${editConn.id}/test`);
-      toast[r.data.ok ? "success" : "error"](r.data.message);
+      if (r.data.ok) toast.success(r.data.message);
+      else {
+        const msg = String(r.data.message || "Test başarısız.");
+        toast.error(/invalid_client/i.test(msg)
+          ? "Kuveyt: invalid_client — Müşteri Id / Client Secret portalle eşleşmiyor. Karttaki adımları izleyin."
+          : msg.length > 180 ? `${msg.slice(0, 180)}…` : msg);
+      }
       load();
       onSynced?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
@@ -270,7 +329,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <span>Çekilen: <b className="text-slate-700">{c.synced_count}</b></span>
               {credentialsOnFile(c) ? <span>Kimlik bilgisi <b>sunucuda kayıtlı</b></span> : <span className="text-amber-600 font-semibold">Anahtar girilmedi</span>}
             </div>
-            {c.last_error && <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2">{c.last_error}</div>}
+            {c.last_error && <ConnErrorBox connection={c} onEdit={() => openEdit(c)} />}
             <button type="button" onClick={() => toggleAutoSync(c)} className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition ${c.auto_sync !== false ? "bg-sky-50 border-sky-300" : "bg-slate-50 border-slate-200"}`} data-testid={`auto-sync-toggle-${c.id}`} aria-pressed={c.auto_sync !== false}>
               <span className="flex items-center gap-2 text-[11px]"><RefreshCw className={`w-3.5 h-3.5 ${c.auto_sync !== false ? "text-sky-600" : "text-slate-400"}`} /><span><b className={c.auto_sync !== false ? "text-sky-800" : "text-slate-700"}>Arka plan senkron</b> <span className="text-slate-500">— kimlik bilgisi varsa her 10 dakikada otomatik çekilir</span></span></span>
               <span className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition ${c.auto_sync !== false ? "bg-sky-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${c.auto_sync !== false ? "left-[18px]" : "left-0.5"}`} /></span>
@@ -442,11 +501,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             )}
             {editForm.provider === "kuveytturk" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="kuveyt-edit-hint">
-                Araştırma (resmi SDK): token yalnızca <code className="font-mono">POST …/api/connect/token</code> body
-                (<code className="font-mono">client_credentials</code> + <code className="font-mono">scope=public</code>) —
-                HTTP Basic kullanılmaz. <b>Müşteri Id</b>≠Api Anahtarı; <b>Client Secret</b>≠Api Anahtarı.
-                <code className="font-mono">invalid_client</code> çoğunlukla Canlı/Sandbox kimlik karışması veya yanlış secret:
-                Sandbox kimliği → Sandbox mod; Canlı uygulama onayı + canlı secret → Canlı mod.
+                Portal alanları: <b>Müşteri Id</b> → Client ID, <b>Client Secret</b> (Api Anahtarı değil),
+                <b> Api Anahtarı</b> → X-Gravitee-Api-Key. Token: <code className="font-mono">POST …/api/connect/token</code> body
+                (<code className="font-mono">client_credentials</code> + <code className="font-mono">scope=public</code>).
+                Yapıştırırken satır sonu/boşluk bırakmayın. <code className="font-mono">invalid_client</code> → yanlış secret
+                veya Canlı/Sandbox kimlik karışması: Sandbox kimliği → Sandbox; Canlı onaylı uygulama → Canlı.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">

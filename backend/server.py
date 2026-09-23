@@ -7178,7 +7178,7 @@ async def create_bank_connection(conn: BankConnection):
         raise HTTPException(status_code=400, detail="Yalnızca banka, POS veya ÖKC hesabı bağlanabilir.")
     conn.provider_name = bank_providers.PROVIDERS[conn.provider]["name"]
     conn.linked_account_name = _linked_account_label(acc)
-    doc = conn.to_mongo()
+    doc = bank_providers.normalize_kuveyt_connection_secrets(conn.to_mongo())
     test = await bank_providers.test_connection(doc)
     doc["status"] = "simulated" if test.get("simulated") else ("connected" if test["ok"] else "error")
     doc["last_error"] = None if test["ok"] else test["message"]
@@ -7208,6 +7208,12 @@ async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
     prev = await db.bank_connections.find_one({"_id": conn_id})
     if not prev:
         raise HTTPException(status_code=404, detail="Bağlantı bulunamadı.")
+    # Kuveyt: yapıştırma boşluk/newline’larını kaydetmeden temizle
+    if (allowed.get("provider") or prev.get("provider")) == "kuveytturk":
+        cleaned = bank_providers.normalize_kuveyt_connection_secrets({**allowed, "provider": "kuveytturk"})
+        for k in ("client_id", "client_secret", "api_key"):
+            if k in allowed and cleaned.get(k) is not None:
+                allowed[k] = cleaned[k]
     await db.bank_connections.update_one({"_id": conn_id}, {"$set": allowed})
     doc = await db.bank_connections.find_one({"_id": conn_id})
     if linked_acc is None and doc.get("linked_account_id"):

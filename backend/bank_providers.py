@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import random
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -331,11 +332,30 @@ def _kuveyt_headers(
 
 
 def _kuveyt_normalize_secret(val: str) -> str:
-    """Paste artifacts: quotes, zero-width, BOM."""
-    s = (val or "").strip().replace("\ufeff", "").replace("\u200b", "")
+    """Paste artifacts: quotes, zero-width, BOM, and accidental whitespace/newlines.
+
+    Portal copy-paste often inserts newlines or spaces inside Client Secret / Müşteri Id;
+    Identity Server then returns invalid_client even when the characters are otherwise correct.
+    """
+    s = (val or "").strip().replace("\ufeff", "").replace("\u200b", "").replace("\u00a0", "")
     if len(s) >= 2 and ((s[0] == s[-1] == '"') or (s[0] == s[-1] == "'")):
         s = s[1:-1].strip()
+    # Non-PEM secrets must be a single token — collapse all whitespace.
+    if "BEGIN" not in s.upper():
+        s = "".join(s.split())
     return s
+
+
+def normalize_kuveyt_connection_secrets(conn: dict) -> dict:
+    """Persist/read path: strip paste noise from Kuveyt identity fields."""
+    out = dict(conn or {})
+    if (out.get("provider") or "") != "kuveytturk":
+        return out
+    for key in ("client_id", "client_secret", "api_key"):
+        raw = out.get(key)
+        if raw and not is_masked_secret(raw):
+            out[key] = _kuveyt_normalize_secret(str(raw))
+    return out
 
 
 def _kuveyt_scope_candidates(conn: dict) -> List[str]:
@@ -376,18 +396,41 @@ def _kuveyt_token_auth_attempts(client_id: str, client_secret: str, scope: str) 
     ]
 
 
+_KUVEYT_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.I,
+)
+
+
+def _kuveyt_looks_like_uuid(val: str) -> bool:
+    return bool(val and _KUVEYT_UUID_RE.match(val) and len(val) == 36)
+
+
 def _kuveyt_secret_looks_like_api_key(client_secret: str, api_key: str) -> bool:
     """Portal Api Anahtarı UUID; Client Secret genelde farklı uzun/opaque bir değerdir."""
-    import re
-    uuid_re = re.compile(
-        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-        re.I,
-    )
     sec = (client_secret or "").strip()
     key = (api_key or "").strip()
     if key and sec and sec == key:
         return True
-    return bool(sec and uuid_re.match(sec) and len(sec) == 36)
+    return _kuveyt_looks_like_uuid(sec)
+
+
+def _kuveyt_cred_swap_hints(client_id: str, client_secret: str, api_key: str) -> List[str]:
+    """Alan karışıklığı: Müşteri Id / Client Secret / Api Anahtarı yer değiştirmiş olabilir."""
+    hints: List[str] = []
+    cid = (client_id or "").strip()
+    sec = (client_secret or "").strip()
+    key = (api_key or "").strip()
+    if key and cid and cid == key:
+        hints.append("client_id=api_key")
+    if key and sec and sec == key:
+        hints.append("secret=api_key")
+    if _kuveyt_secret_looks_like_api_key(sec, key) and "secret=api_key" not in hints:
+        hints.append("secret≈uuid")
+    if key and _kuveyt_looks_like_uuid(cid) and _kuveyt_looks_like_uuid(key) and cid != key:
+        # İkisi de UUID — kullanıcı Api Anahtarı’nı Müşteri Id sanmış olabilir; uyarı değil bilgi
+        pass
+    return hints
 
 
 def _kuveyt_cred_fingerprint(client_id: str, client_secret: str, api_key: str) -> str:
@@ -397,8 +440,7 @@ def _kuveyt_cred_fingerprint(client_id: str, client_secret: str, api_key: str) -
         f"secret={len(client_secret)}kr",
         f"api_key={'var' if api_key else 'yok'}",
     ]
-    if _kuveyt_secret_looks_like_api_key(client_secret, api_key):
-        parts.append("secret≈uuid")
+    parts.extend(_kuveyt_cred_swap_hints(client_id, client_secret, api_key))
     return ", ".join(parts)
 
 
@@ -517,16 +559,28 @@ async def _kuveyt_access_token(conn: dict) -> str:
     detail = primary_err or last_err
     hint = ""
     if saw_invalid_client:
+        swaps = _kuveyt_cred_swap_hints(client_id, client_secret, api_key)
         hint = (
             " invalid_client: Müşteri Id / Client Secret bu Identity ortamında geçersiz "
             "(veya uygulamada client_credentials kapalı). "
             "Portalden Client Secret’i yeniden kopyalayın; Api Anahtarı’nı Client Secret "
             "yerine yazmayın. "
         ) + alt_hint
-        if _kuveyt_secret_looks_like_api_key(client_secret, api_key):
+        if "secret≈uuid" in swaps or "secret=api_key" in swaps:
             hint += (
                 "Kayıtlı Client Secret UUID formatında (Api Anahtarı gibi) — "
                 "portalden asıl Client Secret’i Client Secret alanına yapıştırın. "
+            )
+        if "client_id=api_key" in swaps:
+            hint += (
+                "Müşteri Id ile Api Anahtarı aynı — Müşteri Id alanına portaldeki "
+                "Müşteri Id’yi, Api Anahtarı alanına Gravitee anahtarını yazın. "
+            )
+        if alt_hint and "eşleşmiyor" in alt_hint:
+            hint += (
+                "Adımlar: 1) Düzenle → Müşteri Id + Client Secret’i portalden tek satır "
+                "olarak yeniden yapıştırın (Api Anahtarı değil). 2) Canlı uygulama için "
+                "mod=Canlı, test uygulaması için Sandbox. 3) Kaydet & Test Et. "
             )
     fp = _kuveyt_cred_fingerprint(client_id, client_secret, api_key)
     raise RuntimeError(
