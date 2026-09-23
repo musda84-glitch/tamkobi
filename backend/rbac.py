@@ -158,6 +158,8 @@ def backfill_permissions(perms: Optional[Dict[str, str]]) -> Dict[str, str]:
     p.setdefault("/mesai", "none")
     p.setdefault("/support", p.get("/communication", "none"))
     p.setdefault("/purchase-orders", p.get("/stock", "none"))
+    # Eski üretim rollerinde /atolye anahtarı yoksa üretim seviyesini miras al
+    p.setdefault("/atolye", p.get("/production", "none"))
     for m, _ in MODULES:
         p.setdefault(m, "none")
     return p
@@ -215,6 +217,28 @@ def module_for_path(path: str) -> Optional[str]:
         if path.startswith(prefix) and (best is None or len(prefix) > len(best[0])):
             best = (prefix, mod)
     return best[1] if best else None
+
+
+def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str]) -> bool:
+    """POST/PUT/DELETE: genelde edit; atölye tablet işlemlerinde view de yeterli."""
+    if not module:
+        return True
+    if perms.get(module, "none") == "edit":
+        return True
+    # Sipariş ekranından kargolama: /orders edit yeterli (ayrı /cargo yetkisi şart değil)
+    if module == "/cargo" and (
+        path.startswith("/api/cargo/create-shipment")
+        or path.startswith("/api/cargo/auto-ship")
+    ):
+        return perms.get("/orders", "none") == "edit"
+    # Atölye ekranı (PIN + iş emri başlat/duraklat/bitir): modülü görebilen kullanıcı işletebilsin.
+    # Özel "Atölye" rolü çoğu zaman view ile açılır; edit şartı operatör girişini 403 yapıyordu.
+    if module == "/atolye" and path.startswith("/api/production/work-orders"):
+        if perms.get("/atolye", "none") in ("view", "edit"):
+            return True
+        # Üretim edit yetkisi olanlar da atölye iş emirlerini işletebilir
+        return perms.get("/production", "none") == "edit"
+    return False
 
 
 class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
@@ -278,14 +302,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
         if user and user.get("role") != "admin" and module:
             role = await role_for(user)
             perms = role.get("permissions", {})
-            allowed = perms.get(module, "none") == "edit"
-            # Sipariş ekranından kargolama: /orders edit yeterli (ayrı /cargo yetkisi şart değil)
-            if not allowed and module == "/cargo" and (
-                path.startswith("/api/cargo/create-shipment")
-                or path.startswith("/api/cargo/auto-ship")
-            ):
-                allowed = perms.get("/orders", "none") == "edit"
-            if not allowed:
+            if not mutation_allowed(module, path, perms):
                 from fastapi.responses import JSONResponse
                 return JSONResponse({"detail": f"Bu işlem için yetkiniz yok ({role.get('name')} rolü: {module})."}, status_code=403)
         response = await call_next(request)
