@@ -114,3 +114,14 @@ export function productCartQty(cart: B2BCart | null | undefined, productId: stri
   if (!id) return 0;
   return Object.values(cart || {}).reduce((s, line) => s + (line.productId === id ? Number(line.qty) || 0 : 0), 0);
 }
+
+/** Sepete eklenince banner açık gridan yeşile geçer; çerçeve düz çizgi. */
+export function b2bFlashChrome(added: boolean) {
+  return {
+    borderStyle: "solid" as const,
+    borderColor: added ? "#059669" : "#E2E8F0",
+    backgroundColor: added ? "#ECFDF5" : "#F8FAFC",
+    icon: added ? "#059669" : "#94A3B8",
+    text: added ? "#047857" : "#64748B",
+  };
+}

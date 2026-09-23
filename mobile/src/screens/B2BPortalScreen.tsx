@@ -14,7 +14,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
-import { addCartLine, cartCount, formatCartSheetMeta, formatOrderItemLabel, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "../utils/b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, formatCartSheetMeta, formatOrderItemLabel, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "../utils/b2bCart";
 import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
 import { canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty } from "../utils/b2bCatalog";
 import {
@@ -267,6 +267,7 @@ export function B2BPortalScreen() {
   const [cartOpen, setCartOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [addedId, setAddedId] = useState<string | null>(null);
+  const [flashOn, setFlashOn] = useState(false);
   const addedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -328,6 +329,7 @@ export function B2BPortalScreen() {
   const vat = lines.reduce((s, l) => s + (b2bGross(l.p) - b2bNet(l.p)) * l.qty, 0);
   const cartTotal = sub + vat;
   const count = cartCount(cart);
+  const flash = b2bFlashChrome(flashOn);
 
   const addProduct = (p: B2BProduct) => {
     if (!canAddProduct(p, showStock, allowOrders)) return;
@@ -342,6 +344,16 @@ export function B2BPortalScreen() {
   useEffect(() => () => {
     if (addedTimer.current) clearTimeout(addedTimer.current);
   }, []);
+
+  useEffect(() => {
+    if (!message) {
+      setFlashOn(false);
+      return undefined;
+    }
+    setFlashOn(false);
+    const t = setTimeout(() => setFlashOn(true), 60);
+    return () => clearTimeout(t);
+  }, [message]);
 
   const submitOrder = async () => {
     if (!allowOrders || !b2bToken) return;
@@ -508,18 +520,19 @@ export function B2BPortalScreen() {
                 alignItems: "center",
                 gap: 8,
                 borderWidth: 2,
-                borderStyle: "dashed",
-                borderColor: colors.danger,
+                borderStyle: flash.borderStyle,
+                borderColor: flash.borderColor,
                 borderRadius: 12,
                 paddingHorizontal: 12,
                 paddingVertical: 10,
-                backgroundColor: colors.rose50,
+                backgroundColor: flash.backgroundColor,
+                ...(Platform.OS === "web" ? { transition: "background-color 220ms ease, border-color 220ms ease" } : null),
               }}
             >
-              <Ionicons name="checkmark-circle" size={18} color={colors.danger} />
-              <Text style={{ flex: 1, color: colors.danger, fontWeight: "700" }}>{message}</Text>
+              <Ionicons name="checkmark-circle" size={18} color={flash.icon} />
+              <Text style={{ flex: 1, color: flash.text, fontWeight: "700" }}>{message}</Text>
               <Pressable onPress={() => setMessage(null)} hitSlop={8} testID="b2b-flash-close">
-                <Ionicons name="close" size={18} color={colors.danger} />
+                <Ionicons name="close" size={18} color={flash.icon} />
               </Pressable>
             </View>
           ) : null}
