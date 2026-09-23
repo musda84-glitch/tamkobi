@@ -8902,7 +8902,7 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
     discount_total = float(inv_totals.get("discount_total") or 0)
     grand_total = float(inv_totals.get("grand_total") or 0)
     term_days = int(contact.get("payment_term_days") or 14)
-    note_src = "sevkiyatında" if source == "ship" else "onayında"
+    note_src = {"ship": "sevkiyatında", "approve": "onayında", "convert": "Faturala ile"}.get(source, "onayında")
     doc = {
         "_id": inv_id,
         "company_id": order.get("company_id"),
@@ -10870,6 +10870,41 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
     if not order:
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
 
+    as_draft = bool(req.get("as_draft"))
+    e_type_req = req.get("e_type") if req.get("e_type") in ("e_invoice", "e_archive", "paper") else None
+
+    if as_draft:
+        if order.get("is_invoiced"):
+            return {"status": "info", "message": "Bu sipariş için zaten fatura oluşturulmuş.", "invoice_id": order.get("invoice_id"), "draft": False}
+        if order.get("invoice_id"):
+            existing = await db.invoices.find_one({"_id": order["invoice_id"]})
+            if existing and existing.get("status") == "draft":
+                if e_type_req and existing.get("e_type") != e_type_req:
+                    await db.invoices.update_one({"_id": existing["_id"]}, {"$set": {"e_type": e_type_req}})
+                    existing["e_type"] = e_type_req
+                return {
+                    "status": "success",
+                    "message": f"Taslak fatura zaten var: {existing.get('invoice_number')}",
+                    "invoice_id": existing["_id"],
+                    "invoice_number": existing.get("invoice_number"),
+                    "draft": True,
+                }
+            if existing and existing.get("status") != "draft":
+                return {"status": "info", "message": "Bu sipariş için zaten fatura oluşturulmuş.", "invoice_id": order.get("invoice_id"), "draft": False}
+        draft = await _create_draft_invoice_for_order(order, source="convert")
+        if not draft:
+            raise HTTPException(status_code=400, detail="Taslak fatura oluşturulamadı (cari veya kalem eksik).")
+        if e_type_req:
+            await db.invoices.update_one({"_id": draft["_id"]}, {"$set": {"e_type": e_type_req}})
+            draft["e_type"] = e_type_req
+        return {
+            "status": "success",
+            "message": f"Taslak fatura oluşturuldu: {draft.get('invoice_number')}",
+            "invoice_id": draft["_id"],
+            "invoice_number": draft.get("invoice_number"),
+            "draft": True,
+        }
+
     if order.get("is_invoiced"):
         return {"status": "info", "message": "Bu sipariş için zaten fatura oluşturulmuş.", "invoice_id": order.get("invoice_id")}
     draft_inv = None
@@ -10899,7 +10934,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
         "contact_id": _oc["_id"],
         "contact_name": _oc.get("name") or order.get("customer_name"),
         "contact_tax_id": _oc.get("tax_number_or_id") or "11111111111",
-        "e_type": req.get("e_type") if req.get("e_type") in ("e_invoice", "e_archive", "paper") else ("e_invoice" if _oc.get("is_e_invoice_user") else "e_archive"),
+        "e_type": e_type_req or ("e_invoice" if _oc.get("is_e_invoice_user") else "e_archive"),
         "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "due_date": (datetime.now(timezone.utc) + timedelta(days=14)).strftime("%Y-%m-%d"),
         "items": inv_items,
