@@ -314,8 +314,9 @@ def approved_intraday_gap_minutes(rec: Optional[dict]) -> int:
     if ci and co:
         try:
             cia, cob = _hm(str(ci)[:5]), _hm(str(co)[:5])
+            # Ters giriş/çıkış: gece vardiyası varsayma; izin penceresini sıkıştırma
             if cob < cia:
-                cob += 24 * 60
+                return max(0, b - a)
             start = max(cia, a)
             end = min(cob, b)
             return max(0, end - start)
@@ -328,9 +329,12 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
     """check_in/check_out (HH:MM) → hours, normal_hours, overtime_hours, late_minutes, early_leave_minutes, is_off_day.
     Atanan fazla mesai beklenen çıkışı (expected_end) uzatır; erken çıkış buna göre, fazla mesai mesai bitişine göre hesaplanır.
     Onaylı gün içi izin (çıkış–dönüş) çalışılan dakikadan düşülür.
+
+    Not: Firma mesaisi aynı takvim günü içindedir (end > start). Çıkış < giriş
+    olduğunda +24s gece sarması yapılmaz — bu veri hatasıdır ve ~24 sa şişirme üretir.
     """
     out = {"hours": 0.0, "normal_hours": 0.0, "overtime_hours": 0.0, "late_minutes": 0, "early_leave_minutes": 0, "is_off_day": False,
-           "assigned_overtime_hours": 0.0, "expected_end": None, "intraday_leave_minutes": 0}
+           "assigned_overtime_hours": 0.0, "expected_end": None, "intraday_leave_minutes": 0, "time_order_invalid": False}
     try:
         wd = datetime.strptime(rec.get("date"), "%Y-%m-%d").weekday()
     except Exception:
@@ -361,7 +365,10 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
         return out
     a, b = _hm(ci), _hm(co)
     if b < a:
-        b += 24 * 60
+        # Aynı gün mesaisinde çıkış < giriş → gece vardiyası değil, bozuk kayıt
+        out["time_order_invalid"] = True
+        out["early_leave_minutes"] = max(0, expected_end_m - b) if not out["is_off_day"] else 0
+        return out
     worked = max(0, b - a - win["break_minutes"] - leave_m)
     if out["is_off_day"]:
         ot = worked
@@ -924,6 +931,16 @@ async def put_work_schedule(company_id: str, req: Dict[str, Any]):
     return {"status": "success", "schedule": s}
 
 
+def enrich_attendance_row(rec: Optional[dict], schedule: dict, plan: Optional[dict] = None) -> Optional[dict]:
+    """Kayıtlı saatleri güncel compute_day ile yeniden hesapla (ters giriş/çıkış şişirmesini düzeltir)."""
+    if not rec:
+        return None
+    row = dict(rec)
+    metrics = compute_day(row, schedule, plan)
+    row.update(metrics)
+    return row
+
+
 # ---------- Personel self-servis ----------
 @router.get("/personnel/attendance/me")
 async def my_attendance(request: Request, company_id: Optional[str] = None, month: Optional[str] = None):
@@ -937,6 +954,12 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
     today_s = _today(schedule)
     rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(100)
     today = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today_s})
+    plans = {p["date"]: p for p in await _db.shift_plans.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}}).to_list(100)}
+    enriched = []
+    for r in rows:
+        e = enrich_attendance_row(r, schedule, plans.get(r.get("date")))
+        enriched.append(_clean(e) if e else _clean(r))
+    today_e = enrich_attendance_row(today, schedule, plans.get(today_s)) if today else None
     workplace = await workplace_for_employee(emp, company, today_s)
     loc = geo_target(workplace)
     lt = normalize_location_tracking(emp.get("location_tracking"))
@@ -947,7 +970,7 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
     elif not active_lt.get("enabled"):
         schedule = {**schedule, "require_geo": False}
     return {"employee": {"id": emp["_id"], "full_name": emp["full_name"], "department": emp.get("department"), "position": emp.get("position")},
-            "month": month, "records": [_clean(r) for r in rows], "summary": summarize(rows), "today": _clean(today) if today else None,
+            "month": month, "records": enriched, "summary": summarize(enriched), "today": _clean(today_e) if today_e else None,
             "schedule": schedule, "day_labels": DAY_LABELS, "location": loc, "workplace": workplace,
             "company_location": company.get("location"), "location_tracking": lt,
             "active_location_tracking": active_lt,
@@ -1016,6 +1039,17 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     if action == "check_out" and existing.get("check_out"):
         raise HTTPException(status_code=400, detail=f"Bugün {existing['check_out']} saatinde çıkış yapılmış.")
     now_s = now_hm(schedule)
+    if action == "check_out" and existing.get("check_in"):
+        try:
+            if _hm(now_s) < _hm(str(existing["check_in"])[:5]):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Çıkış saati ({now_s}) girişten ({existing['check_in']}) önce olamaz. Cihaz saatini kontrol edin.",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     patch = {"status": "present", action: now_s}
     rec = await apply_day(emp, today, patch, source="self", confirmed=True)
     extra = {}
