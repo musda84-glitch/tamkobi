@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2, Eye, UserCheck } from "lucide-react";
+import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2, Eye, UserCheck, MessageSquare, Phone } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupMenuItems } from "../navGroups";
 
@@ -11,17 +11,44 @@ const LEVEL_CLS = { none: "bg-slate-100 text-slate-500", view: "bg-sky-100 text-
 
 const UsersTab = ({ companyId, roles, reload, data }) => {
   const { user: me } = useAuth();
-  const [inv, setInv] = useState({ name: "", email: "", role: "sales" });
+  const [inv, setInv] = useState({ name: "", email: "", phone: "", role: "sales", channels: { email: true, sms: false, whatsapp: false } });
   const [manual, setManual] = useState({ name: "", email: "", password: "", role: "sales" });
   const [busy, setBusy] = useState(false);
   const [pwdFor, setPwdFor] = useState(null);
   const [pwd, setPwd] = useState("");
+  const toggleChannel = (key) => setInv((s) => ({ ...s, channels: { ...s.channels, [key]: !s.channels[key] } }));
   const invite = async (e) => {
-    e.preventDefault(); setBusy(true);
+    e.preventDefault();
+    const channels = Object.entries(inv.channels).filter(([, on]) => on).map(([k]) => k);
+    if (!channels.length) { toast.error("En az bir kanal seçin (E-posta / SMS / WhatsApp)."); return; }
+    if ((inv.channels.sms || inv.channels.whatsapp) && !String(inv.phone || "").trim()) {
+      toast.error("SMS veya WhatsApp için telefon numarası girin.");
+      return;
+    }
+    setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/users/invite`, { ...inv, company_id: companyId, base_url: window.location.origin, invited_by: me?.id });
-      toast[r.data.mail.status === "sent" ? "success" : "info"](r.data.mail.detail);
-      setInv({ name: "", email: "", role: "sales" }); reload();
+      const r = await axios.post(`${API_URL}/users/invite`, {
+        name: inv.name,
+        email: inv.email,
+        phone: inv.phone,
+        role: inv.role,
+        channels,
+        company_id: companyId,
+        base_url: window.location.origin,
+        invited_by: me?.id,
+      });
+      const delivery = r.data.delivery || {};
+      const wa = delivery.whatsapp;
+      if (wa?.wa_link && (wa.status === "simulated" || wa.status === "sent")) {
+        try { window.open(wa.wa_link, "_blank", "noopener,noreferrer"); } catch { /* ignore */ }
+      }
+      const msg = r.data.message || r.data.mail?.detail || "Davet oluşturuldu.";
+      const anyFail = Object.values(delivery).some((d) => d?.status === "failed");
+      const anySent = Object.values(delivery).some((d) => d?.status === "sent" || d?.status === "simulated")
+        || r.data.mail?.status === "sent";
+      toast[anyFail && !anySent ? "error" : anySent ? "success" : "info"](msg);
+      setInv({ name: "", email: "", phone: "", role: "sales", channels: { email: true, sms: false, whatsapp: false } });
+      reload();
     } catch (err) { toast.error(err.response?.data?.detail || "Davet gönderilemedi."); } finally { setBusy(false); }
   };
   const createManual = async (e) => {
@@ -37,12 +64,40 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
   const copy = async (link) => { try { await navigator.clipboard.writeText(link); toast.success("Davet linki kopyalandı."); } catch { window.prompt("Davet linki (kopyalayın):", link); } };
   return (
     <div className="space-y-5">
-      <form onSubmit={invite} className="bg-slate-50 border rounded-xl p-3 grid grid-cols-1 md:grid-cols-5 gap-2 items-end text-xs" data-testid="user-invite-form">
-        <div className="md:col-span-5 font-bold text-slate-800 flex items-center gap-1.5"><UserPlus className="w-4 h-4 text-emerald-600" /> Yeni kullanıcı davet et (e-posta ile link gönderilir)</div>
+      <form onSubmit={invite} className="bg-slate-50 border rounded-xl p-3 grid grid-cols-1 md:grid-cols-6 gap-2 items-end text-xs" data-testid="user-invite-form">
+        <div className="md:col-span-6 font-bold text-slate-800 flex items-center gap-1.5"><UserPlus className="w-4 h-4 text-emerald-600" /> Yeni kullanıcı davet et</div>
         <div><label className="block font-semibold mb-1">Ad Soyad</label><input value={inv.name} onChange={(e) => setInv({ ...inv, name: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="invite-name" /></div>
         <div className="md:col-span-2"><label className="block font-semibold mb-1">E-posta</label><input type="email" required value={inv.email} onChange={(e) => setInv({ ...inv, email: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="invite-email" /></div>
+        <div><label className="block font-semibold mb-1">Telefon</label><input value={inv.phone} onChange={(e) => setInv({ ...inv, phone: e.target.value })} placeholder="05XX XXX XX XX" className="w-full border rounded-lg p-2 bg-white font-mono" data-testid="invite-phone" /></div>
         <div><label className="block font-semibold mb-1">Rol</label><select value={inv.role} onChange={(e) => setInv({ ...inv, role: e.target.value })} className="w-full border rounded-lg p-2 bg-white" data-testid="invite-role">{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></div>
-        <button disabled={busy} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center justify-center gap-1" data-testid="invite-submit">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Davet Gönder</button>
+        <div className="md:col-span-6 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-bold uppercase text-slate-400 mr-1">Kanallar</span>
+          {[
+            ["email", "E-posta", Mail, "emerald"],
+            ["sms", "SMS", MessageSquare, "indigo"],
+            ["whatsapp", "WhatsApp", Phone, "teal"],
+          ].map(([key, label, Ico, tone]) => {
+            const on = !!inv.channels[key];
+            const tones = {
+              emerald: on ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-slate-700 border-slate-200",
+              indigo: on ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-700 border-slate-200",
+              teal: on ? "bg-teal-600 text-white border-teal-600" : "bg-white text-slate-700 border-slate-200",
+            };
+            return (
+              <button
+                type="button"
+                key={key}
+                onClick={() => toggleChannel(key)}
+                className={`px-2.5 py-1.5 rounded-lg border font-semibold flex items-center gap-1 ${tones[tone]}`}
+                data-testid={`invite-channel-${key}`}
+                aria-pressed={on}
+              >
+                <Ico className="w-3.5 h-3.5" /> {label}
+              </button>
+            );
+          })}
+          <button disabled={busy} type="submit" className="ml-auto px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center justify-center gap-1" data-testid="invite-submit">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Davet Gönder</button>
+        </div>
       </form>
       <form onSubmit={createManual} className="bg-white border border-slate-200 rounded-xl p-3 grid grid-cols-1 md:grid-cols-6 gap-2 items-end text-xs" data-testid="user-manual-form">
         <div className="md:col-span-6 font-bold text-slate-800 flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-slate-700" /> Manuel kullanıcı ekle (şifre siz belirlersiniz, hemen giriş yapabilir)</div>
@@ -59,7 +114,13 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
             <div key={i.id} className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" data-testid={`invite-row-${i.email}`}>
               <span className="font-semibold text-slate-800">{i.name || "-"}</span><span className="text-slate-500">{i.email}</span><span className="px-1.5 py-0.5 rounded bg-white border text-[10px]">{roles.find((r) => r.code === i.role)?.name || i.role_name || i.role}</span>
               {i.employee_name ? <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] font-semibold" data-testid={`invite-emp-${i.email}`} title="Bağlı personel">Personel: {i.employee_name}</span> : null}
-              <span className={`text-[10px] ${i.mail?.status === "sent" ? "text-emerald-700" : "text-amber-700"}`}>{i.mail?.status === "sent" ? "E-posta gönderildi" : "E-posta gönderilmedi — linki iletin"}</span>
+              <span className={`text-[10px] ${i.mail?.status === "sent" ? "text-emerald-700" : "text-amber-700"}`}>
+                {[
+                  i.delivery?.mail?.status === "sent" || i.mail?.status === "sent" ? "E-posta" : null,
+                  i.delivery?.sms?.status === "sent" || i.delivery?.sms?.status === "simulated" ? "SMS" : null,
+                  i.delivery?.whatsapp?.status === "sent" || i.delivery?.whatsapp?.status === "simulated" ? "WhatsApp" : null,
+                ].filter(Boolean).join(" · ") || (i.mail?.status === "sent" ? "E-posta gönderildi" : "Linki iletin")}
+              </span>
               <button onClick={() => copy(i.link)} className="ml-auto p-1 rounded hover:bg-white" title="Linki kopyala" data-testid={`invite-copy-${i.email}`}><Copy className="w-3.5 h-3.5" /></button>
               <button onClick={async () => { await axios.delete(`${API_URL}/users/invite/${i.id}`); reload(); }} className="p-1 rounded hover:bg-white text-rose-600" title="İptal" data-testid={`invite-cancel-${i.email}`}><Trash2 className="w-3.5 h-3.5" /></button>
             </div>
