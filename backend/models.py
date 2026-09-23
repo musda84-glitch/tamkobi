@@ -606,6 +606,10 @@ class Recipe(BaseDocument):
     unit_cost: float = 0.0
     is_active: bool = True
     notes: Optional[str] = None
+    # Müşteri siparişi / iş dosyası (opsiyonel)
+    contact_id: Optional[str] = None
+    contact_name: Optional[str] = None
+    job_file_name: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class ProductionOrder(BaseDocument):

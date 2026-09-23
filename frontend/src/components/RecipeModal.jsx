@@ -1,5 +1,5 @@
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useEscape } from "../utils/useEscape";
 import axios from "axios";
 import { toast } from "sonner";
@@ -14,7 +14,19 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
   useEscape(onClose);
   const finished = products.filter((p) => p.type !== "raw_material" && p.type !== "service");
   const materialsSrc = products.filter((p) => p.type !== "service");
-  const [f, setF] = useState({ name: recipe?.name || "", finished_product_id: recipe?.finished_product_id || presetProductId || "", target_quantity: recipe?.target_quantity || 1, unit: recipe?.unit || "Adet", labor_cost: recipe?.labor_cost || 0, overhead_cost: recipe?.overhead_cost || 0, notes: recipe?.notes || "" });
+  const [contacts, setContacts] = useState([]);
+  const [f, setF] = useState({
+    name: recipe?.name || "",
+    finished_product_id: recipe?.finished_product_id || presetProductId || "",
+    target_quantity: recipe?.target_quantity || 1,
+    unit: recipe?.unit || "Adet",
+    labor_cost: recipe?.labor_cost || 0,
+    overhead_cost: recipe?.overhead_cost || 0,
+    notes: recipe?.notes || "",
+    contact_id: recipe?.contact_id || "",
+    contact_name: recipe?.contact_name || "",
+    job_file_name: recipe?.job_file_name || "",
+  });
   const [steps, setSteps] = useState(recipe?.steps?.length ? recipe.steps.map((x) => ({ ...x })) : []);
   const updStep = (i, patch) => setSteps(steps.map((x, idx) => idx === i ? { ...x, ...patch } : x));
   const [mats, setMats] = useState(recipe?.materials?.length ? recipe.materials.map((m) => ({ ...m })) : [{ product_id: "", product_name: "", quantity: 1, unit: "Adet", cost_per_unit: 0, wastage_percent: 0 }]);
@@ -24,11 +36,45 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
   const total = matCost + Number(f.labor_cost || 0) + Number(f.overhead_cost || 0);
   const unitCost = total / Number(f.target_quantity || 1);
   const fp = products.find((p) => p.id === f.finished_product_id);
+
+  useEffect(() => {
+    if (!companyId) return;
+    axios.get(`${API_URL}/contacts`, { params: { company_id: companyId, lite: 1 } })
+      .then((r) => {
+        const rows = Array.isArray(r.data) ? r.data : (r.data?.contacts || []);
+        setContacts(rows.map((c) => ({ ...c, id: c.id || c._id })));
+      })
+      .catch(() => setContacts([]));
+  }, [companyId]);
+
+  const pickContact = (id, c) => {
+    const row = c || contacts.find((x) => (x.id || x._id) === id);
+    setF({
+      ...f,
+      contact_id: id || "",
+      contact_name: row?.name || "",
+    });
+  };
+
   const save = async () => {
     const valid = mats.filter((m) => m.product_id && Number(m.quantity) > 0);
     if (!f.finished_product_id) { toast.error("Üretilecek ürünü seçin."); return; }
     if (!valid.length) { toast.error("En az bir hammadde ekleyin."); return; }
-    const payload = { company_id: companyId, ...f, steps: steps.filter((x) => x.name?.trim()).map((x, i) => ({ no: i + 1, name: x.name.trim(), station: x.station || "Genel", duration_min: Number(x.duration_min || 0) })), code: recipe?.code || "", name: f.name || `${fp?.name} Reçetesi`, finished_product_name: fp?.name || "", target_quantity: Number(f.target_quantity), labor_cost: Number(f.labor_cost), overhead_cost: Number(f.overhead_cost), materials: valid.map((m) => ({ ...m, quantity: Number(m.quantity), cost_per_unit: Number(m.cost_per_unit), wastage_percent: Number(m.wastage_percent || 0) })) };
+    const payload = {
+      company_id: companyId,
+      ...f,
+      contact_id: f.contact_id || null,
+      contact_name: f.contact_name || null,
+      job_file_name: (f.job_file_name || "").trim() || null,
+      steps: steps.filter((x) => x.name?.trim()).map((x, i) => ({ no: i + 1, name: x.name.trim(), station: x.station || "Genel", duration_min: Number(x.duration_min || 0) })),
+      code: recipe?.code || "",
+      name: f.name || `${fp?.name} Reçetesi`,
+      finished_product_name: fp?.name || "",
+      target_quantity: Number(f.target_quantity),
+      labor_cost: Number(f.labor_cost),
+      overhead_cost: Number(f.overhead_cost),
+      materials: valid.map((m) => ({ ...m, quantity: Number(m.quantity), cost_per_unit: Number(m.cost_per_unit), wastage_percent: Number(m.wastage_percent || 0) })),
+    };
     try {
       if (recipe) await axios.put(`${API_URL}/production/recipes/${recipe.id}`, payload); else await axios.post(`${API_URL}/production/recipes`, payload);
       toast.success(recipe ? "Reçete güncellendi." : "Reçete oluşturuldu."); onSaved?.(); onClose();
@@ -43,6 +89,8 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
           <div className="col-span-2"><label className="block font-semibold mb-1">Üretilecek Ürün (Mamul) *</label><SearchSelect value={f.finished_product_id} options={finished} placeholder="Ürün ara…" getLabel={(p) => p.name} getSub={(p) => `${p.sku} • Stok: ${p.stock_quantity}`} onChange={(id, p) => setF({ ...f, finished_product_id: id, unit: p?.unit || f.unit, name: f.name || (p ? `${p.name} Reçetesi` : "") })} testId="recipe-product" /></div>
           <div><label className="block font-semibold mb-1">Bu reçete kaç {f.unit} üretir?</label><input type="number" min="0.001" step="any" value={f.target_quantity} onChange={(e) => setF({ ...f, target_quantity: e.target.value })} className={`${cls} font-bold`} data-testid="recipe-target-qty" /></div>
           <div><label className="block font-semibold mb-1">Reçete Adı</label><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Standart üretim" className={cls} data-testid="recipe-name" /></div>
+          <div className="col-span-2"><label className="block font-semibold mb-1">Müşteri (Cari)</label><SearchSelect value={f.contact_id} options={contacts} placeholder="Cari ara…" getLabel={(c) => c.name} getSub={(c) => [c.phone, c.tax_number_or_id].filter(Boolean).join(" · ")} onChange={pickContact} testId="recipe-contact" /></div>
+          <div className="col-span-2"><label className="block font-semibold mb-1">İş dosyası adı</label><input value={f.job_file_name} onChange={(e) => setF({ ...f, job_file_name: e.target.value })} placeholder="Örn. AHM-2026-014 / Villa mutfak" className={cls} data-testid="recipe-job-file" /></div>
         </div>
         <div>
           <div className="flex items-center justify-between mb-1"><span className="font-bold text-slate-800">Hammaddeler / Bileşenler</span><button onClick={() => setMats([...mats, { product_id: "", product_name: "", quantity: 1, unit: "Adet", cost_per_unit: 0, wastage_percent: 0 }])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="recipe-add-material"><Plus className="w-3.5 h-3.5" /> Hammadde Ekle</button></div>

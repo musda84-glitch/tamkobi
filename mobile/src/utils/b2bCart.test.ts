@@ -1,4 +1,4 @@
-import { addCartLine, cartCount, formatCartSheetLine, formatCartSheetMeta, lineKey, normalizeNote, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "./b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, formatCartSheetLine, formatCartSheetMeta, lineKey, normalizeNote, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "./b2bCart";
 
 describe("b2bCart", () => {
   test("same product + different notes stay separate lines", () => {
@@ -62,5 +62,15 @@ describe("b2bCart", () => {
     expect(productCartQty(cart, "prod_01")).toBe(3);
     expect(productCartQty(cart, "prod_02")).toBe(4);
     expect(productCartQty(cart, "prod_99")).toBe(0);
+  });
+
+  test("flash banner goes from gray to green with a solid border", () => {
+    const idle = b2bFlashChrome(false);
+    const on = b2bFlashChrome(true);
+    expect(idle.borderStyle).toBe("solid");
+    expect(on.borderStyle).toBe("solid");
+    expect(idle.backgroundColor).toBe("#F8FAFC");
+    expect(on.backgroundColor).toBe("#ECFDF5");
+    expect(on.borderColor).toBe("#059669");
   });
 });

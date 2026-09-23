@@ -442,8 +442,8 @@ COLLECTIONS = {
     "recipes": {
         "scope": SCOPE_TENANT,
         "description": "Üretim reçetesi (BOM).",
-        "keys": ("_id", "company_id", "finished_product_id", "materials", "unit_cost"),
-        "refs": ("products._id",),
+        "keys": ("_id", "company_id", "finished_product_id", "materials", "unit_cost", "contact_id", "job_file_name"),
+        "refs": ("products._id", "contacts._id"),
     },
     "production_orders": {
         "scope": SCOPE_TENANT,

@@ -92,7 +92,6 @@ import {
   companyBonusPayload,
   bonusesPeriodTotal,
   COMPANY_BONUS_TYPES,
-  SALARY_CALC_ROWS,
   overtimePayload,
   projectSelectGroups,
   closedProjectCount,
@@ -119,7 +118,6 @@ import {
   type Payroll,
   type PendingRequest,
   type ProjectWithTasks,
-  type SalaryCalc,
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
@@ -127,7 +125,7 @@ import { findWorkPark, officeTaskPayload, parkSelectGroups, validateOfficeTaskAs
 import { fmtDmy } from "../utils/calendar";
 import { fieldWorkplaceFromProjects, workplaceHint, workplaceShort, type Workplace } from "../utils/workplace";
 
-type Tab = "payroll" | "attendance" | "leaves" | "calc" | "extras";
+type Tab = "payroll" | "attendance" | "leaves" | "extras";
 
 function AttendanceRecCard({
   r,
@@ -264,9 +262,6 @@ export function PersonnelScreen() {
   const [pendingReqs, setPendingReqs] = useState<PendingRequest[]>([]);
   const [cards, setCards] = useState<Record<string, EmployeeCard>>({});
   const [photoEmp, setPhotoEmp] = useState<Employee | null>(null);
-  const [calcMode, setCalcMode] = useState<"gross" | "net">("gross");
-  const [calcAmount, setCalcAmount] = useState("50000");
-  const [calcResult, setCalcResult] = useState<SalaryCalc | null>(null);
   const [bonuses, setBonuses] = useState<EmployeeBonus[]>([]);
   const [bonusForm, setBonusForm] = useState({ employee_id: "", type: "bonus", amount: "", period: new Date().toISOString().slice(0, 7), note: "" });
   const [expenseEmp, setExpenseEmp] = useState<Employee | null>(null);
@@ -916,19 +911,6 @@ export function PersonnelScreen() {
     }
   };
 
-  const runSalaryCalc = async () => {
-    setBusy(true);
-    try {
-      const r = await post<SalaryCalc>(client, "/personnel/salary-calc", { mode: calcMode, amount: Number(calcAmount) || 0 });
-      setCalcResult(r);
-      setError(null);
-    } catch (err) {
-      setError(apiErrorMessage(err, "Hesaplanamadı."));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const uploadEmployeePhoto = async (fromCamera: boolean) => {
     const emp = photoEmp;
     const eid = emp ? idOf(emp) : "";
@@ -1097,7 +1079,6 @@ export function PersonnelScreen() {
           { key: "payroll", label: "Bordro", icon: "people", count: employees.length },
           { key: "attendance", label: "Puantaj", icon: "time" },
           { key: "leaves", label: "İzinler", icon: "calendar", count: pendingLeaves || undefined },
-          { key: "calc", label: "Maaş", icon: "calculator" },
           { key: "extras", label: "Prim", icon: "gift", count: bonuses.length || undefined },
         ]}
       />
@@ -1480,54 +1461,6 @@ export function PersonnelScreen() {
             </Card>
           ))}
         </>
-      ) : null}
-
-      {tab === "calc" ? (
-        <Card testID="salary-calculator">
-          <Text style={{ fontWeight: "800", color: colors.text }}>Maaş hesaplama (Brüt ⇄ Net)</Text>
-          <Row>
-            {(["gross", "net"] as const).map((k) => (
-              <Pressable
-                key={k}
-                testID={k === "gross" ? "salary-mode-gross" : "salary-mode-net"}
-                onPress={() => setCalcMode(k)}
-                style={{
-                  flex: 1,
-                  minHeight: 36,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: calcMode === k ? colors.indigo : colors.border,
-                  backgroundColor: calcMode === k ? colors.indigo : colors.surface,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Text style={{ fontWeight: "700", fontSize: 12, color: calcMode === k ? "#fff" : colors.muted }}>
-                  {k === "gross" ? "Brütten nete" : "Netten brüte"}
-                </Text>
-              </Pressable>
-            ))}
-          </Row>
-          <Field label={calcMode === "gross" ? "Brüt maaş (₺)" : "Net maaş (₺)"} testID="salary-amount-input" value={calcAmount} onChangeText={setCalcAmount} keyboardType="decimal-pad" />
-          <PrimaryButton title="Hesapla" testID="salary-calc-btn" color={colors.indigo} loading={busy} onPress={runSalaryCalc} />
-          <Muted>2026 yaklaşık oranlar; resmi bordro için mali müşavirinizle doğrulayın.</Muted>
-          {calcResult ? (
-            <View testID="salary-result" style={{ gap: 6, paddingTop: 8 }}>
-              {SALARY_CALC_ROWS.map((row) => {
-                const raw = Number(calcResult[row.key] || 0);
-                const deduct = ["sgk_employee", "unemployment_employee", "income_tax", "stamp_tax"].includes(row.key);
-                return (
-                  <Row key={row.key} style={{ justifyContent: "space-between" }}>
-                    <Muted>{row.label}</Muted>
-                    <Text style={{ fontWeight: "800", color: row.tone === "green" ? colors.primary : row.tone === "red" ? colors.danger : colors.text }}>
-                      {deduct && raw > 0 ? "-" : ""}{fmtMoney(Math.abs(raw))}
-                    </Text>
-                  </Row>
-                );
-              })}
-            </View>
-          ) : <Muted>Hesaplama sonucu burada görünür.</Muted>}
-        </Card>
       ) : null}
 
       {tab === "extras" ? (
