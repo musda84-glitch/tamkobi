@@ -15,8 +15,9 @@ _current_user = None
 
 DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "days": {}, "late_tolerance_minutes": 10, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul",
                     "overtime_method": "legal", "overtime_multiplier": 1.5, "holiday_multiplier": 2.0, "monthly_hours_divisor": 225, "notify_missing_checkin": True, "notify_late_checkin": True}
-# Personel kartı: konum izleme tercihleri (girişte geo; çıkış her zaman serbest).
-DEFAULT_LOCATION_TRACKING = {"enabled": True, "continuous": False, "interval_minutes": 15}
+# Personel kartı: konum izleme (iş yeri + dış görev ayrı).
+DEFAULT_LOCATION_MODE = {"enabled": True, "continuous": False, "interval_minutes": 15}
+DEFAULT_LOCATION_TRACKING = {**DEFAULT_LOCATION_MODE, "field": dict(DEFAULT_LOCATION_MODE)}
 OVERTIME_METHODS = {"legal": "Yasal (brüt/225 × katsayı)", "fixed": "Sabit saatlik mesai ücreti"}
 DAY_LABELS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
 
@@ -60,9 +61,9 @@ def _clean(d: dict) -> dict:
     return d
 
 
-def normalize_location_tracking(raw: Optional[dict] = None) -> dict:
-    """Personel konum izleme tercihlerini güvenli varsayılanlara çevirir."""
-    base = dict(DEFAULT_LOCATION_TRACKING)
+def _normalize_location_mode(raw: Optional[dict] = None, fallback: Optional[dict] = None) -> dict:
+    """Tek bir konum modu: enabled / continuous / interval_minutes (0 = sürekli)."""
+    base = dict(fallback or DEFAULT_LOCATION_MODE)
     if not isinstance(raw, dict):
         return base
     if "enabled" in raw:
@@ -74,10 +75,32 @@ def normalize_location_tracking(raw: Optional[dict] = None) -> dict:
             mins = int(raw["interval_minutes"])
         except (TypeError, ValueError):
             mins = base["interval_minutes"]
-        base["interval_minutes"] = max(1, min(120, mins))
+        base["interval_minutes"] = max(0, min(120, mins))
     if not base["enabled"]:
         base["continuous"] = False
+        return base
+    if base["interval_minutes"] == 0:
+        base["continuous"] = True
+    elif base["continuous"]:
+        base["interval_minutes"] = 0
     return base
+
+
+def normalize_location_tracking(raw: Optional[dict] = None) -> dict:
+    """İş yeri + dış görev konum tercihleri. Eski düz alanlar iş yeri ayarıdır."""
+    company = _normalize_location_mode(raw if isinstance(raw, dict) else None)
+    field_raw = (raw or {}).get("field") if isinstance(raw, dict) else None
+    # Eski kayıtlarda field yoksa iş yeri ayarından türet.
+    field = _normalize_location_mode(field_raw if isinstance(field_raw, dict) else None, fallback=company)
+    return {**company, "field": field}
+
+
+def location_mode_for(lt: Optional[dict], workplace: Optional[dict] = None) -> dict:
+    """Etkin iş yerine göre kullanılacak konum modu (iş yeri veya dış görev)."""
+    full = normalize_location_tracking(lt)
+    if workplace and workplace.get("kind") == "task":
+        return dict(full.get("field") or DEFAULT_LOCATION_MODE)
+    return {"enabled": full["enabled"], "continuous": full["continuous"], "interval_minutes": full["interval_minutes"]}
 
 
 def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
@@ -91,7 +114,7 @@ def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
     if employee is not None:
         lt = normalize_location_tracking(employee.get("location_tracking"))
         s["location_tracking"] = lt
-        # Personelde konum kapalıysa girişte geo zorunlu olmaz; çıkış her zaman serbest.
+        # İş yeri (firma) konum kapalıysa schedule.require_geo kapanır; dış görev ayrı alan.
         if not lt["enabled"]:
             s["require_geo"] = False
     return s
@@ -788,10 +811,17 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
     workplace = await workplace_for_employee(emp, company, today_s)
     loc = geo_target(workplace)
     lt = normalize_location_tracking(emp.get("location_tracking"))
+    active_lt = location_mode_for(lt, workplace)
+    # /me: etkin iş yerine göre require_geo (dış görevde field.enabled).
+    if workplace and workplace.get("kind") == "task":
+        schedule = {**schedule, "require_geo": bool(active_lt.get("enabled"))}
+    elif not active_lt.get("enabled"):
+        schedule = {**schedule, "require_geo": False}
     return {"employee": {"id": emp["_id"], "full_name": emp["full_name"], "department": emp.get("department"), "position": emp.get("position")},
             "month": month, "records": [_clean(r) for r in rows], "summary": summarize(rows), "today": _clean(today) if today else None,
             "schedule": schedule, "day_labels": DAY_LABELS, "location": loc, "workplace": workplace,
             "company_location": company.get("location"), "location_tracking": lt,
+            "active_location_tracking": active_lt,
             "now": now_hm(schedule), "today_date": today_s}
 
 
@@ -808,11 +838,18 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     schedule = merge_schedule(company, emp)
     workplace = await workplace_for_employee(emp, company)
     loc = geo_target(workplace)
+    lt = normalize_location_tracking(emp.get("location_tracking"))
+    active_lt = location_mode_for(lt, workplace)
+    # Dış görevde field.enabled; iş yerinde şirket require_geo ∧ personel iş yeri enabled.
+    if workplace and workplace.get("kind") == "task":
+        enforce_geo = bool(active_lt.get("enabled"))
+    else:
+        enforce_geo = bool(schedule.get("require_geo", True)) and bool(active_lt.get("enabled"))
     geo = None
     # Konum zorunluluğu yalnızca girişte; açık dış görev / etkin dış görev varsa görev yeri iş yeri sayılır.
     # Çıkış: konum zorunlu değil ama referans her zaman etkin iş yeri (dış görevde görev yeri;
     # iş yerinde dış görev atanmışsa çıkış da dış görev yerini referans alır).
-    if action == "check_in" and loc and schedule.get("require_geo", True):
+    if action == "check_in" and loc and enforce_geo:
         try:
             lat, lng = float(req["latitude"]), float(req["longitude"])
         except (KeyError, TypeError, ValueError):
