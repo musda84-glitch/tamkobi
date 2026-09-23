@@ -1,4 +1,4 @@
-import { isExpoPushToken, isPushPermissionGranted, notificationHref, shouldAskPushOnOpen } from "./push";
+import { isExpoPushToken, isPushPermissionGranted, notificationHref, PUSH_CHANNEL, PUSH_SOUND, PUSH_SOUND_ANDROID, shouldAskPushOnOpen } from "./push";
 
 describe("push helpers", () => {
   it("asks permission on iOS/Android open, not web", () => {
@@ -25,5 +25,11 @@ describe("push helpers", () => {
     expect(notificationHref({ link: "/stock" })).toBe("/stok");
     expect(notificationHref({ link: "/personnel?tab=attendance" })).toBe("/personnel?tab=attendance");
     expect(notificationHref({})).toBe("/notifications");
+  });
+
+  it("uses the TamKobi chime on a fresh Android channel", () => {
+    expect(PUSH_CHANNEL).toBe("tamkobi_chime");
+    expect(PUSH_SOUND).toBe("tamkobi.wav");
+    expect(PUSH_SOUND_ANDROID).toBe("tamkobi");
   });
 });

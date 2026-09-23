@@ -6,6 +6,7 @@ import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../c
 import { colors } from "../theme";
 import { passwordChangePayload, validatePasswordChange } from "../utils/account";
 import { getPriceDecimals, idOf } from "../utils/money";
+import { playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 import { getStoredPushToken, presentLocalNotification, registerDevicePush, type PushStatus } from "../utils/pushRegister";
 
 export function SettingsScreen() {
@@ -61,40 +62,49 @@ export function SettingsScreen() {
         <Text style={{ fontWeight: "800", color: colors.text }}>Telefon bildirimleri</Text>
         <Muted>
           {pushStatus === "ok"
-            ? "Bu cihazda açık. Uygulama içi bildirimler bildirim çubuğuna da düşer."
+            ? "Bu cihazda açık. Yeni kayıtlar TamKobi çanı ile bildirim çubuğuna düşer."
             : pushStatus === "web"
-              ? "Tarayıcıda telefon bildirimi yok; Android / iOS uygulamasında açılır."
+              ? "Tarayıcıda yeni bildirim TamKobi çanı çalar. Sistem tepsisi için Android / iOS uygulamasını kullanın."
               : pushStatus === "denied"
                 ? "Bildirim izni kapalı. Telefondan izin verip yeniden deneyin."
-                : "İzin açıksa bekleyen ve yeni bildirimler telefona da yazılır. Uygulamayı bir kez açın."}
+                : "İzin açıksa bekleyen ve yeni bildirimler TamKobi çanı ile telefona da yazılır. Uygulamayı bir kez açın."}
         </Muted>
-        {Platform.OS !== "web" ? (
-          <>
-            <PrimaryButton
-              title={pushBusy ? "Açılıyor…" : "Bildirimleri aç"}
-              testID="settings-push-enable"
-              onPress={async () => {
-                setPushBusy(true);
-                try {
-                  const r = await registerDevicePush(client);
-                  setPushStatus(r.status === "ok" ? "ok" : r.status);
-                  const local = await presentLocalNotification({
-                    title: "TamKobi",
-                    body: "Telefon bildirimleri açık. Uygulama içi kayıtlar buraya da düşer.",
-                    data: { link: "/notifications" },
-                  });
-                  if (r.status === "denied") setError("Bildirim izni verilmedi.");
-                  else if (local) setMessage("Telefon bildirimi gönderildi. Bildirim çubuğunu kontrol edin.");
-                  else setError(r.error || "Telefon bildirimi gösterilemedi.");
-                } finally {
-                  setPushBusy(false);
-                }
-              }}
-              loading={pushBusy}
-              color={colors.indigo}
-            />
-          </>
-        ) : null}
+        {Platform.OS === "web" ? (
+          <PrimaryButton
+            title="TamKobi bildirim sesini dinle"
+            testID="settings-notify-sound"
+            onPress={() => {
+              unlockTamkobiNotify();
+              playTamkobiNotify();
+              setMessage("TamKobi bildirim sesi çalındı.");
+            }}
+            color={colors.primary}
+          />
+        ) : (
+          <PrimaryButton
+            title={pushBusy ? "Açılıyor…" : "Bildirimleri aç"}
+            testID="settings-push-enable"
+            onPress={async () => {
+              setPushBusy(true);
+              try {
+                const r = await registerDevicePush(client);
+                setPushStatus(r.status === "ok" ? "ok" : r.status);
+                const local = await presentLocalNotification({
+                  title: "TamKobi",
+                  body: "Telefon bildirimleri açık. Uygulama içi kayıtlar buraya da düşer.",
+                  data: { link: "/notifications" },
+                });
+                if (r.status === "denied") setError("Bildirim izni verilmedi.");
+                else if (local) setMessage("Telefon bildirimi gönderildi. Bildirim çubuğunu kontrol edin.");
+                else setError(r.error || "Telefon bildirimi gösterilemedi.");
+              } finally {
+                setPushBusy(false);
+              }
+            }}
+            loading={pushBusy}
+            color={colors.indigo}
+          />
+        )}
       </Card>
 
       <Card testID="settings-price-decimals">
