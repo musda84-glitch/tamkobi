@@ -7889,12 +7889,14 @@ async def sms_balance(company_id: Optional[str] = "comp_nexus_main_01"):
 async def sms_verify(req: Dict[str, Any]):
     """Operatör kullanıcı/şifre + onaylı başlık doğrulaması. Başarılıysa BAĞLI işaretlenir."""
     company_id = req.get("company_id", "comp_nexus_main_01")
+    base = await get_sms_settings(company_id)
     try:
         creds = await _sms_creds(company_id)
     except HTTPException as e:
-        return {"ok": False, "message": e.detail}
+        return {**base, "ok": False, "verified": False, "verify_message": e.detail, "message": e.detail}
     if not creds:
-        return {"ok": False, "message": "Önce operatör, kullanıcı/API bilgisi, şifre ve gönderici başlığını kaydedin."}
+        msg = "Önce operatör, kullanıcı/API bilgisi, şifre ve gönderici başlığını kaydedin."
+        return {**base, "ok": False, "verified": False, "verify_message": msg, "message": msg}
     name = comm_service.provider_display_name(creds.get("provider"))
     try:
         res = await comm_service.sms_verify(creds)
@@ -7908,7 +7910,9 @@ async def sms_verify(req: Dict[str, Any]):
     }
     await db.sms_settings.update_one({"company_id": company_id}, {"$set": patch})
     out = await get_sms_settings(company_id)
+    out["ok"] = bool(res.get("ok"))
     out["verify"] = res
+    out["message"] = out.get("verify_message") or res.get("message")
     return out
 
 async def _send_sms_to(company_id: str, recipients: List[Dict[str, Any]], message: str, context: str, ref_id: Optional[str]) -> Dict[str, Any]:
