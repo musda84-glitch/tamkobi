@@ -46,4 +46,12 @@ describe("orderInvoice draft / post / e-belge", () => {
     expect(orderInvoiceBadgeTone({ is_invoiced: true, invoice_number: "SF-2" })).toBe("green");
     expect(orderInvoiceBadgeLabel(null)).toBeNull();
   });
+
+  it("e-belge defaults to e-archive unless mükellef", () => {
+    const { orderEBelgeTypeFromContact, canShowEFaturaOption } = require("./orderInvoice");
+    expect(orderEBelgeTypeFromContact(null)).toBe("e_archive");
+    expect(orderEBelgeTypeFromContact({ is_e_invoice_user: false })).toBe("e_archive");
+    expect(orderEBelgeTypeFromContact({ is_e_invoice_user: true })).toBe("e_invoice");
+    expect(canShowEFaturaOption({})).toBe(false);
+  });
 });

@@ -68,3 +68,12 @@ export function faturalaActionLabel(o: OrderInvoiceFlags | null | undefined): st
   if (isOrderFullyInvoiced(o)) return "Faturalandı";
   return "Faturala";
 }
+
+/** Cari e-fatura mükellefi değilse / bilinmiyorsa → e-arşiv. */
+export function orderEBelgeTypeFromContact(contact?: { is_e_invoice_user?: boolean } | null): "e_invoice" | "e_archive" {
+  return contact?.is_e_invoice_user ? "e_invoice" : "e_archive";
+}
+
+export function canShowEFaturaOption(contact?: { is_e_invoice_user?: boolean } | null): boolean {
+  return orderEBelgeTypeFromContact(contact) === "e_invoice";
+}
