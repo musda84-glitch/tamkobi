@@ -1488,6 +1488,8 @@ export function employeeCardActionIcon(key: string): string {
   return EMPLOYEE_CARD_ACTION_ICONS[key] || "ellipse-outline";
 }
 
+export const EMPLOYEE_LOCATION_SETTINGS_TITLE = "Konum Ayarları";
+
 export function allowanceDue(emp?: Employee | null, balance?: EmployeeBalance | null, kind: "meal" | "transport" = "meal"): number {
   if (kind === "meal") return Number(balance?.meal_due ?? emp?.meal_allowance ?? 0) || 0;
   return Number(balance?.transport_due ?? emp?.transport_allowance ?? 0) || 0;

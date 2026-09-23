@@ -36,6 +36,7 @@ import {
   EMPLOYEE_CARD_WORK_ACTIONS,
   employeeCardActionTitle,
   employeeCardActionIcon,
+  EMPLOYEE_LOCATION_SETTINGS_TITLE,
   parseYevmiyeDays,
   parseYevmiyeWage,
   parseTaskDays,
@@ -1168,10 +1169,11 @@ export function PersonnelScreen() {
                         onPress={() => setDutiesEmp(emp)}
                       />
                       <PayChip
-                        title="Konum Ayarları"
+                        title={EMPLOYEE_LOCATION_SETTINGS_TITLE}
                         icon={employeeCardActionIcon("location")}
                         color="#047857"
                         bg="#ECFDF5"
+                        wide
                         testID={`emp-card-location-btn-${eid}`}
                         onPress={() => openLocSettings(emp)}
                       />
@@ -1660,7 +1662,7 @@ export function PersonnelScreen() {
 
       <B2BSheet
         visible={!!locEmp}
-        title="Konum izleme"
+        title={EMPLOYEE_LOCATION_SETTINGS_TITLE}
         subtitle={locEmp ? locEmp.full_name : undefined}
         onClose={() => setLocEmp(null)}
         testID="emp-location-sheet"
@@ -2281,6 +2283,7 @@ function PayChip({
   bg,
   onPress,
   testID,
+  wide,
 }: {
   title: string;
   icon?: string;
@@ -2288,6 +2291,7 @@ function PayChip({
   bg: string;
   onPress: () => void;
   testID: string;
+  wide?: boolean;
 }) {
   return (
     <Pressable
@@ -2295,23 +2299,24 @@ function PayChip({
       onPress={onPress}
       style={{
         flexGrow: 1,
-        flexBasis: "22%",
-        minWidth: 68,
-        maxWidth: "24.5%",
-        minHeight: 52,
-        paddingVertical: 4,
-        paddingHorizontal: 4,
+        flexBasis: wide ? "47%" : "22%",
+        minWidth: wide ? "47%" : 68,
+        maxWidth: wide ? "48.5%" : "24.5%",
+        minHeight: wide ? 40 : 52,
+        paddingVertical: wide ? 8 : 4,
+        paddingHorizontal: wide ? 8 : 4,
         borderRadius: 10,
         backgroundColor: bg,
         borderWidth: 1,
         borderColor: colors.border,
+        flexDirection: wide ? "row" : "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 2,
+        gap: wide ? 6 : 2,
       }}
     >
       {icon ? <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={16} color={color} /> : null}
-      <Text style={{ fontWeight: "700", fontSize: 10, color, textAlign: "center" }} numberOfLines={2}>{title}</Text>
+      <Text style={{ fontWeight: "700", fontSize: wide ? 11 : 10, color, textAlign: "center", flexShrink: 1 }} numberOfLines={wide ? 1 : 2}>{title}</Text>
     </Pressable>
   );
 }

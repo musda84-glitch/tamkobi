@@ -16,6 +16,7 @@ import {
   unpaidPayrollTotal,
   employeeCardActionTitles,
   employeeCardActionIcon,
+  EMPLOYEE_LOCATION_SETTINGS_TITLE,
   employeeCardActionsByGroup,
   employeePayMoves,
   enrichEmployeeBalance,
@@ -390,6 +391,7 @@ describe("employee card actions", () => {
     expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai"]);
     expect(employeeCardActionIcon("advance")).toBe("cash-outline");
     expect(employeeCardActionIcon("location")).toBe("location-outline");
+    expect(EMPLOYEE_LOCATION_SETTINGS_TITLE).toBe("Konum Ayarları");
     expect(employeeCardActionIcon("expense")).toBe("receipt-outline");
     expect(employeeCardActionIcon("duties")).toBe("checkbox-outline");
     expect(employeeCardActionTitles({ pay_type: "daily" })).toEqual([
