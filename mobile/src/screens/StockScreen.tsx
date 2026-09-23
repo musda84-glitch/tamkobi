@@ -17,7 +17,7 @@ import { cacheIsFresh, peekCachedRows, readCachedRows, writeCachedRows } from ".
 import { listRowText } from "../utils/listRow";
 import { LIST_INITIAL_ROWS, nextRowLimit, visibleRows } from "../utils/listPaging";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
-import { asList, filterProducts, lastPurchaseLabel, productCategoryGroups, productImage, slimListProducts, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
+import { asList, filterProducts, lastPurchaseLabel, lastSaleLabel, productCategoryGroups, productImage, slimListProducts, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
 import { moveChange, parseStockMoves, type StockMove } from "../utils/stockMoves";
 
 export function StockScreen() {
@@ -109,6 +109,9 @@ export function StockScreen() {
         last_purchase_price?: number | null;
         last_purchase_supplier?: string | null;
         purchase_price?: number | null;
+        last_sale_price?: number | null;
+        last_sale_contact?: string | null;
+        sale_price?: number | null;
       }>(client, `/products/${idOf(p)}/movements`);
       setMoves(parseStockMoves(data));
       setMovesFor({
@@ -116,6 +119,9 @@ export function StockScreen() {
         last_purchase_price: data?.last_purchase_price ?? p.last_purchase_price,
         last_purchase_supplier: data?.last_purchase_supplier ?? p.last_purchase_supplier,
         purchase_price: data?.purchase_price ?? p.purchase_price,
+        last_sale_price: data?.last_sale_price ?? p.last_sale_price,
+        last_sale_contact: data?.last_sale_contact ?? p.last_sale_contact,
+        sale_price: data?.sale_price ?? p.sale_price,
       });
       setError(null);
     } catch (err) {
@@ -204,25 +210,27 @@ export function StockScreen() {
         <B2BSheet
           visible
           title="Stok hareketleri"
-          subtitle={[listRowText(movesFor.name), lastPurchaseLabel(movesFor, fmtMoney)].filter(Boolean).join(" · ") || undefined}
+          subtitle={[listRowText(movesFor.name), lastPurchaseLabel(movesFor, fmtMoney), lastSaleLabel(movesFor, fmtMoney)].filter(Boolean).join(" · ") || undefined}
           onClose={() => setMovesFor(null)}
           testID="stock-moves-sheet"
         >
           {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
           {!movesBusy && !moves.length ? (
             <Muted testID="stock-moves-empty">
-              {lastPurchaseLabel(movesFor, fmtMoney)
-                ? `${lastPurchaseLabel(movesFor, fmtMoney)}. Fatura/sipariş satırı henüz düşmedi.`
+              {[lastPurchaseLabel(movesFor, fmtMoney), lastSaleLabel(movesFor, fmtMoney)].filter(Boolean).join(" · ")
+                ? `${[lastPurchaseLabel(movesFor, fmtMoney), lastSaleLabel(movesFor, fmtMoney)].filter(Boolean).join(" · ")}. Fatura/sipariş satırı henüz düşmedi.`
                 : "Fatura, sipariş veya sayım hareketi bulunamadı."}
             </Muted>
           ) : null}
           {moves.map((m, i) => {
             const change = moveChange(m);
+            const price = Number((m as { unit_price?: number }).unit_price);
+            const priceTxt = Number.isFinite(price) && price > 0 ? fmtMoney(price) : "";
             return (
               <ListRow
                 key={idOf(m) || i}
                 testID={`stock-move-${idOf(m) || i}`}
-                title={`${change > 0 ? "+" : ""}${change}`}
+                title={`${change > 0 ? "+" : ""}${change}${priceTxt ? ` · ${priceTxt}` : ""}`}
                 subtitle={[m.reason, fmtDate(m.date)].filter(Boolean).join(" · ")}
               />
             );

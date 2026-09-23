@@ -1,4 +1,4 @@
-import { asList, filterProducts, lastPurchaseLabel, listSafeThumb, productCategoryGroups, productGalleryUrls, productImage, productPickSubtitle, productSkuLabel, slimListProducts, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
+import { asList, filterProducts, lastPurchaseLabel, lastSaleLabel, listSafeThumb, productCategoryGroups, productGalleryUrls, productImage, productPickSubtitle, productSkuLabel, slimListProducts, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
 
 describe("productDisplay", () => {
   it("prefers thumbnail, then main image, then gallery", () => {
@@ -92,5 +92,8 @@ describe("productDisplay", () => {
     expect(lastPurchaseLabel({}, (n) => `${n} ₺`)).toBe("");
     expect(lastPurchaseLabel(null, (n) => `${n} ₺`)).toBe("");
     expect(lastPurchaseLabel(undefined, (n) => `${n} ₺`)).toBe("");
+    expect(lastSaleLabel({ last_sale_price: 120, last_sale_contact: "Mustafa" }, (n) => `${n} ₺`)).toBe("Son satış 120 ₺ · Mustafa");
+    expect(lastSaleLabel({ sale_price: 99 }, (n) => `${n} ₺`)).toBe("Son satış 99 ₺");
+    expect(lastSaleLabel({}, (n) => `${n} ₺`)).toBe("");
   });
 });

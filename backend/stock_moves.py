@@ -46,6 +46,17 @@ def _qty(item: dict) -> float:
     return 0.0
 
 
+def _unit_price(item: dict) -> float | None:
+    for key in ("unit_price", "price", "sale_price", "purchase_price"):
+        try:
+            n = float(item.get(key))
+        except (TypeError, ValueError):
+            continue
+        if n or n == 0:
+            return n
+    return None
+
+
 def invoice_stock_moves(invoices: list, product_id: str, product: dict | None = None) -> list:
     """Fatura satırlarından sentetik stok hareketi — stock_movements yazılmayan alış/satış için."""
     rows = []
@@ -63,12 +74,14 @@ def invoice_stock_moves(invoices: list, product_id: str, product: dict | None = 
         num = inv.get("invoice_number") or inv.get("number") or "Fatura"
         date = inv.get("issue_date") or inv.get("created_at") or ""
         contact = inv.get("contact_name") or ""
+        currency = inv.get("currency") or "TRY"
         for idx, it in enumerate(inv.get("items") or []):
             if not item_matches_product(it, product, product_id):
                 continue
             qty = _qty(it)
             if not qty:
                 continue
+            price = _unit_price(it)
             rows.append({
                 "_id": f"inv-{inv.get('_id')}-{idx}",
                 "product_id": product_id,
@@ -76,6 +89,9 @@ def invoice_stock_moves(invoices: list, product_id: str, product: dict | None = 
                 "reason": f"{label}: {num}" + (f" · {contact}" if contact else ""),
                 "date": date,
                 "source": "invoice",
+                "invoice_type": itype,
+                "unit_price": price,
+                "currency": currency,
             })
     return rows
 
@@ -88,12 +104,14 @@ def order_stock_moves(orders: list, product_id: str, product: dict | None = None
         num = o.get("order_number") or "Sipariş"
         date = o.get("order_date") or o.get("created_at") or ""
         contact = o.get("customer_name") or o.get("contact_name") or ""
+        currency = o.get("currency") or "TRY"
         for idx, it in enumerate(o.get("items") or []):
             if not item_matches_product(it, product, product_id):
                 continue
             qty = _qty(it)
             if not qty:
                 continue
+            price = _unit_price(it)
             rows.append({
                 "_id": f"ord-{o.get('_id')}-{idx}",
                 "product_id": product_id,
@@ -101,6 +119,8 @@ def order_stock_moves(orders: list, product_id: str, product: dict | None = None
                 "reason": f"Sipariş: {num}" + (f" · {contact}" if contact else ""),
                 "date": date,
                 "source": "order",
+                "unit_price": price,
+                "currency": currency,
             })
     return rows
 

@@ -5259,6 +5259,9 @@ async def list_product_movements(product_id: str, limit: int = 80):
     last_price = product.get("purchase_price")
     last_supplier = None
     last_date = None
+    last_sale_price = product.get("sale_price")
+    last_sale_contact = None
+    last_sale_date = None
     inv_moves = stock_moves.invoice_stock_moves(invoices, product_id, product)
     for inv in invoices:
         if inv.get("invoice_type") != "purchase":
@@ -5273,6 +5276,19 @@ async def list_product_movements(product_id: str, limit: int = 80):
                     pass
                 break
         break
+    for inv in invoices:
+        if inv.get("invoice_type") != "sales":
+            continue
+        last_sale_contact = inv.get("contact_name")
+        last_sale_date = inv.get("issue_date")
+        for it in inv.get("items") or []:
+            if stock_moves.item_matches_product(it, product, product_id):
+                try:
+                    last_sale_price = float(it.get("unit_price") or last_sale_price or 0) or last_sale_price
+                except (TypeError, ValueError):
+                    pass
+                break
+        break
     merged = stock_moves.merge_stock_moves(
         clean_docs(stored or []),
         inv_moves,
@@ -5283,10 +5299,15 @@ async def list_product_movements(product_id: str, limit: int = 80):
     return {
         "product_id": product_id,
         "product_name": product.get("name"),
+        "currency": product.get("currency") or "TRY",
         "purchase_price": product.get("purchase_price"),
+        "sale_price": product.get("sale_price"),
         "last_purchase_price": last_price,
         "last_purchase_supplier": last_supplier,
         "last_purchase_date": last_date,
+        "last_sale_price": last_sale_price,
+        "last_sale_contact": last_sale_contact,
+        "last_sale_date": last_sale_date,
         "movements": merged,
     }
 
