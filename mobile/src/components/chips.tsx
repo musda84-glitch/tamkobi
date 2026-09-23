@@ -1,5 +1,6 @@
 import { Alert, Platform, Pressable, Text } from "react-native";
 import { colors } from "../theme";
+import { requestConfirm } from "../utils/confirmDialog";
 
 export function Chip({
   label,
@@ -36,14 +37,16 @@ export function Chip({
   );
 }
 
-export function confirmAction(title: string, msg: string, onYes: () => void) {
+export function confirmAction(title: string, msg: string, onYes: () => void, confirmLabel = "Tamam") {
   if (Platform.OS === "web") {
-    if (typeof window !== "undefined" && window.confirm(msg)) onYes();
+    void requestConfirm(title, msg, confirmLabel).then((ok) => {
+      if (ok) onYes();
+    });
     return;
   }
   Alert.alert(title, msg, [
     { text: "Vazgeç", style: "cancel" },
-    { text: "Tamam", style: "destructive", onPress: onYes },
+    { text: confirmLabel, style: "destructive", onPress: onYes },
   ]);
 }
 

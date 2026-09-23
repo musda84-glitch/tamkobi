@@ -32,6 +32,7 @@ import {
   lockedPaymentLabel,
   paymentAmountColor,
   paymentAmountPrefix,
+  paymentDeleteConfirm,
   paymentKindLabel,
   paymentRowSurface,
   paymentEditFrom,
@@ -453,6 +454,7 @@ export function ContactDetailScreen() {
           setError(apiErrorMessage(err, "Çek / senet silinemedi."));
         }
       },
+      "Sil",
     );
   };
 
@@ -534,9 +536,10 @@ export function ContactDetailScreen() {
 
   const removePayment = (p: ContactPayment) => {
     if (!canBank) { setError("Hareket silme yetkiniz yok."); return; }
+    const ask = paymentDeleteConfirm(p);
     confirmAction(
-      "Hareketi sil",
-      `${fmtMoney(p.amount)} tutarındaki ${p.type === "inflow" ? "tahsilat" : "ödeme"} silinsin mi? Bakiyeler geri alınır.`,
+      ask.title,
+      ask.message,
       async () => {
         try {
           await del(client, `/banking/transactions/${idOf(p)}`);
@@ -546,7 +549,8 @@ export function ContactDetailScreen() {
         } catch (err) {
           setError(apiErrorMessage(err, "Hareket silinemedi."));
         }
-      }
+      },
+      ask.confirmLabel,
     );
   };
 

@@ -9,6 +9,7 @@ import {
   lockedPaymentLabel,
   paymentAmountColor,
   paymentAmountPrefix,
+  paymentDeleteConfirm,
   paymentKindLabel,
   paymentRowSurface,
   paymentEditFrom,
@@ -94,6 +95,12 @@ describe("installments", () => {
     expect(paymentAmountColor(pay)).toBe("#E11D48");
     expect(paymentRowSurface(collect)).toEqual({ bg: "#ECFDF5", border: "#059669", badge: "green" });
     expect(paymentRowSurface(pay)).toEqual({ bg: "#FFF1F2", border: "#E11D48", badge: "red" });
+    expect(paymentDeleteConfirm(collect)).toEqual({
+      title: "Hareketi sil",
+      message: expect.stringMatching(/tahsilat silinsin mi/),
+      confirmLabel: "Sil",
+    });
+    expect(paymentDeleteConfirm(pay).message).toMatch(/ödeme silinsin mi/);
   });
 
   it("maps vade form to apply-terms body", () => {
