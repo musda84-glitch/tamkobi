@@ -372,6 +372,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                         workplace: card.workplace,
                       });
                       const rest = (card.tasks || []).filter((t) => !currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)).filter((t) => !t.done || (t.photos || []).length);
+                      if (!currentDuty && !rest.length && !pendingDutyPhotoCount(card.tasks)) return null;
                       return (
                       <div className="space-y-2" data-testid="emp-card-tasks">
                         {pendingDutyPhotoCount(card.tasks) ? (
