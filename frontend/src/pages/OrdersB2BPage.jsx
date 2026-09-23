@@ -24,7 +24,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Pencil } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Pencil, Stamp } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { printMiniInvoices } from "../utils/miniInvoicePrint";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
@@ -336,6 +336,51 @@ export default function OrdersB2BPage() {
     }
   };
 
+  /** Taslak faturayı onayla → cari bakiyesi + stok işlenir (yeşil badge). */
+  const handlePostDraftInvoice = async (ord) => {
+    const invoiceId = ord.invoice_id;
+    if (!invoiceId) {
+      toast.error("Bu siparişte taslak fatura yok.");
+      return;
+    }
+    if (!window.confirm(`${ord.order_number} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek.`)) return;
+    try {
+      const res = await axios.post(`${API_URL}/invoices/${invoiceId}/approve`);
+      toast.success(res.data.message || "Fatura onaylandı; cari bakiyesi işlendi.");
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Fatura onaylanamadı.");
+    }
+  };
+
+  /** Diğer işlemler: e-belge (GİB) resmi faturalandırma. */
+  const handleEBelgeInvoice = async (ord, eType) => {
+    const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+    const label = eType === "e_invoice" ? "E-Fatura" : "E-Arşiv";
+    if (!window.confirm(`${ord.order_number} için ${label} GİB'e iletilsin mi?`)) return;
+    try {
+      let invoiceId = ord.invoice_id;
+      if (!invoiceId) {
+        const draft = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/convert-to-invoice`, {
+          e_type: eType,
+          as_draft: true,
+        });
+        invoiceId = draft.data?.invoice_id;
+      }
+      const res = await axios.post(`${API_URL}/e-invoice/create`, {
+        invoice_id: invoiceId || undefined,
+        order_id: ord.id || ord._id,
+        company_id: companyId,
+        e_type: eType,
+        scenario: eType === "e_invoice" ? "TICARI" : undefined,
+      });
+      toast.success(res.data.message || `${label} GİB'e iletildi.`);
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || `${label} kesilemedi.`);
+    }
+  };
+
   const handleUpdateOrderStatus = async (orderId, newStatus) => {
     try {
       const r = await axios.put(`${API_URL}/orders/${orderId}/status`, { status: newStatus });
@@ -621,14 +666,16 @@ export default function OrdersB2BPage() {
                         {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
                           ord.invoice_id ? (
-                            <span
-                              className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-amber-50 text-amber-700 border border-amber-200"
-                              title={`Taslak fatura${ord.invoice_number ? `: ${ord.invoice_number}` : ""}`}
-                              aria-label="Taslak fatura"
-                              data-testid={`draft-inv-badge-${ord.order_number}`}
+                            <button
+                              type="button"
+                              onClick={() => handlePostDraftInvoice(ord)}
+                              className="p-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-sm border border-amber-600"
+                              title={`Taslağı onayla (cari bakiyeye işle)${ord.invoice_number ? `: ${ord.invoice_number}` : ""}`}
+                              aria-label="Faturala"
+                              data-testid={`convert-inv-btn-${ord.order_number}`}
                             >
                               <FileText className="w-4 h-4" />
-                            </span>
+                            </button>
                           ) : (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -695,7 +742,26 @@ export default function OrdersB2BPage() {
                           <DropdownMenuTrigger asChild>
                             <button type="button" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 data-[state=open]:bg-slate-100 data-[state=open]:text-slate-900 data-[state=open]:ring-1 data-[state=open]:ring-slate-200" title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="center" side="left" sideOffset={10} collisionPadding={24} className="z-[80] w-56 rounded-xl p-1.5 shadow-lg" data-testid={`order-more-menu-${ord.order_number}`}>
+                          <DropdownMenuContent align="center" side="left" sideOffset={10} collisionPadding={24} className="z-[80] w-60 rounded-xl p-1.5 shadow-lg" data-testid={`order-more-menu-${ord.order_number}`}>
+                            <>
+                                <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">E-Belge (GİB)</div>
+                                <DropdownMenuItem
+                                  onSelect={() => handleEBelgeInvoice(ord, "e_invoice")}
+                                  className="gap-2 text-xs font-medium"
+                                  data-testid={`e-belge-efatura-${ord.order_number}`}
+                                >
+                                  <Stamp className="w-4 h-4 shrink-0 text-indigo-600" />
+                                  <span className="truncate">E-Fatura kes (GİB)</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => handleEBelgeInvoice(ord, "e_archive")}
+                                  className="gap-2 text-xs font-medium border-b mb-1 pb-1.5"
+                                  data-testid={`e-belge-earsiv-${ord.order_number}`}
+                                >
+                                  <Stamp className="w-4 h-4 shrink-0 text-violet-600" />
+                                  <span className="truncate">E-Arşiv kes (GİB)</span>
+                                </DropdownMenuItem>
+                              </>
                             {[
                               [Pencil, "Siparişi Düzenle", () => {
                                 const reason = orderEditBlockedReason(ord);
