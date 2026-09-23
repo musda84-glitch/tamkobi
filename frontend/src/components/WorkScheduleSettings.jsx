@@ -2,13 +2,14 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Timer, Save, Loader2, X, RotateCcw, Bell, Banknote } from "lucide-react";
+import { Timer, Save, Loader2, X, RotateCcw, Bell, Banknote, MapPin } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { isDailyWage, monthlyLoad } from "../utils/personnelWage";
 
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
 export const DAY_LABELS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 const eff = (s, d, k) => (s.days?.[d]?.[k] ?? s[k]) ?? "";
+const DEFAULT_LOC_TRACK = { enabled: true, continuous: false, interval_minutes: 15 };
 
 /* Gün gün mesai tablosu: satır işaretli ise çalışma günü; saat/mola gün bazında farklılaştırılabilir */
 export const DaySchedule = ({ s, onChange, fallback }) => {
@@ -93,10 +94,17 @@ export const WorkScheduleSettings = ({ companyId, onSaved }) => {
 /* Personel: ücretler + kişiye özel mesai (Personel Kartı ve Puantaj'dan ortak kullanılır) */
 export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, onClose }) => {
   const ws = employee.work_schedule || {};
+  const lt0 = { ...DEFAULT_LOC_TRACK, ...(employee.location_tracking || {}) };
   const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0 });
   const [s, setS] = useState({ start: ws.start || "", end: ws.end || "", break_minutes: ws.break_minutes ?? null, late_tolerance_minutes: ws.late_tolerance_minutes ?? null, overtime_tolerance_minutes: ws.overtime_tolerance_minutes ?? null, work_days: ws.work_days || [], days: ws.days || {} });
+  const [locTrack, setLocTrack] = useState({ enabled: lt0.enabled !== false, continuous: !!lt0.continuous, interval_minutes: Number(lt0.interval_minutes) > 0 ? Number(lt0.interval_minutes) : 15 });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setS({ ...s, [k]: v });
+  const setLt = (k, v) => setLocTrack((prev) => {
+    const next = { ...prev, [k]: v };
+    if (k === "enabled" && !v) next.continuous = false;
+    return next;
+  });
   const grossForRate = Number(pay.payroll_salary) || Number(pay.salary) * 1.4 || 0;
   const legalRate = companySchedule ? (grossForRate / (companySchedule.monthly_hours_divisor || 225)) * (companySchedule.overtime_multiplier || 1.5) : 0;
   const save = async (mode) => {
@@ -105,7 +113,24 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
       const schedule = Object.fromEntries(Object.entries(s).filter(([k, v]) => v !== null && v !== "" && !(Array.isArray(v) && !v.length) && !(k === "days" && !Object.keys(v || {}).length)));
       const daily = pay.pay_type === "daily";
       const dailyWage = daily ? Number(pay.daily_wage) || 0 : 0;
-      const body = { payroll_salary: pay.payroll_salary === "" ? null : Number(pay.payroll_salary), pay_type: daily ? "daily" : "monthly", daily_wage: dailyWage, salary: daily ? monthlyLoad({ pay_type: "daily", daily_wage: dailyWage }) : Number(pay.salary) || 0, second_salary: Number(pay.second_salary) || 0, meal_allowance: Number(pay.meal_allowance) || 0, transport_allowance: Number(pay.transport_allowance) || 0, overtime_method: pay.overtime_method || null, overtime_hourly_rate: pay.overtime_hourly_rate === "" ? null : Number(pay.overtime_hourly_rate), work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule };
+      const interval = Math.max(1, Math.min(120, Number(locTrack.interval_minutes) || 15));
+      const body = {
+        payroll_salary: pay.payroll_salary === "" ? null : Number(pay.payroll_salary),
+        pay_type: daily ? "daily" : "monthly",
+        daily_wage: dailyWage,
+        salary: daily ? monthlyLoad({ pay_type: "daily", daily_wage: dailyWage }) : Number(pay.salary) || 0,
+        second_salary: Number(pay.second_salary) || 0,
+        meal_allowance: Number(pay.meal_allowance) || 0,
+        transport_allowance: Number(pay.transport_allowance) || 0,
+        overtime_method: pay.overtime_method || null,
+        overtime_hourly_rate: pay.overtime_hourly_rate === "" ? null : Number(pay.overtime_hourly_rate),
+        work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule,
+        location_tracking: {
+          enabled: !!locTrack.enabled,
+          continuous: !!locTrack.enabled && !!locTrack.continuous,
+          interval_minutes: interval,
+        },
+      };
       await axios.put(`${API_URL}/personnel/employees/${employee.id || employee._id || employee.employee_id}`, body);
       toast.success(mode === "clear" ? "Personel firma mesai saatlerine döndü." : "Ücret ve mesai bilgileri kaydedildi."); onSaved?.(); onClose?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
@@ -142,6 +167,33 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         <div className="font-bold text-slate-800 flex items-center gap-1.5"><Timer className="w-3.5 h-3.5 text-indigo-600" /> Kişiye Özel Mesai Saatleri <span className="font-normal text-slate-400">— boş bırakılan alanlar firma ayarından alınır ({companySchedule?.start}–{companySchedule?.end})</span></div>
         <ScheduleFields s={s} set={set} allowEmpty />
         <DaySchedule s={s} onChange={setS} fallback={companySchedule} />
+      </div>
+      <div className="border border-slate-200 rounded-xl p-3 space-y-2" data-testid="emp-location-tracking">
+        <div className="font-bold text-slate-800 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-emerald-600" /> Konum İzleme</div>
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" checked={!!locTrack.enabled} onChange={(e) => setLt("enabled", e.target.checked)} data-testid="emp-loc-enabled" />
+          Konum özelliği açık (girişte firma / görev yeri kontrolü)
+        </label>
+        <label className={`flex items-center gap-1.5 ${locTrack.enabled ? "cursor-pointer" : "opacity-50 cursor-not-allowed"}`}>
+          <input type="checkbox" disabled={!locTrack.enabled} checked={!!locTrack.continuous} onChange={(e) => setLt("continuous", e.target.checked)} data-testid="emp-loc-continuous" />
+          Sürekli izle (mesai boyunca periyodik konum kontrolü)
+        </label>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Konum kontrol aralığı (dk)</label>
+            <input
+              type="number"
+              min={1}
+              max={120}
+              disabled={!locTrack.enabled}
+              value={locTrack.interval_minutes}
+              onChange={(e) => setLt("interval_minutes", e.target.value === "" ? "" : Number(e.target.value))}
+              className={`${inp} w-24 disabled:opacity-50`}
+              data-testid="emp-loc-interval"
+            />
+          </div>
+          <p className="text-[10px] text-slate-500 pb-1 max-w-md">Kapalı olsa da Mesaim çıkış düğmesi aktif kalır; çıkış her yerden yapılır. Çıkış yanlışlıkla basılmasın diye çift tıklama / onay ister.</p>
+        </div>
       </div>
       <div className="flex justify-between pt-1"><button type="button" onClick={() => save("clear")} disabled={busy} className="px-3 py-1.5 border rounded-lg text-slate-600" data-testid="emp-ws-clear">Firma saatlerine dön</button><button type="button" onClick={() => save("save")} disabled={busy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="emp-ws-save">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Kaydet</button></div>
     </div>
