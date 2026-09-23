@@ -92,9 +92,6 @@ def test_sanitize_stage_photos_drops_foreign_urls():
         {"url": "https://evil.example/x.jpg", "stage": "active"},
         "nope",
     ])
-    assert clean == [{
-        "url": "/api/files/ok.jpg",
-        "stage": "active",
-        "stage_label": "Devam",
-        "created_at": "",
-    }]
+    assert clean[0]["url"] == "/api/files/ok.jpg"
+    assert clean[0]["stage"] == "active"
+    assert clean[0]["visibility"] == "show"

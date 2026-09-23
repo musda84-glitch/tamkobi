@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { stationNamesFromParks } from "../utils/workParks";
+import { AssignedDutyCard } from "../components/AssignedDutyCard";
 
 const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
 
@@ -147,28 +148,15 @@ export default function ShopFloorPage() {
           <h2 className="text-sm font-bold text-slate-700 mb-2">Atanan Görevler ({openDuties.length} açık)</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {duties.map((t, i) => (
-              <div key={t.id || i} className={`bg-white rounded-2xl border-2 p-4 space-y-3 ${t.done ? "border-emerald-200 opacity-70" : "border-indigo-200"}`} data-testid={`shopfloor-duty-${t.id || i}`}>
-                <div className="flex justify-between items-start gap-2">
-                  <div className="min-w-0">
-                    <div className="font-bold text-slate-900 text-base leading-tight">{t.title || "Görev"}</div>
-                    <div className="text-sm text-slate-600 truncate">{t.park_name || [t.project_number, t.project_name].filter(Boolean).join(" · ")}</div>
-                  </div>
-                  <span className={`shrink-0 px-2 py-1 rounded-lg text-xs font-bold ${t.done ? "bg-emerald-50 text-emerald-700" : "bg-indigo-50 text-indigo-700"}`}>{t.done ? "Tamam" : "Açık"}</span>
-                </div>
-                {t.done ? (
-                  <div className="text-xs text-emerald-700 font-semibold">Görev onaylandı.</div>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={dutyBusyId === t.id}
-                    onClick={() => approveDuty(t)}
-                    className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-base disabled:opacity-50"
-                    data-testid={`shopfloor-duty-approve-${t.id || i}`}
-                  >
-                    <CheckCircle2 className="w-5 h-5" /> {dutyBusyId === t.id ? "Onaylanıyor…" : "Onayla"}
-                  </button>
-                )}
-              </div>
+              <AssignedDutyCard
+                key={t.id || i}
+                duty={t}
+                index={i}
+                testId={`shopfloor-duty-${t.id || i}`}
+                approveBusy={dutyBusyId === t.id}
+                onApprove={() => approveDuty(t)}
+                onChanged={() => load()}
+              />
             ))}
           </div>
         </div>

@@ -1163,6 +1163,9 @@ async def upload_generic_file(
                     "stage": stage_key,
                     "stage_label": str(stage_label or "")[:60],
                     "created_at": datetime.now(timezone.utc).isoformat(),
+                    "source": "manager",
+                    "customer_visible": True,
+                    "approval": "approved",
                 }
             upd = await coll.update_one(q, {"$push": push})
             if upd.matched_count == 0:
@@ -12154,7 +12157,8 @@ async def _employee_assigned_work(company_id: str, emp_id: str):
     async for proj in db.projects.find(
         {"company_id": company_id, "tasks.assignee_id": emp_id},
         {"name": 1, "project_number": 1, "status": 1, "tasks": 1,
-         "latitude": 1, "longitude": 1, "address": 1, "location_url": 1},
+         "latitude": 1, "longitude": 1, "address": 1, "location_url": 1, "radius_m": 1,
+         "stage_photos": 1, "images": 1},
     ):
         for t in (proj.get("tasks") or []):
             if t.get("assignee_id") != emp_id:
@@ -12489,6 +12493,117 @@ async def complete_my_assigned_task(task_id: str, user: dict = Depends(get_curre
             "task": attendance.assignment_from_project({**proj, "tasks": updated}, found),
         }
     raise HTTPException(status_code=404, detail="Görev bulunamadı.")
+
+
+async def _find_assigned_project(company_id: str, emp_id: str, task_id: str):
+    tid = str(task_id or "")
+    async for proj in db.projects.find(
+        {"company_id": company_id, "tasks.assignee_id": emp_id},
+        {"name": 1, "project_number": 1, "status": 1, "tasks": 1,
+         "latitude": 1, "longitude": 1, "address": 1, "location_url": 1, "radius_m": 1,
+         "stage_photos": 1, "images": 1},
+    ):
+        for t in (proj.get("tasks") or []):
+            if str(t.get("id") or t.get("_id") or "") == tid and str(t.get("assignee_id") or "") == emp_id:
+                return proj, t
+    return None, None
+
+
+@api_router.post("/personnel/me/tasks/{task_id}/photos")
+async def upload_my_task_photo(
+    task_id: str,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+):
+    """Personel atanan proje görevine iş fotoğrafı yükler; müşteri görmesi yönetici onayına kalır."""
+    emp = await attendance.employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=400, detail="Personel kartınız bağlı değil.")
+    proj, task = await _find_assigned_project(emp.get("company_id"), emp["_id"], task_id)
+    if not proj or not task:
+        raise HTTPException(status_code=404, detail="Görev bulunamadı.")
+    content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF veya HEIC yükleyebilirsiniz.")
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya boyutu en fazla 10 MB olabilir.")
+    opt = image_opt.optimize_upload(data, content_type, file.filename or "")
+    data, content_type, ext = opt.data, opt.content_type, opt.ext
+    company_id = emp.get("company_id")
+    await saas.check_storage_limit(company_id, len(data))
+    try:
+        import storage_manager
+        await storage_manager.ensure_account_folders(company_id)
+        path = storage_manager.object_path(company_id, "project", ext)
+    except Exception:
+        path = f"{APP_NAME}/project/{company_id}/{uuid.uuid4()}.{ext}"
+    try:
+        result = put_object(path, data, content_type)
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=502, detail="Dosya depolama servisine yüklenemedi.")
+    url = f"/api/files/{result['path']}"
+    now = datetime.now(timezone.utc).isoformat()
+    stage = project_photos.clean_stage_key(proj.get("status")) or "active"
+    row = project_photos.employee_photo_row(
+        url,
+        stage=stage,
+        stage_label=PROJECT_STATUS_LABELS.get(proj.get("status"), "") or "Uygulama",
+        created_at=now,
+        uploaded_by=str(emp["_id"]),
+        task_id=str(task.get("id") or task_id),
+    )
+    await db.files.insert_one({
+        "_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename,
+        "content_type": content_type, "size": len(data), "company_id": company_id,
+        "entity": "project", "entity_id": proj["_id"], "is_deleted": False, "created_at": now,
+    })
+    await db.projects.update_one(
+        {"_id": proj["_id"]},
+        {"$push": {"images": url, "stage_photos": row}, "$set": {"updated_at": now}},
+    )
+    import notify as _notify
+    await _notify.insert_notification(db, _notify.notification_doc(
+        company_id, "project_photo_pending",
+        f"Proje fotoğrafı onayı: {emp.get('full_name')}",
+        f"{emp.get('full_name')} {proj.get('project_number') or ''} {proj.get('name') or 'proje'} için iş fotoğrafı yükledi. Müşteri görsün / görmesin.",
+        link="/projects",
+        roles=_notify.roles_for_type("project_photo_pending"),
+        employee_id=emp["_id"],
+        ref_type="project",
+        ref_id=proj["_id"],
+    ))
+    fresh = await db.projects.find_one({"_id": proj["_id"]}) or proj
+    return {
+        "status": "success",
+        "message": "Fotoğraf yüklendi. Müşteri görmesi için yönetici onayı gerekir.",
+        "photo": row,
+        "task": attendance.assignment_from_project(fresh, task),
+    }
+
+
+@api_router.post("/projects/{project_id}/stage-photos/visibility")
+async def set_stage_photo_visibility(project_id: str, req: Dict[str, Any]):
+    """Yönetici: müşteri takip sayfasında görsün / görmesin."""
+    proj = await db.projects.find_one({"$or": [{"_id": project_id}, {"id": project_id}]})
+    if not proj:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı.")
+    url = str(req.get("url") or "").strip()
+    if not project_photos.is_photo_url(url):
+        raise HTTPException(status_code=400, detail="Geçerli bir fotoğraf seçin.")
+    visible = req.get("visible")
+    if visible is None:
+        visible = req.get("customer_visible")
+    if visible is None:
+        raise HTTPException(status_code=400, detail="visible true (görsün) veya false (görmesin) olmalı.")
+    next_rows = project_photos.apply_photo_visibility(proj.get("stage_photos"), url, bool(visible))
+    await db.projects.update_one({"_id": proj["_id"]}, {"$set": {"stage_photos": next_rows, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return {
+        "status": "success",
+        "message": "Müşteri görür." if visible else "Müşteri görmez.",
+        "stage_photos": next_rows,
+    }
 
 
 @api_router.delete("/files/{file_id}")

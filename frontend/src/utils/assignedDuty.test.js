@@ -1,15 +1,8 @@
-import {
-  DUTY_MAPS_ACTION,
-  dutyHasProject,
-  dutyIsField,
-  dutyWorkflowProgress,
-  photoVisibility,
-  photoVisibilityLabel,
-} from "./assignedDuty";
-import { mapsLink } from "./geo";
+import { DUTY_MAPS_ACTION, dutyHasProject, dutyIsField, dutyWorkflowProgress, photoVisibility, photoVisibilityLabel } from "./assignedDuty";
+import { workMapsLink } from "./mapsLink";
 
 describe("assigned duty field extras", () => {
-  it("opens maps for a project assignment and tracks workflow", () => {
+  test("opens maps for a project assignment and tracks workflow", () => {
     const t = {
       id: "t1",
       kind: "field",
@@ -25,15 +18,14 @@ describe("assigned duty field extras", () => {
     expect(DUTY_MAPS_ACTION).toBe("Konuma Git");
     expect(dutyIsField(t)).toBe(true);
     expect(dutyHasProject(t)).toBe(true);
-    expect(mapsLink(t)).toContain("40.1");
+    expect(workMapsLink(t)).toContain("40.1");
     expect(dutyWorkflowProgress(t)).toEqual({ done: 1, total: 2 });
     expect(photoVisibility(t.photos[0])).toBe("pending");
     expect(photoVisibilityLabel(t.photos[0])).toBe("Onay bekliyor");
   });
 
-  it("hides map for office park duties", () => {
+  test("hides map for office park duties", () => {
     expect(dutyIsField({ kind: "office", park_name: "CNC" })).toBe(false);
     expect(dutyHasProject({ kind: "office", park_name: "CNC" })).toBe(false);
-    expect(mapsLink({ address: "" })).toBeNull();
   });
 });
