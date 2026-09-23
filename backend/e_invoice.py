@@ -50,6 +50,104 @@ def digits(value: Any) -> str:
     return re.sub(r"\D", "", str(value or ""))
 
 
+MANUAL_ISSUE_TYPES = frozenset({"paper", "e_export", "e_ihracat", "e_dispatch", "expense_slip"})
+
+
+async def resolve_buyer_mukellef(
+    company_id: str,
+    tax_id: str,
+    *,
+    contact: Optional[dict] = None,
+) -> Dict[str, Any]:
+    """GİB e-Fatura mükellef sorgusu → suggested_e_type (e_invoice | e_archive).
+
+    Entegratör yapılandırılmışsa canlı sorgu; değilse cari bayrağı / VKN uzunluğu ile simüle.
+    """
+    tid = digits(tax_id)
+    local = contact
+    if local is None and _db is not None and tid:
+        local = await _db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tid})
+    if len(tid) not in (10, 11):
+        return {
+            "tax_id": tid,
+            "kind": "UNKNOWN",
+            "is_e_invoice_user": False,
+            "suggested_e_type": "e_archive",
+            "alias": None,
+            "source": "none",
+            "name": (local or {}).get("name") or "",
+            "local_contact": local,
+            "message": "VKN/TCKN yok veya geçersiz — e-Arşiv kesilir.",
+        }
+
+    settings = (await _db.einvoice_settings.find_one({"company_id": company_id}) if _db else None) or {}
+    live = settings.get("status") == "configured"
+    provider = settings.get("provider") or ""
+    if live and provider in ("n11faturam", "isnet", "isnet_portal"):
+        password_fn: Optional[Callable] = _deps.get("password_fn")
+        if not password_fn:
+            raise HTTPException(status_code=500, detail="e-Fatura şifre çözücü yapılandırılmamış.")
+        pwd = password_fn(settings)
+        try:
+            if provider == "isnet":
+                remote = await isnet.lookup_user(settings, pwd, tid)
+                src_label = "İşNet SOAP"
+            elif provider == "isnet_portal":
+                remote = await isnet_portal.lookup_user(settings, pwd, tid)
+                src_label = "İşNet Portal"
+            else:
+                remote = await n11faturam.lookup_user(settings, pwd, tid)
+                src_label = "n11 Faturam"
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"{src_label} GİB sorgusu başarısız: {e}")
+        is_efatura = bool(remote.get("is_e_invoice_user"))
+        alias = remote.get("alias") or (f"urn:mail:defaultpk@{tid}.com.tr" if is_efatura else None)
+        msg = (
+            f"{src_label}: {remote.get('name') or tid} e-Fatura mükellefi."
+            if is_efatura
+            else f"{src_label}: GİB e-Fatura listesinde kayıtlı değil (e-Arşiv kesilmeli)."
+        )
+        if local:
+            msg = "Cari kayıtlarınızda bulundu. " + msg
+        return {
+            "tax_id": tid,
+            "kind": "VKN" if len(tid) == 10 else "TCKN",
+            "is_e_invoice_user": is_efatura,
+            "suggested_e_type": "e_invoice" if is_efatura else "e_archive",
+            "alias": alias,
+            "source": provider,
+            "name": remote.get("name") or (local or {}).get("name") or "",
+            "local_contact": local,
+            "message": msg,
+        }
+
+    is_efatura = bool(local.get("is_e_invoice_user")) if local else len(tid) == 10
+    return {
+        "tax_id": tid,
+        "kind": "VKN" if len(tid) == 10 else "TCKN",
+        "is_e_invoice_user": is_efatura,
+        "suggested_e_type": "e_invoice" if is_efatura else "e_archive",
+        "alias": f"urn:mail:defaultpk@{tid}.com.tr" if is_efatura else None,
+        "source": provider if live else "simulated",
+        "name": (local or {}).get("name") or "",
+        "local_contact": local,
+        "message": (
+            ("Cari kayıtlarınızda bulundu." if local else "GİB e-Fatura mükellef listesinde " + (
+                "kayıtlı (e-Fatura kesilmeli)." if is_efatura else "kayıtlı değil (e-Arşiv kesilmeli)."
+            ))
+            + ("" if live else " [SİMÜLE — entegratör bağlanınca gerçek sorgu yapılır]")
+        ),
+    }
+
+
+def should_resolve_e_type_from_gib(e_type: Optional[str]) -> bool:
+    """Kağıt / ihracat dışındaki kesimlerde tür GİB mükellef kaydından gelir."""
+    if e_type is None or e_type == "" or e_type == "auto":
+        return True
+    return e_type not in MANUAL_ISSUE_TYPES
+
 
 class InvoiceCreateRequest(BaseModel):
     order_id: Optional[str] = None
@@ -229,13 +327,43 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
     if inv.get("invoice_type") == "purchase" and (e_type or inv.get("e_type")) == "e_invoice":
         raise HTTPException(status_code=400, detail="Alış e-faturası GİB'den gelir; kesim yalnızca satış belgelerinde yapılır.")
 
+    contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
+    requested = e_type if e_type is not None else inv.get("e_type")
+    gib_meta: Optional[Dict[str, Any]] = None
+    if should_resolve_e_type_from_gib(requested):
+        tax = digits(
+            (contact or {}).get("tax_number_or_id")
+            or (contact or {}).get("tax_id")
+            or inv.get("contact_tax_id")
+            or ""
+        )
+        gib_meta = await resolve_buyer_mukellef(inv.get("company_id") or "", tax, contact=contact)
+        e_type = gib_meta["suggested_e_type"]
+        if contact and bool(contact.get("is_e_invoice_user")) != bool(gib_meta["is_e_invoice_user"]):
+            await _db.contacts.update_one(
+                {"_id": contact["_id"]},
+                {"$set": {
+                    "is_e_invoice_user": bool(gib_meta["is_e_invoice_user"]),
+                    "e_invoice_alias": gib_meta.get("alias"),
+                    "updated_at": _now(),
+                }},
+            )
+            contact = {
+                **contact,
+                "is_e_invoice_user": bool(gib_meta["is_e_invoice_user"]),
+                "e_invoice_alias": gib_meta.get("alias"),
+            }
+
+    if inv.get("invoice_type") == "purchase" and (e_type or inv.get("e_type")) == "e_invoice":
+        raise HTTPException(status_code=400, detail="Alış e-faturası GİB'den gelir; kesim yalnızca satış belgelerinde yapılır.")
+
     if e_type:
         await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"e_type": e_type}})
-        inv = await _db.invoices.find_one({"_id": invoice_id})
+        refreshed = await _db.invoices.find_one({"_id": invoice_id})
+        inv = {**(refreshed or inv or {}), "e_type": e_type}
 
-    et = inv.get("e_type") or "e_archive"
+    et = e_type or (inv.get("e_type") if inv else None) or "e_archive"
     scen = normalize_scenario(scenario or inv.get("gib_scenario"), et)
-    contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
     buyer = validate_buyer(contact, inv, et)
     company = await _db.companies.find_one({"_id": inv.get("company_id")}) or {}
 
@@ -323,11 +451,15 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             )
         except Exception:
             logger.exception("%s UBL arşivi yazılamadı", provider)
+        msg = f"Fatura {label} üzerinden GİB'e iletildi. ETTN: {tracking}"
+        if gib_meta:
+            msg = f"{'E-Fatura' if et == 'e_invoice' else 'E-Arşiv'} (GİB). {msg}"
         return {
             "status": "success",
             "einvoice_state": "sent",
-            "message": f"Fatura {label} üzerinden GİB'e iletildi. ETTN: {tracking}",
+            "message": msg,
             "invoice_id": invoice_id,
+            "e_type": et,
             "gib_uuid": sent.get("ettn"),
             "gib_invoice_id": sent.get("invoice_id"),
             "tracking_id": tracking,
@@ -336,6 +468,7 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             "mode": settings.get("mode") or "test",
             "scenario": scen,
             "gib_credits_left": remaining,
+            "gib_lookup": gib_meta,
         }
 
     remaining = None
@@ -357,21 +490,26 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         "buyer_tax_id": buyer["tax_id"],
     }
     await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+    if export:
+        message = f"e-İhracat faturası GİB sistemine iletildi. ETTN/Takip No: {tracking}"
+    elif gib_meta:
+        kind = "E-Fatura" if et == "e_invoice" else "E-Arşiv"
+        message = f"{kind} olarak kesildi (GİB mükellef kaydı). ETTN/Takip No: {tracking}"
+    else:
+        message = f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking}"
     return {
         "status": "success",
         "einvoice_state": "sent",
-        "message": (
-            f"e-İhracat faturası GİB sistemine iletildi. ETTN/Takip No: {tracking}"
-            if export
-            else f"Fatura GİB sistemine başarıyla iletildi ve imzalandı. ETTN/Takip No: {tracking}"
-        ),
+        "message": message,
         "invoice_id": invoice_id,
+        "e_type": et,
         "tracking_id": tracking,
         "gib_uuid": patch["gib_uuid"],
         "provider": patch["integrator"],
         "mode": patch["gib_mode"],
         "scenario": scen,
         "gib_credits_left": remaining,
+        "gib_lookup": gib_meta,
     }
 
 

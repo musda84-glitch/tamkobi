@@ -4,6 +4,9 @@ import {
   canIssueExpenseSlip,
   invoiceHasPayment,
   placeContextMenu,
+  suggestedIssueTypeFromGib,
+  invoiceBuyerTaxId,
+  shouldResolveIssueFromGib,
 } from "./InvoiceContextMenu";
 
 describe("placeContextMenu", () => {
@@ -81,5 +84,28 @@ describe("issued invoice menu actions", () => {
       invoice_type: "purchase",
       direction: "incoming",
     })).toBe(false);
+  });
+});
+
+describe("GİB suggested issue type", () => {
+  test("maps lookup to e_invoice or e_archive", () => {
+    expect(suggestedIssueTypeFromGib({ is_e_invoice_user: true, suggested_e_type: "e_invoice" })).toBe("e_invoice");
+    expect(suggestedIssueTypeFromGib({ is_e_invoice_user: false, suggested_e_type: "e_archive" })).toBe("e_archive");
+    expect(suggestedIssueTypeFromGib({ is_e_invoice_user: true })).toBe("e_invoice");
+    expect(suggestedIssueTypeFromGib(null)).toBe("e_archive");
+  });
+
+  test("paper and export stay manual; auto/e-belge resolve from GİB", () => {
+    expect(shouldResolveIssueFromGib("paper")).toBe(false);
+    expect(shouldResolveIssueFromGib("e_export")).toBe(false);
+    expect(shouldResolveIssueFromGib("auto")).toBe(true);
+    expect(shouldResolveIssueFromGib("e_invoice")).toBe(true);
+    expect(shouldResolveIssueFromGib("e_archive")).toBe(true);
+    expect(shouldResolveIssueFromGib(null)).toBe(true);
+  });
+
+  test("invoiceBuyerTaxId strips non-digits", () => {
+    expect(invoiceBuyerTaxId({ contact_tax_id: "123-456-7890" })).toBe("1234567890");
+    expect(invoiceBuyerTaxId({})).toBe("");
   });
 });
