@@ -2,17 +2,31 @@ import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import React, { useState } from "react";
 import { Alert, Linking, Platform, Pressable, Text, View } from "react-native";
-import { fileUrl, upload } from "../api/client";
+import { fileUrl, post, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import {
-  DUTY_MAPS_ACTION,
+  DUTY_ATOLYE_ACTION,
+  DUTY_COMPLETE_ACTION,
+  DUTY_COMPLETE_BUSY,
+  DUTY_PHOTO_HIDE,
+  DUTY_PHOTO_SHOW,
+  DUTY_PHOTOS_HINT,
+  DUTY_SITE_ACTION,
+  applyDutyPhotoVisibility,
   dutyHasProject,
+  dutyIsField,
+  dutyKindLabel,
   dutyPhotos,
+  dutyShowAtolye,
+  dutyShowSite,
+  dutySiteHint,
   dutyWorkflow,
   dutyWorkflowProgress,
+  photoVisibility,
   photoVisibilityLabel,
   type AssignedDuty,
+  type DutyPhoto,
 } from "../utils/assignedDuty";
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import { appendUploadBlob, pickBrowserImage, resolveUploadBlob } from "../utils/formDataFile";
@@ -27,6 +41,7 @@ export function AssignedDutyCard({
   approveBusy = false,
   showAtolye = false,
   onAtolye,
+  reviewPhotos = false,
   testID,
 }: {
   duty: AssignedDuty;
@@ -36,18 +51,23 @@ export function AssignedDutyCard({
   approveBusy?: boolean;
   showAtolye?: boolean;
   onAtolye?: () => void;
+  reviewPhotos?: boolean;
   testID?: string;
 }) {
   const { client } = useAuth();
   const tid = testID || `duty-${duty.id || index}`;
   const [openFlow, setOpenFlow] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [visBusy, setVisBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const flow = dutyWorkflow(duty);
   const progress = dutyWorkflowProgress(duty);
   const photos = dutyPhotos(duty);
   const mapHref = mapsLink(duty);
-  const canMap = dutyHasProject(duty) && Boolean(mapHref);
+  const field = dutyIsField(duty);
+  const showWorkshop = dutyShowAtolye(duty, showAtolye) && Boolean(onAtolye);
+  const showSite = dutyShowSite(duty);
+  const canReview = reviewPhotos && field && Boolean(duty.project_id);
 
   const pickPhoto = async () => {
     if (!duty.id) { setError("Görev numarası yok."); return; }
@@ -78,28 +98,50 @@ export function AssignedDutyCard({
     }
   };
 
+  const openSite = () => {
+    if (mapHref) {
+      Linking.openURL(mapHref).catch(() => Alert.alert("Harita açılamadı", "Konum linki açılamadı."));
+      return;
+    }
+    Alert.alert("Görev yeri", dutySiteHint(duty));
+  };
+
+  const setVisibility = async (photo: DutyPhoto, visible: boolean) => {
+    if (!duty.project_id) { setError("Proje numarası yok."); return; }
+    try {
+      setVisBusy(`${photo.url}:${visible ? "show" : "hide"}`);
+      setError(null);
+      await post(client, `/projects/${duty.project_id}/stage-photos/visibility`, { url: photo.url, visible });
+      onChanged?.({ ...duty, photos: applyDutyPhotoVisibility(duty.photos || photos, photo.url, visible) });
+    } catch (err) {
+      setError(apiErrorMessage(err, "Onay kaydedilemedi."));
+    } finally {
+      setVisBusy(null);
+    }
+  };
+
   return (
     <Card testID={tid} style={duty.done ? { opacity: 0.75 } : undefined}>
       <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={{ fontWeight: "800", color: colors.text }} numberOfLines={2}>{duty.title || "Görev"}</Text>
           <Muted>
-            {[duty.project_number, duty.project_name || duty.park_name].filter(Boolean).join(" · ")}
+            {[dutyKindLabel(duty), duty.project_number, duty.project_name || duty.park_name].filter(Boolean).join(" · ")}
           </Muted>
         </View>
         <Badge label={duty.done ? "Tamam" : "Açık"} tone={duty.done ? "green" : "indigo"} />
       </Row>
       {error ? <Text style={{ color: colors.danger, fontWeight: "700", fontSize: 12 }}>{error}</Text> : null}
-      {canMap ? (
-        <PrimaryButton
-          title={DUTY_MAPS_ACTION}
-          onPress={() => {
-            if (!mapHref) { Alert.alert("Konum yok", "Bu projeye konum veya adres eklenmemiş."); return; }
-            Linking.openURL(mapHref).catch(() => Alert.alert("Harita açılamadı", "Konum linki açılamadı."));
-          }}
-          color="#BE123C"
-          testID={`${tid}-maps`}
-        />
+      {showSite ? (
+        <View style={{ gap: 4 }}>
+          <PrimaryButton
+            title={DUTY_SITE_ACTION}
+            onPress={openSite}
+            color="#BE123C"
+            testID={`${tid}-maps`}
+          />
+          <Muted testID={`${tid}-site-hint`}>{dutySiteHint(duty)}</Muted>
+        </View>
       ) : null}
       {flow.length ? (
         <View>
@@ -118,20 +160,51 @@ export function AssignedDutyCard({
           ) : null}
         </View>
       ) : null}
-      {dutyHasProject(duty) ? (
-        <View style={{ gap: 8 }}>
-          <Muted>İş fotoğrafları — müşteri görmesi yönetici onayına bağlı</Muted>
+      {dutyHasProject(duty) || (reviewPhotos && photos.length) ? (
+        <View style={{ gap: 8 }} testID={`${tid}-photos`}>
+          <Muted>{DUTY_PHOTOS_HINT}</Muted>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            {photos.map((p) => (
-              <View key={p.url} style={{ width: 64 }}>
-                <Image source={{ uri: fileUrl(client.baseUrl, p.url) }} style={{ width: 64, height: 64, borderRadius: 8, backgroundColor: colors.slate100 }} />
-                <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginTop: 2 }} numberOfLines={2}>
-                  {photoVisibilityLabel(p)}
-                </Text>
-              </View>
-            ))}
+            {photos.map((p) => {
+              const vis = photoVisibility(p);
+              return (
+                <View key={p.url} style={{ width: reviewPhotos ? 88 : 64 }} testID={`${tid}-photo-${p.url}`}>
+                  <Pressable
+                    testID={`${tid}-photo-open`}
+                    onPress={() => Linking.openURL(fileUrl(client.baseUrl, p.url)).catch(() => null)}
+                  >
+                    <Image source={{ uri: fileUrl(client.baseUrl, p.url) }} style={{ width: reviewPhotos ? 88 : 64, height: reviewPhotos ? 88 : 64, borderRadius: 8, backgroundColor: colors.slate100 }} />
+                  </Pressable>
+                  <Text style={{ fontSize: 9, fontWeight: "700", color: vis === "show" ? colors.primaryHover : vis === "hide" ? colors.danger : colors.muted, marginTop: 2 }} numberOfLines={2}>
+                    {photoVisibilityLabel(p)}
+                  </Text>
+                  {canReview ? (
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
+                      <Pressable
+                        testID={`${tid}-photo-show`}
+                        disabled={!!visBusy}
+                        onPress={() => setVisibility(p, true)}
+                      >
+                        <Text style={{ fontSize: 10, fontWeight: "800", color: vis === "show" ? colors.primaryHover : colors.muted }}>
+                          {visBusy === `${p.url}:show` ? "…" : DUTY_PHOTO_SHOW}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        testID={`${tid}-photo-hide`}
+                        disabled={!!visBusy}
+                        onPress={() => setVisibility(p, false)}
+                      >
+                        <Text style={{ fontSize: 10, fontWeight: "800", color: vis === "hide" ? colors.danger : colors.muted }}>
+                          {visBusy === `${p.url}:hide` ? "…" : DUTY_PHOTO_HIDE}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+            {!photos.length && reviewPhotos ? <Muted>Henüz iş fotoğrafı yok.</Muted> : null}
           </View>
-          {!duty.done ? (
+          {!duty.done && !reviewPhotos ? (
             <PrimaryButton
               title={busy ? "Yükleniyor…" : "İş fotoğrafı yükle"}
               onPress={pickPhoto}
@@ -144,19 +217,26 @@ export function AssignedDutyCard({
       ) : null}
       {!duty.done ? (
         <Row>
-          {showAtolye && onAtolye ? (
+          {showWorkshop ? (
             <View style={{ flex: 1 }}>
-              <PrimaryButton title="Atölyeye git" onPress={onAtolye} color={colors.indigo} testID={`${tid}-atolye`} />
+              <PrimaryButton title={DUTY_ATOLYE_ACTION} onPress={onAtolye} color={colors.indigo} testID={`${tid}-atolye`} />
             </View>
           ) : null}
           {onApprove ? (
             <View style={{ flex: 1 }}>
-              <PrimaryButton title={approveBusy ? "Onaylanıyor…" : "Onayla"} onPress={onApprove} disabled={approveBusy} loading={approveBusy} color={colors.primary} testID={`${tid}-approve`} />
+              <PrimaryButton
+                title={approveBusy ? DUTY_COMPLETE_BUSY : DUTY_COMPLETE_ACTION}
+                onPress={onApprove}
+                disabled={approveBusy}
+                loading={approveBusy}
+                color={colors.primary}
+                testID={`${tid}-approve`}
+              />
             </View>
           ) : null}
         </Row>
       ) : (
-        <Muted>Görev onaylandı.</Muted>
+        <Muted>Görev tamamlandı.</Muted>
       )}
     </Card>
   );

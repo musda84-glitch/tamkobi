@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, List
+from typing import Any, List, Optional
 
 _STAGE = re.compile(r"[^a-zA-Z0-9_\-]")
 
@@ -166,5 +166,12 @@ def apply_photo_visibility(raw: Any, url: str, visible: bool) -> List[dict]:
     return next_rows
 
 
-def assignment_photos(proj: Optional[dict] = None) -> List[dict]:
-    return sanitize_stage_photos((proj or {}).get("stage_photos"))
+def assignment_photos(proj: Optional[dict] = None, task_id: Optional[str] = None) -> List[dict]:
+    rows = sanitize_stage_photos((proj or {}).get("stage_photos"))
+    tid = str(task_id or "").strip()
+    if not tid:
+        return rows
+    tagged = [r for r in rows if str(r.get("task_id") or "").strip()]
+    if not tagged:
+        return rows
+    return [r for r in tagged if str(r.get("task_id") or "") == tid]

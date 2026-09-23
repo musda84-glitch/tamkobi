@@ -12769,7 +12769,7 @@ async def complete_my_assigned_task(task_id: str, user: dict = Depends(get_curre
         await db.employees.update_one({"_id": emp_id}, {"$set": patch})
         return {
             "status": "success",
-            "message": "Görev onaylandı.",
+            "message": "Görev tamamlandı.",
             "task": wp.office_assignment_view(found),
         }
     async for proj in db.projects.find(
@@ -12786,7 +12786,7 @@ async def complete_my_assigned_task(task_id: str, user: dict = Depends(get_curre
             await db.employees.update_one({"_id": emp_id}, {"$set": {"active_duty": None, "updated_at": now}})
         return {
             "status": "success",
-            "message": "Görev onaylandı.",
+            "message": "Görev tamamlandı.",
             "task": attendance.assignment_from_project({**proj, "tasks": updated}, found),
         }
     raise HTTPException(status_code=404, detail="Görev bulunamadı.")

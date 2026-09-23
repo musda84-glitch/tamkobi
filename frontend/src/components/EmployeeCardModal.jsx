@@ -17,6 +17,8 @@ import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
 import { employeePayActionTitle, isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
 import { workplaceHint, workplaceShort } from "../utils/workplace";
+import { pendingDutyPhotoCount } from "../utils/assignedDuty";
+import { AssignedDutyCard } from "./AssignedDutyCard";
 import { StaffMessagesPanel } from "./StaffMessagesPanel";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -362,15 +364,23 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                       </>
                     ) : null}
                     {(card.tasks || []).filter((t) => !t.done).length ? (
-                      <ul className="text-[11px] space-y-0.5" data-testid="emp-card-tasks">
+                      <div className="space-y-2" data-testid="emp-card-tasks">
+                        {pendingDutyPhotoCount(card.tasks) ? (
+                          <div className="text-[11px] font-bold text-amber-800" data-testid="emp-card-photo-pending">
+                            {pendingDutyPhotoCount(card.tasks)} iş fotoğrafı müşteri onayı bekliyor
+                          </div>
+                        ) : null}
                         {(card.tasks || []).filter((t) => !t.done).slice(0, 8).map((t, i) => (
-                          <li key={t.id || i}>
-                            {t.title || "Görev"}
-                            {t.project_number || t.project_name ? ` · ${t.project_number || t.project_name}` : ""}
-                            {t.kind === "office" ? ` · iç görev${t.park_name ? ` · ${t.park_name}` : ""}` : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${t.due_date}` : ""}
-                          </li>
+                          <AssignedDutyCard
+                            key={t.id || i}
+                            duty={t}
+                            index={i}
+                            testId={`emp-card-task-${t.id || i}`}
+                            reviewPhotos
+                            onChanged={() => reload()}
+                          />
                         ))}
-                      </ul>
+                      </div>
                     ) : null}
                   </div>
                 ) : null}

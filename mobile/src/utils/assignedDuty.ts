@@ -15,6 +15,7 @@ export type DutyPhoto = {
   visibility_label?: string;
   customer_visible?: boolean;
   source?: string;
+  task_id?: string;
 };
 
 export type AssignedDuty = {
@@ -35,7 +36,14 @@ export type AssignedDuty = {
   photos?: DutyPhoto[];
 };
 
-export const DUTY_MAPS_ACTION = "Konuma Git";
+export const DUTY_MAPS_ACTION = "Görev yerine git";
+export const DUTY_SITE_ACTION = DUTY_MAPS_ACTION;
+export const DUTY_ATOLYE_ACTION = "Atölyeye git";
+export const DUTY_COMPLETE_ACTION = "Görev tamamlandı";
+export const DUTY_COMPLETE_BUSY = "Tamamlanıyor…";
+export const DUTY_PHOTOS_HINT = "İş fotoğrafları — müşteri görmesi yönetici onayına bağlı";
+export const DUTY_PHOTO_SHOW = "Görsün";
+export const DUTY_PHOTO_HIDE = "Görmesin";
 
 export function dutySubtitle(t: AssignedDuty): string {
   if (t.kind === "office") {
@@ -70,7 +78,49 @@ export function dutyWorkflowProgress(t?: AssignedDuty | null): { done: number; t
 }
 
 export function dutyPhotos(t?: AssignedDuty | null): DutyPhoto[] {
-  return Array.isArray(t?.photos) ? t!.photos! : [];
+  const rows = Array.isArray(t?.photos) ? t!.photos! : [];
+  const tid = String(t?.id || "").trim();
+  if (!tid) return rows;
+  const tagged = rows.filter((p) => String(p.task_id || "").trim());
+  if (!tagged.length) return rows;
+  return tagged.filter((p) => String(p.task_id || "") === tid);
+}
+
+export function dutyShowAtolye(t?: AssignedDuty | null, allow = true): boolean {
+  return Boolean(allow) && !dutyIsField(t);
+}
+
+export function dutyShowSite(t?: AssignedDuty | null): boolean {
+  return dutyIsField(t);
+}
+
+export function dutySiteHint(t?: AssignedDuty | null): string {
+  const parts = [t?.project_number, t?.project_name || t?.park_name, t?.address].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "Görev yeri konumu henüz eklenmemiş.";
+}
+
+export function dutyKindLabel(t?: AssignedDuty | null): string {
+  return dutyIsField(t) ? "Dış görev" : "İç görev";
+}
+
+export function pendingDutyPhotoCount(tasks?: AssignedDuty[] | null): number {
+  return (tasks || []).reduce((n, t) => {
+    if (!dutyIsField(t)) return n;
+    return n + dutyPhotos(t).filter((p) => photoVisibility(p) === "pending").length;
+  }, 0);
+}
+
+export function applyDutyPhotoVisibility(photos: DutyPhoto[] | null | undefined, url: string, visible: boolean): DutyPhoto[] {
+  const target = String(url || "").trim();
+  return (photos || []).map((p) => {
+    if (String(p.url || "") !== target) return p;
+    return {
+      ...p,
+      customer_visible: visible,
+      visibility: visible ? "show" : "hide",
+      visibility_label: visible ? "Müşteri görür" : "Müşteri görmez",
+    };
+  });
 }
 
 export function photoVisibility(p?: DutyPhoto | null): "pending" | "show" | "hide" {

@@ -1,4 +1,11 @@
-export const DUTY_MAPS_ACTION = "Konuma Git";
+export const DUTY_MAPS_ACTION = "Görev yerine git";
+export const DUTY_SITE_ACTION = DUTY_MAPS_ACTION;
+export const DUTY_ATOLYE_ACTION = "Atölyeye git";
+export const DUTY_COMPLETE_ACTION = "Görev tamamlandı";
+export const DUTY_COMPLETE_BUSY = "Tamamlanıyor…";
+export const DUTY_PHOTOS_HINT = "İş fotoğrafları — müşteri görmesi yönetici onayına bağlı";
+export const DUTY_PHOTO_SHOW = "Görsün";
+export const DUTY_PHOTO_HIDE = "Görmesin";
 
 export function dutySubtitle(t) {
   if (!t) return "";
@@ -26,7 +33,29 @@ export function dutyWorkflowProgress(t) {
 }
 
 export function dutyPhotos(t) {
-  return Array.isArray(t?.photos) ? t.photos : [];
+  const rows = Array.isArray(t?.photos) ? t.photos : [];
+  const tid = String(t?.id || "").trim();
+  if (!tid) return rows;
+  const tagged = rows.filter((p) => String(p.task_id || "").trim());
+  if (!tagged.length) return rows;
+  return tagged.filter((p) => String(p.task_id || "") === tid);
+}
+
+export function dutyShowAtolye(t, allow = true) {
+  return Boolean(allow) && !dutyIsField(t);
+}
+
+export function dutyShowSite(t) {
+  return dutyIsField(t);
+}
+
+export function dutySiteHint(t) {
+  const parts = [t?.project_number, t?.project_name || t?.park_name, t?.address].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "Görev yeri konumu henüz eklenmemiş.";
+}
+
+export function dutyKindLabel(t) {
+  return dutyIsField(t) ? "Dış görev" : "İç görev";
 }
 
 export function photoVisibility(p) {
@@ -40,4 +69,24 @@ export function photoVisibilityLabel(p) {
   if (p?.visibility_label) return p.visibility_label;
   const vis = photoVisibility(p);
   return vis === "show" ? "Müşteri görür" : vis === "hide" ? "Müşteri görmez" : "Onay bekliyor";
+}
+
+export function pendingDutyPhotoCount(tasks) {
+  return (tasks || []).reduce((n, t) => {
+    if (!dutyIsField(t)) return n;
+    return n + dutyPhotos(t).filter((p) => photoVisibility(p) === "pending").length;
+  }, 0);
+}
+
+export function applyDutyPhotoVisibility(photos, url, visible) {
+  const target = String(url || "").trim();
+  return (photos || []).map((p) => {
+    if (String(p.url || "") !== target) return p;
+    return {
+      ...p,
+      customer_visible: visible,
+      visibility: visible ? "show" : "hide",
+      visibility_label: visible ? "Müşteri görür" : "Müşteri görmez",
+    };
+  });
 }

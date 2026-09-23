@@ -670,7 +670,7 @@ def assignment_from_project(proj: dict, task: dict) -> dict:
         "location_url": proj.get("location_url"),
         "radius_m": proj.get("radius_m"),
         "workflow": project_workflow(proj),
-        "photos": _pp.assignment_photos(proj),
+        "photos": _pp.assignment_photos(proj, task.get("id") or task.get("_id")),
     }
 
 

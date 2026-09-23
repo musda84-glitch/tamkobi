@@ -179,6 +179,7 @@ export type EmployeeCard = {
   tasks?: Array<{
     id?: string;
     title?: string;
+    project_id?: string;
     project_name?: string;
     project_number?: string;
     due_date?: string | null;
@@ -186,6 +187,19 @@ export type EmployeeCard = {
     done?: boolean;
     kind?: string;
     park_name?: string;
+    address?: string | null;
+    latitude?: number | string | null;
+    longitude?: number | string | null;
+    location_url?: string | null;
+    photos?: Array<{
+      url: string;
+      visibility?: string;
+      visibility_label?: string;
+      customer_visible?: boolean;
+      source?: string;
+      task_id?: string;
+    }>;
+    workflow?: Array<{ id?: string; title?: string; done?: boolean; assignee_name?: string }>;
   }>;
 };
 
