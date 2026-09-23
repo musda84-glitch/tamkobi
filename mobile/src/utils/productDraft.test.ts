@@ -43,12 +43,31 @@ describe("productDraft", () => {
       show_in_b2b: false,
       is_active: false,
       type: "raw_material",
+      gtip: "8471.30",
+      origin_country: "TR",
+      manufacturer_code: "MFR-9",
     });
     expect(d.name).toBe("Raf");
     expect(d.show_in_b2b).toBe(false);
     expect(d.is_active).toBe(false);
     expect(d.type).toBe("raw_material");
     expect(d.sale_price).toBe("10");
+    expect(d.gtip).toBe("8471.30");
+    expect(d.origin_country).toBe("TR");
+    expect(d.manufacturer_code).toBe("MFR-9");
+  });
+
+  it("includes trade identity fields in payload", () => {
+    const d = emptyProductDraft();
+    d.name = "Raf";
+    d.sku = "RAF-1";
+    d.gtip = "8471.30.00.00.00";
+    d.origin_country = "CN";
+    d.manufacturer_code = " ACME-1 ";
+    const body = productPayload(d);
+    expect(body.gtip).toBe("8471.30.00.00.00");
+    expect(body.origin_country).toBe("CN");
+    expect(body.manufacturer_code).toBe("ACME-1");
   });
 
   it("generates EAN-like 868 barcodes", () => {

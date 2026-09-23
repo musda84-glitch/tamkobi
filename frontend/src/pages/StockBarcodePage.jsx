@@ -339,6 +339,7 @@ export default function StockBarcodePage() {
     track_stock: true,
     gtip: "",
     origin_country: "",
+    manufacturer_code: "",
     desi: "",
     weight: "",
     length: "",
@@ -379,6 +380,9 @@ export default function StockBarcodePage() {
       const res = await axios.post(`${API_URL}/products`, {
         company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
         ...newProduct,
+        gtip: (newProduct.gtip || "").trim() || null,
+        origin_country: (newProduct.origin_country || "").trim() || null,
+        manufacturer_code: (newProduct.manufacturer_code || "").trim() || null,
         purchase_price: Number(newProduct.purchase_price || 0),
         sale_price: Number(newProduct.sale_price || 0),
         stock_quantity: Number(newProduct.stock_quantity || 0),
@@ -812,8 +816,11 @@ export default function StockBarcodePage() {
                         </button>
                         <div>
                           <div className="font-bold text-slate-900">{prod.name}</div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-[11px] font-mono text-indigo-600 font-semibold">SKU: {prod.sku}</span>
+                            {prod.manufacturer_code ? <span className="text-[10px] font-mono text-slate-500" data-testid={`product-mfr-${prod.sku}`}>Ürt: {prod.manufacturer_code}</span> : null}
+                            {prod.gtip ? <span className="text-[10px] font-mono text-slate-400" data-testid={`product-gtip-${prod.sku}`}>GTIP {prod.gtip}</span> : null}
+                            {prod.origin_country ? <span className="text-[10px] text-slate-500" data-testid={`product-origin-${prod.sku}`}>Menşei: {prod.origin_country}</span> : null}
                             {(prod.tags || []).map((t) => <span key={t} className="bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1 py-0.5 text-[9px] font-semibold">{t}</span>)}
                             {prod.variants?.length > 0 && (
                               <button onClick={() => openDetail(prod, "variants")} className="inline-flex items-center gap-1 bg-violet-50 text-violet-700 border border-violet-200 rounded-md px-1.5 py-0.5 text-[10px] font-bold hover:bg-violet-100" data-testid={`variant-badge-${prod.sku}`}>
@@ -1211,9 +1218,19 @@ export default function StockBarcodePage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2" data-testid="new-product-trade-fields">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">GTIP (Gümrük)</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Menşei</label>
+                  <input
+                    value={newProduct.origin_country}
+                    onChange={(e) => setNewProduct({ ...newProduct, origin_country: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    placeholder="TR, CN, DE…"
+                    data-testid="product-origin-input"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">GTIP</label>
                   <input
                     value={newProduct.gtip}
                     onChange={(e) => setNewProduct({ ...newProduct, gtip: e.target.value })}
@@ -1223,13 +1240,13 @@ export default function StockBarcodePage() {
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Menşe ülke</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Üretici kodu</label>
                   <input
-                    value={newProduct.origin_country}
-                    onChange={(e) => setNewProduct({ ...newProduct, origin_country: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
-                    placeholder="TR, CN, DE…"
-                    data-testid="product-origin-input"
+                    value={newProduct.manufacturer_code}
+                    onChange={(e) => setNewProduct({ ...newProduct, manufacturer_code: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono"
+                    placeholder="Örn. üretici / MPN"
+                    data-testid="product-manufacturer-code-input"
                   />
                 </div>
               </div>

@@ -24,6 +24,9 @@ export type ProductDraft = {
   width: string;
   height: string;
   package_count: string;
+  gtip: string;
+  origin_country: string;
+  manufacturer_code: string;
 };
 
 export const PRODUCT_TYPES = [
@@ -77,6 +80,9 @@ export function emptyProductDraft(): ProductDraft {
     width: "",
     height: "",
     package_count: "1",
+    gtip: "",
+    origin_country: "",
+    manufacturer_code: "",
   };
 }
 
@@ -108,6 +114,9 @@ export function draftFromProduct(p: Product | null | undefined): ProductDraft {
     width: str(p.width),
     height: str(p.height),
     package_count: str(p.package_count ?? 1),
+    gtip: str(p.gtip),
+    origin_country: str(p.origin_country),
+    manufacturer_code: str(p.manufacturer_code),
   };
 }
 
@@ -155,6 +164,9 @@ export function productPayload(draft: ProductDraft, companyId?: string): Record<
     width: optNum(draft.width),
     height: optNum(draft.height),
     package_count: Math.max(1, Math.min(50, Math.round(num(draft.package_count, 1)) || 1)),
+    gtip: draft.gtip.trim() || null,
+    origin_country: draft.origin_country.trim() || null,
+    manufacturer_code: draft.manufacturer_code.trim() || null,
   };
   if (companyId) body.company_id = companyId;
   return body;

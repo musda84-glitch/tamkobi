@@ -287,6 +287,14 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
       </Card>
 
       <Card>
+        <Text style={{ fontWeight: "800", color: colors.text }}>Menşei / GTIP / Üretici</Text>
+        <Muted>İthalat-ihracat ve e-ihracat faturalarında kullanılır.</Muted>
+        <Field label="Menşei" testID="stock-origin" value={draft.origin_country} onChangeText={(v) => set("origin_country", v)} placeholder="TR, CN, DE…" autoCapitalize="characters" editable={canEdit} />
+        <Field label="GTIP" testID="stock-gtip" value={draft.gtip} onChangeText={(v) => set("gtip", v)} placeholder="8471.30.00.00.00" autoCapitalize="none" editable={canEdit} />
+        <Field label="Üretici kodu" testID="stock-manufacturer-code" value={draft.manufacturer_code} onChangeText={(v) => set("manufacturer_code", v)} placeholder="Üretici / MPN" autoCapitalize="none" editable={canEdit} />
+      </Card>
+
+      <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>Paket (kargo)</Text>
         <Field label="Paket sayısı" value={draft.package_count} onChangeText={(v) => set("package_count", v)} keyboardType="number-pad" editable={canEdit} />
         <Field label="Desi" value={draft.desi} onChangeText={(v) => set("desi", v)} keyboardType="decimal-pad" editable={canEdit} />

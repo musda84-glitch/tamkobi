@@ -27,6 +27,9 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
     desi: pkgNum(product.desi), weight: pkgNum(product.weight), length: pkgNum(product.length),
     width: pkgNum(product.width), height: pkgNum(product.height), package_count: product.package_count || 1,
     label_template_id: product.label_template_id || "",
+    gtip: product.gtip || "",
+    origin_country: product.origin_country || "",
+    manufacturer_code: product.manufacturer_code || "",
   });
   const ccy = f.currency || "TRY";
   const ccyLabel = moneySuffix(ccy);
@@ -61,6 +64,9 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
         ...f,
         unit,
         label_template_id: f.label_template_id || null,
+        gtip: (f.gtip || "").trim() || null,
+        origin_country: (f.origin_country || "").trim() || null,
+        manufacturer_code: (f.manufacturer_code || "").trim() || null,
         vat_rate: Number(f.vat_rate), purchase_price: Number(f.purchase_price), sale_price: Number(f.sale_price),
         min_stock_alert: Number(f.min_stock_alert), stock_quantity: Number(f.stock_quantity),
         desi: n(f.desi), weight: n(f.weight), length: n(f.length), width: n(f.width), height: n(f.height),
@@ -117,6 +123,39 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
           />
           <p className="text-[10px] text-slate-400 mt-0.5">Firma ayarlarındaki birimler; yeni yazılan kayıt edilir.</p>
         </F>
+      </div>
+      <div className="bg-sky-50/60 border border-sky-100 rounded-xl p-3 space-y-2" data-testid="product-trade-fields">
+        <div className="font-bold text-slate-800">Menşei / GTIP / Üretici</div>
+        <p className="text-[10px] text-slate-500">İthalat-ihracat ve e-ihracat faturalarında kullanılır.</p>
+        <div className="grid grid-cols-3 gap-2">
+          <F label="Menşei">
+            <input
+              value={f.origin_country}
+              onChange={(e) => set("origin_country", e.target.value)}
+              className={inputCls}
+              placeholder="TR, CN, DE…"
+              data-testid="edit-origin-input"
+            />
+          </F>
+          <F label="GTIP">
+            <input
+              value={f.gtip}
+              onChange={(e) => set("gtip", e.target.value)}
+              className={`${inputCls} font-mono`}
+              placeholder="8471.30.00.00.00"
+              data-testid="edit-gtip-input"
+            />
+          </F>
+          <F label="Üretici kodu">
+            <input
+              value={f.manufacturer_code}
+              onChange={(e) => set("manufacturer_code", e.target.value)}
+              className={`${inputCls} font-mono`}
+              placeholder="Örn. üretici / MPN"
+              data-testid="edit-manufacturer-code-input"
+            />
+          </F>
+        </div>
       </div>
       <div className="grid grid-cols-4 gap-2">
         <F label={`Alış (${ccyLabel})`}><input type="number" step="0.01" value={f.purchase_price} onChange={(e) => set("purchase_price", e.target.value)} className={inputCls} data-testid="edit-purchase-price" /></F>
