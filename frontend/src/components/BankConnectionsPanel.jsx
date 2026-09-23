@@ -67,7 +67,7 @@ function ConnErrorBox({ connection, onEdit }) {
   if (!isKuveyt || !invalidClient) {
     return <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2" data-testid="conn-last-error">{err}</div>;
   }
-  const bothHosts = /hem Canlı hem Sandbox/i.test(err);
+  const bothHosts = /hem Canlı.*Sandbox|hem Canlı hem Sandbox/i.test(err);
   const modeMismatch = /aynı Müşteri Id\/Secret|Sandbox.*Identity|prep-identity|idprep/i.test(err) && !bothHosts;
   const secretUuid = /secret≈uuid|UUID formatında|secret=api_key/i.test(err);
   const idIsKey = /client_id=api_key|Müşteri Id ile Api Anahtarı aynı/i.test(err);
