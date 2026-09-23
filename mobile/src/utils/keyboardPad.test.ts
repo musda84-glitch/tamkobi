@@ -3,6 +3,7 @@ import {
   focusedFieldScrollDelta,
   keyboardTopFromEvent,
   keyboardTopFromVisualViewport,
+  loginSheetJustify,
   nextScrollY,
   SCREEN_BASE_PAD,
   webKeyboardHeight,
@@ -38,5 +39,7 @@ describe("keyboardPad", () => {
     expect(keyboardTopFromVisualViewport(800, 480, 0)).toBe(480);
     expect(webKeyboardHeight(800, 480, 0)).toBe(320);
     expect(webKeyboardHeight(800, 780, 0)).toBe(0);
+    expect(loginSheetJustify(0)).toBe("center");
+    expect(loginSheetJustify(280)).toBe("flex-end");
   });
 });

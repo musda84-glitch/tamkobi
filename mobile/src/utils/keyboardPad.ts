@@ -43,3 +43,8 @@ export function webKeyboardHeight(innerHeight: number, visualHeight?: number, of
   const covered = inner - keyboardTopFromVisualViewport(inner, visualHeight, offsetTop);
   return covered > 80 ? covered : 0;
 }
+
+/** Login card: closed keyboard stays centered; open keyboard pins the sheet above the IME. */
+export function loginSheetJustify(keyboardHeight: number): "center" | "flex-end" {
+  return (Number(keyboardHeight) || 0) > 0 ? "flex-end" : "center";
+}

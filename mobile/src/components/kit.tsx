@@ -43,7 +43,7 @@ export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshin
           style={[
             styles.stickyTop,
             padded && styles.stickyPad,
-            Platform.OS === "web" ? ({ position: "sticky", top: 0 } as object) : null,
+            Platform.OS === "web" ? { position: "sticky" as const, top: 0 } : null,
           ]}
         >
           {stickyTop}

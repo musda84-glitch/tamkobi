@@ -5,7 +5,9 @@ import { loadRememberedB2bEmail, loadRememberedEmail, saveRememberedB2bEmail, sa
 import { Field, PrimaryButton } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BForgotResult } from "../types";
+import { contentBottomPad, loginSheetJustify } from "../utils/keyboardPad";
 import { emailToRemember } from "../utils/loginRemember";
+import { useKeyboardAwareScroll } from "../utils/useKeyboardAwareScroll";
 
 type Mode = "erp" | "erp-forgot" | "erp-reset" | "b2b" | "b2b-forgot" | "b2b-reset";
 
@@ -50,6 +52,8 @@ export function LoginScreen() {
   const [portalLink, setPortalLink] = useState("");
   const [rememberErp, setRememberErp] = useState(true);
   const [rememberB2b, setRememberB2b] = useState(true);
+  const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll();
+  const sheetPad = contentBottomPad(24, keyboardHeight, Platform.OS);
 
   useEffect(() => {
     loadRememberedEmail().then((v) => {
@@ -170,7 +174,15 @@ export function LoginScreen() {
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView contentContainerStyle={styles.wrap} keyboardShouldPersistTaps="handled" testID="login-page">
+      <ScrollView
+        ref={scrollRef}
+        {...scrollProps}
+        contentContainerStyle={[
+          styles.wrap,
+          { paddingBottom: sheetPad, justifyContent: loginSheetJustify(keyboardHeight) },
+        ]}
+        testID="login-page"
+      >
         <View style={styles.card} testID={b2bMode ? "b2b-login-page" : undefined}>
           <Image source={require("../../assets/icon.png")} style={styles.mark} />
           {mode === "erp" ? (
