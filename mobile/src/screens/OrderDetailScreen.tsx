@@ -10,6 +10,7 @@ import { colors } from "../theme";
 import type { Order } from "../types";
 import { channelTr, orderNumberLabel, statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney } from "../utils/money";
+import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
 
 export function OrderDetailScreen() {
   const { client } = useAuth();
@@ -46,6 +47,12 @@ export function OrderDetailScreen() {
       <Card>
         <Badge label={channelTr(order.channel)} tone="indigo" />
         <Badge label={statusTr(order.order_status)} tone="amber" />
+        {(() => {
+          const invTone = orderInvoiceBadgeTone(order);
+          const invLabel = orderInvoiceBadgeLabel(order);
+          if (!invLabel || !invTone) return null;
+          return <Badge label={invLabel} tone={invTone === "green" ? "green" : "amber"} />;
+        })()}
         {order.marketplace_status ? <Badge label={order.marketplace_status} tone="slate" /> : null}
         {order.cargo_carrier_name || order.cargo_carrier ? <Badge label={String(order.cargo_carrier_name || order.cargo_carrier)} tone="teal" /> : null}
         {order.cargo_tracking_number ? <Badge label={order.cargo_tracking_number} tone="green" /> : null}

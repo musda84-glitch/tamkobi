@@ -17,6 +17,12 @@ describe("staff order gates", () => {
     expect(canStaffDeleteOrder({ is_invoiced: false })).toBe(true);
   });
 
+  it("allows edit when only draft invoice_id exists", () => {
+    const draft = { channel: "b2b", order_status: "approved", invoice_id: "inv_draft", is_invoiced: false };
+    expect(canStaffEditOrder(draft)).toBe(true);
+    expect(canStaffDeleteOrder(draft)).toBe(false);
+  });
+
   it("reads order_status or status", () => {
     expect(orderStatusOf({ status: "approved" })).toBe("approved");
     expect(orderStatusOf({ order_status: "pending", status: "x" })).toBe("pending");

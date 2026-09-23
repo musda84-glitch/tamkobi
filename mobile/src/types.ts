@@ -202,6 +202,7 @@ export type Order = {
   source?: string;
   is_invoiced?: boolean;
   invoice_id?: string;
+  invoice_number?: string;
   status?: string;
   cancel_request?: { status?: string; reason?: string; at?: string } | null;
   tracking?: {
