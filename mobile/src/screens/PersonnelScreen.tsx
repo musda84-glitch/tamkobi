@@ -60,6 +60,10 @@ import {
   remainingLeaveDays,
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
+  employeeCardChrome,
+  filterPayMoves,
+  payMovesPeriodLabel,
+  type PayMovesPeriod,
   pendingRequestDecision,
   pendingRequestDecisionMessage,
   requestKindLabel,
@@ -116,6 +120,7 @@ export function PersonnelScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [workplaceOpen, setWorkplaceOpen] = useState<Record<string, boolean>>({});
+  const [movesPeriod, setMovesPeriod] = useState<PayMovesPeriod>("30d");
   const [balances, setBalances] = useState<Record<string, EmployeeBalance>>({});
   const [payItem, setPayItem] = useState<Payroll | null>(null);
   const [payAccount, setPayAccount] = useState("");
@@ -738,6 +743,7 @@ export function PersonnelScreen() {
   const openMoves = async (emp: Employee) => {
     setMovesEmp(emp);
     setMoves([]);
+    setMovesPeriod("30d");
     setMovesBusy(true);
     try {
       const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
@@ -895,7 +901,7 @@ export function PersonnelScreen() {
       <ErrorBanner message={error} />
       {message ? <Muted testID="personnel-msg">{message}</Muted> : null}
 
-      {canEdit ? (
+      {canEdit && !empOpen ? (
         <Row style={{ flexWrap: "wrap", gap: 8 }}>
           <PrimaryButton title="Aylık bordro hesapla" onPress={generatePayroll} loading={busy} color={colors.indigo} testID="generate-payroll-btn" />
           <PrimaryButton
@@ -914,7 +920,7 @@ export function PersonnelScreen() {
         </Row>
       ) : null}
 
-      {pendingReqs.length ? (
+      {!empOpen && pendingReqs.length ? (
         <Card testID="personnel-requests-inbox">
           <Text style={{ fontWeight: "800", color: colors.text }}>Personel talepleri ({pendingReqs.length})</Text>
           {pendingReqs.slice(0, 8).map((it) => (
@@ -1004,7 +1010,7 @@ export function PersonnelScreen() {
         </Card>
       ) : null}
 
-      <TabStrip
+      {empOpen ? null : <TabStrip
         testID="personnel-tab"
         value={tab}
         onChange={setTab}
@@ -1015,9 +1021,9 @@ export function PersonnelScreen() {
           { key: "calc", label: "Maaş", icon: "calculator" },
           { key: "extras", label: "Prim", icon: "gift", count: bonuses.length || undefined },
         ]}
-      />
+      />}
 
-      {tab === "payroll" ? (
+      {!empOpen && tab === "payroll" ? (
         <>
           {!employees.length ? (
             <Empty icon="people-outline" title="Çalışan yok" />
@@ -1034,7 +1040,7 @@ export function PersonnelScreen() {
               yevmiyeAmount: Math.max(Number(emp.yevmiye_due) || 0, fromPays.amount),
             });
             return (
-              <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`}>
+              <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`} style={employeeCardChrome(emp)}>
                 <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
                   <EmployeeAvatar
                     name={emp.full_name}
@@ -1214,7 +1220,7 @@ export function PersonnelScreen() {
         </>
       ) : null}
 
-      {tab === "attendance" ? (
+      {!empOpen && tab === "attendance" ? (
         <>
           <Field label="Ay" testID="attendance-month-input" value={month} onChangeText={setMonth} placeholder="2026-09" />
           {!(attendance?.summary || []).length ? (
@@ -1297,7 +1303,7 @@ export function PersonnelScreen() {
         </>
       ) : null}
 
-      {tab === "leaves" ? (
+      {!empOpen && tab === "leaves" ? (
         <>
           {canEdit ? (
             <Card testID="leave-form">
@@ -1345,7 +1351,7 @@ export function PersonnelScreen() {
         </>
       ) : null}
 
-      {tab === "calc" ? (
+      {!empOpen && tab === "calc" ? (
         <Card testID="salary-calculator">
           <Text style={{ fontWeight: "800", color: colors.text }}>Maaş hesaplama (Brüt ⇄ Net)</Text>
           <Row>
@@ -1393,7 +1399,7 @@ export function PersonnelScreen() {
         </Card>
       ) : null}
 
-      {tab === "extras" ? (
+      {!empOpen && tab === "extras" ? (
         <>
           <Card testID="bonus-panel">
             <Text style={{ fontWeight: "800", color: colors.text }}>Prim / ikinci maaş</Text>
@@ -1460,9 +1466,30 @@ export function PersonnelScreen() {
         onClose={() => { setMovesEmp(null); setMoves([]); }}
         testID="emp-pay-moves-sheet"
       >
+        <Row style={{ flexWrap: "wrap", gap: 8, marginBottom: 8 }} testID="emp-pay-moves-period">
+          {(["30d", "month", "all"] as PayMovesPeriod[]).map((key) => (
+            <Pressable
+              key={key}
+              testID={`emp-pay-moves-period-${key}`}
+              onPress={() => setMovesPeriod(key)}
+              style={{
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 999,
+                backgroundColor: movesPeriod === key ? colors.indigo50 : colors.slate50,
+                borderWidth: 1,
+                borderColor: movesPeriod === key ? colors.indigo : colors.border,
+              }}
+            >
+              <Text style={{ fontSize: 11, fontWeight: "800", color: movesPeriod === key ? colors.indigo : colors.text }}>
+                {payMovesPeriodLabel(key)}
+              </Text>
+            </Pressable>
+          ))}
+        </Row>
         {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
-        {!movesBusy && !moves.length ? <Muted>Bu personel için ödeme hareketi yok.</Muted> : null}
-        {moves.map((row) => (
+        {!movesBusy && !filterPayMoves(moves, movesPeriod, new Date(), month).length ? <Muted>Bu dönemde ödeme hareketi yok.</Muted> : null}
+        {filterPayMoves(moves, movesPeriod, new Date(), month).map((row) => (
           <View
             key={row.id}
             testID={`emp-pay-move-${row.id}`}

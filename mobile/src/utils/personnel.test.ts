@@ -66,6 +66,10 @@ import {
   requestsForEmployee,
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
+  employeeCardChrome,
+  filterPayMoves,
+  payMoveInPeriod,
+  payMovesPeriodLabel,
   companyBonusPayload,
   bonusesPeriodTotal,
 } from "./personnel";
@@ -140,6 +144,13 @@ describe("employee draft", () => {
     expect(workplaceDetailsToggleLabel(true)).toBe("Gizle");
     expect(workplaceDetailsSummary({ hasFieldDuty: true, fieldLabel: "aa", taskCount: 4 })).toBe("aa · 4 açık görev");
     expect(workplaceDetailsSummary({ taskCount: 1 })).toBe("1 açık görev");
+    expect(payMovesPeriodLabel("30d")).toBe("Son 30 gün");
+    expect(payMoveInPeriod({ date: "2026-09-20" }, "30d", new Date("2026-09-22T12:00:00"), "2026-09")).toBe(true);
+    expect(payMoveInPeriod({ date: "2026-07-01" }, "30d", new Date("2026-09-22T12:00:00"), "2026-09")).toBe(false);
+    expect(payMoveInPeriod({ date: "2026-09" }, "month", new Date("2026-09-22"), "2026-09")).toBe(true);
+    expect(filterPayMoves([{ id: "1", kind: "bonus", title: "Avans", subtitle: "", amount: 1, date: "2026-07-01" }], "30d", new Date("2026-09-22"), "2026-09")).toHaveLength(0);
+    expect(employeeCardChrome({ pay_type: "daily", daily_wage: 500 }).borderColor).toBe("#F59E0B");
+    expect(employeeCardChrome({ pay_type: "monthly" }).backgroundColor).toBe("#F0FDF4");
   });
 });
 
