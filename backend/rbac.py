@@ -516,8 +516,14 @@ async def delete_user(user_id: str):
 async def invite_user(req: Dict[str, Any], request: Request):
     company_id = req.get("company_id", "comp_nexus_main_01")
     email = (req.get("email") or "").strip().lower()
+    phone = (req.get("phone") or "").strip()
+    channels = [c for c in (req.get("channels") or ["email"]) if c in ("email", "sms", "whatsapp")]
+    if not channels:
+        channels = ["email"]
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Geçerli bir e-posta girin.")
+    if ("sms" in channels or "whatsapp" in channels) and not phone:
+        raise HTTPException(status_code=400, detail="SMS / WhatsApp için telefon numarası gerekli.")
     if await _db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Bu e-posta ile kayıtlı kullanıcı zaten var.")
     role = req.get("role") or "sales"
@@ -530,25 +536,102 @@ async def invite_user(req: Dict[str, Any], request: Request):
     token = secrets.token_urlsafe(32)
     base = (req.get("base_url") or str(request.headers.get("origin") or "")).rstrip("/")
     link = f"{base}/davet/{token}"
-    doc = {"_id": token, "company_id": company_id, "company_name": company.get("name"), "email": email, "name": (req.get("name") or "").strip(), "role": role, "employee_id": req.get("employee_id"),
-           "invited_by": req.get("invited_by"), "link": link, "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(), "accepted_at": None, "created_at": _now()}
+    doc = {
+        "_id": token,
+        "company_id": company_id,
+        "company_name": company.get("name"),
+        "email": email,
+        "phone": phone or None,
+        "name": (req.get("name") or "").strip(),
+        "role": role,
+        "employee_id": req.get("employee_id"),
+        "invited_by": req.get("invited_by"),
+        "link": link,
+        "channels": channels,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+        "accepted_at": None,
+        "created_at": _now(),
+    }
     await _db.user_invites.delete_many({"company_id": company_id, "email": email, "accepted_at": None})
     await _db.user_invites.insert_one(doc)
-    mail = {"status": "skipped", "detail": "E-posta hesabı tanımlı değil; linki kopyalayıp iletin."}
-    try:
-        a = await _mail_account(company_id)
-        subject = f"{company.get('name', 'TamKobi')} sizi davet ediyor"
-        body = f"Merhaba {doc['name'] or ''},\n{company.get('name', 'Firmamız')} sizi TamKobi sistemine '{role}' rolüyle davet etti. Hesabınızı oluşturmak için: {link}\nBu link 7 gün geçerlidir."
-        html = f"<p>{body.replace(chr(10), '<br>')}</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Daveti Kabul Et</a></p>"
-        await comm_service.smtp_send(a, [email], subject, body, html=html)
-        mail = {"status": "sent", "detail": f"{email} adresine davet gönderildi."}
-    except HTTPException as e:
-        mail = {"status": "skipped", "detail": e.detail}
-    except Exception as e:
-        mail = {"status": "failed", "detail": f"SMTP hatası: {str(e)[:120]}"}
-    await _db.user_invites.update_one({"_id": token}, {"$set": {"mail": mail}})
+
+    role_name = ((await _db.roles.find_one({"company_id": company_id, "code": role})) or {}).get("name") or role
+    invitee = doc["name"] or "Merhaba"
+    firm = company.get("name") or "Firmamız"
+    short_msg = f"{invitee}, {firm} sizi TamKobi'ye '{role_name}' rolüyle davet etti. Hesap: {link} (7 gün)"
+    mail_body = f"Merhaba {doc['name'] or ''},\n{firm} sizi TamKobi sistemine '{role_name}' rolüyle davet etti. Hesabınızı oluşturmak için: {link}\nBu link 7 gün geçerlidir."
+
+    delivery: Dict[str, Any] = {}
+    mail = {"status": "skipped", "detail": "E-posta kanalı seçilmedi."}
+    if "email" in channels:
+        mail = {"status": "skipped", "detail": "E-posta hesabı tanımlı değil; linki kopyalayıp iletin."}
+        try:
+            a = await _mail_account(company_id)
+            subject = f"{firm} sizi davet ediyor"
+            html = f"<p>{mail_body.replace(chr(10), '<br>')}</p><p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Daveti Kabul Et</a></p>"
+            await comm_service.smtp_send(a, [email], subject, mail_body, html=html)
+            mail = {"status": "sent", "detail": f"{email} adresine davet gönderildi."}
+        except HTTPException as e:
+            mail = {"status": "skipped", "detail": e.detail}
+        except Exception as e:
+            mail = {"status": "failed", "detail": f"SMTP hatası: {str(e)[:120]}"}
+    delivery["mail"] = mail
+
+    if "sms" in channels:
+        try:
+            from server import _send_sms_to  # lazy — circular import yok
+            r = await _send_sms_to(
+                company_id,
+                [{"phone": phone, "contact_name": doc.get("name")}],
+                short_msg,
+                "user_invite",
+                token,
+            )
+            delivery["sms"] = comm_service.sms_channel_result(r) if hasattr(comm_service, "sms_channel_result") else {
+                "status": "sent" if r.get("sent") else ("failed" if r.get("failed") else "simulated"),
+                "detail": r.get("message") or r.get("error") or "SMS işlendi.",
+            }
+        except HTTPException as e:
+            delivery["sms"] = {"status": "failed", "detail": e.detail}
+        except Exception as e:
+            delivery["sms"] = {"status": "failed", "detail": str(e)[:160]}
+
+    if "whatsapp" in channels:
+        try:
+            from server import wa_send  # lazy
+            r = await wa_send({
+                "company_id": company_id,
+                "phone": phone,
+                "message": short_msg,
+                "contact_name": doc.get("name"),
+            })
+            delivery["whatsapp"] = {
+                "status": r.get("status") or "simulated",
+                "detail": r.get("message_info") or "WhatsApp işlendi.",
+                "wa_link": r.get("wa_link"),
+            }
+        except HTTPException as e:
+            delivery["whatsapp"] = {"status": "failed", "detail": e.detail}
+        except Exception as e:
+            delivery["whatsapp"] = {"status": "failed", "detail": str(e)[:160]}
+
+    await _db.user_invites.update_one({"_id": token}, {"$set": {"mail": mail, "delivery": delivery}})
     await _notify_role_assigned(company_id, {"full_name": doc.get("name") or email, "_id": req.get("employee_id")}, role, None)
-    return {**_clean(doc), "mail": mail}
+    summary_bits = []
+    for ch, res in delivery.items():
+        if not res:
+            continue
+        st = res.get("status")
+        if st in ("sent", "simulated"):
+            summary_bits.append(f"{ch}: {res.get('detail') or st}")
+        elif st == "failed":
+            summary_bits.append(f"{ch} hata: {res.get('detail')}")
+    return {
+        **_clean(doc),
+        "mail": mail,
+        "delivery": delivery,
+        "message": " · ".join(summary_bits) if summary_bits else (mail.get("detail") or "Davet oluşturuldu."),
+    }
 
 
 @router.delete("/users/invite/{token}")
