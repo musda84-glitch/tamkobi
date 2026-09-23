@@ -61,7 +61,10 @@ def _clean(d: dict) -> dict:
 
 
 def normalize_location_tracking(raw: Optional[dict] = None) -> dict:
-    """Personel konum izleme tercihlerini güvenli varsayılanlara çevirir."""
+    """Personel konum izleme tercihlerini güvenli varsayılanlara çevirir.
+
+    interval_minutes=0 → sürekli izleme (continuous=True).
+    """
     base = dict(DEFAULT_LOCATION_TRACKING)
     if not isinstance(raw, dict):
         return base
@@ -74,9 +77,15 @@ def normalize_location_tracking(raw: Optional[dict] = None) -> dict:
             mins = int(raw["interval_minutes"])
         except (TypeError, ValueError):
             mins = base["interval_minutes"]
-        base["interval_minutes"] = max(1, min(120, mins))
+        base["interval_minutes"] = max(0, min(120, mins))
     if not base["enabled"]:
         base["continuous"] = False
+        return base
+    # 0 dk = sürekli; sürekli işaretliyse aralığı 0'a çek.
+    if base["interval_minutes"] == 0:
+        base["continuous"] = True
+    elif base["continuous"]:
+        base["interval_minutes"] = 0
     return base
 
 

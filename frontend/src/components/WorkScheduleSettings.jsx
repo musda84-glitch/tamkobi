@@ -97,12 +97,27 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
   const lt0 = { ...DEFAULT_LOC_TRACK, ...(employee.location_tracking || {}) };
   const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0 });
   const [s, setS] = useState({ start: ws.start || "", end: ws.end || "", break_minutes: ws.break_minutes ?? null, late_tolerance_minutes: ws.late_tolerance_minutes ?? null, overtime_tolerance_minutes: ws.overtime_tolerance_minutes ?? null, work_days: ws.work_days || [], days: ws.days || {} });
-  const [locTrack, setLocTrack] = useState({ enabled: lt0.enabled !== false, continuous: !!lt0.continuous, interval_minutes: Number(lt0.interval_minutes) > 0 ? Number(lt0.interval_minutes) : 15 });
+  const initInterval = (() => {
+    const n = Number(lt0.interval_minutes);
+    if (lt0.continuous || n === 0) return 0;
+    return Number.isFinite(n) && n > 0 ? n : 15;
+  })();
+  const [locTrack, setLocTrack] = useState({ enabled: lt0.enabled !== false, continuous: !!lt0.continuous || initInterval === 0, interval_minutes: initInterval });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setS({ ...s, [k]: v });
   const setLt = (k, v) => setLocTrack((prev) => {
     const next = { ...prev, [k]: v };
     if (k === "enabled" && !v) next.continuous = false;
+    // Aralık 0 → sürekli; sürekli işaretlenince aralık 0.
+    if (k === "interval_minutes") {
+      const n = v === "" ? "" : Number(v);
+      if (n === 0) next.continuous = true;
+      else if (typeof n === "number" && n > 0) next.continuous = false;
+    }
+    if (k === "continuous") {
+      if (v) next.interval_minutes = 0;
+      else if (Number(prev.interval_minutes) === 0) next.interval_minutes = 15;
+    }
     return next;
   });
   const grossForRate = Number(pay.payroll_salary) || Number(pay.salary) * 1.4 || 0;
@@ -113,7 +128,9 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
       const schedule = Object.fromEntries(Object.entries(s).filter(([k, v]) => v !== null && v !== "" && !(Array.isArray(v) && !v.length) && !(k === "days" && !Object.keys(v || {}).length)));
       const daily = pay.pay_type === "daily";
       const dailyWage = daily ? Number(pay.daily_wage) || 0 : 0;
-      const interval = Math.max(1, Math.min(120, Number(locTrack.interval_minutes) || 15));
+      const rawInterval = locTrack.interval_minutes === "" ? 15 : Number(locTrack.interval_minutes);
+      const interval = Math.max(0, Math.min(120, Number.isFinite(rawInterval) ? rawInterval : 15));
+      const continuous = !!locTrack.enabled && (interval === 0 || !!locTrack.continuous);
       const body = {
         payroll_salary: pay.payroll_salary === "" ? null : Number(pay.payroll_salary),
         pay_type: daily ? "daily" : "monthly",
@@ -127,8 +144,8 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule,
         location_tracking: {
           enabled: !!locTrack.enabled,
-          continuous: !!locTrack.enabled && !!locTrack.continuous,
-          interval_minutes: interval,
+          continuous,
+          interval_minutes: continuous ? 0 : interval,
         },
       };
       await axios.put(`${API_URL}/personnel/employees/${employee.id || employee._id || employee.employee_id}`, body);
@@ -175,22 +192,24 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
           Konum özelliği açık (girişte firma / görev yeri kontrolü)
         </label>
         <label className={`flex items-center gap-1.5 ${locTrack.enabled ? "cursor-pointer" : "opacity-50 cursor-not-allowed"}`}>
-          <input type="checkbox" disabled={!locTrack.enabled} checked={!!locTrack.continuous} onChange={(e) => setLt("continuous", e.target.checked)} data-testid="emp-loc-continuous" />
-          Sürekli izle (mesai boyunca periyodik konum kontrolü)
+          <input type="checkbox" disabled={!locTrack.enabled} checked={!!locTrack.continuous || Number(locTrack.interval_minutes) === 0} onChange={(e) => setLt("continuous", e.target.checked)} data-testid="emp-loc-continuous" />
+          Sürekli izle (aralık 0 ile aynı)
         </label>
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Konum kontrol aralığı (dk)</label>
             <input
               type="number"
-              min={1}
+              min={0}
               max={120}
               disabled={!locTrack.enabled}
               value={locTrack.interval_minutes}
               onChange={(e) => setLt("interval_minutes", e.target.value === "" ? "" : Number(e.target.value))}
               className={`${inp} w-24 disabled:opacity-50`}
               data-testid="emp-loc-interval"
+              title="0 = sürekli izle"
             />
+            <p className="text-[10px] text-slate-400 mt-0.5" data-testid="emp-loc-interval-hint">0 = sürekli izle</p>
           </div>
           <p className="text-[10px] text-slate-500 pb-1 max-w-md">Kapalı olsa da Mesaim çıkış düğmesi aktif kalır; çıkış her yerden yapılır. Çıkış yanlışlıkla basılmasın diye çift tıklama / onay ister.</p>
         </div>

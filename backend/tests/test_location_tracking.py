@@ -10,9 +10,17 @@ def test_normalize_defaults():
 def test_normalize_clamps_interval_and_disables_continuous_when_off():
     lt = normalize_location_tracking({"enabled": False, "continuous": True, "interval_minutes": 999})
     assert lt == {"enabled": False, "continuous": False, "interval_minutes": 120}
-    lt2 = normalize_location_tracking({"enabled": True, "continuous": True, "interval_minutes": 0})
-    assert lt2["interval_minutes"] == 1
+    lt2 = normalize_location_tracking({"enabled": True, "continuous": False, "interval_minutes": 0})
+    assert lt2["interval_minutes"] == 0
     assert lt2["continuous"] is True
+
+
+def test_normalize_zero_interval_means_continuous():
+    lt = normalize_location_tracking({"enabled": True, "interval_minutes": 0})
+    assert lt == {"enabled": True, "continuous": True, "interval_minutes": 0}
+    # Sürekli işaretliyse aralık 0'a çekilir.
+    lt2 = normalize_location_tracking({"enabled": True, "continuous": True, "interval_minutes": 10})
+    assert lt2 == {"enabled": True, "continuous": True, "interval_minutes": 0}
 
 
 def test_merge_schedule_require_geo_follows_employee_location_tracking():
@@ -24,11 +32,16 @@ def test_merge_schedule_require_geo_follows_employee_location_tracking():
     assert s_off["location_tracking"]["continuous"] is False
     assert s_off["location_tracking"]["interval_minutes"] == 10
 
-    emp_on = {"location_tracking": {"enabled": True, "continuous": True, "interval_minutes": 5}}
+    emp_on = {"location_tracking": {"enabled": True, "continuous": False, "interval_minutes": 5}}
     s_on = merge_schedule(company, emp_on)
     assert s_on["require_geo"] is True
-    assert s_on["location_tracking"]["continuous"] is True
+    assert s_on["location_tracking"]["continuous"] is False
     assert s_on["location_tracking"]["interval_minutes"] == 5
+
+    emp_cont = {"location_tracking": {"enabled": True, "continuous": False, "interval_minutes": 0}}
+    s_cont = merge_schedule(company, emp_cont)
+    assert s_cont["location_tracking"]["continuous"] is True
+    assert s_cont["location_tracking"]["interval_minutes"] == 0
 
 
 def test_merge_schedule_without_employee_keeps_company_require_geo():
