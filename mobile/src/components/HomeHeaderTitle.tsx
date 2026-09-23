@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Image, Text, View } from "react-native";
 import { colors } from "../theme";
+import { appVersionLabel } from "../utils/appVersion";
 import { companyInitials, greetingLine } from "../utils/greeting";
 
 /** Özet başlığı: firma logosu + selamlama. Logo yoksa firma baş harfleri durur. */
@@ -56,8 +57,8 @@ export function HomeHeaderTitle({
         <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800" }} numberOfLines={1}>
           {greeting}
         </Text>
-        <Text style={{ color: colors.muted, fontSize: 10 }} numberOfLines={1}>
-          {company || "TamKobi"}
+        <Text style={{ color: colors.muted, fontSize: 10 }} numberOfLines={1} testID="home-app-version">
+          {company || "TamKobi"} · {appVersionLabel()}
         </Text>
       </View>
     </View>
