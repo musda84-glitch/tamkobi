@@ -4,17 +4,16 @@ import { Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
-import { Badge, Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
-import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
 import { LocationConsentCard } from "../components/LocationConsentCard";
-import { LocationSignalDot } from "../components/LocationSignal";
 import { locationConsentAccepted, locationConsentPayload, locationUnavailablePayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
-import { workplaceHint, type Workplace } from "../utils/workplace";
-import { yevmiyeStatusLine } from "../utils/personnel";
+import { type Workplace } from "../utils/workplace";
 
 type LocationTracking = {
   enabled?: boolean;
@@ -44,7 +43,8 @@ type AttendancePayload = {
   } | null;
   location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
   workplace?: Workplace | null;
-  schedule?: { require_geo?: boolean; start?: string; end?: string; location_tracking?: LocationTracking };
+  schedule?: { require_geo?: boolean; start?: string; end?: string; break_minutes?: number; work_days?: number[]; location_tracking?: LocationTracking };
+  day_labels?: string[];
   location_tracking?: LocationTracking;
   active_location_tracking?: LocationTracking;
   records?: {
@@ -335,12 +335,7 @@ export function AttendanceScreen() {
   const today = data?.today;
   const checkedIn = Boolean(today?.check_in);
   const checkedOut = Boolean(today?.check_out);
-  const geoPending = geoConfirmPending(today);
-  const geoPendingAction = today?.geo_confirm_request?.action;
   const geoPendingHint = geoConfirmHint(today);
-  const early = today?.early_leave_request;
-  const intra = today?.intraday_leave_request;
-  const yevLine = yevmiyeStatusLine(today);
   const earlyOk = earlyLeaveApproved(today);
   const checkoutOn = data?.checkout_unlocked != null
     ? Boolean(data.checkout_unlocked) && !checkedOut
@@ -363,7 +358,7 @@ export function AttendanceScreen() {
       <Muted>{data?.employee?.full_name || "Personel kartı bağlı değilse giriş yapılamaz."}</Muted>
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
-      {data?.employee ? (
+      {data?.employee && !consentOk ? (
         <LocationConsentCard
           consent={data.location_consent}
           signal={liveSignal}
@@ -377,94 +372,51 @@ export function AttendanceScreen() {
           <Muted>KVKK (K) ve konum paylaşımı (KK) sözleşmelerini kabul edince giriş / çıkış paneli açılır.</Muted>
         </Card>
       ) : null}
-      {(consentOk || !data?.employee) ? <Card>
-        <Text style={{ fontSize: 42, fontWeight: "900", color: colors.text, textAlign: "center" }}>{data?.now || "--:--"}</Text>
-        {consentOk ? <LocationSignalDot signal={liveSignal} testID="mesai-signal" /> : null}
-        <Muted>{fmtDmy(data?.today_date)}</Muted>
-        <Muted testID="mesai-workplace">{workplaceHint(data?.workplace || data?.location, data?.schedule?.require_geo !== false)}</Muted>
-        {habitLabel(data?.habit, data?.habit_label) ? <Muted testID="mesai-habit">{habitLabel(data?.habit, data?.habit_label)}</Muted> : null}
-        <Muted testID="mesai-checkout-hint">
-          {checkoutOn
-            ? (earlyOk
-              ? "Onaylı erken çıkış: çıkış butonu açık. Saat ve konum basınca veya konumla otomatik kaydedilir."
-              : "Giriş iş yeri / görev yakınından (konumla otomatik de yazılır). Çıkış butonu her zaman açık; konumla da çıkış yazılabilir.")
-            : selfCheckoutLockedHint({ checkedIn, earlyPending: early?.status === "pending" })}
-        </Muted>
-        <Row style={{ justifyContent: "center", gap: 8 }}>
-          {checkedIn ? <Badge label={`Giriş ${today?.check_in}`} tone="green" /> : <Badge label="Giriş yok" />}
-          {checkedOut ? <Badge label={`Çıkış ${today?.check_out}`} tone="indigo" /> : null}
-          {geoPending ? <Badge label="Yönetici teyidi bekliyor" tone="amber" /> : null}
-          {today?.late_minutes ? <Badge label={`${today.late_minutes} dk geç`} tone="red" /> : null}
-          {yevLine ? <Badge label={yevLine} tone="amber" /> : null}
-        </Row>
-        <View style={{ gap: 10, marginTop: 8 }}>
-          {geoPendingHint ? <Muted testID="mesai-geo-confirm-pending">{geoPendingHint}</Muted> : null}
-          <PrimaryButton title={busy === "check_in" ? "Kaydediliyor…" : "Giriş"} onPress={() => act("check_in")} disabled={checkedIn || (geoPending && geoPendingAction === "check_in")} color={colors.accent} testID="mesai-in" />
-          {outConfirm && checkoutOn ? (
-            <View testID="mesai-out-confirm" style={{ gap: 8 }}>
-              <Muted testID="mesai-out-confirm-text">{checkoutConfirmMessage(today?.check_in)}</Muted>
-              <PrimaryButton
-                title={busy === "check_out" ? "Kaydediliyor…" : "Çıkışı onayla"}
-                onPress={() => act("check_out")}
-                disabled={busy === "check_out"}
-                color={colors.danger}
-                testID="mesai-out-confirm-yes"
-              />
-              <PrimaryButton title="Vazgeç" onPress={() => setOutConfirm(false)} color={colors.secondary} testID="mesai-out-cancel" />
-            </View>
-          ) : (
-            <PrimaryButton
-              title={busy === "check_out" ? "Kaydediliyor…" : (earlyOk && !checkedOut ? "Çıkış (onaylı erken)" : "Çıkış")}
-              onPress={() => setOutConfirm(true)}
-              disabled={!checkoutOn || (geoPending && geoPendingAction === "check_out")}
-              color={earlyOk && !checkedOut ? colors.danger : colors.secondary}
-              testID="mesai-out"
-            />
-          )}
-          {early?.status === "pending" ? (
-            <View testID="mesai-early-pending" style={{ gap: 8 }}>
-              <Muted>Erken çıkış talebi bekliyor{early.planned_time ? ` · plan ${early.planned_time}` : ""}{early.reason ? ` · ${early.reason}` : ""}</Muted>
-              <PrimaryButton title={busy === "early-cancel" ? "İptal ediliyor…" : "Talebi iptal et"} onPress={cancelEarly} color={colors.danger} testID="mesai-early-cancel" />
-            </View>
-          ) : earlyOk && !checkedOut ? (
-            <Muted testID="mesai-early-approved">Erken çıkış onaylandı — çıkış butonu açık. Saat ve konum çıkışa basınca kaydedilir{early?.planned_time ? ` (plan ${early.planned_time})` : ""}.</Muted>
-          ) : earlyOpen ? (
-            <View testID="mesai-early-form" style={{ gap: 8 }}>
-              {early?.status === "rejected" ? <Muted>Önceki talep reddedildi{early.decision_note ? `: ${early.decision_note}` : ""}.</Muted> : null}
-              {!checkedIn ? <Muted>Talebi göndermeden önce giriş yapın.</Muted> : null}
-              {checkedOut ? <Muted>Bugün zaten çıkış yapılmış — yeni talep gönderilemez.</Muted> : null}
-              <Field label="Neden" testID="mesai-early-reason" value={earlyReason} onChangeText={setEarlyReason} placeholder="Örn: doktor randevusu" />
-              <TimeField label="Planlanan saat" testID="mesai-early-time" value={earlyTime} onChangeText={setEarlyTime} optional />
-              <PrimaryButton title={busy === "early" ? "Gönderiliyor…" : "Talebi gönder"} onPress={requestEarly} disabled={!checkedIn || checkedOut} color="#D97706" testID="mesai-early-submit" />
-              <PrimaryButton title="Vazgeç" onPress={() => setEarlyOpen(false)} color={colors.secondary} testID="mesai-early-close" />
-            </View>
-          ) : (
-            <PrimaryButton title="Erken çıkış talep et" onPress={() => setEarlyOpen(true)} color="#D97706" testID="mesai-early-open" />
-          )}
-          {intra?.status === "pending" ? (
-            <View testID="mesai-intraday-pending" style={{ gap: 8 }}>
-              <Muted>Gün içi izin talebi bekliyor{intra.out_time && intra.return_time ? ` · ${intra.out_time}–${intra.return_time}` : ""}{intra.reason ? ` · ${intra.reason}` : ""}</Muted>
-              <PrimaryButton title={busy === "intra-cancel" ? "İptal ediliyor…" : "Talebi iptal et"} onPress={cancelIntra} color={colors.danger} testID="mesai-intraday-cancel" />
-            </View>
-          ) : intraOpen ? (
-            <View testID="mesai-intraday-form" style={{ gap: 8 }}>
-              {intra?.status === "approved" || today?.intraday_leave_approved ? (
-                <Muted testID="mesai-intraday-approved">Gün içi izin onaylandı · {intra?.out_time}–{intra?.return_time}{today?.intraday_leave_minutes ? ` (${today.intraday_leave_minutes} dk)` : ""}.</Muted>
-              ) : null}
-              {intra?.status === "rejected" ? <Muted>Önceki talep reddedildi{intra.decision_note ? `: ${intra.decision_note}` : ""}.</Muted> : null}
-              <Field label="Neden" testID="mesai-intraday-reason" value={intraReason} onChangeText={setIntraReason} placeholder="Örn: banka / doktor" />
-              <TimeField label="Çıkış saati" testID="mesai-intraday-out" value={intraOut} onChangeText={setIntraOut} />
-              <TimeField label="Dönüş (giriş)" testID="mesai-intraday-return" value={intraReturn} onChangeText={setIntraReturn} />
-              <PrimaryButton title={busy === "intra" ? "Gönderiliyor…" : "Gün içi izin gönder"} onPress={requestIntra} color="#0284C7" testID="mesai-intraday-submit" />
-              <PrimaryButton title="Vazgeç" onPress={() => setIntraOpen(false)} color={colors.secondary} testID="mesai-intraday-close" />
-            </View>
-          ) : intra?.status === "approved" || today?.intraday_leave_approved ? (
-            <Muted testID="mesai-intraday-approved">Gün içi izin onaylandı · {intra?.out_time}–{intra?.return_time}</Muted>
-          ) : (
-            <PrimaryButton title="Gün ortası çıkış / giriş" onPress={() => setIntraOpen(true)} color="#0284C7" testID="mesai-intraday-open" />
-          )}
-        </View>
-      </Card> : null}
+      {(consentOk || !data?.employee) ? (
+        <MesaimTodayCard
+          now={data?.now}
+          todayDate={data?.today_date}
+          workplace={data?.workplace}
+          location={data?.location}
+          requireGeo={data?.schedule?.require_geo}
+          schedule={data?.schedule}
+          dayLabels={data?.day_labels}
+          habit={data?.habit}
+          habitFallback={data?.habit_label}
+          liveSignal={liveSignal}
+          showSignal={consentOk}
+          today={today}
+          checkoutOn={checkoutOn}
+          earlyOk={earlyOk}
+          outConfirm={outConfirm}
+          busy={busy}
+          earlyOpen={earlyOpen}
+          earlyReason={earlyReason}
+          earlyTime={earlyTime}
+          intraOpen={intraOpen}
+          intraReason={intraReason}
+          intraOut={intraOut}
+          intraReturn={intraReturn}
+          geoPendingHint={geoPendingHint}
+          onCheckIn={() => act("check_in")}
+          onCheckOutAsk={() => setOutConfirm(true)}
+          onCheckOutConfirm={() => act("check_out")}
+          onCheckOutCancel={() => setOutConfirm(false)}
+          onEarlyOpen={() => setEarlyOpen(true)}
+          onEarlyClose={() => setEarlyOpen(false)}
+          onEarlySubmit={requestEarly}
+          onEarlyCancel={cancelEarly}
+          onEarlyReason={setEarlyReason}
+          onEarlyTime={setEarlyTime}
+          onIntraOpen={() => setIntraOpen(true)}
+          onIntraClose={() => setIntraOpen(false)}
+          onIntraSubmit={requestIntra}
+          onIntraCancel={cancelIntra}
+          onIntraReason={setIntraReason}
+          onIntraOut={setIntraOut}
+          onIntraReturn={setIntraReturn}
+        />
+      ) : null}
       {consentOk ? (data?.records || []).slice(0, 14).map((r) => {
         const rid = idOf(r);
         const open = disputeId === rid;

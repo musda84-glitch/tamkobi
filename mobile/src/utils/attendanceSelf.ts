@@ -29,6 +29,37 @@ export function geoConfirmReasonTr(reason?: string | null): string {
   return (reason || "").trim() || "konum doğrulanamadı";
 }
 
+export function mesaimLongDate(ymd?: string | null): string {
+  const raw = String(ymd || "").trim().slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!m) return "";
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
+}
+
+export function mesaimWorkDaysLine(workDays?: number[] | null, labels?: string[] | null): string {
+  const labs = labels && labels.length ? labels : ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
+  return (workDays || []).map((n) => labs[Number(n)] || "").filter(Boolean).join(", ");
+}
+
+export function mesaimScheduleLine(sch?: { start?: string; end?: string; break_minutes?: number } | null): string {
+  if (!sch?.start || !sch?.end) return "";
+  const br = sch.break_minutes != null && sch.break_minutes !== undefined ? ` · mola ${sch.break_minutes} dk` : "";
+  return `Mesai ${sch.start}–${sch.end}${br}`;
+}
+
+export function mesaimInSubtitle(checkIn?: string | null): string {
+  return checkIn ? `Giriş ${checkIn}` : "henüz giriş yok";
+}
+
+export function mesaimOutSubtitle(opts?: { checkIn?: string | null; checkOut?: string | null; confirming?: boolean } | null): string {
+  if (opts?.checkOut) return `Çıkış ${opts.checkOut}`;
+  if (!opts?.checkIn) return "önce giriş yapın";
+  if (opts.confirming) return "onay için tekrar basın";
+  return "saat ve konum basınca yazılır";
+}
+
 export function geoConfirmHint(rec?: { geo_confirm_request?: GeoConfirmRequest | null } | null): string {
   const g = rec?.geo_confirm_request;
   if (!g || g.status !== "pending") return "";
