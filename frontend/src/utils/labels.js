@@ -17,3 +17,21 @@ export const tr = (map, value) => (value == null || value === "" ? "—" : map[v
 export const statusTr = (v) => tr(STATUS_TR, v);
 export const channelTr = (v) => tr(CHANNEL_TR, v);
 export const contextTr = (v) => tr(CONTEXT_TR, v);
+
+/** Sipariş durumu rozeti — arka plan / metin sınıfları */
+export function orderStatusBadgeClass(status) {
+  const s = String(status || "").toLowerCase();
+  if (["shipped", "completed", "delivered", "approved"].includes(s)) {
+    return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  }
+  if (["cancelled", "returned", "partially_returned", "rejected", "failed"].includes(s)) {
+    return "bg-rose-50 text-rose-700 border-rose-200";
+  }
+  if (["preparing", "in_transit", "partially_paid"].includes(s)) {
+    return "bg-sky-50 text-sky-700 border-sky-200";
+  }
+  if (["pending", "new", "on_hold", "draft"].includes(s)) {
+    return "bg-amber-50 text-amber-800 border-amber-200";
+  }
+  return "bg-slate-100 text-slate-600 border-slate-200";
+}
