@@ -15,6 +15,13 @@ import {
   peerSelectGroups,
   announceAudienceLabel,
   announcementUnread,
+  buildChatList,
+  chatInitials,
+  chatPeer,
+  chatTimeLabel,
+  filterChatList,
+  isOwnMessage,
+  threadInOrder,
 } from "./staffMessages";
 
 describe("staffMessages", () => {
@@ -69,5 +76,31 @@ describe("staffMessages", () => {
     expect(announceAudienceLabel({ employee_ids: [] })).toBe("Tüm personel");
     expect(announceAudienceLabel({ employee_ids: ["e1", "e2"] })).toBe("2 personel");
     expect(announcementUnread([{ id: "a", read_by: ["me"] }, { id: "b", read_by: [] }], "me")).toBe(1);
+  });
+
+  it("builds a WhatsApp-style chat list and thread helpers", () => {
+    expect(chatInitials("Ali Veli")).toBe("AV");
+    expect(chatInitials("")).toBe("?");
+    const noon = new Date("2026-09-23T12:00:00").getTime();
+    expect(chatTimeLabel("2026-09-23T11:05:00", noon)).toMatch(/11[:.]05/);
+    expect(chatTimeLabel("2026-09-22T11:05:00", noon)).toBe("dün");
+    const chats = buildChatList({
+      managers: [{ user_id: "u1", name: "Mustafa", unread: 2, last: { body: "gel", created_at: "2026-09-23T10:00:00" } }],
+      employees: [{ employee_id: "e1", employee_name: "Davut", last: null, unread: 0 }],
+      groups: [{ group_id: "g1", name: "Montaj", last: { body: "ok", created_at: "2026-09-23T09:00:00" } }],
+      announcements: [{ id: "a1", title: "Toplantı", body: "saat 10", from_name: "Mustafa", created_at: "2026-09-23T08:00:00", read_by: [] }],
+      selfId: "me",
+      includeEmptyEmployees: false,
+    });
+    expect(chats.map((c) => c.key)).toEqual(["m:u1", "g:g1", "a:a1"]);
+    expect(filterChatList(chats, "montaj").map((c) => c.id)).toEqual(["g1"]);
+    expect(chatPeer(chats[0])).toEqual({ kind: "manager", id: "u1" });
+    expect(chatPeer(chats[2])).toBeNull();
+    expect(isOwnMessage({ from_side: "staff", from_user_id: "me" }, "me", "both")).toBe(true);
+    expect(isOwnMessage({ from_side: "manager" }, "x", "staff")).toBe(false);
+    expect(threadInOrder([
+      { id: "2", created_at: "2026-09-23T12:00:00" },
+      { id: "1", created_at: "2026-09-23T10:00:00" },
+    ]).map((m) => m.id)).toEqual(["1", "2"]);
   });
 });
