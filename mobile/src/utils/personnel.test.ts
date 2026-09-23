@@ -68,6 +68,10 @@ import {
   pendingRequestDecisionMessage,
   requestKindLabel,
   requestsForEmployee,
+  requestsDetailsToggleLabel,
+  requestsDetailsToggleIcon,
+  requestsDetailsSummary,
+  locationCellCaption,
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
   workplaceDetailsToggleIcon,
@@ -191,6 +195,12 @@ describe("employee draft", () => {
     expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, false)).toBe("Ücret kesilmedi.");
     expect(requestDecisionActions("yevmiye_adjustment").map((a) => a.title)).toEqual(["Ücret kes", "Ücret kesme"]);
     expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);
+    expect(requestsDetailsToggleLabel(false)).toBe("Büyüt");
+    expect(requestsDetailsToggleLabel(true)).toBe("Gizle");
+    expect(requestsDetailsToggleIcon(false)).toBe("chevron-down");
+    expect(requestsDetailsSummary([{ kind: "leave", title: "Yıllık" }, { kind: "advance", title: "Avans" }])).toBe("İzin · Yıllık · +1");
+    expect(locationCellCaption(true)).toBe("Açık");
+    expect(locationCellCaption(false)).toBe("Kapalı");
     expect(companyBonusPayload("e1", "second_salary", "2000", "2026-09", "", "not").type).toBe("second_salary");
     expect(bonusesPeriodTotal([{ period: "2026-09", amount: 100 }, { period: "2026-08", amount: 50 }], "2026-09")).toBe(100);
     expect(attendanceGroupToggleLabel(false, 3)).toBe("Kayıtlar (3)");

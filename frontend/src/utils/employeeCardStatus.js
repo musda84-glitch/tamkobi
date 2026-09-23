@@ -7,6 +7,14 @@ export function locationControllerLabel(on) {
   return on ? "Konum açık" : "Konum kapalı";
 }
 
+export function locationCellCaption(on) {
+  return on ? "Açık" : "Kapalı";
+}
+
+export function requestsDetailsToggleLabel(open) {
+  return open ? "Gizle" : "Büyüt";
+}
+
 export function locationTrackingTogglePayload(raw, enabled) {
   const src = raw && typeof raw === "object" ? raw : {};
   const field = src.field && typeof src.field === "object" ? src.field : src;

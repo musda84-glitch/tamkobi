@@ -83,6 +83,7 @@ import {
   locationTrackingPayload,
   locationTrackingEnabled,
   locationControllerLabel,
+  locationCellCaption,
   locationTrackingTogglePayload,
   todayAttendanceParts,
   locModeSummary,
@@ -96,6 +97,9 @@ import {
   pendingRequestDecisionMessage,
   requestKindLabel,
   requestsForEmployee,
+  requestsDetailsToggleLabel,
+  requestsDetailsToggleIcon,
+  requestsDetailsSummary,
   companyBonusPayload,
   bonusesPeriodTotal,
   COMPANY_BONUS_TYPES,
@@ -237,6 +241,7 @@ export function PersonnelScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [workplaceOpen, setWorkplaceOpen] = useState<Record<string, boolean>>({});
+  const [requestsOpen, setRequestsOpen] = useState<Record<string, boolean>>({});
   const [attRecOpen, setAttRecOpen] = useState<Record<string, boolean>>({});
   const [movesPeriod, setMovesPeriod] = useState<PayMovesPeriod>("30d");
   const [movesMonth, setMovesMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -1190,55 +1195,46 @@ export function PersonnelScreen() {
                     <View
                       testID={`emp-card-loc-${eid}`}
                       style={{
-                        padding: 10,
-                        borderRadius: 12,
-                        backgroundColor: locOn ? "#ECFDF5" : "#F8FAFC",
+                        padding: 4,
+                        borderRadius: 8,
+                        backgroundColor: locOn ? "#ECFDF5" : colors.slate50,
                         borderWidth: 1,
-                        borderColor: locOn ? "#6EE7B7" : colors.border,
-                        gap: 8,
+                        borderColor: locOn ? "#A7F3D0" : colors.border,
                       }}
                     >
-                      <Row style={{ alignItems: "center", justifyContent: "space-between" }}>
+                      <Row style={{ alignItems: "stretch", gap: 4 }}>
                         <Pressable
                           testID={`emp-card-loc-toggle-${eid}`}
                           disabled={!canEdit || locBusy === eid}
                           onPress={() => toggleCardLocation(emp, !locOn)}
                           accessibilityLabel={locationControllerLabel(locOn)}
-                          style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}
+                          style={{ flex: 1, minWidth: 0, gap: 2, padding: 4, borderRadius: 8, backgroundColor: locOn ? "#D1FAE5" : "#fff" }}
                         >
-                          <View
-                            style={{
-                              width: 28,
-                              height: 28,
-                              borderRadius: 14,
-                              alignItems: "center",
-                              justifyContent: "center",
-                              backgroundColor: locOn ? "#A7F3D0" : colors.slate100,
-                            }}
-                          >
-                            <Ionicons name={locOn ? "location" : "location-outline"} size={16} color={locOn ? "#047857" : colors.muted} />
-                          </View>
-                          <Text style={{ fontSize: 12, fontWeight: "800", color: locOn ? "#047857" : colors.muted }}>
-                            {locBusy === eid ? "Kaydediliyor…" : locationControllerLabel(locOn)}
-                          </Text>
+                          <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>KONUM</Text>
+                          <Row style={{ alignItems: "center", gap: 3 }}>
+                            <Ionicons name={locOn ? "location" : "location-outline"} size={12} color={locOn ? "#047857" : colors.muted} />
+                            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 11, color: locOn ? "#047857" : colors.muted, flex: 1 }}>
+                              {locBusy === eid ? "…" : locationCellCaption(locOn)}
+                            </Text>
+                          </Row>
+                          <LocationSignalDot
+                            compact
+                            signal={{ ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok ?? null, at: emp.location_last_at ?? cards[eid]?.employee?.location_last_at ?? null }}
+                            testID={`emp-card-loc-signal-${eid}`}
+                          />
                         </Pressable>
-                        <LocationSignalDot
-                          signal={{ ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok ?? null, at: emp.location_last_at ?? cards[eid]?.employee?.location_last_at ?? null }}
-                          testID={`emp-card-loc-signal-${eid}`}
-                        />
-                      </Row>
-                      <Row style={{ gap: 8 }} testID={`emp-card-today-${eid}`}>
-                        <View style={{ flex: 1, minWidth: 0, padding: 8, borderRadius: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: locOn ? "#A7F3D0" : colors.border }}>
-                          <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>GİRİŞ</Text>
-                          <Text style={{ fontWeight: "800", fontSize: 16, color: colors.text }}>{punch.checkIn}</Text>
-                        </View>
-                        <View style={{ flex: 1, minWidth: 0, padding: 8, borderRadius: 8, backgroundColor: "#fff", borderWidth: 1, borderColor: locOn ? "#A7F3D0" : colors.border }}>
-                          <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>ÇIKIŞ</Text>
-                          <Text style={{ fontWeight: "800", fontSize: 16, color: colors.text }}>{punch.checkOut}</Text>
+                        <View testID={`emp-card-today-${eid}`} style={{ flex: 2, minWidth: 0, flexDirection: "row", gap: 4 }}>
+                          <View style={{ flex: 1, minWidth: 0, gap: 2, padding: 4, borderRadius: 8, backgroundColor: "#fff" }}>
+                            <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>GİRİŞ</Text>
+                            <Text style={{ fontWeight: "800", fontSize: 13, color: colors.text }}>{punch.checkIn}</Text>
+                            {punch.late ? <Text style={{ fontSize: 9, color: colors.warning }}>{punch.late} dk geç</Text> : null}
+                          </View>
+                          <View style={{ flex: 1, minWidth: 0, gap: 2, padding: 4, borderRadius: 8, backgroundColor: "#fff" }}>
+                            <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>ÇIKIŞ</Text>
+                            <Text style={{ fontWeight: "800", fontSize: 13, color: colors.text }}>{punch.checkOut}</Text>
+                          </View>
                         </View>
                       </Row>
-                      {punch.late ? <Muted>{punch.late} dk geç</Muted> : null}
-                      {punch.empty ? <Muted>Bugün henüz giriş / çıkış yok</Muted> : null}
                     </View>
                   );
                 })()}
@@ -1309,32 +1305,60 @@ export function PersonnelScreen() {
                     )}
                   </View>
                 ) : null}
-                {requestsForEmployee(pendingReqs, eid).length ? (
-                  <View testID={`emp-card-requests-${eid}`} style={{ padding: 10, borderRadius: 12, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A", gap: 6 }}>
-                    <Text style={{ fontWeight: "800", color: "#92400E", fontSize: 12 }}>Talepler ({requestsForEmployee(pendingReqs, eid).length})</Text>
-                    {requestsForEmployee(pendingReqs, eid).slice(0, 3).map((it) => (
-                      <View key={`${it.kind}-${it.id}`} style={{ gap: 4 }}>
-                        <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
-                        {canEdit ? (
-                          <Row style={{ flexWrap: "wrap" }}>
-                            {requestDecisionActions(it.kind).map((btn) => (
-                              <PrimaryButton
-                                key={btn.key}
-                                title={btn.title}
-                                color={btn.color === "danger" ? colors.danger : btn.color === "warning" ? colors.warning : btn.color === "secondary" ? colors.secondary : colors.primary}
-                                testID={`card-${btn.key}-${it.kind}-${it.id}`}
-                                onPress={() => decideRequest(it, btn.decision)}
-                              />
-                            ))}
-                            {it.kind === "dispute" ? (
-                              <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`card-view-dispute-${it.id}`} onPress={() => setTab("attendance")} />
-                            ) : null}
-                          </Row>
-                        ) : null}
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
+                {(() => {
+                  const empReqs = requestsForEmployee(pendingReqs, eid);
+                  if (!empReqs.length) return null;
+                  const reqOpen = !!requestsOpen[eid];
+                  return (
+                    <View testID={`emp-card-requests-${eid}`} style={{ padding: 6, borderRadius: 8, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A", gap: 4 }}>
+                      <Pressable
+                        testID={`emp-card-requests-toggle-${eid}`}
+                        onPress={() => setRequestsOpen((cur) => ({ ...cur, [eid]: !cur[eid] }))}
+                        accessibilityLabel={requestsDetailsToggleLabel(reqOpen)}
+                        style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+                      >
+                        <Text style={{ fontWeight: "800", color: "#92400E", fontSize: 12 }}>Talepler ({empReqs.length})</Text>
+                        <Text numberOfLines={1} style={{ flex: 1, fontSize: 11, color: colors.muted }}>{requestsDetailsSummary(empReqs)}</Text>
+                        <View
+                          testID={`emp-card-requests-toggle-icon-${eid}`}
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 14,
+                            backgroundColor: "#FDE68A",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <Ionicons name={requestsDetailsToggleIcon(reqOpen)} size={16} color="#92400E" />
+                        </View>
+                      </Pressable>
+                      {reqOpen
+                        ? empReqs.slice(0, 3).map((it) => (
+                            <View key={`${it.kind}-${it.id}`} style={{ gap: 4 }}>
+                              <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
+                              {canEdit ? (
+                                <Row style={{ flexWrap: "wrap" }}>
+                                  {requestDecisionActions(it.kind).map((btn) => (
+                                    <PrimaryButton
+                                      key={btn.key}
+                                      title={btn.title}
+                                      color={btn.color === "danger" ? colors.danger : btn.color === "warning" ? colors.warning : btn.color === "secondary" ? colors.secondary : colors.primary}
+                                      testID={`card-${btn.key}-${it.kind}-${it.id}`}
+                                      onPress={() => decideRequest(it, btn.decision)}
+                                    />
+                                  ))}
+                                  {it.kind === "dispute" ? (
+                                    <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`card-view-dispute-${it.id}`} onPress={() => setTab("attendance")} />
+                                  ) : null}
+                                </Row>
+                              ) : null}
+                            </View>
+                          ))
+                        : null}
+                    </View>
+                  );
+                })()}
                 <Row testID={`emp-comp-${eid}`} style={{ alignItems: "stretch", gap: 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: colors.border }}>
                   {employeeCompGroups(comp).map((group) => (
                     <View key={group.key} testID={`emp-comp-group-${group.key}-${eid}`} style={{ flex: 1, minWidth: 0, gap: 2, padding: 4, borderRadius: 8, backgroundColor: colors.slate50 }}>

@@ -15,7 +15,7 @@ import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
-import { locationControllerLabel, locationTrackingEnabled, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
+import { locationCellCaption, locationControllerLabel, locationTrackingEnabled, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
@@ -680,34 +680,35 @@ export default function PersonnelPage() {
                 const punch = todayAttendanceParts(attToday[empKey]);
                 return (
                   <div
-                    className={`rounded-xl border p-2.5 space-y-2 ${locOn ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"}`}
+                    className={`rounded-lg border p-1 ${locOn ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"}`}
                     data-testid={`employee-card-loc-${empKey}`}
                   >
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="grid grid-cols-3 gap-1">
                       <button
                         type="button"
                         onClick={() => toggleCardLocation(emp, !locOn)}
                         disabled={locBusyId === empKey}
-                        className="inline-flex items-center gap-1.5 text-xs font-bold disabled:opacity-50"
+                        aria-label={locationControllerLabel(locOn)}
+                        className={`min-w-0 rounded-lg px-1.5 py-1 text-left disabled:opacity-50 ${locOn ? "bg-emerald-100" : "bg-white"}`}
                         data-testid={`employee-card-loc-toggle-${empKey}`}
                       >
-                        <span className={`inline-flex w-7 h-7 rounded-full items-center justify-center ${locOn ? "bg-emerald-200 text-emerald-800" : "bg-slate-200 text-slate-500"}`}>
-                          <MapPin className="w-3.5 h-3.5" />
-                        </span>
-                        <span className={locOn ? "text-emerald-800" : "text-slate-500"}>{locBusyId === empKey ? "Kaydediliyor…" : locationControllerLabel(locOn)}</span>
+                        <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Konum</div>
+                        <div className={`flex items-center gap-0.5 text-[11px] font-extrabold leading-tight ${locOn ? "text-emerald-800" : "text-slate-500"}`}>
+                          <MapPin className="w-3 h-3 shrink-0" />
+                          {locBusyId === empKey ? "…" : locationCellCaption(locOn)}
+                        </div>
+                        <div className="text-[9px] font-semibold text-slate-500 truncate" data-testid={`employee-card-loc-signal-${empKey}`}>
+                          {emp.location_last_ok === true ? "Konum alındı" : emp.location_last_ok === false ? "Konum alınamadı" : "Konum bekleniyor"}
+                        </div>
                       </button>
-                      <span className="text-[10px] font-semibold text-slate-500" data-testid={`employee-card-loc-signal-${empKey}`}>
-                        {emp.location_last_ok === true ? "Konum alındı" : emp.location_last_ok === false ? "Konum alınamadı" : "Konum bekleniyor"}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-1.5" data-testid={`employee-card-today-${empKey}`}>
-                      <div className="rounded-lg bg-white border border-emerald-100 px-2 py-1.5">
+                      <div className="min-w-0 rounded-lg bg-white px-1.5 py-1" data-testid={`employee-card-today-${empKey}`}>
                         <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Giriş</div>
-                        <div className="text-sm font-black text-slate-900">{punch.checkIn}</div>
+                        <div className="text-[13px] font-black text-slate-900 leading-tight">{punch.checkIn}</div>
+                        {punch.late ? <div className="text-[9px] font-semibold text-amber-700">{punch.late} dk geç</div> : null}
                       </div>
-                      <div className="rounded-lg bg-white border border-emerald-100 px-2 py-1.5">
+                      <div className="min-w-0 rounded-lg bg-white px-1.5 py-1">
                         <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Çıkış</div>
-                        <div className="text-sm font-black text-slate-900">{punch.checkOut}</div>
+                        <div className="text-[13px] font-black text-slate-900 leading-tight">{punch.checkOut}</div>
                       </div>
                     </div>
                   </div>
