@@ -272,7 +272,20 @@ export function PersonelimScreen() {
         <View style={{ flex: 1 }}>
           <Muted>AVANS TALEBİ{pendingAdvance ? " · bekleyen talep" : ""}</Muted>
         </View>
-        <Ionicons name={advanceFormToggleIcon(advanceOpen)} size={20} color={colors.muted} />
+        <Text style={{ fontSize: 12, fontWeight: "800", color: "#B45309" }}>{advanceFormToggleLabel(advanceOpen)}</Text>
+        <View
+          testID="personelim-advance-toggle-icon"
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 14,
+            backgroundColor: "#FDE68A",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Ionicons name={advanceFormToggleIcon(advanceOpen)} size={16} color="#B45309" />
+        </View>
       </Pressable>
       {advanceOpen ? (
         pendingAdvance ? (
@@ -293,7 +306,7 @@ export function PersonelimScreen() {
           </>
         )
       ) : (
-        <Muted testID="personelim-advance-hidden">Form gizli — göz işaretine basınca açılır.</Muted>
+        <Muted testID="personelim-advance-hidden">Gizli. Göz işaretine basınca form açılır.</Muted>
       )}
     </Card>
   );
