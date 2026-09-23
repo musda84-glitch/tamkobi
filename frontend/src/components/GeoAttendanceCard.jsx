@@ -4,7 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { MapPin, LogIn, LogOut, Loader2, Crosshair, Smartphone } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
-import { selfAttendanceGeoMode } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 
 export const getPos = () => new Promise((res, rej) => { if (!navigator.geolocation) return rej(new Error("Bu cihaz konum desteklemiyor.")); navigator.geolocation.getCurrentPosition((p) => res(p.coords), (e) => rej(new Error(e.code === 1 ? "Konum izni verilmedi. Tarayıcı ayarlarından konum iznini açın." : "Konum alınamadı.")), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }); });
 
@@ -14,6 +14,17 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
   const [busy, setBusy] = useState(null);
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/geo-status?company_id=${companyId}`, { withCredentials: true }).then((r) => setSt(r.data)).catch(() => {}), [companyId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const t = st?.today;
+    if (!shouldWatchCheckoutUnlock({
+      earlyPending: t?.early_leave_request?.status === "pending",
+      checkedIn: !!t?.check_in,
+      checkedOut: !!t?.check_out,
+      checkoutUnlocked: st?.checkout_unlocked,
+    })) return undefined;
+    const id = setInterval(() => { load(); }, CHECKOUT_UNLOCK_WATCH_MS);
+    return () => clearInterval(id);
+  }, [load, st?.today?.check_in, st?.today?.check_out, st?.today?.early_leave_request?.status, st?.checkout_unlocked]);
   const act = async (action) => {
     setBusy(action);
     try {
@@ -49,6 +60,10 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
   };
   const t = st?.today;
   const isAdmin = user?.role === "admin";
+  const earlyOk = earlyLeaveApproved(t);
+  const checkoutOn = st?.checkout_unlocked != null
+    ? Boolean(st.checkout_unlocked) && !t?.check_out
+    : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: st?.now, scheduleStart: st?.schedule?.start, scheduleEnd: st?.schedule?.end, expectedEnd: t?.expected_end, checkIn: t?.check_in, earlyApproved: earlyOk });
   return (
     <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center gap-4 shadow-lg" data-testid="geo-attendance-card">
       <div className="flex-1 min-w-0">
@@ -63,7 +78,7 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => act("check_in")} disabled={!!busy || !st?.employee || !!t?.check_in || (!st?.location && st?.workplace?.kind !== "task")} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 rounded-xl text-xs font-bold" data-testid="geo-checkin-btn">{busy === "check_in" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />} Giriş Yap</button>
-        <button onClick={() => act("check_out")} disabled={!!busy || !st?.employee || !t?.check_in || !!t?.check_out} className="flex items-center gap-1.5 px-4 py-2 bg-rose-500 hover:bg-rose-400 disabled:opacity-40 rounded-xl text-xs font-bold" data-testid="geo-checkout-btn">{busy === "check_out" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />} Çıkış Yap</button>
+        <button onClick={() => act("check_out")} disabled={!!busy || !st?.employee || !checkoutOn} className="flex items-center gap-1.5 px-4 py-2 bg-rose-500 hover:bg-rose-400 disabled:opacity-40 rounded-xl text-xs font-bold" data-testid="geo-checkout-btn">{busy === "check_out" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />} {earlyOk && t && !t.check_out ? "Çıkış (onaylı erken)" : "Çıkış Yap"}</button>
         {isAdmin && <button onClick={pin} disabled={!!busy} className="flex items-center gap-1.5 px-3 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-semibold" title="Bulunduğunuz noktayı firma konumu olarak kaydet" data-testid="geo-pin-btn">{busy === "pin" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crosshair className="w-4 h-4" />} {st?.location ? "Firma Konumunu Güncelle" : "Firma Konumunu Sabitle"}</button>}
       </div>
     </div>

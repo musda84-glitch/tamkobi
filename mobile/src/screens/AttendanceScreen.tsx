@@ -6,7 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
 import { Badge, Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeavePayload, selfAttendanceGeoMode, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
@@ -36,6 +36,7 @@ type AttendancePayload = {
     intraday_leave_request?: { status?: string; reason?: string; out_time?: string; return_time?: string; decision_note?: string } | null;
     yevmiye_full_amount?: number;
     yevmiye_adjustment_request?: { status?: string; full_amount?: number; proposed_amount?: number; final_amount?: number } | null;
+    expected_end?: string;
   } | null;
   location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
   workplace?: Workplace | null;
@@ -56,6 +57,7 @@ type AttendancePayload = {
     dispute_resolution?: string;
   }[];
   summary?: { days?: number; hours?: number };
+  checkout_unlocked?: boolean;
 };
 
 async function coords() {
@@ -96,6 +98,17 @@ export function AttendanceScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!shouldWatchCheckoutUnlock({
+      earlyPending: data?.today?.early_leave_request?.status === "pending",
+      checkedIn: Boolean(data?.today?.check_in),
+      checkedOut: Boolean(data?.today?.check_out),
+      checkoutUnlocked: data?.checkout_unlocked,
+    })) return undefined;
+    const t = setInterval(() => { load(); }, CHECKOUT_UNLOCK_WATCH_MS);
+    return () => clearInterval(t);
+  }, [client, load, data?.today?.check_in, data?.today?.check_out, data?.today?.early_leave_request?.status, data?.checkout_unlocked]);
 
   useEffect(() => {
     const tracking = data?.active_location_tracking || data?.location_tracking;
@@ -251,6 +264,19 @@ export function AttendanceScreen() {
   const early = today?.early_leave_request;
   const intra = today?.intraday_leave_request;
   const yevLine = yevmiyeStatusLine(today);
+  const earlyOk = earlyLeaveApproved(today);
+  const checkoutOn = data?.checkout_unlocked != null
+    ? Boolean(data.checkout_unlocked) && !checkedOut
+    : selfCheckoutUnlocked({
+      checkedIn,
+      checkedOut,
+      nowHm: data?.now,
+      scheduleStart: data?.schedule?.start,
+      scheduleEnd: data?.schedule?.end,
+      expectedEnd: today?.expected_end,
+      checkIn: today?.check_in,
+      earlyApproved: earlyOk,
+    });
 
   return (
     <Screen onRefresh={load}>
@@ -262,7 +288,13 @@ export function AttendanceScreen() {
         <Text style={{ fontSize: 42, fontWeight: "900", color: colors.text, textAlign: "center" }}>{data?.now || "--:--"}</Text>
         <Muted>{fmtDmy(data?.today_date)}</Muted>
         <Muted testID="mesai-workplace">{workplaceHint(data?.workplace || data?.location, data?.schedule?.require_geo !== false)}</Muted>
-        <Muted testID="mesai-checkout-hint">Giriş iş yeri / görev yakınından. Çıkış yalnız butonla, her yerden; konum açıksa çıkışta konum alınır, otomatik giriş-çıkış yok.</Muted>
+        <Muted testID="mesai-checkout-hint">
+          {checkoutOn
+            ? (earlyOk
+              ? "Onaylı erken çıkış: çıkış butonu açık. Saat ve konum basınca kaydedilir; plan saati yazılmaz."
+              : "Giriş iş yeri / görev yakınından. Çıkış yalnız butonla, her yerden; konum açıksa çıkışta konum alınır.")
+            : selfCheckoutLockedHint({ checkedIn, earlyPending: early?.status === "pending" })}
+        </Muted>
         <Row style={{ justifyContent: "center", gap: 8 }}>
           {checkedIn ? <Badge label={`Giriş ${today?.check_in}`} tone="green" /> : <Badge label="Giriş yok" />}
           {checkedOut ? <Badge label={`Çıkış ${today?.check_out}`} tone="indigo" /> : null}
@@ -271,7 +303,7 @@ export function AttendanceScreen() {
         </Row>
         <View style={{ gap: 10, marginTop: 8 }}>
           <PrimaryButton title={busy === "check_in" ? "Kaydediliyor…" : "Giriş"} onPress={() => act("check_in")} disabled={checkedIn} color={colors.accent} testID="mesai-in" />
-          {outConfirm && checkedIn && !checkedOut ? (
+          {outConfirm && checkoutOn ? (
             <View testID="mesai-out-confirm" style={{ gap: 8 }}>
               <Muted testID="mesai-out-confirm-text">{checkoutConfirmMessage(today?.check_in)}</Muted>
               <PrimaryButton
@@ -285,9 +317,10 @@ export function AttendanceScreen() {
             </View>
           ) : (
             <PrimaryButton
-              title={busy === "check_out" ? "Kaydediliyor…" : "Çıkış"}
+              title={busy === "check_out" ? "Kaydediliyor…" : (earlyOk && !checkedOut ? "Çıkış (onaylı erken)" : "Çıkış")}
               onPress={() => setOutConfirm(true)}
-              disabled={!checkedIn || checkedOut}
+              disabled={!checkoutOn}
+              color={earlyOk && !checkedOut ? colors.danger : colors.secondary}
               testID="mesai-out"
             />
           )}
@@ -296,11 +329,10 @@ export function AttendanceScreen() {
               <Muted>Erken çıkış talebi bekliyor{early.planned_time ? ` · plan ${early.planned_time}` : ""}{early.reason ? ` · ${early.reason}` : ""}</Muted>
               <PrimaryButton title={busy === "early-cancel" ? "İptal ediliyor…" : "Talebi iptal et"} onPress={cancelEarly} color={colors.danger} testID="mesai-early-cancel" />
             </View>
+          ) : earlyOk && !checkedOut ? (
+            <Muted testID="mesai-early-approved">Erken çıkış onaylandı — çıkış butonu açık. Saat ve konum çıkışa basınca kaydedilir{early?.planned_time ? ` (plan ${early.planned_time})` : ""}.</Muted>
           ) : earlyOpen ? (
             <View testID="mesai-early-form" style={{ gap: 8 }}>
-              {early?.status === "approved" || today?.early_leave_approved ? (
-                <Muted testID="mesai-early-approved">Erken çıkış onaylandı — çıkış yapabilirsiniz{early?.planned_time ? ` (plan ${early.planned_time})` : ""}.</Muted>
-              ) : null}
               {early?.status === "rejected" ? <Muted>Önceki talep reddedildi{early.decision_note ? `: ${early.decision_note}` : ""}.</Muted> : null}
               {!checkedIn ? <Muted>Talebi göndermeden önce giriş yapın.</Muted> : null}
               {checkedOut ? <Muted>Bugün zaten çıkış yapılmış — yeni talep gönderilemez.</Muted> : null}

@@ -28,6 +28,63 @@ export function checkoutConfirmMessage(checkIn?: string | null): string {
     : "Bugünkü mesai kapatılacak. Yanlışlıkla bastıysanız vazgeçin; çıkış geri alınamaz.";
 }
 
+export function hmToMinutes(value?: string | null): number | null {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(value || "").trim());
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+export function earlyLeaveApproved(rec?: { early_leave_approved?: boolean; early_leave_request?: { status?: string } | null } | null): boolean {
+  if (!rec) return false;
+  if (rec.early_leave_approved) return true;
+  return rec.early_leave_request?.status === "approved";
+}
+
+export function hmReachedEnd(now: number, end: number, start?: number | null): boolean {
+  if (start != null && end < start) return now < start && now >= end;
+  return now >= end;
+}
+
+export function selfCheckoutUnlocked(opts: {
+  checkedIn?: boolean;
+  checkedOut?: boolean;
+  nowHm?: string;
+  scheduleStart?: string;
+  scheduleEnd?: string;
+  expectedEnd?: string;
+  checkIn?: string;
+  earlyApproved?: boolean;
+  offDay?: boolean;
+}): boolean {
+  if (!opts.checkedIn || opts.checkedOut) return false;
+  if (opts.earlyApproved || opts.offDay) return true;
+  const now = hmToMinutes(opts.nowHm);
+  const end = hmToMinutes(opts.expectedEnd || opts.scheduleEnd);
+  const start = hmToMinutes(opts.scheduleStart || opts.checkIn);
+  if (now == null || end == null) return true;
+  return hmReachedEnd(now, end, start);
+}
+
+export function selfCheckoutLockedHint(opts: { checkedIn?: boolean; earlyPending?: boolean }): string {
+  if (!opts.checkedIn) return "Çıkış için önce giriş yapın.";
+  if (opts.earlyPending) return "Erken çıkış talebi onaylanınca çıkış butonu açılır; saat ve konum o anda kaydedilir.";
+  return "Mesai bitmeden çıkış için erken çıkış onayı gerekir. Onaydan sonra çıkış butonu açılır; saat ve konum basınca kaydedilir.";
+}
+
+/** Bekleyen erken çıkış veya mesai sonu için /me yenile — onay gelince çıkış açılır. */
+export const CHECKOUT_UNLOCK_WATCH_MS = 12_000;
+
+export function shouldWatchCheckoutUnlock(opts: {
+  earlyPending?: boolean;
+  checkedIn?: boolean;
+  checkedOut?: boolean;
+  checkoutUnlocked?: boolean;
+}): boolean {
+  if (opts.checkedOut) return false;
+  if (opts.earlyPending) return true;
+  return Boolean(opts.checkedIn && !opts.checkoutUnlocked);
+}
+
 export function earlyLeavePayload(reason: string, plannedTime?: string) {
   const planned = (plannedTime || "").trim();
   const hm = /^(\d{1,2}):(\d{2})/.exec(planned);

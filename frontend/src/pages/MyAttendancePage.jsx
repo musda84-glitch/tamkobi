@@ -6,7 +6,7 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Cal
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { selfAttendanceGeoMode } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
@@ -76,6 +76,17 @@ export default function MyAttendancePage() {
     const t = setTimeout(() => setOutArmed(false), CHECKOUT_ARM_MS);
     return () => clearTimeout(t);
   }, [outArmed]);
+  useEffect(() => {
+    const t = data?.today;
+    if (!shouldWatchCheckoutUnlock({
+      earlyPending: t?.early_leave_request?.status === "pending",
+      checkedIn: !!t?.check_in,
+      checkedOut: !!t?.check_out,
+      checkoutUnlocked: data?.checkout_unlocked,
+    })) return undefined;
+    const id = setInterval(() => { load(); }, CHECKOUT_UNLOCK_WATCH_MS);
+    return () => clearInterval(id);
+  }, [load, data?.today?.check_in, data?.today?.check_out, data?.today?.early_leave_request?.status, data?.checkout_unlocked]);
   const act = async (action) => {
     setBusy(action);
     try {
@@ -104,7 +115,9 @@ export default function MyAttendancePage() {
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "İşlem başarısız."); } finally { setBusy(null); }
   };
   const onCheckoutClick = () => {
-    const canCheckout = !busy && !!data?.today?.check_in && !data?.today?.check_out;
+    const canCheckout = !busy && (data?.checkout_unlocked != null
+      ? Boolean(data.checkout_unlocked) && !data?.today?.check_out
+      : selfCheckoutUnlocked({ checkedIn: !!data?.today?.check_in, checkedOut: !!data?.today?.check_out, nowHm: data?.now, scheduleStart: data?.schedule?.start, scheduleEnd: data?.schedule?.end, expectedEnd: data?.today?.expected_end, checkIn: data?.today?.check_in, earlyApproved: earlyLeaveApproved(data?.today) }));
     const next = resolveCheckoutClick({ armed: outArmed, canCheckout });
     if (next === "arm") {
       setOutArmed(true);
@@ -161,6 +174,10 @@ export default function MyAttendancePage() {
   if (!data) return <div className="p-8 text-sm text-slate-400">Yükleniyor…</div>;
   const s = data.summary, t = data.today, sch = data.schedule;
   const workDays = sch ? sch.work_days.map((d) => data.day_labels[d]).join(", ") : "";
+  const earlyOk = earlyLeaveApproved(t);
+  const checkoutOn = data?.checkout_unlocked != null
+    ? Boolean(data.checkout_unlocked) && !t?.check_out
+    : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: data?.now, scheduleStart: sch?.start, scheduleEnd: sch?.end, expectedEnd: t?.expected_end, checkIn: t?.check_in, earlyApproved: earlyOk });
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-5" data-testid="my-attendance-page">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
@@ -191,16 +208,16 @@ export default function MyAttendancePage() {
             <button
               type="button"
               onClick={onCheckoutClick}
-              disabled={!!busy || !t?.check_in || !!t?.check_out}
+              disabled={!!busy || !checkoutOn}
               className={`flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition ${outArmed ? "bg-amber-500 hover:bg-amber-400 ring-2 ring-amber-200 ring-offset-2 ring-offset-slate-900" : "bg-rose-500 hover:bg-rose-400"}`}
               data-testid="my-att-checkout"
               aria-pressed={outArmed}
-              title={outArmed ? "Onaylamak için tekrar tıklayın" : "Çıkış için iki kez tıklayın"}
+              title={outArmed ? "Onaylamak için tekrar tıklayın" : checkoutOn ? "Çıkış için iki kez tıklayın" : "Mesai bitmeden çıkış için erken çıkış onayı gerekir"}
             >
               {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}
-              <span className="text-lg sm:text-base">{outArmed ? "Tekrar tıklayın" : "Çıkış Yap"}</span>
+              <span className="text-lg sm:text-base">{outArmed ? "Tekrar tıklayın" : (earlyOk && !t?.check_out ? "Çıkış (onaylı erken)" : "Çıkış Yap")}</span>
               <span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-out">
-                {t?.check_out ? `Çıkış ${t.check_out}` : t?.check_in ? (outArmed ? "onay için tekrar tıklayın" : "çift tıklayın · çıkış bekleniyor") : "önce giriş yapın"}
+                {t?.check_out ? `Çıkış ${t.check_out}` : !t?.check_in ? "önce giriş yapın" : !checkoutOn ? "erken çıkış onayı bekleniyor" : (outArmed ? "onay için tekrar tıklayın" : "çift tıklayın · saat ve konum basınca yazılır")}
               </span>
             </button>
           </div>
@@ -236,7 +253,7 @@ export default function MyAttendancePage() {
                   );
                 }
                 if (elr.status === "approved" || t.early_leave_approved) {
-                  return <div className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1.5" data-testid="my-att-early-approved"><DoorOpen className="w-3.5 h-3.5" /> Erken çıkış onaylandı — çıkış yapabilirsiniz{elr.planned_time ? ` (plan ${elr.planned_time})` : ""}</div>;
+                  return <div className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1.5" data-testid="my-att-early-approved"><DoorOpen className="w-3.5 h-3.5" /> Erken çıkış onaylandı — çıkış ve konumlu çıkış açık. Saat ve konum basınca kaydedilir{elr.planned_time ? ` (plan ${elr.planned_time} yazılmaz)` : ""}</div>;
                 }
                 if (elr.status === "rejected") {
                   return <div className="text-xs text-rose-200" data-testid="my-att-early-rejected">Erken çıkış talebi reddedildi{elr.decision_note ? `: ${elr.decision_note}` : ""}. Yeniden talep edebilirsiniz.</div>;
