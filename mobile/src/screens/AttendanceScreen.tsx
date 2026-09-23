@@ -6,7 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
 import { Badge, Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
@@ -58,9 +58,18 @@ type AttendancePayload = {
     dispute_note?: string;
     dispute_resolved?: boolean;
     dispute_resolution?: string;
+    manager_time_edit?: {
+      prev_check_in?: string;
+      prev_check_out?: string;
+      check_in?: string;
+      check_out?: string;
+      pending_employee?: boolean;
+    } | null;
   }[];
   summary?: { days?: number; hours?: number };
   checkout_unlocked?: boolean;
+  habit?: { typical_in?: string; typical_out?: string; sample_days?: number } | null;
+  habit_label?: string | null;
   location_consent?: LocationConsent | null;
   location_signal?: LocationSignal | null;
 };
@@ -137,17 +146,21 @@ export function AttendanceScreen() {
       return false;
     }
     try {
-      const r = await post<{ location_signal?: LocationSignal }>(client, "/personnel/attendance/self/location", {
+      const r = await post<{ location_signal?: LocationSignal; punched?: string; message?: string }>(client, "/personnel/attendance/self/location", {
         latitude: c.latitude,
         longitude: c.longitude,
         accuracy_m: c.accuracy_m ?? undefined,
       });
       if (r.location_signal) setSignal(r.location_signal);
+      if (r.punched) {
+        if (r.message) setMessage(r.message);
+        await load();
+      }
       return true;
     } catch {
       return false;
     }
-  }, [client]);
+  }, [client, load]);
 
   useEffect(() => {
     if (!locationConsentAccepted(data?.location_consent)) return;
@@ -156,9 +169,8 @@ export function AttendanceScreen() {
 
   useEffect(() => {
     const tracking = data?.active_location_tracking || data?.location_tracking;
-    const onDuty = Boolean(data?.today?.check_in && !data?.today?.check_out);
-    const field = data?.workplace?.kind === "task";
-    if (!locationConsentAccepted(data?.location_consent) || !tracking?.enabled || !onDuty || !field) return;
+    const checkedOut = Boolean(data?.today?.check_out);
+    if (!locationConsentAccepted(data?.location_consent) || !tracking?.enabled || checkedOut) return;
     let cancelled = false;
     const ping = async () => {
       if (cancelled) return;
@@ -172,7 +184,7 @@ export function AttendanceScreen() {
       cancelled = true;
       clearInterval(t);
     };
-  }, [client, data?.today?.check_in, data?.today?.check_out, data?.workplace?.kind, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
+  }, [client, data?.today?.check_out, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
 
   const act = async (action: "check_in" | "check_out") => {
     setBusy(action);
@@ -278,6 +290,20 @@ export function AttendanceScreen() {
     }
   };
 
+  const confirmRecord = async (recordId: string) => {
+    setBusy(`confirm-${recordId}`);
+    setError(null);
+    try {
+      await post(client, `/personnel/attendance/${recordId}/confirm`, {});
+      setMessage("Puantaj saati onaylandı.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Onay kaydedilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const requestDispute = async (recordId: string) => {
     const invalid = validateAttendanceDispute(disputeNote, disputeIn, disputeOut);
     if (invalid) { setError(invalid); return; }
@@ -359,11 +385,12 @@ export function AttendanceScreen() {
         {consentOk ? <LocationSignalDot signal={liveSignal} testID="mesai-signal" /> : null}
         <Muted>{fmtDmy(data?.today_date)}</Muted>
         <Muted testID="mesai-workplace">{workplaceHint(data?.workplace || data?.location, data?.schedule?.require_geo !== false)}</Muted>
+        {habitLabel(data?.habit, data?.habit_label) ? <Muted testID="mesai-habit">{habitLabel(data?.habit, data?.habit_label)}</Muted> : null}
         <Muted testID="mesai-checkout-hint">
           {checkoutOn
             ? (earlyOk
-              ? "Onaylı erken çıkış: çıkış butonu açık. Saat ve konum basınca kaydedilir; plan saati yazılmaz."
-              : "Giriş iş yeri / görev yakınından. Çıkış yalnız butonla, her yerden; konum açıksa çıkışta konum alınır.")
+              ? "Onaylı erken çıkış: çıkış butonu açık. Saat ve konum basınca veya konumla otomatik kaydedilir."
+              : "Giriş iş yeri / görev yakınından (konumla otomatik de yazılır). Çıkış butonu her zaman açık; konumla da çıkış yazılabilir.")
             : selfCheckoutLockedHint({ checkedIn, earlyPending: early?.status === "pending" })}
         </Muted>
         <Row style={{ justifyContent: "center", gap: 8 }}>
@@ -449,6 +476,7 @@ export function AttendanceScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: "800", color: colors.text }}>{fmtDmy(r.date)}</Text>
                 <Muted>{`${r.check_in || "--:--"} → ${r.check_out || "--:--"}`}</Muted>
+                {managerTimeEditHint(r.manager_time_edit) ? <Muted testID={`mesai-rec-edit-${rid}`}>{managerTimeEditHint(r.manager_time_edit)}</Muted> : null}
                 {status ? <Muted testID={`mesai-rec-status-${rid}`}>{status}{r.dispute_note && !r.dispute_resolved ? ` · ${r.dispute_note}` : ""}</Muted> : null}
               </View>
               <Text style={{ fontWeight: "800", color: colors.text }}>{r.hours ? `${r.hours} sa` : statusTr(r.status)}</Text>
@@ -472,14 +500,26 @@ export function AttendanceScreen() {
                 />
                 <PrimaryButton title="Vazgeç" onPress={() => { setDisputeId(null); setDisputeNote(""); setDisputeIn(""); setDisputeOut(""); }} color={colors.secondary} testID={`mesai-rec-dispute-close-${rid}`} />
               </View>
-            ) : canRequestAttendanceFix(r) ? (
-              <PrimaryButton
-                title="Düzeltme talep et"
-                onPress={() => { setDisputeId(rid); setDisputeNote(""); setDisputeIn(r.check_in || ""); setDisputeOut(r.check_out || ""); }}
-                color={colors.warning}
-                testID={`mesai-rec-dispute-open-${rid}`}
-              />
-            ) : null}
+            ) : (
+              <Row>
+                {!r.employee_confirmed && rid ? (
+                  <PrimaryButton
+                    title={busy === `confirm-${rid}` ? "Onaylanıyor…" : "Saati onayla"}
+                    onPress={() => confirmRecord(rid)}
+                    color={colors.primary}
+                    testID={`mesai-rec-confirm-${rid}`}
+                  />
+                ) : null}
+                {canRequestAttendanceFix(r) ? (
+                  <PrimaryButton
+                    title="Düzeltme talep et"
+                    onPress={() => { setDisputeId(rid); setDisputeNote(""); setDisputeIn(r.check_in || ""); setDisputeOut(r.check_out || ""); }}
+                    color={colors.warning}
+                    testID={`mesai-rec-dispute-open-${rid}`}
+                  />
+                ) : null}
+              </Row>
+            )}
           </Card>
         );
       }) : null}

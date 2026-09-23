@@ -15,14 +15,22 @@ export function hmReachedEnd(now, end, start) {
   return now >= end;
 }
 
-export function selfCheckoutUnlocked({ checkedIn, checkedOut, nowHm, scheduleStart, scheduleEnd, expectedEnd, checkIn, earlyApproved, offDay } = {}) {
-  if (!checkedIn || checkedOut) return false;
-  if (earlyApproved || offDay) return true;
-  const now = hmToMinutes(nowHm);
-  const end = hmToMinutes(expectedEnd || scheduleEnd);
-  const start = hmToMinutes(scheduleStart || checkIn);
-  if (now == null || end == null) return true;
-  return hmReachedEnd(now, end, start);
+export function selfCheckoutUnlocked({ checkedIn, checkedOut } = {}) {
+  return Boolean(checkedIn && !checkedOut);
+}
+
+export function habitLabel(habit, fallback) {
+  if (fallback) return fallback;
+  if (!habit?.typical_in) return "";
+  if (habit.typical_out) return `Alışkanlık: genelde ${habit.typical_in} giriş · ${habit.typical_out} çıkış (${habit.sample_days || 0} gün)`;
+  return `Alışkanlık: genelde ${habit.typical_in} giriş (${habit.sample_days || 0} gün)`;
+}
+
+export function managerTimeEditHint(edit) {
+  if (!edit?.pending_employee) return "";
+  const prev = edit.prev_check_out || edit.prev_check_in || "—";
+  const next = edit.check_out || edit.check_in || "—";
+  return `Yönetici saati düzeltti (${prev} → ${next}). Onaylamanız gerekir.`;
 }
 
 export const CHECKOUT_UNLOCK_WATCH_MS = 12_000;

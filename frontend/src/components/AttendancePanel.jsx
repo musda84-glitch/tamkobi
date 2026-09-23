@@ -119,6 +119,22 @@ export const AttendancePanel = ({ companyId }) => {
         <div key={r.id} className={`px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 ${r.is_off_day ? "bg-amber-50/40" : ""}`} data-testid={`att-rec-${r.id}`}>
           <span className="text-slate-400 font-mono">{fmtDmy(r.date)}</span>
           <span className="font-mono">{r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"} • ${r.hours || 0} sa` : r.status === "absent" ? "Devamsız" : "İzinli"}</span>
+          {r.status === "present" ? (
+            <form
+              className="inline-flex items-center gap-1"
+              data-testid={`att-correct-${r.id}`}
+              onSubmit={(e) => {
+                e.preventDefault();
+                const out = e.currentTarget.elements.namedItem("out")?.value;
+                if (!out) return;
+                act(r.employee_id, { date: r.date, check_out: out });
+              }}
+            >
+              <input name="out" type="time" defaultValue={r.check_out || ""} className="border rounded px-1 py-0.5 text-[11px]" data-testid={`att-correct-out-${r.id}`} />
+              <button type="submit" className="px-1.5 py-0.5 rounded bg-indigo-600 text-white font-bold" data-testid={`att-correct-save-${r.id}`}>Saati düzelt</button>
+            </form>
+          ) : null}
+          {r.manager_time_edit?.pending_employee ? <span className="text-[10px] font-bold text-amber-700" data-testid={`att-time-edit-${r.id}`}>Personel onayı bekliyor</span> : null}
           {r.assigned_overtime_hours > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">atanan +{r.assigned_overtime_hours} sa</span>}{r.overtime_hours > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">+{r.overtime_hours} sa mesai{r.is_off_day ? " (tatil)" : ""}</span>}
           {r.late_minutes > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">{r.late_minutes} dk geç</span>}
           {r.early_leave_minutes > 0 && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${r.early_leave_approved || r.early_leave_request?.status === "approved" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{r.early_leave_minutes} dk erken{r.early_leave_approved || r.early_leave_request?.status === "approved" ? " (onaylı)" : ""}</span>}

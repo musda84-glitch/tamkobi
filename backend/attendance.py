@@ -119,26 +119,114 @@ def hm_reached_end(now_m: int, end_m: int, start_m: Optional[int] = None) -> boo
 
 
 def self_checkout_unlocked(rec: Optional[dict] = None, schedule: Optional[dict] = None, now_s: Optional[str] = None) -> bool:
-    """Mesai bitmeden self çıkış kilitli; onaylı erken çıkışta buton açılır. Saat/konum basınca yazılır."""
+    """Giriş varsa çıkış butonu her zaman açık. Yönetici saati düzeltebilir; personel onayı gerekir."""
     rec = rec or {}
-    if not rec.get("check_in") or rec.get("check_out"):
-        return False
-    if early_leave_is_approved(rec):
-        return True
-    sched = schedule or DEFAULT_SCHEDULE
+    return bool(rec.get("check_in") and not rec.get("check_out"))
+
+
+def _median_minutes(values: list) -> Optional[int]:
+    rows = sorted(int(v) for v in values if v is not None)
+    if not rows:
+        return None
+    n = len(rows)
+    if n % 2:
+        return rows[n // 2]
+    return (rows[n // 2 - 1] + rows[n // 2]) // 2
+
+
+def _minutes_to_hm(value: Optional[int]) -> Optional[str]:
+    if value is None:
+        return None
+    m = int(value) % (24 * 60)
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def attendance_habit(records: Optional[list], min_days: int = 4) -> Optional[dict]:
+    """Son kayıtların medyan giriş/çıkış saati — alışkanlık özeti."""
+    ins, outs = [], []
+    for rec in records or []:
+        if rec.get("status") and rec.get("status") != "present":
+            continue
+        try:
+            if rec.get("check_in"):
+                ins.append(_hm(str(rec["check_in"])[:5]))
+            if rec.get("check_out"):
+                outs.append(_hm(str(rec["check_out"])[:5]))
+        except Exception:
+            continue
+    if len(ins) < min_days:
+        return None
+    typical_in = _median_minutes(ins)
+    typical_out = _median_minutes(outs)
+    return {
+        "typical_in": _minutes_to_hm(typical_in),
+        "typical_out": _minutes_to_hm(typical_out),
+        "sample_days": len(ins),
+        "out_days": len(outs),
+    }
+
+
+def habit_label(habit: Optional[dict]) -> str:
+    if not habit or not habit.get("typical_in"):
+        return ""
+    if habit.get("typical_out"):
+        return f"Alışkanlık: genelde {habit['typical_in']} giriş · {habit['typical_out']} çıkış ({habit.get('sample_days') or 0} gün)"
+    return f"Alışkanlık: genelde {habit['typical_in']} giriş ({habit.get('sample_days') or 0} gün)"
+
+
+def habit_deviation(habit: Optional[dict], check_in: Optional[str] = None, check_out: Optional[str] = None, threshold: int = 20) -> Optional[str]:
+    """Alışkanlıktan threshold dk sapınca yöneticiye metin."""
+    if not habit:
+        return None
+    bits = []
     try:
-        wd = datetime.strptime(str(rec.get("date") or _today(sched)), "%Y-%m-%d").weekday()
-        if wd not in (sched.get("work_days") or DEFAULT_SCHEDULE["work_days"]):
-            return True
+        if check_in and habit.get("typical_in"):
+            delta = _hm(str(check_in)[:5]) - _hm(str(habit["typical_in"])[:5])
+            if abs(delta) >= threshold:
+                bits.append(f"giriş {check_in} (alışkanlık {habit['typical_in']}, {delta:+d} dk)")
+        if check_out and habit.get("typical_out"):
+            delta = _hm(str(check_out)[:5]) - _hm(str(habit["typical_out"])[:5])
+            if abs(delta) >= threshold:
+                bits.append(f"çıkış {check_out} (alışkanlık {habit['typical_out']}, {delta:+d} dk)")
     except Exception:
-        pass
-    end = rec.get("expected_end") or sched.get("end") or DEFAULT_SCHEDULE["end"]
-    start = sched.get("start") or rec.get("check_in") or DEFAULT_SCHEDULE["start"]
-    stamp = now_s or now_hm(sched)
-    try:
-        return hm_reached_end(_hm(str(stamp)[:5]), _hm(str(end)[:5]), _hm(str(start)[:5]))
-    except Exception:
-        return True
+        return None
+    if not bits:
+        return None
+    return " · ".join(bits)
+
+
+def geo_auto_action(
+    *,
+    inside: bool,
+    rec: Optional[dict] = None,
+    was_inside: bool = False,
+) -> Optional[str]:
+    """Konum ping: içeri girince otomatik giriş, içerideyken çıkınca otomatik çıkış."""
+    rec = rec or {}
+    if not rec.get("check_in"):
+        return "check_in" if inside else None
+    if rec.get("check_out"):
+        return None
+    if inside:
+        return None
+    if was_inside or rec.get("geo_check_in") or rec.get("location_inside_at"):
+        return "check_out"
+    return None
+
+
+def manager_time_edit_doc(existing: Optional[dict], rec: Optional[dict], now: str) -> Optional[dict]:
+    prev = existing or {}
+    nxt = rec or {}
+    if str(prev.get("check_in") or "") == str(nxt.get("check_in") or "") and str(prev.get("check_out") or "") == str(nxt.get("check_out") or ""):
+        return None
+    return {
+        "prev_check_in": prev.get("check_in"),
+        "prev_check_out": prev.get("check_out"),
+        "check_in": nxt.get("check_in"),
+        "check_out": nxt.get("check_out"),
+        "at": now,
+        "pending_employee": True,
+    }
 
 
 async def mark_employee_location_signal(emp_id: str, ok: bool) -> dict:
@@ -153,8 +241,8 @@ def checkout_distance_blocks() -> bool:
 
 
 def location_ping_checks_out() -> bool:
-    """Sürekli takip yalnızca konum dışı bildirir; Giriş/Çıkış basılmaz."""
-    return False
+    """Konum ping giriş/çıkışı otomatik basabilir."""
+    return True
 
 
 def location_mode_for(lt: Optional[dict], workplace: Optional[dict] = None) -> dict:
@@ -1039,6 +1127,8 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
             "active_location_tracking": active_lt,
             "now": now_s, "today_date": today_s,
             "checkout_unlocked": self_checkout_unlocked(today_e or today, schedule, now_s),
+            "habit": attendance_habit(enriched),
+            "habit_label": habit_label(attendance_habit(enriched)),
             "location_consent": location_consent.normalize_location_consent(emp.get("location_consent")),
             "location_signal": location_consent.location_signal_view(emp)}
 
@@ -1086,7 +1176,7 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             raise HTTPException(status_code=400, detail=f"Firma konumuna {int(dist)} m uzaktasınız (izin verilen {int(radius)} m). Giriş yapılamadı.")
         geo = {"latitude": lat, "longitude": lng, "distance_m": round(dist), "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": True, "workplace_kind": loc.get("kind")}
     elif action == "check_out" and not checkout_distance_blocks():
-        # Çıkış yalnız butonla, her yerden. Konum açıksa GPS kayda eklenir; mesafe asla reddetmez. Otomatik giriş-çıkış yok.
+        # Çıkış butonla her yerden. Konum açıksa GPS kayda eklenir; mesafe asla reddetmez.
         ref = workplace if workplace and workplace.get("kind") == "task" else (loc or workplace)
         try:
             lat, lng = float(req["latitude"]), float(req["longitude"])
@@ -1108,7 +1198,7 @@ async def self_attendance(req: Dict[str, Any], request: Request):
         raise HTTPException(status_code=400, detail=f"Bugün {existing['check_out']} saatinde çıkış yapılmış.")
     now_s = now_hm(schedule)
     if action == "check_out" and not self_checkout_unlocked(existing, schedule, now_s):
-        raise HTTPException(status_code=400, detail="Mesai bitmeden çıkış için önce erken çıkış talebinin onaylanması gerekir. Onaydan sonra çıkış butonu açılır; saat ve konum o anda kaydedilir.")
+        raise HTTPException(status_code=400, detail="Çıkış için önce giriş yapın.")
     if action == "check_out" and existing.get("check_in"):
         try:
             if _hm(now_s) < _hm(str(existing["check_in"])[:5]):
@@ -1196,6 +1286,19 @@ async def self_attendance(req: Dict[str, Any], request: Request):
                 msg += " Konum dışı çıkış yöneticiye iletildi."
         except Exception:
             pass
+    try:
+        month_rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{today[:7]}"}}).to_list(40)
+        note = habit_deviation(attendance_habit(month_rows), rec.get("check_in") if action == "check_in" else None, rec.get("check_out") if action == "check_out" else None)
+        if note:
+            await notify_managers(
+                emp["company_id"], "attendance_habit",
+                f"Giriş/çıkış alışkanlığı: {emp.get('full_name')}",
+                f"{emp.get('full_name')} — {note}.",
+                dedupe_key=f"habit:{emp['_id']}:{today}:{action}",
+            )
+            msg += " Yöneticiye alışkanlık sapması bildirildi."
+    except Exception:
+        pass
     return {"status": "success", "record": rec, "message": msg, "workplace": workplace, "yevmiye": yev}
 
 
@@ -1266,7 +1369,7 @@ async def maybe_open_location_exit(
 
 @router.post("/personnel/attendance/self/location")
 async def self_location_ping(req: Dict[str, Any], request: Request):
-    """Sürekli/aralıklı takip: konum ping. Çıkış basılmaz; tolerans dolunca yönetici talebi açar."""
+    """Sürekli/aralıklı takip: konum ping. İçeri/dışarı olunca otomatik giriş-çıkış; tolerans dolunca yönetici talebi."""
     user = await _current_user(request)
     emp = await employee_for_user(user)
     if not emp:
@@ -1287,20 +1390,63 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
     rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
     if rec:
         rec["id"] = rec.get("_id") or rec.get("id")
-    opened = None
-    if rec.get("check_in") and not rec.get("check_out") and loc and active_lt.get("enabled"):
-        opened = await maybe_open_location_exit(emp, rec, workplace, loc, active_lt, lat, lng)
     dist = None
     outside = False
+    inside = False
     if loc:
         dist = round(haversine_m(lat, lng, loc["latitude"], loc["longitude"]))
         outside = dist > float(loc.get("radius_m") or 300)
+        inside = not outside
+    was_inside = bool(rec.get("location_inside_at") or rec.get("geo_check_in") or emp.get("location_inside_at"))
+    punched = None
+    punch_msg = None
+    if loc and active_lt.get("enabled") and location_ping_checks_out():
+        action = geo_auto_action(inside=inside, rec=rec, was_inside=was_inside)
+        if action == "check_in" and not rec.get("check_in"):
+            now_s = now_hm(schedule)
+            rec = await apply_day(emp, today, {"status": "present", "check_in": now_s}, source="geo", confirmed=True)
+            punched = "check_in"
+            punch_msg = f"Konumla giriş {now_s} kaydedildi."
+        elif action == "check_out" and rec.get("check_in") and not rec.get("check_out"):
+            now_s = now_hm(schedule)
+            rec = await apply_day(emp, today, {"status": "present", "check_out": now_s}, source="geo", confirmed=True)
+            punched = "check_out"
+            punch_msg = f"Konumla çıkış {now_s} kaydedildi."
+        if punched:
+            geo = {"latitude": lat, "longitude": lng, "distance_m": dist, "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": False, "auto": True}
+            extra = {f"geo_{punched}": geo}
+            if inside:
+                extra["location_inside_at"] = _now()
+            await _db.attendance.update_one({"employee_id": emp["_id"], "date": today}, {"$set": extra})
+            rec.update(extra)
+            try:
+                month_rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{today[:7]}"}}).to_list(40)
+                note = habit_deviation(attendance_habit(month_rows), rec.get("check_in") if punched == "check_in" else None, rec.get("check_out") if punched == "check_out" else None)
+                if note:
+                    await notify_managers(
+                        emp["company_id"], "attendance_habit",
+                        f"Giriş/çıkış alışkanlığı: {emp.get('full_name')}",
+                        f"{emp.get('full_name')} konumla {punched} — {note}.",
+                        dedupe_key=f"habit:{emp['_id']}:{today}:{punched}",
+                    )
+            except Exception:
+                pass
+    if inside:
+        await _db.employees.update_one({"_id": emp["_id"]}, {"$set": {"location_inside_at": _now()}})
+        if rec.get("id") or rec.get("_id"):
+            await _db.attendance.update_one({"_id": rec.get("id") or rec.get("_id")}, {"$set": {"location_inside_at": _now()}})
+    opened = None
+    if rec.get("check_in") and not rec.get("check_out") and loc and active_lt.get("enabled"):
+        opened = await maybe_open_location_exit(emp, rec, workplace, loc, active_lt, lat, lng)
     signal = await mark_employee_location_signal(emp["_id"], True)
     return {
         "status": "success",
         "outside": outside,
         "distance_m": dist,
         "opened": bool(opened),
+        "punched": punched,
+        "message": punch_msg,
+        "record": _clean(rec) if rec else None,
         "request": opened,
         "workplace": workplace,
         "active_location_tracking": active_lt,
@@ -1929,6 +2075,11 @@ async def confirm_attendance(att_id: str, request: Request, req: Dict[str, Any] 
         raise HTTPException(status_code=403, detail="Yalnızca kendi puantaj kaydınızı onaylayabilirsiniz.")
     note = (req or {}).get("note")
     upd = {"employee_confirmed": True, "employee_confirmed_at": _now()}
+    if rec.get("manager_time_edit"):
+        edit = dict(rec.get("manager_time_edit") or {})
+        edit["pending_employee"] = False
+        edit["confirmed_at"] = _now()
+        upd["manager_time_edit"] = edit
     if note:
         upd["employee_note"] = note
     # Personel itiraz sonrası "yine de onayla" derse kutudan düşür

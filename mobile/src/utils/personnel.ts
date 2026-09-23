@@ -757,6 +757,13 @@ export type AttendanceRecord = {
     late_minutes?: number;
     early_leave_minutes?: number;
   };
+  manager_time_edit?: {
+    prev_check_in?: string;
+    prev_check_out?: string;
+    check_in?: string;
+    check_out?: string;
+    pending_employee?: boolean;
+  } | null;
   location_exit_request?: {
     status?: string;
     place?: string;

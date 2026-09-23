@@ -9310,7 +9310,27 @@ async def upsert_attendance(req: Dict[str, Any]):
     if action in ("check_in", "check_out"):
         patch["status"] = "present"
         patch[action] = now_hm
-    return await attendance.apply_day(emp, date, patch, source=req.get("source") or "manager", confirmed=False if action or patch else None)
+    existing = await db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
+    rec = await attendance.apply_day(emp, date, patch, source=req.get("source") or "manager", confirmed=False if action or patch else None)
+    edit = attendance.manager_time_edit_doc(existing, rec, attendance._now())
+    if edit:
+        rec["manager_time_edit"] = edit
+        rec["employee_confirmed"] = False
+        await db.attendance.update_one({"employee_id": emp["_id"], "date": date}, {"$set": {"manager_time_edit": edit, "employee_confirmed": False, "employee_confirmed_at": None}})
+        try:
+            import notify as _notify
+            await _notify.insert_notification(db, _notify.notification_doc(
+                emp["company_id"], "attendance_time_edit",
+                f"Puantaj saati düzeltildi: {date}",
+                f"Yönetici giriş/çıkış saatini güncelledi ({edit.get('prev_check_out') or edit.get('prev_check_in') or '—'} → {edit.get('check_out') or edit.get('check_in') or '—'}). Personel onayı gerekir.",
+                link="/mesai",
+                user_id=emp.get("user_id"),
+                employee_id=emp.get("_id"),
+                roles=[],
+            ))
+        except Exception:
+            pass
+    return rec
 
 # ----------------- MALİ MÜŞAVİR PANELİ -----------------
 @api_router.get("/accountant/summary")

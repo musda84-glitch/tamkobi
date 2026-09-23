@@ -6,7 +6,7 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Cal
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
@@ -44,6 +44,7 @@ const RecordRow = ({ r, onConfirm, onDispute }) => {
         {r.intraday_leave_request?.status === "pending" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">gün içi izin talebi</span>}
         {yevmiyeStatusLine(r) ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800" data-testid={`my-att-yevmiye-${r.id}`}>{yevmiyeStatusLine(r)}</span> : null}
         <span className="ml-auto flex items-center gap-2">
+          {r.manager_time_edit?.pending_employee ? <span className="text-[10px] font-bold text-amber-800" data-testid={`my-att-edit-${r.id}`}>{managerTimeEditHint(r.manager_time_edit)}</span> : null}
           {r.employee_confirmed ? <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold"><CheckCircle2 className="w-3.5 h-3.5" /> Onaylandı</span>
             : <>
               {r.dispute_note && !r.dispute_resolved && <span className="inline-flex items-center gap-1 text-rose-600 font-semibold" title={r.dispute_note}><MessageSquareWarning className="w-3.5 h-3.5" /> Düzeltme talebi iletildi</span>}
@@ -96,11 +97,15 @@ export default function MyAttendancePage() {
         latitude: coords.latitude, longitude: coords.longitude, accuracy_m: coords.accuracy,
       }, { withCredentials: true });
       if (r.data.location_signal) setSignal(r.data.location_signal);
+      if (r.data.punched) {
+        if (r.data.message) toast.success(r.data.message);
+        load();
+      }
       return true;
     } catch {
       return false;
     }
-  }, []);
+  }, [load]);
 
   useEffect(() => {
     if (!locationConsentAccepted(data?.location_consent)) return undefined;
@@ -109,15 +114,14 @@ export default function MyAttendancePage() {
   }, [data?.location_consent?.accepted, reportLocation]);
   useEffect(() => {
     const tracking = data?.active_location_tracking || data?.location_tracking;
-    const onDuty = Boolean(data?.today?.check_in && !data?.today?.check_out);
-    const field = data?.workplace?.kind === "task";
-    if (!locationConsentAccepted(data?.location_consent) || !tracking?.enabled || !onDuty || !field) return undefined;
+    const checkedOut = Boolean(data?.today?.check_out);
+    if (!locationConsentAccepted(data?.location_consent) || !tracking?.enabled || checkedOut) return undefined;
     reportLocation();
     const mins = Number(tracking.interval_minutes);
     const ms = tracking.continuous || mins === 0 ? 60_000 : Math.max(1, mins) * 60_000;
     const id = setInterval(() => { reportLocation(); }, ms);
     return () => clearInterval(id);
-  }, [data?.today?.check_in, data?.today?.check_out, data?.workplace?.kind, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
+  }, [data?.today?.check_out, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
   useEffect(() => {
     if (!outArmed) return undefined;
     const t = setTimeout(() => setOutArmed(false), CHECKOUT_ARM_MS);
@@ -294,12 +298,12 @@ export default function MyAttendancePage() {
               className={`flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition ${outArmed ? "bg-amber-500 hover:bg-amber-400 ring-2 ring-amber-200 ring-offset-2 ring-offset-slate-900" : "bg-rose-500 hover:bg-rose-400"}`}
               data-testid="my-att-checkout"
               aria-pressed={outArmed}
-              title={outArmed ? "Onaylamak için tekrar tıklayın" : checkoutOn ? "Çıkış için iki kez tıklayın" : "Mesai bitmeden çıkış için erken çıkış onayı gerekir"}
+              title={outArmed ? "Onaylamak için tekrar tıklayın" : checkoutOn ? "Çıkış için iki kez tıklayın" : "Çıkış için önce giriş yapın"}
             >
               {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}
               <span className="text-lg sm:text-base">{outArmed ? "Tekrar tıklayın" : (earlyOk && !t?.check_out ? "Çıkış (onaylı erken)" : "Çıkış Yap")}</span>
               <span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-out">
-                {t?.check_out ? `Çıkış ${t.check_out}` : !t?.check_in ? "önce giriş yapın" : !checkoutOn ? "erken çıkış onayı bekleniyor" : (outArmed ? "onay için tekrar tıklayın" : "çift tıklayın · saat ve konum basınca yazılır")}
+                {t?.check_out ? `Çıkış ${t.check_out}` : !t?.check_in ? "önce giriş yapın" : (outArmed ? "onay için tekrar tıklayın" : "çift tıklayın · saat ve konum basınca veya konumla yazılır")}
               </span>
             </button>
           </div>
@@ -403,7 +407,8 @@ export default function MyAttendancePage() {
             })()}
           </div>
 
-          <div className="text-[11px] text-slate-400 text-center sm:text-left">Açık proje görevi varsa giriş <b className="text-indigo-200">görev yerinden</b> yapılır (dış görev). Çıkış her konumdan yapılabilir (konum özelliği kapalı olsa da); yanlışlıkla basılmasın diye <b className="text-rose-200">çift tıklama</b> ister. Kayıt paneldeki mesai saatine{t?.assigned_overtime_hours ? " ve atanan fazla mesaiye" : ""} göre işlenir. Mesai bitişinden ({sch.end}) sonraki süre otomatik <b className="text-indigo-300">fazla mesai</b> yazılır. Erken çıkmak için önce talep edin. Gün içinde çıkıp dönecekseniz <b className="text-sky-300">gün içi izin</b> talebine çıkış ve dönüş saatini yazın.</div>
+          {habitLabel(data.habit, data.habit_label) ? <div className="text-[11px] text-emerald-200" data-testid="my-att-habit">{habitLabel(data.habit, data.habit_label)}</div> : null}
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Giriş iş yeri / görev yakınından; konum açıksa <b className="text-emerald-200">otomatik de yazılır</b>. Çıkış butonu her zaman açıktır (çift tıklama). Konumla çıkış da yazılabilir. Yönetici saati düzeltirse <b className="text-amber-200">personel onayı</b> gerekir. Mesai bitişinden ({sch.end}) sonraki süre otomatik fazla mesai yazılır. Gün içinde çıkıp dönecekseniz gün içi izin kullanın.</div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">
