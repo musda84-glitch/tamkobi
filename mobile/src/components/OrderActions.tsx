@@ -21,6 +21,15 @@ import {
 import { idOf } from "../utils/money";
 import { go } from "../nav";
 import { canStaffDeleteOrder, canStaffEditOrder } from "../utils/orderEdit";
+import {
+  canCreateOrderDraftInvoice,
+  canIssueOrderEBelge,
+  canPostOrderDraftInvoice,
+  convertToDraftBody,
+  eBelgeCreateBody,
+  faturalaActionLabel,
+  isOrderFullyInvoiced,
+} from "../utils/orderInvoice";
 import { printCargoLabel, printOrderForm } from "../utils/orderShare";
 import { QUICK_TONE_COLORS, type QuickTone } from "../utils/quickMenu";
 import { ActionTiles, type ActionTile } from "./ActionTiles";
@@ -224,10 +233,100 @@ export function OrderActions({
     );
   };
 
+  const createDraftInvoice = () => {
+    confirmAction(
+      "Taslak fatura",
+      `${order.order_number || "Sipariş"} için taslak fatura oluşturulsun mu? Cari bakiyesine hemen işlenmez.`,
+      async () => {
+        setBusy("invoice");
+        try {
+          const r = await post<{ message?: string; invoice_number?: string }>(
+            client,
+            `/orders/${oid}/convert-to-invoice`,
+            convertToDraftBody("e_archive"),
+          );
+          onMessage?.(r.message || `Taslak fatura kaydedildi${r.invoice_number ? `: ${r.invoice_number}` : ""}.`);
+          onChanged?.();
+        } catch (err) {
+          onError?.(apiErrorMessage(err, "Taslak fatura oluşturulamadı."));
+        } finally {
+          setBusy(null);
+        }
+      },
+    );
+  };
+
+  const postDraftInvoice = () => {
+    const invId = order.invoice_id;
+    if (!invId) {
+      onError?.("Bu siparişte taslak fatura yok.");
+      return;
+    }
+    confirmAction(
+      "Cariye işle",
+      `${order.order_number || "Sipariş"} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek.`,
+      async () => {
+        setBusy("invoice");
+        try {
+          const r = await post<{ message?: string }>(client, `/invoices/${invId}/approve`, {});
+          onMessage?.(r.message || "Fatura onaylandı; cari bakiyesi işlendi.");
+          onChanged?.();
+        } catch (err) {
+          onError?.(apiErrorMessage(err, "Fatura onaylanamadı."));
+        } finally {
+          setBusy(null);
+        }
+      },
+    );
+  };
+
+  const issueEBelge = (eType: "e_invoice" | "e_archive") => {
+    const label = eType === "e_invoice" ? "E-Fatura" : "E-Arşiv";
+    confirmAction(
+      `${label} (GİB)`,
+      `${order.order_number || "Sipariş"} için ${label} GİB'e iletilsin mi?`,
+      async () => {
+        setBusy("ebelge");
+        try {
+          let invoiceId = order.invoice_id;
+          if (!invoiceId) {
+            const draft = await post<{ invoice_id?: string }>(
+              client,
+              `/orders/${oid}/convert-to-invoice`,
+              convertToDraftBody(eType),
+            );
+            invoiceId = draft.invoice_id;
+          }
+          const r = await post<{ message?: string }>(
+            client,
+            "/e-invoice/create",
+            eBelgeCreateBody({
+              orderId: oid,
+              invoiceId,
+              companyId: companyId || activeCompany?.id || "",
+              eType,
+            }),
+          );
+          onMessage?.(r.message || `${label} GİB'e iletildi.`);
+          onChanged?.();
+        } catch (err) {
+          onError?.(apiErrorMessage(err, `${label} kesilemedi.`));
+        } finally {
+          setBusy(null);
+        }
+      },
+    );
+  };
+
   const showApprove = canEdit && (marketplace ? canShowMarketplaceApprove(order) : canApproveOrder(order));
   const showCargo = canEdit && canChangeMarketplaceCargo(order);
   const showEdit = canMutate && canStaffEditOrder(order);
   const showDelete = canMutate && canStaffDeleteOrder(order);
+  const canInvoice = can("/invoices", "edit") || canEdit;
+  const showDraftCreate = canInvoice && canCreateOrderDraftInvoice(order);
+  const showDraftPost = canInvoice && canPostOrderDraftInvoice(order);
+  const showEBelge = canInvoice && canIssueOrderEBelge(order);
+  const showInvoiced = isOrderFullyInvoiced(order);
 
   const defs: ActionDef[] = [
     ...(showEdit
@@ -235,6 +334,21 @@ export function OrderActions({
       : []),
     ...(showDelete
       ? [{ key: "delete", label: "Sil", icon: "trash" as const, tone: "rose" as const, busyKey: "delete", testID: `order-delete-${oid}`, onPress: remove }]
+      : []),
+    ...(showDraftCreate
+      ? [{ key: "invoice", label: faturalaActionLabel(order), icon: "document-text" as const, tone: "emerald" as const, busyKey: "invoice", testID: `order-faturala-${oid}`, onPress: createDraftInvoice }]
+      : []),
+    ...(showDraftPost
+      ? [{ key: "invoice", label: faturalaActionLabel(order), icon: "document-text" as const, tone: "amber" as const, busyKey: "invoice", testID: `order-faturala-${oid}`, onPress: postDraftInvoice }]
+      : []),
+    ...(showInvoiced
+      ? [{ key: "invoiced", label: "Faturalandı", icon: "checkmark-done" as const, tone: "emerald" as const, busyKey: "invoiced", testID: `order-invoiced-${oid}`, onPress: () => onMessage?.(order.invoice_number ? `Fatura: ${order.invoice_number}` : "Sipariş faturalandı.") }]
+      : []),
+    ...(showEBelge
+      ? [
+          { key: "efatura", label: "E-Fatura", icon: "receipt" as const, tone: "indigo" as const, busyKey: "ebelge", testID: `order-ebelge-efatura-${oid}`, onPress: () => issueEBelge("e_invoice") },
+          { key: "earsiv", label: "E-Arşiv", icon: "receipt" as const, tone: "violet" as const, busyKey: "ebelge", testID: `order-ebelge-earsiv-${oid}`, onPress: () => issueEBelge("e_archive") },
+        ]
       : []),
     ...(showCargo
       ? [{ key: "cargo", label: "Kargo firma", icon: "car" as const, tone: "violet" as const, busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: openCargo }]

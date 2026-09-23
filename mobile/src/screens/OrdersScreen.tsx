@@ -4,11 +4,12 @@ import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { OrderActions } from "../components/OrderActions";
 import { ChannelLogo } from "../components/ChannelLogo";
-import { Empty, ErrorBanner, Field, ListRow, Muted, Screen } from "../components/kit";
+import { Empty, ErrorBanner, Field, ListRow, Muted, Screen, Badge, Row } from "../components/kit";
 import { go } from "../nav";
 import type { Order } from "../types";
 import { orderNumberLabel, statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
 
 export function OrdersScreen() {
   const { client, companyId } = useAuth();
@@ -46,7 +47,10 @@ export function OrdersScreen() {
     >
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
-      {!filtered.length ? <Empty icon="cart-outline" title="Sipariş yok" /> : filtered.map((o) => (
+      {!filtered.length ? <Empty icon="cart-outline" title="Sipariş yok" /> : filtered.map((o) => {
+        const invTone = orderInvoiceBadgeTone(o);
+        const invLabel = orderInvoiceBadgeLabel(o);
+        return (
         <View key={idOf(o)} style={{ marginBottom: 8 }}>
           <ListRow
             testID={`order-row-${idOf(o)}`}
@@ -56,9 +60,14 @@ export function OrdersScreen() {
             right={fmtMoney(o.grand_total || o.total_amount)}
             onPress={() => go("OrderDetail", { id: idOf(o) })}
           />
+          {invLabel && invTone ? (
+            <Row style={{ paddingHorizontal: 4, paddingBottom: 2 }}>
+              <Badge label={invLabel} tone={invTone === "green" ? "green" : "amber"} />
+            </Row>
+          ) : null}
           <OrderActions order={o} compact onMessage={setMessage} onError={setError} onChanged={load} />
         </View>
-      ))}
+      );})}
     </Screen>
   );
 }
