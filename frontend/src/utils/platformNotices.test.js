@@ -2,9 +2,13 @@ import { describe, expect, test } from "@jest/globals";
 import {
   dismissKey,
   dismissNotice,
+  formatCountdown,
   isDismissed,
   isUpdateTransportError,
+  makeTransportNotice,
   pickVisibleNotice,
+  remainingMs,
+  UPDATE_DONE_NOTICE,
 } from "./platformNotices";
 
 function memStore() {
@@ -17,14 +21,21 @@ function memStore() {
 }
 
 describe("platformNotices", () => {
-  test("pickVisibleNotice prefers active maintenance", () => {
+  test("pickVisibleNotice prefers active maintenance and keeps ends_at", () => {
     const n = pickVisibleNotice({
-      maintenance: { active: true, title: "Bakım", body: "Şimdi", notify_popup: true },
+      maintenance: {
+        active: true,
+        title: "Bakım",
+        body: "Şimdi",
+        notify_popup: true,
+        ends_at: "2026-09-23T15:30:00+00:00",
+      },
       announcements: [{ id: "a1", title: "X", body: "Y" }],
     }, memStore());
     expect(n.id).toBe("maintenance-active");
     expect(n.activeUpdate).toBe(true);
     expect(n.dismissible).toBe(false);
+    expect(n.ends_at).toBe("2026-09-23T15:30:00+00:00");
   });
 
   test("pickVisibleNotice skips dismissed announcements", () => {
@@ -62,5 +73,19 @@ describe("platformNotices", () => {
     expect(isUpdateTransportError({ response: { status: 502 } })).toBe(true);
     expect(isUpdateTransportError({ code: "ERR_NETWORK", message: "Network Error" })).toBe(true);
     expect(isUpdateTransportError({ response: { status: 400 } })).toBe(false);
+  });
+
+  test("countdown helpers and transport/done notices", () => {
+    expect(formatCountdown(125000)).toBe("02:05");
+    expect(formatCountdown(0)).toBe("00:00");
+    expect(formatCountdown(-5000)).toBe("00:00");
+    const now = Date.parse("2026-09-23T12:00:00.000Z");
+    expect(remainingMs("2026-09-23T12:02:00.000Z", now)).toBe(120000);
+    const t = makeTransportNotice(now);
+    expect(t.activeUpdate).toBe(true);
+    expect(t.etaEstimated).toBe(true);
+    expect(t.ends_at).toBe("2026-09-23T12:05:00.000Z");
+    expect(UPDATE_DONE_NOTICE.updateDone).toBe(true);
+    expect(UPDATE_DONE_NOTICE.activeUpdate).toBe(false);
   });
 });

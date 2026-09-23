@@ -2,6 +2,9 @@
 
 const DISMISS_PREFIX = "tk_platform_notice_dismissed:";
 
+/** Bağlantı kesildiğinde (ends_at yok) varsayılan tahmini süre. */
+export const ETA_DEFAULT_MS = 5 * 60 * 1000;
+
 export function dismissKey(id) {
   return `${DISMISS_PREFIX}${id || "unknown"}`;
 }
@@ -33,6 +36,30 @@ export function clearDismiss(id, storage = localStorage) {
   }
 }
 
+/** ends_at'e kalan milisaniye; yoksa/geçersizse null. */
+export function remainingMs(endsAt, nowMs = Date.now()) {
+  if (!endsAt) return null;
+  const t = new Date(endsAt).getTime();
+  if (Number.isNaN(t)) return null;
+  return t - nowMs;
+}
+
+/** 125000 → "02:05"; 0 veya eksi → "00:00". */
+export function formatCountdown(ms) {
+  if (ms == null || Number.isNaN(ms)) return null;
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
+  return `${pad(m)}:${pad(s)}`;
+}
+
+export function etaIsoFromNow(ms = ETA_DEFAULT_MS, nowMs = Date.now()) {
+  return new Date(nowMs + ms).toISOString();
+}
+
 /** Bakım aktifken veya duyuru listesinde gösterilecek sıradaki pop-up. */
 export function pickVisibleNotice(payload, storage = localStorage) {
   if (!payload) return null;
@@ -47,6 +74,9 @@ export function pickVisibleNotice(payload, storage = localStorage) {
       support_email: m.support_email,
       support_phone: m.support_phone,
       dismissible: false,
+      starts_at: m.starts_at,
+      ends_at: m.ends_at,
+      server_time: payload.server_time,
     };
   }
   const announcements = Array.isArray(payload.announcements) ? payload.announcements : [];
@@ -107,6 +137,29 @@ export const UPDATE_FALLBACK_NOTICE = {
   kind: "maintenance",
   activeUpdate: true,
   dismissible: false,
+};
+
+/** Bağlantı hatasında gösterilecek güncelleme bildirimi (+ tahmini bitiş). */
+export function makeTransportNotice(nowMs = Date.now()) {
+  return {
+    ...UPDATE_FALLBACK_NOTICE,
+    ends_at: etaIsoFromNow(ETA_DEFAULT_MS, nowMs),
+    etaEstimated: true,
+  };
+}
+
+export const UPDATE_DONE_NOTICE = {
+  id: "update-done",
+  title: "Güncelleme Tamamlandı",
+  body:
+    "Değerli Kullanıcımız,\n\n" +
+    "Sistem güncellemesi tamamlandı. Bağlantı yeniden kuruldu.\n\n" +
+    "Güncel arayüze geçmek için sayfayı yenileyebilirsiniz.\n\n" +
+    "İyi çalışmalar dileriz.",
+  kind: "maintenance",
+  activeUpdate: false,
+  updateDone: true,
+  dismissible: true,
 };
 
 export function toDatetimeLocalValue(iso) {
