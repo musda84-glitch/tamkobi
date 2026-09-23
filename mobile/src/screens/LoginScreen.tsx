@@ -3,7 +3,7 @@ import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleShee
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { loadRememberedB2bEmail, loadRememberedEmail, saveRememberedB2bEmail, saveRememberedEmail } from "../auth/storage";
 import { Field, PrimaryButton } from "../components/kit";
-import { colors } from "../theme";
+import { colors, typeface } from "../theme";
 import type { B2BForgotResult } from "../types";
 import { contentBottomPad, loginSheetJustify } from "../utils/keyboardPad";
 import { emailToRemember } from "../utils/loginRemember";
@@ -327,18 +327,18 @@ const styles = StyleSheet.create({
   wrap: { flexGrow: 1, backgroundColor: colors.ink, alignItems: "center", justifyContent: "center", padding: 24 },
   card: { width: "100%", maxWidth: 400, backgroundColor: "#fff", borderRadius: 24, padding: 24 },
   mark: { width: 56, height: 56, borderRadius: 14, marginBottom: 12 },
-  eyebrow: { fontSize: 11, fontWeight: "800", color: colors.primary, letterSpacing: 1.4, textTransform: "uppercase" },
-  brand: { fontSize: 28, fontWeight: "900", color: colors.text },
-  hint: { color: colors.muted, marginBottom: 16, marginTop: 4 },
-  error: { color: colors.danger, fontWeight: "700", marginBottom: 8 },
-  server: { textAlign: "center", color: colors.muted, fontSize: 12, fontWeight: "600" },
+  eyebrow: { fontSize: 11, color: colors.primary, letterSpacing: 1.4, textTransform: "uppercase", ...typeface("800") },
+  brand: { fontSize: 28, color: colors.text, ...typeface("900") },
+  hint: { color: colors.muted, marginBottom: 16, marginTop: 4, ...typeface("400") },
+  error: { color: colors.danger, marginBottom: 8, ...typeface("700") },
+  server: { textAlign: "center", color: colors.muted, fontSize: 12, ...typeface("600") },
   footerRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignItems: "center", marginTop: 14 },
-  footer: { textAlign: "center", color: colors.muted, fontSize: 12, fontWeight: "600" },
-  b2bLink: { color: colors.indigo, fontWeight: "800" },
-  erpLink: { color: colors.primary, fontWeight: "800" },
-  forgot: { textAlign: "center", color: colors.primaryHover, fontSize: 13, fontWeight: "800" },
+  footer: { textAlign: "center", color: colors.muted, fontSize: 12, ...typeface("600") },
+  b2bLink: { color: colors.indigo, ...typeface("800") },
+  erpLink: { color: colors.primary, ...typeface("800") },
+  forgot: { textAlign: "center", color: colors.primaryHover, fontSize: 13, ...typeface("800") },
   okBox: { backgroundColor: colors.emerald50, borderRadius: 12, padding: 10, marginBottom: 12, gap: 4 },
-  okText: { color: "#065F46", fontSize: 12, fontWeight: "600" },
+  okText: { color: "#065F46", fontSize: 12, ...typeface("600") },
   rememberRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -353,8 +353,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   rememberLabel: { flexDirection: "row", alignItems: "center", gap: 8 },
-  rememberText: { fontSize: 12, fontWeight: "600", color: colors.slate800 },
-  forget: { fontSize: 12, fontWeight: "700", color: colors.muted, textDecorationLine: "underline" },
+  rememberText: { fontSize: 12, color: colors.slate800, ...typeface("600") },
+  forget: { fontSize: 12, color: colors.muted, textDecorationLine: "underline", ...typeface("700") },
   check: {
     width: 18,
     height: 18,
@@ -366,5 +366,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   checkOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  checkMark: { color: "#fff", fontSize: 12, fontWeight: "800", lineHeight: 14 },
+  checkMark: { color: "#fff", fontSize: 12, lineHeight: 14, ...typeface("800") },
 });

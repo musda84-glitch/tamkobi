@@ -7,7 +7,6 @@ import { enableSoftFonts, SOFT_FONT_FACES } from "@/theme/softFontRuntime";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 
 function RootStack() {
@@ -90,9 +89,7 @@ function RootStack() {
 
 export default function RootLayout() {
   const [fontsReady, fontError] = useFonts(SOFT_FONT_FACES);
-  useEffect(() => {
-    if (fontsReady || fontError) enableSoftFonts();
-  }, [fontsReady, fontError]);
+  if (fontsReady || fontError) enableSoftFonts();
   if (!fontsReady && !fontError) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.ink }}>
