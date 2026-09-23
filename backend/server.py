@@ -3749,14 +3749,16 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     doc["legal_accept"] = legal_docs.acceptance_record(req)
     await db.orders.insert_one(doc)
     await _notify_company(c["company_id"], "b2b_order", f"Yeni B2B siparişi {doc['order_number']}", f"{c.get('name')} portaldan {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) sipariş verdi.", doc["_id"])
-    return {"status": "success", "order": clean_doc(doc), "message": f"Siparişiniz alındı: {doc['order_number']}"}
+    await _attach_draft_invoice_on_intake(doc, source="b2b")
+    refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
+    return {"status": "success", "order": clean_doc(refreshed), "message": f"Siparişiniz alındı: {doc['order_number']}"}
 
 @api_router.put("/public/b2b/{token}/orders/{order_id}")
 async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
     c, o = await _b2b_owned_order(token, order_id)
     if o.get("order_status") not in ("pending", "new"):
         raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler düzenlenebilir.")
-    if o.get("is_invoiced") or o.get("invoice_id"):
+    if o.get("is_invoiced"):
         raise HTTPException(status_code=400, detail="Faturalanmış sipariş düzenlenemez.")
     items = await _b2b_build_items(c, req.get("items", []))
     if not items:
@@ -3782,6 +3784,7 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
         update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
     await db.orders.update_one({"_id": order_id}, {"$set": update})
     updated = await db.orders.find_one({"_id": order_id})
+    await _sync_draft_invoice_items(updated, update.get("items") or [])
     await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) olacak şekilde düzenledi.", order_id)
     return {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
 
@@ -3790,8 +3793,12 @@ async def b2b_delete_order(token: str, order_id: str):
     c, o = await _b2b_owned_order(token, order_id)
     if o.get("order_status") not in ("pending", "new"):
         raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler silinebilir.")
-    if o.get("is_invoiced") or o.get("invoice_id"):
+    if o.get("is_invoiced"):
         raise HTTPException(status_code=400, detail="Faturalanmış sipariş silinemez.")
+    if o.get("invoice_id"):
+        inv = await db.invoices.find_one({"_id": o["invoice_id"]})
+        if inv and inv.get("status") == "draft" and not o.get("is_invoiced"):
+            await _soft_delete_invoice_doc(inv, note="B2B sipariş silindi — taslak fatura silindi")
     await trash.soft_delete("orders", o, "order", f"{o.get('order_number')} · {o.get('customer_name')}", note=f"B2B portal · {float(o.get('total_amount') or 0):,.2f} ₺")
     await _notify_company(c["company_id"], "b2b_order_delete", f"B2B sipariş silindi {o.get('order_number')}", f"{c.get('name')} beklemedeki siparişi iptal edip sildi.", order_id)
     return {"status": "success", "message": f"{o.get('order_number')} silindi."}
@@ -8580,18 +8587,9 @@ async def update_order(order_id: str, req: Dict[str, Any]):
             "total_amount": grand_total if vat_total else subtotal,
         })
     await db.orders.update_one({"_id": order_id}, {"$set": update})
-    if invoice and invoice.get("status") == "draft" and not o.get("is_invoiced") and update.get("items"):
-        inv_rows = order_items_to_invoice_items(update["items"])
-        await _fill_stock_codes(o.get("company_id"), inv_rows)
-        inv_items = [it.model_dump() for it in _invoice_item_models(inv_rows)]
-        totals = invoice_document_totals(inv_items)
-        await db.invoices.update_one({"_id": invoice["_id"]}, {"$set": {
-            "items": inv_items,
-            "subtotal": totals["subtotal"],
-            "vat_total": totals["vat_total"],
-            "discount_total": totals["discount_total"],
-            "grand_total": totals["grand_total"],
-        }})
+    if update.get("items"):
+        refreshed = {**o, **update}
+        await _sync_draft_invoice_items(refreshed, update["items"])
     updated = await db.orders.find_one({"_id": order_id})
     return {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
 
@@ -8902,7 +8900,15 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
     discount_total = float(inv_totals.get("discount_total") or 0)
     grand_total = float(inv_totals.get("grand_total") or 0)
     term_days = int(contact.get("payment_term_days") or 14)
-    note_src = {"ship": "sevkiyatında", "approve": "onayında", "convert": "Faturala ile"}.get(source, "onayında")
+    note_src = {
+        "ship": "sevkiyatında",
+        "approve": "onayında",
+        "convert": "Faturala ile",
+        "intake": "alışında",
+        "b2b": "B2B siparişinde",
+        "marketplace": "pazaryeri senkronunda",
+        "import": "içe aktarımda",
+    }.get(source, "alışında")
     doc = {
         "_id": inv_id,
         "company_id": order.get("company_id"),
@@ -8947,6 +8953,37 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
     order["invoice_number"] = invoice_number
     order["contact_id"] = contact["_id"]
     return doc
+
+
+async def _attach_draft_invoice_on_intake(order: dict, source: str = "intake") -> Optional[dict]:
+    """Yeni gelen siparişi cariye taslak fatura olarak düşür (hata siparişi bozmasın)."""
+    try:
+        return await _create_draft_invoice_for_order(order, source=source)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Sipariş alışında taslak fatura oluşturulamadı: %s", (order or {}).get("_id")
+        )
+        return None
+
+
+async def _sync_draft_invoice_items(order: dict, items: list) -> None:
+    """Bekleyen sipariş kalemleri değişince bağlı taslak faturayı güncelle."""
+    if not order or not order.get("invoice_id") or order.get("is_invoiced") or not items:
+        return
+    invoice = await db.invoices.find_one({"_id": order["invoice_id"]})
+    if not invoice or invoice.get("status") != "draft":
+        return
+    inv_rows = order_items_to_invoice_items(items)
+    await _fill_stock_codes(order.get("company_id"), inv_rows)
+    inv_items = [it.model_dump() for it in _invoice_item_models(inv_rows)]
+    totals = invoice_document_totals(inv_items)
+    await db.invoices.update_one({"_id": invoice["_id"]}, {"$set": {
+        "items": inv_items,
+        "subtotal": totals["subtotal"],
+        "vat_total": totals["vat_total"],
+        "discount_total": totals["discount_total"],
+        "grand_total": totals["grand_total"],
+    }})
 
 
 @api_router.post("/orders/{order_id}/approve")
@@ -9318,6 +9355,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
             d["created_at"] = d["updated_at"]
             await db.orders.insert_one(d)
             await _ensure_order_contact(d)
+            await _attach_draft_invoice_on_intake(d, source="marketplace")
             inserted += 1
     return {"inserted": inserted, "updated": updated}
 
@@ -10834,7 +10872,9 @@ async def create_order(order: Order):
     doc = order.to_mongo()
     await db.orders.insert_one(doc)
     await _ensure_order_contact(doc)
-    return clean_doc(doc)
+    await _attach_draft_invoice_on_intake(doc, source="intake")
+    refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
+    return clean_doc(refreshed)
 
 @api_router.put("/orders/{order_id}/status")
 async def update_order_status(order_id: str, req: Dict[str, str]):
@@ -12787,7 +12827,9 @@ async def ai_order_confirm(req: Dict[str, Any]):
         doc.update({"notes": o.get("notes") or "", "source": "ai_import", "order_date": (o.get("order_date") + "T00:00:00+00:00") if o.get("order_date") else doc.get("order_date"), "contact_id": o.get("contact_id")})
         await db.orders.insert_one(doc)
         await _ensure_order_contact(doc)
-        created.append(clean_doc(doc))
+        await _attach_draft_invoice_on_intake(doc, source="import")
+        refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
+        created.append(clean_doc(refreshed))
     return {"status": "success", "created": len(created), "orders": created, "message": f"{len(created)} sipariş oluşturuldu."}
 
 
