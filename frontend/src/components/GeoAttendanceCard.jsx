@@ -36,17 +36,24 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
         latitude: coords.latitude, longitude: coords.longitude, accuracy_m: coords.accuracy,
       }, { withCredentials: true });
       if (r.data.location_signal) setSignal(r.data.location_signal);
+      if (r.data.punched) {
+        if (r.data.message) toast.success(r.data.message);
+        load();
+        onChanged?.();
+      }
       return true;
     } catch {
       return false;
     }
-  }, []);
+  }, [load, onChanged]);
 
   useEffect(() => {
     if (!locationConsentAccepted(st?.location_consent)) return undefined;
     reportLocation();
-    return undefined;
-  }, [st?.location_consent?.accepted, reportLocation]);
+    if (st?.today?.check_out) return undefined;
+    const id = setInterval(() => { reportLocation(); }, 60_000);
+    return () => clearInterval(id);
+  }, [st?.location_consent?.accepted, st?.today?.check_out, reportLocation]);
   useEffect(() => {
     const t = st?.today;
     if (!shouldWatchCheckoutUnlock({

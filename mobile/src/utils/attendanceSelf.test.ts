@@ -1,4 +1,4 @@
-import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -52,17 +52,17 @@ describe("checkoutConfirmMessage", () => {
 });
 
 describe("selfCheckoutUnlocked", () => {
-  it("stays locked before schedule end unless early leave is approved", () => {
-    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00" })).toBe(false);
+  it("stays open after check-in even before schedule end", () => {
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00" })).toBe(true);
     expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00", earlyApproved: true })).toBe(true);
-    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "18:00", scheduleEnd: "18:00" })).toBe(true);
     expect(selfCheckoutUnlocked({ checkedIn: false, nowHm: "19:00", scheduleEnd: "18:00" })).toBe(false);
     expect(selfCheckoutUnlocked({ checkedIn: true, checkedOut: true, earlyApproved: true })).toBe(false);
-    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleStart: "09:00", expectedEnd: "00:00" })).toBe(false);
-    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "00:00", scheduleStart: "09:00", expectedEnd: "00:00" })).toBe(true);
     expect(earlyLeaveApproved({ early_leave_request: { status: "approved" } })).toBe(true);
     expect(earlyLeaveApproved({ early_leave_request: { status: "pending" } })).toBe(false);
-    expect(selfCheckoutLockedHint({ checkedIn: true, earlyPending: true })).toMatch(/onaylanınca/);
+    expect(selfCheckoutLockedHint({ checkedIn: true })).toMatch(/açık/);
+    expect(habitLabel({ typical_in: "08:50", typical_out: "18:05", sample_days: 6 })).toMatch(/08:50/);
+    expect(managerTimeEditHint({ pending_employee: true, prev_check_out: "18:10", check_out: "17:45" })).toMatch(/17:45/);
+    expect(managerTimeEditHint({ pending_employee: false })).toBe("");
   });
 });
 

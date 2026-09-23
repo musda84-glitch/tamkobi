@@ -9,6 +9,7 @@ import { B2BSheet } from "../components/b2b/B2BSheet";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
+import { TimeField } from "../components/TimeField";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
 import { colors } from "../theme";
@@ -131,11 +132,13 @@ function AttendanceRecCard({
   r,
   canEdit,
   onDecide,
+  onCorrectOut,
   hideName,
 }: {
   r: AttendanceRecord;
   canEdit: boolean;
   onDecide: (it: PendingRequest, approved: boolean | "ack" | "deduct") => void;
+  onCorrectOut?: (rec: AttendanceRecord, checkOut: string) => void;
   hideName?: boolean;
 }) {
   const early = r.early_leave_request?.status === "pending";
@@ -143,6 +146,7 @@ function AttendanceRecCard({
   const yevAdj = r.yevmiye_adjustment_request?.status === "pending";
   const locExit = r.location_exit_request?.status === "pending";
   const yevLine = yevmiyeStatusLine(r);
+  const [editOut, setEditOut] = React.useState(r.check_out || "");
   return (
     <View testID={`att-rec-${idOf(r)}`} style={{ paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border, marginTop: 8 }}>
       {hideName ? null : <Text style={{ fontWeight: "800", color: colors.text }}>{r.employee_name || "Personel"}</Text>}
@@ -151,6 +155,9 @@ function AttendanceRecCard({
         {r.hours != null ? ` · ${r.hours} sa` : ""}
         {r.late_minutes ? ` · ${r.late_minutes} dk geç` : ""}
       </Muted>
+      {r.manager_time_edit?.pending_employee ? (
+        <Muted testID={`att-time-edit-${idOf(r)}`}>Personel onayı bekleniyor ({r.manager_time_edit.prev_check_out || r.manager_time_edit.prev_check_in || "—"} → {r.manager_time_edit.check_out || r.manager_time_edit.check_in || "—"})</Muted>
+      ) : null}
       {early ? <Muted testID={`att-early-${idOf(r)}`}>Erken çıkış talebi {r.early_leave_request?.planned_time || ""} {r.early_leave_request?.reason ? `· ${r.early_leave_request.reason}` : ""}</Muted> : null}
       {intra ? <Muted testID={`att-intra-${idOf(r)}`}>Gün içi izin {r.intraday_leave_request?.out_time || ""}–{r.intraday_leave_request?.return_time || ""} {r.intraday_leave_request?.reason ? `· ${r.intraday_leave_request.reason}` : ""}</Muted> : null}
       {yevLine ? <Muted testID={`att-yevmiye-adj-${idOf(r)}`}>{yevLine}</Muted> : null}
@@ -191,6 +198,17 @@ function AttendanceRecCard({
             </>
           ) : null}
         </Row>
+      ) : null}
+      {canEdit && onCorrectOut && r.status === "present" ? (
+        <View style={{ gap: 6, marginTop: 6 }} testID={`att-correct-${idOf(r)}`}>
+          <TimeField label="Çıkış saati düzelt" testID={`att-correct-out-${idOf(r)}`} value={editOut} onChangeText={setEditOut} optional />
+          <PrimaryButton
+            title="Saati kaydet (personel onayı gerekir)"
+            color={colors.indigo}
+            testID={`att-correct-save-${idOf(r)}`}
+            onPress={() => onCorrectOut(r, editOut)}
+          />
+        </View>
       ) : null}
     </View>
   );
@@ -1383,7 +1401,7 @@ export function PersonnelScreen() {
                       <Ionicons name={workplaceDetailsToggleIcon(open)} size={16} color={colors.indigo} />
                     </Pressable>
                     {open ? recs.map((r) => (
-                      <AttendanceRecCard key={idOf(r)} r={r} canEdit={canEdit} onDecide={decideRequest} hideName />
+                      <AttendanceRecCard key={idOf(r)} r={r} canEdit={canEdit} onDecide={decideRequest} hideName onCorrectOut={(rec, out) => attAct(rec.employee_id || "", { date: rec.date, check_out: out })} />
                     )) : null}
                   </View>
                 );
@@ -1407,7 +1425,7 @@ export function PersonnelScreen() {
                     <Ionicons name={workplaceDetailsToggleIcon(open)} size={16} color={colors.indigo} />
                   </Pressable>
                   {open ? g.records.map((r) => (
-                    <AttendanceRecCard key={idOf(r)} r={r} canEdit={canEdit} onDecide={decideRequest} hideName />
+                    <AttendanceRecCard key={idOf(r)} r={r} canEdit={canEdit} onDecide={decideRequest} hideName onCorrectOut={(rec, out) => attAct(rec.employee_id || "", { date: rec.date, check_out: out })} />
                   )) : null}
                 </Card>
               );
@@ -1762,7 +1780,7 @@ export function PersonnelScreen() {
           mode={locField}
           onChange={(key, value) => setLocField((prev) => patchLocMode(prev, key, value))}
         />
-        <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından. Çıkış yalnız Mesaim butonuyla, her yerden; konum açıksa çıkışta konum alınır, otomatik giriş-çıkış basılmaz. Dış görevde konum dışına çıkınca tolerans kadar saat sonra yöneticiye haber gider — Haberim var / Kesinti olmasın / Kesinti olsun / Reddet.</Muted>
+        <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından; konumla otomatik de yazılır. Çıkış butonu her zaman açık, konumla da çıkış yazılabilir. Yönetici çıkış saatini düzeltirse personel onayı gerekir. Dış görevde konum dışına çıkınca tolerans kadar saat sonra yöneticiye haber gider — Haberim var / Kesinti olmasın / Kesinti olsun / Reddet.</Muted>
         <PrimaryButton title="Kaydet" testID="emp-location-save" color="#047857" loading={busy} onPress={saveLocSettings} />
       </B2BSheet>
 

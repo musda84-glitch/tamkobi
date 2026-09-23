@@ -1,7 +1,7 @@
 export type SelfAttendanceAction = "check_in" | "check_out";
 export type SelfAttendanceGeoMode = "required" | "attach" | "none";
 
-/** Giriş: iş yeri/görev yakınında konum zorunlu. Çıkış: yalnız buton, her yerden; konum açıksa GPS eklenir, mesafe bloklamaz. Otomatik giriş-çıkış yok. */
+/** Giriş: iş yeri/görev yakınında konum zorunlu. Çıkış: buton her yerden; konum açıksa GPS eklenir. Konum ping otomatik basabilir. */
 export function selfAttendanceGeoMode(
   action: SelfAttendanceAction,
   opts?: { hasTarget?: boolean; trackingEnabled?: boolean; requireGeo?: boolean },
@@ -56,19 +56,38 @@ export function selfCheckoutUnlocked(opts: {
   earlyApproved?: boolean;
   offDay?: boolean;
 }): boolean {
-  if (!opts.checkedIn || opts.checkedOut) return false;
-  if (opts.earlyApproved || opts.offDay) return true;
-  const now = hmToMinutes(opts.nowHm);
-  const end = hmToMinutes(opts.expectedEnd || opts.scheduleEnd);
-  const start = hmToMinutes(opts.scheduleStart || opts.checkIn);
-  if (now == null || end == null) return true;
-  return hmReachedEnd(now, end, start);
+  return Boolean(opts.checkedIn && !opts.checkedOut);
 }
 
 export function selfCheckoutLockedHint(opts: { checkedIn?: boolean; earlyPending?: boolean }): string {
-  if (!opts.checkedIn) return "Çıkış için önce giriş yapın.";
-  if (opts.earlyPending) return "Erken çıkış talebi onaylanınca çıkış butonu açılır; saat ve konum o anda kaydedilir.";
-  return "Mesai bitmeden çıkış için erken çıkış onayı gerekir. Onaydan sonra çıkış butonu açılır; saat ve konum basınca kaydedilir.";
+  if (!opts.checkedIn) return "Çıkış için önce giriş yapın. Konum açıksa iş yerine yaklaşınca giriş otomatik yazılır.";
+  return "Çıkış butonu açık. Konumla da çıkış yazılabilir; yönetici saati düzeltirse personel onayı gerekir.";
+}
+
+export type AttendanceHabit = {
+  typical_in?: string | null;
+  typical_out?: string | null;
+  sample_days?: number;
+};
+
+export function habitLabel(habit?: AttendanceHabit | null, fallback?: string | null): string {
+  if (fallback) return fallback;
+  if (!habit?.typical_in) return "";
+  if (habit.typical_out) return `Alışkanlık: genelde ${habit.typical_in} giriş · ${habit.typical_out} çıkış (${habit.sample_days || 0} gün)`;
+  return `Alışkanlık: genelde ${habit.typical_in} giriş (${habit.sample_days || 0} gün)`;
+}
+
+export function managerTimeEditHint(edit?: {
+  prev_check_in?: string | null;
+  prev_check_out?: string | null;
+  check_in?: string | null;
+  check_out?: string | null;
+  pending_employee?: boolean;
+} | null): string {
+  if (!edit?.pending_employee) return "";
+  const prev = edit.prev_check_out || edit.prev_check_in || "—";
+  const next = edit.check_out || edit.check_in || "—";
+  return `Yönetici saati düzeltti (${prev} → ${next}). Onaylamanız gerekir.`;
 }
 
 /** Bekleyen erken çıkış veya mesai sonu için /me yenile — onay gelince çıkış açılır. */
