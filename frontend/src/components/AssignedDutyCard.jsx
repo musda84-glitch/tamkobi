@@ -92,7 +92,7 @@ export function AssignedDutyCard({
   };
 
   return (
-    <div className={`rounded-2xl border p-4 space-y-3 ${duty?.done ? "border-emerald-200 opacity-70" : "border-indigo-200 bg-white"}`} data-testid={tid}>
+    <div className={`rounded-2xl border p-4 space-y-3 ${duty?.done ? "border-emerald-400 bg-emerald-50" : "border-indigo-200 bg-white"}`} data-testid={tid}>
       <div className="flex justify-between items-start gap-2">
         <div className="min-w-0">
           <div className={`font-bold text-slate-900 leading-tight ${duty?.done ? "line-through" : ""}`}>{duty?.title || "Görev"}</div>
@@ -175,8 +175,8 @@ export function AssignedDutyCard({
             </a>
           )}
           {duty?.done ? (
-            <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold" data-testid={`${tid}-approved`}>
-              <CheckCircle2 className="w-3.5 h-3.5" /> {dutyCompleteTitle({ done: true })}
+            <span className="inline-flex items-center justify-center gap-1.5 w-full py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold" data-testid={`${tid}-approved`}>
+              <CheckCircle2 className="w-4 h-4" /> {dutyCompleteTitle({ done: true })}
             </span>
           ) : onApprove ? (
             <button

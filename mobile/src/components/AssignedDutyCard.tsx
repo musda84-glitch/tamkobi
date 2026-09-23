@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import React, { useState } from "react";
@@ -134,7 +135,7 @@ export function AssignedDutyCard({
   };
 
   return (
-    <Card testID={tid} style={duty.done ? { opacity: 0.75 } : undefined}>
+    <Card testID={tid} style={duty.done ? { borderColor: colors.primary, backgroundColor: colors.emerald50 } : undefined}>
       <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={{ fontWeight: "800", color: colors.text }} numberOfLines={2}>{duty.title || "Görev"}</Text>
@@ -236,8 +237,21 @@ export function AssignedDutyCard({
             </View>
           ) : null}
           {duty.done ? (
-            <View style={{ flex: 1 }}>
-              <PrimaryButton title={dutyCompleteTitle({ done: true })} disabled color={colors.primary} testID={`${tid}-approved`} />
+            <View
+              testID={`${tid}-approved`}
+              style={{
+                flex: 1,
+                backgroundColor: colors.primary,
+                borderRadius: 12,
+                paddingVertical: 12,
+                alignItems: "center",
+                justifyContent: "center",
+                flexDirection: "row",
+                gap: 6,
+              }}
+            >
+              <Ionicons name="checkmark-circle" size={18} color="#fff" />
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>{dutyCompleteTitle({ done: true })}</Text>
             </View>
           ) : onApprove ? (
             <View style={{ flex: 1 }}>
