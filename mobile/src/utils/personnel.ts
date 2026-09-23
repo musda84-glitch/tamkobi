@@ -192,6 +192,23 @@ export function openEmployeeTasks(card?: EmployeeCard | null) {
   return (card?.tasks || []).filter((t) => !t.done);
 }
 
+export function workplaceDetailsToggleLabel(open: boolean): string {
+  return open ? "Gizle" : "Aç";
+}
+
+export function workplaceDetailsSummary(opts: {
+  hasFieldDuty?: boolean;
+  fieldLabel?: string;
+  taskCount?: number;
+}): string {
+  const parts: string[] = [];
+  if (opts.hasFieldDuty && String(opts.fieldLabel || "").trim()) parts.push(String(opts.fieldLabel).trim());
+  const n = Number(opts.taskCount) || 0;
+  if (n === 1) parts.push("1 açık görev");
+  else if (n > 1) parts.push(`${n} açık görev`);
+  return parts.join(" · ") || "Ayrıntı yok";
+}
+
 export type EmployeePayMove = {
   id: string;
   kind: "payroll" | "bonus";
@@ -340,6 +357,63 @@ export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] 
     });
   }
   return rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+export type PayMovesPeriod = "30d" | "month" | "all";
+
+export function payMovesPeriodLabel(period: PayMovesPeriod): string {
+  if (period === "month") return "Bu ay";
+  if (period === "all") return "Tümü";
+  return "Son 30 gün";
+}
+
+function payMoveInstant(raw?: string | null): number | null {
+  const s = String(raw || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const t = Date.parse(`${s.slice(0, 10)}T00:00:00`);
+    return Number.isFinite(t) ? t : null;
+  }
+  if (/^\d{4}-\d{2}$/.test(s)) {
+    const t = Date.parse(`${s}-01T00:00:00`);
+    return Number.isFinite(t) ? t : null;
+  }
+  return null;
+}
+
+export function payMoveInPeriod(
+  row: Pick<EmployeePayMove, "date">,
+  period: PayMovesPeriod,
+  now = new Date(),
+  month = "",
+): boolean {
+  if (period === "all") return true;
+  const ts = payMoveInstant(row.date);
+  if (ts == null) return period === "month" && String(row.date || "").startsWith(String(month || "").slice(0, 7));
+  if (period === "month") {
+    const ym = String(month || now.toISOString().slice(0, 7));
+    return new Date(ts).toISOString().slice(0, 7) === ym || String(row.date || "").startsWith(ym);
+  }
+  const cutoff = new Date(now);
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - 30);
+  return ts >= cutoff.getTime();
+}
+
+export function filterPayMoves(
+  rows: EmployeePayMove[] | null | undefined,
+  period: PayMovesPeriod,
+  now = new Date(),
+  month = "",
+): EmployeePayMove[] {
+  return (rows || []).filter((row) => payMoveInPeriod(row, period, now, month));
+}
+
+export function employeeCardChrome(emp?: Pick<Employee, "pay_type" | "daily_wage"> | null): {
+  backgroundColor: string;
+  borderColor: string;
+} {
+  if (isDailyWage(emp)) return { backgroundColor: "#FFFBEB", borderColor: "#F59E0B" };
+  return { backgroundColor: "#F0FDF4", borderColor: "#059669" };
 }
 
 export type EmployeeDraft = {
