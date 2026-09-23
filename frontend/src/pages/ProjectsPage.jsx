@@ -632,9 +632,15 @@ export default function ProjectsPage({ section } = {}) {
                 if (!tasks.length) return null;
                 return (
                   <div className="flex flex-wrap gap-1.5 text-[10px]" data-testid={`project-summary-${p.project_number}`}>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold border border-indigo-100">
+                    <button
+                      type="button"
+                      onClick={() => setTeamProject(p)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold border border-indigo-100 hover:bg-indigo-100"
+                      data-testid={`project-tasks-${p.id || p.project_number}`}
+                      title="Görev ve atamaları aç"
+                    >
                       <Users className="w-3 h-3" /> {done}/{tasks.length} görev{assigned.length ? ` · ${assigned.length} atanmış` : ""}
-                    </span>
+                    </button>
                   </div>
                 );
               })()}

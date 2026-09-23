@@ -213,12 +213,12 @@ export function ProjectCard({
       {taskBits || trackLabel || onCollect ? (
         <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
           {taskBits ? (
-            <Pressable onPress={() => go("ProjectDetail", { id })} testID={`project-tasks-${id}`} style={{ backgroundColor: colors.indigo50, borderRadius: 8, borderWidth: 1, borderColor: "#C7D2FE", paddingHorizontal: 8, paddingVertical: 4 }}>
+            <Pressable onPress={onTeam} testID={`project-tasks-${id}`} style={{ backgroundColor: colors.indigo50, borderRadius: 8, borderWidth: 1, borderColor: "#C7D2FE", paddingHorizontal: 8, paddingVertical: 4 }}>
               <Text style={{ fontWeight: "700", color: "#3730A3", fontSize: 11 }}>{taskBits.label}</Text>
             </Pressable>
           ) : null}
           {trackLabel ? (
-            <Pressable onPress={() => go("ProjectDetail", { id })} testID={`project-track-badge-${id}`} style={{ backgroundColor: "#F0F9FF", borderRadius: 8, borderWidth: 1, borderColor: "#BAE6FD", paddingHorizontal: 8, paddingVertical: 4 }}>
+            <Pressable onPress={onTrack} testID={`project-track-badge-${id}`} style={{ backgroundColor: "#F0F9FF", borderRadius: 8, borderWidth: 1, borderColor: "#BAE6FD", paddingHorizontal: 8, paddingVertical: 4 }}>
               <Text style={{ fontWeight: "700", color: "#0369A1", fontSize: 11 }}>{trackLabel}</Text>
             </Pressable>
           ) : null}
