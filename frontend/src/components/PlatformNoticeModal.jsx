@@ -1,9 +1,11 @@
-import React from "react";
-import { X } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { CheckCircle2, X } from "lucide-react";
+import { formatCountdown, remainingMs } from "../utils/platformNotices";
 
 /**
  * Bizim Hesap tarzı bilgilendirme pop-up'ı:
  * başlık + metin + "Bir Daha Gösterme" / "Kapat".
+ * Aktif güncellemede tahmini süre sayacı; bitince yeşil tamamlandı durumu.
  */
 export function PlatformNoticeModal({
   notice,
@@ -11,9 +13,21 @@ export function PlatformNoticeModal({
   onDontShowAgain,
   onReload,
 }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!notice?.activeUpdate || !notice?.ends_at) return undefined;
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [notice?.activeUpdate, notice?.ends_at, notice?.id]);
+
   if (!notice) return null;
   const activeUpdate = !!notice.activeUpdate;
+  const updateDone = !!notice.updateDone;
   const dismissible = notice.dismissible !== false && !activeUpdate;
+  const left = activeUpdate ? remainingMs(notice.ends_at, nowMs) : null;
+  const countdown = left != null ? formatCountdown(left) : null;
+  const etaPast = left != null && left <= 0;
 
   return (
     <div
@@ -58,15 +72,42 @@ export function PlatformNoticeModal({
               {notice.support_phone ? <div>Telefon: <span className="font-semibold text-slate-700">{notice.support_phone}</span></div> : null}
             </div>
           )}
+
+          {activeUpdate && countdown && (
+            <div
+              className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-center"
+              data-testid="platform-notice-eta"
+            >
+              <div className="text-[10px] uppercase tracking-wide font-bold text-slate-400">
+                {notice.etaEstimated ? "Tahmini kalan süre" : "Kalan süre"}
+              </div>
+              <div className={`mt-1 font-mono text-2xl font-black tabular-nums ${etaPast ? "text-amber-700" : "text-slate-900"}`} data-testid="platform-notice-eta-value">
+                {countdown}
+              </div>
+              {etaPast ? (
+                <p className="mt-1 text-[11px] text-amber-800">Tahmini süre doldu; sistem hazır olunca otomatik bildirilir.</p>
+              ) : (
+                <p className="mt-1 text-[11px] text-slate-500">İşlem bitince bu pencere güncellenir.</p>
+              )}
+            </div>
+          )}
+
           {activeUpdate && (
             <p className="mt-4 text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-xl px-3 py-2" data-testid="platform-notice-update-hint">
               Güncelleme sürerken hata sayfası yerine bu bilgilendirme gösterilir. İşlem bitince sayfayı yenileyin.
             </p>
           )}
+
+          {updateDone && (
+            <p className="mt-4 text-xs text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-start gap-2" data-testid="platform-notice-done-hint">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
+              <span>Güncelleme tamamlandı. Güncel arayüz için sayfayı yenileyebilirsiniz.</span>
+            </p>
+          )}
         </div>
 
         <div className="px-5 sm:px-6 py-4 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2 bg-slate-50/60">
-          {dismissible && onDontShowAgain && (
+          {dismissible && onDontShowAgain && !updateDone && (
             <button
               type="button"
               onClick={onDontShowAgain}
@@ -82,6 +123,15 @@ export function PlatformNoticeModal({
               onClick={onReload}
               className="px-5 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-xl shadow-sm"
               data-testid="platform-notice-reload"
+            >
+              Sayfayı Yenile
+            </button>
+          ) : updateDone && onReload ? (
+            <button
+              type="button"
+              onClick={onReload}
+              className="px-5 py-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm animate-pulse"
+              data-testid="platform-notice-reload-done"
             >
               Sayfayı Yenile
             </button>
