@@ -363,14 +363,14 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                         {card.workplace.address ? <div className="text-[11px] text-indigo-700">{card.workplace.address}</div> : null}
                       </>
                     ) : null}
-                    {(card.tasks || []).filter((t) => !t.done).length ? (
+                    {(card.tasks || []).some((t) => !t.done || (t.photos || []).length) ? (
                       <div className="space-y-2" data-testid="emp-card-tasks">
                         {pendingDutyPhotoCount(card.tasks) ? (
                           <div className="text-[11px] font-bold text-amber-800" data-testid="emp-card-photo-pending">
                             {pendingDutyPhotoCount(card.tasks)} iş fotoğrafı müşteri onayı bekliyor
                           </div>
                         ) : null}
-                        {(card.tasks || []).filter((t) => !t.done).slice(0, 8).map((t, i) => (
+                        {(card.tasks || []).filter((t) => !t.done || (t.photos || []).length).slice(0, 8).map((t, i) => (
                           <AssignedDutyCard
                             key={t.id || i}
                             duty={t}
