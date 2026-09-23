@@ -86,11 +86,12 @@ def test_kuveyt_sign_post_concatenates_json_without_query():
 
 def test_kuveyt_headers_include_signature_and_language():
     pem = _rsa_pem()
-    conn = {"provider": "kuveytturk", "private_key": pem}
+    conn = {"provider": "kuveytturk", "private_key": pem, "api_key": "gravitee-uuid"}
     headers = bp._kuveyt_headers("tok123", conn, params={"beginDate": "2026-09-01"})
     assert headers["Authorization"] == "Bearer tok123"
     assert headers["LanguageId"] == "1"
     assert headers["Signature"]
+    assert headers["X-Gravitee-Api-Key"] == "gravitee-uuid"
     assert "Content-Type" not in headers
 
 
@@ -107,6 +108,16 @@ def test_has_credentials_kuveyt_client_pair():
     assert not bp.has_credentials({"provider": "kuveytturk"})
     assert bp.has_credentials({"provider": "kuveytturk", "client_id": "a", "client_secret": "b"})
     assert not bp.has_credentials({"provider": "kuveytturk", "client_id": "a", "private_key": "x"})
+
+
+def test_kuveyt_normalize_secret_strips_paste_artifacts():
+    assert bp._kuveyt_normalize_secret('  "abc-uuid"  ') == "abc-uuid"
+    assert bp._kuveyt_normalize_secret("\ufeffsec\u200b") == "sec"
+
+
+def test_kuveyt_scope_candidates_prefer_accounts():
+    assert bp._kuveyt_scope_candidates({})[0] == "accounts"
+    assert bp._kuveyt_scope_candidates({"scope": "payments cards"})[0] == "payments cards"
 
 
 def test_kuveyt_token_posts_client_credentials_to_identity():
@@ -130,9 +141,70 @@ def test_kuveyt_token_posts_client_credentials_to_identity():
     args, kwargs = mock_client.post.await_args
     assert args[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
     assert kwargs["data"]["grant_type"] == "client_credentials"
-    assert kwargs["data"]["client_id"] == "cid"
-    assert kwargs["data"]["client_secret"] == "sec"
-    assert kwargs["data"].get("scope") == "public"
+    # First attempt: HTTP Basic, credentials not in body; default scope=accounts
+    assert "client_id" not in kwargs["data"]
+    assert "client_secret" not in kwargs["data"]
+    assert kwargs["data"].get("scope") == "accounts"
+    assert kwargs["headers"]["Authorization"].startswith("Basic ")
+
+
+def test_kuveyt_token_falls_back_to_body_credentials():
+    conn = {"provider": "kuveytturk", "mode": "live", "client_id": "cid", "client_secret": "sec"}
+    bad = MagicMock()
+    bad.status_code = 401
+    bad.content = b'{"error":"invalid_client"}'
+    bad.text = '{"error":"invalid_client"}'
+    bad.json.return_value = {"error": "invalid_client"}
+
+    good = MagicMock()
+    good.status_code = 200
+    good.content = b'{"access_token":"body-tok"}'
+    good.json.return_value = {"access_token": "body-tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=[bad, good])
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._kuveyt_access_token(conn)
+
+    token = asyncio.run(_run())
+    assert token == "body-tok"
+    assert mock_client.post.await_count == 2
+    second = mock_client.post.await_args_list[1]
+    assert second.args[0] == "https://id.kuveytturk.com.tr/api/connect/token"
+    assert second.kwargs["data"]["client_id"] == "cid"
+    assert second.kwargs["data"]["client_secret"] == "sec"
+    assert "Authorization" not in second.kwargs["headers"]
+
+
+def test_kuveyt_token_invalid_client_message_hints_api_key():
+    conn = {"provider": "kuveytturk", "mode": "live", "client_id": "cid", "client_secret": "wrong"}
+    bad = MagicMock()
+    bad.status_code = 401
+    bad.content = b'{"error":"invalid_client"}'
+    bad.text = "invalid_client:"
+    bad.json.return_value = {"error": "invalid_client"}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=bad)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._kuveyt_access_token(conn)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "invalid_client" in msg
+        assert "Api Anahtarı" in msg or "Client Secret" in msg
+        assert "id.kuveytturk.com.tr" in msg
 
 
 def test_kuveyt_probe_signs_banks_get():

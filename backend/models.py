@@ -434,6 +434,7 @@ class BankConnection(BaseDocument):
     customer_number: Optional[str] = ""
     bank_account_number: Optional[str] = ""
     base_url: Optional[str] = ""
+    scope: Optional[str] = ""
     auto_sync: bool = True
     auto_match: bool = False
     status: str = "disconnected"  # disconnected, connected, simulated, error

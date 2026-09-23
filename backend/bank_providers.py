@@ -26,8 +26,8 @@ PROVIDERS = {
         "identity_live_url": "https://id.kuveytturk.com.tr",
         "token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
-        "fields": ["client_id", "client_secret", "private_key", "customer_number"],
-        "hint": "API Market: Identity Server client_credentials (sandbox idprep / canlı id.kuveytturk.com.tr → /api/connect/token). Her API isteği RSA-SHA256 Signature ister — PKCS8 PEM private key yapıştırın. Sandbox API: apitest.kuveytturk.com.tr/prep",
+        "fields": ["client_id", "client_secret", "api_key", "private_key", "customer_number"],
+        "hint": "API Market: Müşteri Id=Client ID, Client Secret, Api Anahtarı (X-Gravitee-Api-Key). Token: Identity Server client_credentials (idprep/id → /api/connect/token). Her API isteği RSA-SHA256 Signature — portala yüklediğiniz public key’in PKCS8 PEM private key’ini yapıştırın. Scope önerisi: accounts public. Sandbox API: apitest.kuveytturk.com.tr/prep",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -202,8 +202,10 @@ def _kuveyt_token_urls(conn: dict) -> List[str]:
         urls.append(custom)
         if not custom.endswith("/token"):
             urls.append(custom + "/api/connect/token")
+            urls.append(custom + "/connect/token")
     host = _kuveyt_identity_host(conn)
     urls.append(host + "/api/connect/token")
+    urls.append(host + "/connect/token")
     seen = set()
     out = []
     for u in urls:
@@ -291,6 +293,9 @@ def _kuveyt_headers(
         "Accept": "application/json",
         "LanguageId": "1",
     }
+    api_key = _plain_secret(conn, "api_key")
+    if api_key:
+        headers["X-Gravitee-Api-Key"] = api_key
     pem = _kuveyt_private_key_pem(conn)
     if pem:
         if json_body is not None:
@@ -303,57 +308,103 @@ def _kuveyt_headers(
     return headers
 
 
-async def _kuveyt_access_token(conn: dict) -> str:
-    client_id = _plain_secret(conn, "client_id")
-    client_secret = _plain_secret(conn, "client_secret")
-    if not client_id or not client_secret:
-        raise RuntimeError("Kuveyt Türk Client ID / Client Secret gerekli (client_credentials).")
+def _kuveyt_normalize_secret(val: str) -> str:
+    """Paste artifacts: quotes, zero-width, BOM."""
+    s = (val or "").strip().replace("\ufeff", "").replace("\u200b", "")
+    if len(s) >= 2 and ((s[0] == s[-1] == '"') or (s[0] == s[-1] == "'")):
+        s = s[1:-1].strip()
+    return s
 
-    scopes: List[str] = []
-    custom_scope = (conn.get("scope") or "").strip()
-    if custom_scope:
-        scopes.append(custom_scope)
-    for s in ("public", "public accounts", ""):
-        if s not in scopes:
-            scopes.append(s)
+
+def _kuveyt_scope_candidates(conn: dict) -> List[str]:
+    """Portal scopes often include accounts + public; try likely combinations."""
+    out: List[str] = []
+    custom = (conn.get("scope") or "").strip()
+    if custom:
+        out.append(custom)
+    for s in ("accounts", "accounts public", "public", "public accounts", ""):
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def _kuveyt_token_auth_attempts(client_id: str, client_secret: str, scope: str) -> List[Dict[str, Any]]:
+    """IdentityServer: Basic-only or body credentials (try both for invalid_client)."""
+    form_base: Dict[str, str] = {"grant_type": "client_credentials"}
+    if scope:
+        form_base["scope"] = scope
+    return [
+        {
+            "data": dict(form_base),
+            "headers": {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+                "Authorization": _basic_auth_header(client_id, client_secret),
+            },
+            "label": "basic",
+        },
+        {
+            "data": {**form_base, "client_id": client_id, "client_secret": client_secret},
+            "headers": {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+            "label": "body",
+        },
+    ]
+
+
+async def _kuveyt_access_token(conn: dict) -> str:
+    client_id = _kuveyt_normalize_secret(_plain_secret(conn, "client_id"))
+    client_secret = _kuveyt_normalize_secret(_plain_secret(conn, "client_secret"))
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "Kuveyt Türk Client ID (Müşteri Id) ve Client Secret gerekli (client_credentials). "
+            "Api Anahtarı token için değil; API çağrılarına X-Gravitee-Api-Key olarak gider."
+        )
 
     last_err = "Token uç noktası yanıt vermedi."
-    async with httpx.AsyncClient(timeout=20) as client:
+    saw_invalid_client = False
+    async with httpx.AsyncClient(timeout=25) as client:
         for url in _kuveyt_token_urls(conn):
-            for scope in scopes:
-                form = {
-                    "grant_type": "client_credentials",
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                }
-                if scope:
-                    form["scope"] = scope
-                try:
-                    resp = await client.post(
-                        url,
-                        data=form,
-                        headers={
-                            "Content-Type": "application/x-www-form-urlencoded",
-                            "Accept": "application/json",
-                        },
-                    )
-                    if resp.status_code < 400:
-                        data = resp.json() if resp.content else {}
-                        token = (data or {}).get("access_token") or (data or {}).get("accessToken")
-                        if token:
-                            return token
-                        last_err = f"{url} → access_token yok"
-                        continue
-                    last_err = _oauth_error_text(resp, url)
-                    blob = (getattr(resp, "text", None) or "").lower()
-                    if resp.status_code in (400, 401) and "scope" in blob:
-                        continue
-                except Exception as e:
-                    last_err = f"{url} → {_err_text(e)}"
+            for scope in _kuveyt_scope_candidates(conn):
+                for attempt in _kuveyt_token_auth_attempts(client_id, client_secret, scope):
+                    try:
+                        resp = await client.post(url, data=attempt["data"], headers=attempt["headers"])
+                        if resp.status_code < 400:
+                            data = resp.json() if resp.content else {}
+                            token = (data or {}).get("access_token") or (data or {}).get("accessToken")
+                            if token:
+                                return token
+                            last_err = f"{url} [{attempt['label']}] → access_token yok"
+                            continue
+                        last_err = _oauth_error_text(resp, url) + f" [{attempt['label']}]"
+                        blob = (getattr(resp, "text", None) or "").lower()
+                        if "invalid_client" in blob:
+                            saw_invalid_client = True
+                            # Try next auth style (Basic → body); scopes won't fix bad client.
+                            continue
+                        if resp.status_code in (400, 401) and "scope" in blob:
+                            continue
+                    except Exception as e:
+                        last_err = f"{url} [{attempt['label']}] → {_err_text(e)}"
+                # Both auth styles exhausted with invalid_client → try next Identity URL.
+                if saw_invalid_client and "invalid_client" in last_err.lower():
+                    break
+
+    hint = ""
+    if saw_invalid_client:
+        hint = (
+            " invalid_client: Müşteri Id / Client Secret hatalı veya uygulama bu ortamda "
+            "client_credentials grant’ına kapalı. Portalden Client Secret’i yeniden kopyalayın; "
+            "Api Anahtarı’nı Client Secret yerine yazmayın; canlı kimlik için mod=LIVE, "
+            "test için Sandbox seçin. "
+        )
     raise RuntimeError(
-        "Kuveyt Türk token alınamadı (Identity Server client_credentials). "
+        "Kuveyt Türk token alınamadı (Identity Server client_credentials)."
+        f"{hint}"
         "Client ID/Secret ve ortamı kontrol edin "
-        f"(sandbox: idprep.kuveytturk.com.tr / canlı: id.kuveytturk.com.tr). ({last_err[:180]})"
+        f"(sandbox: idprep.kuveytturk.com.tr / canlı: id.kuveytturk.com.tr). ({last_err[:200]})"
     )
 
 

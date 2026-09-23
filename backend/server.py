@@ -7180,7 +7180,7 @@ async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
     allowed = {k: v for k, v in updated.items() if k in {
         "client_id", "client_secret", "access_token", "refresh_token", "token_url",
         "api_key", "private_key", "customer_number", "bank_account_number", "base_url", "mode",
-        "auto_sync", "auto_match", "linked_account_id", "provider",
+        "auto_sync", "auto_match", "linked_account_id", "provider", "scope",
     }}
     allowed = bank_providers.drop_masked_secrets(allowed)
     if "provider" in allowed and allowed["provider"] not in bank_providers.PROVIDERS:
