@@ -40,41 +40,8 @@ CATEGORIES = {
     "/communication": "İletişim", "/support": "İletişim",
     "/ai-advisor": "Yapay Zeka",
 }
-DESCRIPTIONS = {
-    "/invoices": "Satış/alış faturaları, e-Fatura, e-Arşiv",
-    "/edoc-inbox": "GİB gelen e-Fatura / e-İrsaliye kutusu, onay ve aktarım",
-    "/dis-ticaret": "İthalat/ihracat dosyası, GTIP, rejim, DAB, ticari fatura",
-    "/dispatches": "e-İrsaliye oluşturma ve takip",
-    "/contacts": "Müşteri/tedarikçi kartları, ekstre ve bakiye",
-    "/b2b-yonetim": "Bayi B2B portalı, fiyat listesi ve sipariş onayları",
-    "/installments": "Taksitli satış ve ödeme planları",
-    "/banking": "Banka, kasa, POS, virman, canlı banka eşleme",
-    "/expenses": "Masraf ve bütçe yönetimi",
-    "/loans": "Kredi ve kredi kartı takibi",
-    "/cheques": "Alınan/verilen çek ve senet girişi, tahsil, ciro, karşılıksız",
-    "/reports": "Satış, alış, stok, nakit akışı, KDV, kârlılık raporları",
-    "/accountant": "Mali müşavir paneli ve beyanname özetleri",
-    "/stock": "Stok kartları, varyant, barkod ve etiket tasarımı",
-    "/purchase-orders": "Tedarikçiye verilen siparişler ve stok yeniden sipariş",
-    "/sayim": "Tablet stok sayımı, barkod tarama ve fark raporu",
-    "/warehouses": "Çoklu depo ve transfer",
-    "/sevk": "Depo sevkiyat kiosk, sipariş toplama",
-    "/production": "Reçete (BOM) ve üretim emirleri",
-    "/atolye": "Tablet atölye ekranı ve iş emirleri",
-    "/quotes": "Satış teklifi, müşteri onayı ve faturaya çevirme",
-    "/projects": "İş / saha projesi, bütçe ve teklif bağlantısı",
-    "/surveys": "Keşif, ölçü ve teklife dönüştürme",
-    "/orders": "Sipariş yönetimi, toplu kargo, fiyat merkezi",
-    "/hizli-satis": "Perakende hızlı satış (POS), tartı ve termal fiş",
-    "/saha": "Tablet saha sipariş ve müşteri ziyareti",
-    "/ecommerce": "Trendyol, ShopPHP ve 60+ pazaryeri entegrasyonu",
-    "/cargo": "Geliver ve kargo firmaları entegrasyonu",
-    "/personnel": "Personel, bordro, vardiya, izin",
-    "/mesai": "Personel puantaj, giriş-çıkış, fazla mesai",
-    "/communication": "SMS, e-posta, WhatsApp Business",
-    "/support": "Destek talepleri, ekler ve yanıtlar",
-    "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım",
-}
+# Paket vitrini açıklamaları — roller matrisi (rbac.MODULE_HELP) ile senkron.
+DESCRIPTIONS = dict(getattr(rbac, "MODULE_HELP", {}) or {})
 
 _STARTER = ["/invoices", "/edoc-inbox", "/dis-ticaret", "/dispatches", "/contacts", "/b2b-yonetim", "/banking", "/expenses", "/stock", "/purchase-orders", "/sayim", "/reports"]
 _STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/hizli-satis", "/saha", "/sevk", "/communication", "/support", "/accountant"]
