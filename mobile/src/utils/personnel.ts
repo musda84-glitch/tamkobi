@@ -192,6 +192,23 @@ export function openEmployeeTasks(card?: EmployeeCard | null) {
   return (card?.tasks || []).filter((t) => !t.done);
 }
 
+export function workplaceDetailsToggleLabel(open: boolean): string {
+  return open ? "Gizle" : "Aç";
+}
+
+export function workplaceDetailsSummary(opts: {
+  hasFieldDuty?: boolean;
+  fieldLabel?: string;
+  taskCount?: number;
+}): string {
+  const parts: string[] = [];
+  if (opts.hasFieldDuty && String(opts.fieldLabel || "").trim()) parts.push(String(opts.fieldLabel).trim());
+  const n = Number(opts.taskCount) || 0;
+  if (n === 1) parts.push("1 açık görev");
+  else if (n > 1) parts.push(`${n} açık görev`);
+  return parts.join(" · ") || "Ayrıntı yok";
+}
+
 export type EmployeePayMove = {
   id: string;
   kind: "payroll" | "bonus";

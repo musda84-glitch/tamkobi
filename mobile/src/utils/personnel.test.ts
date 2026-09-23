@@ -64,6 +64,8 @@ import {
   pendingRequestDecisionMessage,
   requestKindLabel,
   requestsForEmployee,
+  workplaceDetailsSummary,
+  workplaceDetailsToggleLabel,
   companyBonusPayload,
   bonusesPeriodTotal,
 } from "./personnel";
@@ -134,6 +136,10 @@ describe("employee draft", () => {
     expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);
     expect(companyBonusPayload("e1", "second_salary", "2000", "2026-09", "", "not").type).toBe("second_salary");
     expect(bonusesPeriodTotal([{ period: "2026-09", amount: 100 }, { period: "2026-08", amount: 50 }], "2026-09")).toBe(100);
+    expect(workplaceDetailsToggleLabel(false)).toBe("Aç");
+    expect(workplaceDetailsToggleLabel(true)).toBe("Gizle");
+    expect(workplaceDetailsSummary({ hasFieldDuty: true, fieldLabel: "aa", taskCount: 4 })).toBe("aa · 4 açık görev");
+    expect(workplaceDetailsSummary({ taskCount: 1 })).toBe("1 açık görev");
   });
 });
 

@@ -58,6 +58,8 @@ import {
   hasEmployeeDetails,
   openEmployeeTasks,
   remainingLeaveDays,
+  workplaceDetailsSummary,
+  workplaceDetailsToggleLabel,
   pendingRequestDecision,
   pendingRequestDecisionMessage,
   requestKindLabel,
@@ -113,6 +115,7 @@ export function PersonnelScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [workplaceOpen, setWorkplaceOpen] = useState<Record<string, boolean>>({});
   const [balances, setBalances] = useState<Record<string, EmployeeBalance>>({});
   const [payItem, setPayItem] = useState<Payroll | null>(null);
   const [payAccount, setPayAccount] = useState("");
@@ -1070,20 +1073,39 @@ export function PersonnelScreen() {
                     testID={`emp-card-workplace-${eid}`}
                     style={{ padding: 10, borderRadius: 12, backgroundColor: "#EEF2FF", borderWidth: 1, borderColor: "#C7D2FE", gap: 2 }}
                   >
-                    <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 12 }}>Görev / çalıştığı yer</Text>
-                    {emp.workplace?.kind === "task" ? (
+                    <Pressable
+                      testID={`emp-card-workplace-toggle-${eid}`}
+                      onPress={() => setWorkplaceOpen((cur) => ({ ...cur, [eid]: !cur[eid] }))}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+                    >
+                      <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 12, flex: 1 }}>Görev / çalıştığı yer</Text>
+                      <Text style={{ fontWeight: "800", color: "#4338CA", fontSize: 12 }}>{workplaceDetailsToggleLabel(!!workplaceOpen[eid])}</Text>
+                    </Pressable>
+                    {workplaceOpen[eid] ? (
                       <>
-                        <Text style={{ fontWeight: "700", color: "#312E81", fontSize: 13 }}>Dış görev · {workplaceShort(emp.workplace)}</Text>
-                        <Muted>{workplaceHint(emp.workplace, true)}</Muted>
+                        {emp.workplace?.kind === "task" ? (
+                          <>
+                            <Text style={{ fontWeight: "700", color: "#312E81", fontSize: 13 }}>Dış görev · {workplaceShort(emp.workplace)}</Text>
+                            <Muted>{workplaceHint(emp.workplace, true)}</Muted>
+                          </>
+                        ) : null}
+                        {openEmployeeTasks(cards[eid]).slice(0, 6).map((t) => (
+                          <Muted key={t.id || t.title} testID={`emp-card-task-${eid}-${t.id || t.title}`}>
+                            {t.title || "Görev"}
+                            {t.project_number || t.project_name ? ` · ${t.project_number || t.project_name}` : ""}
+                            {t.kind === "office" ? ` · iç görev${t.park_name ? ` · ${t.park_name}` : ""}` : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${t.due_date}` : ""}
+                          </Muted>
+                        ))}
                       </>
-                    ) : null}
-                    {openEmployeeTasks(cards[eid]).slice(0, 6).map((t) => (
-                      <Muted key={t.id || t.title} testID={`emp-card-task-${eid}-${t.id || t.title}`}>
-                        {t.title || "Görev"}
-                        {t.project_number || t.project_name ? ` · ${t.project_number || t.project_name}` : ""}
-                        {t.kind === "office" ? ` · iç görev${t.park_name ? ` · ${t.park_name}` : ""}` : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${t.due_date}` : ""}
+                    ) : (
+                      <Muted testID={`emp-card-workplace-summary-${eid}`}>
+                        {workplaceDetailsSummary({
+                          hasFieldDuty: emp.workplace?.kind === "task",
+                          fieldLabel: emp.workplace?.kind === "task" ? workplaceShort(emp.workplace) : "",
+                          taskCount: openEmployeeTasks(cards[eid]).length,
+                        })}
                       </Muted>
-                    ))}
+                    )}
                   </View>
                 ) : null}
                 {requestsForEmployee(pendingReqs, eid).length ? (
