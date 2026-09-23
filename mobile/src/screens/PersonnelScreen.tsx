@@ -1156,7 +1156,7 @@ export function PersonnelScreen() {
                     <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
                   )) : null}
                   {canEdit ? (
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, width: "100%" }} testID={`emp-card-work-actions-${eid}`}>
+                    <>
                       {EMPLOYEE_CARD_WORK_ACTIONS.map((action) => (
                         <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
                       ))}
@@ -1173,7 +1173,6 @@ export function PersonnelScreen() {
                         icon={employeeCardActionIcon("location")}
                         color="#047857"
                         bg="#ECFDF5"
-                        wide
                         testID={`emp-card-location-btn-${eid}`}
                         onPress={() => openLocSettings(emp)}
                       />
@@ -1185,7 +1184,7 @@ export function PersonnelScreen() {
                         testID={`emp-card-expense-btn-${eid}`}
                         onPress={() => { setExpenseEmp(emp); setExpenseAmount(""); setExpenseNote(""); }}
                       />
-                    </View>
+                    </>
                   ) : null}
                 </View>
               </Card>
@@ -2285,7 +2284,6 @@ function PayChip({
   bg,
   onPress,
   testID,
-  wide,
 }: {
   title: string;
   icon?: string;
@@ -2293,32 +2291,31 @@ function PayChip({
   bg: string;
   onPress: () => void;
   testID: string;
-  wide?: boolean;
 }) {
   return (
     <Pressable
       testID={testID}
       onPress={onPress}
       style={{
-        flexGrow: 1,
-        flexBasis: wide ? "47%" : "22%",
-        minWidth: wide ? "47%" : 68,
-        maxWidth: wide ? "48.5%" : "24.5%",
-        minHeight: wide ? 40 : 52,
-        paddingVertical: wide ? 8 : 4,
-        paddingHorizontal: wide ? 8 : 4,
+        flexGrow: 0,
+        flexShrink: 0,
+        flexBasis: "31.5%",
+        width: "31.5%",
+        maxWidth: "32%",
+        minHeight: 56,
+        paddingVertical: 6,
+        paddingHorizontal: 4,
         borderRadius: 10,
         backgroundColor: bg,
         borderWidth: 1,
         borderColor: colors.border,
-        flexDirection: wide ? "row" : "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: wide ? 6 : 2,
+        gap: 2,
       }}
     >
       {icon ? <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={16} color={color} /> : null}
-      <Text style={{ fontWeight: "700", fontSize: wide ? 11 : 10, color, textAlign: "center", flexShrink: 1 }} numberOfLines={wide ? 1 : 2}>{title}</Text>
+      <Text style={{ fontWeight: "700", fontSize: 10, color, textAlign: "center" }} numberOfLines={2}>{title}</Text>
     </Pressable>
   );
 }
