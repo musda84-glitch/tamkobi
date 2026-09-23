@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useState } from "react";
-import { Modal, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
 import { formatHm, hourOptions, minuteOptions, parseHm } from "../utils/clock";
@@ -36,35 +36,6 @@ export function TimeField({ label, value, onChangeText, testID, optional }: Time
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 }}>{trUpper(label)}</Text>
-      {Platform.OS === "web" ? (
-        <View style={[inputStyle, { flexDirection: "row", alignItems: "center", paddingVertical: 0, paddingHorizontal: 8 }]}>
-          <input
-            type="time"
-            step={60}
-            data-testid={testID}
-            value={value || ""}
-            onChange={(e) => onChangeText(e.currentTarget.value)}
-            onFocus={(e) => {
-              const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-              try { el.showPicker?.(); } catch { /* eski tarayıcı */ }
-            }}
-            onClick={(e) => {
-              const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
-              try { el.showPicker?.(); } catch { /* eski tarayıcı */ }
-            }}
-            style={{
-              flex: 1,
-              border: "none",
-              outline: "none",
-              minHeight: 44,
-              fontSize: 15,
-              color: colors.text,
-              backgroundColor: "transparent",
-            }}
-          />
-          <Ionicons name="time-outline" size={18} color={colors.muted} />
-        </View>
-      ) : (
       <Pressable
         testID={testID}
         onPress={openPicker}
@@ -77,7 +48,6 @@ export function TimeField({ label, value, onChangeText, testID, optional }: Time
         </Text>
         <Ionicons name="time-outline" size={18} color={colors.muted} />
       </Pressable>
-      )}
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable onPress={() => setOpen(false)} style={{ flex: 1, backgroundColor: "rgba(15,23,42,0.35)", justifyContent: "center", padding: 16 }}>
           <Pressable
