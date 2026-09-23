@@ -6,7 +6,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { statusTr } from "../utils/labels";
 import { workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
@@ -80,6 +80,17 @@ export function AttendanceScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!shouldWatchCheckoutUnlock({
+      earlyPending: data?.today?.early_leave_request?.status === "pending",
+      checkedIn: Boolean(data?.today?.check_in),
+      checkedOut: Boolean(data?.today?.check_out),
+      checkoutUnlocked: data?.checkout_unlocked,
+    })) return undefined;
+    const t = setInterval(() => { load(); }, CHECKOUT_UNLOCK_WATCH_MS);
+    return () => clearInterval(t);
+  }, [client, load, data?.today?.check_in, data?.today?.check_out, data?.today?.early_leave_request?.status, data?.checkout_unlocked]);
 
   useEffect(() => {
     const tracking = data?.active_location_tracking || data?.location_tracking;

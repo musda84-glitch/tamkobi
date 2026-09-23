@@ -19,6 +19,14 @@ export function selfCheckoutUnlocked({ checkedIn, checkedOut, nowHm, scheduleEnd
   return now >= end;
 }
 
+export const CHECKOUT_UNLOCK_WATCH_MS = 12_000;
+
+export function shouldWatchCheckoutUnlock({ earlyPending, checkedIn, checkedOut, checkoutUnlocked } = {}) {
+  if (checkedOut) return false;
+  if (earlyPending) return true;
+  return Boolean(checkedIn && !checkoutUnlocked);
+}
+
 /** Giriş: iş yeri/görev yakınında konum zorunlu. Çıkış: yalnız buton, her yerden; konum açıksa GPS eklenir. */
 export function selfAttendanceGeoMode(action, opts = {}) {
   if (action === "check_in") {

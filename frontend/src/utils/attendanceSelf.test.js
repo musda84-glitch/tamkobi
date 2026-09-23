@@ -1,4 +1,4 @@
-import { earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked } from "./attendanceSelf";
+import { earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "./attendanceSelf";
 
 describe("selfAttendanceGeoMode", () => {
   test("requires geo only on check-in near a target", () => {
@@ -19,5 +19,8 @@ describe("selfCheckoutUnlocked", () => {
     expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00", earlyApproved: true })).toBe(true);
     expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "18:05", scheduleEnd: "18:00" })).toBe(true);
     expect(earlyLeaveApproved({ early_leave_request: { status: "approved" } })).toBe(true);
+    expect(earlyLeaveApproved({ early_leave_request: { status: "pending" } })).toBe(false);
+    expect(shouldWatchCheckoutUnlock({ earlyPending: true, checkedIn: true })).toBe(true);
+    expect(shouldWatchCheckoutUnlock({ checkedIn: true, checkoutUnlocked: true })).toBe(false);
   });
 });

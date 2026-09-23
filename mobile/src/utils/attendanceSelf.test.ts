@@ -1,4 +1,4 @@
-import { checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -59,6 +59,16 @@ describe("selfCheckoutUnlocked", () => {
     expect(selfCheckoutUnlocked({ checkedIn: false, nowHm: "19:00", scheduleEnd: "18:00" })).toBe(false);
     expect(selfCheckoutUnlocked({ checkedIn: true, checkedOut: true, earlyApproved: true })).toBe(false);
     expect(earlyLeaveApproved({ early_leave_request: { status: "approved" } })).toBe(true);
+    expect(earlyLeaveApproved({ early_leave_request: { status: "pending" } })).toBe(false);
     expect(selfCheckoutLockedHint({ checkedIn: true, earlyPending: true })).toMatch(/onaylanınca/);
+  });
+});
+
+describe("shouldWatchCheckoutUnlock", () => {
+  it("polls while early leave is pending or checkout is still locked", () => {
+    expect(shouldWatchCheckoutUnlock({ earlyPending: true, checkedIn: true })).toBe(true);
+    expect(shouldWatchCheckoutUnlock({ checkedIn: true, checkoutUnlocked: false })).toBe(true);
+    expect(shouldWatchCheckoutUnlock({ checkedIn: true, checkoutUnlocked: true })).toBe(false);
+    expect(shouldWatchCheckoutUnlock({ checkedOut: true, earlyPending: true })).toBe(false);
   });
 });

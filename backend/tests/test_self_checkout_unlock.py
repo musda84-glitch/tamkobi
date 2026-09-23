@@ -16,3 +16,14 @@ def test_self_checkout_opens_at_schedule_end():
     assert self_checkout_unlocked(rec, sched, "18:00") is True
     rec["check_out"] = "18:01"
     assert self_checkout_unlocked(rec, sched, "18:05") is False
+
+
+def test_pending_planned_time_does_not_unlock():
+    rec = {
+        "check_in": "09:00",
+        "date": "2026-09-23",
+        "early_leave_request": {"status": "pending", "planned_time": "16:00"},
+    }
+    sched = {"start": "09:00", "end": "18:00", "work_days": [0, 1, 2, 3, 4]}
+    assert early_leave_is_approved(rec) is False
+    assert self_checkout_unlocked(rec, sched, "16:05") is False

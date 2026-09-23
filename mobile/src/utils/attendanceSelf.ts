@@ -63,6 +63,20 @@ export function selfCheckoutLockedHint(opts: { checkedIn?: boolean; earlyPending
   return "Mesai bitmeden çıkış için erken çıkış onayı gerekir. Onaydan sonra çıkış butonu açılır; saat ve konum basınca kaydedilir.";
 }
 
+/** Bekleyen erken çıkış veya mesai sonu için /me yenile — onay gelince çıkış açılır. */
+export const CHECKOUT_UNLOCK_WATCH_MS = 12_000;
+
+export function shouldWatchCheckoutUnlock(opts: {
+  earlyPending?: boolean;
+  checkedIn?: boolean;
+  checkedOut?: boolean;
+  checkoutUnlocked?: boolean;
+}): boolean {
+  if (opts.checkedOut) return false;
+  if (opts.earlyPending) return true;
+  return Boolean(opts.checkedIn && !opts.checkoutUnlocked);
+}
+
 export function earlyLeavePayload(reason: string, plannedTime?: string) {
   const planned = (plannedTime || "").trim();
   const hm = /^(\d{1,2}):(\d{2})/.exec(planned);
