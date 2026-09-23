@@ -15,6 +15,8 @@ import {
   remainingLeaveDays,
   unpaidPayrollTotal,
   employeeCardActionTitles,
+  employeeCardActionIcon,
+  EMPLOYEE_LOCATION_SETTINGS_TITLE,
   employeeCardActionsByGroup,
   employeePayMoves,
   enrichEmployeeBalance,
@@ -66,9 +68,22 @@ import {
   requestsForEmployee,
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
+  workplaceDetailsToggleIcon,
+  employeeDutyBoard,
+  employeeDutyHeadline,
   employeeCardChrome,
+  employeeCardPayKind,
+  employeeCompGroups,
+  employeeCompRowCaption,
+  requestDecisionActions,
+  initLocMode,
+  patchLocMode,
+  serializeLocMode,
+  locationTrackingPayload,
+  locModeSummary,
   filterPayMoves,
   payMoveInPeriod,
+  payMovesPeriodHint,
   payMovesPeriodLabel,
   companyBonusPayload,
   bonusesPeriodTotal,
@@ -134,7 +149,12 @@ describe("employee draft", () => {
     });
     expect(pendingRequestDecision({ id: "a1", kind: "advance" }, false)?.body).toEqual({ status: "rejected" });
     expect(pendingRequestDecision({ id: "y1", kind: "yevmiye_adjustment" }, true)?.path).toBe("/personnel/attendance/y1/yevmiye-decision");
+    expect(pendingRequestDecision({ id: "x1", kind: "location_exit" }, "ack")).toEqual({
+      path: "/personnel/attendance/x1/location-exit-decision", body: { decision: "ack" },
+    });
     expect(pendingRequestDecision({ id: "d1", kind: "dispute" }, true)).toBeNull();
+    expect(pendingRequestDecisionMessage({ kind: "location_exit" }, "ack")).toBe("Konum dışı çıkış: haberim var.");
+    expect(requestDecisionActions("location_exit").map((a) => a.title)).toEqual(["Haberim var", "Onayla", "Reddet"]);
     expect(pendingRequestDecisionMessage({ kind: "early_leave" }, false)).toBe("Erken çıkış reddedildi.");
     expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, false)).toBe("Yevmiye kart ücretiyle bırakıldı.");
     expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);
@@ -142,15 +162,49 @@ describe("employee draft", () => {
     expect(bonusesPeriodTotal([{ period: "2026-09", amount: 100 }, { period: "2026-08", amount: 50 }], "2026-09")).toBe(100);
     expect(workplaceDetailsToggleLabel(false)).toBe("Aç");
     expect(workplaceDetailsToggleLabel(true)).toBe("Gizle");
+    expect(workplaceDetailsToggleIcon(false)).toBe("chevron-down");
+    expect(workplaceDetailsToggleIcon(true)).toBe("chevron-up");
     expect(workplaceDetailsSummary({ hasFieldDuty: true, fieldLabel: "aa", taskCount: 4 })).toBe("aa · 4 açık görev");
     expect(workplaceDetailsSummary({ taskCount: 1 })).toBe("1 açık görev");
+    const duties = employeeDutyBoard(
+      {
+        workplace: {
+          kind: "task",
+          task_id: "t1",
+          task_title: "Montaj",
+          project_number: "PRJ-2026-0012",
+          project_name: "Villa",
+          duration_days: 3,
+          due_date: "2026-09-26",
+          address: "Kadıköy",
+        },
+      },
+      {
+        tasks: [
+          { id: "t1", title: "Montaj", project_number: "PRJ-2026-0012", project_name: "Villa", duration_days: 3, due_date: "2026-09-26", kind: "field" },
+          { id: "t2", title: "Keşif", project_name: "Ofis", kind: "office", park_name: "Makina" },
+          { id: "t3", title: "Eski", done: true },
+        ],
+      },
+    );
+    expect(duties.headline).toBe("Şu an: Montaj");
+    expect(duties.current?.title).toBe("Montaj");
+    expect(duties.current?.lines).toEqual(["Dış görev", "PRJ-2026-0012 · Villa", "3 gün", "Bitiş 2026-09-26"]);
+    expect(duties.open.map((t) => t.title)).toEqual(["Montaj", "Keşif"]);
+    expect(duties.done).toHaveLength(1);
+    expect(employeeDutyHeadline({ current: null, open: [] })).toBe("Atanmış görev yok");
     expect(payMovesPeriodLabel("30d")).toBe("Son 30 gün");
+    expect(payMovesPeriodHint(8, 24, "30d")).toBe("8 / 24 hareket");
+    expect(payMovesPeriodHint(12, 12, "all")).toBe("12 hareket");
     expect(payMoveInPeriod({ date: "2026-09-20" }, "30d", new Date("2026-09-22T12:00:00"), "2026-09")).toBe(true);
     expect(payMoveInPeriod({ date: "2026-07-01" }, "30d", new Date("2026-09-22T12:00:00"), "2026-09")).toBe(false);
     expect(payMoveInPeriod({ date: "2026-09" }, "month", new Date("2026-09-22"), "2026-09")).toBe(true);
     expect(filterPayMoves([{ id: "1", kind: "bonus", title: "Avans", subtitle: "", amount: 1, date: "2026-07-01" }], "30d", new Date("2026-09-22"), "2026-09")).toHaveLength(0);
-    expect(employeeCardChrome({ pay_type: "daily", daily_wage: 500 }).borderColor).toBe("#F59E0B");
-    expect(employeeCardChrome({ pay_type: "monthly" }).backgroundColor).toBe("#F0FDF4");
+    expect(employeeCardChrome({ pay_type: "daily", daily_wage: 500 }).borderColor).toBe("#D97706");
+    expect(employeeCardChrome({ pay_type: "monthly" }).backgroundColor).toBe("#D1FAE5");
+    expect(employeeCardChrome({ pay_type: "daily", daily_wage: 500 }).borderWidth).toBe(2);
+    expect(employeeCardPayKind({ pay_type: "daily", daily_wage: 500 })).toBe("daily");
+    expect(employeeCardPayKind({ pay_type: "monthly" })).toBe("monthly");
   });
 });
 
@@ -205,6 +259,28 @@ describe("payroll helpers", () => {
     expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500 }, { bonus_pending: 10500 }, { daysPresent: 1 }).find((r) => r.key === "bonus")).toEqual({
       key: "bonus", label: "Yevmiye günü", value: 10500, hint: "7 gün", days: 7,
     });
+    expect(employeeCompGroups(employeeCompRows({ salary: 30000, meal_allowance: 100, transport_allowance: 50 })).map((g) => [g.key, g.title, g.rows.map((r) => r.key)])).toEqual([
+      ["allowance", "Yan hak", ["meal", "yol"]],
+      ["wage", "Maaş", ["salary", "bonus"]],
+      ["sum", "Özet", ["overtime", "total"]],
+    ]);
+    expect(employeeCompGroups(employeeCompRows({ pay_type: "daily", daily_wage: 500 })).find((g) => g.key === "wage")?.title).toBe("Yevmiye");
+    expect(employeeCompRowCaption({ key: "salary", label: "Yevmiye", value: 500 }, true)).toBe("Yevmiye / gün");
+    expect(employeeCompRowCaption({ key: "bonus", label: "Yevmiye günü", value: 8000, days: 16 }, true)).toBe("Yevmiye günü · 16 gün");
+    expect(initLocMode(null).interval_minutes).toBe(15);
+    expect(initLocMode({ enabled: false, continuous: true, interval_minutes: 0 })).toMatchObject({ enabled: false, continuous: true, interval_minutes: 0 });
+    expect(patchLocMode({ enabled: true, continuous: false, interval_minutes: 15 }, "continuous", true).interval_minutes).toBe(0);
+    expect(serializeLocMode({ enabled: true, continuous: true, interval_minutes: 10 })).toEqual({ enabled: true, continuous: true, interval_minutes: 0, exit_tolerance_hours: 0 });
+    expect(locationTrackingPayload(
+      { enabled: false, continuous: false, interval_minutes: 15 },
+      { enabled: true, continuous: true, interval_minutes: 0, exit_tolerance_hours: 2 },
+    )).toEqual({
+      enabled: false, continuous: false, interval_minutes: 15, exit_tolerance_hours: 0,
+      field: { enabled: true, continuous: true, interval_minutes: 0, exit_tolerance_hours: 2 },
+    });
+    expect(locModeSummary({ enabled: false })).toBe("Kapalı");
+    expect(locModeSummary({ enabled: true, continuous: true, interval_minutes: 0 })).toBe("Sürekli");
+    expect(locModeSummary({ enabled: true, interval_minutes: 15 })).toBe("15 dk");
     expect(employeeCompRows({ daily_wage: 1500 }, { bonus_pending: 3000 }).find((r) => r.key === "bonus")).toMatchObject({
       label: "Yevmiye günü", value: 3000, days: 2,
     });
@@ -313,6 +389,11 @@ describe("employee card actions", () => {
   it("shows Görev ata and never Düzenle/Sil", () => {
     const titles = employeeCardActionTitles();
     expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai"]);
+    expect(employeeCardActionIcon("advance")).toBe("cash-outline");
+    expect(employeeCardActionIcon("location")).toBe("location-outline");
+    expect(EMPLOYEE_LOCATION_SETTINGS_TITLE).toBe("Konum Ayarları");
+    expect(employeeCardActionIcon("expense")).toBe("receipt-outline");
+    expect(employeeCardActionIcon("duties")).toBe("checkbox-outline");
     expect(employeeCardActionTitles({ pay_type: "daily" })).toEqual([
       "Avans", "Bakiye öde", "Yemek", "Yol", "Yevmiye günü", "Mesai öde", "Görev ata", "+ Mesai",
     ]);

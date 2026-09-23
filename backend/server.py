@@ -8418,6 +8418,31 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             "link": "/personnel?tab=payroll",
             "meta": {"amount": amt, "period": adv.get("period"), "note": adv.get("note")},
         })
+    loc_exit = await db.attendance.find(
+        {"company_id": company_id, "location_exit_request.status": "pending"}
+    ).sort("date", -1).to_list(200)
+    for att in loc_exit:
+        ler = att.get("location_exit_request") or {}
+        dist = ler.get("distance_m")
+        items.append({
+            "kind": "location_exit",
+            "id": att.get("_id") or att.get("id"),
+            "employee_id": att.get("employee_id"),
+            "employee_name": att.get("employee_name") or "—",
+            "title": "Konum dışı çıkış",
+            "detail": f"{att.get('date') or ''}"
+                      + (f" · {ler.get('place')}" if ler.get("place") else "")
+                      + (f" · {int(dist)} m" if dist is not None else "")
+                      + (f" · tolerans {ler.get('tolerance_hours')} sa" if ler.get("tolerance_hours") else ""),
+            "created_at": ler.get("requested_at") or att.get("updated_at") or att.get("date") or "",
+            "link": "/personnel?tab=attendance",
+            "meta": {
+                "date": att.get("date"),
+                "place": ler.get("place"),
+                "distance_m": dist,
+                "tolerance_hours": ler.get("tolerance_hours"),
+            },
+        })
     items.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
     return {"count": len(items), "items": items}
 

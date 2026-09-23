@@ -16,7 +16,7 @@ _current_user = None
 DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "days": {}, "late_tolerance_minutes": 10, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul",
                     "overtime_method": "legal", "overtime_multiplier": 1.5, "holiday_multiplier": 2.0, "monthly_hours_divisor": 225, "notify_missing_checkin": True, "notify_late_checkin": True}
 # Personel kartı: konum izleme (iş yeri + dış görev ayrı).
-DEFAULT_LOCATION_MODE = {"enabled": True, "continuous": False, "interval_minutes": 15}
+DEFAULT_LOCATION_MODE = {"enabled": True, "continuous": False, "interval_minutes": 15, "exit_tolerance_hours": 0}
 DEFAULT_LOCATION_TRACKING = {**DEFAULT_LOCATION_MODE, "field": dict(DEFAULT_LOCATION_MODE)}
 OVERTIME_METHODS = {"legal": "Yasal (brüt/225 × katsayı)", "fixed": "Sabit saatlik mesai ücreti"}
 DAY_LABELS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
@@ -76,6 +76,14 @@ def _normalize_location_mode(raw: Optional[dict] = None, fallback: Optional[dict
         except (TypeError, ValueError):
             mins = base["interval_minutes"]
         base["interval_minutes"] = max(0, min(120, mins))
+    if raw.get("exit_tolerance_hours") not in (None, ""):
+        try:
+            hours = int(raw["exit_tolerance_hours"])
+        except (TypeError, ValueError):
+            hours = int(base.get("exit_tolerance_hours") or 0)
+        base["exit_tolerance_hours"] = max(0, min(12, hours))
+    elif "exit_tolerance_hours" not in base:
+        base["exit_tolerance_hours"] = 0
     if not base["enabled"]:
         base["continuous"] = False
         return base
@@ -100,7 +108,73 @@ def location_mode_for(lt: Optional[dict], workplace: Optional[dict] = None) -> d
     full = normalize_location_tracking(lt)
     if workplace and workplace.get("kind") == "task":
         return dict(full.get("field") or DEFAULT_LOCATION_MODE)
-    return {"enabled": full["enabled"], "continuous": full["continuous"], "interval_minutes": full["interval_minutes"]}
+    return {
+        "enabled": full["enabled"],
+        "continuous": full["continuous"],
+        "interval_minutes": full["interval_minutes"],
+        "exit_tolerance_hours": full.get("exit_tolerance_hours", 0),
+    }
+
+
+def _parse_iso(raw: Optional[str]) -> Optional[datetime]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def location_exit_should_notify(
+    *,
+    outside: bool,
+    first_left_at: Optional[str] = None,
+    now: Optional[str] = None,
+    tolerance_hours: int = 0,
+    existing: Optional[dict] = None,
+) -> bool:
+    """Tolerans dolduktan sonra yöneticiye konum-dışı talebi açılsın mı?"""
+    if not outside:
+        return False
+    status = str((existing or {}).get("status") or "")
+    if status in ("pending", "acked", "approved", "rejected"):
+        return False
+    hours = max(0, int(tolerance_hours or 0))
+    if hours <= 0:
+        return True
+    start = _parse_iso(first_left_at)
+    end = _parse_iso(now) or datetime.now(timezone.utc)
+    if not start:
+        return False
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    return (end - start).total_seconds() >= hours * 3600
+
+
+def build_location_exit_request(
+    *,
+    distance_m: float,
+    radius_m: float,
+    tolerance_hours: int,
+    workplace: Optional[dict],
+    now: Optional[str] = None,
+) -> dict:
+    stamp = now or _now()
+    return {
+        "status": "pending",
+        "left_at": stamp,
+        "distance_m": int(round(distance_m)),
+        "radius_m": int(round(radius_m)),
+        "tolerance_hours": max(0, int(tolerance_hours or 0)),
+        "place": workplace_place_label(workplace),
+        "requested_at": stamp,
+        "decided_at": None,
+        "decided_by": None,
+        "decision": "",
+    }
 
 
 def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
@@ -951,7 +1025,178 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             msg += f" Geç/erken için yevmiye {adj.get('proposed_amount')} ₺ önerildi — yönetici onayı bekleniyor."
     except Exception:
         yev = None
+    if action == "check_out" and geo and geo.get("latitude") is not None and workplace and workplace.get("kind") == "task":
+        try:
+            opened = await maybe_open_location_exit(
+                emp, rec, workplace, loc or workplace, active_lt,
+                float(geo["latitude"]), float(geo["longitude"]),
+            )
+            if opened:
+                rec["location_exit_request"] = opened
+                msg += " Konum dışı çıkış yöneticiye iletildi."
+        except Exception:
+            pass
     return {"status": "success", "record": rec, "message": msg, "workplace": workplace, "yevmiye": yev}
+
+
+async def maybe_open_location_exit(
+    emp: dict,
+    rec: dict,
+    workplace: Optional[dict],
+    target: Optional[dict],
+    mode: dict,
+    lat: float,
+    lng: float,
+) -> Optional[dict]:
+    """Dış görevde konum dışında tolerans dolunca yönetici talebi aç."""
+    if not rec or not mode.get("enabled"):
+        return None
+    if (workplace or {}).get("kind") != "task":
+        return None
+    loc = geo_target(target or workplace)
+    if not loc:
+        return None
+    att_id = rec.get("id") or rec.get("_id")
+    if not att_id:
+        return None
+    dist = haversine_m(lat, lng, loc["latitude"], loc["longitude"])
+    radius = float(loc.get("radius_m") or 300)
+    outside = dist > radius
+    now = _now()
+    existing = rec.get("location_exit_request")
+    first_left = rec.get("location_left_at") or (existing or {}).get("left_at")
+    if outside and not first_left:
+        first_left = now
+        await _db.attendance.update_one({"_id": att_id}, {"$set": {"location_left_at": first_left, "updated_at": now}})
+        rec["location_left_at"] = first_left
+    if not outside:
+        if rec.get("location_left_at"):
+            await _db.attendance.update_one({"_id": att_id}, {"$unset": {"location_left_at": ""}})
+            rec.pop("location_left_at", None)
+        return None
+    if not location_exit_should_notify(
+        outside=True,
+        first_left_at=first_left,
+        now=now,
+        tolerance_hours=int(mode.get("exit_tolerance_hours") or 0),
+        existing=existing,
+    ):
+        return None
+    req = build_location_exit_request(
+        distance_m=dist,
+        radius_m=radius,
+        tolerance_hours=int(mode.get("exit_tolerance_hours") or 0),
+        workplace=workplace or loc,
+        now=now,
+    )
+    await _db.attendance.update_one({"_id": att_id}, {"$set": {"location_exit_request": req, "updated_at": now}})
+    rec["location_exit_request"] = req
+    await notify_managers(
+        emp["company_id"],
+        "location_exit",
+        f"Konum dışı: {emp.get('full_name')}",
+        f"{emp.get('full_name')} dış görev yerinden {int(dist)} m uzakta (izin {int(radius)} m"
+        + (f", tolerans {int(mode.get('exit_tolerance_hours') or 0)} sa" if mode.get("exit_tolerance_hours") else "")
+        + "). Haberim var / onayla / reddet.",
+        link="/personnel?tab=attendance",
+        dedupe_key=f"locexit:{emp.get('_id')}:{rec.get('date')}",
+    )
+    return req
+
+
+@router.post("/personnel/attendance/self/location")
+async def self_location_ping(req: Dict[str, Any], request: Request):
+    """Sürekli/aralıklı takip: konum ping. Dış görevde tolerans dolunca yönetici talebi açar."""
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    try:
+        lat, lng = float(req["latitude"]), float(req["longitude"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Konum gerekli.")
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    schedule = merge_schedule(company, emp)
+    workplace = await workplace_for_employee(emp, company)
+    loc = geo_target(workplace)
+    lt = normalize_location_tracking(emp.get("location_tracking"))
+    active_lt = location_mode_for(lt, workplace)
+    today = _today(schedule)
+    rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+    if rec:
+        rec["id"] = rec.get("_id") or rec.get("id")
+    opened = None
+    if rec.get("check_in") and not rec.get("check_out") and loc and active_lt.get("enabled"):
+        opened = await maybe_open_location_exit(emp, rec, workplace, loc, active_lt, lat, lng)
+    dist = None
+    outside = False
+    if loc:
+        dist = round(haversine_m(lat, lng, loc["latitude"], loc["longitude"]))
+        outside = dist > float(loc.get("radius_m") or 300)
+    return {
+        "status": "success",
+        "outside": outside,
+        "distance_m": dist,
+        "opened": bool(opened),
+        "request": opened,
+        "workplace": workplace,
+        "active_location_tracking": active_lt,
+    }
+
+
+@router.post("/personnel/attendance/{att_id}/location-exit-decision")
+async def decide_location_exit(att_id: str, req: Dict[str, Any], request: Request):
+    user = await _current_user(request)
+    if user.get("role") not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="Konum dışı çıkışı yanıtlamak için yönetici yetkisi gerekir.")
+    rec = await _db.attendance.find_one({"_id": att_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+    ler = rec.get("location_exit_request") or {}
+    if ler.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen konum dışı çıkış yok.")
+    decision = (req.get("decision") or "").strip().lower()
+    if decision not in ("ack", "approve", "reject", "approved", "rejected", "acknowledged"):
+        raise HTTPException(status_code=400, detail="decision: ack, approve veya reject olmalı.")
+    if decision in ("ack", "acknowledged"):
+        status = "acked"
+        label = "haberim var"
+    elif decision in ("approve", "approved"):
+        status = "approved"
+        label = "onaylandı"
+    else:
+        status = "rejected"
+        label = "reddedildi"
+    ler = {
+        **ler,
+        "status": status,
+        "decision": status,
+        "decided_at": _now(),
+        "decided_by": str(user.get("_id") or user.get("id") or ""),
+        "decision_note": (req.get("note") or "")[:300],
+    }
+    await _db.attendance.update_one(
+        {"_id": att_id},
+        {"$set": {"location_exit_request": ler, "updated_at": _now()}},
+    )
+    import notify as _notify
+    await _notify.insert_notification(_db, {
+        "_id": str(uuid.uuid4()),
+        "company_id": rec["company_id"],
+        "user_id": rec.get("employee_id"),
+        "type": "location_exit_decision",
+        "title": f"Konum dışı çıkış {label}",
+        "message": f"{rec.get('employee_name')} — {label}. {ler.get('decision_note') or ''}".strip(),
+        "link": "/mesai",
+        "is_read": False,
+        "created_at": _now(),
+    })
+    messages = {
+        "acked": "Konum dışı çıkış: haberim var.",
+        "approved": "Konum dışı çıkış onaylandı.",
+        "rejected": "Konum dışı çıkış reddedildi.",
+    }
+    return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id})), "message": messages[status]}
 
 
 async def accrue_task_yevmiye(emp: dict, rec: dict, workplace: Optional[dict], schedule: dict) -> Optional[dict]:

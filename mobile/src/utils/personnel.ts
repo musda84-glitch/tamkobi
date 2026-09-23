@@ -1,7 +1,7 @@
 import { splitPaymentTarget } from "./finance";
 import { idOf } from "./money";
 import { hoursFromTimeRange } from "./overtimeRange";
-import type { Workplace } from "./workplace";
+import { workplaceDays, workplaceHint, type Workplace } from "./workplace";
 
 export type Employee = {
   id?: string;
@@ -31,7 +31,74 @@ export type Employee = {
   address?: string | null;
   emergency_contact?: string | null;
   notes?: string | null;
+  location_tracking?: LocationTracking | null;
 };
+
+export type LocMode = {
+  enabled: boolean;
+  continuous: boolean;
+  interval_minutes: number | "";
+  exit_tolerance_hours?: number | "";
+};
+
+export type LocationTracking = {
+  enabled?: boolean;
+  continuous?: boolean;
+  interval_minutes?: number;
+  exit_tolerance_hours?: number;
+  field?: { enabled?: boolean; continuous?: boolean; interval_minutes?: number; exit_tolerance_hours?: number };
+};
+
+export const DEFAULT_LOC_MODE: LocMode = { enabled: true, continuous: false, interval_minutes: 15, exit_tolerance_hours: 0 };
+
+export function initLocMode(raw?: Partial<LocMode> | LocationTracking | null): LocMode {
+  const n = Number((raw as LocMode | undefined)?.interval_minutes);
+  const continuous = !!(raw as LocMode | undefined)?.continuous || n === 0;
+  const interval = continuous || n === 0 ? 0 : (Number.isFinite(n) && n > 0 ? n : 15);
+  const hoursRaw = Number((raw as LocMode | undefined)?.exit_tolerance_hours);
+  const hours = Number.isFinite(hoursRaw) ? Math.max(0, Math.min(12, hoursRaw)) : 0;
+  return {
+    enabled: (raw as LocMode | undefined)?.enabled !== false,
+    continuous: continuous || interval === 0,
+    interval_minutes: interval,
+    exit_tolerance_hours: hours,
+  };
+}
+
+export function patchLocMode(prev: LocMode, key: keyof LocMode, value: boolean | number | ""): LocMode {
+  const next: LocMode = { ...prev, [key]: value } as LocMode;
+  if (key === "enabled" && !value) next.continuous = false;
+  if (key === "interval_minutes") {
+    const n = value === "" ? "" : Number(value);
+    if (n === 0) next.continuous = true;
+    else if (typeof n === "number" && n > 0) next.continuous = false;
+  }
+  if (key === "continuous") {
+    if (value) next.interval_minutes = 0;
+    else if (Number(prev.interval_minutes) === 0) next.interval_minutes = 15;
+  }
+  return next;
+}
+
+export function serializeLocMode(mode: LocMode): { enabled: boolean; continuous: boolean; interval_minutes: number; exit_tolerance_hours: number } {
+  const rawInterval = mode.interval_minutes === "" ? 15 : Number(mode.interval_minutes);
+  const interval = Math.max(0, Math.min(120, Number.isFinite(rawInterval) ? rawInterval : 15));
+  const continuous = !!mode.enabled && (interval === 0 || !!mode.continuous);
+  const hoursRaw = mode.exit_tolerance_hours === "" ? 0 : Number(mode.exit_tolerance_hours);
+  const hours = Math.max(0, Math.min(12, Number.isFinite(hoursRaw) ? hoursRaw : 0));
+  return { enabled: !!mode.enabled, continuous, interval_minutes: continuous ? 0 : interval, exit_tolerance_hours: hours };
+}
+
+export function locationTrackingPayload(company: LocMode, field: LocMode): LocationTracking {
+  return { ...serializeLocMode(company), field: serializeLocMode(field) };
+}
+
+export function locModeSummary(mode?: LocMode | LocationTracking | null): string {
+  const m = initLocMode(mode);
+  if (!m.enabled) return "Kapalı";
+  if (m.continuous || m.interval_minutes === 0) return "Sürekli";
+  return `${m.interval_minutes} dk`;
+}
 
 export function employeeInitials(name?: string | null): string {
   const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
@@ -138,15 +205,18 @@ export const REQUEST_KIND_TR: Record<string, string> = {
   dispute: "İtiraz",
   advance: "Avans",
   yevmiye_adjustment: "Yevmiye",
+  location_exit: "Konum dışı",
 };
 
 export function requestKindLabel(kind?: string | null): string {
   return REQUEST_KIND_TR[String(kind || "")] || "Talep";
 }
 
+export type RequestDecision = boolean | "ack";
+
 export function pendingRequestDecision(
   it: PendingRequest,
-  approved: boolean,
+  approved: RequestDecision,
 ): { path: string; body: Record<string, string> } | null {
   const id = String(it.id || "").trim();
   if (!id) return null;
@@ -165,15 +235,44 @@ export function pendingRequestDecision(
   if (it.kind === "yevmiye_adjustment") {
     return { path: `/personnel/attendance/${id}/yevmiye-decision`, body: { decision: approved ? "approve" : "reject" } };
   }
+  if (it.kind === "location_exit") {
+    const decision = approved === "ack" ? "ack" : approved ? "approve" : "reject";
+    return { path: `/personnel/attendance/${id}/location-exit-decision`, body: { decision } };
+  }
   return null;
 }
 
-export function pendingRequestDecisionMessage(it: PendingRequest, approved: boolean): string {
+export function pendingRequestDecisionMessage(it: PendingRequest, approved: RequestDecision): string {
+  if (it.kind === "location_exit") {
+    if (approved === "ack") return "Konum dışı çıkış: haberim var.";
+    return approved ? "Konum dışı çıkış onaylandı." : "Konum dışı çıkış reddedildi.";
+  }
   if (it.kind === "yevmiye_adjustment") {
     return approved ? "Yevmiye onaylandı." : "Yevmiye kart ücretiyle bırakıldı.";
   }
   const label = requestKindLabel(it.kind);
   return approved ? `${label} onaylandı.` : `${label} reddedildi.`;
+}
+
+export function requestDecisionActions(kind?: string | null): { key: string; title: string; decision: RequestDecision; color: "primary" | "secondary" | "danger" }[] {
+  if (kind === "dispute") return [];
+  if (kind === "location_exit") {
+    return [
+      { key: "ack", title: "Haberim var", decision: "ack", color: "secondary" },
+      { key: "approve", title: "Onayla", decision: true, color: "primary" },
+      { key: "reject", title: "Reddet", decision: false, color: "danger" },
+    ];
+  }
+  if (kind === "yevmiye_adjustment") {
+    return [
+      { key: "approve", title: "Onayla", decision: true, color: "primary" },
+      { key: "reject", title: "Kart ücreti", decision: false, color: "danger" },
+    ];
+  }
+  return [
+    { key: "approve", title: "Onayla", decision: true, color: "primary" },
+    { key: "reject", title: "Reddet", decision: false, color: "danger" },
+  ];
 }
 
 export function requestsForEmployee(items: PendingRequest[] | null | undefined, empId: string): PendingRequest[] {
@@ -192,8 +291,123 @@ export function openEmployeeTasks(card?: EmployeeCard | null) {
   return (card?.tasks || []).filter((t) => !t.done);
 }
 
+export type EmployeeDutyRow = {
+  id: string;
+  title: string;
+  kindLabel: string;
+  project: string;
+  due: string;
+  days: number;
+  park: string;
+  current: boolean;
+  done: boolean;
+  lines: string[];
+};
+
+export type EmployeeDutyBoard = {
+  current: EmployeeDutyRow | null;
+  open: EmployeeDutyRow[];
+  done: EmployeeDutyRow[];
+  headline: string;
+  currentHint: string;
+};
+
+function dutyLines(opts: {
+  kindLabel: string;
+  project?: string;
+  days?: number;
+  due?: string;
+  park?: string;
+  address?: string;
+}): string[] {
+  const lines = [opts.kindLabel];
+  if (opts.project) lines.push(opts.project);
+  if (opts.days) lines.push(`${opts.days} gün`);
+  if (opts.due) lines.push(`Bitiş ${opts.due}`);
+  if (opts.park) lines.push(`Parkur: ${opts.park}`);
+  if (opts.address) lines.push(opts.address);
+  return lines;
+}
+
+export function employeeDutyHeadline(board: Pick<EmployeeDutyBoard, "current" | "open">): string {
+  if (board.current) return `Şu an: ${board.current.title}`;
+  if (board.open.length === 1) return "1 açık görev";
+  if (board.open.length > 1) return `${board.open.length} açık görev`;
+  return "Atanmış görev yok";
+}
+
+export function employeeDutyBoard(emp?: Employee | null, card?: EmployeeCard | null): EmployeeDutyBoard {
+  const workplace = emp?.workplace || card?.workplace || null;
+  const currentId = workplace?.kind === "task" ? String(workplace.task_id || "") : "";
+  const currentTitle = workplace?.kind === "task" ? String(workplace.task_title || "") : "";
+  const rows: EmployeeDutyRow[] = (card?.tasks || []).map((t) => {
+    const id = String(t.id || t.title || "");
+    const kindLabel = taskKindLabel(t.kind);
+    const project = [t.project_number, t.project_name].filter(Boolean).join(" · ");
+    const days = Number(t.duration_days) || 0;
+    const due = String(t.due_date || "").slice(0, 10);
+    const park = String(t.park_name || "");
+    const current = (!!currentId && id === currentId) || (!!currentTitle && String(t.title || "") === currentTitle);
+    return {
+      id,
+      title: t.title || "Görev",
+      kindLabel,
+      project,
+      due,
+      days,
+      park,
+      current,
+      done: !!t.done,
+      lines: dutyLines({ kindLabel, project, days, due, park }),
+    };
+  });
+
+  let current = rows.find((r) => r.current && !r.done) || null;
+  if (!current && workplace?.kind === "task") {
+    const kindLabel = "Dış görev";
+    const project = [workplace.project_number, workplace.project_name || workplace.label].filter(Boolean).join(" · ");
+    const days = workplaceDays(workplace);
+    const due = String(workplace.due_date || "").slice(0, 10);
+    current = {
+      id: String(workplace.task_id || workplace.task_title || "current"),
+      title: workplace.task_title || "Dış görev",
+      kindLabel,
+      project,
+      due,
+      days,
+      park: "",
+      current: true,
+      done: false,
+      lines: dutyLines({ kindLabel, project, days, due, address: workplace.address }),
+    };
+    if (!rows.some((r) => r.id === current!.id || r.title === current!.title)) rows.unshift(current);
+  }
+  if (!current) {
+    const firstOpen = rows.find((r) => !r.done) || null;
+    current = firstOpen ? { ...firstOpen, current: true } : null;
+  }
+
+  const open = rows
+    .filter((r) => !r.done)
+    .map((r) => (current && (r.id === current.id || r.title === current.title) ? { ...r, current: true } : { ...r, current: false }));
+  const done = rows.filter((r) => r.done);
+  const board: EmployeeDutyBoard = {
+    current,
+    open,
+    done,
+    headline: "",
+    currentHint: current && workplace?.kind === "task" ? workplaceHint(workplace, true) : "",
+  };
+  board.headline = employeeDutyHeadline(board);
+  return board;
+}
+
 export function workplaceDetailsToggleLabel(open: boolean): string {
   return open ? "Gizle" : "Aç";
+}
+
+export function workplaceDetailsToggleIcon(open: boolean): "chevron-up" | "chevron-down" {
+  return open ? "chevron-up" : "chevron-down";
 }
 
 export function workplaceDetailsSummary(opts: {
@@ -408,12 +622,22 @@ export function filterPayMoves(
   return (rows || []).filter((row) => payMoveInPeriod(row, period, now, month));
 }
 
+export function payMovesPeriodHint(shown: number, total: number, period: PayMovesPeriod): string {
+  if (period === "all" || shown === total) return `${total} hareket`;
+  return `${shown} / ${total} hareket`;
+}
+
 export function employeeCardChrome(emp?: Pick<Employee, "pay_type" | "daily_wage"> | null): {
   backgroundColor: string;
   borderColor: string;
+  borderWidth: number;
 } {
-  if (isDailyWage(emp)) return { backgroundColor: "#FFFBEB", borderColor: "#F59E0B" };
-  return { backgroundColor: "#F0FDF4", borderColor: "#059669" };
+  if (isDailyWage(emp)) return { backgroundColor: "#FEF3C7", borderColor: "#D97706", borderWidth: 2 };
+  return { backgroundColor: "#D1FAE5", borderColor: "#059669", borderWidth: 2 };
+}
+
+export function employeeCardPayKind(emp?: Pick<Employee, "pay_type" | "daily_wage"> | null): "daily" | "monthly" {
+  return isDailyWage(emp) ? "daily" : "monthly";
 }
 
 export type EmployeeDraft = {
@@ -499,6 +723,14 @@ export type AttendanceRecord = {
     final_amount?: number;
     late_minutes?: number;
     early_leave_minutes?: number;
+  };
+  location_exit_request?: {
+    status?: string;
+    place?: string;
+    distance_m?: number;
+    radius_m?: number;
+    tolerance_hours?: number;
+    left_at?: string;
   };
 };
 
@@ -901,6 +1133,26 @@ export function employeeCompRows(
   ];
 }
 
+export type CompRow = { key: string; label: string; value: number; hint?: string; days?: number };
+export type CompGroup = { key: string; title: string; rows: CompRow[] };
+
+export function employeeCompGroups(rows: CompRow[]): CompGroup[] {
+  const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+  const pick = (...keys: string[]) => keys.map((k) => byKey[k]).filter(Boolean) as CompRow[];
+  const wageTitle = byKey.salary?.label === "Yevmiye" ? "Yevmiye" : "Maaş";
+  return [
+    { key: "allowance", title: "Yan hak", rows: pick("meal", "yol") },
+    { key: "wage", title: wageTitle, rows: pick("salary", "bonus") },
+    { key: "sum", title: "Özet", rows: pick("overtime", "total") },
+  ];
+}
+
+export function employeeCompRowCaption(row: CompRow, daily?: boolean): string {
+  const label = row.key === "salary" && daily ? `${row.label} / gün` : row.label;
+  if (row.key === "bonus" && row.days != null) return `${label} · ${row.days} gün`;
+  return label;
+}
+
 export function remainingDue(balance?: EmployeeBalance | null, unpaidFallback = 0): number {
   if (balance && balance.remaining != null && Number.isFinite(Number(balance.remaining))) {
     return Number(balance.remaining) || 0;
@@ -1216,6 +1468,27 @@ export type EmployeeCardActionKey = (typeof EMPLOYEE_CARD_ACTIONS)[number]["key"
 export function employeeCardActionsByGroup(group: "pay" | "work") {
   return group === "work" ? EMPLOYEE_CARD_WORK_ACTIONS : EMPLOYEE_CARD_PAY_ACTIONS;
 }
+
+export const EMPLOYEE_CARD_ACTION_ICONS: Record<string, string> = {
+  moves: "list-outline",
+  advance: "cash-outline",
+  salary: "wallet-outline",
+  meal: "restaurant-outline",
+  transport: "bus-outline",
+  bonus: "calendar-outline",
+  otpay: "time-outline",
+  task: "briefcase-outline",
+  overtime: "add-circle-outline",
+  location: "location-outline",
+  expense: "receipt-outline",
+  duties: "checkbox-outline",
+};
+
+export function employeeCardActionIcon(key: string): string {
+  return EMPLOYEE_CARD_ACTION_ICONS[key] || "ellipse-outline";
+}
+
+export const EMPLOYEE_LOCATION_SETTINGS_TITLE = "Konum Ayarları";
 
 export function allowanceDue(emp?: Employee | null, balance?: EmployeeBalance | null, kind: "meal" | "transport" = "meal"): number {
   if (kind === "meal") return Number(balance?.meal_due ?? emp?.meal_allowance ?? 0) || 0;
