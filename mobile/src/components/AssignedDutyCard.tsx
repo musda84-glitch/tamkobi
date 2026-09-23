@@ -25,7 +25,8 @@ import {
   dutyWorkflow,
   dutyWorkflowProgress,
   photoVisibility,
-  photoVisibilityLabel,
+  photoVisibilityIcon,
+  photoVisibilityShort,
   type AssignedDuty,
   type DutyPhoto,
 } from "../utils/assignedDuty";
@@ -180,39 +181,55 @@ export function AssignedDutyCard({
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             {photos.map((p) => {
               const vis = photoVisibility(p);
+              const side = reviewPhotos ? 88 : 64;
               return (
-                <View key={p.url} style={{ width: reviewPhotos ? 88 : 64 }} testID={`${tid}-photo-${p.url}`}>
-                  <Pressable
-                    testID={`${tid}-photo-open`}
-                    onPress={() => Linking.openURL(fileUrl(client.baseUrl, p.url)).catch(() => null)}
-                  >
-                    <Image source={{ uri: fileUrl(client.baseUrl, p.url) }} style={{ width: reviewPhotos ? 88 : 64, height: reviewPhotos ? 88 : 64, borderRadius: 8, backgroundColor: colors.slate100 }} />
-                  </Pressable>
-                  <Text style={{ fontSize: 9, fontWeight: "700", color: vis === "show" ? colors.primaryHover : vis === "hide" ? colors.danger : colors.muted, marginTop: 2 }} numberOfLines={2}>
-                    {photoVisibilityLabel(p)}
-                  </Text>
-                  {canReview ? (
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
-                      <Pressable
-                        testID={`${tid}-photo-show`}
-                        disabled={!!visBusy}
-                        onPress={() => setVisibility(p, true)}
-                      >
-                        <Text style={{ fontSize: 10, fontWeight: "800", color: vis === "show" ? colors.primaryHover : colors.muted }}>
-                          {visBusy === `${p.url}:show` ? "…" : DUTY_PHOTO_SHOW}
+                <View key={p.url} style={{ width: side }} testID={`${tid}-photo-${p.url}`}>
+                  <View style={{ width: side, height: side, borderRadius: 8, overflow: "hidden", backgroundColor: colors.slate100 }}>
+                    <Pressable
+                      testID={`${tid}-photo-open`}
+                      onPress={() => Linking.openURL(fileUrl(client.baseUrl, p.url)).catch(() => null)}
+                      style={{ width: "100%", height: "100%" }}
+                    >
+                      <Image source={{ uri: fileUrl(client.baseUrl, p.url) }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
+                    </Pressable>
+                    <View
+                      pointerEvents="box-none"
+                      style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, justifyContent: "space-between" }}
+                    >
+                      <View style={{ alignSelf: "flex-start", margin: 3, maxWidth: side - 6, flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 6, paddingHorizontal: 4, paddingVertical: 2 }}>
+                        <Ionicons name={photoVisibilityIcon(p)} size={11} color={vis === "show" ? colors.primaryHover : vis === "hide" ? colors.danger : colors.muted} />
+                        <Text numberOfLines={1} style={{ fontSize: 9, fontWeight: "800", color: vis === "show" ? colors.primaryHover : vis === "hide" ? colors.danger : colors.muted, flexShrink: 1 }}>
+                          {photoVisibilityShort(p)}
                         </Text>
-                      </Pressable>
-                      <Pressable
-                        testID={`${tid}-photo-hide`}
-                        disabled={!!visBusy}
-                        onPress={() => setVisibility(p, false)}
-                      >
-                        <Text style={{ fontSize: 10, fontWeight: "800", color: vis === "hide" ? colors.danger : colors.muted }}>
-                          {visBusy === `${p.url}:hide` ? "…" : DUTY_PHOTO_HIDE}
-                        </Text>
-                      </Pressable>
+                      </View>
+                      {canReview ? (
+                        <View style={{ backgroundColor: "rgba(15,23,42,0.72)", padding: 3, gap: 2 }}>
+                          <Pressable
+                            testID={`${tid}-photo-show`}
+                            disabled={!!visBusy}
+                            onPress={() => setVisibility(p, true)}
+                            style={{ flexDirection: "row", alignItems: "center", gap: 3, minHeight: 22 }}
+                          >
+                            <Ionicons name="eye" size={13} color={vis === "show" ? "#6EE7B7" : "#E2E8F0"} />
+                            <Text numberOfLines={1} style={{ fontSize: 9, fontWeight: "800", color: vis === "show" ? "#6EE7B7" : "#F8FAFC", flex: 1 }}>
+                              {visBusy === `${p.url}:show` ? "…" : DUTY_PHOTO_SHOW}
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            testID={`${tid}-photo-hide`}
+                            disabled={!!visBusy}
+                            onPress={() => setVisibility(p, false)}
+                            style={{ flexDirection: "row", alignItems: "center", gap: 3, minHeight: 22 }}
+                          >
+                            <Ionicons name="eye-off" size={13} color={vis === "hide" ? "#FDA4AF" : "#E2E8F0"} />
+                            <Text numberOfLines={1} style={{ fontSize: 9, fontWeight: "800", color: vis === "hide" ? "#FDA4AF" : "#F8FAFC", flex: 1 }}>
+                              {visBusy === `${p.url}:hide` ? "…" : DUTY_PHOTO_HIDE}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
                     </View>
-                  ) : null}
+                  </View>
                 </View>
               );
             })}

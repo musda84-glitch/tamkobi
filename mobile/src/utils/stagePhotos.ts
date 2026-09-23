@@ -9,6 +9,8 @@ export type StagePhoto = {
   stage_label?: string;
   created_at?: string;
   source?: string;
+  uploaded_by?: string;
+  task_id?: string;
   customer_visible?: boolean;
   visibility?: string;
   visibility_label?: string;
@@ -47,6 +49,8 @@ export function sanitizeStagePhotos(raw: unknown): StagePhoto[] {
       stage_label: String(rec.stage_label || "").slice(0, 60),
       created_at: String(rec.created_at || "").slice(0, 40),
       source: String(rec.source || ""),
+      uploaded_by: String(rec.uploaded_by || "").slice(0, 40),
+      task_id: String(rec.task_id || "").slice(0, 40),
       customer_visible: rec.customer_visible === true ? true : rec.customer_visible === false ? false : undefined,
       visibility: String(rec.visibility || ""),
       visibility_label: String(rec.visibility_label || ""),

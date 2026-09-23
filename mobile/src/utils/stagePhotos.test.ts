@@ -21,7 +21,7 @@ describe("stagePhotos", () => {
   it("sanitizes keys and drops foreign urls like the API", () => {
     expect(cleanStageKey("active!")).toBe("active");
     expect(sanitizeStagePhotos([
-      { url: "/api/files/ok.jpg", stage: "active!", stage_label: "Devam" },
+      { url: "/api/files/ok.jpg", stage: "active!", stage_label: "Devam", task_id: "t1", uploaded_by: "e1", source: "employee" },
       { url: "https://evil.example/x.jpg", stage: "active" },
       "nope",
     ])).toMatchObject([{
@@ -29,6 +29,9 @@ describe("stagePhotos", () => {
       stage: "active",
       stage_label: "Devam",
       created_at: "",
+      task_id: "t1",
+      uploaded_by: "e1",
+      source: "employee",
     }]);
   });
 

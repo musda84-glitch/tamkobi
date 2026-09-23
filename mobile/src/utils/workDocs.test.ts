@@ -26,6 +26,8 @@ import {
   projectPayload,
   projectTaskRows,
   projectCardChipTarget,
+  PROJECT_STAFF_WORK_TITLE,
+  projectStaffWork,
   projectTaskSummary,
   projectTrackingPayload,
   quoteListSubtitle,
@@ -377,8 +379,9 @@ describe("workDocs", () => {
     ];
     expect(quotesForProject(quotes, { id: "p1" }).map((q) => q.id)).toEqual(["q1"]);
     expect(quotesForProject(quotes, { id: "p9", quote_id: "q3" }).map((q) => q.id)).toEqual(["q3"]);
-    expect(projectMetricSectionOrder("expenses")).toEqual(["expenses", "quotes", "invoices"]);
-    expect(projectMetricSectionOrder("")).toEqual(["quotes", "invoices", "expenses"]);
+    expect(projectMetricSectionOrder("expenses")).toEqual(["expenses", "tasks", "quotes", "invoices"]);
+    expect(projectMetricSectionOrder("")).toEqual(["tasks", "quotes", "invoices", "expenses"]);
+    expect(projectMetricSectionOrder("tasks")).toEqual(["tasks", "quotes", "invoices", "expenses"]);
   });
 
   it("labels create buttons like web", () => {
@@ -453,8 +456,26 @@ describe("workDocs", () => {
       { id: "t2", title: "Montaj", assignee_id: "e2" },
       { id: "t3", title: "  " },
     ])).toEqual({ done: 1, total: 2, assigned: 2, label: "1/2 görev · 2 atanmış" });
-    expect(projectCardChipTarget("tasks")).toBe("team");
+    expect(projectCardChipTarget("tasks")).toBe("tasks");
     expect(projectCardChipTarget("track")).toBe("track");
+    expect(PROJECT_STAFF_WORK_TITLE).toBe("Görevli işler");
+    const staff = projectStaffWork(
+      [
+        { id: "t1", title: "Keşif", done: true, assignee_id: "e1", assignee_name: "Ali" },
+        { id: "t2", title: "Montaj", assignee_id: "e1", assignee_name: "Ali" },
+        { id: "t3", title: "Tesisat", assignee_name: "Ayşe" },
+      ],
+      [
+        { url: "/api/files/a.jpg", task_id: "t1", source: "employee", uploaded_by: "e1", visibility: "pending" },
+        { url: "/api/files/b.jpg", task_id: "t2", source: "employee", uploaded_by: "e1" },
+        { url: "/api/files/mgr.jpg", source: "manager" },
+      ],
+    );
+    expect(staff.map((p) => ({ name: p.name, label: p.label }))).toEqual([
+      { name: "Ali", label: "1/2 görev · 2 foto" },
+      { name: "Ayşe", label: "0/1 görev" },
+    ]);
+    expect(staff[0].tasks[0]).toMatchObject({ title: "Keşif", done: true, photos: [{ url: "/api/files/a.jpg" }] });
     const rows = projectTaskRows([]);
     expect(rows).toHaveLength(1);
     expect(rows[0].title).toBe("");

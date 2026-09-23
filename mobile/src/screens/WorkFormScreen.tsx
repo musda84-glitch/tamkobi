@@ -14,6 +14,7 @@ import { DateField } from "../components/DateField";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { ImageUploader } from "../components/ImageUploader";
 import { ProjectStagePhotos, ProjectWorkPreview } from "../components/ProjectStagePhotos";
+import { ProjectStaffWorkCard } from "../components/ProjectStaffWork";
 import { LocationPicker, type LocationValue } from "../components/LocationPicker";
 import { ProductPickRow } from "../components/ProductPickRow";
 import { ProductThumb } from "../components/ProductThumb";
@@ -673,6 +674,16 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     ? projectMetricSectionOrder(focus).map((key) => {
       const active = focus === key;
       const frame = active ? { borderColor: colors.primary, borderWidth: 2 } : undefined;
+      if (key === "tasks") {
+        return (
+          <ProjectStaffWorkCard
+            key="tasks"
+            project={project}
+            style={frame}
+            testID="project-staff-work"
+          />
+        );
+      }
       if (key === "quotes") {
         return (
           <Card key="quotes" testID="project-quotes" style={frame}>

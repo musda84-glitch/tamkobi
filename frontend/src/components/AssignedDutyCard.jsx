@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { CheckCircle2, Circle, Factory, ImagePlus, MapPin, Navigation } from "lucide-react";
+import { CheckCircle2, Circle, Eye, EyeOff, Factory, ImagePlus, MapPin, Navigation } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { compressImageFile } from "../utils/compressImage";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -26,7 +26,7 @@ import {
   dutyWorkflow,
   dutyWorkflowProgress,
   photoVisibility,
-  photoVisibilityLabel,
+  photoVisibilityShort,
 } from "../utils/assignedDuty";
 
 export function AssignedDutyCard({
@@ -139,21 +139,28 @@ export function AssignedDutyCard({
             {photos.map((p) => {
               const vis = photoVisibility(p);
               return (
-                <div key={p.url} className="w-16" data-testid={`${tid}-photo-${p.url}`}>
-                  <a href={resolveImageUrl(p.url)} target="_blank" rel="noreferrer" className="block">
-                    <img src={resolveImageUrl(p.url)} alt="" className="w-16 h-16 object-cover rounded-lg border bg-white" />
-                  </a>
-                  <div className={`text-[9px] font-bold leading-tight mt-0.5 ${vis === "show" ? "text-emerald-700" : vis === "hide" ? "text-rose-600" : "text-slate-500"}`}>{photoVisibilityLabel(p)}</div>
-                  {canReview ? (
-                    <div className="flex gap-1 mt-0.5">
-                      <button type="button" disabled={!!visBusy} onClick={() => setVisibility(p, true)} className={`text-[8px] font-bold ${vis === "show" ? "text-emerald-700" : "text-slate-400"}`} data-testid={`${tid}-photo-show`}>
-                        {visBusy === `${p.url}:show` ? "…" : DUTY_PHOTO_SHOW}
-                      </button>
-                      <button type="button" disabled={!!visBusy} onClick={() => setVisibility(p, false)} className={`text-[8px] font-bold ${vis === "hide" ? "text-rose-600" : "text-slate-400"}`} data-testid={`${tid}-photo-hide`}>
-                        {visBusy === `${p.url}:hide` ? "…" : DUTY_PHOTO_HIDE}
-                      </button>
+                <div key={p.url} className="w-20" data-testid={`${tid}-photo-${p.url}`}>
+                  <div className="relative w-20 h-20 rounded-lg overflow-hidden border bg-white">
+                    <a href={resolveImageUrl(p.url)} target="_blank" rel="noreferrer" className="block w-full h-full">
+                      <img src={resolveImageUrl(p.url)} alt="" className="w-full h-full object-cover" />
+                    </a>
+                    <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
+                      <span className={`pointer-events-none m-1 max-w-[calc(100%-8px)] inline-flex items-center gap-0.5 self-start rounded px-1 py-0.5 bg-white/95 text-[8px] font-extrabold leading-none ${vis === "show" ? "text-emerald-700" : vis === "hide" ? "text-rose-600" : "text-slate-500"}`}>
+                        {vis === "show" ? <Eye className="w-2.5 h-2.5 shrink-0" /> : vis === "hide" ? <EyeOff className="w-2.5 h-2.5 shrink-0" /> : <Eye className="w-2.5 h-2.5 shrink-0 opacity-70" />}
+                        {photoVisibilityShort(p)}
+                      </span>
+                      {canReview ? (
+                        <div className="pointer-events-auto bg-slate-900/70 p-1 space-y-0.5">
+                          <button type="button" disabled={!!visBusy} onClick={() => setVisibility(p, true)} className={`w-full flex items-center gap-1 text-[8px] font-extrabold leading-none ${vis === "show" ? "text-emerald-300" : "text-white"}`} data-testid={`${tid}-photo-show`}>
+                            <Eye className="w-3 h-3 shrink-0" /> {visBusy === `${p.url}:show` ? "…" : DUTY_PHOTO_SHOW}
+                          </button>
+                          <button type="button" disabled={!!visBusy} onClick={() => setVisibility(p, false)} className={`w-full flex items-center gap-1 text-[8px] font-extrabold leading-none ${vis === "hide" ? "text-rose-300" : "text-white"}`} data-testid={`${tid}-photo-hide`}>
+                            <EyeOff className="w-3 h-3 shrink-0" /> {visBusy === `${p.url}:hide` ? "…" : DUTY_PHOTO_HIDE}
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
+                  </div>
                 </div>
               );
             })}

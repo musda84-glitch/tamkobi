@@ -651,10 +651,10 @@ export function quotesForProject(
   });
 }
 
-export type ProjectMetricSection = "quotes" | "invoices" | "expenses";
+export type ProjectMetricSection = "quotes" | "invoices" | "expenses" | "tasks";
 
 export function projectMetricSectionOrder(focus?: string | null): ProjectMetricSection[] {
-  const all: ProjectMetricSection[] = ["quotes", "invoices", "expenses"];
+  const all: ProjectMetricSection[] = ["tasks", "quotes", "invoices", "expenses"];
   const key = String(focus || "").trim() as ProjectMetricSection;
   if (!all.includes(key)) return all;
   return [key, ...all.filter((s) => s !== key)];
@@ -726,9 +726,136 @@ export function projectTaskSummary(tasks?: ProjectTask[] | null) {
   };
 }
 
-/** Kart özet çipleri proje formuna değil, görev/takip paneline gider. */
-export function projectCardChipTarget(kind: "tasks" | "track"): "team" | "track" {
-  return kind === "tasks" ? "team" : "track";
+/** Kart özet çipleri: görev → proje görevli işler, takip → takip paneli. */
+export function projectCardChipTarget(kind: "tasks" | "track"): "tasks" | "track" {
+  return kind;
+}
+
+export const PROJECT_STAFF_WORK_TITLE = "Görevli işler";
+export const PROJECT_STAFF_WORK_EMPTY = "Bu projede görevli iş yok.";
+
+export type ProjectStaffWorkPhoto = {
+  url: string;
+  visibility?: string;
+  visibility_label?: string;
+};
+
+export type ProjectStaffWorkTask = {
+  id: string;
+  title: string;
+  done: boolean;
+  due_date?: string | null;
+  photos: ProjectStaffWorkPhoto[];
+};
+
+export type ProjectStaffWorkPerson = {
+  key: string;
+  name: string;
+  employeeId: string;
+  done: number;
+  total: number;
+  photoCount: number;
+  label: string;
+  tasks: ProjectStaffWorkTask[];
+};
+
+function staffWorkPhoto(row: {
+  url?: string;
+  visibility?: string;
+  visibility_label?: string;
+  customer_visible?: boolean;
+}): ProjectStaffWorkPhoto {
+  const visibility = String(row.visibility || "").trim()
+    || (row.customer_visible === true ? "show" : row.customer_visible === false ? "pending" : "");
+  return {
+    url: String(row.url || ""),
+    visibility,
+    visibility_label: String(row.visibility_label || "").trim() || undefined,
+  };
+}
+
+function staffWorkLabel(done: number, total: number, photos: number): string {
+  const parts = [`${done}/${total} görev`];
+  if (photos) parts.push(`${photos} foto`);
+  return parts.join(" · ");
+}
+
+/** Görevli personel + yükledikleri iş fotoğrafları (proje formu bölümü). */
+export function projectStaffWork(
+  tasks?: ProjectTask[] | null,
+  photos?: Array<{
+    url?: string;
+    task_id?: string;
+    uploaded_by?: string;
+    source?: string;
+    visibility?: string;
+    visibility_label?: string;
+    customer_visible?: boolean;
+  }> | null,
+): ProjectStaffWorkPerson[] {
+  const rows = normalizeProjectTasks(tasks);
+  const pics = (photos || []).filter((p) => String(p.url || "").startsWith("/api/files/"));
+  const groups = new Map<string, ProjectStaffWorkPerson>();
+
+  const person = (employeeId: string, name: string): ProjectStaffWorkPerson => {
+    const key = employeeId || name || "unassigned";
+    const existing = groups.get(key);
+    if (existing) return existing;
+    const next: ProjectStaffWorkPerson = {
+      key,
+      name: name || (employeeId ? "Personel" : "Atanmamış"),
+      employeeId,
+      done: 0,
+      total: 0,
+      photoCount: 0,
+      label: "",
+      tasks: [],
+    };
+    groups.set(key, next);
+    return next;
+  };
+
+  const photosFor = (taskId: string) => pics
+    .filter((p) => String(p.task_id || "").trim() === taskId)
+    .map(staffWorkPhoto);
+
+  for (const t of rows) {
+    const row = person(String(t.assignee_id || "").trim(), String(t.assignee_name || "").trim());
+    const taskPhotos = photosFor(String(t.id || "").trim());
+    row.tasks.push({
+      id: String(t.id || ""),
+      title: t.title || "Görev",
+      done: !!t.done,
+      due_date: t.due_date || null,
+      photos: taskPhotos,
+    });
+    row.total += 1;
+    if (t.done) row.done += 1;
+    row.photoCount += taskPhotos.length;
+  }
+
+  const knownTasks = new Set(rows.map((t) => String(t.id || "").trim()).filter(Boolean));
+  for (const p of pics) {
+    if (String(p.source || "") !== "employee") continue;
+    const tid = String(p.task_id || "").trim();
+    if (tid && knownTasks.has(tid)) continue;
+    const uploader = String(p.uploaded_by || "").trim();
+    const row = [...groups.values()].find((g) => g.employeeId && g.employeeId === uploader)
+      || person(uploader, "Görevli");
+    let extra = row.tasks.find((t) => t.id === "__photos__");
+    if (!extra) {
+      extra = { id: "__photos__", title: "İş fotoğrafları", done: false, photos: [] };
+      row.tasks.push(extra);
+      row.total += 1;
+    }
+    extra.photos.push(staffWorkPhoto(p));
+    row.photoCount += 1;
+  }
+
+  return [...groups.values()].map((row) => ({
+    ...row,
+    label: staffWorkLabel(row.done, row.total, row.photoCount),
+  }));
 }
 
 export function emptyProjectTask(id?: string): ProjectTask {

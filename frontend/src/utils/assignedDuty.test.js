@@ -18,6 +18,7 @@ import {
   photoFaded,
   photoVisibility,
   photoVisibilityLabel,
+  photoVisibilityShort,
 } from "./assignedDuty";
 import { workMapsLink } from "./mapsLink";
 
@@ -35,7 +36,7 @@ describe("assigned duty field extras", () => {
       workflow: [{ title: "Montaj" }, { title: "Teslim", done: true }],
       photos: [{ url: "/api/files/a.jpg", source: "employee", visibility: "pending", task_id: "t1" }],
     };
-    expect(DUTY_MAPS_ACTION).toBe("Görev yerine git");
+    expect(DUTY_MAPS_ACTION).toBe("Göreve başla");
     expect(DUTY_COMPLETE_ACTION).toBe("Görev tamamlandı");
     expect(dutyCompleteTitle({ done: true })).toBe(DUTY_COMPLETE_APPROVED);
     expect(matchAssignedDuty([{ id: "t1", title: "Montaj" }], { id: "t1" })?.title).toBe("Montaj");
@@ -55,6 +56,7 @@ describe("assigned duty field extras", () => {
     expect(photoVisibility(t.photos[0])).toBe("pending");
     expect(photoFaded(t.photos[0])).toBe(true);
     expect(photoVisibilityLabel(t.photos[0])).toBe("Onay bekliyor");
+    expect(photoVisibilityShort(t.photos[0])).toBe("Onay");
     expect(pendingDutyPhotoCount([t])).toBe(1);
   });
 
