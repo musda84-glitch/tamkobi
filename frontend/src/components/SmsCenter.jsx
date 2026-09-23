@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { MessageSquare, Settings, Send, Loader2, Wallet, CheckCircle2, AlertCircle, FlaskConical, ShieldCheck } from "lucide-react";
@@ -6,6 +6,19 @@ import { contextTr } from "../utils/labels";
 import { API_URL } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
+
+/** Merge API settings without dropping has_password / providers on partial responses. */
+const mergeSettings = (prev, next) => {
+  if (!next || typeof next !== "object") return prev;
+  const merged = { ...(prev || {}), ...next };
+  if (typeof next.has_password !== "boolean" && typeof prev?.has_password === "boolean") {
+    merged.has_password = prev.has_password;
+  }
+  if (!next.providers?.length && prev?.providers?.length) {
+    merged.providers = prev.providers;
+  }
+  return merged;
+};
 
 export const SmsCenter = ({ companyId, contacts }) => {
   const [settings, setSettings] = useState(null);
@@ -15,6 +28,42 @@ export const SmsCenter = ({ companyId, contacts }) => {
   const [single, setSingle] = useState({ contact_id: "", phone: "", message: "" });
   const [busy, setBusy] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [balanceBusy, setBalanceBusy] = useState(false);
+  /** Sticky flag: once we know a password is stored, keep showing until explicit clear. */
+  const passwordSavedRef = useRef(false);
+  const [passwordSaved, setPasswordSaved] = useState(false);
+
+  const markPasswordSaved = useCallback((val) => {
+    if (val) {
+      passwordSavedRef.current = true;
+      setPasswordSaved(true);
+    } else if (val === false) {
+      passwordSavedRef.current = false;
+      setPasswordSaved(false);
+    }
+  }, []);
+
+  const applySettings = useCallback((data, { resetFormPassword = false } = {}) => {
+    setSettings((prev) => {
+      const merged = mergeSettings(prev, data);
+      if (typeof data?.has_password === "boolean") {
+        if (data.has_password) markPasswordSaved(true);
+        else if (!passwordSavedRef.current) markPasswordSaved(false);
+        // If API says false but we already knew it was saved, keep sticky true
+        // unless this is a fresh load that explicitly reports false after save.
+      }
+      return merged;
+    });
+    if (data && (data.usercode !== undefined || data.provider !== undefined)) {
+      setForm((f) => ({
+        provider: data.provider || f.provider || "netgsm",
+        usercode: data.usercode != null ? data.usercode : f.usercode,
+        password: resetFormPassword ? "" : f.password,
+        msgheader: data.msgheader != null ? data.msgheader : f.msgheader,
+        is_active: data.is_active != null ? data.is_active : f.is_active,
+      }));
+    }
+  }, [markPasswordSaved]);
 
   const providers = settings?.providers || [];
   const meta = useMemo(() => {
@@ -26,7 +75,15 @@ export const SmsCenter = ({ companyId, contacts }) => {
 
   const load = useCallback(async () => {
     try {
-      const [s, l] = await Promise.all([axios.get(`${API_URL}/comm/sms/settings?company_id=${companyId}`), axios.get(`${API_URL}/comm/sms/logs?company_id=${companyId}`)]);
+      const [s, l] = await Promise.all([
+        axios.get(`${API_URL}/comm/sms/settings?company_id=${companyId}`),
+        axios.get(`${API_URL}/comm/sms/logs?company_id=${companyId}`),
+      ]);
+      // Full reload: trust has_password from server
+      if (typeof s.data.has_password === "boolean") {
+        passwordSavedRef.current = !!s.data.has_password;
+        setPasswordSaved(!!s.data.has_password);
+      }
       setSettings(s.data);
       setForm({
         provider: s.data.provider || "netgsm",
@@ -43,21 +100,49 @@ export const SmsCenter = ({ companyId, contacts }) => {
   const saveSettings = async (e) => {
     e.preventDefault();
     try {
-      const saved = await axios.put(`${API_URL}/comm/sms/settings`, { company_id: companyId, ...form });
-      setSettings(saved.data);
+      const payload = {
+        company_id: companyId,
+        provider: form.provider,
+        usercode: form.usercode,
+        msgheader: form.msgheader,
+        is_active: form.is_active,
+      };
+      // Boş şifre gönderme — kayıtlı şifreyi koru
+      if (String(form.password || "").trim()) {
+        payload.password = form.password.trim();
+      }
+      const saved = await axios.put(`${API_URL}/comm/sms/settings`, payload);
+      if (payload.password || saved.data.has_password) markPasswordSaved(true);
+      applySettings(saved.data, { resetFormPassword: true });
       toast.success(`${meta?.name || "SMS"} ayarları kaydedildi. Bağlantıyı doğrulayın.`);
       setVerifying(true);
       try {
         const v = await axios.post(`${API_URL}/comm/sms/verify`, { company_id: companyId });
-        setSettings(v.data);
-        if (v.data.verified) toast.success(v.data.verify_message || "Bağlantı doğrulandı.");
-        else toast.error(v.data.verify_message || v.data.verify?.message || "Doğrulanamadı.");
+        applySettings(v.data, { resetFormPassword: true });
+        if (v.data.verified || v.data.ok) toast.success(v.data.verify_message || "Bağlantı doğrulandı.");
+        else toast.error(v.data.verify_message || v.data.message || v.data.verify?.message || "Doğrulanamadı.");
       } catch (err) {
         toast.error(err.response?.data?.detail || "Doğrulama yapılamadı.");
       } finally {
         setVerifying(false);
       }
-      load();
+      // Yenile — form şifresini sil, has_password'ü sunucudan al
+      const s = await axios.get(`${API_URL}/comm/sms/settings?company_id=${companyId}`);
+      if (typeof s.data.has_password === "boolean") {
+        passwordSavedRef.current = !!s.data.has_password;
+        setPasswordSaved(!!s.data.has_password);
+      }
+      setSettings(s.data);
+      setForm((f) => ({
+        ...f,
+        provider: s.data.provider || f.provider,
+        usercode: s.data.usercode || "",
+        password: "",
+        msgheader: s.data.msgheader || "",
+        is_active: s.data.is_active ?? true,
+      }));
+      const logsRes = await axios.get(`${API_URL}/comm/sms/logs?company_id=${companyId}`);
+      setLogs(logsRes.data);
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };
 
@@ -65,9 +150,9 @@ export const SmsCenter = ({ companyId, contacts }) => {
     setVerifying(true);
     try {
       const v = await axios.post(`${API_URL}/comm/sms/verify`, { company_id: companyId });
-      setSettings(v.data);
-      if (v.data.verified) toast.success(v.data.verify_message || "Bağlantı doğrulandı.");
-      else toast.error(v.data.verify_message || v.data.verify?.message || "Doğrulanamadı.");
+      applySettings(v.data); // şifre alanını dokunma
+      if (v.data.verified || v.data.ok) toast.success(v.data.verify_message || "Bağlantı doğrulandı.");
+      else toast.error(v.data.verify_message || v.data.message || v.data.verify?.message || "Doğrulanamadı.");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Doğrulama yapılamadı.");
     } finally {
@@ -76,11 +161,21 @@ export const SmsCenter = ({ companyId, contacts }) => {
   };
 
   const checkBalance = async () => {
+    // Formdaki yazılmış (henüz kaydedilmemiş) şifreyi asla temizleme
+    const typedPassword = form.password;
+    setBalanceBusy(true);
     try {
       const r = await axios.get(`${API_URL}/comm/sms/balance?company_id=${companyId}`);
       setBalance(r.data);
       if (!r.data.ok) toast.info(r.data.message || "Bakiye alınamadı.");
-    } catch { toast.error("Bakiye sorgulanamadı."); }
+      // has_password bilgisini koru; form şifresini geri koy
+      setForm((f) => (f.password === typedPassword ? f : { ...f, password: typedPassword }));
+    } catch {
+      toast.error("Bakiye sorgulanamadı.");
+      setForm((f) => ({ ...f, password: typedPassword }));
+    } finally {
+      setBalanceBusy(false);
+    }
   };
 
   const sendSingle = async (e) => {
@@ -97,11 +192,13 @@ export const SmsCenter = ({ companyId, contacts }) => {
         toast.success(r.data.message);
         setSingle({ ...single, message: "" });
       }
-      load();
+      const l = await axios.get(`${API_URL}/comm/sms/logs?company_id=${companyId}`);
+      setLogs(l.data);
     } catch (err) { toast.error(err.response?.data?.detail || "Gönderilemedi."); } finally { setBusy(false); }
   };
 
-  const configured = settings?.usercode && settings?.has_password;
+  const hasStoredPassword = passwordSaved || !!settings?.has_password;
+  const configured = !!(settings?.usercode && hasStoredPassword);
   const connected = configured && settings?.verified && settings?.is_active;
   const providerName = settings?.provider_name || meta?.name || "SMS";
 
@@ -124,7 +221,7 @@ export const SmsCenter = ({ companyId, contacts }) => {
               <label className="block font-semibold mb-1">SMS Operatörü</label>
               <select
                 value={form.provider}
-                onChange={(e) => setForm({ ...form, provider: e.target.value, verified: false })}
+                onChange={(e) => setForm({ ...form, provider: e.target.value })}
                 className={inputCls}
                 data-testid="sms-provider-select"
               >
@@ -139,8 +236,24 @@ export const SmsCenter = ({ companyId, contacts }) => {
               <input value={form.usercode} onChange={(e) => setForm({ ...form, usercode: e.target.value })} className={`${inputCls} font-mono`} placeholder={meta?.user_placeholder || ""} data-testid="sms-usercode-input" />
             </div>
             <div>
-              <label className="block font-semibold mb-1">{meta?.pass_label || "API Şifresi"} {settings?.has_password && <span className="text-slate-400 font-normal">(kayıtlı — değiştirmek için girin)</span>}</label>
-              <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className={inputCls} data-testid="sms-password-input" autoComplete="new-password" />
+              <label className="block font-semibold mb-1" data-testid="sms-password-label">
+                {meta?.pass_label || "API Şifresi"}
+                {hasStoredPassword && (
+                  <span className="ml-1 text-emerald-700 font-semibold" data-testid="sms-password-saved-hint">(kayıtlı — değiştirmek için girin)</span>
+                )}
+              </label>
+              <input
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                className={inputCls}
+                data-testid="sms-password-input"
+                autoComplete="new-password"
+                placeholder={hasStoredPassword ? "••••••••" : ""}
+              />
+              {hasStoredPassword && !form.password && (
+                <p className="text-[10px] text-emerald-700 mt-1" data-testid="sms-password-kept-note">Kayıtlı şifre korunuyor. Değiştirmek istemiyorsanız boş bırakın.</p>
+              )}
             </div>
             <div>
               <label className="block font-semibold mb-1">Gönderici Başlığı</label>
@@ -158,7 +271,9 @@ export const SmsCenter = ({ companyId, contacts }) => {
               <button type="button" onClick={verifyConnection} disabled={verifying || !configured} className="flex items-center gap-1 px-3 py-2 border rounded-lg font-semibold hover:bg-slate-50 disabled:opacity-50" data-testid="sms-verify-btn">
                 {verifying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />} Doğrula
               </button>
-              <button type="button" onClick={checkBalance} className="flex items-center gap-1 px-3 py-2 border rounded-lg font-semibold hover:bg-slate-50" data-testid="sms-balance-btn"><Wallet className="w-3.5 h-3.5" /> Bakiye</button>
+              <button type="button" onClick={checkBalance} disabled={balanceBusy} className="flex items-center gap-1 px-3 py-2 border rounded-lg font-semibold hover:bg-slate-50 disabled:opacity-50" data-testid="sms-balance-btn">
+                {balanceBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wallet className="w-3.5 h-3.5" />} Bakiye
+              </button>
             </div>
           </form>
           {settings?.verify_message && (
