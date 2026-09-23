@@ -130,26 +130,29 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
       refreshing={refreshing}
       stickyTop={(
         <View testID={`work-list-sticky-${kind}`} style={{ gap: 8 }}>
-          {canEdit ? (
+          {kind !== "project" && canEdit ? (
             <PrimaryButton title={newButtonLabel(kind)} onPress={() => go(meta.goNew)} color={colors.primary} testID={`new-${kind}-btn`} />
           ) : null}
           <Field label="Ara" value={q} onChangeText={setQ} placeholder="No / cari / ad" />
-          {kind === "project" && completedProjectCount ? (
-            <>
-              <PrimaryButton
-                title={showCompleted ? "Tamamlananları gizle" : `Tamamlananları göster (${completedProjectCount})`}
-                onPress={() => setShowCompleted((v) => !v)}
-                color={colors.secondary}
-                testID="toggle-completed-projects"
-              />
-              {!showCompleted ? (
-                <Muted testID="completed-projects-hint">{completedProjectCount} tamamlanan proje gizlendi.</Muted>
-              ) : null}
-            </>
-          ) : null}
         </View>
       )}
     >
+      {kind === "project" && canEdit ? (
+        <PrimaryButton title={newButtonLabel(kind)} onPress={() => go(meta.goNew)} color={colors.primary} testID={`new-${kind}-btn`} />
+      ) : null}
+      {kind === "project" && completedProjectCount ? (
+        <>
+          <PrimaryButton
+            title={showCompleted ? "Tamamlananları gizle" : `Tamamlananları göster (${completedProjectCount})`}
+            onPress={() => setShowCompleted((v) => !v)}
+            color={colors.secondary}
+            testID="toggle-completed-projects"
+          />
+          {!showCompleted ? (
+            <Muted testID="completed-projects-hint">{completedProjectCount} tamamlanan proje gizlendi.</Muted>
+          ) : null}
+        </>
+      ) : null}
       <ErrorBanner message={error} />
       {!filtered.length ? (
         <Empty
