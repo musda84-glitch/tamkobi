@@ -7821,15 +7821,38 @@ async def get_sms_settings(company_id: Optional[str] = "comp_nexus_main_01"):
             "usercode": "", "msgheader": "", "is_active": False, "has_password": False, "verified": False,
             "providers": comm_service.list_sms_providers(),
         }
+    enc = s.get("password_enc") or ""
+    has_password = bool(enc)
+    password_unreadable = False
+    if enc and comm_service.try_decrypt(enc) is None:
+        # Anahtar değişmiş / bozuk token — «kayıtlı» gösterme, yeniden giriş iste.
+        password_unreadable = True
+        has_password = False
+        await db.sms_settings.update_one(
+            {"_id": s["_id"]},
+            {
+                "$unset": {"password_enc": ""},
+                "$set": {
+                    "verified": False,
+                    "verify_message": "Kayıtlı API şifresi okunamadı; lütfen yeniden girip kaydedin.",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            },
+        )
     return {
         "id": str(s["_id"]), "company_id": company_id,
         "provider": provider, "provider_name": meta["name"],
         "usercode": s.get("usercode", ""),
         "msgheader": s.get("msgheader", ""), "is_active": s.get("is_active", False),
-        "has_password": bool(s.get("password_enc")),
-        "verified": bool(s.get("verified")),
-        "verified_at": s.get("verified_at"),
-        "verify_message": s.get("verify_message") or "",
+        "has_password": has_password,
+        "password_unreadable": password_unreadable,
+        "verified": False if password_unreadable else bool(s.get("verified")),
+        "verified_at": None if password_unreadable else s.get("verified_at"),
+        "verify_message": (
+            "Kayıtlı API şifresi okunamadı; lütfen yeniden girip kaydedin."
+            if password_unreadable
+            else (s.get("verify_message") or "")
+        ),
         "approved_headers": s.get("approved_headers") or [],
         "providers": comm_service.list_sms_providers(),
     }
@@ -7866,9 +7889,19 @@ async def _sms_creds(company_id: str) -> Optional[dict]:
     s = await db.sms_settings.find_one({"company_id": company_id})
     if not s or not s.get("is_active") or not s.get("usercode") or not s.get("password_enc"):
         return None
-    try:
-        password = comm_service.decrypt(s["password_enc"])
-    except Exception:
+    password = comm_service.try_decrypt(s["password_enc"])
+    if password is None:
+        await db.sms_settings.update_one(
+            {"_id": s["_id"]},
+            {
+                "$unset": {"password_enc": ""},
+                "$set": {
+                    "verified": False,
+                    "verify_message": "Kayıtlı API şifresi okunamadı; lütfen yeniden girip kaydedin.",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            },
+        )
         raise HTTPException(
             status_code=400,
             detail="Kayıtlı API şifresi okunamadı (şifreleme anahtarı değişmiş olabilir). Lütfen API şifresini yeniden girip kaydedin.",
