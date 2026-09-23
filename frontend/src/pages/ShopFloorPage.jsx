@@ -25,13 +25,21 @@ export default function ShopFloorPage() {
   const [showDone, setShowDone] = useState(false);
   const [perf, setPerf] = useState(null);
   const [showPerf, setShowPerf] = useState(false);
+  const [duties, setDuties] = useState([]);
+  const [dutyBusyId, setDutyBusyId] = useState(null);
   const loadPerf = useCallback(() => axios.get(`${API_URL}/production/work-orders/performance?company_id=${companyId}`).then((r) => setPerf(r.data)).catch(() => {}), [companyId]);
   useEffect(() => { loadPerf(); }, [loadPerf, wos.length]);
 
   const load = useCallback(async () => {
     try {
-      const [w, e, s] = await Promise.all([axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}`), axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`), axios.get(`${API_URL}/production/work-orders/stations?company_id=${companyId}`)]);
-      setWos(w.data); setEmployees(e.data); setStations(s.data);
+      const [w, e, s, me] = await Promise.all([
+        axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}`).catch(() => ({ data: [] })),
+        axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`).catch(() => ({ data: [] })),
+        axios.get(`${API_URL}/production/work-orders/stations?company_id=${companyId}`).catch(() => ({ data: [] })),
+        axios.get(`${API_URL}/personnel/me`, { withCredentials: true }).catch(() => ({ data: { tasks: [] } })),
+      ]);
+      setWos(w.data || []); setEmployees(e.data || []); setStations(s.data || []);
+      setDuties(Array.isArray(me.data?.tasks) ? me.data.tasks : []);
     } catch { /* keep last */ }
   }, [companyId, station]);
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
@@ -67,6 +75,21 @@ export default function ShopFloorPage() {
   const waiting = wos.filter((w) => w.status === "waiting");
   const done = wos.filter((w) => w.status === "done");
   const mine = active.filter((w) => w.operator_name === operator || w.assigned_name === operator);
+  const openDuties = duties.filter((t) => !t.done);
+
+  const approveDuty = async (t) => {
+    if (!t?.id) return;
+    setDutyBusyId(t.id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/me/tasks/${t.id}/complete`, {}, { withCredentials: true });
+      toast.success(r.data?.message || "Görev onaylandı.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Görev onaylanamadı.");
+    } finally {
+      setDutyBusyId(null);
+    }
+  };
 
   const Card = ({ w }) => { const [l, c] = STATUS[w.status] || STATUS.waiting; return (
     <div className={`bg-white rounded-2xl border-2 p-4 space-y-3 ${w.status === "in_progress" ? "border-amber-400 shadow-lg shadow-amber-100" : w.status === "ready" ? "border-blue-200" : "border-slate-200"}`} data-testid={`wo-card-${w.order_code}-${w.step_no}`}>
@@ -116,6 +139,37 @@ export default function ShopFloorPage() {
           </div>
         )}
       </div>
+      {duties.length > 0 && (
+        <div data-testid="shopfloor-duties">
+          <h2 className="text-sm font-bold text-slate-700 mb-2">Atanan Görevler ({openDuties.length} açık)</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {duties.map((t, i) => (
+              <div key={t.id || i} className={`bg-white rounded-2xl border-2 p-4 space-y-3 ${t.done ? "border-emerald-200 opacity-70" : "border-indigo-200"}`} data-testid={`shopfloor-duty-${t.id || i}`}>
+                <div className="flex justify-between items-start gap-2">
+                  <div className="min-w-0">
+                    <div className="font-bold text-slate-900 text-base leading-tight">{t.title || "Görev"}</div>
+                    <div className="text-sm text-slate-600 truncate">{t.park_name || [t.project_number, t.project_name].filter(Boolean).join(" · ")}</div>
+                  </div>
+                  <span className={`shrink-0 px-2 py-1 rounded-lg text-xs font-bold ${t.done ? "bg-emerald-50 text-emerald-700" : "bg-indigo-50 text-indigo-700"}`}>{t.done ? "Tamam" : "Açık"}</span>
+                </div>
+                {t.done ? (
+                  <div className="text-xs text-emerald-700 font-semibold">Görev onaylandı.</div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={dutyBusyId === t.id}
+                    onClick={() => approveDuty(t)}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-base disabled:opacity-50"
+                    data-testid={`shopfloor-duty-approve-${t.id || i}`}
+                  >
+                    <CheckCircle2 className="w-5 h-5" /> {dutyBusyId === t.id ? "Onaylanıyor…" : "Onayla"}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {mine.length > 0 && <div><h2 className="text-sm font-bold text-slate-700 mb-2">Benim İşlerim ({mine.length})</h2><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{mine.map((w) => <Card key={w.id} w={w} />)}</div></div>}
       <div><h2 className="text-sm font-bold text-slate-700 mb-2">Açık İş Emirleri ({active.length})</h2>
         {active.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-sm text-slate-400" data-testid="shopfloor-empty">Bekleyen iş emri yok. Üretim &amp; Reçete sayfasından "Üretim Emri Ver" ile oluşturun.</div>}

@@ -12401,6 +12401,48 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
     }
 
 
+@api_router.post("/personnel/me/tasks/{task_id}/complete")
+async def complete_my_assigned_task(task_id: str, user: dict = Depends(get_current_user)):
+    """Personel kendi atanan görevini (iç / dış) atölye veya Görevler'den onaylar."""
+    import work_parks as wp
+    emp = await attendance.employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=400, detail="Personel kartınız bağlı değil.")
+    emp_id = emp["_id"]
+    company_id = emp.get("company_id")
+    now = datetime.now(timezone.utc).isoformat()
+    office, found = wp.mark_office_task_done(emp.get("office_tasks") or [], task_id)
+    if found:
+        patch: Dict[str, Any] = {"office_tasks": office, "updated_at": now}
+        duty = wp.clear_duty_if_task(emp.get("active_duty"), task_id)
+        if duty is None:
+            patch["active_duty"] = None
+        await db.employees.update_one({"_id": emp_id}, {"$set": patch})
+        return {
+            "status": "success",
+            "message": "Görev onaylandı.",
+            "task": wp.office_assignment_view(found),
+        }
+    async for proj in db.projects.find(
+        {"company_id": company_id, "tasks.assignee_id": emp_id},
+        {"tasks": 1, "name": 1, "project_number": 1, "status": 1,
+         "latitude": 1, "longitude": 1, "address": 1, "location_url": 1, "radius_m": 1},
+    ):
+        updated, found = wp.mark_project_task_done(proj.get("tasks") or [], task_id, emp_id)
+        if not found:
+            continue
+        await db.projects.update_one({"_id": proj["_id"]}, {"$set": {"tasks": updated, "updated_at": now}})
+        duty = wp.clear_duty_if_task(emp.get("active_duty"), task_id)
+        if duty is None:
+            await db.employees.update_one({"_id": emp_id}, {"$set": {"active_duty": None, "updated_at": now}})
+        return {
+            "status": "success",
+            "message": "Görev onaylandı.",
+            "task": attendance.assignment_from_project({**proj, "tasks": updated}, found),
+        }
+    raise HTTPException(status_code=404, detail="Görev bulunamadı.")
+
+
 @api_router.delete("/files/{file_id}")
 async def delete_file_record(file_id: str):
     r = await db.files.update_one({"_id": file_id}, {"$set": {"is_deleted": True}})

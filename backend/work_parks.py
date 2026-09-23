@@ -65,6 +65,51 @@ def office_task_row(emp: dict, park: dict, title: str = "", new_id: Optional[str
     }
 
 
+def is_assignment_done(task: Optional[dict]) -> bool:
+    if not isinstance(task, dict):
+        return False
+    return bool(task.get("done") or task.get("status") in ("done", "completed", "tamamlandi"))
+
+
+def mark_office_task_done(tasks: Any, task_id: str) -> tuple[list, Optional[dict]]:
+    tid = str(task_id or "")
+    out: list = []
+    found: Optional[dict] = None
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        if tid and str(t.get("id") or "") == tid:
+            found = {**t, "done": True, "status": "completed"}
+            out.append(found)
+        else:
+            out.append(t)
+    return out, found
+
+
+def mark_project_task_done(tasks: Any, task_id: str, emp_id: str) -> tuple[list, Optional[dict]]:
+    tid = str(task_id or "")
+    eid = str(emp_id or "")
+    out: list = []
+    found: Optional[dict] = None
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        same = tid and str(t.get("id") or t.get("_id") or "") == tid
+        mine = not eid or str(t.get("assignee_id") or "") == eid
+        if same and mine:
+            found = {**t, "done": True, "status": "completed"}
+            out.append(found)
+        else:
+            out.append(t)
+    return out, found
+
+
+def clear_duty_if_task(duty: Any, task_id: str) -> Any:
+    if isinstance(duty, dict) and str(duty.get("task_id") or "") == str(task_id or ""):
+        return None
+    return duty
+
+
 def office_assignment_view(task: dict) -> dict:
     park_name = task.get("park_name") or ""
     return {

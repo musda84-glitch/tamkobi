@@ -23,4 +23,5 @@ def test_personelim_aliases_mesai_license():
 def test_personnel_me_module_map_is_personnel_prefix():
     # Without skip, prefix map would classify under /personnel; skip bypasses that.
     assert module_for_path("/api/personnel/me") == "/personnel"
+    assert module_for_path("/api/personnel/me/tasks/ot_1/complete") == "/personnel"
     assert module_for_path("/api/personnel/employees") == "/personnel"

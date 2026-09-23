@@ -47,6 +47,7 @@ export default function MyPersonnelPage() {
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceNote, setAdvanceNote] = useState("");
   const [advanceBusy, setAdvanceBusy] = useState(false);
+  const [taskBusyId, setTaskBusyId] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -97,6 +98,20 @@ export default function MyPersonnelPage() {
       toast.error(err.response?.data?.detail || "Avans talebi gönderilemedi.");
     } finally {
       setAdvanceBusy(false);
+    }
+  };
+
+  const completeTask = async (t) => {
+    if (!t?.id) return;
+    setTaskBusyId(t.id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/me/tasks/${t.id}/complete`, {}, { withCredentials: true });
+      toast.success(r.data?.message || "Görev onaylandı.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Görev onaylanamadı.");
+    } finally {
+      setTaskBusyId(null);
     }
   };
 
@@ -283,9 +298,14 @@ export default function MyPersonnelPage() {
 
       {tab === "gorevler" && emp && (
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden" data-testid="my-personnel-tasks">
-          <div className="px-4 py-3 border-b text-xs font-bold text-slate-700 flex items-center justify-between">
+          <div className="px-4 py-3 border-b text-xs font-bold text-slate-700 flex items-center justify-between gap-2">
             <span>Proje görevlerim ({tasks.length})</span>
-            <span className="font-normal text-slate-400">{openTasks.length} açık</span>
+            <div className="flex items-center gap-2">
+              <span className="font-normal text-slate-400">{openTasks.length} açık</span>
+              <Link to="/atolye" className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 text-white font-bold" data-testid="my-pers-goto-atolye">
+                <Factory className="w-3.5 h-3.5" /> Atölye ekranı
+              </Link>
+            </div>
           </div>
           {tasks.length === 0 ? (
             <div className="p-6 text-xs text-slate-400 text-center">Size atanmış proje görevi yok.</div>
@@ -297,9 +317,25 @@ export default function MyPersonnelPage() {
                   <div className="min-w-0 flex-1">
                     <div className={`font-semibold text-slate-800 ${t.done ? "line-through" : ""}`}>{t.title}</div>
                     <div className="text-slate-500 mt-0.5">
-                      {t.project_number ? `${t.project_number} · ` : ""}{t.project_name || "Proje"}
+                      {t.park_name || (t.project_number ? `${t.project_number} · ` : "")}{!t.park_name ? (t.project_name || "Proje") : ""}
                       {t.due_date ? ` · son ${t.due_date}` : ""}
                     </div>
+                    {!t.done && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Link to="/atolye" className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-bold" data-testid={`my-pers-task-atolye-${i}`}>
+                          Atölyeye git
+                        </Link>
+                        <button
+                          type="button"
+                          disabled={taskBusyId === t.id}
+                          onClick={() => completeTask(t)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-50"
+                          data-testid={`my-pers-task-approve-${i}`}
+                        >
+                          {taskBusyId === t.id ? "Onaylanıyor…" : "Onayla"}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </li>
               ))}
