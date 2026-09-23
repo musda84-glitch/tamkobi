@@ -62,7 +62,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Destek", path: "/support", badge: "Talep" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/panel": "/", "/personelim": "/mesai", "/purchase-orders": "/stock" }; // first-class modules keep their own role/license keys
+  const LICENSE_KEY = { "/panel": "/", "/personelim": "/mesai" }; // first-class modules keep their own role/license keys
   const permPath = (path) => LICENSE_KEY[path] || path;
   const perms = user?.permissions;
   const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");

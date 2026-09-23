@@ -46,6 +46,10 @@ export function can(user: SessionUser, path: string, level: "view" | "edit" = "v
   if (value == null && path === "/cheques") {
     return can(user, "/banking", level);
   }
+  // Sunucu backfill: /purchase-orders yoksa stok yetkisi geçer.
+  if (value == null && path === "/purchase-orders") {
+    return can(user, "/stock", level);
+  }
   if (level === "view") return value !== "none";
   return value === "edit";
 }

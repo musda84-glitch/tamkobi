@@ -53,7 +53,7 @@ export default function AccountPage() {
   );
 }
 
-const ROLE_LABELS = { admin: "Yönetici", accountant: "Muhasebe", sales: "Satış", warehouse: "Depo", production: "Üretim", advisor: "Mali Müşavir" };
+const ROLE_LABELS = { admin: "Yönetici", accountant: "Muhasebe", sales: "Satış", warehouse: "Depo", production: "Üretim", personel: "Personel", advisor: "Mali Müşavir" };
 
 const ProfileTab = ({ user }) => {
   const [f, setF] = useState({ current_password: "", new_password: "", new_password2: "" });

@@ -17,6 +17,16 @@ describe("permissions", () => {
     expect(can(blocked, "/cheques", "edit")).toBe(false);
   });
 
+  it("inherits missing purchase-orders permission from stock", () => {
+    const warehouse = { role: "warehouse", permissions: { "/stock": "edit" } };
+    expect(can(warehouse, "/purchase-orders", "edit")).toBe(true);
+    const sales = { role: "sales", permissions: { "/stock": "view" } };
+    expect(can(sales, "/purchase-orders", "view")).toBe(true);
+    expect(can(sales, "/purchase-orders", "edit")).toBe(false);
+    const blocked = { role: "sales", permissions: { "/stock": "edit", "/purchase-orders": "none" } };
+    expect(can(blocked, "/purchase-orders")).toBe(false);
+  });
+
   it("honors none vs edit", () => {
     const user = { role: "sales", permissions: { "/saha": "edit", "/invoices": "view", "/stock": "none" } };
     expect(can(user, "/saha", "edit")).toBe(true);

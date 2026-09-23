@@ -109,6 +109,7 @@ export default function MainLayout({ children, onOpenQuickAction }) {
     sales: "Satış",
     warehouse: "Depo",
     production: "Üretim",
+    personel: "Personel",
     advisor: "Mali Müşavir",
   };
 
