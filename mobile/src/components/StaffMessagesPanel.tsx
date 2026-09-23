@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, Text, TextInput, View } from "react-native";
@@ -14,8 +15,10 @@ import {
   chatPeer,
   chatTimeLabel,
   filterChatList,
+  MESSAGES_COLLAPSED_KEY,
   inboxUnreadTotal,
   isOwnMessage,
+  parseHiddenFlag,
   mergeInboxWithDirectory,
   mergeManagerInbox,
   parsePeerValue,
@@ -155,6 +158,7 @@ export function StaffMessagesPanel({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [openPeer, setOpenPeer] = useState<PeerRef | null>(null);
   const [pickPeer, setPickPeer] = useState("");
@@ -186,6 +190,16 @@ export function StaffMessagesPanel({
   }, [client]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    AsyncStorage.getItem(MESSAGES_COLLAPSED_KEY).then((raw) => setCollapsed(parseHiddenFlag(raw))).catch(() => null);
+  }, []);
+
+  const toggleCollapsed = async () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    if (next) setComposeOpen(false);
+    await AsyncStorage.setItem(MESSAGES_COLLAPSED_KEY, next ? "1" : "0").catch(() => null);
+  };
 
   const managers = data?.managers || [];
   const selfId = data?.self_user_id || "";
@@ -354,29 +368,53 @@ export function StaffMessagesPanel({
         <View style={{ width: 30, height: 30, borderRadius: 10, backgroundColor: tone.solid, alignItems: "center", justifyContent: "center" }}>
           <Ionicons name="chatbubbles" size={16} color="#fff" />
         </View>
-        <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13, flex: 1 }}>Mesajlar</Text>
+        <Pressable onPress={collapsed ? toggleCollapsed : undefined} style={{ flex: 1 }} disabled={!collapsed}>
+          <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Mesajlar</Text>
+        </Pressable>
         {badge ? (
           <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, backgroundColor: colors.primary }}>
             <Text testID="home-messages-unread" style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{badge}</Text>
           </View>
         ) : null}
+        {!collapsed ? (
+          <Pressable
+            testID="home-messages-compose"
+            onPress={() => setComposeOpen((v) => !v)}
+            style={({ pressed }) => ({
+              width: 32,
+              height: 32,
+              borderRadius: 16,
+              backgroundColor: tone.solid,
+              alignItems: "center",
+              justifyContent: "center",
+              opacity: pressed ? 0.75 : 1,
+            })}
+          >
+            <Ionicons name="add" size={20} color="#fff" />
+          </Pressable>
+        ) : null}
         <Pressable
-          testID="home-messages-compose"
-          onPress={() => setComposeOpen((v) => !v)}
+          testID="home-messages-toggle"
+          onPress={toggleCollapsed}
+          accessibilityLabel={collapsed ? "Mesajları aç" : "Mesajları küçült"}
           style={({ pressed }) => ({
             width: 32,
             height: 32,
-            borderRadius: 16,
-            backgroundColor: tone.solid,
+            borderRadius: 10,
+            backgroundColor: "#fff",
+            borderWidth: 1,
+            borderColor: tone.border,
             alignItems: "center",
             justifyContent: "center",
-            opacity: pressed ? 0.75 : 1,
+            opacity: pressed ? 0.7 : 1,
           })}
         >
-          <Ionicons name="add" size={20} color="#fff" />
+          <Ionicons name={collapsed ? "chevron-down" : "chevron-up"} size={18} color={tone.fg} />
         </Pressable>
       </View>
 
+      {!collapsed ? (
+        <>
       {composeOpen ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
           <Chip
@@ -457,6 +495,8 @@ export function StaffMessagesPanel({
       ))}
 
       {error && data ? <Text style={{ color: colors.danger, fontSize: 12 }}>{error}</Text> : null}
+        </>
+      ) : null}
 
       <B2BSheet
         visible={!!openPeer}

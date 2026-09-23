@@ -88,6 +88,7 @@ export type PeerKind = "emp" | "manager" | "group";
 export type PeerRef = { kind: PeerKind; id: string };
 
 export const MESSAGES_HIDDEN_KEY = "tamkobi.staff_messages.hidden";
+export const MESSAGES_COLLAPSED_KEY = "tamkobi.staff_messages.collapsed";
 
 export function parseHiddenFlag(raw?: string | null): boolean {
   return raw === "1" || raw === "true";
