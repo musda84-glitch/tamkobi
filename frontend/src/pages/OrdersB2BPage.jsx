@@ -41,6 +41,7 @@ import { OrdersToolbar, applyOrderFilters, orderFiltersFromSearch } from "../com
 import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
+import { eBelgeMenuItems, orderCanIssueEFatura, orderEBelgeType } from "../utils/orderEBelge";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import {
   DropdownMenu,
@@ -201,10 +202,16 @@ export default function OrdersB2BPage() {
           await axios.post(`${API_URL}/orders/${o.id || o._id}/convert-to-invoice`, { e_type: "e_archive", as_draft: true });
         } else if (action === "einvoice_create") {
           if (o.is_invoiced || o.invoice_id) { skipped++; continue; }
-          await axios.post(`${API_URL}/e-invoice/create`, { order_id: o.id || o._id, e_type: "e_invoice", scenario: "TICARI" });
+          const eType = orderEBelgeType(o, contacts);
+          await axios.post(`${API_URL}/e-invoice/create`, {
+            order_id: o.id || o._id,
+            e_type: eType,
+            scenario: eType === "e_invoice" ? "TICARI" : undefined,
+          });
         } else if (action === "einvoice_send") {
           if (!o.invoice_id) { skipped++; continue; }
-          await axios.post(`${API_URL}/invoices/${o.invoice_id}/send-to-gib`, { e_type: o.e_type || "e_invoice" });
+          const eType = o.e_type || orderEBelgeType(o, contacts);
+          await axios.post(`${API_URL}/invoices/${o.invoice_id}/send-to-gib`, { e_type: eType });
         } else if (action === "approve") {
           if (o.order_status !== "pending") { skipped++; continue; }
           await axios.post(`${API_URL}/orders/${o.id}/approve`, { cargo_carrier: o.cargo_carrier || "geliver" });
@@ -354,16 +361,22 @@ export default function OrdersB2BPage() {
     }
   };
 
-  /** Diğer işlemler: e-belge (GİB) resmi faturalandırma. */
+  /** Diğer işlemler: e-belge (GİB). Mükellef değilse zorla e-arşiv. */
   const handleEBelgeInvoice = async (ord, eType) => {
     const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
-    const label = eType === "e_invoice" ? "E-Fatura" : "E-Arşiv";
+    const resolved = eType === "e_invoice" && orderEBelgeType(ord, contacts) !== "e_invoice"
+      ? "e_archive"
+      : (eType || orderEBelgeType(ord, contacts));
+    const label = resolved === "e_invoice" ? "E-Fatura" : "E-Arşiv";
+    if (resolved !== eType && eType === "e_invoice") {
+      toast.message("Cari e-fatura mükellefi değil; E-Arşiv kesilecek.");
+    }
     if (!window.confirm(`${ord.order_number} için ${label} GİB'e iletilsin mi?`)) return;
     try {
       let invoiceId = ord.invoice_id;
       if (!invoiceId) {
         const draft = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/convert-to-invoice`, {
-          e_type: eType,
+          e_type: resolved,
           as_draft: true,
         });
         invoiceId = draft.data?.invoice_id;
@@ -372,8 +385,8 @@ export default function OrdersB2BPage() {
         invoice_id: invoiceId || undefined,
         order_id: ord.id || ord._id,
         company_id: companyId,
-        e_type: eType,
-        scenario: eType === "e_invoice" ? "TICARI" : undefined,
+        e_type: resolved,
+        scenario: resolved === "e_invoice" ? "TICARI" : undefined,
       });
       toast.success(res.data.message || `${label} GİB'e iletildi.`);
       loadData();
@@ -707,7 +720,9 @@ export default function OrdersB2BPage() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" sideOffset={8} collisionPadding={24} className="z-[80] w-52 rounded-xl p-1.5 shadow-lg" data-testid={`inv-type-chooser-${ord.order_number}`}>
                               <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">Taslak fatura türü</div>
-                              {[["e_invoice", "E-Fatura", "Mükellef alıcı"], ["e_archive", "E-Arşiv", "Nihai tüketici / pazaryeri"], ["paper", "Kağıt Fatura", "Matbu"]].map(([k, l, sub]) => (
+                              {[["e_invoice", "E-Fatura", "Mükellef alıcı"], ["e_archive", "E-Arşiv", "Nihai tüketici / pazaryeri"], ["paper", "Kağıt Fatura", "Matbu"]]
+                                .filter(([k]) => k !== "e_invoice" || orderCanIssueEFatura(ord, contacts))
+                                .map(([k, l, sub]) => (
                                 <DropdownMenuItem key={k} onSelect={() => handleConvertToInvoice(ord.id || ord._id, k)} className="flex-col items-start gap-0 py-1.5" data-testid={`inv-type-${k}-${ord.order_number}`}>
                                   <span className="text-xs font-semibold text-slate-800">{l}</span>
                                   <span className="text-[10px] text-slate-400">{sub}</span>
@@ -773,22 +788,17 @@ export default function OrdersB2BPage() {
                           <DropdownMenuContent align="center" side="left" sideOffset={10} collisionPadding={24} className="z-[80] w-60 rounded-xl p-1.5 shadow-lg" data-testid={`order-more-menu-${ord.order_number}`}>
                             <>
                                 <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">E-Belge (GİB)</div>
-                                <DropdownMenuItem
-                                  onSelect={() => handleEBelgeInvoice(ord, "e_invoice")}
-                                  className="gap-2 text-xs font-medium"
-                                  data-testid={`e-belge-efatura-${ord.order_number}`}
-                                >
-                                  <Stamp className="w-4 h-4 shrink-0 text-indigo-600" />
-                                  <span className="truncate">E-Fatura kes (GİB)</span>
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onSelect={() => handleEBelgeInvoice(ord, "e_archive")}
-                                  className="gap-2 text-xs font-medium border-b mb-1 pb-1.5"
-                                  data-testid={`e-belge-earsiv-${ord.order_number}`}
-                                >
-                                  <Stamp className="w-4 h-4 shrink-0 text-violet-600" />
-                                  <span className="truncate">E-Arşiv kes (GİB)</span>
-                                </DropdownMenuItem>
+                                {eBelgeMenuItems(ord, contacts).map((item, idx, arr) => (
+                                  <DropdownMenuItem
+                                    key={item.eType}
+                                    onSelect={() => handleEBelgeInvoice(ord, item.eType)}
+                                    className={`gap-2 text-xs font-medium${idx === arr.length - 1 ? " border-b mb-1 pb-1.5" : ""}`}
+                                    data-testid={`e-belge-${item.testIdSuffix}-${ord.order_number}`}
+                                  >
+                                    <Stamp className={`w-4 h-4 shrink-0 ${item.eType === "e_invoice" ? "text-indigo-600" : "text-violet-600"}`} />
+                                    <span className="truncate">{item.label}</span>
+                                  </DropdownMenuItem>
+                                ))}
                               </>
                             {[
                               [Pencil, "Siparişi Düzenle", () => {

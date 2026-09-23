@@ -1,5 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -25,10 +24,12 @@ import {
   canCreateOrderDraftInvoice,
   canIssueOrderEBelge,
   canPostOrderDraftInvoice,
+  canShowEFaturaOption,
   convertToDraftBody,
   eBelgeCreateBody,
   faturalaActionLabel,
   isOrderFullyInvoiced,
+  orderEBelgeTypeFromContact,
 } from "../utils/orderInvoice";
 import { printCargoLabel, printOrderForm } from "../utils/orderShare";
 import { QUICK_TONE_COLORS, type QuickTone } from "../utils/quickMenu";
@@ -37,6 +38,7 @@ import { B2BSheet } from "./b2b/B2BSheet";
 import { confirmAction } from "./chips";
 import { GroupedSelect } from "./GroupedSelect";
 import { Muted, PrimaryButton } from "./kit";
+import { Ionicons } from "@expo/vector-icons";
 
 type ActionDef = {
   key: string;
@@ -104,11 +106,29 @@ export function OrderActions({
   const [cargoOpen, setCargoOpen] = useState(false);
   const [carriers, setCarriers] = useState<CargoCatalogItem[]>(FALLBACK_CARGO_CATALOG);
   const [carrier, setCarrier] = useState(String(order.cargo_carrier || ""));
+  const [contactFlag, setContactFlag] = useState<{ is_e_invoice_user?: boolean } | null>(null);
   const canProduce = can("/production", "edit") || can("/sevk", "edit") || can("/orders", "edit");
   const canEdit = can("/orders", "edit");
   const canMutate = canEdit || can("/saha", "edit");
   const marketplace = isMarketplaceChannel(order.channel);
   const oid = idOf(order);
+
+  useEffect(() => {
+    const cid = order.contact_id;
+    if (!cid) {
+      setContactFlag(null);
+      return;
+    }
+    let cancelled = false;
+    get<{ contact?: { is_e_invoice_user?: boolean }; is_e_invoice_user?: boolean }>(client, `/contacts/${cid}/overview`)
+      .then((ov) => {
+        if (cancelled) return;
+        const flag = !!(ov?.contact?.is_e_invoice_user ?? ov?.is_e_invoice_user);
+        setContactFlag({ is_e_invoice_user: flag });
+      })
+      .catch(() => { if (!cancelled) setContactFlag(null); });
+    return () => { cancelled = true; };
+  }, [client, order.contact_id]);
 
   const ensure = async () => {
     if (order.items?.length) return order;
@@ -281,10 +301,15 @@ export function OrderActions({
   };
 
   const issueEBelge = (eType: "e_invoice" | "e_archive") => {
-    const label = eType === "e_invoice" ? "E-Fatura" : "E-Arşiv";
+    const resolved = eType === "e_invoice" && !canShowEFaturaOption(contactFlag)
+      ? "e_archive"
+      : (eType || orderEBelgeTypeFromContact(contactFlag));
+    const label = resolved === "e_invoice" ? "E-Fatura" : "E-Arşiv";
     confirmAction(
       `${label} (GİB)`,
-      `${order.order_number || "Sipariş"} için ${label} GİB'e iletilsin mi?`,
+      resolved !== eType && eType === "e_invoice"
+        ? `${order.order_number || "Sipariş"} cari e-fatura mükellefi değil; E-Arşiv GİB'e iletilsin mi?`
+        : `${order.order_number || "Sipariş"} için ${label} GİB'e iletilsin mi?`,
       async () => {
         setBusy("ebelge");
         try {
@@ -293,7 +318,7 @@ export function OrderActions({
             const draft = await post<{ invoice_id?: string }>(
               client,
               `/orders/${oid}/convert-to-invoice`,
-              convertToDraftBody(eType),
+              convertToDraftBody(resolved),
             );
             invoiceId = draft.invoice_id;
           }
@@ -304,7 +329,7 @@ export function OrderActions({
               orderId: oid,
               invoiceId,
               companyId: companyId || activeCompany?.id || "",
-              eType,
+              eType: resolved,
             }),
           );
           onMessage?.(r.message || `${label} GİB'e iletildi.`);
@@ -346,7 +371,9 @@ export function OrderActions({
       : []),
     ...(showEBelge
       ? [
-          { key: "efatura", label: "E-Fatura", icon: "receipt" as const, tone: "indigo" as const, busyKey: "ebelge", testID: `order-ebelge-efatura-${oid}`, onPress: () => issueEBelge("e_invoice") },
+          ...(canShowEFaturaOption(contactFlag)
+            ? [{ key: "efatura", label: "E-Fatura", icon: "receipt" as const, tone: "indigo" as const, busyKey: "ebelge", testID: `order-ebelge-efatura-${oid}`, onPress: () => issueEBelge("e_invoice") }]
+            : []),
           { key: "earsiv", label: "E-Arşiv", icon: "receipt" as const, tone: "violet" as const, busyKey: "ebelge", testID: `order-ebelge-earsiv-${oid}`, onPress: () => issueEBelge("e_archive") },
         ]
       : []),
