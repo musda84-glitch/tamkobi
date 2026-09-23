@@ -9367,7 +9367,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
         existing = await db.orders.find_one(key)
         d["updated_at"] = datetime.now(timezone.utc).isoformat()
         if existing:
-            keep = {k: existing[k] for k in ("invoice_id", "is_invoiced", "contact_id", "contact_name", "internal_note", "label_printed_at") if existing.get(k) is not None}
+            keep = {k: existing[k] for k in ("invoice_id", "is_invoiced", "contact_id", "contact_name", "internal_note", "label_printed_at", "form_printed_at") if existing.get(k) is not None}
             await db.orders.update_one({"_id": existing["_id"]}, {"$set": {**d, **keep}})
             if not existing.get("contact_id"):
                 await _ensure_order_contact({**existing, **d})
@@ -10519,6 +10519,17 @@ async def mark_labels_printed(req: Dict[str, Any]):
     now = datetime.now(timezone.utc).isoformat()
     await db.orders.update_many({"_id": {"$in": ids}}, {"$set": {"label_printed_at": now}})
     return {"status": "success", "count": len(ids)}
+
+
+@api_router.post("/orders/mark-form-printed")
+async def mark_form_printed(req: Dict[str, Any]):
+    """Sipariş formu yazdırıldığında form_printed_at işaretlenir (UI yeşil/mor 'yazdırıldı')."""
+    ids = [i for i in (req.get("ids") or []) if i]
+    if not ids:
+        raise HTTPException(status_code=400, detail="Sipariş seçilmedi.")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_many({"_id": {"$in": ids}}, {"$set": {"form_printed_at": now}})
+    return {"status": "success", "count": len(ids), "form_printed_at": now}
 
 
 async def _resolve_order_cargo_label(order_id: str):

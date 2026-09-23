@@ -40,6 +40,7 @@ import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
 import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
+import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import {
   DropdownMenu,
@@ -492,7 +493,22 @@ export default function OrdersB2BPage() {
         </div></div>
       )}
       {labelOrder && <CargoLabel order={labelOrder} company={activeCompany} onClose={() => setLabelOrder(null)} />}
-      {printOrder && <PrintDocument docType="order" doc={printOrder} company={activeCompany} onClose={() => setPrintOrder(null)} onEditTemplate={() => setEditTpl(true)} />}
+      {printOrder && (
+        <PrintDocument
+          docType="order"
+          doc={printOrder}
+          company={activeCompany}
+          onClose={() => setPrintOrder(null)}
+          onEditTemplate={() => setEditTpl(true)}
+          onPrinted={(doc) => {
+            const id = doc?.id || doc?._id;
+            if (!id) return;
+            axios.post(`${API_URL}/orders/mark-form-printed`, { ids: [id] })
+              .then(() => loadData())
+              .catch(() => {});
+          }}
+        />
+      )}
       {editTpl && <PrintTemplateEditor companyId={activeCompany?.id || "comp_nexus_main_01"} docType="order" onClose={() => setEditTpl(false)} />}
       {notifyOrder && (
         <QuickMessageModal
@@ -715,26 +731,38 @@ export default function OrdersB2BPage() {
                           <button
                             type="button"
                             onClick={() => setShipOrder(ord)}
-                            className="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-800 rounded-lg"
-                            title="Kargola"
-                            aria-label="Kargola"
+                            className={cargoActionButtonClass(ord)}
+                            title={cargoActionTitle(ord)}
+                            aria-label={cargoActionTitle(ord)}
                             data-testid={`create-cargo-btn-${ord.order_number}`}
+                            data-shipped={orderIsShipped(ord) ? "1" : "0"}
                           >
                             <Truck className="w-4 h-4" />
                           </button>
                         ) : (
-                          <button type="button" onClick={() => { if (printThermalLabels([ord], activeCompany)) axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id] }).catch(() => {}); }} className="p-1.5 text-indigo-700 hover:bg-indigo-50 border border-dashed border-indigo-200 rounded-lg" title={`Termal etiket: ${ord.cargo_tracking_number}${ord.label_printed_at ? " ✓" : ""}`} aria-label="Kargo etiketi yazdır" data-testid={`print-label-${ord.order_number}`}>
-                            <Printer className="w-4 h-4" />
+                          <button
+                            type="button"
+                            onClick={() => { if (printThermalLabels([ord], activeCompany)) axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id] }).then(() => loadData()).catch(() => {}); }}
+                            className={ord.label_printed_at
+                              ? "p-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg shadow-sm ring-1 ring-sky-700/30"
+                              : "p-1.5 text-indigo-700 hover:bg-indigo-50 border border-dashed border-indigo-200 rounded-lg"}
+                            title={cargoActionTitle(ord)}
+                            aria-label={cargoActionTitle(ord)}
+                            data-testid={`print-label-${ord.order_number}`}
+                            data-shipped="1"
+                          >
+                            <Truck className="w-4 h-4" />
                           </button>
                         )}
                         {["pending", "new"].includes(ord.order_status) ? <button type="button" onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         <button
                           type="button"
                           onClick={() => setPrintOrder(ord)}
-                          className="p-1.5 text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-lg"
-                          title="Sipariş Formu Yazdır"
-                          aria-label="Sipariş Formu Yazdır"
+                          className={printOrderButtonClass(ord)}
+                          title={printOrderTitle(ord)}
+                          aria-label={printOrderTitle(ord)}
                           data-testid={`print-order-btn-${ord.order_number}`}
+                          data-printed={ord.form_printed_at ? "1" : "0"}
                         >
                           <Printer className="w-4 h-4" />
                         </button>
@@ -771,7 +799,7 @@ export default function OrdersB2BPage() {
                               [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, true],
                               [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, !["returned"].includes(ord.order_status)],
                               [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, true],
-                              [Printer, "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-menu-${ord.order_number}`, true],
+                              [Printer, ord.form_printed_at ? "Sipariş Formu (yazdırıldı)" : "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-menu-${ord.order_number}`, true],
                               [MessageSquare, "Müşteriye Bildirim Gönder", () => setNotifyOrder(ord), `notify-order-btn-${ord.order_number}`, true],
                             ].filter((it) => it[4]).map(([Ico, label, fn, tid]) => (
                               <DropdownMenuItem key={tid} onSelect={fn} className="gap-2 text-xs font-medium" data-testid={tid}><Ico className="w-4 h-4 shrink-0 text-slate-500" /><span className="truncate">{label}</span></DropdownMenuItem>

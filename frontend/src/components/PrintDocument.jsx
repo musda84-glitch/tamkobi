@@ -45,7 +45,7 @@ export const LAYOUTS = [
   ["bold", "Vurgulu", "Sol renk şeridi, zebra tablo"]
 ];
 
-export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }) => {
+export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, onPrinted }) => {
   const [tpl, setTpl] = useState(null);
   const [prodById, setProdById] = useState({});
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
@@ -137,7 +137,16 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate }
           <div className="flex items-center gap-2">
             <button onClick={() => setPickerOpen(!pickerOpen)} className={`flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50 ${pickerOpen ? "bg-slate-100" : ""}`} data-testid="print-layout-toggle-btn"><LayoutTemplate className="w-3.5 h-3.5" /> Şablon: {LAYOUTS.find((l) => l[0] === layout)?.[1]}</button>
             {onEditTemplate && <button onClick={onEditTemplate} className="flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50" data-testid="print-edit-template-btn"><Settings2 className="w-3.5 h-3.5" /> Form Düzenle</button>}
-            <button onClick={() => window.print()} className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold" data-testid="print-now-btn"><Printer className="w-3.5 h-3.5" /> Yazdır</button>
+            <button
+              onClick={() => {
+                window.print();
+                try { onPrinted?.(doc); } catch { /* ignore */ }
+              }}
+              className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold"
+              data-testid="print-now-btn"
+            >
+              <Printer className="w-3.5 h-3.5" /> Yazdır
+            </button>
             <button onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="print-close-btn"><X className="w-5 h-5" /></button>
           </div>
         </div>
