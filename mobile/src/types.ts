@@ -254,6 +254,9 @@ export type Product = {
   width?: number | null;
   height?: number | null;
   package_count?: number | null;
+  gtip?: string | null;
+  origin_country?: string | null;
+  manufacturer_code?: string | null;
 };
 
 export type Notification = {

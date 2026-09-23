@@ -44,6 +44,11 @@ export const ProductDetailModal = ({ product, initialTab = "images", onClose, on
             <div>
               <h3 className="text-base font-bold text-slate-900 leading-tight">{product.name}</h3>
               <p className="text-[11px] font-mono text-indigo-600 font-semibold">SKU: {product.sku} • Stok: {product.stock_quantity} {product.unit}</p>
+              {(product.gtip || product.origin_country || product.manufacturer_code) ? (
+                <p className="text-[10px] text-slate-500 mt-0.5" data-testid="product-detail-trade-meta">
+                  {[product.manufacturer_code && `Ürt: ${product.manufacturer_code}`, product.gtip && `GTIP ${product.gtip}`, product.origin_country && `Menşei: ${product.origin_country}`].filter(Boolean).join(" · ")}
+                </p>
+              ) : null}
             </div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="close-product-detail-btn"><X className="w-5 h-5" /></button>
