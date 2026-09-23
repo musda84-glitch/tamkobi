@@ -73,6 +73,8 @@ import {
   employeeCardChrome,
   employeeCardPayKind,
   employeeCompGroups,
+  employeeCompRowCaption,
+  requestDecisionActions,
   initLocMode,
   patchLocMode,
   serializeLocMode,
@@ -146,7 +148,12 @@ describe("employee draft", () => {
     });
     expect(pendingRequestDecision({ id: "a1", kind: "advance" }, false)?.body).toEqual({ status: "rejected" });
     expect(pendingRequestDecision({ id: "y1", kind: "yevmiye_adjustment" }, true)?.path).toBe("/personnel/attendance/y1/yevmiye-decision");
+    expect(pendingRequestDecision({ id: "x1", kind: "location_exit" }, "ack")).toEqual({
+      path: "/personnel/attendance/x1/location-exit-decision", body: { decision: "ack" },
+    });
     expect(pendingRequestDecision({ id: "d1", kind: "dispute" }, true)).toBeNull();
+    expect(pendingRequestDecisionMessage({ kind: "location_exit" }, "ack")).toBe("Konum dışı çıkış: haberim var.");
+    expect(requestDecisionActions("location_exit").map((a) => a.title)).toEqual(["Haberim var", "Onayla", "Reddet"]);
     expect(pendingRequestDecisionMessage({ kind: "early_leave" }, false)).toBe("Erken çıkış reddedildi.");
     expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, false)).toBe("Yevmiye kart ücretiyle bırakıldı.");
     expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);
@@ -257,6 +264,8 @@ describe("payroll helpers", () => {
       ["sum", "Özet", ["overtime", "total"]],
     ]);
     expect(employeeCompGroups(employeeCompRows({ pay_type: "daily", daily_wage: 500 })).find((g) => g.key === "wage")?.title).toBe("Yevmiye");
+    expect(employeeCompRowCaption({ key: "salary", label: "Yevmiye", value: 500 }, true)).toBe("Yevmiye / gün");
+    expect(employeeCompRowCaption({ key: "bonus", label: "Yevmiye günü", value: 8000, days: 16 }, true)).toBe("Yevmiye günü · 16 gün");
     expect(initLocMode(null).interval_minutes).toBe(15);
     expect(initLocMode({ enabled: false, continuous: true, interval_minutes: 0 })).toMatchObject({ enabled: false, continuous: true, interval_minutes: 0 });
     expect(patchLocMode({ enabled: true, continuous: false, interval_minutes: 15 }, "continuous", true).interval_minutes).toBe(0);

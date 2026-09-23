@@ -205,15 +205,18 @@ export const REQUEST_KIND_TR: Record<string, string> = {
   dispute: "İtiraz",
   advance: "Avans",
   yevmiye_adjustment: "Yevmiye",
+  location_exit: "Konum dışı",
 };
 
 export function requestKindLabel(kind?: string | null): string {
   return REQUEST_KIND_TR[String(kind || "")] || "Talep";
 }
 
+export type RequestDecision = boolean | "ack";
+
 export function pendingRequestDecision(
   it: PendingRequest,
-  approved: boolean,
+  approved: RequestDecision,
 ): { path: string; body: Record<string, string> } | null {
   const id = String(it.id || "").trim();
   if (!id) return null;
@@ -232,15 +235,44 @@ export function pendingRequestDecision(
   if (it.kind === "yevmiye_adjustment") {
     return { path: `/personnel/attendance/${id}/yevmiye-decision`, body: { decision: approved ? "approve" : "reject" } };
   }
+  if (it.kind === "location_exit") {
+    const decision = approved === "ack" ? "ack" : approved ? "approve" : "reject";
+    return { path: `/personnel/attendance/${id}/location-exit-decision`, body: { decision } };
+  }
   return null;
 }
 
-export function pendingRequestDecisionMessage(it: PendingRequest, approved: boolean): string {
+export function pendingRequestDecisionMessage(it: PendingRequest, approved: RequestDecision): string {
+  if (it.kind === "location_exit") {
+    if (approved === "ack") return "Konum dışı çıkış: haberim var.";
+    return approved ? "Konum dışı çıkış onaylandı." : "Konum dışı çıkış reddedildi.";
+  }
   if (it.kind === "yevmiye_adjustment") {
     return approved ? "Yevmiye onaylandı." : "Yevmiye kart ücretiyle bırakıldı.";
   }
   const label = requestKindLabel(it.kind);
   return approved ? `${label} onaylandı.` : `${label} reddedildi.`;
+}
+
+export function requestDecisionActions(kind?: string | null): { key: string; title: string; decision: RequestDecision; color: "primary" | "secondary" | "danger" }[] {
+  if (kind === "dispute") return [];
+  if (kind === "location_exit") {
+    return [
+      { key: "ack", title: "Haberim var", decision: "ack", color: "secondary" },
+      { key: "approve", title: "Onayla", decision: true, color: "primary" },
+      { key: "reject", title: "Reddet", decision: false, color: "danger" },
+    ];
+  }
+  if (kind === "yevmiye_adjustment") {
+    return [
+      { key: "approve", title: "Onayla", decision: true, color: "primary" },
+      { key: "reject", title: "Kart ücreti", decision: false, color: "danger" },
+    ];
+  }
+  return [
+    { key: "approve", title: "Onayla", decision: true, color: "primary" },
+    { key: "reject", title: "Reddet", decision: false, color: "danger" },
+  ];
 }
 
 export function requestsForEmployee(items: PendingRequest[] | null | undefined, empId: string): PendingRequest[] {
@@ -692,6 +724,14 @@ export type AttendanceRecord = {
     late_minutes?: number;
     early_leave_minutes?: number;
   };
+  location_exit_request?: {
+    status?: string;
+    place?: string;
+    distance_m?: number;
+    radius_m?: number;
+    tolerance_hours?: number;
+    left_at?: string;
+  };
 };
 
 export type AttendancePayload = {
@@ -1105,6 +1145,12 @@ export function employeeCompGroups(rows: CompRow[]): CompGroup[] {
     { key: "wage", title: wageTitle, rows: pick("salary", "bonus") },
     { key: "sum", title: "Özet", rows: pick("overtime", "total") },
   ];
+}
+
+export function employeeCompRowCaption(row: CompRow, daily?: boolean): string {
+  const label = row.key === "salary" && daily ? `${row.label} / gün` : row.label;
+  if (row.key === "bonus" && row.days != null) return `${label} · ${row.days} gün`;
+  return label;
 }
 
 export function remainingDue(balance?: EmployeeBalance | null, unpaidFallback = 0): number {

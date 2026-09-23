@@ -28,6 +28,8 @@ import {
   remainingDue,
   employeeCompRows,
   employeeCompGroups,
+  employeeCompRowCaption,
+  requestDecisionActions,
   unpaidPayrollTotal,
   employeePayMoves,
   EMPLOYEE_CARD_PAY_ACTIONS,
@@ -809,7 +811,7 @@ export function PersonnelScreen() {
     }
   };
 
-  const decideRequest = async (it: PendingRequest, approved: boolean) => {
+  const decideRequest = async (it: PendingRequest, approved: boolean | "ack") => {
     const spec = pendingRequestDecision(it, approved);
     if (!spec) {
       setTab("attendance");
@@ -933,9 +935,16 @@ export function PersonnelScreen() {
               <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
               {it.detail ? <Muted>{it.detail}</Muted> : null}
               {it.kind !== "dispute" && canEdit ? (
-                <Row>
-                  <PrimaryButton title="Onayla" color={colors.primary} testID={`approve-req-${it.id}`} onPress={() => decideRequest(it, true)} />
-                  <PrimaryButton title={it.kind === "yevmiye_adjustment" ? "Kart ücreti" : "Reddet"} color={colors.danger} testID={`reject-req-${it.id}`} onPress={() => decideRequest(it, false)} />
+                <Row style={{ flexWrap: "wrap" }}>
+                  {requestDecisionActions(it.kind).map((btn) => (
+                    <PrimaryButton
+                      key={btn.key}
+                      title={btn.title}
+                      color={btn.color === "danger" ? colors.danger : btn.color === "secondary" ? colors.secondary : colors.primary}
+                      testID={`${btn.key}-req-${it.id}`}
+                      onPress={() => decideRequest(it, btn.decision)}
+                    />
+                  ))}
                 </Row>
               ) : (
                 <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`view-req-${it.id}`} onPress={() => setTab("attendance")} />
@@ -1065,35 +1074,38 @@ export function PersonnelScreen() {
                       <View key={`${it.kind}-${it.id}`} style={{ gap: 4 }}>
                         <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
                         {it.kind !== "dispute" && canEdit ? (
-                          <Row>
-                            <PrimaryButton title="Onayla" color={colors.primary} testID={`card-approve-${it.kind}-${it.id}`} onPress={() => decideRequest(it, true)} />
-                            <PrimaryButton title={it.kind === "yevmiye_adjustment" ? "Kart ücreti" : "Reddet"} color={colors.danger} testID={`card-reject-${it.kind}-${it.id}`} onPress={() => decideRequest(it, false)} />
+                          <Row style={{ flexWrap: "wrap" }}>
+                            {requestDecisionActions(it.kind).map((btn) => (
+                              <PrimaryButton
+                                key={btn.key}
+                                title={btn.title}
+                                color={btn.color === "danger" ? colors.danger : btn.color === "secondary" ? colors.secondary : colors.primary}
+                                testID={`card-${btn.key}-${it.kind}-${it.id}`}
+                                onPress={() => decideRequest(it, btn.decision)}
+                              />
+                            ))}
                           </Row>
                         ) : null}
                       </View>
                     ))}
                   </View>
                 ) : null}
-                <Row testID={`emp-comp-${eid}`} style={{ alignItems: "stretch", gap: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.border }}>
+                <Row testID={`emp-comp-${eid}`} style={{ alignItems: "stretch", gap: 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: colors.border }}>
                   {employeeCompGroups(comp).map((group) => (
-                    <View key={group.key} testID={`emp-comp-group-${group.key}-${eid}`} style={{ flex: 1, minWidth: 0, gap: 4, padding: 6, borderRadius: 8, backgroundColor: colors.slate50, justifyContent: "space-between" }}>
+                    <View key={group.key} testID={`emp-comp-group-${group.key}-${eid}`} style={{ flex: 1, minWidth: 0, gap: 2, padding: 4, borderRadius: 8, backgroundColor: colors.slate50 }}>
                       <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>{group.title}</Text>
                       {group.rows.map((row) => (
-                        <View key={row.key} style={{ gap: 0 }}>
-                          <Text style={{ fontSize: 10, color: colors.muted }}>
-                            {row.label}{row.key === "salary" && isDailyWage(emp) ? " / gün" : ""}
+                        <View key={row.key} style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 4 }}>
+                          <Text
+                            numberOfLines={1}
+                            testID={row.key === "bonus" && row.days != null ? `emp-comp-bonus-days-${eid}` : undefined}
+                            style={{ fontSize: 10, color: colors.muted, flex: 1 }}
+                          >
+                            {employeeCompRowCaption(row, isDailyWage(emp))}
                           </Text>
-                          {row.key === "bonus" && row.days != null ? (
-                            <Text
-                              testID={`emp-comp-bonus-days-${eid}`}
-                              style={{ fontWeight: "800", color: colors.text, fontSize: 11 }}
-                            >
-                              {row.days} gün
-                            </Text>
-                          ) : null}
                           <Text
                             testID={row.key === "total" ? `emp-remaining-${eid}` : `emp-comp-${row.key}-${eid}`}
-                            style={{ fontWeight: "800", fontSize: 12, color: row.key === "total" ? colors.primary : colors.text }}
+                            style={{ fontWeight: "800", fontSize: 11, color: row.key === "total" ? colors.primary : colors.text }}
                           >
                             {fmtMoney(row.value)}
                           </Text>
@@ -1229,6 +1241,7 @@ export function PersonnelScreen() {
             const early = r.early_leave_request?.status === "pending";
             const intra = r.intraday_leave_request?.status === "pending";
             const yevAdj = r.yevmiye_adjustment_request?.status === "pending";
+            const locExit = r.location_exit_request?.status === "pending";
             const yevLine = yevmiyeStatusLine(r);
             return (
               <Card key={idOf(r)} testID={`att-rec-${idOf(r)}`}>
@@ -1241,7 +1254,14 @@ export function PersonnelScreen() {
                 {early ? <Muted testID={`att-early-${idOf(r)}`}>Erken çıkış talebi {r.early_leave_request?.planned_time || ""} {r.early_leave_request?.reason ? `· ${r.early_leave_request.reason}` : ""}</Muted> : null}
                 {intra ? <Muted testID={`att-intra-${idOf(r)}`}>Gün içi izin {r.intraday_leave_request?.out_time || ""}–{r.intraday_leave_request?.return_time || ""} {r.intraday_leave_request?.reason ? `· ${r.intraday_leave_request.reason}` : ""}</Muted> : null}
                 {yevLine ? <Muted testID={`att-yevmiye-adj-${idOf(r)}`}>{yevLine}</Muted> : null}
-                {canEdit && (early || intra || yevAdj) ? (
+                {locExit ? (
+                  <Muted testID={`att-loc-exit-${idOf(r)}`}>
+                    Konum dışı{r.location_exit_request?.place ? ` · ${r.location_exit_request.place}` : ""}
+                    {r.location_exit_request?.distance_m != null ? ` · ${r.location_exit_request.distance_m} m` : ""}
+                    {r.location_exit_request?.tolerance_hours ? ` · tolerans ${r.location_exit_request.tolerance_hours} sa` : ""}
+                  </Muted>
+                ) : null}
+                {canEdit && (early || intra || yevAdj || locExit) ? (
                   <Row>
                     {early ? (
                       <>
@@ -1259,6 +1279,13 @@ export function PersonnelScreen() {
                       <>
                         <PrimaryButton title="Yevmiye onayla" color={colors.primary} testID={`att-yevmiye-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "yevmiye_adjustment" }, true)} />
                         <PrimaryButton title="Kart ücreti" color={colors.danger} testID={`att-yevmiye-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "yevmiye_adjustment" }, false)} />
+                      </>
+                    ) : null}
+                    {locExit ? (
+                      <>
+                        <PrimaryButton title="Haberim var" color={colors.secondary} testID={`att-loc-exit-ack-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, "ack")} />
+                        <PrimaryButton title="Onayla" color={colors.primary} testID={`att-loc-exit-ok-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, true)} />
+                        <PrimaryButton title="Reddet" color={colors.danger} testID={`att-loc-exit-no-${idOf(r)}`} onPress={() => decideRequest({ id: idOf(r), kind: "location_exit" }, false)} />
                       </>
                     ) : null}
                   </Row>
@@ -1640,7 +1667,7 @@ export function PersonnelScreen() {
           mode={locField}
           onChange={(key, value) => setLocField((prev) => patchLocMode(prev, key, value))}
         />
-        <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından; çıkış her yerden. Sürekli açıkken konum aralığında kontrol edilir. Dış görevde konum dışına çıkınca tolerans kadar saat sonra çıkış sayılır.</Muted>
+        <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından; çıkış her yerden. Sürekli açıkken konum aralığında kontrol edilir. Dış görevde konum dışına çıkınca tolerans kadar saat sonra yöneticiye haber gider — Haberim var / Onayla / Reddet.</Muted>
         <PrimaryButton title="Kaydet" testID="emp-location-save" color="#047857" loading={busy} onPress={saveLocSettings} />
       </B2BSheet>
 

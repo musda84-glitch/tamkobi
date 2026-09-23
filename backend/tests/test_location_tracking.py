@@ -2,6 +2,8 @@
 from attendance import (
     DEFAULT_LOCATION_MODE,
     DEFAULT_LOCATION_TRACKING,
+    build_location_exit_request,
+    location_exit_should_notify,
     location_mode_for,
     merge_schedule,
     normalize_location_tracking,
@@ -89,6 +91,38 @@ def test_merge_schedule_require_geo_follows_employee_location_tracking():
     s_cont = merge_schedule(company, emp_cont)
     assert s_cont["location_tracking"]["continuous"] is True
     assert s_cont["location_tracking"]["interval_minutes"] == 0
+
+
+def test_location_exit_should_notify_after_tolerance():
+    assert location_exit_should_notify(outside=True, tolerance_hours=0) is True
+    assert location_exit_should_notify(outside=False, tolerance_hours=0) is False
+    assert location_exit_should_notify(
+        outside=True,
+        first_left_at="2026-09-23T08:00:00+00:00",
+        now="2026-09-23T09:00:00+00:00",
+        tolerance_hours=2,
+    ) is False
+    assert location_exit_should_notify(
+        outside=True,
+        first_left_at="2026-09-23T08:00:00+00:00",
+        now="2026-09-23T10:00:00+00:00",
+        tolerance_hours=2,
+    ) is True
+    assert location_exit_should_notify(
+        outside=True,
+        tolerance_hours=0,
+        existing={"status": "pending"},
+    ) is False
+    req = build_location_exit_request(
+        distance_m=850,
+        radius_m=300,
+        tolerance_hours=2,
+        workplace={"kind": "task", "task_title": "Montaj", "project_name": "Villa"},
+        now="2026-09-23T10:00:00+00:00",
+    )
+    assert req["status"] == "pending"
+    assert req["distance_m"] == 850
+    assert req["tolerance_hours"] == 2
 
 
 def test_merge_schedule_without_employee_keeps_company_require_geo():

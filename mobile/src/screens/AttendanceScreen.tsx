@@ -79,12 +79,44 @@ export function AttendanceScreen() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    const tracking = data?.active_location_tracking || data?.location_tracking;
+    const onDuty = Boolean(data?.today?.check_in && !data?.today?.check_out);
+    const field = data?.workplace?.kind === "task";
+    if (!tracking?.enabled || !onDuty || !field) return;
+    let cancelled = false;
+    const ping = async () => {
+      try {
+        const c = await coords();
+        if (cancelled) return;
+        await post(client, "/personnel/attendance/self/location", {
+          latitude: c.latitude,
+          longitude: c.longitude,
+          accuracy_m: c.accuracy_m ?? undefined,
+        });
+      } catch {
+        /* izin yok veya konum kapalı */
+      }
+    };
+    ping();
+    const mins = Number(tracking.interval_minutes);
+    const ms = tracking.continuous || mins === 0 ? 60_000 : Math.max(1, mins) * 60_000;
+    const t = setInterval(ping, ms);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [client, data?.today?.check_in, data?.today?.check_out, data?.workplace?.kind, data?.active_location_tracking, data?.location_tracking]);
+
   const act = async (action: "check_in" | "check_out") => {
     setBusy(action);
     setError(null);
     try {
       let extra: { latitude?: number; longitude?: number; accuracy_m?: number } = {};
-      if (action === "check_in" && data?.location && data?.schedule?.require_geo !== false) {
+      const needGeo = action === "check_in"
+        ? Boolean(data?.location && data?.schedule?.require_geo !== false)
+        : Boolean(data?.workplace?.kind === "task" || data?.active_location_tracking?.enabled);
+      if (needGeo) {
         const c = await coords();
         extra = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
       }
