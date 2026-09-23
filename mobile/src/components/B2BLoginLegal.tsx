@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import { apiErrorMessage } from "../api/errors";
 import { get } from "../api/client";
 import { colors, typeface } from "../theme";
@@ -55,6 +55,7 @@ export function B2BLoginLegal({
               testID={`b2b-login-legal-${d.slug}`}
               accessibilityRole="checkbox"
               accessibilityState={{ checked }}
+              {...(Platform.OS === "web" ? { "aria-checked": checked } : {})}
               hitSlop={8}
               style={{
                 width: 18,
