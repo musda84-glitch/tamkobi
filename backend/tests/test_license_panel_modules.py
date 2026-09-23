@@ -17,6 +17,7 @@ PANEL_MODULES = {
     "/saha": "Saha Sipariş",
     "/sevk": "Depo Sevkiyatı",
     "/mesai": "Mesaim",
+    "/purchase-orders": "Verilen Siparişler",
 }
 
 
@@ -56,7 +57,7 @@ class TestLicensePanelModules:
         starter = next((p for p in r.json() if p.get("code") == "starter" or p.get("id") == "plan_starter"), None)
         assert starter
         mods = set(starter.get("modules") or [])
-        for key in ("/edoc-inbox", "/dis-ticaret", "/b2b-yonetim", "/sayim"):
+        for key in ("/edoc-inbox", "/dis-ticaret", "/b2b-yonetim", "/sayim", "/purchase-orders"):
             assert key in mods, f"starter plan missing {key}"
 
     def test_toggle_edoc_inbox_blocks_api(self):
