@@ -1295,6 +1295,24 @@ export function employeeCardActionsByGroup(group: "pay" | "work") {
   return group === "work" ? EMPLOYEE_CARD_WORK_ACTIONS : EMPLOYEE_CARD_PAY_ACTIONS;
 }
 
+export const EMPLOYEE_CARD_ACTION_ICONS: Record<string, string> = {
+  moves: "list-outline",
+  advance: "cash-outline",
+  salary: "wallet-outline",
+  meal: "restaurant-outline",
+  transport: "bus-outline",
+  bonus: "calendar-outline",
+  otpay: "time-outline",
+  task: "briefcase-outline",
+  overtime: "add-circle-outline",
+  location: "location-outline",
+  expense: "receipt-outline",
+};
+
+export function employeeCardActionIcon(key: string): string {
+  return EMPLOYEE_CARD_ACTION_ICONS[key] || "ellipse-outline";
+}
+
 export function allowanceDue(emp?: Employee | null, balance?: EmployeeBalance | null, kind: "meal" | "transport" = "meal"): number {
   if (kind === "meal") return Number(balance?.meal_due ?? emp?.meal_allowance ?? 0) || 0;
   return Number(balance?.transport_due ?? emp?.transport_allowance ?? 0) || 0;

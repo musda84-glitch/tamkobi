@@ -33,6 +33,7 @@ import {
   EMPLOYEE_CARD_PAY_ACTIONS,
   EMPLOYEE_CARD_WORK_ACTIONS,
   employeeCardActionTitle,
+  employeeCardActionIcon,
   parseYevmiyeDays,
   parseYevmiyeWage,
   parseTaskDays,
@@ -1215,27 +1216,26 @@ export function PersonnelScreen() {
                     ) : null}
                   </Row>
                 ) : null}
-                <View style={{ gap: 8 }} testID={`emp-card-actions-${eid}`}>
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                    <PayChip
-                      title="Hareketler"
-                      color={colors.secondary}
-                      bg="#F1F5F9"
-                      testID={`emp-card-moves-btn-${eid}`}
-                      onPress={() => openMoves(emp)}
-                      wide
-                    />
-                    {canEdit ? EMPLOYEE_CARD_PAY_ACTIONS.map((action) => (
-                      <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
-                    )) : null}
-                  </View>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }} testID={`emp-card-actions-${eid}`}>
+                  <PayChip
+                    title="Hareketler"
+                    icon={employeeCardActionIcon("moves")}
+                    color={colors.secondary}
+                    bg="#F1F5F9"
+                    testID={`emp-card-moves-btn-${eid}`}
+                    onPress={() => openMoves(emp)}
+                  />
+                  {canEdit ? EMPLOYEE_CARD_PAY_ACTIONS.map((action) => (
+                    <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
+                  )) : null}
                   {canEdit ? (
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }} testID={`emp-card-work-actions-${eid}`}>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, width: "100%" }} testID={`emp-card-work-actions-${eid}`}>
                       {EMPLOYEE_CARD_WORK_ACTIONS.map((action) => (
                         <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
                       ))}
                       <PayChip
                         title="Konum Ayarları"
+                        icon={employeeCardActionIcon("location")}
                         color="#047857"
                         bg="#ECFDF5"
                         testID={`emp-card-location-btn-${eid}`}
@@ -1243,6 +1243,7 @@ export function PersonnelScreen() {
                       />
                       <PayChip
                         title="Masraf"
+                        icon={employeeCardActionIcon("expense")}
                         color="#9A3412"
                         bg="#FFF7ED"
                         testID={`emp-card-expense-btn-${eid}`}
@@ -2137,6 +2138,7 @@ function EmpActionChip({
   return (
     <PayChip
       title={employeeCardActionTitle(action, emp)}
+      icon={employeeCardActionIcon(action.key)}
       color={tone.color}
       bg={tone.bg}
       testID={`emp-card-${action.key}-btn-${eid}`}
@@ -2226,18 +2228,18 @@ function pickEmployeeWorkplace(
 
 function PayChip({
   title,
+  icon,
   color,
   bg,
   onPress,
   testID,
-  wide,
 }: {
   title: string;
+  icon?: string;
   color: string;
   bg: string;
   onPress: () => void;
   testID: string;
-  wide?: boolean;
 }) {
   return (
     <Pressable
@@ -2245,21 +2247,23 @@ function PayChip({
       onPress={onPress}
       style={{
         flexGrow: 1,
-        flexBasis: wide ? "100%" : "47%",
-        minWidth: wide ? "100%" : "47%",
-        maxWidth: wide ? "100%" : "48.5%",
-        minHeight: 40,
-        paddingVertical: 8,
-        paddingHorizontal: 8,
+        flexBasis: "22%",
+        minWidth: 68,
+        maxWidth: "24.5%",
+        minHeight: 52,
+        paddingVertical: 4,
+        paddingHorizontal: 4,
         borderRadius: 10,
         backgroundColor: bg,
         borderWidth: 1,
         borderColor: colors.border,
         alignItems: "center",
         justifyContent: "center",
+        gap: 2,
       }}
     >
-      <Text style={{ fontWeight: "800", fontSize: 12, color, textAlign: "center" }}>{title}</Text>
+      {icon ? <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={16} color={color} /> : null}
+      <Text style={{ fontWeight: "700", fontSize: 10, color, textAlign: "center" }} numberOfLines={2}>{title}</Text>
     </Pressable>
   );
 }

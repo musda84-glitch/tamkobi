@@ -15,6 +15,7 @@ import {
   remainingLeaveDays,
   unpaidPayrollTotal,
   employeeCardActionTitles,
+  employeeCardActionIcon,
   employeeCardActionsByGroup,
   employeePayMoves,
   enrichEmployeeBalance,
@@ -339,6 +340,9 @@ describe("employee card actions", () => {
   it("shows Görev ata and never Düzenle/Sil", () => {
     const titles = employeeCardActionTitles();
     expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai"]);
+    expect(employeeCardActionIcon("advance")).toBe("cash-outline");
+    expect(employeeCardActionIcon("location")).toBe("location-outline");
+    expect(employeeCardActionIcon("expense")).toBe("receipt-outline");
     expect(employeeCardActionTitles({ pay_type: "daily" })).toEqual([
       "Avans", "Bakiye öde", "Yemek", "Yol", "Yevmiye günü", "Mesai öde", "Görev ata", "+ Mesai",
     ]);
