@@ -1,7 +1,10 @@
 import {
   DUTY_ATOLYE_ACTION,
   DUTY_COMPLETE_ACTION,
+  DUTY_COMPLETE_APPROVED,
   DUTY_MAPS_ACTION,
+  dutyCompleteTitle,
+  matchAssignedDuty,
   applyDutyPhotoVisibility,
   dutyHasProject,
   dutyIsField,
@@ -32,6 +35,8 @@ describe("assigned duty field extras", () => {
     };
     expect(DUTY_MAPS_ACTION).toBe("Görev yerine git");
     expect(DUTY_COMPLETE_ACTION).toBe("Görev tamamlandı");
+    expect(dutyCompleteTitle({ done: true })).toBe(DUTY_COMPLETE_APPROVED);
+    expect(matchAssignedDuty([{ id: "t1", title: "Montaj" }], { id: "t1" })?.title).toBe("Montaj");
     expect(DUTY_ATOLYE_ACTION).toBe("Atölyeye git");
     expect(dutyIsField(t)).toBe(true);
     expect(dutyHasProject(t)).toBe(true);

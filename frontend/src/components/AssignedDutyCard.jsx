@@ -8,8 +8,8 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { workMapsLink } from "../utils/mapsLink";
 import {
   DUTY_ATOLYE_ACTION,
-  DUTY_COMPLETE_ACTION,
-  DUTY_COMPLETE_BUSY,
+  DUTY_COMPLETE_CONFIRM,
+  dutyCompleteTitle,
   DUTY_PHOTO_HIDE,
   DUTY_PHOTO_SHOW,
   DUTY_PHOTOS_HINT,
@@ -167,18 +167,28 @@ export function AssignedDutyCard({
           </div>
         </div>
       )}
-      {!duty?.done && (
+      {(showWorkshop || onApprove || duty?.done) && (
         <div className="flex flex-wrap gap-2">
-          {showWorkshop && (
+          {showWorkshop && !duty?.done && (
             <a href="/atolye" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold" data-testid={`${tid}-atolye`}>
               <Factory className="w-3.5 h-3.5" /> {DUTY_ATOLYE_ACTION}
             </a>
           )}
-          {onApprove && (
-            <button type="button" disabled={approveBusy} onClick={onApprove} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold disabled:opacity-50" data-testid={`${tid}-approve`}>
-              <CheckCircle2 className="w-3.5 h-3.5" /> {approveBusy ? DUTY_COMPLETE_BUSY : DUTY_COMPLETE_ACTION}
+          {duty?.done ? (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold" data-testid={`${tid}-approved`}>
+              <CheckCircle2 className="w-3.5 h-3.5" /> {dutyCompleteTitle({ done: true })}
+            </span>
+          ) : onApprove ? (
+            <button
+              type="button"
+              disabled={approveBusy}
+              onClick={() => { if (window.confirm(DUTY_COMPLETE_CONFIRM)) onApprove(); }}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold disabled:opacity-50"
+              data-testid={`${tid}-approve`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" /> {dutyCompleteTitle({ busy: approveBusy })}
             </button>
-          )}
+          ) : null}
         </div>
       )}
     </div>

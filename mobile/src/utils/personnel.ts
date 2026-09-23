@@ -32,6 +32,8 @@ export type Employee = {
   emergency_contact?: string | null;
   notes?: string | null;
   location_tracking?: LocationTracking | null;
+  location_last_ok?: boolean | null;
+  location_last_at?: string | null;
 };
 
 export type LocMode = {
@@ -98,6 +100,36 @@ export function locModeSummary(mode?: LocMode | LocationTracking | null): string
   if (!m.enabled) return "Kapalı";
   if (m.continuous || m.interval_minutes === 0) return "Sürekli";
   return `${m.interval_minutes} dk`;
+}
+
+export function locationTrackingEnabled(lt?: LocationTracking | null): boolean {
+  return initLocMode(lt).enabled || initLocMode(lt?.field || lt).enabled;
+}
+
+export function locationControllerLabel(on: boolean): string {
+  return on ? "Konum açık" : "Konum kapalı";
+}
+
+export function locationTrackingTogglePayload(raw: LocationTracking | null | undefined, enabled: boolean): LocationTracking {
+  const company = initLocMode(raw);
+  const field = initLocMode(raw?.field || raw);
+  return locationTrackingPayload({ ...company, enabled }, { ...field, enabled });
+}
+
+export function todayAttendanceLine(today?: AttendanceToday | null): string {
+  if (!today || (!today.check_in && !today.check_out && today.status !== "present")) {
+    return "Bugün giriş / çıkış yok";
+  }
+  const late = today.late_minutes ? ` · ${today.late_minutes} dk geç` : "";
+  return `Bugün ${today.check_in || "--:--"} → ${today.check_out || "--:--"}` + late;
+}
+
+export function advanceFormToggleIcon(open: boolean): "eye-off-outline" | "eye-outline" {
+  return open ? "eye-off-outline" : "eye-outline";
+}
+
+export function advanceFormToggleLabel(open: boolean): string {
+  return open ? "Gizle" : "Göster";
 }
 
 export function employeeInitials(name?: string | null): string {

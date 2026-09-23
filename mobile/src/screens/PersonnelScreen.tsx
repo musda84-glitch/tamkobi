@@ -8,6 +8,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
+import { LocationSignalDot } from "../components/LocationSignal";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
@@ -79,6 +80,10 @@ import {
   initLocMode,
   patchLocMode,
   locationTrackingPayload,
+  locationTrackingEnabled,
+  locationControllerLabel,
+  locationTrackingTogglePayload,
+  todayAttendanceLine,
   locModeSummary,
   DEFAULT_LOC_MODE,
   type LocMode,
@@ -125,7 +130,7 @@ import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { findWorkPark, officeTaskPayload, parkSelectGroups, validateOfficeTaskAssign, type WorkPark } from "../utils/workParks";
 import { fmtDmy } from "../utils/calendar";
 import { fieldWorkplaceFromProjects, workplaceHint, workplaceShort, type Workplace } from "../utils/workplace";
-import { pendingDutyPhotoCount, type AssignedDuty } from "../utils/assignedDuty";
+import { matchAssignedDuty, pendingDutyPhotoCount, type AssignedDuty } from "../utils/assignedDuty";
 
 type Tab = "payroll" | "attendance" | "leaves" | "extras";
 
@@ -270,6 +275,7 @@ export function PersonnelScreen() {
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseNote, setExpenseNote] = useState("");
   const [locEmp, setLocEmp] = useState<Employee | null>(null);
+  const [locBusy, setLocBusy] = useState<string | null>(null);
   const [locCompany, setLocCompany] = useState<LocMode>(DEFAULT_LOC_MODE);
   const [locField, setLocField] = useState<LocMode>(DEFAULT_LOC_MODE);
   const [dutiesEmp, setDutiesEmp] = useState<Employee | null>(null);
@@ -703,6 +709,23 @@ export function PersonnelScreen() {
     transport: (emp: Employee) => openAllowance(emp, "transport"),
     bonus: (emp: Employee) => (isDailyWage(emp) ? openYevmiyeDays(emp) : openExtraPay(emp, "bonus")),
     otpay: (emp: Employee) => openExtraPay(emp, "overtime"),
+  };
+
+  const toggleCardLocation = async (emp: Employee, enabled: boolean) => {
+    const eid = idOf(emp);
+    const raw = emp.location_tracking || cards[eid]?.employee?.location_tracking || {};
+    setLocBusy(eid);
+    try {
+      await put(client, `/personnel/employees/${eid}`, {
+        location_tracking: locationTrackingTogglePayload(raw, enabled),
+      });
+      setMessage(`${emp.full_name}: ${locationControllerLabel(enabled)}.`);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Konum ayarı kaydedilemedi."));
+    } finally {
+      setLocBusy(null);
+    }
   };
 
   const openLocSettings = (emp: Employee) => {
@@ -1139,6 +1162,44 @@ export function PersonnelScreen() {
                       Kalan izin: {cards[eid]?.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {cards[eid]?.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
                       {cards[eid]?.performance?.overall != null ? ` · performans %${cards[eid]?.performance?.overall}` : ""}
                     </Muted>
+                    {(() => {
+                      const locOn = locationTrackingEnabled(emp.location_tracking || cards[eid]?.employee?.location_tracking);
+                      const today = (attendance?.summary || []).find((s) => s.employee_id === eid)?.today || null;
+                      return (
+                        <View testID={`emp-card-loc-${eid}`} style={{ gap: 4, marginTop: 6 }}>
+                          <Pressable
+                            testID={`emp-card-loc-toggle-${eid}`}
+                            disabled={!canEdit || locBusy === eid}
+                            onPress={() => toggleCardLocation(emp, !locOn)}
+                            accessibilityLabel={locationControllerLabel(locOn)}
+                            style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+                          >
+                            <View
+                              style={{
+                                width: 28,
+                                height: 28,
+                                borderRadius: 14,
+                                alignItems: "center",
+                                justifyContent: "center",
+                                backgroundColor: locOn ? colors.emerald100 : colors.slate100,
+                              }}
+                            >
+                              <Ionicons name={locOn ? "location" : "location-outline"} size={16} color={locOn ? "#047857" : colors.muted} />
+                            </View>
+                            <Text style={{ fontSize: 12, fontWeight: "800", color: locOn ? "#047857" : colors.muted }}>
+                              {locBusy === eid ? "Kaydediliyor…" : locationControllerLabel(locOn)}
+                            </Text>
+                          </Pressable>
+                          {(emp.location_last_ok != null || emp.location_last_at || cards[eid]?.employee?.location_last_ok != null) ? (
+                            <LocationSignalDot
+                              signal={{ ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok ?? null, at: emp.location_last_at ?? cards[eid]?.employee?.location_last_at ?? null }}
+                              testID={`emp-card-loc-signal-${eid}`}
+                            />
+                          ) : null}
+                          <Muted testID={`emp-card-today-${eid}`}>{todayAttendanceLine(today)}</Muted>
+                        </View>
+                      );
+                    })()}
                   </View>
                 </View>
                 {emp.workplace?.kind === "task" || openEmployeeTasks(cards[eid]).length ? (
@@ -1788,6 +1849,7 @@ export function PersonnelScreen() {
         {dutiesEmp ? (() => {
           const board = employeeDutyBoard(dutiesEmp, cards[idOf(dutiesEmp)]);
           const dutyRows = (cards[idOf(dutiesEmp)]?.tasks || []) as AssignedDuty[];
+          const currentDuty = matchAssignedDuty(dutyRows, board.current);
           const pendingPhotos = pendingDutyPhotoCount(dutyRows);
           const patchDuty = (next?: AssignedDuty) => {
             if (!next?.id) return;
@@ -1824,6 +1886,14 @@ export function PersonnelScreen() {
                       <Muted key={line}>{line}</Muted>
                     ))}
                     {board.currentHint ? <Muted testID="emp-duties-current-hint">{board.currentHint}</Muted> : null}
+                    {currentDuty ? (
+                      <AssignedDutyCard
+                        duty={currentDuty}
+                        reviewPhotos
+                        onChanged={patchDuty}
+                        testID="emp-duties-current-card"
+                      />
+                    ) : null}
                   </>
                 ) : (
                   <Muted testID="emp-duties-empty">Aktif görev yok.</Muted>
@@ -1832,9 +1902,9 @@ export function PersonnelScreen() {
                   <Muted testID="emp-duties-photo-pending">{pendingPhotos} iş fotoğrafı müşteri onayı bekliyor</Muted>
                 ) : null}
               </View>
-              {dutyRows.length ? (
+              {dutyRows.filter((t) => !currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)).length ? (
                 <View testID="emp-duties-cards" style={{ gap: 8 }}>
-                  {dutyRows.map((t, i) => (
+                  {dutyRows.filter((t) => !currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)).map((t, i) => (
                     <AssignedDutyCard
                       key={t.id || String(i)}
                       duty={t}

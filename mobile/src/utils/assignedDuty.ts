@@ -41,6 +41,23 @@ export const DUTY_SITE_ACTION = DUTY_MAPS_ACTION;
 export const DUTY_ATOLYE_ACTION = "Atölyeye git";
 export const DUTY_COMPLETE_ACTION = "Görev tamamlandı";
 export const DUTY_COMPLETE_BUSY = "Tamamlanıyor…";
+export const DUTY_COMPLETE_APPROVED = "Onaylı";
+export const DUTY_COMPLETE_CONFIRM = "Görevi onaylayıp tamamlandı işaretlensin mi?";
+
+export function dutyCompleteTitle(opts?: { done?: boolean; busy?: boolean }): string {
+  if (opts?.done) return DUTY_COMPLETE_APPROVED;
+  return opts?.busy ? DUTY_COMPLETE_BUSY : DUTY_COMPLETE_ACTION;
+}
+
+export function matchAssignedDuty<T extends { id?: string; title?: string }>(
+  tasks: T[] | null | undefined,
+  current?: { id?: string; title?: string } | null,
+): T | null {
+  if (!current) return null;
+  const id = String(current.id || "").trim();
+  const title = String(current.title || "").trim();
+  return (tasks || []).find((t) => (id && String(t.id || "") === id) || (title && String(t.title || "") === title)) || null;
+}
 export const DUTY_PHOTOS_HINT = "İş fotoğrafları — müşteri görmesi yönetici onayına bağlı";
 export const DUTY_PHOTO_SHOW = "Görsün";
 export const DUTY_PHOTO_HIDE = "Görmesin";

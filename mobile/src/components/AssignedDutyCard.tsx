@@ -7,8 +7,8 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import {
   DUTY_ATOLYE_ACTION,
-  DUTY_COMPLETE_ACTION,
-  DUTY_COMPLETE_BUSY,
+  DUTY_COMPLETE_CONFIRM,
+  dutyCompleteTitle,
   DUTY_PHOTO_HIDE,
   DUTY_PHOTO_SHOW,
   DUTY_PHOTOS_HINT,
@@ -104,6 +104,19 @@ export function AssignedDutyCard({
       return;
     }
     Alert.alert("Görev yeri", dutySiteHint(duty));
+  };
+
+  const confirmApprove = () => {
+    if (!onApprove) return;
+    if (Platform.OS === "web") {
+      const ok = typeof window !== "undefined" && window.confirm(DUTY_COMPLETE_CONFIRM);
+      if (ok) onApprove();
+      return;
+    }
+    Alert.alert("Görevi onayla", DUTY_COMPLETE_CONFIRM, [
+      { text: "Vazgeç", style: "cancel" },
+      { text: "Onayla", onPress: onApprove },
+    ]);
   };
 
   const setVisibility = async (photo: DutyPhoto, visible: boolean) => {
@@ -215,18 +228,22 @@ export function AssignedDutyCard({
           ) : null}
         </View>
       ) : null}
-      {!duty.done ? (
+      {showWorkshop || onApprove || duty.done ? (
         <Row>
-          {showWorkshop ? (
+          {showWorkshop && !duty.done ? (
             <View style={{ flex: 1 }}>
               <PrimaryButton title={DUTY_ATOLYE_ACTION} onPress={onAtolye} color={colors.indigo} testID={`${tid}-atolye`} />
             </View>
           ) : null}
-          {onApprove ? (
+          {duty.done ? (
+            <View style={{ flex: 1 }}>
+              <PrimaryButton title={dutyCompleteTitle({ done: true })} disabled color={colors.primary} testID={`${tid}-approved`} />
+            </View>
+          ) : onApprove ? (
             <View style={{ flex: 1 }}>
               <PrimaryButton
-                title={approveBusy ? DUTY_COMPLETE_BUSY : DUTY_COMPLETE_ACTION}
-                onPress={onApprove}
+                title={dutyCompleteTitle({ busy: approveBusy })}
+                onPress={confirmApprove}
                 disabled={approveBusy}
                 loading={approveBusy}
                 color={colors.primary}
@@ -235,9 +252,7 @@ export function AssignedDutyCard({
             </View>
           ) : null}
         </Row>
-      ) : (
-        <Muted>Görev tamamlandı.</Muted>
-      )}
+      ) : null}
     </Card>
   );
 }
