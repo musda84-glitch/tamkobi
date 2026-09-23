@@ -2422,6 +2422,7 @@ async def dashboard_overview(company_id: str = "comp_nexus_main_01"):
         db.attendance.count_documents({"company_id": company_id, "$or": [
             {"early_leave_request.status": "pending"},
             {"intraday_leave_request.status": "pending"},
+            {"geo_confirm_request.status": "pending"},
         ]}),
         expenses.get_budgets(company_id),
     )
@@ -2617,7 +2618,7 @@ async def dashboard_ops_alerts(company_id: str = "comp_nexus_main_01"):
 @api_router.get("/dashboard/tile-badges")
 async def dashboard_tile_badges(request: Request, company_id: str = "comp_nexus_main_01"):
     """Ana ekran kutucuk rozetleri: tam liste yok, sadece bekleyen iş sayıları."""
-    pending_orders, incoming, pick_missing, pickable, leaves, early, intraday, disputes, advances, unmatched, atolye, edoc, notes = await asyncio.gather(
+    pending_orders, incoming, pick_missing, pickable, leaves, early, intraday, geo_confirms, disputes, advances, unmatched, atolye, edoc, notes = await asyncio.gather(
         db.orders.count_documents({"company_id": company_id, "order_status": "pending"}),
         db.orders.count_documents(_incoming_orders_query(company_id)),
         db.notifications.count_documents({
@@ -2629,6 +2630,7 @@ async def dashboard_tile_badges(request: Request, company_id: str = "comp_nexus_
         db.leave_requests.count_documents({"company_id": company_id, "status": "pending"}),
         db.attendance.count_documents({"company_id": company_id, "early_leave_request.status": "pending"}),
         db.attendance.count_documents({"company_id": company_id, "intraday_leave_request.status": "pending"}),
+        db.attendance.count_documents({"company_id": company_id, "geo_confirm_request.status": "pending"}),
         db.attendance.count_documents({
             "company_id": company_id,
             "dispute_note": {"$exists": True, "$nin": [None, ""]},
@@ -2653,7 +2655,7 @@ async def dashboard_tile_badges(request: Request, company_id: str = "comp_nexus_
         incoming_orders=incoming,
         pickable=pickable,
         pick_missing=pick_missing,
-        personnel=int(leaves or 0) + int(early or 0) + int(intraday or 0) + int(disputes or 0) + int(advances or 0),
+        personnel=int(leaves or 0) + int(early or 0) + int(intraday or 0) + int(geo_confirms or 0) + int(disputes or 0) + int(advances or 0),
         unmatched=unmatched,
         atolye=atolye,
         edoc=edoc,
@@ -8531,6 +8533,38 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
             "created_at": adv.get("created_at") or "",
             "link": "/personnel?tab=payroll",
             "meta": {"amount": amt, "period": adv.get("period"), "note": adv.get("note")},
+        })
+    geo_conf = await db.attendance.find(
+        {"company_id": company_id, "geo_confirm_request.status": "pending"}
+    ).sort("date", -1).to_list(200)
+    for att in geo_conf:
+        gcr = att.get("geo_confirm_request") or {}
+        action = gcr.get("action") or "check_in"
+        label = "Giriş" if action == "check_in" else "Çıkış"
+        reason = gcr.get("reason")
+        why = "konum kapalı" if reason == "location_off" else ("iş yerinde değil" if reason == "offsite" else "konum doğrulanamadı")
+        dist = gcr.get("distance_m")
+        items.append({
+            "kind": "geo_confirm",
+            "id": att.get("_id") or att.get("id"),
+            "employee_id": att.get("employee_id"),
+            "employee_name": att.get("employee_name") or "—",
+            "title": f"Yönetici teyitli {label.lower()}",
+            "detail": f"{att.get('date') or ''}"
+                      + (f" · {gcr.get('proposed_time')}" if gcr.get("proposed_time") else "")
+                      + f" · {why}"
+                      + (f" · {gcr.get('place')}" if gcr.get("place") else "")
+                      + (f" · {int(dist)} m" if dist is not None else ""),
+            "created_at": gcr.get("requested_at") or att.get("updated_at") or att.get("date") or "",
+            "link": "/personnel?tab=attendance",
+            "meta": {
+                "date": att.get("date"),
+                "action": action,
+                "reason": reason,
+                "proposed_time": gcr.get("proposed_time"),
+                "place": gcr.get("place"),
+                "distance_m": dist,
+            },
         })
     loc_exit = await db.attendance.find(
         {"company_id": company_id, "location_exit_request.status": "pending"}

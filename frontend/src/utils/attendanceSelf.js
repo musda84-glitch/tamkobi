@@ -41,11 +41,29 @@ export function shouldWatchCheckoutUnlock({ earlyPending, checkedIn, checkedOut,
   return Boolean(checkedIn && !checkoutUnlocked);
 }
 
-/** Giriş: iş yeri/görev yakınında konum zorunlu. Çıkış: yalnız buton, her yerden; konum açıksa GPS eklenir. */
+/** Giriş/çıkış butonu konum yüzünden kapanmaz. GPS varsa eklenir; yoksa veya uzaktaysa yönetici teyidi. */
 export function selfAttendanceGeoMode(action, opts = {}) {
-  if (action === "check_in") {
-    if (opts.hasTarget && opts.requireGeo !== false && opts.trackingEnabled !== false) return "required";
-    return "none";
-  }
-  return opts.trackingEnabled ? "attach" : "none";
+  if (opts.hasTarget || opts.trackingEnabled) return "attach";
+  return "none";
+}
+
+export function geoConfirmPending(rec) {
+  return rec?.geo_confirm_request?.status === "pending";
+}
+
+export function geoConfirmReasonTr(reason) {
+  if (reason === "location_off") return "konum kapalı";
+  if (reason === "offsite") return "iş yerinde değil";
+  return String(reason || "").trim() || "konum doğrulanamadı";
+}
+
+export function geoConfirmHint(rec) {
+  const g = rec?.geo_confirm_request;
+  if (!g || g.status !== "pending") return "";
+  const label = g.action === "check_out" ? "Çıkış" : "Giriş";
+  const when = g.proposed_time ? ` ${g.proposed_time}` : "";
+  const why = geoConfirmReasonTr(g.reason);
+  const place = g.place ? ` · ${g.place}` : "";
+  const dist = g.distance_m != null ? ` · ${g.distance_m} m` : "";
+  return `${label}${when} yönetici onayında (${why}${place}${dist}). Onaylanınca yönetici teyitli kayıt yazılır.`;
 }

@@ -276,6 +276,7 @@ export const REQUEST_KIND_TR: Record<string, string> = {
   advance: "Avans",
   yevmiye_adjustment: "Geç giriş ücreti",
   location_exit: "Konum dışı",
+  geo_confirm: "Teyitli giriş",
 };
 
 export function requestKindLabel(kind?: string | null): string {
@@ -317,6 +318,9 @@ export function pendingRequestDecision(
   }
   if (it.kind === "dispute") {
     return { path: `/personnel/attendance/${id}/dispute-decision`, body: { decision: approved ? "approve" : "reject" } };
+  }
+  if (it.kind === "geo_confirm") {
+    return { path: `/personnel/attendance/${id}/geo-confirm-decision`, body: { decision: approved ? "approve" : "reject" } };
   }
   return null;
 }
@@ -855,6 +859,14 @@ export type AttendanceRecord = {
     left_at?: string;
     wage_deduction?: boolean | null;
     deduction_amount?: number;
+  };
+  geo_confirm_request?: {
+    status?: string;
+    action?: string;
+    reason?: string;
+    proposed_time?: string;
+    place?: string;
+    distance_m?: number | null;
   };
 };
 

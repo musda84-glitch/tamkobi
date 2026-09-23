@@ -1,4 +1,4 @@
-import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -30,15 +30,29 @@ describe("intraday leave request", () => {
 });
 
 describe("selfAttendanceGeoMode", () => {
-  it("requires geo only on check-in near a target", () => {
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("required");
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: true })).toBe("none");
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: false })).toBe("none");
+  it("never blocks the punch — GPS is attached when a target or tracking exists", () => {
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("attach");
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: false })).toBe("attach");
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: true })).toBe("attach");
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: false })).toBe("none");
   });
   it("attaches checkout geo when tracking is on and never requires it", () => {
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true, hasTarget: true })).toBe("attach");
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: false })).toBe("none");
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true })).not.toBe("required");
+  });
+});
+
+describe("geoConfirmHint", () => {
+  it("describes pending manager-confirmed punches", () => {
+    expect(geoConfirmPending({ geo_confirm_request: { status: "pending", action: "check_in" } })).toBe(true);
+    expect(geoConfirmHint({
+      geo_confirm_request: { status: "pending", action: "check_in", reason: "location_off", proposed_time: "08:41" },
+    })).toMatch(/Giriş 08:41/);
+    expect(geoConfirmHint({
+      geo_confirm_request: { status: "pending", action: "check_out", reason: "offsite", place: "Firma", distance_m: 1200 },
+    })).toMatch(/iş yerinde değil/);
+    expect(geoConfirmHint({ geo_confirm_request: { status: "approved" } })).toBe("");
   });
 });
 

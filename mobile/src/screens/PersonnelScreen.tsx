@@ -159,6 +159,7 @@ function AttendanceRecCard({
   const intra = r.intraday_leave_request?.status === "pending";
   const yevAdj = r.yevmiye_adjustment_request?.status === "pending";
   const locExit = r.location_exit_request?.status === "pending";
+  const geoConfirm = r.geo_confirm_request?.status === "pending";
   const yevLine = yevmiyeStatusLine(r);
   const [editOut, setEditOut] = React.useState(r.check_out || "");
   return (
@@ -183,7 +184,16 @@ function AttendanceRecCard({
           {` · kesinti: ${r.location_exit_request?.wage_deduction == null ? "bekliyor" : r.location_exit_request.wage_deduction ? "olsun" : "olmasın"}`}
         </Muted>
       ) : null}
-      {canEdit && (early || intra || yevAdj || locExit) ? (
+      {geoConfirm ? (
+        <Muted testID={`att-geo-confirm-${idOf(r)}`}>
+          Yönetici teyitli {r.geo_confirm_request?.action === "check_out" ? "çıkış" : "giriş"}
+          {r.geo_confirm_request?.proposed_time ? ` · ${r.geo_confirm_request.proposed_time}` : ""}
+          {r.geo_confirm_request?.reason === "location_off" ? " · konum kapalı" : r.geo_confirm_request?.reason === "offsite" ? " · iş yerinde değil" : ""}
+          {r.geo_confirm_request?.place ? ` · ${r.geo_confirm_request.place}` : ""}
+          {r.geo_confirm_request?.distance_m != null ? ` · ${r.geo_confirm_request.distance_m} m` : ""}
+        </Muted>
+      ) : null}
+      {canEdit && (early || intra || yevAdj || locExit || geoConfirm) ? (
         <Row>
           {early ? (
             <>
@@ -209,6 +219,12 @@ function AttendanceRecCard({
               <PrimaryButton title="Kesinti olmasın" color={colors.primary} testID={`att-loc-exit-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "location_exit" }, true)} />
               <PrimaryButton title="Kesinti olsun" color={colors.warning} testID={`att-loc-exit-deduct-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "location_exit" }, "deduct")} />
               <PrimaryButton title="Reddet" color={colors.danger} testID={`att-loc-exit-no-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "location_exit" }, false)} />
+            </>
+          ) : null}
+          {geoConfirm ? (
+            <>
+              <PrimaryButton title="Teyit et" color={colors.primary} testID={`att-geo-confirm-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "geo_confirm" }, true)} />
+              <PrimaryButton title="Reddet" color={colors.danger} testID={`att-geo-confirm-no-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "geo_confirm" }, false)} />
             </>
           ) : null}
         </Row>

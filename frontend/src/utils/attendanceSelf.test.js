@@ -1,9 +1,15 @@
-import { earlyLeaveApproved, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "./attendanceSelf";
+import { earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "./attendanceSelf";
 
 describe("selfAttendanceGeoMode", () => {
-  test("requires geo only on check-in near a target", () => {
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("required");
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: true })).toBe("none");
+  test("never blocks the punch — GPS is attached when a target or tracking exists", () => {
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("attach");
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: true })).toBe("attach");
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: false })).toBe("none");
+  });
+
+  test("describes pending manager-confirmed punches", () => {
+    expect(geoConfirmPending({ geo_confirm_request: { status: "pending" } })).toBe(true);
+    expect(geoConfirmHint({ geo_confirm_request: { status: "pending", action: "check_in", reason: "offsite", proposed_time: "09:10" } })).toMatch(/Giriş 09:10/);
   });
 
   test("attaches checkout geo when tracking is on and never requires it", () => {

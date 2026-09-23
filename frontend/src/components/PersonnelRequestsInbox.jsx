@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Bell, CalendarDays, Check, ChevronDown, ChevronUp, Clock, Coins, Loader2, MapPin, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight } from "lucide-react";
+import { Bell, CalendarDays, Check, ChevronDown, ChevronUp, Clock, Coins, Loader2, MapPin, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight, ShieldCheck } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { requestsDetailsToggleLabel } from "../utils/employeeCardStatus";
@@ -15,6 +15,7 @@ export const KIND_META = {
   advance: { label: "Avans", Icon: Wallet, chip: "bg-amber-50 text-amber-800 border-amber-100" },
   yevmiye_adjustment: { label: "Geç giriş ücreti", Icon: Coins, chip: "bg-amber-50 text-amber-900 border-amber-200" },
   location_exit: { label: "Konum dışı", Icon: MapPin, chip: "bg-emerald-50 text-emerald-800 border-emerald-200" },
+  geo_confirm: { label: "Teyitli giriş", Icon: ShieldCheck, chip: "bg-violet-50 text-violet-800 border-violet-200" },
 };
 
 const chipBtn = "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold disabled:opacity-50";
@@ -29,6 +30,7 @@ export function EmployeeRequestChips({
   onDecideAdvance,
   onDecideYevmiye,
   onDecideLocationExit,
+  onDecideGeoConfirm,
   onDecideDispute,
   onViewDispute,
   maxVisible = 3,
@@ -141,6 +143,16 @@ export function EmployeeRequestChips({
                     Kesinti olsun
                   </button>
                   <button type="button" disabled={busy} onClick={() => onDecideLocationExit?.(it.id, "reject", false)} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-locexit-${it.id}`}>
+                    <X className="w-2.5 h-2.5" /> Reddet
+                  </button>
+                </>
+              )}
+              {it.kind === "geo_confirm" && (
+                <>
+                  <button type="button" disabled={busy} onClick={() => onDecideGeoConfirm?.(it.id, "approve")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-geoconfirm-${it.id}`}>
+                    <Check className="w-2.5 h-2.5" /> Teyit et
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideGeoConfirm?.(it.id, "reject")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-geoconfirm-${it.id}`}>
                     <X className="w-2.5 h-2.5" /> Reddet
                   </button>
                 </>
@@ -281,6 +293,20 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     }
   };
 
+  const decideGeoConfirm = async (id, decision) => {
+    setBusyId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/geo-confirm-decision`, { decision });
+      toast.success(r.data?.message || (decision === "approve" ? "Teyit edildi." : "Reddedildi."));
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const decideDispute = async (id, decision) => {
     setBusyId(id);
     try {
@@ -331,7 +357,7 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
         </div>
       ) : items.length === 0 ? (
         <div className="px-4 py-6 text-center text-slate-400 text-xs" data-testid="personnel-requests-empty">
-          Şu an onay bekleyen izin, avans, yevmiye, konum dışı, erken çıkış, gün içi izin veya puantaj itirazı yok.
+          Şu an onay bekleyen izin, avans, yevmiye, konum dışı, teyitli giriş, erken çıkış, gün içi izin veya puantaj itirazı yok.
         </div>
       ) : (
         <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto" data-testid="personnel-requests-list">
@@ -414,6 +440,16 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                         Kesinti olsun
                       </button>
                       <button type="button" disabled={busy} onClick={() => decideLocationExit(it.id, "reject", false)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-locexit-${it.id}`}>
+                        <X className="w-3 h-3" /> Reddet
+                      </button>
+                    </>
+                  )}
+                  {it.kind === "geo_confirm" && (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => decideGeoConfirm(it.id, "approve")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-geoconfirm-${it.id}`}>
+                        <Check className="w-3 h-3" /> Teyit et
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideGeoConfirm(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-geoconfirm-${it.id}`}>
                         <X className="w-3 h-3" /> Reddet
                       </button>
                     </>

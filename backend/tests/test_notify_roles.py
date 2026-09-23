@@ -23,6 +23,9 @@ def test_roles_for_known_types():
     assert "accountant" in roles_for_type("yevmiye_adjustment")
     assert "manager" in roles_for_type("location_exit")
     assert "accountant" in roles_for_type("location_exit")
+    assert "manager" in roles_for_type("geo_confirm_request")
+    assert "accountant" in roles_for_type("geo_confirm_request")
+    assert roles_for_type("geo_confirm_decision") == []
     assert "accountant" in roles_for_type("bank_sync")
     assert roles_for_type("task_assigned") == []
     assert roles_for_type("unknown_type") == ["admin"]
