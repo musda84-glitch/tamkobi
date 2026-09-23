@@ -86,6 +86,7 @@ import {
   locationCellCaption,
   locationTrackingTogglePayload,
   todayAttendanceParts,
+  cardPunchConfirmMessage,
   locModeSummary,
   DEFAULT_LOC_MODE,
   type LocMode,
@@ -242,6 +243,8 @@ export function PersonnelScreen() {
   const [busy, setBusy] = useState(false);
   const [workplaceOpen, setWorkplaceOpen] = useState<Record<string, boolean>>({});
   const [requestsOpen, setRequestsOpen] = useState<Record<string, boolean>>({});
+  const [punchConfirm, setPunchConfirm] = useState<{ id: string; action: "check_in" | "check_out"; name: string } | null>(null);
+  const [punchBusy, setPunchBusy] = useState<string | null>(null);
   const [attRecOpen, setAttRecOpen] = useState<Record<string, boolean>>({});
   const [movesPeriod, setMovesPeriod] = useState<PayMovesPeriod>("30d");
   const [movesMonth, setMovesMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -852,11 +855,17 @@ export function PersonnelScreen() {
   };
 
   const attAct = async (employeeId: string, body: Record<string, unknown>) => {
+    setPunchBusy(employeeId);
     try {
       await post(client, "/personnel/attendance", { employee_id: employeeId, ...body });
+      setPunchConfirm(null);
+      if (body.action === "check_in") setMessage("Giriş kaydedildi.");
+      if (body.action === "check_out") setMessage("Çıkış kaydedildi.");
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Puantaj kaydedilemedi."));
+    } finally {
+      setPunchBusy(null);
     }
   };
 
@@ -1227,18 +1236,46 @@ export function PersonnelScreen() {
                           </Row>
                         </Pressable>
                         <View testID={`emp-card-today-${eid}`} style={{ flex: 2, minWidth: 0, flexDirection: "row", gap: 3 }}>
-                          <View style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: "#fff" }}>
+                          <Pressable
+                            testID={`emp-card-today-in-${eid}`}
+                            disabled={!canEdit || punchBusy === eid}
+                            accessibilityRole="button"
+                            accessibilityLabel="Giriş kaydı"
+                            onPress={() => setPunchConfirm({ id: eid, action: "check_in", name: emp.full_name || "" })}
+                            style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: punchConfirm?.id === eid && punchConfirm.action === "check_in" ? "#D1FAE5" : "#fff" }}
+                          >
                             <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>GİRİŞ</Text>
                             <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: colors.text }}>
                               {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
                             </Text>
-                          </View>
-                          <View style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: "#fff" }}>
+                          </Pressable>
+                          <Pressable
+                            testID={`emp-card-today-out-${eid}`}
+                            disabled={!canEdit || punchBusy === eid}
+                            accessibilityRole="button"
+                            accessibilityLabel="Çıkış kaydı"
+                            onPress={() => setPunchConfirm({ id: eid, action: "check_out", name: emp.full_name || "" })}
+                            style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: punchConfirm?.id === eid && punchConfirm.action === "check_out" ? "#FEE2E2" : "#fff" }}
+                          >
                             <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>ÇIKIŞ</Text>
                             <Text style={{ fontWeight: "800", fontSize: 12, color: colors.text }}>{punch.checkOut}</Text>
-                          </View>
+                          </Pressable>
                         </View>
                       </Row>
+                      {punchConfirm?.id === eid ? (
+                        <View testID={`emp-card-punch-confirm-${eid}`} style={{ paddingTop: 4, gap: 6 }}>
+                          <Text style={{ fontSize: 11, color: colors.text }}>{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</Text>
+                          <Row style={{ gap: 6 }}>
+                            <PrimaryButton
+                              title={punchBusy === eid ? "Kaydediliyor…" : "Onayla"}
+                              color={punchConfirm.action === "check_out" ? colors.danger : colors.primary}
+                              testID={`emp-card-punch-yes-${eid}`}
+                              onPress={() => attAct(eid, { action: punchConfirm.action })}
+                            />
+                            <PrimaryButton title="Vazgeç" color={colors.secondary} testID={`emp-card-punch-no-${eid}`} onPress={() => setPunchConfirm(null)} />
+                          </Row>
+                        </View>
+                      ) : null}
                     </View>
                   );
                 })()}

@@ -95,6 +95,7 @@ import {
   locationTrackingTogglePayload,
   todayAttendanceLine,
   todayAttendanceParts,
+  cardPunchConfirmMessage,
   advanceFormToggleIcon,
   advanceFormToggleLabel,
   filterPayMoves,
@@ -346,6 +347,8 @@ describe("payroll helpers", () => {
       checkIn: "01:37", checkOut: "10:26", late: 0, empty: false,
     });
     expect(todayAttendanceParts(null).empty).toBe(true);
+    expect(cardPunchConfirmMessage("check_in", "Davut")).toBe("Davut için giriş kaydı şimdi yazılsın mı?");
+    expect(cardPunchConfirmMessage("check_out")).toMatch(/çıkış kaydı/);
     expect(advanceFormToggleIcon(true)).toBe("eye-off-outline");
     expect(advanceFormToggleLabel(false)).toBe("Göster");
     expect(employeeCompRows({ daily_wage: 1500 }, { bonus_pending: 3000 }).find((r) => r.key === "bonus")).toMatchObject({
