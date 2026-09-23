@@ -3,6 +3,7 @@ import { useBadges } from "@/auth/BadgeContext";
 import { AccountMenu } from "@/components/AccountMenu";
 import { HomeHeaderTitle } from "@/components/HomeHeaderTitle";
 import { colors } from "@/theme";
+import { typeface } from "@/theme/softFont";
 import { resolveMediaUrl } from "@/utils/media";
 import { showFinanceSubstituteTabs, showSelfPersonnelTabs } from "@/utils/permissions";
 import { Ionicons } from "@expo/vector-icons";
@@ -23,13 +24,13 @@ export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        headerTitleStyle: { fontWeight: "800", color: colors.text },
+        headerTitleStyle: { color: colors.text, ...typeface("800") },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.muted,
         tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.text,
-        tabBarLabelStyle: { fontWeight: "700", fontSize: 10 },
+        tabBarLabelStyle: { fontSize: 10, ...typeface("700") },
         headerRight: () => <AccountMenu />,
       }}
     >

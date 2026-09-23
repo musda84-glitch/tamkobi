@@ -2,6 +2,9 @@ import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import { BadgeProvider } from "@/auth/BadgeContext";
 import { PushBridge } from "@/components/PushBridge";
 import { colors } from "@/theme";
+import { typeface } from "@/theme/softFont";
+import { enableSoftFonts, SOFT_FONT_FACES } from "@/theme/softFontRuntime";
+import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, View } from "react-native";
@@ -20,7 +23,7 @@ function RootStack() {
   return (
     <Stack
       screenOptions={{
-        headerTitleStyle: { fontWeight: "800", color: colors.text },
+        headerTitleStyle: { color: colors.text, ...typeface("800") },
         headerBackTitle: "Geri",
         headerTintColor: colors.primary,
         headerStyle: { backgroundColor: colors.surface },
@@ -85,6 +88,15 @@ function RootStack() {
 }
 
 export default function RootLayout() {
+  const [fontsReady, fontError] = useFonts(SOFT_FONT_FACES);
+  if (fontsReady || fontError) enableSoftFonts();
+  if (!fontsReady && !fontError) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.ink }}>
+        <ActivityIndicator color="#fff" />
+      </View>
+    );
+  }
   return (
     <AuthProvider>
       <BadgeProvider>

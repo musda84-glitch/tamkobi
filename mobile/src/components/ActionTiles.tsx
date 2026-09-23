@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Platform, Pressable, Text, View } from "react-native";
-import { colors } from "../theme";
+import { colors, typeface } from "../theme";
 import { QUICK_TONE_COLORS, type QuickTone } from "../utils/quickMenu";
 import { TILE_SIZES, type TileSize } from "../utils/tileSizes";
 
@@ -120,14 +120,13 @@ export function ActionTiles({
               </View>
               <Text
                 style={{
-                  fontWeight: "800",
                   color: colors.text,
                   fontSize: s.font,
                   lineHeight: s.labelHeight / 2,
                   height: s.labelHeight,
                   width: "100%",
                   textAlign: "center",
-                  fontFamily: Platform.OS === "web" ? 'system-ui, "Segoe UI", Roboto, Arial, sans-serif' : undefined,
+                  ...typeface("800"),
                 }}
                 numberOfLines={2}
               >

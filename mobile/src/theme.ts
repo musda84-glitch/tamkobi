@@ -40,3 +40,5 @@ export const radius = {
   lg: 16,
   xl: 24,
 };
+
+export { SOFT_FONT, typeface } from "./theme/softFont";
