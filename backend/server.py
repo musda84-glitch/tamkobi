@@ -2343,12 +2343,14 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
             mail_status, mail_detail = "skipped", str(e.detail)
     except Exception as e:
         mail_status, mail_detail = "failed", str(e)[:140]
-    out["mail_status"] = mail_status
-    out["detail"] = mail_detail
     if mail_status != "sent":
-        out["reset_url"] = link
-        out["reset_token"] = token
-    return out
+        # Gönderilemeyen token’ı iptal et — istemciye link vermek e-posta doğrulamasını atlatır.
+        await db.password_resets.update_one(
+            {"_id": token},
+            {"$set": {"used_at": now.isoformat(), "revoked": True, "mail_failed": True, "mail_error": mail_detail[:200]}},
+        )
+        logger.warning("forgot-password mail %s user=%s: %s", mail_status, email, mail_detail)
+    return password_reset.finalize_forgot_mail_result(out, mail_status=mail_status, mail_detail=mail_detail)
 
 
 async def _erp_reset_doc(token: str) -> dict:
@@ -3046,12 +3048,17 @@ async def b2b_forgot_password(req: Dict[str, Any], request: Request):
             mail_status, mail_detail = "skipped", str(e.detail)
     except Exception as e:
         mail_status, mail_detail = "failed", str(e)[:140]
-    out["mail_status"] = mail_status
-    out["detail"] = mail_detail
     if mail_status != "sent":
-        out["reset_url"] = link
-        out["reset_token"] = token
-    return out
+        await db.b2b_password_resets.update_one(
+            {"_id": token},
+            {"$set": {"used_at": now.isoformat(), "revoked": True, "mail_failed": True, "mail_error": mail_detail[:200]}},
+        )
+        logger.warning("b2b forgot-password mail %s to=%s: %s", mail_status, to, mail_detail)
+    return password_reset.finalize_forgot_mail_result(
+        {**out, "message": FORGOT_MSG},
+        mail_status=mail_status,
+        mail_detail=mail_detail,
+    )
 
 
 @api_router.get("/public/b2b/reset/{token}")

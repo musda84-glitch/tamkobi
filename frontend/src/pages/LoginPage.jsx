@@ -76,7 +76,9 @@ export default function LoginPage() {
             <div className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 space-y-1" data-testid="login-forgot-result">
               <div>{resetInfo.message}</div>
               {resetInfo.mail_status === "sent" && <div>E-postanızı kontrol edin (1 saat geçerli).</div>}
-              {resetInfo.reset_url && <a href={resetInfo.reset_url} className="block font-semibold text-emerald-700 underline" data-testid="login-forgot-link">E-posta gönderilemedi — şifreyi buradan sıfırlayın</a>}
+              {resetInfo.mail_status && resetInfo.mail_status !== "sent" && (
+                <div className="text-amber-800" data-testid="login-forgot-mail-fail">{resetInfo.detail || "E-posta gönderilemedi. Mail ayarlarını kontrol edip tekrar deneyin."}</div>
+              )}
             </div>
           )}
           <button disabled={busy} className="w-full py-2.5 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2" data-testid="login-forgot-submit">

@@ -71,3 +71,22 @@ def reset_row_error(row: Optional[dict], now: Optional[datetime] = None) -> Opti
 
 def generic_forgot_response() -> dict:
     return {"status": "ok", "message": ERP_FORGOT_MSG, "mail_status": "skipped"}
+
+
+MAIL_FAIL_PUBLIC_DETAIL = (
+    "E-posta şu an gönderilemedi. Mail ayarlarını kontrol edip daha sonra tekrar deneyin. "
+    "Güvenlik nedeniyle bağlantı ekranda gösterilmez."
+)
+
+
+def finalize_forgot_mail_result(out: dict, *, mail_status: str, mail_detail: str = "") -> dict:
+    """Forgot yanıtına mail durumunu yaz; reset_url/token asla ekleme."""
+    result = dict(out or {})
+    result["mail_status"] = mail_status
+    if mail_status == "sent":
+        result["detail"] = mail_detail or "E-posta gönderildi."
+    else:
+        result["detail"] = MAIL_FAIL_PUBLIC_DETAIL
+    result.pop("reset_url", None)
+    result.pop("reset_token", None)
+    return result

@@ -82,8 +82,12 @@ class TestIteration42:
         _ensure_b2b(admin)
         r = requests.post(f"{API}/public/b2b/forgot-password", json={"email": "b2btest@musteri.com", "base_url": BASE_URL}, timeout=20)
         assert r.status_code == 200, r.text
-        token = r.json().get("reset_token")
-        assert token, r.text
+        d = r.json()
+        assert "reset_token" not in d
+        assert "reset_url" not in d
+        token = d.get("reset_token")
+        if not token:
+            pytest.skip("reset token istemciye dönülmez (e-posta zorunlu); roundtrip e-posta ile test edilir")
         g = requests.get(f"{API}/public/b2b/reset/{token}", timeout=20)
         assert g.status_code == 200, g.text
         assert g.json().get("valid") is True
@@ -95,12 +99,21 @@ class TestIteration42:
         assert reused.status_code == 400
         _ensure_b2b(admin)
 
+    def test_b2b_forgot_never_returns_reset_link(self, admin):
+        _ensure_b2b(admin)
+        r = requests.post(f"{API}/public/b2b/forgot-password", json={"email": "b2btest@musteri.com", "base_url": BASE_URL}, timeout=20)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert "reset_token" not in d
+        assert "reset_url" not in d
+        assert d.get("status") == "ok"
+
     def test_b2b_reset_short_password(self, admin):
         _ensure_b2b(admin)
         r = requests.post(f"{API}/public/b2b/forgot-password", json={"email": "b2btest@musteri.com"}, timeout=20)
         token = r.json().get("reset_token")
         if not token:
-            pytest.skip("reset token not returned")
+            pytest.skip("reset token istemciye dönülmez")
         r2 = requests.post(f"{API}/public/b2b/reset/{token}", json={"password": "123"}, timeout=20)
         assert r2.status_code == 400
         requests.post(f"{API}/public/b2b/reset/{token}", json={"password": "b2b12345"}, timeout=20)

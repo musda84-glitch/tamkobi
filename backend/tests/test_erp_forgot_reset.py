@@ -43,6 +43,20 @@ def test_forgot_unknown_email_generic():
     d = r.json()
     assert d.get("status") == "ok"
     assert "reset_token" not in d
+    assert "reset_url" not in d
+
+
+def test_forgot_never_returns_reset_link_on_mail_fail():
+    r = requests.post(
+        f"{API}/auth/forgot-password",
+        json={"email": ADMIN_EMAIL, "base_url": BASE_URL, "next": "login"},
+        timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert "reset_token" not in d
+    assert "reset_url" not in d
+    assert d.get("status") == "ok"
 
 
 def test_erp_forgot_and_reset_roundtrip():
@@ -54,7 +68,7 @@ def test_erp_forgot_and_reset_roundtrip():
     assert r.status_code == 200, r.text
     token = r.json().get("reset_token")
     if not token:
-        pytest.skip("reset token not returned (mail sent or user missing)")
+        pytest.skip("reset token istemciye dönülmez (e-posta zorunlu)")
     g = requests.get(f"{API}/auth/reset/{token}", timeout=20)
     assert g.status_code == 200, g.text
     assert g.json().get("valid") is True
@@ -78,7 +92,7 @@ def test_panel_forgot_next_sistem():
     assert r.status_code == 200, r.text
     token = r.json().get("reset_token")
     if not token:
-        pytest.skip("reset token not returned")
+        pytest.skip("reset token istemciye dönülmez")
     g = requests.get(f"{API}/auth/reset/{token}", timeout=20)
     assert g.json().get("next") == "sistem"
     r2 = requests.post(f"{API}/auth/reset/{token}", json={"password": ADMIN_PASS}, timeout=20)

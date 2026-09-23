@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 from password_reset import (
     ERP_FORGOT_MSG,
+    MAIL_FAIL_PUBLIC_DETAIL,
+    finalize_forgot_mail_result,
     generic_forgot_response,
     login_next,
     mask_email,
@@ -47,3 +49,28 @@ def test_password_and_token_errors():
     out = generic_forgot_response()
     assert out["message"] == ERP_FORGOT_MSG
     assert "reset_token" not in out
+
+
+def test_finalize_forgot_never_exposes_reset_link():
+    """E-posta gitmezse reset_url/token istemciye verilmez (güvenlik)."""
+    dirty = {
+        "status": "ok",
+        "message": ERP_FORGOT_MSG,
+        "reset_url": "https://evil/sifre/tok",
+        "reset_token": "tok",
+    }
+    failed = finalize_forgot_mail_result(dirty, mail_status="failed", mail_detail="SMTP down")
+    assert "reset_url" not in failed
+    assert "reset_token" not in failed
+    assert failed["mail_status"] == "failed"
+    assert failed["detail"] == MAIL_FAIL_PUBLIC_DETAIL
+    assert "SMTP" not in failed["detail"]
+
+    sent = finalize_forgot_mail_result(
+        {"status": "ok", "message": ERP_FORGOT_MSG, "reset_token": "x"},
+        mail_status="sent",
+        mail_detail="a@b.com adresine gönderildi.",
+    )
+    assert "reset_token" not in sent
+    assert sent["mail_status"] == "sent"
+    assert "gönderildi" in sent["detail"]
