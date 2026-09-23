@@ -58,7 +58,11 @@ import bank_providers
 import bank_guard
 import cash_approval
 import marketplace_providers
-from marketplace_settlement import marketplace_contact_name
+from marketplace_settlement import (
+    is_marketplace_settlement_tx,
+    marketplace_contact_name,
+    should_reverse_settlement_on_status,
+)
 from zoneinfo import ZoneInfo
 import httpx
 from urllib.parse import quote
@@ -5862,41 +5866,19 @@ async def gib_lookup(tax_id: str, company_id: Optional[str] = "comp_nexus_main_0
     tid = "".join(ch for ch in tax_id if ch.isdigit())
     if len(tid) not in (10, 11):
         raise HTTPException(status_code=400, detail="VKN 10 veya TCKN 11 haneli olmalıdır.")
-    local = await db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tid})
-    settings = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
-    live = settings.get("status") == "configured"
-    if live and settings.get("provider") in ("n11faturam", "isnet", "isnet_portal"):
-        pwd = _einvoice_password(settings)
-        provider = settings.get("provider")
-        try:
-            if provider == "isnet":
-                remote = await isnet.lookup_user(settings, pwd, tid)
-                src_label = "İşNet SOAP"
-            elif provider == "isnet_portal":
-                remote = await isnet_portal.lookup_user(settings, pwd, tid)
-                src_label = "İşNet Portal"
-            else:
-                remote = await n11faturam.lookup_user(settings, pwd, tid)
-                src_label = "n11 Faturam"
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"{src_label} GİB sorgusu başarısız: {e}")
-        is_efatura = bool(remote.get("is_e_invoice_user"))
-        alias = remote.get("alias") or (f"urn:mail:defaultpk@{tid}.com.tr" if is_efatura else None)
-        msg = "Cari kayıtlarınızda bulundu." if local else (
-            f"{src_label}: {remote.get('name') or tid} e-Fatura mükellefi." if is_efatura else f"{src_label}: GİB e-Fatura listesinde kayıtlı değil (e-Arşiv kesilmeli)."
-        )
-        return {"tax_id": tid, "kind": "VKN" if len(tid) == 10 else "TCKN", "is_e_invoice_user": is_efatura, "suggested_e_type": "e_invoice" if is_efatura else "e_archive",
-                "alias": alias, "source": provider, "name": remote.get("name") or "",
-                "local_contact": clean_doc(local) if local else None, "message": msg}
-    # Gerçek entegratör bağlı değilse GİB mükellef sorgusu SİMÜLE edilir (VKN'ler mükellef kabul edilir)
-    is_efatura = local.get("is_e_invoice_user") if local else len(tid) == 10
-    return {"tax_id": tid, "kind": "VKN" if len(tid) == 10 else "TCKN", "is_e_invoice_user": bool(is_efatura), "suggested_e_type": "e_invoice" if is_efatura else "e_archive",
-            "alias": f"urn:mail:defaultpk@{tid}.com.tr" if is_efatura else None, "source": settings.get("provider") if live else "simulated",
-            "local_contact": clean_doc(local) if local else None,
-            "message": ("Cari kayıtlarınızda bulundu." if local else "GİB e-Fatura mükellef listesinde " + ("kayıtlı (e-Fatura kesilmeli)." if is_efatura else "kayıtlı değil (e-Arşiv kesilmeli).")) + ("" if live else " [SİMÜLE — entegratör bağlanınca gerçek sorgu yapılır]")}
-
+    result = await e_invoice.resolve_buyer_mukellef(company_id, tid)
+    local = result.get("local_contact")
+    return {
+        "tax_id": result["tax_id"],
+        "kind": result["kind"],
+        "is_e_invoice_user": result["is_e_invoice_user"],
+        "suggested_e_type": result["suggested_e_type"],
+        "alias": result.get("alias"),
+        "source": result.get("source"),
+        "name": result.get("name") or "",
+        "local_contact": clean_doc(local) if local else None,
+        "message": result.get("message") or "",
+    }
 @api_router.put("/invoices/{invoice_id}")
 async def update_invoice(invoice_id: str, req: Dict[str, Any]):
     inv = await db.invoices.find_one({"_id": invoice_id})
@@ -9141,7 +9123,13 @@ async def return_order(order_id: str, req: Dict[str, Any]):
     await db.returns.insert_one(doc)
     partial = len(items) < len(o.get("items", []))
     await db.orders.update_one({"_id": order_id}, {"$set": {"order_status": "partially_returned" if partial else "returned", "return_id": doc["_id"]}})
-    return {"status": "success", "return": clean_doc(doc), "message": f"{o['order_number']} için {total:,.2f} ₺ iade kaydedildi{' ve stok geri alındı' if restock else ''}."}
+    o_fresh = await db.orders.find_one({"_id": order_id})
+    settlement_rev = await _reverse_marketplace_settlement(o_fresh or o)
+    out = {"status": "success", "return": clean_doc(doc), "message": f"{o['order_number']} için {total:,.2f} ₺ iade kaydedildi{' ve stok geri alındı' if restock else ''}."}
+    if settlement_rev:
+        out["settlement_reversed"] = settlement_rev
+        out["message"] += f" · {settlement_rev.get('removed_txs', 0)} hakediş hareketi silindi."
+    return out
 
 @api_router.get("/returns")
 async def list_returns(company_id: Optional[str] = "comp_nexus_main_01"):
@@ -9804,6 +9792,99 @@ async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict
             await db.contacts.update_one({"_id": mp["_id"]}, {"$inc": {"balance": deductions}})
     await db.orders.update_one({"_id": order["_id"]}, {"$set": {"settlement": {"account_id": acc["_id"], "account_name": acc.get("account_name"), "gross": p["revenue"], "deductions": deductions, "net": net, "tx_id": tx["_id"], "expense_id": exp["_id"] if exp else None, "marketplace_contact_id": mp["_id"] if mp else None, "date": today}}})
     return {"account_name": acc.get("account_name"), "gross": p["revenue"], "deductions": deductions, "net": net, "marketplace_contact_id": mp["_id"] if mp else None}
+
+
+async def _reverse_marketplace_settlement(order: dict) -> Optional[dict]:
+    """Sipariş iptal veya iade onayında: hakediş tahsilatı + kesinti ledger + komisyon masrafını geri al.
+
+    Fatura paid_amount'una dokunulmaz (hakediş yazılırken fatura zaten ödendi işaretlenir;
+    _reverse_tx_effects ile related_invoice_id üzerinden düşülmemeli).
+    """
+    if not order or not order.get("_id"):
+        return None
+    oid = order["_id"]
+    settlement = order.get("settlement") or {}
+    txs = await db.bank_transactions.find({"order_id": oid}).to_list(100)
+    by_id = {t["_id"]: t for t in txs if is_marketplace_settlement_tx(t)}
+    for extra_id in (settlement.get("tx_id"),):
+        if extra_id and extra_id not in by_id:
+            extra = await db.bank_transactions.find_one({"_id": extra_id})
+            if extra and is_marketplace_settlement_tx(extra):
+                by_id[extra["_id"]] = extra
+    txs = list(by_id.values())
+
+    expense_ids = set()
+    if settlement.get("expense_id"):
+        expense_ids.add(settlement["expense_id"])
+    for exp in await db.expenses.find({"order_id": oid, "netted_in_settlement": True}).to_list(50):
+        expense_ids.add(exp["_id"])
+
+    if not txs and not expense_ids and not settlement:
+        return None
+
+    removed_txs = 0
+    reversed_net = 0.0
+    for tx in txs:
+        amt = float(tx.get("amount") or 0)
+        # Kasa/banka: ledger kaynaklı satırlar hesap bakiyesine yazılmaz.
+        if tx.get("account_id") and tx.get("source") != "ledger":
+            change = -amt if tx.get("type") == "inflow" else amt
+            await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
+            if tx.get("type") == "inflow":
+                reversed_net += amt
+        if tx.get("contact_id"):
+            # inflow → cari bakiyeyi düşmüştü; outflow (kesinti) → artırmıştı.
+            delta = amt if tx.get("type") == "inflow" else -amt
+            await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": delta}})
+        await trash.soft_delete(
+            "bank_transactions",
+            tx,
+            "bank_transaction",
+            f"{tx.get('description')} · {amt:,.2f} ₺",
+            note=f"Sipariş iptal/iade · hakediş geri alındı · {tx.get('account_name')} · {tx.get('date')}",
+        )
+        removed_txs += 1
+
+    removed_expenses = 0
+    for eid in expense_ids:
+        exp = await db.expenses.find_one({"_id": eid})
+        if not exp:
+            continue
+        # netted_in_settlement: ayrı kasa çıkışı yok; yalnızca masraf kaydını kaldır.
+        await trash.soft_delete(
+            "expenses",
+            exp,
+            "expense",
+            f"{exp.get('expense_number')} · {exp.get('description') or exp.get('category')}",
+            note=f"Sipariş iptal/iade · hakediş masrafı · {float(exp.get('total') or 0):,.2f} ₺",
+        )
+        removed_expenses += 1
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one(
+        {"_id": oid},
+        {"$unset": {"settlement": ""}, "$set": {"settlement_reversed_at": now}},
+    )
+    if removed_txs == 0 and removed_expenses == 0:
+        return None
+    return {
+        "removed_txs": removed_txs,
+        "removed_expenses": removed_expenses,
+        "reversed_net": round(reversed_net, 2),
+    }
+
+
+async def _order_for_marketplace_claim(claim: dict) -> Optional[dict]:
+    """İade talebinden bağlı siparişi bul (order_number + kanal)."""
+    onum = (claim.get("order_number") or "").strip()
+    if not onum:
+        return None
+    q: Dict[str, Any] = {"company_id": claim.get("company_id"), "order_number": onum}
+    ch = (claim.get("channel") or "").strip().lower()
+    if ch:
+        q["channel"] = ch
+    return await db.orders.find_one(q)
+
 
 async def _upsert_by_external(coll, company_id: str, docs: list) -> int:
     n = 0
@@ -10518,7 +10599,13 @@ async def approve_marketplace_claim(claim_id: str, req: Dict[str, Any] = None):
         for it in c.get("items", []):
             if it.get("barcode"):
                 await db.products.update_one({"company_id": c["company_id"], "barcode": it["barcode"]}, {"$inc": {"stock_quantity": 1}})
-    return clean_doc(await db.marketplace_claims.find_one({"_id": claim_id}))
+    # İade onayında siparişe bağlı pazaryeri hakediş hareketlerini sil.
+    linked = await _order_for_marketplace_claim(c)
+    settlement_rev = await _reverse_marketplace_settlement(linked) if linked else None
+    out = clean_doc(await db.marketplace_claims.find_one({"_id": claim_id}))
+    if settlement_rev:
+        out["settlement_reversed"] = settlement_rev
+    return out
 
 @api_router.get("/marketplace/questions")
 async def list_marketplace_questions(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
@@ -10981,10 +11068,17 @@ async def update_order_status(order_id: str, req: Dict[str, str]):
     if unset:
         ops["$unset"] = unset
     await db.orders.update_one({"_id": order_id}, ops)
+    settlement_rev = None
+    if should_reverse_settlement_on_status(new_status):
+        fresh = await db.orders.find_one({"_id": order_id})
+        settlement_rev = await _reverse_marketplace_settlement(fresh or {**order, "order_status": new_status})
     await _push_order_to_shopphp(await db.orders.find_one({"_id": order_id}), reason="status")
     out = {"status": "success", "order_status": new_status, "draft_invoice_cleared": draft_cleared}
     if draft_cleared:
         out["message"] = "Sipariş beklemeye alındı; bağlı taslak fatura silindi."
+    if settlement_rev:
+        out["settlement_reversed"] = settlement_rev
+        out["message"] = (out.get("message") or f"Sipariş durumu: {new_status}") + f" · {settlement_rev.get('removed_txs', 0)} hakediş hareketi silindi."
     return out
 
 @api_router.post("/orders/{order_id}/convert-to-invoice")

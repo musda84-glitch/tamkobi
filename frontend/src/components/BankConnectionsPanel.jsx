@@ -252,10 +252,6 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
         </div>
       </div>
 
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-800" data-testid="bank-sim-notice">
-        <b>Not:</b> API kimlik bilgisi girilmeyen bağlantılar <b>SİMÜLE</b> modda çalışır. <b>Kuveyt Türk</b> Identity Server <code className="font-mono">client_credentials</code> + her istekte <b>RSA-SHA256 Signature</b> (PKCS8 PEM) kullanır. <b>Enpara</b> Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır; Enpara API çağrıları tarayıcıdan yapılmaz. IBAN 26 hane.
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {connections.map((c) => (
           <div key={c.id} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-sm" data-testid={`bank-conn-card-${c.id}`}>
@@ -445,11 +441,12 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               </p>
             )}
             {editForm.provider === "kuveytturk" && (
-              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                Kuveyt Türk API Market (resmi SDK): <b>Müşteri Id</b> → Client ID, <b>Client Secret</b> (Api Anahtarı değil!), <b>Api Anahtarı</b> → Gravitee.
-                Token: <code className="font-mono">POST …/api/connect/token</code> body’de <code className="font-mono">client_credentials</code> + <code className="font-mono">scope=public</code>.
-                API isteklerine RSA-SHA256 <b>Signature</b> (PKCS8 PEM).
-                <code className="font-mono">invalid_client</code> = yanlış secret veya Api Anahtarının Secret yerine yazılması; canlı uygulama portalde onaylı olmalı.
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="kuveyt-edit-hint">
+                Araştırma (resmi SDK): token yalnızca <code className="font-mono">POST …/api/connect/token</code> body
+                (<code className="font-mono">client_credentials</code> + <code className="font-mono">scope=public</code>) —
+                HTTP Basic kullanılmaz. <b>Müşteri Id</b>≠Api Anahtarı; <b>Client Secret</b>≠Api Anahtarı.
+                <code className="font-mono">invalid_client</code> çoğunlukla Canlı/Sandbox kimlik karışması veya yanlış secret:
+                Sandbox kimliği → Sandbox mod; Canlı uygulama onayı + canlı secret → Canlı mod.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">

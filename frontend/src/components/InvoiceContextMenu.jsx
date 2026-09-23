@@ -1,10 +1,10 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import axios from "axios";
 import {
   FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock,
-  Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink, Trash2, Receipt, Pencil,
+  Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink, Trash2, Receipt, Pencil, Loader2,
 } from "lucide-react";
-
 export const E_TYPE_LABELS = {
   e_invoice: "E-Fatura",
   e_archive: "E-Arşiv",
@@ -121,12 +121,30 @@ export function canIssueExpenseSlip(inv) {
 }
 
 const ISSUE_OPTIONS = [
-  { key: "e_invoice", label: "E-Fatura olarak kes", sub: "GİB Portal (mükellef alıcı)", icon: FileCheck2, color: "text-emerald-600" },
-  { key: "e_archive", label: "E-Arşiv olarak kes", sub: "Nihai tüketici / mükellef olmayan", icon: Archive, color: "text-blue-600" },
+  { key: "auto", label: "E-Fatura / E-Arşiv (GİB)", sub: "Mükellef ise e-Fatura, değilse e-Arşiv", icon: FileCheck2, color: "text-emerald-600" },
   { key: "e_export", label: "e-İhracat olarak kes", sub: "GİB e-İhracat · GTIP / teslim şekli", icon: Globe, color: "text-sky-600" },
   { key: "paper", label: "Kağıt Fatura olarak kes", sub: "Matbu / elden", icon: FileText, color: "text-amber-600" },
 ];
 
+/** GİB lookup sonucu → kesilecek belge türü. */
+export function suggestedIssueTypeFromGib(lookup) {
+  if (!lookup) return "e_archive";
+  if (lookup.suggested_e_type === "e_invoice" || lookup.suggested_e_type === "e_archive") {
+    return lookup.suggested_e_type;
+  }
+  return lookup.is_e_invoice_user ? "e_invoice" : "e_archive";
+}
+
+export function invoiceBuyerTaxId(inv) {
+  if (!inv) return "";
+  return String(inv.contact_tax_id || inv.buyer_tax_id || "").replace(/\D/g, "");
+}
+
+/** Kağıt / ihracat dışındaki kesimlerde tür GİB'den gelir. */
+export function shouldResolveIssueFromGib(eType) {
+  if (eType == null || eType === "" || eType === "auto") return true;
+  return !["paper", "e_export", "e_ihracat", "e_dispatch", "expense_slip"].includes(eType);
+}
 export const InvoiceContextMenu = (props) => {
   const {
     menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onDelete, onCancel, onExpenseSlip, onEdit,
@@ -134,8 +152,11 @@ export const InvoiceContextMenu = (props) => {
   const onAcceptIncoming = props.onAcceptIncoming;
   const onRejectIncoming = props.onRejectIncoming;
   const apiBase = props.apiBase || "";
+  const companyId = props.companyId || menu?.inv?.company_id || "";
   const ref = useRef(null);
   const [pos, setPos] = useState(null);
+  const [gibLookup, setGibLookup] = useState(null);
+  const [gibBusy, setGibBusy] = useState(false);
   useEffect(() => {
     if (!menu) return;
     const close = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
@@ -150,6 +171,29 @@ export const InvoiceContextMenu = (props) => {
       document.removeEventListener("keydown", esc);
     };
   }, [menu, onClose]);
+  useEffect(() => {
+    if (!menu?.inv || !canIssueInvoice(menu.inv) || isIncomingPurchaseInvoice(menu.inv)) {
+      setGibLookup(null);
+      setGibBusy(false);
+      return undefined;
+    }
+    const tax = invoiceBuyerTaxId(menu.inv);
+    if (!apiBase || tax.length < 10) {
+      setGibLookup(null);
+      setGibBusy(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setGibBusy(true);
+    setGibLookup(null);
+    const cid = companyId || menu.inv.company_id || "";
+    axios
+      .get(`${apiBase}/gib/lookup`, { params: { tax_id: tax, company_id: cid } })
+      .then((r) => { if (!cancelled) setGibLookup(r.data); })
+      .catch(() => { if (!cancelled) setGibLookup(null); })
+      .finally(() => { if (!cancelled) setGibBusy(false); });
+    return () => { cancelled = true; };
+  }, [menu, apiBase, companyId]);
   useLayoutEffect(() => {
     if (!menu) return;
     const el = ref.current;
@@ -167,7 +211,7 @@ export const InvoiceContextMenu = (props) => {
     if (el.scrollHeight > next.maxHeight + 1 && menu.y > window.innerHeight * 0.55) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [menu]);
+  }, [menu, gibLookup, gibBusy]);
 
   if (!menu) return null;
   const { inv } = menu;
@@ -181,6 +225,12 @@ export const InvoiceContextMenu = (props) => {
   const slipable = canIssueExpenseSlip(inv);
   const paid = invoiceHasPayment(inv);
   const showIssuedActions = issued && !incoming;
+  const gibType = suggestedIssueTypeFromGib(gibLookup);
+  const gibSub = gibBusy
+    ? "GİB mükellef sorgulanıyor…"
+    : gibLookup
+      ? (gibType === "e_invoice" ? "GİB: e-Fatura mükellefi → E-Fatura" : "GİB: kayıt yok → E-Arşiv")
+      : "Mükellef ise e-Fatura, değilse e-Arşiv";
   const placed = pos || placeContextMenu({
     x: menu.x,
     y: menu.y,
@@ -188,8 +238,14 @@ export const InvoiceContextMenu = (props) => {
     viewportWidth: window.innerWidth,
     viewportHeight: window.innerHeight,
   });
-  const Item = ({ icon: Icon, label, sub, color = "text-slate-500", onClick, testId }) => (
-    <button onClick={() => { onClick(); onClose(); }} className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-slate-50 transition" data-testid={testId}>
+  const Item = ({ icon: Icon, label, sub, color = "text-slate-500", onClick, testId, disabled }) => (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => { if (disabled) return; onClick(); onClose(); }}
+      className={`w-full flex items-start gap-2.5 px-3 py-2 text-left transition ${disabled ? "opacity-60 cursor-wait" : "hover:bg-slate-50"}`}
+      data-testid={testId}
+    >
       <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${color}`} />
       <span>
         <span className="block text-xs font-semibold text-slate-800">{label}</span>
@@ -226,9 +282,36 @@ export const InvoiceContextMenu = (props) => {
           {inv.e_type === "paper" && inv.status !== "draft" && (
             <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-paper-info">Kağıt fatura (matbu) — GİB e-belgesi değildir; buradan kesilebilir.</p>
           )}
-          {ISSUE_OPTIONS.map((o) => (
-            <Item key={o.key} icon={o.icon} color={o.color} label={o.label} sub={inv.e_type === o.key ? `${o.sub} • seçili tür` : o.sub} onClick={() => onIssue(inv, o.key)} testId={`ctx-issue-${o.key}`} />
-          ))}
+          {ISSUE_OPTIONS.map((o) => {
+            const isAuto = o.key === "auto";
+            const label = isAuto
+              ? (gibBusy ? "GİB sorgulanıyor…" : gibLookup ? (gibType === "e_invoice" ? "E-Fatura olarak kes" : "E-Arşiv olarak kes") : o.label)
+              : o.label;
+            const sub = isAuto ? gibSub : o.sub;
+            const Icon = isAuto && gibBusy
+              ? Loader2
+              : isAuto && gibLookup
+                ? (gibType === "e_invoice" ? FileCheck2 : Archive)
+                : o.icon;
+            const color = isAuto && gibLookup
+              ? (gibType === "e_invoice" ? "text-emerald-600" : "text-blue-600")
+              : o.color;
+            return (
+              <Item
+                key={o.key}
+                icon={Icon}
+                color={`${color}${isAuto && gibBusy ? " animate-spin" : ""}`}
+                label={label}
+                sub={sub}
+                disabled={isAuto && gibBusy}
+                onClick={() => onIssue(inv, isAuto ? "auto" : o.key)}
+                testId={isAuto ? "ctx-issue-gib" : `ctx-issue-${o.key}`}
+              />
+            );
+          })}
+          {/* Geriye dönük test id: eski e_invoice / e_archive düğmeleri GİB auto'ya yönlenir */}
+          <button type="button" className="hidden" data-testid="ctx-issue-e_invoice" onClick={() => { onIssue(inv, "auto"); onClose(); }} aria-hidden />
+          <button type="button" className="hidden" data-testid="ctx-issue-e_archive" onClick={() => { onIssue(inv, "auto"); onClose(); }} aria-hidden />
         </div>
       ) : issued ? (
         <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-100" data-testid="ctx-issued-info">
