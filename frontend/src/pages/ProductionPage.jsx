@@ -2,11 +2,12 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { Factory, BookOpen, Plus, Play, CheckCircle2, XCircle, Pencil, Trash2, AlertTriangle, Clock, Package, MonitorPlay, BellRing, Loader2, Copy } from "lucide-react";
+import { Factory, BookOpen, Plus, Play, CheckCircle2, XCircle, Pencil, Trash2, AlertTriangle, Clock, Package, MonitorPlay, BellRing, Loader2, Copy, X } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { RecipeModal } from "../components/RecipeModal";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { formatTrAmount } from "../utils/money";
+import { filterMissingByOrder, missingLinesForOrder } from "../utils/missingOrderLines";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const STATUS = { planned: ["Planlandı", "bg-slate-100 text-slate-700", Clock], in_production: ["Üretimde", "bg-amber-50 text-amber-700", Play], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700", CheckCircle2], cancelled: ["İptal", "bg-rose-50 text-rose-700", XCircle] };
@@ -35,6 +36,33 @@ export default function ProductionPage() {
   const [selected, setSelected] = useState({});
   const [planning, setPlanning] = useState(false);
   const [editPlan, setEditPlan] = useState({}); // { [orderId]: { qty, recipe_id } }
+  const [orderMissingView, setOrderMissingView] = useState(null); // kaynak sipariş → eksik ürün listesi
+
+  const visibleMissingItems = useMemo(
+    () => filterMissingByOrder(missingItems, highlightOrder),
+    [missingItems, highlightOrder],
+  );
+
+  const orderMissingLines = useMemo(
+    () => missingLinesForOrder(missingItems, orderMissingView || {}),
+    [orderMissingView, missingItems],
+  );
+
+  const openOrderMissing = (src) => {
+    if (!src?.order_id && !src?.order_number) return;
+    setOrderMissingView(src);
+    const np = new URLSearchParams(params);
+    np.set("tab", "missing");
+    if (src.order_id) np.set("order", src.order_id);
+    setParams(np);
+  };
+
+  const clearOrderMissingFilter = () => {
+    setOrderMissingView(null);
+    const np = new URLSearchParams(params);
+    np.delete("order");
+    setParams(np);
+  };
 
   const loadOrders = useCallback(async () => {
     try {
@@ -156,8 +184,8 @@ export default function ProductionPage() {
   );
 
   const toggleAll = (on) => {
-    const next = {};
-    missingItems.forEach((it) => { next[it.key] = on; });
+    const next = { ...selected };
+    visibleMissingItems.forEach((it) => { next[it.key] = on; });
     setSelected(next);
   };
 
@@ -251,6 +279,16 @@ export default function ProductionPage() {
             <span>Depodan gelen eksik ürün bildirimleri ve kritik stok buradan planlanır; onayladığınız kalemler <b>Üretim Emirleri</b> sekmesine düşer.</span>
             {missingMeta.notification_count > 0 && <span className="ml-auto font-semibold">{missingMeta.notification_count} okunmamış bildirim</span>}
           </div>
+          {highlightOrder ? (
+            <div className="px-4 py-2 border-b border-indigo-100 bg-indigo-50 text-xs text-indigo-900 flex flex-wrap items-center gap-2" data-testid="missing-order-filter-bar">
+              <span className="font-semibold">
+                Sipariş filtresi: {orderMissingView?.order_number || highlightOrder}
+                {orderMissingView?.customer_name ? ` · ${orderMissingView.customer_name}` : ""}
+              </span>
+              <span className="text-indigo-700">{visibleMissingItems.length} ürün</span>
+              <button type="button" onClick={clearOrderMissingFilter} className="ml-auto px-2 py-1 rounded-lg border border-indigo-200 bg-white font-semibold hover:bg-indigo-100" data-testid="missing-order-filter-clear">Filtreyi kaldır</button>
+            </div>
+          ) : null}
           <table className="w-full text-xs text-left">
             <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-semibold border-b">
               <tr>
@@ -266,16 +304,13 @@ export default function ProductionPage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {missingLoading && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="missing-loading">Yükleniyor…</td></tr>}
-              {!missingLoading && missingItems.length === 0 && (
+              {!missingLoading && visibleMissingItems.length === 0 && (
                 <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400" data-testid="missing-empty">
                   <Package className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-                  Bekleyen eksik ürün bildirimi yok. Depo sevkiyatında “Eksikleri bildir” ile buraya düşer.
+                  {highlightOrder ? "Bu sipariş için listede eksik ürün yok." : "Bekleyen eksik ürün bildirimi yok. Depo sevkiyatında “Eksikleri bildir” ile buraya düşer."}
                 </td></tr>
               )}
-              {!missingLoading && missingItems.filter((it) => {
-                const n = String(it.product_name || "").trim().toLowerCase();
-                return n && !n.startsWith("depo eksik");
-              }).map((it) => {
+              {!missingLoading && visibleMissingItems.map((it) => {
                 const fromHighlight = highlightOrder && (it.order_ids || []).includes(highlightOrder);
                 const pickSources = (it.sources || []).filter((s) => s.type === "order_pick");
                 const lowSources = (it.sources || []).filter((s) => s.type === "low_stock");
@@ -296,11 +331,18 @@ export default function ProductionPage() {
                     </td>
                     <td className="px-3 py-2 text-slate-600">
                       {pickSources.map((s, i) => (
-                        <div key={i} className="text-[11px]">
-                          <span className="font-semibold text-slate-800">Sipariş {s.order_number || "—"}</span>
+                        <button
+                          type="button"
+                          key={i}
+                          onClick={() => openOrderMissing(s)}
+                          className="block w-full text-left text-[11px] rounded-md px-1 -mx-1 py-0.5 hover:bg-indigo-50 hover:text-indigo-900 transition"
+                          title="Bu siparişin eksik ürünlerini göster"
+                          data-testid={`missing-source-order-${s.order_number || s.order_id || i}`}
+                        >
+                          <span className="font-semibold text-slate-800 underline decoration-slate-300 underline-offset-2">Sipariş {s.order_number || "—"}</span>
                           {s.customer_name && <span className="text-slate-400"> · {s.customer_name}</span>}
                           {s.missing_qty != null && <span className="text-rose-600"> · {Number(s.missing_qty)} eksik</span>}
-                        </div>
+                        </button>
                       ))}
                       {lowSources.map((s, i) => (
                         <div key={`l${i}`} className="text-[11px] text-amber-800 font-semibold">Kritik stok{s.detail ? ` · ${s.detail}` : ""}</div>
@@ -470,6 +512,52 @@ export default function ProductionPage() {
 
       {recipeModal && <RecipeModal companyId={companyId} products={products} recipe={recipeModal.recipe} presetProductId={recipeModal.presetProductId} onClose={() => setRecipeModal(null)} onSaved={load} />}
       {orderModal && <ProductionOrderModal companyId={companyId} product={orderModal === true ? null : orderModal} recipes={orderModal === true ? recipes.filter((r) => r.is_active !== false) : null} onClose={() => setOrderModal(false)} onCreated={() => { load(); setParams({ tab: "orders" }); }} />}
+      {orderMissingView && (
+        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setOrderMissingView(null)} data-testid="order-missing-modal-backdrop">
+          <div
+            className="bg-white rounded-2xl max-w-lg w-full p-5 space-y-3 text-xs shadow-2xl max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="order-missing-modal"
+          >
+            <div className="flex justify-between items-start border-b pb-2 gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-600" />
+                  Sipariş {orderMissingView.order_number || "—"} — eksik ürünler
+                </h3>
+                {orderMissingView.customer_name ? <p className="text-[11px] text-slate-500 mt-0.5">{orderMissingView.customer_name}</p> : null}
+              </div>
+              <button type="button" onClick={() => setOrderMissingView(null)} className="text-slate-400 hover:text-slate-700" data-testid="order-missing-close"><X className="w-5 h-5" /></button>
+            </div>
+            {!orderMissingLines.length ? (
+              <p className="text-slate-400 py-6 text-center">Bu sipariş için eksik ürün bulunamadı.</p>
+            ) : (
+              <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden" data-testid="order-missing-list">
+                {orderMissingLines.map((line) => (
+                  <div key={line.key} className="flex items-center justify-between gap-3 px-3 py-2.5 bg-white" data-testid={`order-missing-line-${line.product_id || line.key}`}>
+                    <div className="min-w-0">
+                      <div className="font-semibold text-slate-900 truncate">{line.product_name}</div>
+                      <div className="text-[10px] text-slate-400 flex gap-1.5">
+                        {line.sku ? <span className="font-mono">{line.sku}</span> : null}
+                        {line.has_recipe ? <span className="text-emerald-700 font-semibold">Reçeteli</span> : <span className="text-amber-700 font-semibold">Reçetesiz</span>}
+                        <span>Stok {Number(line.stock_quantity)}</span>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="font-black text-rose-700">{line.missing_qty} <span className="text-slate-400 font-normal">{line.unit}</span></div>
+                      <div className="text-[10px] text-slate-400">eksik</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-between items-center gap-2 border-t pt-2">
+              <span className="text-slate-500 font-semibold">{orderMissingLines.length} kalem · {orderMissingLines.reduce((s, l) => s + Number(l.missing_qty || 0), 0)} adet eksik</span>
+              <button type="button" onClick={() => setOrderMissingView(null)} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold" data-testid="order-missing-ok">Tamam</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
