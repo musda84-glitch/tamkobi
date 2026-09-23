@@ -11,7 +11,12 @@ import { statusTr } from "../utils/labels";
 import { workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
 
-type LocationTracking = { enabled?: boolean; continuous?: boolean; interval_minutes?: number };
+type LocationTracking = {
+  enabled?: boolean;
+  continuous?: boolean;
+  interval_minutes?: number;
+  field?: { enabled?: boolean; continuous?: boolean; interval_minutes?: number };
+};
 
 type AttendancePayload = {
   employee?: { full_name: string } | null;
@@ -34,6 +39,7 @@ type AttendancePayload = {
   workplace?: Workplace | null;
   schedule?: { require_geo?: boolean; start?: string; end?: string; location_tracking?: LocationTracking };
   location_tracking?: LocationTracking;
+  active_location_tracking?: LocationTracking;
   records?: { id?: string; date: string; check_in?: string; check_out?: string; hours?: number; status?: string }[];
   summary?: { days?: number; hours?: number };
 };

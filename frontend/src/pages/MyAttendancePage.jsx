@@ -75,8 +75,11 @@ export default function MyAttendancePage() {
     setBusy(action);
     try {
       let coords = {};
-      // Konum yalnızca girişte zorunlu; çıkış her yerden yapılabilir (konum kapalı olsa da).
-      if (action === "check_in" && data?.location && data?.schedule?.require_geo !== false) {
+      // Konum yalnızca girişte; etkin iş yerine göre (iş yeri / dış görev) ayar.
+      const activeLt = data?.active_location_tracking || data?.location_tracking;
+      const needGeo = action === "check_in" && data?.location && activeLt?.enabled !== false
+        && (data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false);
+      if (needGeo) {
         const c = await getPos();
         coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
       }
