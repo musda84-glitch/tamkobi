@@ -1034,11 +1034,23 @@ export function PersonnelScreen() {
                       style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
                     >
                       <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 12, flex: 1 }}>Görev / çalıştığı yer</Text>
-                      <Ionicons
-                        name={workplaceDetailsToggleIcon(!!workplaceOpen[eid])}
-                        size={18}
-                        color="#4338CA"
-                      />
+                      <View
+                        testID={`emp-card-workplace-toggle-icon-${eid}`}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 14,
+                          backgroundColor: "#C7D2FE",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Ionicons
+                          name={workplaceDetailsToggleIcon(!!workplaceOpen[eid])}
+                          size={16}
+                          color="#3730A3"
+                        />
+                      </View>
                     </Pressable>
                     {workplaceOpen[eid] ? (
                       <>
