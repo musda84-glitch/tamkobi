@@ -131,7 +131,7 @@ import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { findWorkPark, officeTaskPayload, parkSelectGroups, validateOfficeTaskAssign, type WorkPark } from "../utils/workParks";
 import { fmtDmy } from "../utils/calendar";
 import { fieldWorkplaceFromProjects, workplaceHint, workplaceShort, type Workplace } from "../utils/workplace";
-import { matchAssignedDuty, pendingDutyPhotoCount, type AssignedDuty } from "../utils/assignedDuty";
+import { dutyFromCurrent, pendingDutyPhotoCount, type AssignedDuty } from "../utils/assignedDuty";
 
 type Tab = "payroll" | "attendance" | "leaves" | "extras";
 
@@ -1889,7 +1889,11 @@ export function PersonnelScreen() {
         {dutiesEmp ? (() => {
           const board = employeeDutyBoard(dutiesEmp, cards[idOf(dutiesEmp)]);
           const dutyRows = (cards[idOf(dutiesEmp)]?.tasks || []) as AssignedDuty[];
-          const currentDuty = matchAssignedDuty(dutyRows, board.current);
+          const currentDuty = dutyFromCurrent({
+            tasks: dutyRows,
+            current: board.current,
+            workplace: dutiesEmp.workplace || cards[idOf(dutiesEmp)]?.workplace,
+          });
           const pendingPhotos = pendingDutyPhotoCount(dutyRows);
           const patchDuty = (next?: AssignedDuty) => {
             if (!next?.id) return;
@@ -1919,21 +1923,15 @@ export function PersonnelScreen() {
                 }}
               >
                 <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 12 }}>Şu anda yaptığı iş</Text>
-                {board.current ? (
+                {currentDuty ? (
                   <>
-                    <Text style={{ fontWeight: "800", color: colors.text, fontSize: 15 }}>{board.current.title}</Text>
-                    {board.current.lines.map((line) => (
-                      <Muted key={line}>{line}</Muted>
-                    ))}
                     {board.currentHint ? <Muted testID="emp-duties-current-hint">{board.currentHint}</Muted> : null}
-                    {currentDuty ? (
-                      <AssignedDutyCard
-                        duty={currentDuty}
-                        reviewPhotos
-                        onChanged={patchDuty}
-                        testID="emp-duties-current-card"
-                      />
-                    ) : null}
+                    <AssignedDutyCard
+                      duty={currentDuty}
+                      reviewPhotos
+                      onChanged={patchDuty}
+                      testID="emp-duties-current-card"
+                    />
                   </>
                 ) : (
                   <Muted testID="emp-duties-empty">Aktif görev yok.</Muted>

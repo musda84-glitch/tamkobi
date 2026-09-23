@@ -17,7 +17,7 @@ import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
 import { employeePayActionTitle, isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
 import { workplaceHint, workplaceShort } from "../utils/workplace";
-import { pendingDutyPhotoCount } from "../utils/assignedDuty";
+import { dutyFromCurrent, pendingDutyPhotoCount } from "../utils/assignedDuty";
 import { AssignedDutyCard } from "./AssignedDutyCard";
 import { StaffMessagesPanel } from "./StaffMessagesPanel";
 
@@ -363,14 +363,34 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                         {card.workplace.address ? <div className="text-[11px] text-indigo-700">{card.workplace.address}</div> : null}
                       </>
                     ) : null}
-                    {(card.tasks || []).some((t) => !t.done || (t.photos || []).length) ? (
+                    {(() => {
+                      const currentDuty = dutyFromCurrent({
+                        tasks: card.tasks,
+                        current: card.workplace?.kind === "task"
+                          ? { id: card.workplace.task_id, title: card.workplace.task_title, project: [card.workplace.project_number, card.workplace.project_name].filter(Boolean).join(" · ") }
+                          : (card.tasks || []).find((t) => !t.done) || null,
+                        workplace: card.workplace,
+                      });
+                      const rest = (card.tasks || []).filter((t) => !currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)).filter((t) => !t.done || (t.photos || []).length);
+                      return (
                       <div className="space-y-2" data-testid="emp-card-tasks">
                         {pendingDutyPhotoCount(card.tasks) ? (
                           <div className="text-[11px] font-bold text-amber-800" data-testid="emp-card-photo-pending">
                             {pendingDutyPhotoCount(card.tasks)} iş fotoğrafı müşteri onayı bekliyor
                           </div>
                         ) : null}
-                        {(card.tasks || []).filter((t) => !t.done || (t.photos || []).length).slice(0, 8).map((t, i) => (
+                        {currentDuty ? (
+                          <div data-testid="emp-card-current-duty">
+                            <div className="text-[10px] font-bold uppercase tracking-wide text-indigo-600 mb-1">Şu anda yaptığı iş</div>
+                            <AssignedDutyCard
+                              duty={currentDuty}
+                              reviewPhotos
+                              onChanged={() => reload()}
+                              testId="emp-card-current-card"
+                            />
+                          </div>
+                        ) : null}
+                        {rest.slice(0, 8).map((t, i) => (
                           <AssignedDutyCard
                             key={t.id || i}
                             duty={t}
@@ -381,7 +401,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                           />
                         ))}
                       </div>
-                    ) : null}
+                      );
+                    })()}
                   </div>
                 ) : null}
                 <div className="border border-slate-100 rounded-xl p-3 space-y-3" data-testid="emp-performance">
