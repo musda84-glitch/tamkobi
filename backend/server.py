@@ -5862,41 +5862,19 @@ async def gib_lookup(tax_id: str, company_id: Optional[str] = "comp_nexus_main_0
     tid = "".join(ch for ch in tax_id if ch.isdigit())
     if len(tid) not in (10, 11):
         raise HTTPException(status_code=400, detail="VKN 10 veya TCKN 11 haneli olmalıdır.")
-    local = await db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tid})
-    settings = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
-    live = settings.get("status") == "configured"
-    if live and settings.get("provider") in ("n11faturam", "isnet", "isnet_portal"):
-        pwd = _einvoice_password(settings)
-        provider = settings.get("provider")
-        try:
-            if provider == "isnet":
-                remote = await isnet.lookup_user(settings, pwd, tid)
-                src_label = "İşNet SOAP"
-            elif provider == "isnet_portal":
-                remote = await isnet_portal.lookup_user(settings, pwd, tid)
-                src_label = "İşNet Portal"
-            else:
-                remote = await n11faturam.lookup_user(settings, pwd, tid)
-                src_label = "n11 Faturam"
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"{src_label} GİB sorgusu başarısız: {e}")
-        is_efatura = bool(remote.get("is_e_invoice_user"))
-        alias = remote.get("alias") or (f"urn:mail:defaultpk@{tid}.com.tr" if is_efatura else None)
-        msg = "Cari kayıtlarınızda bulundu." if local else (
-            f"{src_label}: {remote.get('name') or tid} e-Fatura mükellefi." if is_efatura else f"{src_label}: GİB e-Fatura listesinde kayıtlı değil (e-Arşiv kesilmeli)."
-        )
-        return {"tax_id": tid, "kind": "VKN" if len(tid) == 10 else "TCKN", "is_e_invoice_user": is_efatura, "suggested_e_type": "e_invoice" if is_efatura else "e_archive",
-                "alias": alias, "source": provider, "name": remote.get("name") or "",
-                "local_contact": clean_doc(local) if local else None, "message": msg}
-    # Gerçek entegratör bağlı değilse GİB mükellef sorgusu SİMÜLE edilir (VKN'ler mükellef kabul edilir)
-    is_efatura = local.get("is_e_invoice_user") if local else len(tid) == 10
-    return {"tax_id": tid, "kind": "VKN" if len(tid) == 10 else "TCKN", "is_e_invoice_user": bool(is_efatura), "suggested_e_type": "e_invoice" if is_efatura else "e_archive",
-            "alias": f"urn:mail:defaultpk@{tid}.com.tr" if is_efatura else None, "source": settings.get("provider") if live else "simulated",
-            "local_contact": clean_doc(local) if local else None,
-            "message": ("Cari kayıtlarınızda bulundu." if local else "GİB e-Fatura mükellef listesinde " + ("kayıtlı (e-Fatura kesilmeli)." if is_efatura else "kayıtlı değil (e-Arşiv kesilmeli).")) + ("" if live else " [SİMÜLE — entegratör bağlanınca gerçek sorgu yapılır]")}
-
+    result = await e_invoice.resolve_buyer_mukellef(company_id, tid)
+    local = result.get("local_contact")
+    return {
+        "tax_id": result["tax_id"],
+        "kind": result["kind"],
+        "is_e_invoice_user": result["is_e_invoice_user"],
+        "suggested_e_type": result["suggested_e_type"],
+        "alias": result.get("alias"),
+        "source": result.get("source"),
+        "name": result.get("name") or "",
+        "local_contact": clean_doc(local) if local else None,
+        "message": result.get("message") or "",
+    }
 @api_router.put("/invoices/{invoice_id}")
 async def update_invoice(invoice_id: str, req: Dict[str, Any]):
     inv = await db.invoices.find_one({"_id": invoice_id})
