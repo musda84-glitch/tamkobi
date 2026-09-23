@@ -15,26 +15,113 @@ import aiosmtplib
 from cryptography.fernet import Fernet
 
 
+def _data_dirs() -> List[Path]:
+    dirs: List[Path] = []
+    for env in ("DATA_DIR", "APP_DATA_DIR", "TAMKOBI_DATA_DIR"):
+        raw = (os.environ.get(env) or "").strip()
+        if raw:
+            dirs.append(Path(raw))
+    dirs.append(Path("/data"))
+    dirs.append(Path(__file__).resolve().parent)
+    return dirs
+
+
+def _key_file_candidates() -> List[Path]:
+    return [d / ".credential_encryption_key" for d in _data_dirs()]
+
+
+def _read_stored_key() -> Optional[str]:
+    for path in _key_file_candidates():
+        try:
+            if path.is_file():
+                raw = path.read_text(encoding="utf-8").strip()
+                if raw:
+                    return raw
+        except OSError:
+            continue
+    return None
+
+
+def _write_stored_key(key: str) -> Optional[Path]:
+    for path in _key_file_candidates():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(key, encoding="utf-8")
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+            return path
+        except OSError:
+            continue
+    return None
+
+
+def _fernet_from_raw(raw: str) -> Optional[Fernet]:
+    try:
+        return Fernet(raw.encode() if isinstance(raw, str) else raw)
+    except (ValueError, TypeError):
+        return None
+
+
 def _build_fernet() -> Fernet:
     raw = (os.environ.get("CREDENTIAL_ENCRYPTION_KEY") or "").strip()
     if raw:
-        try:
-            return Fernet(raw.encode())
-        except (ValueError, TypeError):
-            pass
-    # Local/Docker fallback so the API can start without a pre-set key.
-    key = Fernet.generate_key()
-    os.environ["CREDENTIAL_ENCRYPTION_KEY"] = key.decode()
-    return Fernet(key)
+        f = _fernet_from_raw(raw)
+        if f:
+            return f
+    stored = _read_stored_key()
+    if stored:
+        f = _fernet_from_raw(stored)
+        if f:
+            os.environ.setdefault("CREDENTIAL_ENCRYPTION_KEY", stored)
+            return f
+    # Persist a stable fallback so restarts / workers share the same key.
+    key = Fernet.generate_key().decode()
+    _write_stored_key(key)
+    os.environ["CREDENTIAL_ENCRYPTION_KEY"] = key
+    return Fernet(key.encode())
 
 
 _fernet = _build_fernet()
 
+
+def reset_fernet_for_tests() -> Fernet:
+    """Rebuild module Fernet from current env/file (tests only)."""
+    global _fernet
+    _fernet = _build_fernet()
+    return _fernet
+
+
+def looks_like_fernet_token(value: str) -> bool:
+    text = str(value or "")
+    return len(text) >= 40 and text.startswith("gAAAA")
+
+
 def encrypt(value: str) -> str:
-    return _fernet.encrypt(value.encode()).decode()
+    return _fernet.encrypt((value or "").encode()).decode()
+
 
 def decrypt(value: str) -> str:
-    return _fernet.decrypt(value.encode()).decode()
+    text = "" if value is None else str(value)
+    if not text:
+        return ""
+    try:
+        return _fernet.decrypt(text.encode()).decode()
+    except Exception:
+        # Eski düz metin kayıtları (şifrelenmeden önce) okunabilsin.
+        if not looks_like_fernet_token(text):
+            return text
+        raise
+
+
+def try_decrypt(value: Optional[str]) -> Optional[str]:
+    if value is None or value == "":
+        return None
+    try:
+        return decrypt(value)
+    except Exception:
+        return None
 
 # ---------------- NETGSM ----------------
 NETGSM_BASE = "https://api.netgsm.com.tr"

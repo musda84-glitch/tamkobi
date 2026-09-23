@@ -93,6 +93,9 @@ export const SmsCenter = ({ companyId, contacts }) => {
         is_active: s.data.is_active ?? true,
       });
       setLogs(l.data);
+      if (s.data.password_unreadable) {
+        toast.warning(s.data.verify_message || "API şifresini yeniden girip kaydedin.");
+      }
     } catch { toast.error("SMS verileri yüklenemedi."); }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
