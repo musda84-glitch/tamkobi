@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -26,6 +27,7 @@ import {
   payrollStatusTr,
   remainingDue,
   employeeCompRows,
+  employeeCompGroups,
   unpaidPayrollTotal,
   employeePayMoves,
   EMPLOYEE_CARD_PAY_ACTIONS,
@@ -60,7 +62,14 @@ import {
   remainingLeaveDays,
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
+  workplaceDetailsToggleIcon,
   employeeCardChrome,
+  initLocMode,
+  patchLocMode,
+  locationTrackingPayload,
+  locModeSummary,
+  DEFAULT_LOC_MODE,
+  type LocMode,
   filterPayMoves,
   payMovesPeriodLabel,
   type PayMovesPeriod,
@@ -178,6 +187,9 @@ export function PersonnelScreen() {
   const [expenseEmp, setExpenseEmp] = useState<Employee | null>(null);
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseNote, setExpenseNote] = useState("");
+  const [locEmp, setLocEmp] = useState<Employee | null>(null);
+  const [locCompany, setLocCompany] = useState<LocMode>(DEFAULT_LOC_MODE);
+  const [locField, setLocField] = useState<LocMode>(DEFAULT_LOC_MODE);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -608,6 +620,30 @@ export function PersonnelScreen() {
     transport: (emp: Employee) => openAllowance(emp, "transport"),
     bonus: (emp: Employee) => (isDailyWage(emp) ? openYevmiyeDays(emp) : openExtraPay(emp, "bonus")),
     otpay: (emp: Employee) => openExtraPay(emp, "overtime"),
+  };
+
+  const openLocSettings = (emp: Employee) => {
+    const raw = emp.location_tracking || cards[idOf(emp)]?.employee?.location_tracking || {};
+    setLocEmp(emp);
+    setLocCompany(initLocMode(raw));
+    setLocField(initLocMode(raw.field || raw));
+  };
+
+  const saveLocSettings = async () => {
+    if (!locEmp) return;
+    setBusy(true);
+    try {
+      await put(client, `/personnel/employees/${idOf(locEmp)}`, {
+        location_tracking: locationTrackingPayload(locCompany, locField),
+      });
+      setMessage(`${locEmp.full_name} konum ayarları kaydedildi.`);
+      setLocEmp(null);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Konum ayarları kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const saveTaskAssign = async () => {
@@ -1082,10 +1118,15 @@ export function PersonnelScreen() {
                     <Pressable
                       testID={`emp-card-workplace-toggle-${eid}`}
                       onPress={() => setWorkplaceOpen((cur) => ({ ...cur, [eid]: !cur[eid] }))}
+                      accessibilityLabel={workplaceDetailsToggleLabel(!!workplaceOpen[eid])}
                       style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
                     >
                       <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 12, flex: 1 }}>Görev / çalıştığı yer</Text>
-                      <Text style={{ fontWeight: "800", color: "#4338CA", fontSize: 12 }}>{workplaceDetailsToggleLabel(!!workplaceOpen[eid])}</Text>
+                      <Ionicons
+                        name={workplaceDetailsToggleIcon(!!workplaceOpen[eid])}
+                        size={18}
+                        color="#4338CA"
+                      />
                     </Pressable>
                     {workplaceOpen[eid] ? (
                       <>
@@ -1130,24 +1171,31 @@ export function PersonnelScreen() {
                     ))}
                   </View>
                 ) : null}
-                <Row testID={`emp-comp-${eid}`} style={{ flexWrap: "wrap", justifyContent: "space-between", paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
-                  {comp.map((row) => (
-                    <View key={row.key} style={{ minWidth: 140, flexGrow: 1, flexBasis: "46%", paddingRight: 8, paddingBottom: 4 }}>
-                      <Muted>{row.label}{row.key === "salary" && isDailyWage(emp) ? " / gün" : ""}</Muted>
-                      {row.key === "bonus" && row.days != null ? (
-                        <Text
-                          testID={`emp-comp-bonus-days-${eid}`}
-                          style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}
-                        >
-                          {row.days} gün
-                        </Text>
-                      ) : null}
-                      <Text
-                        testID={row.key === "total" ? `emp-remaining-${eid}` : `emp-comp-${row.key}-${eid}`}
-                        style={{ fontWeight: "800", color: row.key === "total" ? colors.primary : colors.text }}
-                      >
-                        {fmtMoney(row.value)}
-                      </Text>
+                <Row testID={`emp-comp-${eid}`} style={{ alignItems: "flex-start", gap: 6, paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.border }}>
+                  {employeeCompGroups(comp).map((group) => (
+                    <View key={group.key} testID={`emp-comp-group-${group.key}-${eid}`} style={{ flex: 1, minWidth: 0, gap: 4, padding: 6, borderRadius: 8, backgroundColor: colors.slate50 }}>
+                      <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>{group.title}</Text>
+                      {group.rows.map((row) => (
+                        <View key={row.key} style={{ gap: 0 }}>
+                          <Text style={{ fontSize: 10, color: colors.muted }}>
+                            {row.label}{row.key === "salary" && isDailyWage(emp) ? " / gün" : ""}
+                          </Text>
+                          {row.key === "bonus" && row.days != null ? (
+                            <Text
+                              testID={`emp-comp-bonus-days-${eid}`}
+                              style={{ fontWeight: "800", color: colors.text, fontSize: 11 }}
+                            >
+                              {row.days} gün
+                            </Text>
+                          ) : null}
+                          <Text
+                            testID={row.key === "total" ? `emp-remaining-${eid}` : `emp-comp-${row.key}-${eid}`}
+                            style={{ fontWeight: "800", fontSize: 12, color: row.key === "total" ? colors.primary : colors.text }}
+                          >
+                            {fmtMoney(row.value)}
+                          </Text>
+                        </View>
+                      ))}
                     </View>
                   ))}
                 </Row>
@@ -1186,6 +1234,13 @@ export function PersonnelScreen() {
                       {EMPLOYEE_CARD_WORK_ACTIONS.map((action) => (
                         <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
                       ))}
+                      <PayChip
+                        title="Konum"
+                        color="#047857"
+                        bg="#ECFDF5"
+                        testID={`emp-card-location-btn-${eid}`}
+                        onPress={() => openLocSettings(emp)}
+                      />
                       <PayChip
                         title="Masraf"
                         color="#9A3412"
@@ -1637,6 +1692,31 @@ export function PersonnelScreen() {
       </B2BSheet>
 
       <B2BSheet
+        visible={!!locEmp}
+        title="Konum izleme"
+        subtitle={locEmp ? locEmp.full_name : undefined}
+        onClose={() => setLocEmp(null)}
+        testID="emp-location-sheet"
+      >
+        <LocModeBlock
+          title="İş yeri / firma"
+          hint="Girişte firma konumu kontrolü"
+          prefix="company"
+          mode={locCompany}
+          onChange={(key, value) => setLocCompany((prev) => patchLocMode(prev, key, value))}
+        />
+        <LocModeBlock
+          title="Dış görev"
+          hint="Açık proje görevinde görev yeri kontrolü"
+          prefix="field"
+          mode={locField}
+          onChange={(key, value) => setLocField((prev) => patchLocMode(prev, key, value))}
+        />
+        <Muted testID="emp-location-hint">Kapalı olsa da çıkış her yerden yapılır. 0 dk = sürekli izle.</Muted>
+        <PrimaryButton title="Kaydet" testID="emp-location-save" color="#047857" loading={busy} onPress={saveLocSettings} />
+      </B2BSheet>
+
+      <B2BSheet
         visible={!!yevmiyeEmp}
         title={yevmiyeEditId ? "Yevmiye günü düzenle" : "Yevmiye günü"}
         subtitle={yevmiyeEmp ? `${yevmiyeEmp.full_name} · personel alacağı` : undefined}
@@ -2062,6 +2142,79 @@ function EmpActionChip({
       testID={`emp-card-${action.key}-btn-${eid}`}
       onPress={() => handlers[action.key]?.(emp)}
     />
+  );
+}
+
+function LocModeBlock({
+  title,
+  hint,
+  prefix,
+  mode,
+  onChange,
+}: {
+  title: string;
+  hint: string;
+  prefix: string;
+  mode: LocMode;
+  onChange: (key: keyof LocMode, value: boolean | number | "") => void;
+}) {
+  return (
+    <View
+      testID={`emp-loc-mode-${prefix}`}
+      style={{ gap: 6, padding: 10, borderRadius: 12, backgroundColor: colors.slate50, borderWidth: 1, borderColor: colors.border }}
+    >
+      <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>{title}</Text>
+      <Muted>{hint} · {locModeSummary(mode)}</Muted>
+      <Row>
+        <Pressable
+          testID={`emp-loc-${prefix}-enabled`}
+          onPress={() => onChange("enabled", !mode.enabled)}
+          style={{
+            flex: 1,
+            minHeight: 36,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: mode.enabled ? "#6EE7B7" : colors.border,
+            backgroundColor: mode.enabled ? colors.emerald50 : colors.surface,
+            alignItems: "center",
+            justifyContent: "center",
+            flexDirection: "row",
+            gap: 6,
+          }}
+        >
+          <Ionicons name={mode.enabled ? "checkbox" : "square-outline"} size={16} color={mode.enabled ? colors.primary : colors.muted} />
+          <Text style={{ fontWeight: "700", fontSize: 12, color: mode.enabled ? colors.primaryHover : colors.muted }}>Konum açık</Text>
+        </Pressable>
+        <Pressable
+          testID={`emp-loc-${prefix}-continuous`}
+          onPress={() => mode.enabled && onChange("continuous", !mode.continuous)}
+          style={{
+            flex: 1,
+            minHeight: 36,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: mode.enabled && mode.continuous ? "#A5B4FC" : colors.border,
+            backgroundColor: mode.enabled && mode.continuous ? "#EEF2FF" : colors.surface,
+            opacity: mode.enabled ? 1 : 0.5,
+            alignItems: "center",
+            justifyContent: "center",
+            flexDirection: "row",
+            gap: 6,
+          }}
+        >
+          <Ionicons name={mode.continuous ? "checkbox" : "square-outline"} size={16} color={mode.continuous ? "#4338CA" : colors.muted} />
+          <Text style={{ fontWeight: "700", fontSize: 12, color: mode.continuous ? "#3730A3" : colors.muted }}>Sürekli</Text>
+        </Pressable>
+      </Row>
+      <Field
+        label="Kontrol aralığı (dk)"
+        testID={`emp-loc-${prefix}-interval`}
+        value={String(mode.interval_minutes)}
+        onChangeText={(v) => onChange("interval_minutes", v === "" ? "" : Number(v.replace(/\D/g, "").slice(0, 3)))}
+        keyboardType="number-pad"
+        placeholder="0 = sürekli"
+      />
+    </View>
   );
 }
 

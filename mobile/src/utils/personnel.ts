@@ -31,7 +31,67 @@ export type Employee = {
   address?: string | null;
   emergency_contact?: string | null;
   notes?: string | null;
+  location_tracking?: LocationTracking | null;
 };
+
+export type LocMode = {
+  enabled: boolean;
+  continuous: boolean;
+  interval_minutes: number | "";
+};
+
+export type LocationTracking = {
+  enabled?: boolean;
+  continuous?: boolean;
+  interval_minutes?: number;
+  field?: { enabled?: boolean; continuous?: boolean; interval_minutes?: number };
+};
+
+export const DEFAULT_LOC_MODE: LocMode = { enabled: true, continuous: false, interval_minutes: 15 };
+
+export function initLocMode(raw?: Partial<LocMode> | LocationTracking | null): LocMode {
+  const n = Number((raw as LocMode | undefined)?.interval_minutes);
+  const continuous = !!(raw as LocMode | undefined)?.continuous || n === 0;
+  const interval = continuous || n === 0 ? 0 : (Number.isFinite(n) && n > 0 ? n : 15);
+  return {
+    enabled: (raw as LocMode | undefined)?.enabled !== false,
+    continuous: continuous || interval === 0,
+    interval_minutes: interval,
+  };
+}
+
+export function patchLocMode(prev: LocMode, key: keyof LocMode, value: boolean | number | ""): LocMode {
+  const next: LocMode = { ...prev, [key]: value } as LocMode;
+  if (key === "enabled" && !value) next.continuous = false;
+  if (key === "interval_minutes") {
+    const n = value === "" ? "" : Number(value);
+    if (n === 0) next.continuous = true;
+    else if (typeof n === "number" && n > 0) next.continuous = false;
+  }
+  if (key === "continuous") {
+    if (value) next.interval_minutes = 0;
+    else if (Number(prev.interval_minutes) === 0) next.interval_minutes = 15;
+  }
+  return next;
+}
+
+export function serializeLocMode(mode: LocMode): { enabled: boolean; continuous: boolean; interval_minutes: number } {
+  const rawInterval = mode.interval_minutes === "" ? 15 : Number(mode.interval_minutes);
+  const interval = Math.max(0, Math.min(120, Number.isFinite(rawInterval) ? rawInterval : 15));
+  const continuous = !!mode.enabled && (interval === 0 || !!mode.continuous);
+  return { enabled: !!mode.enabled, continuous, interval_minutes: continuous ? 0 : interval };
+}
+
+export function locationTrackingPayload(company: LocMode, field: LocMode): LocationTracking {
+  return { ...serializeLocMode(company), field: serializeLocMode(field) };
+}
+
+export function locModeSummary(mode?: LocMode | LocationTracking | null): string {
+  const m = initLocMode(mode);
+  if (!m.enabled) return "Kapalı";
+  if (m.continuous || m.interval_minutes === 0) return "Sürekli";
+  return `${m.interval_minutes} dk`;
+}
 
 export function employeeInitials(name?: string | null): string {
   const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
@@ -194,6 +254,10 @@ export function openEmployeeTasks(card?: EmployeeCard | null) {
 
 export function workplaceDetailsToggleLabel(open: boolean): string {
   return open ? "Gizle" : "Aç";
+}
+
+export function workplaceDetailsToggleIcon(open: boolean): "chevron-up" | "chevron-down" {
+  return open ? "chevron-up" : "chevron-down";
 }
 
 export function workplaceDetailsSummary(opts: {
@@ -898,6 +962,20 @@ export function employeeCompRows(
     },
     { key: "overtime", label: "Fazla mesai ücreti", value: mesai },
     { key: "total", label: "Toplam", value: meal + yol + wage + bonusValue + mesai },
+  ];
+}
+
+export type CompRow = { key: string; label: string; value: number; hint?: string; days?: number };
+export type CompGroup = { key: string; title: string; rows: CompRow[] };
+
+export function employeeCompGroups(rows: CompRow[]): CompGroup[] {
+  const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+  const pick = (...keys: string[]) => keys.map((k) => byKey[k]).filter(Boolean) as CompRow[];
+  const wageTitle = byKey.salary?.label === "Yevmiye" ? "Yevmiye" : "Maaş";
+  return [
+    { key: "allowance", title: "Yan hak", rows: pick("meal", "yol") },
+    { key: "wage", title: wageTitle, rows: pick("salary", "bonus") },
+    { key: "sum", title: "Özet", rows: pick("overtime", "total") },
   ];
 }
 

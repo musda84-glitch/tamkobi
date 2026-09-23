@@ -66,7 +66,14 @@ import {
   requestsForEmployee,
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
+  workplaceDetailsToggleIcon,
   employeeCardChrome,
+  employeeCompGroups,
+  initLocMode,
+  patchLocMode,
+  serializeLocMode,
+  locationTrackingPayload,
+  locModeSummary,
   filterPayMoves,
   payMoveInPeriod,
   payMovesPeriodLabel,
@@ -142,6 +149,8 @@ describe("employee draft", () => {
     expect(bonusesPeriodTotal([{ period: "2026-09", amount: 100 }, { period: "2026-08", amount: 50 }], "2026-09")).toBe(100);
     expect(workplaceDetailsToggleLabel(false)).toBe("Aç");
     expect(workplaceDetailsToggleLabel(true)).toBe("Gizle");
+    expect(workplaceDetailsToggleIcon(false)).toBe("chevron-down");
+    expect(workplaceDetailsToggleIcon(true)).toBe("chevron-up");
     expect(workplaceDetailsSummary({ hasFieldDuty: true, fieldLabel: "aa", taskCount: 4 })).toBe("aa · 4 açık görev");
     expect(workplaceDetailsSummary({ taskCount: 1 })).toBe("1 açık görev");
     expect(payMovesPeriodLabel("30d")).toBe("Son 30 gün");
@@ -205,6 +214,23 @@ describe("payroll helpers", () => {
     expect(employeeCompRows({ pay_type: "daily", daily_wage: 1500 }, { bonus_pending: 10500 }, { daysPresent: 1 }).find((r) => r.key === "bonus")).toEqual({
       key: "bonus", label: "Yevmiye günü", value: 10500, hint: "7 gün", days: 7,
     });
+    expect(employeeCompGroups(employeeCompRows({ salary: 30000, meal_allowance: 100, transport_allowance: 50 })).map((g) => [g.key, g.title, g.rows.map((r) => r.key)])).toEqual([
+      ["allowance", "Yan hak", ["meal", "yol"]],
+      ["wage", "Maaş", ["salary", "bonus"]],
+      ["sum", "Özet", ["overtime", "total"]],
+    ]);
+    expect(employeeCompGroups(employeeCompRows({ pay_type: "daily", daily_wage: 500 })).find((g) => g.key === "wage")?.title).toBe("Yevmiye");
+    expect(initLocMode(null).interval_minutes).toBe(15);
+    expect(initLocMode({ enabled: false, continuous: true, interval_minutes: 0 })).toEqual({ enabled: false, continuous: true, interval_minutes: 0 });
+    expect(patchLocMode({ enabled: true, continuous: false, interval_minutes: 15 }, "continuous", true).interval_minutes).toBe(0);
+    expect(serializeLocMode({ enabled: true, continuous: true, interval_minutes: 10 })).toEqual({ enabled: true, continuous: true, interval_minutes: 0 });
+    expect(locationTrackingPayload(
+      { enabled: false, continuous: false, interval_minutes: 15 },
+      { enabled: true, continuous: true, interval_minutes: 0 },
+    )).toEqual({ enabled: false, continuous: false, interval_minutes: 15, field: { enabled: true, continuous: true, interval_minutes: 0 } });
+    expect(locModeSummary({ enabled: false })).toBe("Kapalı");
+    expect(locModeSummary({ enabled: true, continuous: true, interval_minutes: 0 })).toBe("Sürekli");
+    expect(locModeSummary({ enabled: true, interval_minutes: 15 })).toBe("15 dk");
     expect(employeeCompRows({ daily_wage: 1500 }, { bonus_pending: 3000 }).find((r) => r.key === "bonus")).toMatchObject({
       label: "Yevmiye günü", value: 3000, days: 2,
     });
