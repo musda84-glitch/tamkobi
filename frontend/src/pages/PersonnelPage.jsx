@@ -11,7 +11,6 @@ import { AttendancePanel } from "../components/AttendancePanel";
 import { EmployeeCardModal } from "../components/EmployeeCardModal";
 import { EmployeeAssignTaskModal } from "../components/EmployeeAssignTaskModal";
 import { AssignOvertimeModal } from "../components/AssignOvertimeModal";
-import { GeoAttendanceCard } from "../components/GeoAttendanceCard";
 import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
@@ -560,8 +559,6 @@ export default function PersonnelPage() {
           </button>
         </div>
       </div>
-
-      <GeoAttendanceCard companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onChanged={loadPersonnelData} />
 
       <PersonnelRequestsInbox
         companyId={companyId}
