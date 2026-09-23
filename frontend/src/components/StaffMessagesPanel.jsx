@@ -203,8 +203,6 @@ export function StaffMessagesPanel({
     set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   };
 
-  if (data?.mode === "none") return null;
-
   const mode = data?.mode || "";
   const locked = !!employeeId;
   const showInbox = (mode === "manager" || mode === "both") && !locked && !channel;
@@ -219,6 +217,9 @@ export function StaffMessagesPanel({
     () => peerSelectGroups(data?.directory, managers, selfId, data?.manager_inbox),
     [data?.directory, managers, selfId, data?.manager_inbox],
   );
+
+  if (data?.mode === "none") return null;
+
   const groups = data?.group_inbox || data?.groups || [];
   const threadRows = (() => {
     const rows = data?.thread || [];
