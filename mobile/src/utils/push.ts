@@ -1,6 +1,10 @@
 import { resolveMobilePath } from "./quickMenu";
 
-export const PUSH_CHANNEL = "tamkobi";
+/** Android kanalı — ses değişince yeni id gerekir (eski kanal kilitlenir). */
+export const PUSH_CHANNEL = "tamkobi_chime";
+/** iOS / Expo payload dosya adı (plugin `sounds`). Android raw adı uzantısız. */
+export const PUSH_SOUND = "tamkobi.wav";
+export const PUSH_SOUND_ANDROID = "tamkobi";
 
 export const IOS_PUSH_PERMISSION = {
   ios: { allowAlert: true, allowBadge: true, allowSound: true },

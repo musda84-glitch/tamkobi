@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { del, post, type ApiClient } from "../api/client";
-import { IOS_PUSH_PERMISSION, isExpoPushToken, isPushPermissionGranted, PUSH_CHANNEL, shouldAskPushOnOpen } from "./push";
+import { IOS_PUSH_PERMISSION, isExpoPushToken, isPushPermissionGranted, PUSH_CHANNEL, PUSH_SOUND, PUSH_SOUND_ANDROID, shouldAskPushOnOpen } from "./push";
 import { localPushContent, planLocalPush } from "./pushLocal";
 import type { Notification } from "../types";
 
@@ -70,9 +70,9 @@ export async function askPushPermission(): Promise<PushStatus> {
       await Notifications.setNotificationChannelAsync(PUSH_CHANNEL, {
         name: "TamKobi",
         importance: Notifications.AndroidImportance?.HIGH ?? 4,
-        vibrationPattern: [0, 250, 250, 250],
+        vibrationPattern: [0, 180, 80, 180],
         lightColor: "#059669",
-        sound: "default",
+        sound: PUSH_SOUND_ANDROID,
       });
     }
     const existing = await Notifications.getPermissionsAsync();
@@ -161,7 +161,7 @@ export async function presentLocalNotification(note: {
       content: {
         title: note.title || "TamKobi",
         body: note.body || "",
-        sound: "default",
+        sound: PUSH_SOUND,
         data: note.data || {},
         ...(Platform.OS === "android" ? { channelId: PUSH_CHANNEL } : {}),
       },

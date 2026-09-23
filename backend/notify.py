@@ -12,6 +12,8 @@ logger = logging.getLogger("TamKobiERP")
 
 EXPO_PUSH_URL = os.environ.get("EXPO_PUSH_URL", "https://exp.host/--/api/v2/push/send")
 EXPO_TOKEN_RE = re.compile(r"^(ExponentPushToken|ExpoPushToken)\[[^\]]+\]$")
+PUSH_SOUND = "tamkobi.wav"
+PUSH_CHANNEL_ID = "tamkobi_chime"
 
 TYPE_ROLES: Dict[str, tuple[str, ...]] = {
     "order_pick_missing": ("admin", "manager", "warehouse"),
@@ -178,8 +180,8 @@ def expo_push_messages(tokens: Iterable[str], note: Dict[str, Any]) -> List[Dict
             "to": token,
             "title": title,
             "body": body,
-            "sound": "default",
-            "channelId": "tamkobi",
+            "sound": PUSH_SOUND,
+            "channelId": PUSH_CHANNEL_ID,
             "priority": "high",
             "badge": 1,
             "data": data,

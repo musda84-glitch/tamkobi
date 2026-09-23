@@ -97,7 +97,8 @@ def test_expo_push_token_and_payload():
     assert msgs[0]["to"] == "ExponentPushToken[abc123]"
     assert msgs[0]["title"] == "Yeni sipariş"
     assert msgs[0]["data"]["link"] == "/orders"
-    assert msgs[0]["channelId"] == "tamkobi"
+    assert msgs[0]["channelId"] == "tamkobi_chime"
+    assert msgs[0]["sound"] == "tamkobi.wav"
     assert msgs[0]["badge"] == 1
 
 

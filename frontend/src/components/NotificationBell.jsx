@@ -1,20 +1,38 @@
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import axios from "axios";
-import { Bell, CheckCircle2, XCircle } from "lucide-react";
+import { Bell, CheckCircle2, Volume2, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
+import { notifySoundPlan, playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 
 export const NotificationBell = ({ companyId }) => {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const soundRef = useRef({ seen: [], seeded: false });
   const navigate = useNavigate();
-  const load = useCallback(() => axios.get(`${API_URL}/notifications?company_id=${companyId}`).then((r) => setItems(r.data)).catch(() => {}), [companyId]);
+  const load = useCallback(() => axios.get(`${API_URL}/notifications?company_id=${companyId}`).then((r) => {
+    const rows = Array.isArray(r.data) ? r.data : [];
+    const unreadIds = rows.filter((n) => !n.is_read).map((n) => String(n.id || n._id || ""));
+    const plan = notifySoundPlan(soundRef.current.seen, unreadIds, soundRef.current.seeded);
+    soundRef.current = { seen: plan.seen, seeded: plan.seeded };
+    if (plan.play) playTamkobiNotify();
+    setItems(rows);
+  }).catch(() => {}), [companyId]);
   useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
   useDataRefresh(load, { companyId, scopes: ["orders", "notifications", "all"] });
-  useEffect(() => { const h = (e) => ref.current && !ref.current.contains(e.target) && setOpen(false); document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, []);
+  useEffect(() => {
+    const unlock = () => unlockTamkobiNotify();
+    document.addEventListener("pointerdown", unlock, { once: true });
+    const h = (e) => ref.current && !ref.current.contains(e.target) && setOpen(false);
+    document.addEventListener("mousedown", h);
+    return () => {
+      document.removeEventListener("pointerdown", unlock);
+      document.removeEventListener("mousedown", h);
+    };
+  }, []);
   const unread = items.filter((n) => !n.is_read).length;
   const openItem = async (n) => {
     if (!n.is_read) { await axios.post(`${API_URL}/notifications/${n.id}/read`).catch(() => {}); load(); }
@@ -40,7 +58,21 @@ export const NotificationBell = ({ companyId }) => {
       </button>
       {open && (
         <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 overflow-hidden" data-testid="notification-panel">
-          <div className="px-4 py-2.5 border-b text-xs font-bold text-slate-700 flex justify-between"><span>Bildirimler</span><span className="text-slate-400">{unread} okunmamış</span></div>
+          <div className="px-4 py-2.5 border-b text-xs font-bold text-slate-700 flex justify-between items-center">
+            <span>Bildirimler</span>
+            <span className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { unlockTamkobiNotify(); playTamkobiNotify(); }}
+                className="p-1 rounded-md text-emerald-600 hover:bg-emerald-50"
+                title="TamKobi bildirim sesi"
+                data-testid="notification-sound-preview"
+              >
+                <Volume2 className="w-3.5 h-3.5" />
+              </button>
+              <span className="text-slate-400">{unread} okunmamış</span>
+            </span>
+          </div>
           <div className="max-h-96 overflow-y-auto divide-y divide-slate-100">
             {items.length === 0 && <div className="p-6 text-center text-xs text-slate-400">Bildirim yok.</div>}
             {items.map((n) => (
