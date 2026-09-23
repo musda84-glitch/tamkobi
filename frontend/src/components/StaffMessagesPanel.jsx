@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2, Megaphone, MessageSquare, Plus, Search, Send, Users } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Loader2, Megaphone, MessageSquare, Plus, Search, Send, Users } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import {
   announceAudienceLabel,
@@ -11,8 +11,10 @@ import {
   chatPeer,
   chatTimeLabel,
   filterChatList,
+  MESSAGES_COLLAPSED_KEY,
   inboxUnreadTotal,
   isOwnMessage,
+  parseHiddenFlag,
   mergeInboxWithDirectory,
   mergeManagerInbox,
   parsePeerValue,
@@ -78,6 +80,9 @@ export function StaffMessagesPanel({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return parseHiddenFlag(localStorage.getItem(MESSAGES_COLLAPSED_KEY)); } catch { return false; }
+  });
   const [composeOpen, setComposeOpen] = useState(false);
   const [channel, setChannel] = useState(employeeId ? { kind: "emp", id: employeeId } : null);
   const [showGroupForm, setShowGroupForm] = useState(false);
@@ -99,6 +104,16 @@ export function StaffMessagesPanel({
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setChannel(employeeId ? { kind: "emp", id: employeeId } : null); }, [employeeId]);
+
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    if (next) {
+      setComposeOpen(false);
+      if (!employeeId) setChannel(null);
+    }
+    try { localStorage.setItem(MESSAGES_COLLAPSED_KEY, next ? "1" : "0"); } catch { /* ignore */ }
+  };
   useEffect(() => {
     const peer = employeeId ? { kind: "emp", id: employeeId } : channel;
     if (!peer?.id) return;
@@ -279,7 +294,7 @@ export function StaffMessagesPanel({
         {badge > 0 && !showThread ? (
           <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-600 text-white" data-testid={`${testId}-unread`}>{badge}</span>
         ) : null}
-        {!locked && !showThread ? (
+        {!locked && !showThread && !collapsed ? (
           <button
             type="button"
             onClick={() => setComposeOpen((v) => !v)}
@@ -289,9 +304,20 @@ export function StaffMessagesPanel({
             <Plus className="w-4 h-4" />
           </button>
         ) : null}
+        {!locked ? (
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            className="w-8 h-8 rounded-xl border border-violet-200 bg-white text-violet-700 flex items-center justify-center"
+            data-testid={`${testId}-toggle`}
+            aria-label={collapsed ? "Mesajları aç" : "Mesajları küçült"}
+          >
+            {collapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+          </button>
+        ) : null}
       </div>
 
-      {showThread ? (
+      {!collapsed && (showThread ? (
         <>
           <div className={`${compact ? "max-h-72" : "max-h-[28rem]"} overflow-y-auto space-y-1.5 bg-slate-100 rounded-2xl p-2.5`} data-testid={`${testId}-thread`}>
             {threadRows.length === 0 ? (
@@ -465,7 +491,7 @@ export function StaffMessagesPanel({
             ))}
           </div>
         </>
-      )}
+      ))}
     </div>
   );
 }

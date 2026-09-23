@@ -13,6 +13,7 @@ import {
   validateMessageBody,
   managerSelectGroups,
   peerSelectGroups,
+  MESSAGES_COLLAPSED_KEY,
   announceAudienceLabel,
   announcementUnread,
   buildChatList,
@@ -40,6 +41,7 @@ describe("staffMessages", () => {
     expect(inboxUnreadTotal([{ employee_id: "e1", unread: 2 }, { employee_id: "e2", unread: 0 }])).toBe(2);
     expect(parseHiddenFlag("1")).toBe(true);
     expect(parseHiddenFlag("0")).toBe(false);
+    expect(MESSAGES_COLLAPSED_KEY).toBe("tamkobi.staff_messages.collapsed");
     const merged = mergeInboxWithDirectory(
       [{ employee_id: "e1", employee_name: "Ali", unread: 1, last: { body: "selam" } }],
       [{ id: "e1", full_name: "Ali" }, { id: "e2", full_name: "Ayşe" }],

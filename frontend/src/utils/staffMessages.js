@@ -34,6 +34,7 @@ export function messagePreview(m) {
 }
 
 export const MESSAGES_HIDDEN_KEY = "tamkobi.staff_messages.hidden";
+export const MESSAGES_COLLAPSED_KEY = "tamkobi.staff_messages.collapsed";
 
 export function parseHiddenFlag(raw) {
   return raw === "1" || raw === "true";
