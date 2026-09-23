@@ -5,6 +5,7 @@ import {
   DUTY_MAPS_ACTION,
   dutyCompleteTitle,
   matchAssignedDuty,
+  dutyFromCurrent,
   applyDutyPhotoVisibility,
   dutyHasProject,
   dutyIsField,
@@ -37,6 +38,11 @@ describe("assigned duty field extras", () => {
     expect(DUTY_COMPLETE_ACTION).toBe("Görev tamamlandı");
     expect(dutyCompleteTitle({ done: true })).toBe(DUTY_COMPLETE_APPROVED);
     expect(matchAssignedDuty([{ id: "t1", title: "Montaj" }], { id: "t1" })?.title).toBe("Montaj");
+    expect(dutyFromCurrent({
+      tasks: [{ id: "t9", title: "aa", project_number: "PRJ-2026-0017", photos: [{ url: "/a.jpg" }] }],
+      current: { title: "aa", project: "PRJ-2026-0017 · Fiyat Teklifi" },
+      workplace: { kind: "task", task_title: "aa" },
+    })?.photos?.[0]?.url).toBe("/a.jpg");
     expect(DUTY_ATOLYE_ACTION).toBe("Atölyeye git");
     expect(dutyIsField(t)).toBe(true);
     expect(dutyHasProject(t)).toBe(true);
