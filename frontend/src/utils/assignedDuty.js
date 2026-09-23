@@ -110,6 +110,10 @@ export function dutyKindLabel(t) {
   return dutyIsField(t) ? "Dış görev" : "İç görev";
 }
 
+export function photoFaded(p) {
+  return photoVisibility(p) !== "show";
+}
+
 export function photoVisibility(p) {
   if (p?.visibility === "show" || p?.customer_visible === true) return "show";
   if (p?.visibility === "hide") return "hide";

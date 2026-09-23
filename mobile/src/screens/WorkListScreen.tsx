@@ -128,12 +128,13 @@ export function WorkListScreen({ kind }: { kind: WorkKind }) {
     <Screen
       onRefresh={load}
       refreshing={refreshing}
+      stickyCompact
       stickyTop={(
-        <View testID={`work-list-sticky-${kind}`} style={{ gap: 8 }}>
+        <View testID={`work-list-sticky-${kind}`} style={{ gap: 4 }}>
           {kind !== "project" && canEdit ? (
             <PrimaryButton title={newButtonLabel(kind)} onPress={() => go(meta.goNew)} color={colors.primary} testID={`new-${kind}-btn`} />
           ) : null}
-          <Field label="Ara" value={q} onChangeText={setQ} placeholder="No / cari / ad" />
+          <Field dense label="Ara" value={q} onChangeText={setQ} placeholder="No / cari / ad" />
         </View>
       )}
     >

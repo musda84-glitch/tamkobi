@@ -26,13 +26,14 @@ import { MonthField } from "./MonthField";
 import { ProductThumb } from "./ProductThumb";
 import { TimeField } from "./TimeField";
 
-export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshing, padded = true }: {
+export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshing, padded = true, stickyCompact = false }: {
   children: React.ReactNode;
   stickyTop?: React.ReactNode;
   stickyBottom?: React.ReactNode;
   onRefresh?: () => void;
   refreshing?: boolean;
   padded?: boolean;
+  stickyCompact?: boolean;
 }) {
   const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll();
   const bottom = contentBottomPad(SCREEN_BASE_PAD, keyboardHeight, Platform.OS);
@@ -43,7 +44,8 @@ export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshin
           testID="screen-sticky-top"
           style={[
             styles.stickyTop,
-            padded && styles.stickyPad,
+            padded && (stickyCompact ? styles.stickyPadCompact : styles.stickyPad),
+            stickyCompact ? { gap: 4 } : null,
             Platform.OS === "web" ? { position: "sticky" as const, top: 0 } : null,
           ]}
         >
@@ -300,6 +302,7 @@ const styles = StyleSheet.create({
   stickyTop: { backgroundColor: colors.background, zIndex: 20, borderBottomWidth: 1, borderBottomColor: colors.border, gap: 8 },
   stickyBottom: { backgroundColor: colors.background, zIndex: 20, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 },
   stickyPad: { paddingHorizontal: spacing.sm + 4, paddingTop: spacing.sm + 4, paddingBottom: spacing.xs },
+  stickyPadCompact: { paddingHorizontal: spacing.sm + 4, paddingTop: 4, paddingBottom: 4 },
   stickyPadBottom: { paddingHorizontal: spacing.sm + 4, paddingTop: spacing.xs, paddingBottom: spacing.sm + 4 },
   card: {
     backgroundColor: colors.surface,

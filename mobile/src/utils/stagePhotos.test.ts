@@ -5,6 +5,8 @@ import {
   removeStagePhoto,
   sanitizeStagePhotos,
   stagePhotoCount,
+  stagePhotoFaded,
+  stagePhotoHoldHint,
   stagePhotoRows,
   SURVEY_STAGE_PHOTO_LABEL,
 } from "./stagePhotos";
@@ -57,6 +59,9 @@ describe("stagePhotos", () => {
     expect(rows.find((r) => r.key === "other")).toMatchObject({ label: "Keşif fotoğrafı" });
     expect(rows.find((r) => r.key === "other")?.items.map((i) => i.url)).toEqual(["/api/files/loose.jpg"]);
     expect(stagePhotoCount({ stage_photos: [{ url: "/api/files/a.jpg", stage: "planning" }], images: ["/api/files/a.jpg", "/api/files/loose.jpg"] })).toBe(2);
+    expect(stagePhotoFaded({ url: "/api/files/a.jpg", stage: "planning", source: "employee" })).toBe(true);
+    expect(stagePhotoFaded({ url: "/api/files/a.jpg", stage: "planning", visibility: "show", customer_visible: true })).toBe(false);
+    expect(stagePhotoHoldHint()).toMatch(/Basılı tutun/);
   });
 
   it("appends and removes a stage photo without dropping other images", () => {
