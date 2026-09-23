@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -14,7 +15,7 @@ import { leaveTr, statusTr } from "../utils/labels";
 import { fmtMoney, idOf } from "../utils/money";
 import { type AssignedDuty } from "../utils/assignedDuty";
 import { locationConsentPayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
-import { advanceRequestPayload, leaveDays, selfLeavePayload, validateAdvance, validateSelfLeave } from "../utils/personnel";
+import { advanceFormToggleIcon, advanceFormToggleLabel, advanceRequestPayload, leaveDays, selfLeavePayload, validateAdvance, validateSelfLeave } from "../utils/personnel";
 
 type TabId = "ozet" | "alacak" | "gorevler" | "emirler" | "mesai";
 
@@ -121,6 +122,7 @@ export function PersonelimScreen() {
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceNote, setAdvanceNote] = useState("");
   const [advanceBusy, setAdvanceBusy] = useState(false);
+  const [advanceOpen, setAdvanceOpen] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState<string | null>(null);
   const [consentBusy, setConsentBusy] = useState(false);
 
@@ -261,23 +263,37 @@ export function PersonelimScreen() {
 
   const advanceForm = (
     <Card testID="personelim-advance-form">
-      <Muted>AVANS TALEBİ</Muted>
-      {pendingAdvance ? (
-        <View style={{ gap: 8 }} testID="personelim-advance-pending">
-          <Muted>Bekleyen talep: {fmtMoney(pendingAdvance.amount)}{pendingAdvance.note ? ` · ${pendingAdvance.note}` : ""}</Muted>
-          <PrimaryButton
-            title={advanceBusy ? "İptal ediliyor…" : "Talebi iptal et"}
-            onPress={() => cancelAdvance(idOf(pendingAdvance))}
-            color={colors.danger}
-            testID="personelim-advance-cancel"
-          />
+      <Pressable
+        testID="personelim-advance-toggle"
+        onPress={() => setAdvanceOpen((v) => !v)}
+        accessibilityLabel={advanceFormToggleLabel(advanceOpen)}
+        style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+      >
+        <View style={{ flex: 1 }}>
+          <Muted>AVANS TALEBİ{pendingAdvance ? " · bekleyen talep" : ""}</Muted>
         </View>
+        <Ionicons name={advanceFormToggleIcon(advanceOpen)} size={20} color={colors.muted} />
+      </Pressable>
+      {advanceOpen ? (
+        pendingAdvance ? (
+          <View style={{ gap: 8 }} testID="personelim-advance-pending">
+            <Muted>Bekleyen talep: {fmtMoney(pendingAdvance.amount)}{pendingAdvance.note ? ` · ${pendingAdvance.note}` : ""}</Muted>
+            <PrimaryButton
+              title={advanceBusy ? "İptal ediliyor…" : "Talebi iptal et"}
+              onPress={() => cancelAdvance(idOf(pendingAdvance))}
+              color={colors.danger}
+              testID="personelim-advance-cancel"
+            />
+          </View>
+        ) : (
+          <>
+            <Field label="Tutar (₺)" testID="personelim-advance-amount" value={advanceAmount} onChangeText={setAdvanceAmount} keyboardType="numeric" placeholder="Örn: 5000" />
+            <Field label="Açıklama" testID="personelim-advance-note" value={advanceNote} onChangeText={setAdvanceNote} placeholder="İsteğe bağlı" />
+            <PrimaryButton title={advanceBusy ? "Gönderiliyor…" : "Avans talep et"} onPress={submitAdvance} disabled={advanceBusy} color="#D97706" testID="personelim-advance-submit" />
+          </>
+        )
       ) : (
-        <>
-          <Field label="Tutar (₺)" testID="personelim-advance-amount" value={advanceAmount} onChangeText={setAdvanceAmount} keyboardType="numeric" placeholder="Örn: 5000" />
-          <Field label="Açıklama" testID="personelim-advance-note" value={advanceNote} onChangeText={setAdvanceNote} placeholder="İsteğe bağlı" />
-          <PrimaryButton title={advanceBusy ? "Gönderiliyor…" : "Avans talep et"} onPress={submitAdvance} disabled={advanceBusy} color="#D97706" testID="personelim-advance-submit" />
-        </>
+        <Muted testID="personelim-advance-hidden">Form gizli — göz işaretine basınca açılır.</Muted>
       )}
     </Card>
   );

@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import React, { useState } from "react";
@@ -7,8 +8,8 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import {
   DUTY_ATOLYE_ACTION,
-  DUTY_COMPLETE_ACTION,
-  DUTY_COMPLETE_BUSY,
+  DUTY_COMPLETE_CONFIRM,
+  dutyCompleteTitle,
   DUTY_PHOTO_HIDE,
   DUTY_PHOTO_SHOW,
   DUTY_PHOTOS_HINT,
@@ -106,6 +107,19 @@ export function AssignedDutyCard({
     Alert.alert("Görev yeri", dutySiteHint(duty));
   };
 
+  const confirmApprove = () => {
+    if (!onApprove) return;
+    if (Platform.OS === "web") {
+      const ok = typeof window !== "undefined" && window.confirm(DUTY_COMPLETE_CONFIRM);
+      if (ok) onApprove();
+      return;
+    }
+    Alert.alert("Görevi onayla", DUTY_COMPLETE_CONFIRM, [
+      { text: "Vazgeç", style: "cancel" },
+      { text: "Onayla", onPress: onApprove },
+    ]);
+  };
+
   const setVisibility = async (photo: DutyPhoto, visible: boolean) => {
     if (!duty.project_id) { setError("Proje numarası yok."); return; }
     try {
@@ -121,7 +135,7 @@ export function AssignedDutyCard({
   };
 
   return (
-    <Card testID={tid} style={duty.done ? { opacity: 0.75 } : undefined}>
+    <Card testID={tid} style={duty.done ? { borderColor: colors.primary, backgroundColor: colors.emerald50 } : undefined}>
       <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={{ fontWeight: "800", color: colors.text }} numberOfLines={2}>{duty.title || "Görev"}</Text>
@@ -215,18 +229,35 @@ export function AssignedDutyCard({
           ) : null}
         </View>
       ) : null}
-      {!duty.done ? (
+      {showWorkshop || onApprove || duty.done ? (
         <Row>
-          {showWorkshop ? (
+          {showWorkshop && !duty.done ? (
             <View style={{ flex: 1 }}>
               <PrimaryButton title={DUTY_ATOLYE_ACTION} onPress={onAtolye} color={colors.indigo} testID={`${tid}-atolye`} />
             </View>
           ) : null}
-          {onApprove ? (
+          {duty.done ? (
+            <View
+              testID={`${tid}-approved`}
+              style={{
+                flex: 1,
+                backgroundColor: colors.primary,
+                borderRadius: 12,
+                paddingVertical: 12,
+                alignItems: "center",
+                justifyContent: "center",
+                flexDirection: "row",
+                gap: 6,
+              }}
+            >
+              <Ionicons name="checkmark-circle" size={18} color="#fff" />
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>{dutyCompleteTitle({ done: true })}</Text>
+            </View>
+          ) : onApprove ? (
             <View style={{ flex: 1 }}>
               <PrimaryButton
-                title={approveBusy ? DUTY_COMPLETE_BUSY : DUTY_COMPLETE_ACTION}
-                onPress={onApprove}
+                title={dutyCompleteTitle({ busy: approveBusy })}
+                onPress={confirmApprove}
                 disabled={approveBusy}
                 loading={approveBusy}
                 color={colors.primary}
@@ -235,9 +266,7 @@ export function AssignedDutyCard({
             </View>
           ) : null}
         </Row>
-      ) : (
-        <Muted>Görev tamamlandı.</Muted>
-      )}
+      ) : null}
     </Card>
   );
 }

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   UserRound, Wallet, ClipboardList, Factory, Clock, CalendarDays,
-  AlertTriangle, CheckCircle2, Circle, ExternalLink, Loader2,
+  AlertTriangle, CheckCircle2, Circle, ExternalLink, Loader2, Eye, EyeOff,
 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
@@ -49,6 +49,7 @@ export default function MyPersonnelPage() {
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceNote, setAdvanceNote] = useState("");
   const [advanceBusy, setAdvanceBusy] = useState(false);
+  const [advanceOpen, setAdvanceOpen] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState(null);
   const [consentBusy, setConsentBusy] = useState(false);
 
@@ -147,8 +148,21 @@ export default function MyPersonnelPage() {
 
   const AdvanceForm = (
     <form onSubmit={submitAdvance} className="bg-white border border-amber-200 rounded-2xl p-4 space-y-3" data-testid="my-personnel-advance-form">
-      <div className="text-[10px] uppercase font-semibold text-amber-700 flex items-center gap-1"><Wallet className="w-3.5 h-3.5" /> Avans talebi</div>
-      {pendingAdvance ? (
+      <button
+        type="button"
+        onClick={() => setAdvanceOpen((v) => !v)}
+        className="w-full text-[10px] uppercase font-semibold text-amber-700 flex items-center gap-1"
+        data-testid="my-personnel-advance-toggle"
+      >
+        <Wallet className="w-3.5 h-3.5" /> Avans talebi{pendingAdvance ? " · bekleyen talep" : ""}
+        <span className="ml-auto inline-flex items-center gap-1 normal-case tracking-normal text-amber-800">
+          {advanceOpen ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          {advanceOpen ? "Gizle" : "Göster"}
+        </span>
+      </button>
+      {!advanceOpen ? (
+        <div className="text-[11px] text-slate-500" data-testid="my-personnel-advance-hidden">Form gizli — göz işaretine basınca açılır.</div>
+      ) : pendingAdvance ? (
         <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="my-personnel-advance-pending">
           <span className="font-semibold text-slate-800">Bekleyen talep: {money(pendingAdvance.amount)}</span>
           {pendingAdvance.note && <span className="text-slate-500">{pendingAdvance.note}</span>}

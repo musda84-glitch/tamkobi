@@ -8,8 +8,8 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { workMapsLink } from "../utils/mapsLink";
 import {
   DUTY_ATOLYE_ACTION,
-  DUTY_COMPLETE_ACTION,
-  DUTY_COMPLETE_BUSY,
+  DUTY_COMPLETE_CONFIRM,
+  dutyCompleteTitle,
   DUTY_PHOTO_HIDE,
   DUTY_PHOTO_SHOW,
   DUTY_PHOTOS_HINT,
@@ -92,7 +92,7 @@ export function AssignedDutyCard({
   };
 
   return (
-    <div className={`rounded-2xl border p-4 space-y-3 ${duty?.done ? "border-emerald-200 opacity-70" : "border-indigo-200 bg-white"}`} data-testid={tid}>
+    <div className={`rounded-2xl border p-4 space-y-3 ${duty?.done ? "border-emerald-400 bg-emerald-50" : "border-indigo-200 bg-white"}`} data-testid={tid}>
       <div className="flex justify-between items-start gap-2">
         <div className="min-w-0">
           <div className={`font-bold text-slate-900 leading-tight ${duty?.done ? "line-through" : ""}`}>{duty?.title || "Görev"}</div>
@@ -167,18 +167,28 @@ export function AssignedDutyCard({
           </div>
         </div>
       )}
-      {!duty?.done && (
+      {(showWorkshop || onApprove || duty?.done) && (
         <div className="flex flex-wrap gap-2">
-          {showWorkshop && (
+          {showWorkshop && !duty?.done && (
             <a href="/atolye" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold" data-testid={`${tid}-atolye`}>
               <Factory className="w-3.5 h-3.5" /> {DUTY_ATOLYE_ACTION}
             </a>
           )}
-          {onApprove && (
-            <button type="button" disabled={approveBusy} onClick={onApprove} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold disabled:opacity-50" data-testid={`${tid}-approve`}>
-              <CheckCircle2 className="w-3.5 h-3.5" /> {approveBusy ? DUTY_COMPLETE_BUSY : DUTY_COMPLETE_ACTION}
+          {duty?.done ? (
+            <span className="inline-flex items-center justify-center gap-1.5 w-full py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold" data-testid={`${tid}-approved`}>
+              <CheckCircle2 className="w-4 h-4" /> {dutyCompleteTitle({ done: true })}
+            </span>
+          ) : onApprove ? (
+            <button
+              type="button"
+              disabled={approveBusy}
+              onClick={() => { if (window.confirm(DUTY_COMPLETE_CONFIRM)) onApprove(); }}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold disabled:opacity-50"
+              data-testid={`${tid}-approve`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" /> {dutyCompleteTitle({ busy: approveBusy })}
             </button>
-          )}
+          ) : null}
         </div>
       )}
     </div>

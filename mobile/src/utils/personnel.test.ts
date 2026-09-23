@@ -86,6 +86,12 @@ import {
   serializeLocMode,
   locationTrackingPayload,
   locModeSummary,
+  locationTrackingEnabled,
+  locationControllerLabel,
+  locationTrackingTogglePayload,
+  todayAttendanceLine,
+  advanceFormToggleIcon,
+  advanceFormToggleLabel,
   filterPayMoves,
   payMoveInPeriod,
   payMovesPeriodHint,
@@ -317,6 +323,15 @@ describe("payroll helpers", () => {
     expect(locModeSummary({ enabled: false })).toBe("Kapalı");
     expect(locModeSummary({ enabled: true, continuous: true, interval_minutes: 0 })).toBe("Sürekli");
     expect(locModeSummary({ enabled: true, interval_minutes: 15 })).toBe("15 dk");
+    expect(locationTrackingEnabled({ enabled: true, field: { enabled: false } })).toBe(true);
+    expect(locationTrackingEnabled({ enabled: false, field: { enabled: false } })).toBe(false);
+    expect(locationControllerLabel(true)).toBe("Konum açık");
+    expect(locationControllerLabel(false)).toBe("Konum kapalı");
+    expect(locationTrackingTogglePayload({ enabled: true, field: { enabled: true } }, false).enabled).toBe(false);
+    expect(todayAttendanceLine({ check_in: "08:50", check_out: "18:05" })).toBe("Bugün 08:50 → 18:05");
+    expect(todayAttendanceLine(null)).toBe("Bugün giriş / çıkış yok");
+    expect(advanceFormToggleIcon(true)).toBe("eye-off-outline");
+    expect(advanceFormToggleLabel(false)).toBe("Göster");
     expect(employeeCompRows({ daily_wage: 1500 }, { bonus_pending: 3000 }).find((r) => r.key === "bonus")).toMatchObject({
       label: "Yevmiye günü", value: 3000, days: 2,
     });
