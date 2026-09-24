@@ -1,25 +1,30 @@
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { Text, View } from "react-native";
-import { get } from "../api/client";
+import { get, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ChannelLogo } from "../components/ChannelLogo";
+import { confirmAction } from "../components/chips";
 import { OrderActions } from "../components/OrderActions";
+import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { Badge, Card, ErrorBanner, H1, ListRow, Muted, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Order, Product } from "../types";
 import { channelTr, orderNumberLabel, statusTr } from "../utils/labels";
-import { fmtDate, fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { canStaffEditOrder, cartFromOrderItems, orderUpdatePayload, removeOrderLine } from "../utils/orderEdit";
 import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 
 export function OrderDetailScreen() {
-  const { client, companyId } = useAuth();
+  const { client, companyId, can } = useAuth();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Record<string, Product>>({});
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  const canEditItems = (can("/orders", "edit") || can("/saha", "edit")) && canStaffEditOrder(order);
 
   const load = useCallback(async () => {
     try {
@@ -45,6 +50,34 @@ export function OrderDetailScreen() {
       .catch(() => { if (!cancelled) setCatalog({}); });
     return () => { cancelled = true; };
   }, [client, companyId, order?.items]);
+
+  const removeItem = (index: number) => {
+    if (!order || !canEditItems) return;
+    const next = removeOrderLine(order.items || [], index);
+    if (!next) {
+      setOpenRow(null);
+      setError("En az bir kalem gerekli.");
+      return;
+    }
+    const label = String(order.items?.[index]?.product_name || order.items?.[index]?.name || "Kalem");
+    confirmAction("Kalemi sil", `${label} satırı silinsin mi?`, async () => {
+      setOpenRow(null);
+      try {
+        const cart = cartFromOrderItems(next);
+        const r = await put<{ message?: string; order?: Order }>(
+          client,
+          `/orders/${idOf(order)}`,
+          orderUpdatePayload(cart, String(order.notes || ""), String(order.customer_order_number || "")),
+        );
+        if (r.order) setOrder(r.order);
+        else await load();
+        setMessage(r.message || "Kalem silindi.");
+        setError(null);
+      } catch (err) {
+        setError(apiErrorMessage(err, "Kalem silinemedi."));
+      }
+    });
+  };
 
   if (!order) return <Screen><ErrorBanner message={error || "Yükleniyor…"} /></Screen>;
 
@@ -76,16 +109,31 @@ export function OrderDetailScreen() {
         {order.shipping_address ? <Muted>{order.shipping_address} {order.city || ""}</Muted> : null}
         {order.notes ? <Muted>{order.notes}</Muted> : null}
       </Card>
-      {(order.items || []).map((it, i) => (
-        <ListRow
-          key={i}
-          testID={`order-item-${i}`}
-          title={String(it.product_name || it.name || "Kalem")}
-          subtitle={`${it.quantity} × ${fmtMoney(it.unit_price)}`}
-          right={fmtMoney(it.total_incl || it.total)}
-          image={lineItemImage(it, catalog)}
-        />
-      ))}
+      {canEditItems ? <Muted>Kalemi silmek için satırı sola kaydırın.</Muted> : null}
+      {(order.items || []).map((it, i) => {
+        const row = (
+          <ListRow
+            testID={canEditItems ? undefined : `order-item-${i}`}
+            title={String(it.product_name || it.name || "Kalem")}
+            subtitle={`${it.quantity} × ${fmtMoney(it.unit_price)}`}
+            right={fmtMoney(it.total_incl || it.total)}
+            image={lineItemImage(it, catalog)}
+          />
+        );
+        if (!canEditItems) return <React.Fragment key={i}>{row}</React.Fragment>;
+        return (
+          <SwipeRevealRow
+            key={i}
+            rowKey={String(i)}
+            openKey={openRow}
+            onOpen={setOpenRow}
+            onDelete={() => removeItem(i)}
+            testID={`order-item-${i}`}
+          >
+            {row}
+          </SwipeRevealRow>
+        );
+      })}
     </Screen>
   );
 }

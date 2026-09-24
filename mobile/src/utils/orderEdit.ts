@@ -66,3 +66,11 @@ export function setCartLineQty(cart: CartLine[], index: number, qty: number): Ca
   next[index] = computeLine({ ...next[index], quantity: qty });
   return next;
 }
+
+/** Son kalem silinemez; aksi halde kalan satırlar. */
+export function removeOrderLine<T>(items: T[] | null | undefined, index: number): T[] | null {
+  const rows = items || [];
+  if (index < 0 || index >= rows.length) return rows;
+  if (rows.length <= 1) return null;
+  return rows.filter((_, i) => i !== index);
+}

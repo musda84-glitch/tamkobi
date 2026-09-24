@@ -23,7 +23,7 @@ export function SwipeRevealRow({
   rowKey: string;
   openKey: string | null;
   onOpen: (key: string | null) => void;
-  onEdit: () => void;
+  onEdit?: () => void;
   onDelete: () => void;
   onPress?: () => void;
   children: React.ReactNode;
@@ -102,18 +102,20 @@ export function SwipeRevealRow({
   return (
     <View testID={testID} style={{ overflow: "hidden" }}>
       <View style={{ position: "absolute", right: 0, top: 0, bottom: 0, flexDirection: "row", width: SWIPE_MENU_W }}>
-        <Pressable
-          testID={testID ? `${testID}-edit` : undefined}
-          onPress={onEdit}
-          style={{ width: ACTION_W, alignItems: "center", justifyContent: "center", backgroundColor: colors.indigo }}
-        >
-          <Ionicons name="create-outline" size={18} color="#fff" />
-          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11, marginTop: 2 }}>Düzenle</Text>
-        </Pressable>
+        {onEdit ? (
+          <Pressable
+            testID={testID ? `${testID}-edit` : undefined}
+            onPress={onEdit}
+            style={{ width: ACTION_W, alignItems: "center", justifyContent: "center", backgroundColor: colors.indigo }}
+          >
+            <Ionicons name="create-outline" size={18} color="#fff" />
+            <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11, marginTop: 2 }}>Düzenle</Text>
+          </Pressable>
+        ) : null}
         <Pressable
           testID={testID ? `${testID}-del` : undefined}
           onPress={onDelete}
-          style={{ width: ACTION_W, alignItems: "center", justifyContent: "center", backgroundColor: colors.danger }}
+          style={{ width: onEdit ? ACTION_W : SWIPE_MENU_W, alignItems: "center", justifyContent: "center", backgroundColor: colors.danger }}
         >
           <Ionicons name="trash-outline" size={18} color="#fff" />
           <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11, marginTop: 2 }}>Sil</Text>
