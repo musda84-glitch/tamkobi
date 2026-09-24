@@ -45,4 +45,23 @@ describe("contactStatement", () => {
     expect(html).toContain("TOPLAM");
     expect(html).toContain("<table");
   });
+
+  it("adds cheque lines only on the detailed ekstre", () => {
+    const data = {
+      invoices: [{ invoice_number: "SF-1", invoice_type: "sales" as const, issue_date: "2026-01-02", grand_total: 50, status: "approved" }],
+      cheques: [{ instrument: "cheque", direction: "received", amount: 20, due_date: "2026-01-05", serial_no: "CK-1", bank_name: "Ziraat" }],
+    };
+    expect(buildStatementRows(data).map((r) => r.kind)).toEqual(["invoice"]);
+    const detailed = buildStatementRows(data, { includeCheques: true });
+    expect(detailed.map((r) => r.kind)).toEqual(["invoice", "cheque"]);
+    expect(detailed[1].doc).toContain("Alınan Çek");
+    expect(detailed[1].credit).toBe(20);
+  });
+
+  it("prints a mutabakat mektubu heading", () => {
+    const html = statementPrintHtml({ name: "Acme" }, [], "TamKobi", { variant: "reconciliation" });
+    expect(html).toContain("CARİ HESAP MUTABAKAT MEKTUBU");
+    expect(html).toContain("mutabakatını rica ederiz");
+    expect(html).toContain("mutabakat mektubu");
+  });
 });
