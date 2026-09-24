@@ -232,10 +232,10 @@ export function SevkPickScreen() {
                   <PrimaryButton title="+" onPress={() => adjust(line, picked + 1)} disabled={busy || done} color={colors.primary} testID={`sevk-plus-${line.line_index ?? idx}`} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <PrimaryButton title="Tümü" onPress={() => adjust(line, ordered)} disabled={busy || done} color={colors.indigo} testID={`sevk-all-${line.line_index ?? idx}`} />
+                  <PrimaryButton title="Tümü" icon="checkmark-done" onPress={() => adjust(line, ordered)} disabled={busy || done} color={colors.indigo} testID={`sevk-all-${line.line_index ?? idx}`} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <PrimaryButton title="Etiket" onPress={() => printLabels([line])} disabled={busy} color={colors.secondary} testID={`sevk-label-${line.line_index ?? idx}`} />
+                  <PrimaryButton title="Etiket" icon="pricetag" onPress={() => printLabels([line])} disabled={busy} color={colors.secondary} testID={`sevk-label-${line.line_index ?? idx}`} />
                 </View>
               </Row>
             ) : null}

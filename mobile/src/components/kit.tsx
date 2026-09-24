@@ -99,6 +99,7 @@ export function PrimaryButton({
   loading,
   color = colors.secondary,
   testID,
+  icon,
 }: {
   title: string;
   onPress: () => void;
@@ -106,15 +107,21 @@ export function PrimaryButton({
   loading?: boolean;
   color?: string;
   testID?: string;
+  icon?: keyof typeof Ionicons.glyphMap;
 }) {
   return (
     <Pressable
       testID={testID}
       onPress={onPress}
       disabled={disabled || loading}
-      style={[styles.btn, { backgroundColor: color, opacity: disabled ? 0.5 : 1 }]}
+      accessibilityLabel={title}
+      style={[styles.btn, icon ? styles.btnIcon : null, { backgroundColor: color, opacity: disabled ? 0.5 : 1 }]}
     >
-      {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnText}>{title}</Text>}
+      {loading ? <ActivityIndicator color="#fff" /> : icon ? (
+        <Ionicons name={icon} size={18} color="#fff" />
+      ) : (
+        <Text style={styles.btnText}>{title}</Text>
+      )}
     </Pressable>
   );
 }
@@ -329,6 +336,7 @@ const styles = StyleSheet.create({
   badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
   badgeText: { fontSize: 10, ...typeface("700") },
   btn: { borderRadius: radius.md, minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
+  btnIcon: { paddingHorizontal: 0, minWidth: 44 },
   btnText: { color: "#fff", fontSize: 14, ...typeface("700") },
   label: { fontSize: 11, color: colors.muted, marginBottom: 4, ...typeface("700") },
   labelDense: { fontSize: 10, marginBottom: 2 },
