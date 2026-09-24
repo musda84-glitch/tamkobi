@@ -1090,7 +1090,7 @@ async def _einvoice_inbox_auto_loop(interval_s: int = 600):
         await _a.sleep(interval_s)
 
 DEFAULT_PRINT_TEMPLATE = {"show_logo": True, "primary_color": "#059669", "header_note": "", "footer_note": "Bizi tercih ettiğiniz için teşekkür ederiz.", "show_bank_info": True,
-                          "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": "", "layout": "classic", "hide_line_prices": False, "hide_vat": False, "hide_all_prices": False, "show_item_notes": True, "show_order_notes": True}
+                          "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": "", "layout": "classic", "hide_line_prices": False, "hide_vat": False, "hide_all_prices": False, "show_item_notes": True, "show_order_notes": True, "show_qty_total": False}
 
 @api_router.get("/companies/{company_id}/print-templates")
 async def get_print_templates(company_id: str):

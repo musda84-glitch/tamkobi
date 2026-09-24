@@ -4,7 +4,7 @@ import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix, formatTrAmount, fmtDate } from "../utils/money";
-import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
+import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
 import { BarcodeRenderer } from "./BarcodeRenderer";
 
 const pickItemImage = (it = {}, prod = {}) => (
@@ -347,6 +347,11 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, 
           </table>
           )}
           {tpl.show_order_notes !== false && orderNotes.length > 0 && <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-slate-700 whitespace-pre-wrap" data-testid="print-order-notes"><b>Sipariş Notu:</b> {orderNotes.join(" • ")}</div>}
+          {!!tpl.show_qty_total && items.length > 0 && (
+            <div className="mt-2 text-right text-sm font-bold text-slate-800 tabular-nums" data-testid="print-qty-total">
+              {printQtyTotalLabel(items)}
+            </div>
+          )}
           {(compactForm ? (balanceText || !hideAll) : !hideAll) && <div className={`mt-4 flex items-start justify-between gap-6 ${compactForm ? "" : "justify-end"}`} data-testid="print-totals">
             {compactForm && <div className="pt-1 text-sm text-slate-800" data-testid="print-current-balance">{balanceText}</div>}
             {!hideAll && <div className={`${compactForm ? "min-w-[16rem] text-sm" : "w-64"} space-y-1 ${!compactForm && isModern ? "rounded-xl p-3" : ""}`} style={!compactForm && isModern ? { backgroundColor: `${color}14` } : {}}>
@@ -401,7 +406,7 @@ export const PrintTemplateEditor = ({ companyId, docType, onClose, onSaved }) =>
           <div><label className="block font-semibold mb-1">Kağıt</label><select value={tpl.paper} onChange={(e) => set("paper", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2"><option>A4</option><option>A5</option></select></div>
         </div>
         <div className="grid grid-cols-2 gap-1.5">{[["show_logo", "Logo göster"], ["show_tax_info", "Vergi bilgileri"], ["show_bank_info", "Banka / IBAN"], ["show_signature", "Kaşe / İmza alanı"], ["show_barcode", "Barkod / SKU"], ["show_images", "Ürün resimleri"]].map(([k, l]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5 cursor-pointer"><input type="checkbox" checked={!!tpl[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`tpl-${k}`} /><span className="font-semibold">{l}</span></label>)}</div>
-        <div><div className="font-semibold mb-1 text-slate-500 uppercase text-[10px]">Fiyat & Not Görünümü</div><div className="grid grid-cols-2 gap-1.5">{[["hide_line_prices", "Satır fiyatlarını gizle", false], ["hide_vat", "KDV'yi gizle", false], ["hide_all_prices", "Tüm fiyatları gizle (sevk/çeki listesi)", false], ["show_item_notes", "Ürün açıklaması altında satır notu", true], ["show_order_notes", "Sipariş notlarını göster", true]].map(([k, l, def]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5 cursor-pointer"><input type="checkbox" checked={tpl[k] === undefined ? def : !!tpl[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`tpl-${k}`} /><span className="font-semibold">{l}</span></label>)}</div></div>
+        <div><div className="font-semibold mb-1 text-slate-500 uppercase text-[10px]">Fiyat & Not Görünümü</div><div className="grid grid-cols-2 gap-1.5">{[["hide_line_prices", "Satır fiyatlarını gizle", false], ["hide_vat", "KDV'yi gizle", false], ["hide_all_prices", "Tüm fiyatları gizle (sevk/çeki listesi)", false], ["show_item_notes", "Ürün açıklaması altında satır notu", true], ["show_order_notes", "Sipariş notlarını göster", true], ["show_qty_total", "Miktarların toplamını göster", false]].map(([k, l, def]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5 cursor-pointer"><input type="checkbox" checked={tpl[k] === undefined ? def : !!tpl[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`tpl-${k}`} /><span className="font-semibold">{l}</span></label>)}</div></div>
         <div className="flex justify-end gap-2 pt-2 border-t"><button onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button><button onClick={save} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="tpl-save-btn">Kaydet</button></div>
       </div>
     </div>
