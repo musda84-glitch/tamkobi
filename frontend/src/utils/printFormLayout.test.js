@@ -1,4 +1,4 @@
-import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printShelfLabel, printVatLines, vatRateLabel } from "./printFormLayout";
+import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotal, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "./printFormLayout";
 
 test("order and quote use the compact print form", () => {
   expect(isOrderQuotePrint("order")).toBe(true);
@@ -11,6 +11,12 @@ test("quantity prints with a short unit", () => {
   expect(printQtyLabel(1, "Adet")).toBe("1 ad");
   expect(printQtyLabel(2, "")).toBe("2 ad");
   expect(printQtyLabel(3, "kg")).toBe("3 kg");
+});
+
+test("quantity total sums lines and keeps a shared unit", () => {
+  expect(printQtyTotal([{ quantity: 2, unit: "Adet" }, { quantity: 3, unit: "adet" }])).toEqual({ total: 5, unit: "ad" });
+  expect(printQtyTotalLabel([{ quantity: 2, unit: "kg" }, { quantity: 1.5, unit: "kg" }])).toBe("Toplam Miktar: 3,50 kg");
+  expect(printQtyTotalLabel([{ quantity: 1, unit: "ad" }, { quantity: 2, unit: "kg" }])).toBe("Toplam Miktar: 3");
 });
 
 test("vat footer groups by rate and prefers the document vat total", () => {

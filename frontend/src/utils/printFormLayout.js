@@ -14,6 +14,27 @@ export const printQtyLabel = (quantity, unit) => {
   return `${q} ${u}`.trim();
 };
 
+/** Sum of line quantities; if all lines share one unit, include it in the label. */
+export const printQtyTotal = (items = []) => {
+  const list = Array.isArray(items) ? items : [];
+  const total = round2(list.reduce((sum, it) => sum + (Number(it?.quantity) || 0), 0));
+  const units = [
+    ...new Set(
+      list.map((it) => {
+        const raw = String(it?.unit || "").trim();
+        return !raw || /^adet$/i.test(raw) ? "ad" : raw;
+      }),
+    ),
+  ];
+  return { total, unit: units.length === 1 ? units[0] : "" };
+};
+
+export const printQtyTotalLabel = (items = []) => {
+  const { total, unit } = printQtyTotal(items);
+  const qty = Number.isInteger(total) ? String(total) : formatTrAmount(total);
+  return unit ? `Toplam Miktar: ${qty} ${unit}` : `Toplam Miktar: ${qty}`;
+};
+
 export const printShelfLabel = (it = {}, prod = {}) => {
   for (const src of [it, prod]) {
     if (!src || typeof src !== "object") continue;
