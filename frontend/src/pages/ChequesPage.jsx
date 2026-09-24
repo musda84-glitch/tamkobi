@@ -10,6 +10,7 @@ import { ExportButtons } from "../components/ExportButtons";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { PromissoryPrint } from "../components/PromissoryPrint";
 import { fmtDate, formatTrAmount } from "../utils/money";
+import { compressImageFile } from "../utils/compressImage";
 import { applyChequeScan, CHEQUE_SCAN_IDLE_HINT, chequeScanHint } from "../utils/chequeScan";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -49,8 +50,9 @@ const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
     if (!file || scanBusy || !companyId) return;
     setScanBusy(true);
     try {
+      const compact = file.type?.startsWith("image/") ? await compressImageFile(file) : file;
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", compact);
       const r = await axios.post(
         `${API_URL}/ai/cheque-extract?company_id=${encodeURIComponent(companyId)}`,
         fd,

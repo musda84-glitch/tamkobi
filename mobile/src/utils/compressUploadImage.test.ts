@@ -2,6 +2,7 @@ import {
   resizeActions,
   scaledSize,
   skipImageCompress,
+  isHeicLike,
   uploadImageFileName,
   compressPickerAsset,
   UPLOAD_IMAGE,
@@ -27,11 +28,13 @@ describe("uploadImageFileName", () => {
 });
 
 describe("skipImageCompress", () => {
-  it("skips gif/heic and tiny files", () => {
+  it("skips gif and tiny files, but converts heic", () => {
     expect(skipImageCompress("image/gif", 200_000)).toBe(true);
-    expect(skipImageCompress("image/heic", 200_000)).toBe(true);
+    expect(skipImageCompress("image/heic", 200_000)).toBe(false);
+    expect(skipImageCompress("", 200_000, "IMG_1.HEIC")).toBe(false);
     expect(skipImageCompress("image/jpeg", 8_000)).toBe(true);
     expect(skipImageCompress("image/jpeg", 200_000)).toBe(false);
+    expect(isHeicLike("image/heif", "shot.heif")).toBe(true);
   });
 });
 
@@ -73,5 +76,18 @@ describe("compressPickerAsset", () => {
     const gif = { uri: "file:///a.gif", fileName: "a.gif", mimeType: "image/gif", fileSize: 90_000 };
     expect(await compressPickerAsset(gif, manipulate)).toEqual(gif);
     expect(manipulate).not.toHaveBeenCalled();
+  });
+
+  it("converts heic to jpeg first", async () => {
+    const manipulate = jest.fn(async (_uri: string, _a: unknown, format: string) => {
+      if (format === "jpeg") return { uri: "file:///cache/a.jpg" };
+      return { uri: "file:///cache/a.webp" };
+    });
+    const out = await compressPickerAsset(
+      { uri: "file:///orig.heic", fileName: "IMG_1.HEIC", mimeType: "image/heic", width: 4000, height: 3000, fileSize: 2_000_000 },
+      manipulate,
+    );
+    expect(manipulate).toHaveBeenCalledWith("file:///orig.heic", [{ resize: { width: 1600 } }], "jpeg");
+    expect(out).toEqual({ uri: "file:///cache/a.jpg", fileName: "IMG_1.jpg", mimeType: "image/jpeg" });
   });
 });

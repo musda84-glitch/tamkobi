@@ -35,9 +35,18 @@ export function uploadImageFileName(originalName: string | null | undefined, mim
   return `${base}.jpg`;
 }
 
-export function skipImageCompress(mime: string, bytes = 0) {
+export function isHeicLike(mime: string, fileName = "") {
   const type = (mime || "").toLowerCase();
-  if (type === "image/gif" || type === "image/heic" || type === "image/heif") return true;
+  if (type === "image/heic" || type === "image/heif") return true;
+  if (type.startsWith("image/")) return false;
+  return /\.hei[cf]$/i.test(fileName || "");
+}
+
+export function skipImageCompress(mime: string, bytes = 0, fileName = "") {
+  const type = (mime || "").toLowerCase();
+  if (type === "image/gif") return true;
+  // iPhone galeri HEIC'i JPEG'e çevir; vision API HEIC kabul etmez.
+  if (isHeicLike(type, fileName)) return false;
   return bytes > 0 && bytes < UPLOAD_IMAGE.skipUnderBytes;
 }
 
@@ -63,10 +72,11 @@ export async function compressPickerAsset(
   const mime = (asset.mimeType || "").toLowerCase();
   const bytes = asset.fileSize || (asset.file && "size" in asset.file ? Number(asset.file.size) || 0 : 0);
   const uri = (asset.uri || "").trim();
-  if (!uri || skipImageCompress(mime, bytes)) return asset;
+  if (!uri || skipImageCompress(mime, bytes, asset.fileName || "")) return asset;
 
   const actions = resizeActions(asset.width || 0, asset.height || 0);
-  for (const format of ["webp", "jpeg"] as const) {
+  const formats = isHeicLike(mime, asset.fileName || "") ? (["jpeg", "webp"] as const) : (["webp", "jpeg"] as const);
+  for (const format of formats) {
     try {
       const out = await manipulate(uri, actions, format);
       if (out?.uri) {

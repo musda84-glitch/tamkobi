@@ -293,20 +293,24 @@ def _mime_from_name(name: str) -> str:
         return "image/webp"
     if n.endswith(".gif"):
         return "image/gif"
+    if n.endswith((".heic", ".heif", ".avif")):
+        return "image/heic"
     return "image/jpeg"
 
 
 async def extract_cheque_file(data: bytes, filename: str = "", content_type: str = "") -> dict:
     if not data:
         raise ValueError("Dosya boş.")
+    from image_opt import looks_like_image
+
     name = (filename or "").lower()
     ctype = (content_type or "").lower().split(";")[0].strip()
     is_pdf = ctype == "application/pdf" or name.endswith(".pdf")
     is_text = ctype in ("text/plain",) or name.endswith(".txt")
-    is_img = ctype.startswith("image/") or name.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif"))
+    is_img = looks_like_image(data, ctype, name)
     if is_img:
         mime = ctype if ctype.startswith("image/") else _mime_from_name(name)
-        draft = await extract_cheque_from_image(data, mime)
+        draft = await extract_cheque_from_image(data, mime, filename)
         return {"draft": draft, "source": "image"}
     if is_pdf:
         import io
@@ -324,7 +328,7 @@ async def extract_cheque_file(data: bytes, filename: str = "", content_type: str
         text = data.decode("utf-8", "ignore")
         draft = await extract_cheque_from_text(text)
         return {"draft": draft, "source": "text", "text_preview": text[:1200]}
-    raise ValueError("JPEG, PNG, WebP veya PDF yükleyin.")
+    raise ValueError("JPEG, PNG, WebP, HEIC veya PDF yükleyin.")
 
 
 async def _ai_cheque_from_image(data: bytes, mime: str) -> dict:
@@ -341,10 +345,13 @@ async def _ai_cheque_from_image(data: bytes, mime: str) -> dict:
     return normalize_cheque_draft(_json_object(raw))
 
 
-async def extract_cheque_from_image(data: bytes, mime: str = "image/jpeg") -> dict:
+async def extract_cheque_from_image(data: bytes, mime: str = "image/jpeg", filename: str = "") -> dict:
     """Fotoğrafta regex yetmez; tutar için yapay zeka gerekir. AI boş dönerse notes heuristiği denenir."""
     if not data:
         raise ValueError("Görüntü boş.")
+    from image_opt import prepare_vision_image
+
+    data, mime = prepare_vision_image(data, mime, filename)
     last_err: Optional[BaseException] = None
     try:
         parsed = await _ai_cheque_from_image(data, mime)

@@ -48,8 +48,9 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
     if (!file || scanBusy || !companyId) return;
     setScanBusy(true);
     try {
+      const compact = file.type?.startsWith("image/") ? await compressImageFile(file) : file;
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", compact);
       const r = await axios.post(
         `${API_URL}/ai/expense-extract?company_id=${encodeURIComponent(companyId)}`,
         fd,

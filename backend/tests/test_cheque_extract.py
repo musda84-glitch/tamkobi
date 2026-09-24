@@ -99,6 +99,27 @@ def test_extract_cheque_file_rejects_empty_and_unknown():
         asyncio.run(extract_cheque_file(b"xx", "note.docx", "application/msword"))
 
 
+def test_extract_cheque_file_accepts_heic_name_as_image(monkeypatch):
+    seen = {}
+
+    async def fake_ai(data, mime):
+        seen["mime"] = mime
+        seen["data"] = data
+        return normalize_cheque_draft({"amount": 7500, "due_date": "2026-10-01", "confidence": 0.9})
+
+    monkeypatch.setattr("cheque_extract._ai_cheque_from_image", fake_ai)
+    from PIL import Image
+    import io
+    buf = io.BytesIO()
+    Image.new("RGB", (80, 50), (20, 80, 20)).save(buf, format="JPEG", quality=85)
+    jpeg = buf.getvalue()
+    out = asyncio.run(extract_cheque_file(jpeg, "IMG_2141.HEIC", "application/octet-stream"))
+    assert out["source"] == "image"
+    assert out["draft"]["amount"] == 7500
+    assert seen["mime"] == "image/jpeg"
+    assert seen["data"][:2] == b"\xff\xd8"
+
+
 def test_cheque_draft_is_strong_needs_amount_plus_key_field():
     assert cheque_draft_is_strong(None) is False
     assert cheque_draft_is_strong({"amount": 0, "confidence": 0.9, "due_date": "2026-09-21"}) is False
