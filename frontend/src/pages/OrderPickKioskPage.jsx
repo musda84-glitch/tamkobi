@@ -9,6 +9,7 @@ import { notifyDataChanged } from "../utils/dataRefresh";
 
 import { Barcode } from "../components/BarcodeLabelPrint";
 import { expandPickLabelJobs } from "../utils/pickLabels";
+import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import {
   ArrowLeft, Bell, CheckCircle2, Factory, Minus, Package, Plus, Printer, RefreshCw, ScanLine, Truck,
 } from "lucide-react";
@@ -92,6 +93,7 @@ export default function OrderPickKioskPage() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [qtyDrafts, setQtyDrafts] = useState({});
+  const [scanQty, setScanQty] = useState("1");
   const [overscanFlash, setOverscanFlash] = useState(null);
   const [labelJobs, setLabelJobs] = useState(null);
   const inputRef = useRef(null);
@@ -162,8 +164,9 @@ export default function OrderPickKioskPage() {
     unlockOverscanAudio();
 
     // Instant client-side guard when the matched line is already full (2/2 etc.)
+    const qty = parseScanQtyInput(scanQty);
     const localLine = findScanLine(ses.items, c);
-    if (localLine && isLineComplete(localLine)) {
+    if (localLine && (isLineComplete(localLine) || Number(localLine.picked_qty) + qty > Number(localLine.ordered_qty) + 1e-9)) {
       setCode("");
       triggerOverscan({
         message: `${localLine.product_name}: siparişte ${Number(localLine.ordered_qty)} adet var, ${Number(localLine.picked_qty)} okutuldu. Fazla ürün okutmayın.`,
@@ -176,7 +179,7 @@ export default function OrderPickKioskPage() {
 
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/scan`, { barcode: c, quantity: 1 });
+      const r = await axios.post(`${API_URL}/order-picks/${ses.order_id}/scan`, { barcode: c, quantity: qty });
       setSes(r.data);
       setCode("");
       setOverscanFlash(null);
@@ -335,6 +338,16 @@ export default function OrderPickKioskPage() {
       </div>
       <form className="bg-white border-b p-3 flex gap-2 print:hidden" onSubmit={(e) => { e.preventDefault(); scan(); }}>
         <input ref={inputRef} value={code} onChange={(e) => setCode(e.target.value)} onFocus={unlockOverscanAudio} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="text" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
+        <input
+          value={scanQtyShown(scanQty)}
+          onChange={(e) => setScanQty(e.target.value.replace(/[^\d]/g, ""))}
+          onFocus={() => setScanQty(scanQtyOnFocus())}
+          onBlur={() => setScanQty(scanQtyOnBlur(scanQty))}
+          inputMode="numeric"
+          aria-label="Adet çarpan"
+          className="w-16 text-lg font-black text-center border-2 border-slate-300 rounded-xl px-2 py-3"
+          data-testid="pick-scan-qty"
+        />
         <ScanButton onScan={(t) => scan(t)} continuous title="Sipariş barkodu" label="Kamera" className="!py-3" />
         <button type="submit" disabled={busy} className="px-4 bg-emerald-600 text-white rounded-xl font-bold" data-testid="pick-scan-btn">Okut</button>
       </form>
