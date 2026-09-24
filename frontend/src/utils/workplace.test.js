@@ -1,4 +1,4 @@
-import { workplaceHint, workplaceShort } from "./workplace";
+import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHint, workplaceShort } from "./workplace";
 
 describe("workplace labels", () => {
   it("describes a field task as the workplace", () => {
@@ -14,5 +14,14 @@ describe("workplace labels", () => {
     const w = { kind: "task", task_title: "Keşif", project_name: "Saha", has_coords: false };
     expect(workplaceHint(w)).toContain("konum yok");
     expect(workplaceShort({ kind: "company", label: "Firma" })).toBe("");
+  });
+
+  it("says whether location check-in is on", () => {
+    const firm = { kind: "company", has_coords: true, radius_m: 10 };
+    expect(mesaimGeoInOn({ workplace: firm, requireGeo: true })).toBe(true);
+    expect(mesaimGeoInLabel({ workplace: firm, requireGeo: true })).toBe("Konumlu giriş açık");
+    expect(mesaimGeoInLabel({ workplace: firm, requireGeo: false })).toBe("Konumlu giriş kapalı");
+    expect(mesaimGeoInLabel({ workplace: { kind: "task", has_coords: false }, requireGeo: true })).toBe("Konumlu giriş kapalı");
+    expect(mesaimGeoInLabel({})).toBe("Konumlu giriş kapalı");
   });
 });

@@ -9,7 +9,7 @@ import { MyLeavePanel } from "../components/MyLeavePanel";
 import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
-import { workplaceHint } from "../utils/workplace";
+import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHint } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnelWage";
 import { fmtDmy } from "../utils/dateFormat";
 import { LocationConsentCard } from "../components/LocationConsentCard";
@@ -272,6 +272,9 @@ export default function MyAttendancePage() {
   const checkoutOn = data?.checkout_unlocked != null
     ? Boolean(data.checkout_unlocked) && !t?.check_out
     : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: data?.now, scheduleStart: sch?.start, scheduleEnd: sch?.end, expectedEnd: t?.expected_end, checkIn: t?.check_in, earlyApproved: earlyOk });
+  const geoPlace = data.workplace || data.location;
+  const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo: sch?.require_geo });
+  const geoInLabel = mesaimGeoInLabel({ workplace: geoPlace, requireGeo: sch?.require_geo });
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-5" data-testid="my-attendance-page">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
@@ -307,6 +310,12 @@ export default function MyAttendancePage() {
               <span className={`inline-flex items-center gap-1 ${data.workplace?.kind === "task" ? "text-indigo-200" : ""}`} data-testid="my-att-workplace">
                 <MapPin className={`w-3.5 h-3.5 ${data.workplace?.kind === "task" ? "text-indigo-300" : "text-emerald-400"}`} />
                 {workplaceHint(data.workplace || data.location, sch.require_geo !== false)}
+              </span>
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded-full font-extrabold ${geoInOn ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-200"}`}
+                data-testid="my-att-geo-in"
+              >
+                {geoInLabel}
               </span>
             </div>
           </div>

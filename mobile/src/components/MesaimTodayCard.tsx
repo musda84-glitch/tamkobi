@@ -17,7 +17,7 @@ import {
   type AttendanceHabit,
   type GeoConfirmRequest,
 } from "../utils/attendanceSelf";
-import { workplaceHint, type Workplace } from "../utils/workplace";
+import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
 import type { LocationSignal } from "../utils/locationConsent";
 
@@ -228,6 +228,9 @@ export function MesaimTodayCard({
   const workDays = mesaimWorkDaysLine(schedule?.work_days, dayLabels);
   const dateLine = mesaimLongDate(todayDate);
   const yevLine = yevmiyeStatusLine(today);
+  const geoPlace = workplace || location;
+  const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo });
+  const geoInLabel = mesaimGeoInLabel({ workplace: geoPlace, requireGeo });
 
   return (
     <View
@@ -253,6 +256,20 @@ export function MesaimTodayCard({
         <Text style={{ color: workplace?.kind === "task" ? "#C7D2FE" : "#6EE7B7", fontSize: 12, fontWeight: "600", textAlign: "center" }} testID="mesai-workplace">
           {workplaceHint(workplace || location, requireGeo !== false)}
         </Text>
+        <View
+          testID="mesai-geo-in"
+          style={{
+            marginTop: 2,
+            paddingHorizontal: 10,
+            paddingVertical: 4,
+            borderRadius: 999,
+            backgroundColor: geoInOn ? "rgba(16,185,129,0.22)" : "rgba(244,63,94,0.22)",
+          }}
+        >
+          <Text style={{ color: geoInOn ? "#6EE7B7" : "#FECDD3", fontSize: 12, fontWeight: "800" }}>
+            {geoInLabel}
+          </Text>
+        </View>
       </View>
 
       {punchEdit ? (
