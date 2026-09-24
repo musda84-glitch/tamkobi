@@ -495,7 +495,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <div key={f}>
                   <label className="block font-semibold mb-1">{FIELD_LABELS[f] || f}{" "}
                     <span className="text-slate-400 font-normal">
-                      {f === "access_token" ? "(Enpara için önerilir)" : f === "private_key" ? "(özel anahtar — PUBLIC KEY değil)" : f === "api_key" ? "(X-Gravitee — token değil)" : "(opsiyonel — boşsa simüle)"}
+                      {f === "access_token" ? "(hareket için müşteri token)" : f === "refresh_token" ? "(token yenileme)" : f === "private_key" ? "(özel anahtar — PUBLIC KEY değil)" : f === "api_key" ? "(X-Gravitee — token değil)" : "(opsiyonel — boşsa simüle)"}
                     </span>
                   </label>
                   {f === "private_key" ? (
@@ -533,12 +533,10 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             )}
             {editForm.provider === "kuveytturk" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="kuveyt-edit-hint">
-                Portal alanları: <b>Müşteri Id</b> → Client ID, <b>Client Secret</b> (Api Anahtarı değil),
-                <b> Api Anahtarı</b> → X-Gravitee-Api-Key. Token: <code className="font-mono">POST prep-identity|identity…/connect/token</code>
-                (<code className="font-mono">client_credentials</code> + <code className="font-mono">scope=public</code>).
-                API: Sandbox <code className="font-mono">prep-gateway</code>, Canlı <code className="font-mono">gateway</code>.
-                Yapıştırırken satır sonu/boşluk bırakmayın. <code className="font-mono">invalid_client</code> → yanlış secret
-                veya Canlı/Sandbox kimlik karışması: Prep uygulaması → Sandbox; canlı onaylı → Canlı.
+                Bağlantı testi: <b>client_credentials</b> (Müşteri Id/Secret). Hareket çekme: resmi SDK{" "}
+                <b>Authorization Code + accounts</b> ister — portal müşteri girişi sonrası{" "}
+                <b>Access Token</b> yapıştırın. Path: <code className="font-mono">/v1/accounts/&#123;ekNo&#125;/transactions</code>.
+                Hesap No’ya ek no (örn. 2) veya IBAN; müşteri numarasını path sanmayın.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">
@@ -575,7 +573,10 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                       <div>
                         <label className="block font-semibold mb-1">RSA Private Key (PKCS8 / PKCS1) <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label>
                         <textarea className={`${inputCls} font-mono min-h-[88px]`} value={editForm.private_key} onChange={(e) => setEditForm({ ...editForm, private_key: e.target.value })} data-testid="edit-conn-private-key" autoComplete="off" placeholder={"-----BEGIN PRIVATE KEY-----\n(özel anahtar — PUBLIC KEY değil)\n-----END PRIVATE KEY-----"} spellCheck={false} />
-                        <p className="text-[10px] text-slate-500 mt-1">İlk satır BEGIN PRIVATE KEY veya BEGIN RSA PRIVATE KEY olmalı. Genel anahtar / Api Anahtarı UUID buraya gelmez.</p>                      </div>
+                        <p className="text-[10px] text-slate-500 mt-1">İlk satır BEGIN PRIVATE KEY veya BEGIN RSA PRIVATE KEY olmalı. Genel anahtar / Api Anahtarı UUID buraya gelmez.</p>
+                      </div>
+                      <div><label className="block font-semibold mb-1">Access Token <span className="text-slate-400 font-normal">(müşteri yetkili — hareket için)</span></label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" placeholder="Authorization Code ile alınan access_token — boşsa değişmez" /></div>
+                      <div><label className="block font-semibold mb-1">Refresh Token <span className="text-slate-400 font-normal">(opsiyonel)</span></label><textarea className={`${inputCls} font-mono min-h-[56px]`} value={editForm.refresh_token} onChange={(e) => setEditForm({ ...editForm, refresh_token: e.target.value })} data-testid="edit-conn-refresh-token" autoComplete="off" placeholder="Token yenilemek için — boşsa değişmez" /></div>
                       <div><label className="block font-semibold mb-1">Scope <span className="text-slate-400 font-normal">(opsiyonel — örn. accounts public)</span></label><input className={`${inputCls} font-mono`} value={editForm.scope || ""} onChange={(e) => setEditForm({ ...editForm, scope: e.target.value })} data-testid="edit-conn-scope" autoComplete="off" placeholder="accounts public" /></div>
                     </>
                   ) : (

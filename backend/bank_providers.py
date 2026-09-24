@@ -29,8 +29,8 @@ PROVIDERS = {
         "identity_live_url": "https://identity.kuveytturk.com.tr",
         "token_path": "/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
-        "fields": ["client_id", "client_secret", "api_key", "private_key", "customer_number"],
-        "hint": "API Market: Müşteri Id=Client ID, Client Secret (≠Api Anahtarı), Api Anahtarı=X-Gravitee-Api-Key. Token: POST prep-identity|identity …/connect/token (scope=public). Hareket: GET /v1/accounts/{ekNo}/transactions (beginDate, endDate) + RSA Signature — resmi SDK Authorization Code + accounts ister; connection test yalnızca client_credentials doğrular. Sandbox: prep-gateway; Canlı: gateway.",
+        "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
+        "hint": "API Market: Müşteri Id/Secret + Api Anahtarı + RSA-SHA256 PEM. Bağlantı testi client_credentials (scope=public). Hesap hareketi resmi SDK’da Authorization Code + scope=accounts ister — Access Token alanına müşteri yetkili token yapıştırın (veya yenilemek için Refresh Token). Hareket: GET /v1/accounts/{ekNo}/transactions?beginDate&endDate. Sandbox: prep-gateway; Canlı: gateway.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -755,6 +755,57 @@ async def _kuveyt_access_token(conn: dict) -> str:
     )
 
 
+async def _kuveyt_refresh_user_token(conn: dict) -> str:
+    """authorization_code refresh_token → yeni access_token (Hesap İşlem için)."""
+    refresh = _kuveyt_normalize_secret(_plain_secret(conn, "refresh_token"))
+    client_id = _kuveyt_normalize_secret(_plain_secret(conn, "client_id"))
+    client_secret = _kuveyt_normalize_secret(_plain_secret(conn, "client_secret"))
+    if not refresh or not client_id or not client_secret:
+        return ""
+    for url in _kuveyt_token_urls(conn):
+        async with httpx.AsyncClient(timeout=25) as client:
+            try:
+                resp = await client.post(
+                    url,
+                    data={
+                        "grant_type": "refresh_token",
+                        "refresh_token": refresh,
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+            except Exception:
+                continue
+            if resp.status_code >= 400:
+                continue
+            try:
+                data = resp.json()
+            except Exception:
+                continue
+            tok = data.get("access_token") or data.get("accessToken") or ""
+            if tok:
+                return str(tok)
+    return ""
+
+
+async def _kuveyt_account_bearer(conn: dict) -> tuple:
+    """Hesap API’si için bearer: önce kullanıcı (auth code) access_token, sonra CC.
+
+    Returns (token, kind) where kind is 'user' | 'cc'.
+    """
+    stored = _plain_secret(conn, "access_token")
+    if stored:
+        expired = _jwt_expired(stored)
+        if expired is not True:
+            return stored, "user"
+        refreshed = await _kuveyt_refresh_user_token(conn)
+        if refreshed:
+            return refreshed, "user"
+    cc = await _kuveyt_access_token(conn)
+    return cc, "cc"
+
+
 async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
     token = await _kuveyt_access_token(conn)
     pem = _kuveyt_private_key_pem(conn)
@@ -788,48 +839,71 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
 
 
 def _kuveyt_account_suffix(conn: dict) -> str:
-    """Primary account suffix for path /v1/accounts/{suffix}/transactions (official SDK)."""
+    """Primary account ek no for path /v1/accounts/{suffix}/transactions (official SDK)."""
     cands = _kuveyt_account_suffix_candidates(conn)
     return cands[0] if cands else ""
 
 
 def _kuveyt_account_suffix_candidates(conn: dict) -> List[str]:
-    """Suffix / hesap no variants for Account Transactions API path param."""
-    out: List[str] = []
+    """Path {suffix} = hesap ek no (kısa), müşteri no değil.
+
+    Örn. hesap 9698082300002 → ek no 2 (son anlamlı hane); IBAN’dan da ek çıkarılır.
+    Müşteri numarası path’e konmaz (Gravitee 404 / yanlış kaynak).
+    """
+    short: List[str] = []
+    long: List[str] = []
+
+    def add_short(s: str):
+        s = str(s or "").strip()
+        if not s or s in short or s in long:
+            return
+        if s.isdigit() and len(s) <= 5:
+            short.append(s)
+        else:
+            long.append(s)
+
+    def add_long(s: str):
+        s = str(s or "").strip()
+        if s and s not in short and s not in long:
+            long.append(s)
+
     raw = (conn.get("bank_account_number") or "").strip().replace(" ", "").upper()
+    digits = ""
     if raw and raw != "-":
         if raw.startswith("TR") and len(raw) >= 16:
             acct = raw[10:]
-            stripped = acct.lstrip("0") or acct
-            out.extend([stripped, acct])
+            digits = "".join(ch for ch in acct if ch.isdigit())
+            add_long(acct.lstrip("0") or acct)
         else:
-            out.append(raw)
-            # Uzun hesap no → olası ek no (son 1–5 hane); resmi path {suffix}
             digits = "".join(ch for ch in raw if ch.isdigit())
-            if len(digits) >= 6:
-                for n in (5, 4, 3, 2, 1):
-                    ek = digits[-n:].lstrip("0") or digits[-n:]
-                    if ek and ek not in out:
-                        out.append(ek)
-    cust = (conn.get("customer_number") or "").strip()
-    if cust and cust not in out:
-        out.append(cust)
-    # dedupe preserve order
-    seen = set()
-    uniq: List[str] = []
-    for s in out:
-        if s and s not in seen:
-            seen.add(s)
-            uniq.append(s)
-    return uniq
+            compact = digits.lstrip("0") or digits
+            if compact and len(compact) <= 5:
+                # Kullanıcı doğrudan ek no yazmış (örn. 2, 001, 1234)
+                add_short(compact)
+            elif digits:
+                add_long(raw)
+        if digits and len(digits) >= 6:
+            # …00002 → ek 2; …001 → ek 1
+            for n in (1, 2, 3, 4, 5):
+                part = digits[-n:]
+                ek = part.lstrip("0")
+                if ek:
+                    add_short(ek)
+    # Explicit small suffix field if ever stored
+    for key in ("account_suffix", "accountSuffix"):
+        v = str(conn.get(key) or "").strip()
+        if v:
+            add_short(v.lstrip("0") or v)
+    return short + long
 
 
 def _kuveyt_tx_paths(conn: dict) -> List[str]:
     """Official C# SDK: GET /v1/accounts/{suffix?}/transactions (not …/accounttransactions)."""
     paths = ["/v1/accounts/transactions"]
-    for suf in _kuveyt_account_suffix_candidates(conn)[:6]:
-        paths.append(f"/v1/accounts/{suf}/transactions")
-    # Legacy mistaken name — never use; Gravitee returns Path not found.
+    for suf in _kuveyt_account_suffix_candidates(conn)[:8]:
+        p = f"/v1/accounts/{suf}/transactions"
+        if p not in paths:
+            paths.append(p)
     return paths
 
 
@@ -2123,7 +2197,8 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     """API Market Hesap İşlem: GET /v1/accounts/{suffix}/transactions + RSA Signature.
 
     Resmi SDK (KuveytTurkAPICSharp): Path=/v1/accounts/{suffix?}/transactions, GrantType=AuthorizationCode.
-    client_credentials ile bağlantı testi (/v1/data/banks) geçebilir; hesap uçları accounts scope ister.
+    client_credentials ile bağlantı testi (/v1/data/banks) geçebilir; hesap uçları accounts scope +
+    müşteri yetkili access_token ister. CC token ile gateway çoğu zaman Path not found (404) döner.
     """
     pem = _kuveyt_private_key_pem(conn)
     if not pem:
@@ -2131,7 +2206,7 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
             "Kuveyt Türk hesap hareketi için RSA private key (PKCS8 PEM) gerekli. "
             "Developer portalındaki imza anahtarını Düzenle ekranına yapıştırın."
         )
-    token = await _kuveyt_access_token(conn)
+    token, token_kind = await _kuveyt_account_bearer(conn)
     base = _base_url(conn)
     account = (conn.get("bank_account_number") or "").strip().replace(" ", "")
     end = datetime.now(timezone.utc)
@@ -2139,28 +2214,28 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     balance: Optional[float] = None
     best_err = ""
     saw_auth = False
+    saw_404 = False
     saw_ok_empty = False
+    detail = ""
 
     # Official samples use beginDate/endDate; also try startDate/endDate.
     ranges = [
         {"beginDate": start_d, "endDate": end_d},
         {"startDate": start_d, "endDate": end_d},
     ]
+    ek_list = _kuveyt_account_suffix_candidates(conn)
+    ek = ek_list[0] if ek_list else ""
     ident: Dict[str, str] = {}
+    if ek:
+        ident["accountSuffix"] = ek
     if account:
         if account.upper().startswith("TR"):
             ident["iban"] = account.upper()
         else:
             ident["accountNumber"] = account
-            # Bazı dokümanlar iban query bekler; hesap no da gönderilebilir
-            ident["iban"] = account
-    for suf in _kuveyt_account_suffix_candidates(conn)[:2]:
-        ident.setdefault("accountSuffix", suf)
-        ident.setdefault("accountNumber", suf)
     cust = (conn.get("customer_number") or "").strip()
     if cust:
         ident["customerNumber"] = cust
-        ident["customerId"] = cust
 
     param_sets: List[Dict[str, str]] = []
     for rng in ranges:
@@ -2200,6 +2275,9 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
         if resp.status_code in (401, 403):
             saw_auth = True
             best_err = detail
+        elif resp.status_code == 404:
+            saw_404 = True
+            best_err = detail
         elif resp.status_code < 400:
             try:
                 data = resp.json()
@@ -2226,7 +2304,7 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
                     # Token geçerli ama hesap API’si reddetti — diğer path’ler aynı sonucu verir
                     break
                 if resp.status_code == 404:
-                    # Yanlış path / abonelik yok — daha iyi hata varsa sakla
+                    saw_404 = True
                     if not best_err or "404" in best_err:
                         best_err = detail
                     continue
@@ -2250,22 +2328,23 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     if saw_ok_empty or balance is not None:
         return {"transactions": [], "balance": balance, "access_token": None}
 
-    hint = " Client ID/Secret, PKCS8 PEM ve hesap no/IBAN’ı kontrol edin."
-    if saw_auth:
+    hint = " Client ID/Secret, PKCS8 PEM ve hesap ek no/IBAN’ı kontrol edin."
+    if saw_auth or (saw_404 and token_kind == "cc"):
         hint = (
-            " Token alındı ama Hesap İşlem API’si yetki reddetti (401/403). "
-            "Resmi SDK bu uç için Authorization Code + scope=accounts ister; "
-            "yalnızca client_credentials ile bağlantı testi geçebilir. "
-            "Portal uygulamasında Hesap Yönetimi ürününün ve accounts yetkisinin açık olduğundan emin olun."
+            " Hesap İşlem API’si müşteri yetkili token ister (Authorization Code + scope=accounts). "
+            "Bağlantı testi yalnızca client_credentials ile geçer; hareket için portalden müşteri "
+            "girişi sonrası Access Token (ve Refresh Token) alınarak Düzenle → Access Token alanına "
+            "yapıştırılmalı. Uygulamaya Hesap Yönetimi ürününün tanımlı olduğundan emin olun."
         )
-    elif best_err and "404" in best_err:
+        if token_kind == "cc":
+            hint += " (Şu an client_credentials token kullanıldı.)"
+    elif saw_404:
         hint = (
-            " Gateway Path not found: doğru uç GET /v1/accounts/{ekNo}/transactions "
-            "(accounttransactions değil). Hesap No alanına ek no veya IBAN girin; "
-            "API Market’te Hesap Yönetimi ürününün uygulamaya tanımlı olduğunu kontrol edin."
+            " Gateway 404: GET /v1/accounts/{ekNo}/transactions kullanın; "
+            "Hesap No’ya ek no (örn. 2) veya IBAN yazın — müşteri numarasını path’e koymayın."
         )
-    elif not account and not _kuveyt_account_suffix_candidates(conn):
-        hint = " Düzenle → Hesap No/IBAN alanına Kuveyt hesap numaranızı veya IBAN’ı girin."
+    elif not account and not ek_list:
+        hint = " Düzenle → Hesap No/IBAN alanına Kuveyt ek no veya IBAN girin."
     raise RuntimeError(
         f"Kuveyt Türk hesap hareketi alınamadı.{hint} Son yanıt: {(best_err or detail)[:360]}"
     )
