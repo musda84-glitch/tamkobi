@@ -279,17 +279,20 @@ export function BankingPartnersPanel({
         <Field label="Açıklama" testID="partner-exp-description" value={expDraft.description} onChangeText={(v) => setExpDraft((d) => ({ ...d, description: v }))} placeholder="Örn: Ofis malzemesi" />
         <Field label="Tutar (₺)" testID="partner-exp-amount" value={expDraft.amount} onChangeText={(v) => setExpDraft((d) => ({ ...d, amount: v }))} keyboardType="decimal-pad" />
         <Muted>KDV %</Muted>
-        <Row>
-          {[0, 1, 10, 20].map((v) => (
-            <Chip key={v} label={`%${v}`} active={n(expDraft.vat_rate) === v} onPress={() => setExpDraft((d) => ({ ...d, vat_rate: String(v) }))} />
-          ))}
+        <Row style={{ justifyContent: "space-between" }}>
+          <Row style={{ flexShrink: 1 }}>
+            {[0, 1, 10, 20].map((v) => (
+              <Chip key={v} label={`%${v}`} active={n(expDraft.vat_rate) === v} onPress={() => setExpDraft((d) => ({ ...d, vat_rate: String(v) }))} />
+            ))}
+          </Row>
+          <Chip
+            compact
+            label="Tutar KDV dahil"
+            active={expDraft.vat_included}
+            onPress={() => setExpDraft((d) => ({ ...d, vat_included: !d.vat_included }))}
+            testID="partner-exp-vat-included"
+          />
         </Row>
-        <Chip
-          label="Tutar KDV dahil"
-          active={expDraft.vat_included}
-          onPress={() => setExpDraft((d) => ({ ...d, vat_included: !d.vat_included }))}
-          testID="partner-exp-vat-included"
-        />
         <Card>
           <Row style={{ justifyContent: "space-between" }}><Muted>Toplam</Muted><Text style={{ fontWeight: "800", color: colors.danger }}>{fmtMoney(expenseCalc(expDraft).total)}</Text></Row>
         </Card>

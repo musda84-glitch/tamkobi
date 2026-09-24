@@ -229,12 +229,14 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
         suffix={moneySuffix(draft.currency)}
       />
       <Muted>KDV %</Muted>
-      <Row>
-        {[0, 1, 10, 20].map((v) => (
-          <Chip key={v} label={`%${v}`} active={n(draft.vat_rate) === v} onPress={() => canEdit && set("vat_rate", String(v))} />
-        ))}
+      <Row style={{ justifyContent: "space-between" }}>
+        <Row style={{ flexShrink: 1 }}>
+          {[0, 1, 10, 20].map((v) => (
+            <Chip key={v} label={`%${v}`} active={n(draft.vat_rate) === v} onPress={() => canEdit && set("vat_rate", String(v))} />
+          ))}
+        </Row>
+        <Chip compact label="Tutar KDV dahil" active={draft.vat_included} onPress={() => canEdit && set("vat_included", !draft.vat_included)} testID="exp-vat-included" />
       </Row>
-      <Chip label="Tutar KDV dahil" active={draft.vat_included} onPress={() => canEdit && set("vat_included", !draft.vat_included)} testID="exp-vat-included" />
       <Card>
         <Row style={{ justifyContent: "space-between" }}><Muted>Net</Muted><Text>{fmtMoney(totals.net, draft.currency)}</Text></Row>
         <Row style={{ justifyContent: "space-between" }}><Muted>KDV</Muted><Text testID="exp-vat-amount">{fmtMoney(totals.vat, draft.currency)}</Text></Row>
