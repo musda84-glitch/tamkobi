@@ -87,6 +87,8 @@ def test_expense_extract_handler_requires_session_and_company():
     assert "_require_request_token(request)" in chunk
     assert "saas._require_company_access(user, company_id)" in chunk
     assert "public_expense_match(match)" in chunk
+    assert "status_code=400, detail=f\"Fiş okunamadı:" in chunk
+    assert "status_code=502, detail=f\"Fiş okunamadı:" not in chunk
 
 
 def test_extract_expense_file_rejects_empty_and_unknown():
@@ -211,4 +213,13 @@ def test_extract_expense_from_image_raises_when_ai_empty(monkeypatch):
 
     monkeypatch.setattr("expense_extract._ai_expense_from_image", boom)
     with pytest.raises(ValueError, match="tutar"):
+        asyncio.run(extract_expense_from_image(b"jpeg-bytes", "image/jpeg"))
+
+
+def test_extract_expense_from_image_auth_error_is_value_error(monkeypatch):
+    async def boom(_data, _mime):
+        raise RuntimeError("401 invalid api key")
+
+    monkeypatch.setattr("expense_extract._ai_expense_from_image", boom)
+    with pytest.raises(ValueError, match="anahtar"):
         asyncio.run(extract_expense_from_image(b"jpeg-bytes", "image/jpeg"))

@@ -13589,7 +13589,7 @@ async def ai_cheque_extract(
         low = err.lower()
         if "401" in err or "403" in err or "anahtar" in low or "api key" in low:
             hint = " Geçersiz veya süresi dolmuş API anahtarı. Platform → AI Entegrasyonu'ndan yeni anahtar kaydedip Bağlantıyı Test Et yapın."
-        raise HTTPException(status_code=502, detail=f"Çek okunamadı: {err[:160]}.{hint}") from e
+        raise HTTPException(status_code=400, detail=f"Çek okunamadı: {err[:160]}.{hint}") from e
 
     draft = out.get("draft") or {}
     match = None
@@ -13639,7 +13639,7 @@ async def ai_expense_extract(
         low = err.lower()
         if "401" in err or "403" in err or "anahtar" in low or "api key" in low:
             hint = " Geçersiz veya süresi dolmuş API anahtarı. Platform → AI Entegrasyonu'ndan yeni anahtar kaydedip Bağlantıyı Test Et yapın."
-        raise HTTPException(status_code=502, detail=f"Fiş okunamadı: {err[:160]}.{hint}") from e
+        raise HTTPException(status_code=400, detail=f"Fiş okunamadı: {err[:160]}.{hint}") from e
 
     draft = out.get("draft") or {}
     match = None

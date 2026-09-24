@@ -159,7 +159,12 @@ def looks_like_image(data: bytes, content_type: str = "", filename: str = "") ->
     return sniffed.startswith("image/")
 
 
-def prepare_vision_image(data: bytes, content_type: str = "", filename: str = "") -> Tuple[bytes, str]:
+def prepare_vision_image(
+    data: bytes,
+    content_type: str = "",
+    filename: str = "",
+    max_edge: int = 1280,
+) -> Tuple[bytes, str]:
     """Vision API'lerin kabul ettiği JPEG üret (HEIC/HEIF dahil). Asla raise etmez."""
     fallback_mime = "image/jpeg"
     if not data:
@@ -192,10 +197,10 @@ def prepare_vision_image(data: bytes, content_type: str = "", filename: str = ""
         im = ImageOps.exif_transpose(im) or im
         if im.mode != "RGB":
             im = im.convert("RGB")
-        max_edge = _settings()["max_edge"]
-        if max(im.size) > max_edge:
-            im.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
-        payload = _save(im, "JPEG", quality=max(70, _settings()["jpeg_quality"]), optimize=True)
+        edge = max(640, int(max_edge or _settings()["max_edge"]))
+        if max(im.size) > edge:
+            im.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+        payload = _save(im, "JPEG", quality=78, optimize=True)
         if payload:
             return payload, "image/jpeg"
     except Exception as e:

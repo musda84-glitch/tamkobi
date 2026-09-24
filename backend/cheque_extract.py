@@ -368,8 +368,10 @@ async def extract_cheque_from_image(data: bytes, mime: str = "image/jpeg", filen
         last_err = e
         logger.info("AI cheque image extract fallback: %s", e)
         if _is_ai_auth_error(e):
-            raise
-    raise ValueError("Çekten tutar okunamadı.") from last_err
+            raise ValueError(
+                "Yapay zeka API anahtarı geçersiz veya eksik. Platform → AI Entegrasyonu'ndan anahtar kaydedip Bağlantıyı Test Et yapın."
+            ) from e
+    raise ValueError("Çekten tutar okunamadı. Daha net bir fotoğraf deneyin.") from last_err
 
 
 async def _send_vision(chat: Any, text: str, image_b64: str, mime: str) -> str:
@@ -422,7 +424,7 @@ async def _send_vision(chat: Any, text: str, image_b64: str, mime: str) -> str:
         url = chat.base_url or f"{OPENAI_BASE}/chat/completions"
         headers = {"Authorization": f"Bearer {chat.api_key}"} if chat.api_key else {}
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(40.0, connect=10.0)) as client:
             resp = await client.post(url, headers={**headers, "Content-Type": "application/json"}, json=payload)
     except httpx.HTTPError as e:
         raise RuntimeError(f"{provider_label(chat.provider)} sunucusuna ulaşılamadı: {e}") from e

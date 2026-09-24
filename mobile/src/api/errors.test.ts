@@ -23,6 +23,13 @@ describe("apiErrorMessage", () => {
     }
   });
 
+  it("keeps a real API sentence on 502 instead of the generic banner", () => {
+    expect(apiErrorMessage({
+      status: 502,
+      response: { data: { detail: "Fiş okunamadı: Yapay zeka API anahtarı yapılandırılmamış." } },
+    }, "Fiş okunamadı.")).toMatch(/anahtarı/);
+  });
+
   it("does not dump nginx HTML from a 502", () => {
     const html = "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>";
     expect(apiErrorMessage({ status: 502, response: { data: { detail: html } } }, "Özet yüklenemedi.")).toMatch(/yanıt vermiyor/);
