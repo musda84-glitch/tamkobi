@@ -5,6 +5,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Muted, PrimaryButton } from "./kit";
 import { colors } from "../theme";
 import {
+  EXPENSE_SCAN_IDLE_HINT,
   expenseScanHint,
   extractExpenseFromAsset,
   type ExpenseExtractResponse,
@@ -68,7 +69,7 @@ export function ExpenseScanButtons({
   return (
     <>
       <Muted testID={`${testID}-hint`}>
-        {busy ? "Fiş okunuyor…" : "Kamera veya galeri ile fiş okuyun; masraf taslağı dolar."}
+        {busy ? "Fiş okunuyor…" : EXPENSE_SCAN_IDLE_HINT}
       </Muted>
       <PrimaryButton
         title={busy ? "Okunuyor…" : "Kamera ile oku"}

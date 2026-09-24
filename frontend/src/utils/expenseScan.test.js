@@ -1,4 +1,4 @@
-import { applyExpenseScan, expenseAmountInput, expenseScanHint } from "./expenseScan";
+import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseAmountInput, expenseScanHint } from "./expenseScan";
 
 describe("expenseScan", () => {
   it("applies a slip onto the web masraf modal", () => {
@@ -14,5 +14,6 @@ describe("expenseScan", () => {
       document_no: "44821",
     });
     expect(expenseScanHint({ amount: 80, category: "Yemek" })).toBe("Yemek fişi okundu · 80 ₺");
+    expect(EXPENSE_SCAN_IDLE_HINT).toMatch(/yapay zeka/i);
   });
 });

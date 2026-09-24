@@ -225,16 +225,66 @@ def _json_object(raw: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
+_STRONG_KEYS = ("date", "document_no", "contact_name", "tax_number")
+
+
+def expense_draft_is_strong(draft: Optional[dict]) -> bool:
+    """Regex/heuristik yeterliyse yapay zekaya gitmeye gerek yok."""
+    if not draft:
+        return False
+    if float(draft.get("amount") or 0) <= 0:
+        return False
+    extras = sum(1 for key in _STRONG_KEYS if draft.get(key))
+    if draft.get("category") and draft.get("category") != "Diğer":
+        extras += 1
+    desc = str(draft.get("description") or "").strip()
+    if desc and desc != "Masraf fişi":
+        extras += 1
+    try:
+        conf = float(draft.get("confidence") or 0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    return extras >= 1 and conf >= 0.5
+
+
+def merge_expense_drafts(primary: dict, fallback: dict) -> dict:
+    """AI taslağındaki boş alanları heuristikle tamamla."""
+    out = dict(primary or {})
+    extra = fallback or {}
+    for key in ("date", "document_no", "contact_name", "tax_number", "notes"):
+        if not out.get(key) and extra.get(key):
+            out[key] = extra[key]
+    desc = str(out.get("description") or "").strip()
+    if (not desc or desc == "Masraf fişi") and extra.get("description"):
+        out["description"] = extra["description"]
+    if (not out.get("category") or out.get("category") == "Diğer") and extra.get("category"):
+        out["category"] = extra["category"]
+    if float(out.get("amount") or 0) <= 0 and float(extra.get("amount") or 0) > 0:
+        out["amount"] = extra["amount"]
+    return normalize_expense_draft(out)
+
+
+def _is_ai_auth_error(err: BaseException) -> bool:
+    low = str(err).lower()
+    return "anahtar" in low or "api key" in low or "401" in str(err) or "403" in str(err)
+
+
+async def _ai_expense_from_text(text: str) -> dict:
+    from ai_service import make_chat
+    from emergentintegrations.llm.chat import UserMessage
+    chat = await make_chat(f"expense-extract-{abs(hash(text[:200]))}", EXPENSE_SYSTEM, purpose="extract")
+    raw = str(await chat.send_message(UserMessage(text=f"MASRAF FİŞİ METNİ:\n\n{text[:12000]}"))).strip()
+    return normalize_expense_draft(_json_object(raw))
+
+
 async def extract_expense_from_text(text: str) -> dict:
     heuristic = parse_expense_text(text)
+    if expense_draft_is_strong(heuristic):
+        return heuristic
     try:
-        from ai_service import make_chat
-        from emergentintegrations.llm.chat import UserMessage
-        chat = await make_chat(f"expense-extract-{abs(hash(text[:200]))}", EXPENSE_SYSTEM, purpose="extract")
-        raw = str(await chat.send_message(UserMessage(text=f"MASRAF FİŞİ METNİ:\n\n{text[:12000]}"))).strip()
-        parsed = normalize_expense_draft(_json_object(raw))
+        parsed = await _ai_expense_from_text(text)
         if parsed["amount"] > 0:
-            return parsed
+            return merge_expense_drafts(parsed, heuristic)
     except Exception as e:
         logger.info("AI expense text extract fallback: %s", e)
     return heuristic
@@ -282,9 +332,7 @@ async def extract_expense_file(data: bytes, filename: str = "", content_type: st
     raise ValueError("JPEG, PNG, WebP veya PDF yükleyin.")
 
 
-async def extract_expense_from_image(data: bytes, mime: str = "image/jpeg") -> dict:
-    if not data:
-        raise ValueError("Görüntü boş.")
+async def _ai_expense_from_image(data: bytes, mime: str) -> dict:
     b64 = base64.b64encode(data).decode("ascii")
     mime = (mime or "image/jpeg").split(";")[0].strip() or "image/jpeg"
     from ai_service import DirectChat, make_chat
@@ -295,10 +343,31 @@ async def extract_expense_from_image(data: bytes, mime: str = "image/jpeg") -> d
     else:
         from emergentintegrations.llm.chat import UserMessage
         raw = str(await chat.send_message(UserMessage(text=f"{prompt}\n(görüntü base64, {mime}, {len(data)} bayt)"))).strip()
-    parsed = normalize_expense_draft(_json_object(raw))
-    if parsed["amount"] <= 0:
-        raise ValueError("Fişten tutar okunamadı.")
-    return parsed
+    return normalize_expense_draft(_json_object(raw))
+
+
+async def extract_expense_from_image(data: bytes, mime: str = "image/jpeg") -> dict:
+    """Fotoğrafta regex yetmez; tutar için yapay zeka gerekir. AI boş dönerse notes heuristiği denenir."""
+    if not data:
+        raise ValueError("Görüntü boş.")
+    last_err: Optional[BaseException] = None
+    try:
+        parsed = await _ai_expense_from_image(data, mime)
+        if parsed["amount"] > 0:
+            return parsed
+        notes = " ".join(
+            str(parsed.get(k) or "")
+            for k in ("notes", "description", "document_no", "contact_name")
+        )
+        heuristic = parse_expense_text(notes)
+        if heuristic["amount"] > 0:
+            return merge_expense_drafts(heuristic, parsed)
+    except Exception as e:
+        last_err = e
+        logger.info("AI expense image extract fallback: %s", e)
+        if _is_ai_auth_error(e):
+            raise
+    raise ValueError("Fişten tutar okunamadı.") from last_err
 
 
 async def _send_vision(chat: Any, text: str, image_b64: str, mime: str) -> str:

@@ -13,7 +13,7 @@ import { FxPicker, fmtMoney } from "../components/FxPicker";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
-import { applyExpenseScan, expenseScanHint } from "../utils/expenseScan";
+import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseScanHint } from "../utils/expenseScan";
 const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -112,7 +112,7 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-6 space-y-4 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="expense-modal">
         <div className="flex items-center justify-between border-b pb-3"><h3 className="text-base font-bold text-slate-900 flex items-center gap-2"><Receipt className="w-5 h-5 text-rose-600" /> {isEdit ? `Masraf Düzenle · ${f.expense_number}` : "Yeni Masraf"}</h3><button type="button" onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button></div>
         <div className="space-y-1.5">
-          <p className="text-[10px] text-slate-500" data-testid="exp-scan-hint">{scanBusy ? "Fiş okunuyor…" : "Kamera veya galeri ile fiş okuyun; tutar, KDV ve açıklama dolar."}</p>
+          <p className="text-[10px] text-slate-500" data-testid="exp-scan-hint">{scanBusy ? "Fiş okunuyor…" : EXPENSE_SCAN_IDLE_HINT}</p>
           <div className="grid grid-cols-2 gap-2">
             <button type="button" disabled={scanBusy} onClick={() => openScan("camera")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-indigo-50 text-indigo-800 border-indigo-200 disabled:opacity-50 text-xs" data-testid="exp-scan-camera"><Camera className="w-3.5 h-3.5" /> Kamera</button>
             <button type="button" disabled={scanBusy} onClick={() => openScan("gallery")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-emerald-50 text-emerald-800 border-emerald-200 disabled:opacity-50 text-xs" data-testid="exp-scan-gallery"><ImagePlus className="w-3.5 h-3.5" /> Galeriden</button>

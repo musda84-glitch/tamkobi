@@ -1,5 +1,5 @@
 import { emptyExpenseDraft } from "./finance";
-import { applyExpensePrefill, applyExpenseScan, expenseAmountInput, expenseScanHint, expenseScanNavParams } from "./expenseScan";
+import { applyExpensePrefill, applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseAmountInput, expenseScanHint, expenseScanNavParams } from "./expenseScan";
 
 describe("expenseScan", () => {
   it("formats amounts and applies a slip draft", () => {
@@ -23,6 +23,7 @@ describe("expenseScan", () => {
       date: "2026-09-21",
     });
     expect(expenseScanHint({ amount: 1035.84, category: "Yakıt" })).toBe("Yakıt fişi okundu · 1035,84 ₺");
+    expect(EXPENSE_SCAN_IDLE_HINT).toMatch(/yapay zeka/i);
   });
 
   it("builds nav params and prefills the new-expense form", () => {
