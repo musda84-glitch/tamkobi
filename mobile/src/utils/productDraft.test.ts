@@ -33,6 +33,7 @@ describe("productDraft", () => {
     expect(body.package_count).toBe(3);
     expect(body.show_in_b2b).toBe(true);
     expect(body.category).toBe("Genel");
+    expect(body.unit).toBe("Adet");
   });
 
   it("maps an existing product into the form", () => {

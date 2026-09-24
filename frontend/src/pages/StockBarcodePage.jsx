@@ -47,6 +47,7 @@ import {
   Copy,
 } from "lucide-react";
 import { CURRENCIES, fmtMoney, moneySuffix } from "../utils/money";
+import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi } from "../utils/stockUnits";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -608,7 +609,6 @@ export default function StockBarcodePage() {
           <button key={k} onClick={() => setPageTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${pageTab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`stock-tab-${k}`}><Icon className="w-3.5 h-3.5" /> {l}</button>
         ))}
       </div>
-      <datalist id="product-units-list">{units.map((u) => <option key={u.name} value={u.name} />)}</datalist>
       <datalist id="product-categories-list">{categories.map((c) => <option key={c.name} value={c.name} />)}</datalist>
       {aiStockImport && <AiStockImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiStockImport(false)} onSaved={loadProducts} />}
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
@@ -1165,7 +1165,16 @@ export default function StockBarcodePage() {
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Birim</label>
-                  <input list="product-units-list" value={newProduct.unit} onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium" placeholder="Adet" data-testid="new-product-unit" />
+                  <select
+                    value={newProduct.unit || DEFAULT_STOCK_UNIT}
+                    onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value || DEFAULT_STOCK_UNIT })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium"
+                    data-testid="new-product-unit"
+                  >
+                    {mergeUnitOptions(unitNamesFromApi(units), newProduct.unit).map((u) => (
+                      <option key={u} value={u}>{u}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

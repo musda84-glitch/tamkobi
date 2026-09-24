@@ -7,6 +7,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { LazyBarcodeScanner } from "../components/LazyBarcodeScanner";
 import { confirmAction } from "../components/chips";
 import { ImageUploader } from "../components/ImageUploader";
+import { GroupedSelect } from "../components/GroupedSelect";
 import { Card, Empty, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors, spacing } from "../theme";
 import type { Product } from "../types";
@@ -24,6 +25,7 @@ import {
   validateProductDraft,
   type ProductDraft,
 } from "../utils/productDraft";
+import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi, unitSelectGroups } from "../utils/stockUnits";
 
 function Chip({
   label,
@@ -111,6 +113,7 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(!isNew);
   const [scan, setScan] = useState(false);
+  const [savedUnits, setSavedUnits] = useState<string[] | null>(null);
 
   const set = <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) => {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -132,6 +135,15 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   }, [canEdit, client, productId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!companyId) return undefined;
+    let cancelled = false;
+    get<{ name?: string }[]>(client, "/products/units", { company_id: companyId })
+      .then((rows) => { if (!cancelled) setSavedUnits(unitNamesFromApi(rows)); })
+      .catch(() => { if (!cancelled) setSavedUnits([]); });
+    return () => { cancelled = true; };
+  }, [client, companyId]);
 
   const save = async () => {
     const invalid = validateProductDraft(draft);
@@ -261,7 +273,13 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
         ))}
       </Row>
       <Field label="Kategori" testID="stock-category" value={draft.category} onChangeText={(v) => set("category", v)} editable={canEdit} />
-      <Field label="Birim" testID="stock-unit" value={draft.unit} onChangeText={(v) => set("unit", v)} editable={canEdit} />
+      <GroupedSelect
+        label="Birim"
+        testID="stock-unit"
+        value={draft.unit || DEFAULT_STOCK_UNIT}
+        onChange={(v) => canEdit && set("unit", v || DEFAULT_STOCK_UNIT)}
+        groups={unitSelectGroups(mergeUnitOptions(savedUnits, draft.unit))}
+      />
 
       <Field label="Alış fiyatı (₺)" testID="stock-purchase" value={draft.purchase_price} onChangeText={(v) => set("purchase_price", v)} keyboardType="decimal-pad" editable={canEdit} />
       <Field label="Satış fiyatı (₺)" testID="stock-sale" value={draft.sale_price} onChangeText={(v) => set("sale_price", v)} keyboardType="decimal-pad" editable={canEdit} />
