@@ -2,7 +2,7 @@
 
 export type OrderMoreIcon = string;
 
-export type OrderMoreKind = "integration_einvoice" | "panel_draft" | "panel_invoiced" | "default";
+export type OrderMoreKind = "panel_einvoice" | "integration_einvoice" | "panel_draft" | "panel_invoiced" | "default";
 
 export type OrderMoreItem = {
   id: string;
@@ -50,6 +50,7 @@ export function orderHasEInvoiceIssued(ord?: OrderMoreOrder | null): boolean {
 }
 
 export function orderMoreMenuKind(ord?: OrderMoreOrder | null): OrderMoreKind {
+  if (isPanelOrder(ord) && orderHasEInvoiceIssued(ord)) return "panel_einvoice";
   if (isIntegrationOrder(ord) && orderHasEInvoiceIssued(ord)) return "integration_einvoice";
   if (isPanelOrder(ord) && ord?.is_invoiced) return "panel_invoiced";
   if (isPanelOrder(ord) && !ord?.is_invoiced) return "panel_draft";
@@ -96,6 +97,21 @@ export function panelDraftMoreItems(): OrderMoreItem[] {
     item("faturalastir", "Faturalaştır", "document-text", { color: "#059669" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", "car", { color: "#0EA5E9" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", "car", { color: "#0EA5E9" }),
+    item("invoice_date", "Fatura Tarihi Değiştir", "time", { color: "#D97706" }),
+    item("kargola", "Kargola", "car", { color: "#E11D48" }),
+  ];
+}
+
+export function panelEInvoiceMoreItems(): OrderMoreItem[] {
+  return [
+    item("mini_10x15", "Mini E-Arşiv Yazdır (10X15cm)", "document-text", { color: "#0284C7" }),
+    item("mini_8x20", "Mini E-Arşiv Yazdır (8X20cm)", "document-text", { color: "#0284C7" }),
+    item("cargo_mini", "Mini Kargo Etiketi Yazdır", "car", { color: "#0EA5E9" }),
+    item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", "car", { color: "#0EA5E9" }),
+    item("earsiv_send", "E-Arşiv Yazdır & Gönder", "mail", { color: "#059669" }),
+    item("cargo_track_notify", "Kargo Takip Kodu Bildir", "time", { color: "#0EA5E9" }),
+    item("invoice_link", "Fatura Linki Gönder", "link", { color: "#F43F5E" }),
+    item("xml", "E-Fatura XML'i İndir", "code-slash", { color: "#0EA5E9" }),
     item("invoice_date", "Fatura Tarihi Değiştir", "time", { color: "#D97706" }),
     item("kargola", "Kargola", "car", { color: "#E11D48" }),
   ];
@@ -154,6 +170,7 @@ export function orderMoreMenuItems(
   opts: { eBelgeItems?: Array<{ eType: "e_invoice" | "e_archive"; label: string; testIdSuffix: string }> } = {},
 ): { kind: OrderMoreKind; items: OrderMoreItem[] } {
   const kind = orderMoreMenuKind(ord);
+  if (kind === "panel_einvoice") return { kind, items: panelEInvoiceMoreItems() };
   if (kind === "integration_einvoice") return { kind, items: integrationEInvoiceMoreItems() };
   if (kind === "panel_draft") return { kind, items: panelDraftMoreItems() };
   if (kind === "panel_invoiced") return { kind, items: panelInvoicedMoreItems() };
@@ -165,6 +182,7 @@ export function mobilePrimaryAction(ord?: OrderMoreOrder | null): { id: string; 
   const kind = orderMoreMenuKind(ord);
   if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır" };
   if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura" };
+  if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv" };
   if (kind === "integration_einvoice") return { id: "cargo_mini", label: "Etiket" };
   return null;
 }
