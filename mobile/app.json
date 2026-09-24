@@ -2,7 +2,7 @@
   "expo": {
     "name": "TamKobi",
     "slug": "tamkobi",
-    "version": "1.0.35",
+    "version": "1.0.36",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tamkobi",
@@ -19,7 +19,7 @@
     },
     "android": {
       "package": "com.tamkobi.app",
-      "versionCode": 36,
+      "versionCode": 37,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#0F172A",
