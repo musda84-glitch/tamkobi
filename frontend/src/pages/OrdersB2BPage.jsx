@@ -42,6 +42,7 @@ import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
 import { eBelgeMenuItems, orderCanIssueEFatura, orderEBelgeType } from "../utils/orderEBelge";
+import { orderMoreMenuItems } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import {
   DropdownMenu,
@@ -402,6 +403,144 @@ export default function OrdersB2BPage() {
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Durum güncellenemedi.");
+    }
+  };
+
+  /** Tek sipariş «Diğer işlemler». */
+  const handleOrderMoreAction = async (actionId, ord, extra = {}) => {
+    if (actionId.startsWith("ebelge_") || extra.eType) {
+      await handleEBelgeInvoice(ord, extra.eType || actionId.replace(/^ebelge_/, ""));
+      return;
+    }
+    if (["mini_10x15", "mini_8x20", "cargo_mini", "cargo_10x10", "xml", "invoice_link", "refresh_status"].includes(actionId)) {
+      await runBulkForOrder(actionId, ord);
+      return;
+    }
+    switch (actionId) {
+      case "navlungo_create": {
+        const has = String(ord.cargo_carrier || "").toLowerCase().includes("navlungo");
+        if (has) {
+          carrierLabels([ord], "navlungo", "Navlungo");
+          return;
+        }
+        try {
+          await axios.post(`${API_URL}/cargo/create-shipment`, {
+            carrier_code: "navlungo",
+            order_id: ord.id || ord._id,
+            customer_name: ord.customer_name,
+            address: ord.shipping_address || ord.address,
+            city: ord.city,
+            customer_phone: ord.customer_phone,
+            company_id: companyId,
+          });
+          toast.success("Navlungo siparişi oluşturuldu.");
+          loadData();
+        } catch (err) {
+          toast.error(err.response?.data?.detail || "Navlungo oluşturulamadı.");
+        }
+        return;
+      }
+      case "earsiv_send":
+        openInvoicePdfs([ord]);
+        if (ord.invoice_id) {
+          try {
+            await axios.post(`${API_URL}/invoices/${ord.invoice_id}/send-to-gib`, {
+              e_type: ord.e_type || orderEBelgeType(ord, contacts),
+            });
+            toast.success("E-Arşiv yazdırma açıldı; GİB gönderimi tetiklendi.");
+            loadData();
+          } catch (err) {
+            toast.message(err.response?.data?.detail || "Yazdırma açıldı; GİB gönderimi atlandı.");
+          }
+        }
+        return;
+      case "cargo_track_notify":
+        if (!ord.cargo_tracking_number) {
+          toast.error("Bu siparişte kargo takip kodu yok.");
+          return;
+        }
+        setNotifyOrder(ord);
+        return;
+      case "digital_code_notify":
+        toast.message("Dijital kod bildirimi bu kanalda henüz bağlanmadı.");
+        return;
+      case "cargo_change":
+        setShipOrder(ord);
+        return;
+      case "edit": {
+        const reason = orderEditBlockedReason(ord);
+        if (reason) toast.error(reason);
+        else setEditOrder(ord);
+        return;
+      }
+      case "dispatch":
+        await makeDispatch(ord);
+        return;
+      case "return":
+        setReturnOrder(ord);
+        return;
+      case "cargo_label":
+        setLabelOrder(ord);
+        return;
+      case "print_form":
+        setPrintOrder(ord);
+        return;
+      case "notify":
+        setNotifyOrder(ord);
+        return;
+      default:
+        toast.message("Bu işlem henüz bağlanmadı.");
+    }
+  };
+
+  /** Tek sipariş için yazdır / XML / link aksiyonları. */
+  const runBulkForOrder = async (actionId, ord) => {
+    if (actionId === "mini_10x15" || actionId === "mini_8x20") {
+      const size = actionId === "mini_8x20" ? "8x20" : "10x15";
+      if (!printMiniInvoices([ord], activeCompany, size)) toast.error("Yazdırılacak fatura yok veya pencere engellendi.");
+      else toast.success("Mini fatura fişi yazdırmaya gönderildi.");
+      return;
+    }
+    if (actionId === "cargo_mini") {
+      if (printThermalLabels([ord], activeCompany, { size: "100x150" })) {
+        axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id || ord._id] }).catch(() => {});
+        toast.success("Mini kargo etiketi yazdırmaya gönderildi.");
+      }
+      return;
+    }
+    if (actionId === "cargo_10x10") {
+      if (printThermalLabels([ord], activeCompany, { size: "100x100" })) toast.success("Etiket (10×10) yazdırmaya gönderildi.");
+      return;
+    }
+    if (actionId === "xml") {
+      await downloadInvoiceXml([ord]);
+      return;
+    }
+    if (actionId === "invoice_link") {
+      if (!ord.invoice_id || !ord.customer_email) {
+        toast.error("Fatura ve müşteri e-postası gerekli.");
+        return;
+      }
+      try {
+        const fd = new FormData();
+        const link = `${window.location.origin}/api/invoices/${ord.invoice_id}/pdf`;
+        fd.append("company_id", companyId);
+        fd.append("to", ord.customer_email);
+        fd.append("subject", `Faturanız ${ord.invoice_number || ord.order_number}`);
+        fd.append("body", `Sayın ${ord.customer_name || ""},\n\n${ord.invoice_number || ord.order_number} numaralı faturanız: ${link}`);
+        fd.append("context", "invoice");
+        fd.append("ref_id", ord.invoice_id);
+        fd.append("contact_id", ord.contact_id || "");
+        fd.append("contact_name", ord.customer_name || "");
+        await axios.post(`${API_URL}/comm/mail/send`, fd);
+        toast.success("Fatura linki gönderildi.");
+      } catch {
+        toast.error("Fatura linki gönderilemedi.");
+      }
+      return;
+    }
+    if (actionId === "refresh_status") {
+      await bulk("refresh");
     }
   };
 
@@ -785,35 +924,32 @@ export default function OrdersB2BPage() {
                           <DropdownMenuTrigger asChild>
                             <button type="button" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 data-[state=open]:bg-slate-100 data-[state=open]:text-slate-900 data-[state=open]:ring-1 data-[state=open]:ring-slate-200" title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="center" side="left" sideOffset={10} collisionPadding={24} className="z-[80] w-60 rounded-xl p-1.5 shadow-lg" data-testid={`order-more-menu-${ord.order_number}`}>
-                            <>
-                                <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">E-Belge (GİB)</div>
-                                {eBelgeMenuItems(ord, contacts).map((item, idx, arr) => (
-                                  <DropdownMenuItem
-                                    key={item.eType}
-                                    onSelect={() => handleEBelgeInvoice(ord, item.eType)}
-                                    className={`gap-2 text-xs font-medium${idx === arr.length - 1 ? " border-b mb-1 pb-1.5" : ""}`}
-                                    data-testid={`e-belge-${item.testIdSuffix}-${ord.order_number}`}
-                                  >
-                                    <Stamp className={`w-4 h-4 shrink-0 ${item.eType === "e_invoice" ? "text-indigo-600" : "text-violet-600"}`} />
-                                    <span className="truncate">{item.label}</span>
-                                  </DropdownMenuItem>
-                                ))}
-                              </>
-                            {[
-                              [Pencil, "Siparişi Düzenle", () => {
-                                const reason = orderEditBlockedReason(ord);
-                                if (reason) toast.error(reason);
-                                else setEditOrder(ord);
-                              }, `edit-order-menu-${ord.order_number}`, true],
-                              [FileIcon, ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "E-İrsaliye Oluştur & Yazdır", () => makeDispatch(ord), `dispatch-btn-${ord.order_number}`, true],
-                              [RotateCcw, "İade Al", () => setReturnOrder(ord), `return-order-btn-${ord.order_number}`, !["returned"].includes(ord.order_status)],
-                              [Tag, "Kargo Etiketi Yazdır", () => setLabelOrder(ord), `cargo-label-btn-${ord.order_number}`, true],
-                              [Printer, ord.form_printed_at ? "Sipariş Formu (yazdırıldı)" : "Sipariş Formu Yazdır", () => setPrintOrder(ord), `print-order-menu-${ord.order_number}`, true],
-                              [MessageSquare, "Müşteriye Bildirim Gönder", () => setNotifyOrder(ord), `notify-order-btn-${ord.order_number}`, true],
-                            ].filter((it) => it[4]).map(([Ico, label, fn, tid]) => (
-                              <DropdownMenuItem key={tid} onSelect={fn} className="gap-2 text-xs font-medium" data-testid={tid}><Ico className="w-4 h-4 shrink-0 text-slate-500" /><span className="truncate">{label}</span></DropdownMenuItem>
-                            ))}
+                          <DropdownMenuContent align="center" side="left" sideOffset={10} collisionPadding={24} className="z-[80] w-72 rounded-xl p-1.5 shadow-lg" data-testid={`order-more-menu-${ord.order_number}`}>
+                            {(() => {
+                              const { kind, items } = orderMoreMenuItems(ord, {
+                                eBelgeItems: eBelgeMenuItems(ord, contacts),
+                              });
+                              let lastSection = null;
+                              return items.map((it) => {
+                                const Ico = it.icon;
+                                const section = it.section && it.section !== lastSection ? it.section : null;
+                                if (it.section) lastSection = it.section;
+                                return (
+                                  <div key={it.id}>
+                                    {section && <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">{section}</div>}
+                                    <DropdownMenuItem
+                                      onSelect={() => handleOrderMoreAction(it.id, ord, { eType: it.eType })}
+                                      className="gap-2 text-xs font-medium"
+                                      data-testid={`order-more-${it.testId}-${ord.order_number}`}
+                                      data-menu-kind={kind}
+                                    >
+                                      <Ico className={`w-4 h-4 shrink-0 ${it.color || "text-slate-500"}`} />
+                                      <span className="truncate">{it.label}</span>
+                                    </DropdownMenuItem>
+                                  </div>
+                                );
+                              });
+                            })()}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
