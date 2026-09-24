@@ -26,7 +26,7 @@ import {
   Layers,
   ArrowRight
 } from "lucide-react";
-import { fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney } from "../utils/money";
 import {
   AreaChart,
   Area,
@@ -319,7 +319,7 @@ export default function Dashboard() {
               <div key={inv.id || inv._id || inv.invoice_number} className="py-3 flex items-center justify-between text-xs">
                 <div>
                   <div className="font-semibold text-slate-800">{inv.contact_name}</div>
-                  <div className="text-slate-400 text-[11px] font-mono">{inv.invoice_number} • {inv.issue_date}</div>
+                  <div className="text-slate-400 text-[11px] font-mono">{inv.invoice_number} • {fmtDate(inv.issue_date)}</div>
                 </div>
                 <div className="text-right">
                   <div className="font-bold text-slate-900">{fmtMoney(inv.grand_total, inv.currency || "TRY")}</div>

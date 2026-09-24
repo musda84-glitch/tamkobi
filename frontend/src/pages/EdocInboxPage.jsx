@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
-import { formatTrAmount } from "../utils/money";
+import { fmtDate, formatTrAmount } from "../utils/money";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const STATUS = {
@@ -238,7 +238,7 @@ export default function EdocInboxPage() {
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${STATUS[d.status]?.[1]}`}>{STATUS[d.status]?.[0]}</span>
                 </div>
                 <div className="text-[10px] text-slate-500">
-                  {d.kind === "dispatch" ? "e-İrsaliye" : "e-Fatura"} · {d.number || "-"} · {d.issue_date} · <b>{fmt(d.grand_total)} ₺</b>
+                  {d.kind === "dispatch" ? "e-İrsaliye" : "e-Fatura"} · {d.number || "-"} · {fmtDate(d.issue_date)} · <b>{fmt(d.grand_total)} ₺</b>
                   {" · "}{d.matched_lines ?? 0}/{(d.lines || []).length} satır{d.contact_id ? "" : " · tedarikçi yok"}
                 </div>
               </button>
@@ -259,7 +259,7 @@ export default function EdocInboxPage() {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <div className="text-sm font-bold text-slate-900">{sel.kind === "dispatch" ? "Gelen e-İrsaliye" : "Gelen e-Fatura"} {sel.number}</div>
-                  <div className="text-slate-500">{sel.issue_date} · {sourceLabel(sel.source, integrator)} · {sel.profile || ""} {sel.type_code || ""}</div>
+                  <div className="text-slate-500">{fmtDate(sel.issue_date)} · {sourceLabel(sel.source, integrator)} · {sel.profile || ""} {sel.type_code || ""}</div>
                 </div>
                 <div className="text-right">
                   <div className="text-lg font-bold text-slate-900">{fmt(sel.grand_total)} ₺</div>

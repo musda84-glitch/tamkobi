@@ -1,4 +1,4 @@
-import { fmtMoney } from "./money";
+import { fmtDate, fmtMoney } from "./money";
 
 export type StatementInvoice = {
   invoice_number?: string;
@@ -96,7 +96,7 @@ export function statementText(
 ): string {
   const last = rows.slice(-12);
   const lines = last.map(
-    (r) => `${r.date}  ${r.doc.split(" • ").slice(0, 2).join(" ")}  ${r.debit ? "Borç " + fmtMoney(r.debit) : "Alacak " + fmtMoney(r.credit)}`
+    (r) => `${fmtDate(r.date)}  ${r.doc.split(" • ").slice(0, 2).join(" ")}  ${r.debit ? "Borç " + fmtMoney(r.debit) : "Alacak " + fmtMoney(r.credit)}`
   );
   const bal = rows.length ? rows[rows.length - 1].balance : Number(contact.balance) || 0;
   return `${companyName || "Firmamız"} - Cari Hesap Ekstresi
@@ -161,7 +161,7 @@ export function statementPrintHtml(
   const totC = rows.reduce((s, r) => s + (r.credit || 0), 0);
   const trs = rows.map((r, i) => (
     `<tr style="border-bottom:1px solid #f1f5f9;${i % 2 ? "background:#f8fafc;" : ""}">`
-    + `<td style="padding:8px;font-family:ui-monospace,monospace;color:#64748b">${esc(r.date)}</td>`
+    + `<td style="padding:8px;font-family:ui-monospace,monospace;color:#64748b">${esc(fmtDate(r.date))}</td>`
     + `<td style="padding:8px">${esc(r.doc)}</td>`
     + `<td style="padding:8px;text-align:right">${r.debit ? `${esc(fmtMoney(r.debit))}` : ""}</td>`
     + `<td style="padding:8px;text-align:right">${r.credit ? `${esc(fmtMoney(r.credit))}` : ""}</td>`

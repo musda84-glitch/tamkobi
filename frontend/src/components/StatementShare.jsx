@@ -7,7 +7,7 @@ import { Printer, Mail, MessageSquare, Phone, Copy, X, Share2, Link2, FileDown }
 import { API_URL, useAuth } from "../context/AuthContext";
 import { QuickMessageModal } from "./QuickMessageModal";
 import { downloadStatementPdf, fetchStatementShare, statementPdfFile } from "../utils/statementShare";
-import { fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney } from "../utils/money";
 
 export const buildStatementRows = (data, { includeCheques = false } = {}) => {
   const rows = [];
@@ -36,7 +36,7 @@ export const statementText = (contact, rows, company) => {
   const ccy = contact?.currency || company?.currency || "TRY";
   const money = (n) => fmtMoney(n, ccy);
   const last = rows.slice(-12);
-  const lines = last.map((r) => `${r.date}  ${r.doc.split(" • ").slice(0, 2).join(" ")}  ${r.debit ? "Borç " + money(r.debit) : "Alacak " + money(r.credit)}`);
+  const lines = last.map((r) => `${fmtDate(r.date)}  ${r.doc.split(" • ").slice(0, 2).join(" ")}  ${r.debit ? "Borç " + money(r.debit) : "Alacak " + money(r.credit)}`);
   const bal = rows.length ? rows[rows.length - 1].balance : contact.balance || 0;
   return `${company?.name || "Firmamız"} - Cari Hesap Ekstresi\nSayın ${contact.name}\nTarih: ${new Date().toLocaleDateString("tr-TR")}\n\n${lines.join("\n")}\n\nGüncel Bakiye: ${money(Math.abs(bal))} ${bal > 0 ? "(Borcunuz)" : bal < 0 ? "(Alacağınız)" : ""}\n\nBilgilerinize sunarız.`;
 };
@@ -201,7 +201,7 @@ export const StatementPrint = ({ contact, rows, company, onClose, variant = "sta
           )}
           <table className="w-full mt-6 border-collapse">
             <thead><tr className="bg-slate-900 text-white"><th className="text-left p-2 rounded-l">Tarih</th><th className="text-left p-2">Belge / Açıklama</th><th className="text-right p-2">Borç</th><th className="text-right p-2">Alacak</th><th className="text-right p-2 rounded-r">Bakiye</th></tr></thead>
-            <tbody>{rows.map((r, i) => <tr key={i} className={`border-b border-slate-100 ${i % 2 ? "bg-slate-50" : ""}`}><td className="p-2 font-mono text-slate-500">{r.date}</td><td className="p-2">{r.doc}</td><td className="p-2 text-right">{r.debit ? money(r.debit) : ""}</td><td className="p-2 text-right">{r.credit ? money(r.credit) : ""}</td><td className="p-2 text-right font-semibold">{money(r.balance)}</td></tr>)}</tbody>
+            <tbody>{rows.map((r, i) => <tr key={i} className={`border-b border-slate-100 ${i % 2 ? "bg-slate-50" : ""}`}><td className="p-2 font-mono text-slate-500">{fmtDate(r.date)}</td><td className="p-2">{r.doc}</td><td className="p-2 text-right">{r.debit ? money(r.debit) : ""}</td><td className="p-2 text-right">{r.credit ? money(r.credit) : ""}</td><td className="p-2 text-right font-semibold">{money(r.balance)}</td></tr>)}</tbody>
             <tfoot><tr className="border-t-2 border-slate-900 font-bold"><td className="p-2" colSpan={2}>TOPLAM</td><td className="p-2 text-right">{money(totD)}</td><td className="p-2 text-right">{money(totC)}</td><td className="p-2 text-right">{money(bal)}</td></tr></tfoot>
           </table>
           <div className="mt-6 flex justify-end"><div className={`rounded-xl px-4 py-3 text-right ${bal > 0 ? "bg-rose-50" : "bg-emerald-50"}`}><div className="text-[10px] uppercase font-bold text-slate-400">Güncel Bakiye</div><div className={`text-xl font-black ${bal > 0 ? "text-rose-700" : "text-emerald-700"}`}>{money(Math.abs(bal))} <span className="text-xs font-semibold">{bal > 0 ? "Borçlu" : bal < 0 ? "Alacaklı" : ""}</span></div></div></div>

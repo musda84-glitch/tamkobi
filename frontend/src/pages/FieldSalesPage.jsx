@@ -27,6 +27,8 @@ export default function FieldSalesPage() {
   const [custQ, setCustQ] = useState("");
   const [prodQ, setProdQ] = useState("");
   const [barcode, setBarcode] = useState("");
+  const [scanQty, setScanQty] = useState("1");
+  const [scanStatus, setScanStatus] = useState("");
   const [customer, setCustomer] = useState(null);
   const [newCust, setNewCust] = useState(null);
   const [cart, setCart] = useState([]);
@@ -116,7 +118,7 @@ export default function FieldSalesPage() {
         image_url: p.image_url, stock_quantity: p.stock_quantity,
       }];
     });
-    toast.success(`${p.name} sepete eklendi`);
+    toast.success(`${p.name} sepete eklendi (${qty})`);
   };
   const setQty = (i, q) => setCart((prev) => prev.map((it, k) => {
     if (k !== i) return it;
@@ -140,13 +142,17 @@ export default function FieldSalesPage() {
     const raw = (code || barcode).trim();
     if (!raw) return;
     setBarcode("");
-    const local = products.find((p) => p.barcode === raw || p.sku === raw || (p.variants || []).some((v) => v.barcode === raw));
-    if (local) { addProduct(local); return; }
+    const qty = Math.max(1, parseInt(String(scanQty || "1").replace(/\D/g, ""), 10) || 1);
+    const local = products.find((p) => p.barcode === raw || p.sku === raw || (p.variants || []).some((v) => v.barcode === raw || v.sku === raw));
+    if (local) { addProduct(local, qty); setScanStatus(`${local.name} sepete eklendi (${qty})`); return; }
     try {
       const r = await axios.get(`${API_URL}/products/barcode/${encodeURIComponent(raw)}?company_id=${companyId}`);
-      addProduct(r.data);
+      addProduct(r.data, qty);
+      setScanStatus(`${r.data.name} sepete eklendi (${qty})`);
     } catch {
-      toast.error("Barkod ile ürün bulunamadı.");
+      const miss = `Barkod bulunamadı: ${raw}`;
+      setScanStatus(miss);
+      toast.error(miss);
     }
   };
 
@@ -282,9 +288,30 @@ export default function FieldSalesPage() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <div className="lg:col-span-3 bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <div className="font-bold text-slate-900">2. Ürün ekle</div>
-          <form onSubmit={(e) => { e.preventDefault(); scanBarcode(); }} className="flex gap-2">
+          <form onSubmit={(e) => { e.preventDefault(); scanBarcode(); }} className="flex gap-2 items-stretch">
             <input value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder="Barkod oku veya yaz, Enter" className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-3 text-base min-h-12 font-mono" data-testid="saha-barcode" inputMode="numeric" />
-            <ScanButton size="md" label="Kamera" title="Kamera ile barkod / QR okut" onScan={(code) => { setBarcode(code); scanBarcode(code); }} />
+            <label className="shrink-0 flex flex-col justify-center">
+              <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Adet</span>
+              <input
+                value={scanQty}
+                onChange={(e) => setScanQty(e.target.value.replace(/\D/g, ""))}
+                inputMode="numeric"
+                className="w-14 border rounded-xl p-2 text-sm font-black text-center bg-white min-h-12"
+                data-testid="saha-scan-qty"
+                aria-label="Adet çarpan"
+              />
+            </label>
+            <ScanButton
+              size="md"
+              continuous
+              qtyEnabled
+              qty={scanQty}
+              onQtyChange={setScanQty}
+              statusText={scanStatus}
+              label="Okut"
+              title="Seri barkod okut — adet çarpan"
+              onScan={(code) => { setBarcode(code); scanBarcode(code); }}
+            />
             <button type="submit" className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-semibold min-h-12" data-testid="saha-barcode-go">Ekle</button>
           </form>
           <div className="relative">

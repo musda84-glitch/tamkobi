@@ -34,7 +34,7 @@ import {
   Filter
 } from "lucide-react";
 import { useDataRefresh } from "../utils/dataRefresh";
-import { fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney } from "../utils/money";
 const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
 
 export default function ContactsPage() {
@@ -231,7 +231,7 @@ export default function ContactsPage() {
                   {buildStatementRows(statementData).length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Hareket yok.</td></tr>}
                   {buildStatementRows(statementData).map((r, idx) => (
                     <tr key={idx} className={r.kind === "payment" ? "bg-emerald-50/50" : ""} data-testid={`statement-row-${r.kind}-${idx}`}>
-                      <td className="py-2 px-3 text-slate-500 font-mono">{r.date}</td>
+                      <td className="py-2 px-3 text-slate-500 font-mono">{fmtDate(r.date)}</td>
                       <td className="py-2 px-3 font-semibold text-slate-800"><span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${r.kind === "payment" ? "bg-emerald-500" : "bg-rose-500"}`} />{r.doc}</td>
                       <td className="py-2 px-3 text-right font-medium text-rose-700">{r.debit ? fmtMoney(r.debit, selectedContactStatement.currency || "TRY") : '-'}</td>
                       <td className="py-2 px-3 text-right font-medium text-emerald-700">{r.credit ? fmtMoney(r.credit, selectedContactStatement.currency || "TRY") : '-'}</td>

@@ -5,7 +5,7 @@ import { channelTr } from "../utils/labels";
 import { ExportButtons } from "./ExportButtons";
 import { OrdersBulkMenu } from "./OrdersBulkMenu";
 import { orderGross } from "../utils/orderMoney";
-import { formatTrAmount } from "../utils/money";
+import { fmtDate, formatTrAmount } from "../utils/money";
 import { orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
 import {
   ORDER_DOC_STATUS_ALL,
@@ -22,7 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 
-const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { label: "Tutar (KDV dahil)", num: true, value: (r) => orderGross(r) }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
+const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => fmtDate(r.order_date) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { label: "Tutar (KDV dahil)", num: true, value: (r) => orderGross(r) }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
 
 export const ORDER_FILTER_DEFAULTS = {
   q: "",

@@ -5,7 +5,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, CalendarClock, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { formatTrAmount } from "../utils/money";
+import { fmtDate, formatTrAmount } from "../utils/money";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const QUICK = [0, 7, 15, 30, 45, 60, 90];
@@ -48,7 +48,7 @@ export const ContactTermsModal = ({ contact, onClose, onSaved }) => {
             <table className="w-full" data-testid="aging-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1">Fatura</th><th className="py-1">Tarih</th><th className="py-1">Vade</th><th className="py-1 text-right">Kalan</th><th className="py-1 text-right">Gecikme</th><th className="py-1 text-right">Vade Farkı</th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {aging.rows.length === 0 && <tr><td colSpan={6} className="py-3 text-center text-slate-400">Açık fatura yok.</td></tr>}
-                {aging.rows.map((r) => <tr key={r.invoice_id} className={r.overdue_days > 0 ? "bg-rose-50/50" : ""}><td className="py-1 font-mono font-semibold">{r.invoice_number}</td><td className="py-1 text-center text-slate-500">{r.issue_date}</td><td className="py-1 text-center text-slate-500">{r.due_date}</td><td className="py-1 text-right font-bold">{fmt(r.remaining)} ₺</td><td className="py-1 text-right">{r.overdue_days > 0 ? <span className="inline-flex items-center gap-0.5 text-rose-600 font-semibold"><AlertTriangle className="w-3 h-3" /> {r.overdue_days} gün</span> : <span className="text-slate-400">—</span>}</td><td className="py-1 text-right text-amber-700 font-semibold">{r.late_fee ? fmt(r.late_fee) + " ₺" : "—"}</td></tr>)}
+                {aging.rows.map((r) => <tr key={r.invoice_id} className={r.overdue_days > 0 ? "bg-rose-50/50" : ""}><td className="py-1 font-mono font-semibold">{r.invoice_number}</td><td className="py-1 text-center text-slate-500">{fmtDate(r.issue_date)}</td><td className="py-1 text-center text-slate-500">{fmtDate(r.due_date)}</td><td className="py-1 text-right font-bold">{fmt(r.remaining)} ₺</td><td className="py-1 text-right">{r.overdue_days > 0 ? <span className="inline-flex items-center gap-0.5 text-rose-600 font-semibold"><AlertTriangle className="w-3 h-3" /> {r.overdue_days} gün</span> : <span className="text-slate-400">—</span>}</td><td className="py-1 text-right text-amber-700 font-semibold">{r.late_fee ? fmt(r.late_fee) + " ₺" : "—"}</td></tr>)}
               </tbody></table>
           </div>
         )}
