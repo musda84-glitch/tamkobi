@@ -6,6 +6,7 @@ import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, confirmAction, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { ExpenseScanButtons } from "../components/ExpenseScanButtons";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact } from "../types";
@@ -24,14 +25,26 @@ import {
   type ExpenseDraft,
   type Partner,
 } from "../utils/finance";
+import { applyExpensePrefill, applyExpenseScan } from "../utils/expenseScan";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 
 export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const { client, companyId, can } = useAuth();
-  const { account_id: preAccountId } = useLocalSearchParams<{ account_id?: string }>();
+  const prefill = useLocalSearchParams<{
+    account_id?: string;
+    amount?: string;
+    description?: string;
+    category?: string;
+    date?: string;
+    document_no?: string;
+    vat_rate?: string;
+    vat_included?: string;
+    notes?: string;
+    contact_id?: string;
+  }>();
   const canEdit = can("/expenses", "edit");
   const isNew = !expenseId;
-  const [draft, setDraft] = useState<ExpenseDraft>(emptyExpenseDraft(todayIso()));
+  const [draft, setDraft] = useState<ExpenseDraft>(() => applyExpensePrefill(emptyExpenseDraft(todayIso()), prefill));
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -73,14 +86,14 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
         setLoaded(exp);
         setDraft(draftFromExpense(exp, todayIso()));
         setPayAcc(exp.account_id || "");
-      } else if (preAccountId) {
-        setDraft((d) => (d.account_id ? d : { ...d, account_id: String(preAccountId) }));
+      } else if (prefill.account_id) {
+        setDraft((d) => (d.account_id ? d : { ...d, account_id: String(prefill.account_id) }));
       }
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Masraf yüklenemedi."));
     }
-  }, [client, companyId, expenseId, preAccountId]);
+  }, [client, companyId, expenseId, prefill.account_id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -162,6 +175,17 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       <Muted>Kira, fatura, yakıt — kasa/banka ile ödenebilir.</Muted>
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
+      {canEdit ? (
+        <Card testID="exp-scan-card">
+          <ExpenseScanButtons
+            testID="exp-scan"
+            disabled={busy}
+            onDraft={(scan, match) => setDraft((cur) => applyExpenseScan(cur, scan, match))}
+            onHint={(hint) => { setMessage(hint); setError(null); }}
+            onError={(msg) => { setError(msg); setMessage(null); }}
+          />
+        </Card>
+      ) : null}
       <Field label="Tarih" testID="exp-date" value={draft.date} onChangeText={(v) => set("date", v)} placeholder="YYYY-MM-DD" editable={canEdit} />
       <GroupedSelect
         label="Kategori"

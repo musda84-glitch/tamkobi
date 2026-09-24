@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Plus, Receipt, Wallet, RefreshCw, Trash2, Pencil, Search, CheckCircle2, Clock, Paperclip, X, ArrowUpDown, Repeat } from "lucide-react";
+import { Plus, Receipt, Wallet, RefreshCw, Trash2, Pencil, Search, CheckCircle2, Clock, Paperclip, X, ArrowUpDown, Repeat, Camera, ImagePlus } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { useEscape } from "../utils/useEscape";
@@ -13,6 +13,7 @@ import { FxPicker, fmtMoney } from "../components/FxPicker";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
+import { applyExpenseScan, expenseScanHint } from "../utils/expenseScan";
 const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -37,6 +38,40 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
   const [f, setF] = useState(initial);
   const [newCat, setNewCat] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  const camRef = React.useRef(null);
+  const galRef = React.useRef(null);
+  const pickGuard = React.useRef(0);
+  const scanFile = async (file) => {
+    if (!file || scanBusy || !companyId) return;
+    setScanBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await axios.post(
+        `${API_URL}/ai/expense-extract?company_id=${encodeURIComponent(companyId)}`,
+        fd,
+        { timeout: 180000 },
+      );
+      const draft = r.data?.draft;
+      if (!draft || !(Number(draft.amount) > 0)) {
+        toast.error("Fişten tutar okunamadı. Daha net bir fotoğraf deneyin.");
+        return;
+      }
+      setF((cur) => applyExpenseScan(cur, draft, r.data?.matched_contact));
+      toast.success(expenseScanHint(draft));
+    } catch (err) {
+      toast.error(err.response?.data?.detail || (err.code === "ECONNABORTED" ? "İstek zaman aşımına uğradı." : "Fiş okunamadı."));
+    } finally {
+      setScanBusy(false);
+      if (camRef.current) camRef.current.value = "";
+      if (galRef.current) galRef.current.value = "";
+    }
+  };
+  const openScan = (kind) => {
+    pickGuard.current = Date.now() + 1500;
+    (kind === "camera" ? camRef : galRef).current?.click();
+  };
   // Modal açılışında taze çek — sayfa açıkken eklenen kasa/banka eski listede kalmasın.
   const [accounts, setAccounts] = useState(accountsProp || []);
   const [accountsLoading, setAccountsLoading] = useState(true);
@@ -73,9 +108,18 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { if (Date.now() < pickGuard.current) return; onClose(); }}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-6 space-y-4 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="expense-modal">
         <div className="flex items-center justify-between border-b pb-3"><h3 className="text-base font-bold text-slate-900 flex items-center gap-2"><Receipt className="w-5 h-5 text-rose-600" /> {isEdit ? `Masraf Düzenle · ${f.expense_number}` : "Yeni Masraf"}</h3><button type="button" onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-slate-500" data-testid="exp-scan-hint">{scanBusy ? "Fiş okunuyor…" : "Kamera veya galeri ile fiş okuyun; tutar, KDV ve açıklama dolar."}</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" disabled={scanBusy} onClick={() => openScan("camera")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-indigo-50 text-indigo-800 border-indigo-200 disabled:opacity-50 text-xs" data-testid="exp-scan-camera"><Camera className="w-3.5 h-3.5" /> Kamera</button>
+            <button type="button" disabled={scanBusy} onClick={() => openScan("gallery")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-emerald-50 text-emerald-800 border-emerald-200 disabled:opacity-50 text-xs" data-testid="exp-scan-gallery"><ImagePlus className="w-3.5 h-3.5" /> Galeriden</button>
+          </div>
+          <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => scanFile(e.target.files?.[0])} data-testid="exp-scan-camera-input" />
+          <input ref={galRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" className="hidden" onChange={(e) => scanFile(e.target.files?.[0])} data-testid="exp-scan-gallery-input" />
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
           <div><label className="block font-semibold mb-1">Tarih</label><input type="date" required value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} className={inputCls} data-testid="exp-date" /></div>
           <div className="md:col-span-2"><label className="flex justify-between font-semibold mb-1">Kategori <button type="button" onClick={() => setNewCat(!newCat)} className="text-emerald-700 hover:underline">{newCat ? "listeden seç" : "+ yeni kategori"}</button></label>

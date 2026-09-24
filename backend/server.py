@@ -53,6 +53,7 @@ from seed_data import seed_all_data, seed_partners
 import demo
 from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test
 from cheque_extract import extract_cheque_file, public_cheque_match, session_token_from_headers
+from expense_extract import extract_expense_file, public_expense_match
 from receipt_extract import extract_receipt_file
 from storage_service import init_storage, put_object, get_object, APP_NAME
 import image_opt
@@ -13608,6 +13609,51 @@ async def ai_cheque_extract(
         "draft": draft,
         "source": out.get("source"),
         "matched_contact": public_cheque_match(match),
+        "filename": name,
+        "text_preview": out.get("text_preview") or "",
+    }
+
+
+@api_router.post("/ai/expense-extract")
+async def ai_expense_extract(
+    request: Request,
+    file: UploadFile = File(...),
+    company_id: str = Query("comp_nexus_main_01"),
+    user: dict = Depends(get_current_user),
+):
+    _require_request_token(request)
+    saas._require_company_access(user, company_id)
+    name = file.filename or "expense.jpg"
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
+    try:
+        out = await extract_expense_file(data, name, file.content_type or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)[:220]) from e
+    except Exception as e:
+        logger.error("AI expense extract failed: %s", e)
+        err = str(e)
+        hint = ""
+        low = err.lower()
+        if "401" in err or "403" in err or "anahtar" in low or "api key" in low:
+            hint = " Geçersiz veya süresi dolmuş API anahtarı. Platform → AI Entegrasyonu'ndan yeni anahtar kaydedip Bağlantıyı Test Et yapın."
+        raise HTTPException(status_code=502, detail=f"Fiş okunamadı: {err[:160]}.{hint}") from e
+
+    draft = out.get("draft") or {}
+    match = None
+    tax = str(draft.get("tax_number") or "").strip()
+    if tax:
+        match = await db.contacts.find_one({"company_id": company_id, "tax_number_or_id": tax})
+    if not match and draft.get("contact_name"):
+        match = await db.contacts.find_one({
+            "company_id": company_id,
+            "name": {"$regex": re.escape(str(draft["contact_name"])[:25]), "$options": "i"},
+        })
+    return {
+        "draft": draft,
+        "source": out.get("source"),
+        "matched_contact": public_expense_match(match),
         "filename": name,
         "text_preview": out.get("text_preview") or "",
     }
