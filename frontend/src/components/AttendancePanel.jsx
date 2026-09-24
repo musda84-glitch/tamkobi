@@ -12,9 +12,10 @@ import { isDailyWage, yevmiyeStatusLine } from "../utils/personnelWage";
 import { workplaceShort } from "../utils/workplace";
 import { fmtDmy } from "../utils/dateFormat";
 import { attendanceGroupToggleLabel, groupAttendanceRecords } from "../utils/attendanceGroups";
+import { attendanceCalendarMonth } from "../utils/attendanceSelf";
 
 export const AttendancePanel = ({ companyId }) => {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => attendanceCalendarMonth());
   const [data, setData] = useState(null);
   const [schedEmp, setSchedEmp] = useState(null);
   const [otAssign, setOtAssign] = useState(null); // { employee_id, employee_name, hours, date, note }

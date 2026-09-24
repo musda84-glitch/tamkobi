@@ -1,4 +1,4 @@
-import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimInSubtitle, mesaimLongDate, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimInSubtitle, mesaimLongDate, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -106,6 +106,19 @@ describe("shouldWatchCheckoutUnlock", () => {
     expect(shouldWatchCheckoutUnlock({ checkedIn: true, checkoutUnlocked: false })).toBe(true);
     expect(shouldWatchCheckoutUnlock({ checkedIn: true, checkoutUnlocked: true })).toBe(false);
     expect(shouldWatchCheckoutUnlock({ checkedOut: true, earlyPending: true })).toBe(false);
+  });
+});
+
+describe("attendance calendar day", () => {
+  it("uses Europe/Istanbul and reloads after midnight", () => {
+    const before = new Date("2026-09-23T20:59:00.000Z"); // 23:59 TR
+    const after = new Date("2026-09-23T21:01:00.000Z"); // 00:01 TR
+    expect(attendanceCalendarDate(before)).toBe("2026-09-23");
+    expect(attendanceCalendarDate(after)).toBe("2026-09-24");
+    expect(attendanceCalendarMonth(after)).toBe("2026-09");
+    expect(shouldReloadAttendanceDay("2026-09-23", before)).toBe(false);
+    expect(shouldReloadAttendanceDay("2026-09-23", after)).toBe(true);
+    expect(shouldReloadAttendanceDay(null, after)).toBe(true);
   });
 });
 

@@ -7,7 +7,7 @@ import { TimeField } from "../components/TimeField";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
-import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
@@ -107,7 +107,7 @@ export function AttendanceScreen() {
 
   const load = useCallback(async () => {
     try {
-      const month = new Date().toISOString().slice(0, 7);
+      const month = attendanceCalendarMonth();
       const res = await get<AttendancePayload>(client, "/personnel/attendance/me", { company_id: companyId, month });
       setData(res);
       setSignal(res.location_signal || null);
@@ -118,6 +118,13 @@ export function AttendanceScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (shouldReloadAttendanceDay(data?.today_date)) load();
+    }, ATTENDANCE_DAY_WATCH_MS);
+    return () => clearInterval(id);
+  }, [data?.today_date, load]);
 
   useEffect(() => {
     if (!shouldWatchCheckoutUnlock({

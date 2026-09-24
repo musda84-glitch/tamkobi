@@ -6,7 +6,7 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Cal
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
@@ -63,7 +63,7 @@ const RecordRow = ({ r, onConfirm, onRejectTimeEdit, onDispute }) => {
 
 export default function MyAttendancePage() {
   const { user } = useAuth();
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => attendanceCalendarMonth());
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(null);
   const [earlyOpen, setEarlyOpen] = useState(false);
@@ -80,6 +80,12 @@ export default function MyAttendancePage() {
   const [signal, setSignal] = useState(null);
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => { setData(r.data); setSignal(r.data.location_signal || null); }).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (shouldReloadAttendanceDay(data?.today_date)) load();
+    }, ATTENDANCE_DAY_WATCH_MS);
+    return () => clearInterval(id);
+  }, [data?.today_date, load]);
 
   const reportLocation = useCallback(async (reason) => {
     let coords;

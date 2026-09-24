@@ -9243,11 +9243,12 @@ async def create_dispatch(order_id: str):
 # ----------------- PERSONEL PUANTAJ -----------------
 @api_router.get("/personnel/attendance")
 async def list_attendance(company_id: Optional[str] = "comp_nexus_main_01", month: Optional[str] = None):
-    month = month or datetime.now(timezone.utc).strftime("%Y-%m")
-    rows = await db.attendance.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(3000)
-    emps = await db.employees.find({"company_id": company_id}).to_list(200)
     company = await db.companies.find_one({"_id": company_id}) or {}
     today_s = attendance._today(attendance.merge_schedule(company))
+    month = month or today_s[:7]
+    await attendance.rehome_early_checkouts_for_company(company, today_s)
+    rows = await db.attendance.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(3000)
+    emps = await db.employees.find({"company_id": company_id}).to_list(200)
     workplaces = await attendance.workplaces_by_employee(company_id, [e["_id"] for e in emps], today_s, company.get("location"))
     summary = []
     for e in emps:
@@ -9304,7 +9305,10 @@ async def set_company_location(company_id: str, req: Dict[str, Any]):
 async def geo_status(company_id: str = "comp_nexus_main_01", user: dict = Depends(get_current_user)):
     company = await db.companies.find_one({"_id": company_id}) or {}
     emp = await db.employees.find_one({"$or": [{"_id": user.get("employee_id") or "-"}, {"user_id": str(user.get("_id", user.get("id")))}]})
-    today = attendance._today(attendance.merge_schedule(company, emp))
+    sched = attendance.merge_schedule(company, emp)
+    today = attendance._today(sched)
+    if emp:
+        await attendance.rehome_early_checkout(emp, today, sched)
     rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": today}) if emp else None
     workplace = await attendance.workplace_for_employee(emp, company, today) if emp else None
     sched = attendance.merge_schedule(company, emp)
@@ -9334,9 +9338,10 @@ async def upsert_attendance(req: Dict[str, Any]):
     if not emp:
         raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
     sched = attendance.merge_schedule(await db.companies.find_one({"_id": emp["company_id"]}) or {}, emp)
-    date = req.get("date") or attendance._today(sched)
     action = req.get("action")
     now_hm = attendance.now_hm(sched)
+    today = attendance._today(sched)
+    date = req.get("date") or today
     patch: Dict[str, Any] = {}
     for k in ("status", "check_in", "check_out", "note"):
         if req.get(k) is not None:
@@ -9344,6 +9349,15 @@ async def upsert_attendance(req: Dict[str, Any]):
     if action in ("check_in", "check_out"):
         patch["status"] = "present"
         patch[action] = attendance.manager_punch_time(req, action, now_hm)
+    if not req.get("date"):
+        clock = str(patch.get("check_out") or patch.get(action) or now_hm)[:5]
+        if action == "check_out" or (patch.get("check_out") and not patch.get("check_in")):
+            date = await attendance.punch_date_for_action(emp, sched, "check_out", clock, today)
+            if date != today:
+                patch["overnight_checkout"] = True
+        else:
+            await attendance.rehome_early_checkout(emp, today, sched)
+            date = today
     existing = await db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
     rec = await attendance.apply_day(emp, date, patch, source=req.get("source") or "manager", confirmed=False if action or patch else None)
     round_info = attendance.apply_manager_time_edit_round(existing, rec, attendance._now(), action if action in ("check_in", "check_out") else None)

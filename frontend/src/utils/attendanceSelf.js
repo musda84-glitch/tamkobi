@@ -36,6 +36,34 @@ export function managerTimeEditHint(edit) {
 }
 
 export const CHECKOUT_UNLOCK_WATCH_MS = 12_000;
+export const ATTENDANCE_DAY_WATCH_MS = 30_000;
+export const ATTENDANCE_TZ = "Europe/Istanbul";
+
+export function attendanceCalendarDate(now, timeZone = ATTENDANCE_TZ) {
+  const d = now || new Date();
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+  } catch {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+}
+
+export function attendanceCalendarMonth(now, timeZone = ATTENDANCE_TZ) {
+  return attendanceCalendarDate(now, timeZone).slice(0, 7);
+}
+
+export function shouldReloadAttendanceDay(todayDate, now, timeZone = ATTENDANCE_TZ) {
+  if (!todayDate) return true;
+  return attendanceCalendarDate(now, timeZone) !== String(todayDate).slice(0, 10);
+}
 
 export function shouldWatchCheckoutUnlock({ earlyPending, checkedIn, checkedOut, checkoutUnlocked } = {}) {
   if (checkedOut) return false;
