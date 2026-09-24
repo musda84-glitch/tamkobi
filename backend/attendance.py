@@ -863,6 +863,17 @@ def geo_confirm_action_tr(action: Optional[str]) -> str:
     return "Giriş" if action == "check_in" else "Çıkış"
 
 
+def decision_status_tr(status: Optional[str]) -> str:
+    raw = str(status or "").strip().lower()
+    if raw in ("approved", "approve", "accepted"):
+        return "onaylandı"
+    if raw in ("rejected", "reject", "denied"):
+        return "reddedildi"
+    if raw in ("pending",):
+        return "bekliyor"
+    return (status or "").strip() or "—"
+
+
 def build_geo_confirm_request(
     *,
     action: str,
@@ -1648,7 +1659,7 @@ async def decide_geo_confirm(att_id: str, req: Dict[str, Any], request: Request)
         "user_id": rec.get("employee_id"),
         "type": "geo_confirm_decision",
         "title": f"{geo_confirm_action_tr(action)} " + ("onaylandı" if approved else "reddedildi"),
-        "message": f"{rec.get('employee_name')} — {gcr['status']}. {gcr.get('decision_note') or ''}".strip(),
+        "message": f"{rec.get('employee_name')} — {decision_status_tr(gcr.get('status'))}. {gcr.get('decision_note') or ''}".strip(),
         "link": "/mesai",
         "is_read": False,
         "created_at": _now(),
@@ -2204,7 +2215,7 @@ async def decide_early_leave(att_id: str, req: Dict[str, Any], request: Request)
         "user_id": rec.get("employee_id"),
         "type": "early_leave_decision",
         "title": "Erken çıkış " + ("onaylandı" if approved else "reddedildi"),
-        "message": f"{rec.get('employee_name')} — {elr['status']}. {elr.get('decision_note') or ''}".strip(),
+        "message": f"{rec.get('employee_name')} — {decision_status_tr(elr.get('status'))}. {elr.get('decision_note') or ''}".strip(),
         "link": "/mesai",
         "is_read": False,
         "created_at": _now(),
@@ -2344,7 +2355,7 @@ async def decide_intraday_leave(att_id: str, req: Dict[str, Any], request: Reque
         "user_id": rec.get("employee_id"),
         "type": "intraday_leave_decision",
         "title": "Gün içi izin " + ("onaylandı" if approved else "reddedildi"),
-        "message": f"{rec.get('employee_name')} — {ilr.get('out_time')}–{ilr.get('return_time')} · {ilr['status']}. {ilr.get('decision_note') or ''}".strip(),
+        "message": f"{rec.get('employee_name')} — {ilr.get('out_time')}–{ilr.get('return_time')} · {decision_status_tr(ilr.get('status'))}. {ilr.get('decision_note') or ''}".strip(),
         "link": "/mesai",
         "is_read": False,
         "created_at": _now(),

@@ -1,5 +1,6 @@
 from attendance import (
     classify_self_punch_geo,
+    decision_status_tr,
     geo_confirm_action_tr,
     geo_confirm_needs_manager,
     geo_confirm_reason_tr,
@@ -40,6 +41,8 @@ def test_geo_confirm_labels():
     assert geo_confirm_reason_tr("time_edit") == "saat düzeltme"
     assert geo_confirm_action_tr("check_in") == "Giriş"
     assert geo_confirm_action_tr("check_out") == "Çıkış"
+    assert decision_status_tr("approved") == "onaylandı"
+    assert decision_status_tr("rejected") == "reddedildi"
 
 
 def test_self_punch_correction_uses_explicit_clock():

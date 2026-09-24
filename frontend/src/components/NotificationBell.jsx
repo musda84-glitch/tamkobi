@@ -5,6 +5,7 @@ import { Bell, CheckCircle2, Volume2, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
+import { localizeNotificationText } from "../utils/notificationText";
 import { notifySoundPlan, playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 
 export const NotificationBell = ({ companyId }) => {
@@ -78,7 +79,7 @@ export const NotificationBell = ({ companyId }) => {
             {items.map((n) => (
               <button key={n.id} onClick={() => openItem(n)} className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 flex gap-2 ${n.is_read ? "opacity-60" : ""}`} data-testid={`notification-item-${n.id}`}>
                 {n.title?.includes("ONAYLANDI") ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />}
-                <span className="min-w-0"><span className="block text-xs font-bold text-slate-900 truncate">{n.title}</span><span className="block text-[11px] text-slate-600">{n.message}</span><span className="block text-[10px] text-slate-400 mt-0.5">{new Date(n.created_at).toLocaleString("tr-TR")}</span></span>
+                <span className="min-w-0"><span className="block text-xs font-bold text-slate-900 truncate">{n.title}</span><span className="block text-[11px] text-slate-600">{localizeNotificationText(n.message)}</span><span className="block text-[10px] text-slate-400 mt-0.5">{new Date(n.created_at).toLocaleString("tr-TR")}</span></span>
               </button>
             ))}
           </div>

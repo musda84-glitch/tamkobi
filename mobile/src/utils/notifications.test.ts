@@ -1,8 +1,10 @@
 import {
   latestNotifications,
+  localizeNotificationText,
   notificationAge,
   notificationLook,
   notificationRoute,
+  notificationText,
   notificationTitle,
   liveBadgeCounts,
   tileBadgeLabel,
@@ -71,6 +73,14 @@ describe("liveBadgeCounts", () => {
       orders: 4, sevk: 0, personnel: 0, banking: 0, atolye: 0, edoc: 0,
     });
     expect(unreadFromBadges({ unread: 9 })).toBe(9);
+  });
+});
+
+describe("notificationText", () => {
+  it("translates English decision words in stored copy", () => {
+    expect(localizeNotificationText("Davut — approved.")).toBe("Davut — onaylandı.");
+    expect(notificationText({ message: "Davut — approved." })).toBe("Davut — onaylandı.");
+    expect(notificationLook({ title: "Giriş onaylandı", message: "Davut — approved." }).tone).toBe("emerald");
   });
 });
 
