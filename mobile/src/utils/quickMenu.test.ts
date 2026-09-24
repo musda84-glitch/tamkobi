@@ -88,7 +88,7 @@ describe("visibleQuickTiles", () => {
       banking: "Banka & Kasa",
       pay: "Tahsilat & Ödeme",
       cheques: "Çek",
-      sevk: "Sevkiyat",
+      sevk: "Sipariş Hazırla",
       atolye: "Atölye Ekranı",
       personnel: "Personel",
       edoc: "Gelen e-Fatura",
