@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2 } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { workMapsLink } from "../utils/mapsLink";
@@ -24,6 +24,7 @@ import { ContactStatementMenu } from "./ContactStatementMenu";
 import { StatementShareBar, StatementPrint, buildStatementRows } from "./StatementShare";
 import { shareStatementLink } from "../utils/statementShare";
 import { buildContactPayForm, contactPayModalMeta } from "../utils/contactPayMenu";
+import { applyReceiptDraft, receiptScanHint } from "../utils/receiptScan";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
 import { fmtMoney } from "../utils/money";
@@ -236,6 +237,40 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [payForm, setPayForm] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [accounts, setAccounts] = useState([]);
+  const [receiptScanBusy, setReceiptScanBusy] = useState(false);
+  const receiptCamRef = useRef(null);
+  const receiptGalRef = useRef(null);
+  const receiptPickGuard = useRef(0);
+  const scanReceiptFile = async (file) => {
+    if (!file || receiptScanBusy || !c?.company_id) return;
+    setReceiptScanBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await axios.post(
+        `${API_URL}/ai/receipt-extract?company_id=${encodeURIComponent(c.company_id)}`,
+        fd,
+        { timeout: 180000 },
+      );
+      const draft = r.data?.draft;
+      if (!draft || !(Number(draft.amount) > 0)) {
+        toast.error("Makbuzdan tutar okunamadı. Daha net bir fotoğraf deneyin.");
+        return;
+      }
+      setPayForm((cur) => applyReceiptDraft(cur, draft));
+      toast.success(receiptScanHint(draft));
+    } catch (err) {
+      toast.error(err.response?.data?.detail || (err.code === "ECONNABORTED" ? "İstek zaman aşımına uğradı." : "Makbuz okunamadı."));
+    } finally {
+      setReceiptScanBusy(false);
+      if (receiptCamRef.current) receiptCamRef.current.value = "";
+      if (receiptGalRef.current) receiptGalRef.current.value = "";
+    }
+  };
+  const openReceiptPicker = (kind) => {
+    receiptPickGuard.current = Date.now() + 1500;
+    (kind === "camera" ? receiptCamRef : receiptGalRef).current?.click();
+  };
   const openPay = async (opts = {}) => {
     try {
       const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`);
@@ -854,7 +889,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {payForm && (() => {
           const meta = contactPayModalMeta(payForm);
           return (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setPayForm(null)}>
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => { if (Date.now() < receiptPickGuard.current) return; setPayForm(null); }}>
             <form onSubmit={savePay} className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="collect-modal" data-menu-id={payForm.menuId || ""}>
               <div className="flex justify-between border-b pb-2">
                 <div>
@@ -911,6 +946,15 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   {payForm.type === "inflow" && !payForm.preferPos && <p className="text-[10px] text-slate-400">Tahsilatta kredi kartı seçilemez; ortaklar hesabı kullanılabilir.</p>}
                 </>
               )}
+              <div className="space-y-1.5">
+                <p className="text-[10px] text-slate-500" data-testid="collect-receipt-hint">{receiptScanBusy ? "Makbuz okunuyor…" : "Kamera veya galeri ile makbuz okuyun; tutar ve açıklama dolar."}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" disabled={receiptScanBusy} onClick={() => openReceiptPicker("camera")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-indigo-50 text-indigo-800 border-indigo-200 disabled:opacity-50" data-testid="collect-receipt-camera"><Camera className="w-3.5 h-3.5" /> Kamera</button>
+                  <button type="button" disabled={receiptScanBusy} onClick={() => openReceiptPicker("gallery")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-emerald-50 text-emerald-800 border-emerald-200 disabled:opacity-50" data-testid="collect-receipt-gallery"><ImagePlus className="w-3.5 h-3.5" /> Galeriden</button>
+                </div>
+                <input ref={receiptCamRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => scanReceiptFile(e.target.files?.[0])} data-testid="collect-receipt-camera-input" />
+                <input ref={receiptGalRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" className="hidden" onChange={(e) => scanReceiptFile(e.target.files?.[0])} data-testid="collect-receipt-gallery-input" />
+              </div>
               <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="collect-amount-input" /></div>
               <div><label className="block font-semibold mb-1">Açıklama</label><input value={payForm.description} onChange={(e) => setPayForm({ ...payForm, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-desc-input" /></div>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setPayForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="collect-save-btn">{payForm.method === "ledger" ? "Fişi Kaydet" : "Kaydet"}</button></div>
