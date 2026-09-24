@@ -31,10 +31,12 @@ describe("orderMoreMenu", () => {
     expect(orderMoreMenuKind(ord)).toBe("integration_einvoice");
     const { items } = orderMoreMenuItems(ord);
     const labels = items.map((i) => i.label);
-    expect(labels).toEqual(integrationEInvoiceMoreItems().map((i) => i.label));
+    expect(labels.slice(0, -2)).toEqual(integrationEInvoiceMoreItems().map((i) => i.label));
     expect(labels[0]).toBe("Siparişin Güncel Durumunu Getir");
     expect(labels).toContain("E-Fatura XML'i İndir");
     expect(labels).toContain("Navlungo Siparişi Oluştur");
+    expect(labels).toContain("Siparişi Excel İndir");
+    expect(labels).toContain("Siparişi PDF İndir");
   });
 
   it("panel draft (B2B/manual) shows Faturalaştır / Kargola menu", () => {
@@ -47,6 +49,8 @@ describe("orderMoreMenu", () => {
       "Mini Kargo Etiketi Yazdır 10X10",
       "Fatura Tarihi Değiştir",
       "Kargola",
+      "Siparişi Excel İndir",
+      "Siparişi PDF İndir",
     ]);
   });
 
@@ -65,15 +69,19 @@ describe("orderMoreMenu", () => {
       "Mini Kargo Etiketi Yazdır 10X10",
       "Fatura Tarihi Değiştir",
       "Kargola",
+      "Siparişi Excel İndir",
+      "Siparişi PDF İndir",
     ]);
   });
 
   it("B2B + GİB e-belge uses panel e-invoice ops menu on web and mobile", () => {
     const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", order_number: "B2B-2026-0009" };
     expect(orderMoreMenuKind(ord)).toBe("panel_einvoice");
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual(panelEInvoiceMoreItems().map((i) => i.label));
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label).slice(0, -2)).toEqual(panelEInvoiceMoreItems().map((i) => i.label));
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Mini E-Arşiv Yazdır (10X15cm)");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("E-Fatura XML'i İndir");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Siparişi Excel İndir");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Siparişi PDF İndir");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("E-Fatura Oluştur");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Navlungo Siparişi Oluştur");
   });
