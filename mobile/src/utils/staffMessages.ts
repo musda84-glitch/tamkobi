@@ -324,8 +324,58 @@ export function chatTimeLabel(value?: string | null, now: number = Date.now()): 
   return fmtDmy(toYmd(d));
 }
 
+export function chatClockLabel(value?: string | null): string {
+  const t = Date.parse(String(value || ""));
+  if (Number.isNaN(t)) return "";
+  return new Date(t).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+}
+
+export function chatDayKey(value?: string | null): string {
+  const t = Date.parse(String(value || ""));
+  if (Number.isNaN(t)) return "";
+  return toYmd(new Date(t));
+}
+
+export function chatDayLabel(value?: string | null, now: number = Date.now()): string {
+  const t = Date.parse(String(value || ""));
+  if (Number.isNaN(t)) return "";
+  const d = new Date(t);
+  const n = new Date(now);
+  const sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+  if (sameDay) return "Bugün";
+  const yest = new Date(n);
+  yest.setDate(n.getDate() - 1);
+  if (d.getFullYear() === yest.getFullYear() && d.getMonth() === yest.getMonth() && d.getDate() === yest.getDate()) return "Dün";
+  return fmtDmy(toYmd(d));
+}
+
+export type MessageTickKind = "none" | "delivered" | "read";
+
+export function messageTickKind(m?: StaffMessage | null, own?: boolean | null): MessageTickKind {
+  if (!own || !m) return "none";
+  return m.read_at ? "read" : "delivered";
+}
+
+export type ThreadDayItem =
+  | { type: "day"; key: string; label: string }
+  | { type: "msg"; key: string; message: StaffMessage };
+
 export function threadInOrder(rows?: StaffMessage[] | null): StaffMessage[] {
   return [...(rows || [])].sort((a, b) => (Date.parse(a.created_at || "") || 0) - (Date.parse(b.created_at || "") || 0));
+}
+
+export function threadDayItems(rows?: StaffMessage[] | null, now: number = Date.now()): ThreadDayItem[] {
+  const items: ThreadDayItem[] = [];
+  let lastDay = "";
+  for (const m of threadInOrder(rows)) {
+    const day = chatDayKey(m.created_at);
+    if (day && day !== lastDay) {
+      items.push({ type: "day", key: `day-${day}`, label: chatDayLabel(m.created_at, now) });
+      lastDay = day;
+    }
+    items.push({ type: "msg", key: String(m.id || m.created_at || items.length), message: m });
+  }
+  return items;
 }
 
 export function isOwnMessage(

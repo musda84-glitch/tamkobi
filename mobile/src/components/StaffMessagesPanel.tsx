@@ -11,6 +11,7 @@ import {
   announceAudienceLabel,
   buildChatList,
   chatAvatarColor,
+  chatClockLabel,
   chatInitials,
   chatPeer,
   chatTimeLabel,
@@ -18,6 +19,7 @@ import {
   MESSAGES_COLLAPSED_KEY,
   inboxUnreadTotal,
   isOwnMessage,
+  messageTickKind,
   parseHiddenFlag,
   mergeInboxWithDirectory,
   mergeManagerInbox,
@@ -25,8 +27,9 @@ import {
   peerPostBody,
   peerQuery,
   peerSelectGroups,
-  threadInOrder,
+  threadDayItems,
   validateMessageBody,
+  type MessageTickKind,
   type ChatListRow,
   type PeerRef,
   type StaffAnnouncement,
@@ -47,7 +50,32 @@ function Avatar({ name, tint, icon }: { name: string; tint: string; icon?: keyof
   );
 }
 
+function Tick({ kind }: { kind: MessageTickKind }) {
+  if (kind === "none") return null;
+  return (
+    <Ionicons
+      name="checkmark-done"
+      size={14}
+      color={kind === "read" ? "#53BDEB" : "#94A3B8"}
+      testID={kind === "read" ? "msg-tick-read" : "msg-tick-delivered"}
+      accessibilityLabel={kind === "read" ? "Okundu" : "Görüldü"}
+    />
+  );
+}
+
+function DayChip({ label }: { label: string }) {
+  return (
+    <View style={{ alignItems: "center", marginVertical: 8 }}>
+      <View style={{ backgroundColor: "#E2E8F0", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
+        <Text testID="msg-day-chip" style={{ fontSize: 10, fontWeight: "800", color: colors.muted }}>{label}</Text>
+      </View>
+    </View>
+  );
+}
+
 function Bubble({ m, own, showAuthor }: { m: StaffMessage; own: boolean; showAuthor?: boolean }) {
+  const tick = messageTickKind(m, own);
+  const clock = chatClockLabel(m.created_at);
   return (
     <View style={{ alignItems: own ? "flex-end" : "flex-start", marginBottom: 6 }}>
       <View
@@ -67,8 +95,11 @@ function Bubble({ m, own, showAuthor }: { m: StaffMessage; own: boolean; showAut
           <Text style={{ color: colors.indigo, fontSize: 10, fontWeight: "800", marginBottom: 1 }}>{m.from_name || "Kişi"}</Text>
         ) : null}
         <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18 }}>{m.body}</Text>
-        {m.created_at ? (
-          <Text style={{ color: colors.muted, fontSize: 10, fontWeight: "700", marginTop: 2, textAlign: "right" }}>{chatTimeLabel(m.created_at)}</Text>
+        {clock || tick !== "none" ? (
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 3, marginTop: 2 }}>
+            {clock ? <Text style={{ color: colors.muted, fontSize: 10, fontWeight: "700" }}>{clock}</Text> : null}
+            <Tick kind={tick} />
+          </View>
         ) : null}
       </View>
     </View>
@@ -360,7 +391,7 @@ export function StaffMessagesPanel({
   }
   if (!data) return null;
 
-  const ordered = threadInOrder(thread);
+  const ordered = threadDayItems(thread);
 
   return (
     <View testID="home-messages-panel" style={chrome}>
@@ -549,11 +580,13 @@ export function StaffMessagesPanel({
         <View style={{ backgroundColor: "#F1F5F9", borderRadius: 16, padding: 10, minHeight: 120 }}>
           {!ordered.length ? (
             <Text style={{ color: colors.muted, fontSize: 12, textAlign: "center", paddingVertical: 24 }}>Henüz mesaj yok. Aşağıdan yazın.</Text>
-          ) : ordered.map((m) => (
+          ) : ordered.map((item) => item.type === "day" ? (
+            <DayChip key={item.key} label={item.label} />
+          ) : (
             <Bubble
-              key={m.id || m.created_at}
-              m={m}
-              own={isOwnMessage(m, selfId, mode)}
+              key={item.key}
+              m={item.message}
+              own={isOwnMessage(item.message, selfId, mode)}
               showAuthor={openPeer?.kind === "group"}
             />
           ))}
