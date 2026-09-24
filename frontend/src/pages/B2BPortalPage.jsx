@@ -10,7 +10,7 @@ import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, 
 import { B2BAiCart } from "../components/B2BAiCart";
 import { ScanButton } from "../components/CameraScanner";
 import { addCartLine, parseStoredCart, setCartLineQty } from "../utils/b2bCart";
-import { applyB2BScan, matchesB2BQuery } from "../utils/b2bSearch";
+import { applyB2BScan, matchesB2BQuery, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bSearch";
 
 const ALL_TABS = [
   { id: "catalog", label: "Ürünler", Icon: Package },
@@ -341,9 +341,10 @@ export default function B2BPortalPage() {
                               type="text"
                               inputMode="numeric"
                               pattern="[0-9]*"
-                              value={draftQty[p.id] ?? "1"}
+                              value={qtyDraftShown(draftQty, p.id)}
                               onChange={(e) => setDraftQty((dq) => ({ ...dq, [p.id]: e.target.value.replace(/\D/g, "") }))}
-                              onBlur={() => setDraftQty((dq) => ({ ...dq, [p.id]: String(Math.max(1, parseInt(dq[p.id], 10) || 1)) }))}
+                              onFocus={() => setDraftQty((dq) => ({ ...dq, [p.id]: qtyDraftOnFocus() }))}
+                              onBlur={() => setDraftQty((dq) => ({ ...dq, [p.id]: qtyDraftOnBlur(dq[p.id]) }))}
                               onKeyDown={(e) => { if (e.key === "Enter") addWithQty(p); }}
                               className="w-full bg-transparent text-center font-black text-sm text-slate-900 py-0.5 outline-none"
                               data-testid={`b2b-add-qty-${p.sku}`}
