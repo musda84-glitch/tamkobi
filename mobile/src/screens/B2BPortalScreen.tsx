@@ -16,7 +16,7 @@ import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
 import { addCartLine, b2bFlashChrome, cartCount, formatCartSheetMeta, formatOrderItemLabel, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "../utils/b2bCart";
 import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
-import { canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty } from "../utils/b2bCatalog";
+import { canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bCatalog";
 import {
   addEditProduct,
   canCancelOrder,
@@ -173,6 +173,8 @@ function CatalogTile({
                 testID={`b2b-add-qty-${p.id}`}
                 value={qty}
                 keyboardType="number-pad"
+                onFocus={() => onQty(qtyDraftOnFocus())}
+                onBlur={() => onQty(qtyDraftOnBlur(qty))}
                 onChangeText={(v) => onQty(v.replace(/\D/g, ""))}
                 style={{ textAlign: "center", fontWeight: "900", fontSize: 14, color: colors.text, paddingVertical: 2 }}
               />
@@ -637,7 +639,7 @@ export function B2BPortalScreen() {
                       showPrices={showPrices}
                       showStock={showStock}
                       allowOrders={allowOrders}
-                      qty={draftQty[p.id] ?? "1"}
+                      qty={qtyDraftShown(draftQty, p.id)}
                       note={draftNotes[p.id] || ""}
                       inCart={productCartQty(cart, p.id)}
                       added={addedId === p.id}

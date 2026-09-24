@@ -1,3 +1,20 @@
+export function parseDraftQty(raw) {
+  return Math.max(1, parseInt(String(raw ?? "1").replace(/\D/g, ""), 10) || 1);
+}
+
+export function qtyDraftShown(map, id) {
+  if (!map || !Object.prototype.hasOwnProperty.call(map, id)) return "1";
+  return String(map[id] ?? "");
+}
+
+export function qtyDraftOnFocus() {
+  return "";
+}
+
+export function qtyDraftOnBlur(raw) {
+  return String(parseDraftQty(raw));
+}
+
 /** B2B katalog araması: ad, SKU, barkod ve etiketler (tags). */
 export function matchesB2BQuery(product, query) {
   const q = String(query || "").trim().toLowerCase();

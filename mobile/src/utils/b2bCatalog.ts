@@ -41,6 +41,20 @@ export function parseDraftQty(raw?: string | null): number {
   return Math.max(1, parseInt(String(raw ?? "1").replace(/\D/g, ""), 10) || 1);
 }
 
+/** Unset keys show 1; "" stays empty so focus-to-type can clear the field. */
+export function qtyDraftShown(map: Record<string, string> | null | undefined, id: string): string {
+  if (!map || !Object.prototype.hasOwnProperty.call(map, id)) return "1";
+  return String(map[id] ?? "");
+}
+
+export function qtyDraftOnFocus(): string {
+  return "";
+}
+
+export function qtyDraftOnBlur(raw?: string | null): string {
+  return String(parseDraftQty(raw));
+}
+
 export function canAddProduct(p: B2BProduct, showStock: boolean, allowOrders: boolean): boolean {
   if (!allowOrders) return false;
   if (showStock && p.in_stock === false) return false;

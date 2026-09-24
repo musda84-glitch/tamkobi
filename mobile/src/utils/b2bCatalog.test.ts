@@ -1,4 +1,4 @@
-import { canAddProduct, catalogCategories, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty } from "./b2bCatalog";
+import { canAddProduct, catalogCategories, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "./b2bCatalog";
 
 const p = (over: Record<string, unknown> = {}) => ({
   id: "1",
@@ -50,6 +50,15 @@ describe("parseDraftQty / canAddProduct", () => {
     expect(parseDraftQty("")).toBe(1);
     expect(parseDraftQty("3")).toBe(3);
     expect(parseDraftQty("x")).toBe(1);
+  });
+
+  it("clears the qty field on focus and restores 1 on empty blur", () => {
+    expect(qtyDraftShown({}, "p1")).toBe("1");
+    expect(qtyDraftShown({ p1: "" }, "p1")).toBe("");
+    expect(qtyDraftShown({ p1: "12" }, "p1")).toBe("12");
+    expect(qtyDraftOnFocus()).toBe("");
+    expect(qtyDraftOnBlur("")).toBe("1");
+    expect(qtyDraftOnBlur("8")).toBe("8");
   });
 
   it("blocks out-of-stock when stock is shown", () => {
