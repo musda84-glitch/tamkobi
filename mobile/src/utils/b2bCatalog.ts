@@ -41,6 +41,52 @@ export function parseDraftQty(raw?: string | null): number {
   return Math.max(1, parseInt(String(raw ?? "1").replace(/\D/g, ""), 10) || 1);
 }
 
+function scanCodeOf(value?: string | null): string {
+  return normalizeScanText(value).toLowerCase();
+}
+
+/** Exact barcode or SKU match (variants included). */
+export function findCatalogByScan<T extends { barcode?: string | null; sku?: string | null; variants?: Array<{ barcode?: string | null; sku?: string | null }> }>(
+  products: T[] | null | undefined,
+  code?: string | null,
+): T | null {
+  const c = scanCodeOf(code);
+  if (!c) return null;
+  return (products || []).find((p) => {
+    if (scanCodeOf(p.barcode) === c || scanCodeOf(p.sku) === c) return true;
+    return (p.variants || []).some((v) => scanCodeOf(v.barcode) === c || scanCodeOf(v.sku) === c);
+  }) || null;
+}
+
+export type B2BScanResult<T> = {
+  product: T | null;
+  qty: number;
+  action: "add" | "filter" | "miss";
+  message: string;
+};
+
+/** Seri okutma: çarpan kadar sepete ekle; bulunamazsa arama, sipariş kapalıysa filtre. */
+export function applyB2BScan<T extends { name?: string | null; barcode?: string | null; sku?: string | null; in_stock?: boolean; variants?: Array<{ barcode?: string | null; sku?: string | null }> }>(opts: {
+  products: T[] | null | undefined;
+  code?: string | null;
+  qty?: string | number | null;
+  allowOrders?: boolean;
+  showStock?: boolean;
+}): B2BScanResult<T> {
+  const code = normalizeScanText(opts.code);
+  const qty = parseDraftQty(opts.qty == null ? "1" : String(opts.qty));
+  const product = findCatalogByScan(opts.products, code);
+  if (!product) {
+    return { product: null, qty, action: "miss", message: code ? `Barkod bulunamadı: ${code}` : "Barkod okutun." };
+  }
+  const ordersOn = opts.allowOrders !== false;
+  const blocked = !ordersOn || (Boolean(opts.showStock) && product.in_stock === false);
+  if (blocked) {
+    return { product, qty, action: "filter", message: `${product.name || "Ürün"} bulundu` };
+  }
+  return { product, qty, action: "add", message: `${product.name || "Ürün"} sepete eklendi (${qty})` };
+}
+
 export function canAddProduct(p: B2BProduct, showStock: boolean, allowOrders: boolean): boolean {
   if (!allowOrders) return false;
   if (showStock && p.in_stock === false) return false;

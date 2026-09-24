@@ -23,6 +23,32 @@ Kurallar:
 - drawer_name: keşideci. contact_name: lehdar / cari adı.
 - Bulamadığın metin alanlarına null yaz. amount yoksa 0."""
 
+# Formu doldurmak için yeterli alanlar; portal token / bakiye dönülmez.
+_CHEQUE_MATCH_KEYS = ("name", "tax_number_or_id", "phone", "email")
+
+
+def public_cheque_match(match: Optional[dict]) -> Optional[dict]:
+    """Cari eşleşmesini çek formuna güvenli alanlarla indirger."""
+    if not match:
+        return None
+    out = {"id": str(match.get("_id") or match.get("id") or "")}
+    for key in _CHEQUE_MATCH_KEYS:
+        value = match.get(key)
+        if value not in (None, ""):
+            out[key] = value
+    return out
+
+
+def session_token_from_headers(authorization: str = "", cookie: str = "") -> Optional[str]:
+    """Bearer or cookie session; empty means the caller is anonymous."""
+    if (authorization or "").startswith("Bearer "):
+        token = authorization[7:].strip()
+        if token:
+            return token
+    cookie = (cookie or "").strip()
+    return cookie or None
+
+
 _AMOUNT_RE = re.compile(
     r"(?:tutar|toplam|yalnız|bedel)\s*[:.]?\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{1,2})|[0-9]+(?:[.,][0-9]{1,2})?)\s*(?:₺|tl|try)?",
     re.I,

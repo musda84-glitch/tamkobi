@@ -426,10 +426,11 @@ export function AttendanceScreen() {
           punchEdit={punchEdit}
           punchEditTime={punchEditTime}
           onPunchEditTime={setPunchEditTime}
-          onPunchEditConfirm={() => {
+          onPunchEditConfirm={(time) => {
             if (!punchEdit) return;
-            if (!/^\d{1,2}:\d{2}$/.test(punchEditTime.trim())) { setError("Saat seçin."); return; }
-            act(punchEdit, punchEditTime.trim().slice(0, 5));
+            const hm = String(time || punchEditTime || "").trim().slice(0, 5);
+            if (!/^\d{1,2}:\d{2}$/.test(hm)) { setError("Saat seçin."); return; }
+            act(punchEdit, hm);
           }}
           onPunchEditCancel={() => setPunchEdit(null)}
           onCheckIn={() => {

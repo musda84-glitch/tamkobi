@@ -72,7 +72,7 @@ const pickBackCamera = (devices) => {
  * Önce native BarcodeDetector (tam kare), yoksa html5-qrcode (yüksek çözünürlük + geniş alan).
  * continuous=true → okuduktan sonra kapanmaz; aynı kod 1,5 sn içinde tekrar sayılmaz.
  */
-export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Barkod / QR Okut" }) => {
+export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Barkod / QR Okut", qtyEnabled = false, qty, onQtyChange, statusText }) => {
   const hostIdRef = useRef(`cam-scan-${Math.random().toString(36).slice(2)}`);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -427,6 +427,19 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
             EAN-13/8, UPC, Code 128/39/93, ITF, Codabar, QR, Data Matrix, PDF417 desteklenir.
           </div>
         )}
+        {qtyEnabled ? (
+          <label className="flex items-center justify-center gap-2 text-white pt-1">
+            <span className="font-bold">Adet çarpan</span>
+            <input
+              value={qty ?? "1"}
+              onChange={(e) => onQtyChange?.(e.target.value.replace(/\D/g, ""))}
+              inputMode="numeric"
+              className="w-16 rounded-lg px-2 py-1 text-slate-900 font-black text-center"
+              data-testid="camera-scanner-qty"
+            />
+          </label>
+        ) : null}
+        {statusText ? <div className="text-emerald-300 font-bold" data-testid="camera-scanner-status">{statusText}</div> : null}
         {continuous && <div>Sürekli okuma açık — her okuma otomatik işlenir. Bitince <b>X</b> ile kapatın.</div>}
         {engine && status === "scanning" && (
           <div className="text-slate-500" data-testid="camera-scanner-engine">
@@ -439,7 +452,7 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
 };
 
 /** Girdilerin yanına konan kamera düğmesi — panel, B2B, hızlı satış vb. ortak */
-export const ScanButton = ({ onScan, continuous = false, title, className = "", size = "md", label }) => {
+export const ScanButton = ({ onScan, continuous = false, title, className = "", size = "md", label, qtyEnabled = false, qty, onQtyChange, statusText }) => {
   const [open, setOpen] = useState(false);
   const cls = size === "sm" ? "p-1.5" : "px-3 py-2";
   return (
@@ -460,6 +473,10 @@ export const ScanButton = ({ onScan, continuous = false, title, className = "", 
           onClose={() => setOpen(false)}
           continuous={continuous}
           title={title}
+          qtyEnabled={qtyEnabled}
+          qty={qty}
+          onQtyChange={onQtyChange}
+          statusText={statusText}
         />
       )}
     </>

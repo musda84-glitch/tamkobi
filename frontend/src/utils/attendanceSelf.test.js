@@ -1,4 +1,4 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
 
 describe("selfAttendanceGeoMode", () => {
   test("never blocks the punch — GPS is attached when a target or tracking exists", () => {
@@ -13,6 +13,10 @@ describe("selfAttendanceGeoMode", () => {
     expect(geoConfirmHint({ geo_confirm_request: { status: "pending", action: "check_out", reason: "time_edit", proposed_time: "18:00" } })).toMatch(/saat düzeltme/);
     expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(true);
     expect(mesaimPunchEditHint("check_in")).toMatch(/yönetici/);
+    expect(mesaimPunchNowLabel("check_in")).toBe("Şimdiki saat ile giriş");
+    expect(mesaimPunchNowLabel("check_out")).toBe("Şimdiki saat ile çıkış");
+    expect(resolveNowHm("16:43:09")).toBe("16:43");
+    expect(resolveNowHm("", new Date(2026, 8, 24, 9, 5))).toBe("09:05");
   });
 
   test("attaches checkout geo when tracking is on and never requires it", () => {
