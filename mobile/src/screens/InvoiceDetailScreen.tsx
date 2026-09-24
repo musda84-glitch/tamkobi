@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Platform, Pressable, Text } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -11,7 +11,7 @@ import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { go } from "../nav";
 import { colors } from "../theme";
-import type { Invoice } from "../types";
+import type { Invoice, Product } from "../types";
 import { splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups, type BankAccount, type Partner } from "../utils/finance";
 import { computeLine, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
@@ -28,6 +28,7 @@ import {
 } from "../utils/invoiceDraft";
 import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 import { printInvoiceForm } from "../utils/orderShare";
 
 function confirmAction(title: string, msg: string, onYes: () => void) {
@@ -60,6 +61,7 @@ export function InvoiceDetailScreen() {
   const [editLine, setEditLine] = useState<{ index: number; name: string; quantity: string; unit_price: string; vat_rate: number } | null>(null);
   const [gdMode, setGdMode] = useState<GdMode>("amount");
   const [gdValue, setGdValue] = useState("");
+  const [catalog, setCatalog] = useState<Record<string, Product>>({});
 
   const load = useCallback(async () => {
     try {
@@ -100,6 +102,19 @@ export function InvoiceDetailScreen() {
   }, [client, companyId]);
 
   useFocusEffect(useCallback(() => { load(); loadAccounts(); }, [load, loadAccounts]));
+
+  useEffect(() => {
+    const ids = lineProductIds((inv?.items || []) as Array<Record<string, unknown>>);
+    if (!ids.length) {
+      setCatalog({});
+      return;
+    }
+    let cancelled = false;
+    get<Product[]>(client, "/products", { company_id: companyId, lite: 1, ids: ids.join(",") })
+      .then((rows) => { if (!cancelled) setCatalog(indexProductsByKey(rows)); })
+      .catch(() => { if (!cancelled) setCatalog({}); });
+    return () => { cancelled = true; };
+  }, [client, companyId, inv?.items]);
 
   const run = async (fn: () => Promise<void>, fallback: string) => {
     setBusy(true);
@@ -241,6 +256,7 @@ export function InvoiceDetailScreen() {
             title={String(it.product_name || it.name || "Kalem")}
             subtitle={`${it.quantity} ${String(it.unit || "")} × ${fmtMoney(it.unit_price, inv.currency)} · KDV %${it.vat_rate ?? 0}${it.discount_rate ? ` · %${it.discount_rate} isk.` : ""}`}
             right={fmtMoney(it.total_incl || it.total, inv.currency)}
+            image={lineItemImage(it as Record<string, unknown>, catalog)}
           />
         );
         if (!canEdit) return <React.Fragment key={i}>{row}</React.Fragment>;
