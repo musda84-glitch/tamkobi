@@ -5,6 +5,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Muted, PrimaryButton } from "./kit";
 import { colors } from "../theme";
 import {
+  CHEQUE_SCAN_IDLE_HINT,
   chequeScanHint,
   extractChequeFromAsset,
   type ChequeExtractResponse,
@@ -68,7 +69,7 @@ export function ChequeScanButtons({
   return (
     <>
       <Muted testID={`${testID}-hint`}>
-        {busy ? "Çek okunuyor…" : "Kamera veya galeri ile çek / senet okuyun; tutar, vade ve banka dolar."}
+        {busy ? "Çek okunuyor…" : CHEQUE_SCAN_IDLE_HINT}
       </Muted>
       <PrimaryButton
         title={busy ? "Okunuyor…" : "Kamera ile oku"}

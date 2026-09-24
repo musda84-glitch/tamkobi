@@ -10,7 +10,7 @@ import { ExportButtons } from "../components/ExportButtons";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { PromissoryPrint } from "../components/PromissoryPrint";
 import { fmtDate, formatTrAmount } from "../utils/money";
-import { applyChequeScan, chequeScanHint } from "../utils/chequeScan";
+import { applyChequeScan, CHEQUE_SCAN_IDLE_HINT, chequeScanHint } from "../utils/chequeScan";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -97,7 +97,7 @@ const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
           <button type="button" onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
         </div>
         <div className="space-y-1.5">
-          <p className="text-[10px] text-slate-500" data-testid="cheque-scan-hint">{scanBusy ? "Çek okunuyor…" : "Kamera veya galeri ile çek / senet okuyun; tutar, vade ve banka dolar."}</p>
+          <p className="text-[10px] text-slate-500" data-testid="cheque-scan-hint">{scanBusy ? "Çek okunuyor…" : CHEQUE_SCAN_IDLE_HINT}</p>
           <div className="grid grid-cols-2 gap-2">
             <button type="button" disabled={scanBusy} onClick={() => openScan("camera")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-indigo-50 text-indigo-800 border-indigo-200 disabled:opacity-50 text-xs" data-testid="cheque-scan-camera"><Camera className="w-3.5 h-3.5" /> Kamera</button>
             <button type="button" disabled={scanBusy} onClick={() => openScan("gallery")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-emerald-50 text-emerald-800 border-emerald-200 disabled:opacity-50 text-xs" data-testid="cheque-scan-gallery"><ImagePlus className="w-3.5 h-3.5" /> Galeriden</button>

@@ -1,5 +1,5 @@
 import { emptyChequeDraft } from "./cheques";
-import { applyChequeScan, chequeAmountInput, chequeScanHint, chequeScanNavParams } from "./chequeScan";
+import { applyChequeScan, CHEQUE_SCAN_IDLE_HINT, chequeAmountInput, chequeScanHint, chequeScanNavParams } from "./chequeScan";
 
 describe("chequeScan", () => {
   it("formats amounts", () => {
@@ -40,5 +40,6 @@ describe("chequeScan", () => {
       serial_no: "S-9",
     });
     expect(chequeScanHint(draft)).toBe("verilen senet okundu · 250 ₺");
+    expect(CHEQUE_SCAN_IDLE_HINT).toMatch(/yapay zeka/i);
   });
 });

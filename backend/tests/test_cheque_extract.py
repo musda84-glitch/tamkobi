@@ -4,7 +4,11 @@ from pathlib import Path
 import pytest
 
 from cheque_extract import (
+    cheque_draft_is_strong,
     extract_cheque_file,
+    extract_cheque_from_image,
+    extract_cheque_from_text,
+    merge_cheque_drafts,
     normalize_cheque_draft,
     parse_cheque_text,
     public_cheque_match,
@@ -93,3 +97,99 @@ def test_extract_cheque_file_rejects_empty_and_unknown():
         asyncio.run(extract_cheque_file(b"", "a.jpg", "image/jpeg"))
     with pytest.raises(ValueError, match="JPEG"):
         asyncio.run(extract_cheque_file(b"xx", "note.docx", "application/msword"))
+
+
+def test_cheque_draft_is_strong_needs_amount_plus_key_field():
+    assert cheque_draft_is_strong(None) is False
+    assert cheque_draft_is_strong({"amount": 0, "confidence": 0.9, "due_date": "2026-09-21"}) is False
+    assert cheque_draft_is_strong({"amount": 100, "confidence": 0.55}) is False
+    assert cheque_draft_is_strong({"amount": 100, "confidence": 0.55, "due_date": "2026-09-21"}) is True
+
+
+def test_merge_cheque_drafts_fills_empty_ai_fields():
+    merged = merge_cheque_drafts(
+        {"amount": 7500, "instrument": "cheque", "confidence": 0.9},
+        {"amount": 7500, "due_date": "2026-10-01", "bank_name": "Ziraat", "serial_no": "X1"},
+    )
+    assert merged["amount"] == 7500
+    assert merged["due_date"] == "2026-10-01"
+    assert merged["bank_name"] == "Ziraat"
+    assert merged["serial_no"] == "X1"
+
+
+def test_extract_cheque_from_text_skips_ai_when_heuristic_is_strong(monkeypatch):
+    async def boom(_text):
+        raise AssertionError("AI should not run when regex already filled the cheque")
+
+    monkeypatch.setattr("cheque_extract._ai_cheque_from_text", boom)
+    draft = asyncio.run(extract_cheque_from_text(
+        "ALINAN ÇEK\nÇek No: 1234567\nBanka: Garanti BBVA\nTutar: 50.000,00 ₺\nVade: 21.09.2026"
+    ))
+    assert draft["amount"] == 50000.0
+    assert draft["due_date"] == "2026-09-21"
+    assert draft["serial_no"] == "1234567"
+
+
+def test_extract_cheque_from_text_uses_ai_when_heuristic_is_weak(monkeypatch):
+    async def fake_ai(_text):
+        return normalize_cheque_draft({
+            "instrument": "cheque",
+            "direction": "received",
+            "amount": 7500,
+            "due_date": "2026-10-01",
+            "serial_no": "X1",
+            "confidence": 0.91,
+        })
+
+    monkeypatch.setattr("cheque_extract._ai_cheque_from_text", fake_ai)
+    draft = asyncio.run(extract_cheque_from_text("bu belgede net tutar satırı yok"))
+    assert draft["amount"] == 7500
+    assert draft["due_date"] == "2026-10-01"
+    assert draft["serial_no"] == "X1"
+
+
+def test_extract_cheque_from_text_falls_back_when_ai_fails(monkeypatch):
+    async def boom(_text):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr("cheque_extract._ai_cheque_from_text", boom)
+    draft = asyncio.run(extract_cheque_from_text("Tutar: 250,00 TL"))
+    assert draft["amount"] == 250.0
+
+
+def test_extract_cheque_from_image_uses_ai(monkeypatch):
+    async def fake_ai(_data, _mime):
+        return normalize_cheque_draft({
+            "amount": 1200,
+            "due_date": "2026-11-01",
+            "bank_name": "Ziraat",
+            "confidence": 0.8,
+        })
+
+    monkeypatch.setattr("cheque_extract._ai_cheque_from_image", fake_ai)
+    draft = asyncio.run(extract_cheque_from_image(b"jpeg-bytes", "image/jpeg"))
+    assert draft["amount"] == 1200
+    assert draft["bank_name"] == "Ziraat"
+
+
+def test_extract_cheque_from_image_parses_notes_when_ai_amount_missing(monkeypatch):
+    async def fake_ai(_data, _mime):
+        return normalize_cheque_draft({
+            "amount": 0,
+            "notes": "Tutar: 1.250,50 TL Vade: 18.10.2026 Banka: Garanti",
+            "confidence": 0.2,
+        })
+
+    monkeypatch.setattr("cheque_extract._ai_cheque_from_image", fake_ai)
+    draft = asyncio.run(extract_cheque_from_image(b"jpeg-bytes", "image/jpeg"))
+    assert draft["amount"] == 1250.5
+    assert draft["due_date"] == "2026-10-18"
+
+
+def test_extract_cheque_from_image_raises_when_ai_empty(monkeypatch):
+    async def boom(_data, _mime):
+        raise RuntimeError("vision timeout")
+
+    monkeypatch.setattr("cheque_extract._ai_cheque_from_image", boom)
+    with pytest.raises(ValueError, match="tutar"):
+        asyncio.run(extract_cheque_from_image(b"jpeg-bytes", "image/jpeg"))
