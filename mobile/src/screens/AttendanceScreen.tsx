@@ -502,7 +502,7 @@ export function AttendanceScreen() {
                 <PrimaryButton title="Vazgeç" onPress={() => { setDisputeId(null); setDisputeNote(""); setDisputeIn(""); setDisputeOut(""); }} color={colors.secondary} testID={`mesai-rec-dispute-close-${rid}`} />
               </View>
             ) : (
-              <Row style={{ gap: 4, flexWrap: "nowrap" }}>
+              <Row style={{ gap: 6, flexWrap: "nowrap" }}>
                 {!r.employee_confirmed && rid ? (
                   <PrimaryButton
                     compact

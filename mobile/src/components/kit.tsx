@@ -343,10 +343,10 @@ const styles = StyleSheet.create({
   badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
   badgeText: { fontSize: 10, ...typeface("700") },
   btn: { borderRadius: radius.md, minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
-  btnCompact: { minHeight: 36, paddingHorizontal: 6, flexShrink: 1, minWidth: 0 },
+  btnCompact: { minHeight: 38, paddingHorizontal: 8, flexShrink: 1, minWidth: 0 },
   btnIcon: { paddingHorizontal: 0, minWidth: 44 },
   btnText: { color: "#fff", fontSize: 14, ...typeface("700") },
-  btnTextCompact: { fontSize: 11 },
+  btnTextCompact: { fontSize: 12 },
   label: { fontSize: 11, color: colors.muted, marginBottom: 4, ...typeface("700") },
   labelDense: { fontSize: 10, marginBottom: 2 },
   input: {
