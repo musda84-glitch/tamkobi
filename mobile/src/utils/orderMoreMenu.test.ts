@@ -1,62 +1,88 @@
 import {
-  canReturnOrder,
-  dispatchMenuLabel,
-  eBelgeMenuItems,
-  orderMoreMenuSections,
-  orderNotifyMessage,
-  orderNotifySubject,
-  orderToolbarKeys,
-  printMenuLabel,
+  isIntegrationOrder,
+  isPanelOrder,
+  mobilePrimaryAction,
+  orderHasEInvoiceIssued,
+  orderMoreMenuItems,
+  orderMoreMenuKind,
+  integrationEInvoiceMoreItems,
+  panelDraftMoreItems,
+  isYmd,
 } from "./orderMoreMenu";
 
-describe("orderMoreMenu web ⋮ layout", () => {
-  it("keeps toolbar as delete / faturala / kargo / onay / yazdır / more", () => {
-    expect(orderToolbarKeys({
-      showDelete: true,
-      showInvoice: true,
-      showCargo: true,
-      showApprove: true,
-    })).toEqual(["delete", "invoice", "cargo", "approve", "print", "more"]);
+describe("orderMoreMenu web variants", () => {
+  it("classifies marketplace vs panel channels", () => {
+    expect(isIntegrationOrder({ channel: "trendyol" })).toBe(true);
+    expect(isIntegrationOrder({ channel: "n11" })).toBe(true);
+    expect(isPanelOrder({ channel: "b2b" })).toBe(true);
+    expect(isPanelOrder({ channel: "manual" })).toBe(true);
+    expect(isPanelOrder({ channel: "saha" })).toBe(true);
+    expect(isPanelOrder({})).toBe(true);
   });
 
-  it("shows Faturalandı instead of Faturala and always ends with print + more", () => {
-    expect(orderToolbarKeys({ showInvoiced: true })).toEqual(["invoiced", "print", "more"]);
-    expect(orderToolbarKeys({})).toEqual(["print", "more"]);
+  it("detects e-invoice issued", () => {
+    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "e_archive" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ einvoice_state: "sent" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "paper" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ invoice_id: "x", is_invoiced: false })).toBe(false);
   });
 
-  it("groups E-Belge then edit / irsaliye / iade / etiket / form / bildirim", () => {
-    const sections = orderMoreMenuSections({
-      showEBelge: true,
-      showEFatura: true,
-      showEdit: true,
-      showReturn: true,
-      showProduce: true,
-    });
-    expect(sections[0]).toEqual({ title: "E-Belge (GİB)", keys: ["efatura", "earsiv"] });
-    expect(sections[1].keys).toEqual(["edit", "dispatch", "return", "label", "print", "notify", "prod"]);
+  it("B2B draft uses Faturalaştır / Kargola — not the default E-Belge list", () => {
+    const ord = { channel: "b2b", is_invoiced: false, order_number: "B2B-2026-0011" };
+    expect(orderMoreMenuKind(ord)).toBe("panel_draft");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
+      "Faturalaştır",
+      "Mini Kargo Etiketi Yazdır",
+      "Mini Kargo Etiketi Yazdır 10X10",
+      "Fatura Tarihi Değiştir",
+      "Kargola",
+    ]);
+    expect(mobilePrimaryAction(ord)).toEqual({ id: "faturalastir", label: "Faturalaştır" });
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label).join(" ")).not.toMatch(/İade Al|Üretim emri|E-İrsaliye/);
   });
 
-  it("hides E-Fatura and iade like web when not allowed", () => {
-    expect(eBelgeMenuItems(false).map((i) => i.eType)).toEqual(["e_archive"]);
-    expect(eBelgeMenuItems(true).map((i) => i.label)).toEqual(["E-Fatura kes (GİB)", "E-Arşiv kes (GİB)"]);
-    const sections = orderMoreMenuSections({ showEBelge: true, showEFatura: false, showReturn: false });
-    expect(sections[0].keys).toEqual(["earsiv"]);
-    expect(sections[1].keys).toEqual(["dispatch", "label", "print", "notify"]);
-    expect(canReturnOrder("returned")).toBe(false);
-    expect(canReturnOrder("pending")).toBe(true);
+  it("panel invoiced shows E-Fatura Oluştur menu", () => {
+    const ord = { channel: "b2b", is_invoiced: true, e_type: "paper" };
+    expect(orderMoreMenuKind(ord)).toBe("panel_invoiced");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
+      "E-Fatura Oluştur",
+      "Mini Kargo Etiketi Yazdır",
+      "Mini Kargo Etiketi Yazdır 10X10",
+      "Fatura Tarihi Değiştir",
+      "Kargola",
+    ]);
+    expect(mobilePrimaryAction(ord)?.label).toBe("E-Fatura");
   });
 
-  it("labels dispatch / print / notify like the web menu", () => {
-    expect(dispatchMenuLabel(null)).toBe("E-İrsaliye Oluştur & Yazdır");
-    expect(dispatchMenuLabel("IRS-1")).toBe("İrsaliye: IRS-1");
-    expect(printMenuLabel(false)).toBe("Sipariş Formu Yazdır");
-    expect(printMenuLabel(true)).toBe("Sipariş Formu (yazdırıldı)");
-    expect(orderNotifySubject("ORD-1")).toBe("Siparişiniz Yola Çıktı - ORD-1");
-    expect(orderNotifyMessage({
-      customer_name: "Ada",
-      order_number: "ORD-1",
-      cargo_carrier: "Yurtiçi",
-      cargo_tracking_number: "YK123",
-    })).toMatch(/Ada.*ORD-1.*Yurtiçi.*YK123/);
+  it("integration + e-invoice uses marketplace fulfillment menu", () => {
+    const ord = { channel: "trendyol", is_invoiced: true, e_type: "e_archive" };
+    expect(orderMoreMenuKind(ord)).toBe("integration_einvoice");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual(
+      integrationEInvoiceMoreItems().map((i) => i.label),
+    );
+  });
+
+  it("default menu keeps E-Belge + edit / irsaliye / iade", () => {
+    const ord = { channel: "trendyol", is_invoiced: false };
+    expect(orderMoreMenuKind(ord)).toBe("default");
+    const labels = orderMoreMenuItems(ord, {
+      eBelgeItems: [{ eType: "e_archive", label: "E-Arşiv kes (GİB)", testIdSuffix: "earsiv" }],
+    }).items.map((i) => i.label);
+    expect(labels[0]).toBe("E-Arşiv kes (GİB)");
+    expect(labels).toContain("Siparişi Düzenle");
+    expect(labels).toContain("İade Al");
+    expect(labels).not.toContain("Üretim emri");
+  });
+
+  it("panel draft ids match web", () => {
+    expect(panelDraftMoreItems().map((i) => i.id)).toEqual([
+      "faturalastir",
+      "cargo_mini",
+      "cargo_10x10",
+      "invoice_date",
+      "kargola",
+    ]);
+    expect(isYmd("2026-09-24")).toBe(true);
+    expect(isYmd("24.09.2026")).toBe(false);
   });
 });

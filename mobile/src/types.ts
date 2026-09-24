@@ -207,6 +207,9 @@ export type Order = {
   is_invoiced?: boolean;
   invoice_id?: string;
   invoice_number?: string;
+  e_type?: string;
+  invoice_e_type?: string;
+  einvoice_state?: string;
   status?: string;
   cancel_request?: { status?: string; reason?: string; at?: string } | null;
   tracking?: {

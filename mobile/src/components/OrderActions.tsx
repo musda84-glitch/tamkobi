@@ -22,28 +22,24 @@ import {
 } from "../utils/orderCargo";
 import { waDigits } from "../utils/contactStatement";
 import { idOf } from "../utils/money";
-import { canStaffDeleteOrder, canStaffEditOrder } from "../utils/orderEdit";
+import { canStaffDeleteOrder } from "../utils/orderEdit";
 import {
-  canCreateOrderDraftInvoice,
   canIssueOrderEBelge,
-  canPostOrderDraftInvoice,
   canShowEFaturaOption,
   convertToDraftBody,
   eBelgeCreateBody,
-  faturalaActionLabel,
   isOrderFullyInvoiced,
   orderEBelgeTypeFromContact,
 } from "../utils/orderInvoice";
 import {
-  canReturnOrder,
-  dispatchMenuLabel,
   eBelgeMenuItems,
-  orderMoreMenuSections,
+  isYmd,
+  mobilePrimaryAction,
+  orderMoreMenuItems,
   orderNotifyMessage,
   orderNotifySubject,
-  orderToolbarKeys,
-  printMenuLabel,
-  type OrderMoreKey,
+  todayYmd,
+  type OrderMoreItem,
 } from "../utils/orderMoreMenu";
 import { printCargoLabel, printInvoiceForm, printOrderForm } from "../utils/orderShare";
 import { emailComposerHref, smsComposerHref, smsSendFailed } from "../utils/quoteApproval";
@@ -126,10 +122,11 @@ export function OrderActions({
   const [notifyEmail, setNotifyEmail] = useState(order.customer_email || "");
   const [notifyBody, setNotifyBody] = useState(() => orderNotifyMessage(order));
   const [notifyChannel, setNotifyChannel] = useState<"sms" | "email" | "whatsapp">(order.customer_phone ? "sms" : "email");
+  const [dateOpen, setDateOpen] = useState(false);
+  const [invoiceDate, setInvoiceDate] = useState(todayYmd());
   const [carriers, setCarriers] = useState<CargoCatalogItem[]>(FALLBACK_CARGO_CATALOG);
   const [carrier, setCarrier] = useState(String(order.cargo_carrier || ""));
   const [contactFlag, setContactFlag] = useState<{ is_e_invoice_user?: boolean } | null>(null);
-  const canProduce = can("/production", "edit") || can("/sevk", "edit") || can("/orders", "edit");
   const canEdit = can("/orders", "edit");
   const canMutate = canEdit || can("/saha", "edit");
   const marketplace = isMarketplaceChannel(order.channel);
@@ -260,25 +257,6 @@ export function OrderActions({
         setBusy(null);
       }
     });
-  };
-
-  const toProduction = () => {
-    setMoreOpen(false);
-    confirmAction(
-      "Üretim emri",
-      `${order.order_number || "Sipariş"} için eksik kalemler üretime alınsın mı?`,
-      async () => {
-        setBusy("prod");
-        try {
-          const r = await post<{ message?: string }>(client, `/order-picks/${oid}/to-production`, {});
-          onMessage?.(r.message || "Üretim emri açıldı.");
-        } catch (err) {
-          onError?.(apiErrorMessage(err, "Üretim emri açılamadı."));
-        } finally {
-          setBusy(null);
-        }
-      },
-    );
   };
 
   const createDraftInvoice = () => {
@@ -507,144 +485,299 @@ export function OrderActions({
     }
   };
 
-  const showApprove = canEdit && (marketplace ? canShowMarketplaceApprove(order) : canApproveOrder(order));
+  const printMiniCargo = async (size: "100x150" | "100x100") => {
+    setMoreOpen(false);
+    setBusy("label");
+    try {
+      const full = await get<Order>(client, `/orders/${oid}`);
+      await printCargoLabel(full, activeCompany, client);
+      post(client, "/orders/mark-labels-printed", { ids: [idOf(full)] }).catch(() => null);
+      onMessage?.(size === "100x100" ? "Etiket (10×10) yazdırmaya gönderildi." : "Mini kargo etiketi yazdırmaya gönderildi.");
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "Etiket yazdırılamadı."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const printMiniInvoice = async () => {
+    setMoreOpen(false);
+    if (!order.invoice_id) {
+      onError?.("Yazdırılacak fatura yok.");
+      return;
+    }
+    setBusy("print");
+    try {
+      const inv = await get<Invoice>(client, `/invoices/${order.invoice_id}`);
+      await printInvoiceForm(inv, activeCompany, client);
+      onMessage?.("Mini fatura fişi yazdırmaya gönderildi.");
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "Fatura yazdırılamadı."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const createShipment = async (carrierCode?: string) => {
+    setMoreOpen(false);
+    setBusy("cargo");
+    try {
+      let carrier = carrierCode || order.cargo_carrier || "geliver";
+      if (!carrierCode) {
+        try {
+          const list = await get<Array<{ carrier_code?: string; status?: string; is_active?: boolean }>>(client, "/integrations/cargo", { company_id: companyId });
+          const connected = (list || []).find((c) => c.status === "connected" && c.is_active !== false);
+          carrier = connected?.carrier_code || carrier;
+        } catch {
+          /* default */
+        }
+      }
+      const r = await post<{ message?: string; tracking_number?: string }>(client, "/cargo/create-shipment", {
+        carrier_code: carrier,
+        order_id: oid,
+        customer_name: order.customer_name,
+        address: order.shipping_address,
+        city: order.city,
+        customer_phone: order.customer_phone,
+        company_id: companyId,
+      });
+      onMessage?.(r.message || `Kargo fişi oluşturuldu${r.tracking_number ? `: ${r.tracking_number}` : ""}.`);
+      onChanged?.();
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "Kargo kaydı oluşturulamadı."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveInvoiceDate = async () => {
+    if (!order.invoice_id) {
+      onError?.("Önce fatura oluşturun.");
+      return;
+    }
+    if (!isYmd(invoiceDate.trim())) {
+      onError?.("Tarih YYYY-AA-GG olmalı.");
+      return;
+    }
+    setBusy("invoice");
+    try {
+      await put(client, `/invoices/${order.invoice_id}`, { issue_date: invoiceDate.trim() });
+      onMessage?.("Fatura tarihi güncellendi.");
+      setDateOpen(false);
+      onChanged?.();
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "Fatura tarihi değiştirilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const refreshMarketplace = async () => {
+    setMoreOpen(false);
+    setBusy("refresh");
+    try {
+      const channels = await get<Array<{ id?: string; _id?: string }>>(client, "/integrations/ecommerce", { company_id: companyId });
+      let synced = 0;
+      for (const c of channels || []) {
+        const id = c.id || c._id;
+        if (!id) continue;
+        try {
+          await post(client, `/integrations/ecommerce/${id}/sync-now`, {});
+          synced += 1;
+        } catch {
+          /* kanal kapalı */
+        }
+      }
+      onMessage?.(synced ? `${synced} kanal senkronlandı, siparişler güncellendi.` : "Sipariş listesi yenilendi.");
+      onChanged?.();
+    } catch {
+      onChanged?.();
+      onMessage?.("Sipariş listesi yenilendi.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const downloadXml = async () => {
+    setMoreOpen(false);
+    if (!order.invoice_id) {
+      onError?.("Bu siparişte e-fatura yok.");
+      return;
+    }
+    setBusy("xml");
+    try {
+      const href = `${client.baseUrl.replace(/\/+$/, "")}/api/e-invoice/${order.invoice_id}/xml`;
+      const opened = await Linking.openURL(href).then(() => true).catch(() => false);
+      if (!opened) throw new Error("XML açılamadı.");
+      onMessage?.("E-Fatura XML indiriliyor.");
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "XML indirilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const sendInvoiceLink = async () => {
+    setMoreOpen(false);
+    if (!order.invoice_id || !order.customer_email) {
+      onError?.("Fatura ve müşteri e-postası gerekli.");
+      return;
+    }
+    setBusy("notify");
+    try {
+      const link = `${client.baseUrl.replace(/\/+$/, "")}/api/invoices/${order.invoice_id}/pdf`;
+      await post(client, "/comm/mail/send", {
+        company_id: companyId,
+        to: order.customer_email,
+        subject: `Faturanız ${order.invoice_number || order.order_number}`,
+        body: `Sayın ${order.customer_name || ""},\n\n${order.invoice_number || order.order_number} numaralı faturanız: ${link}`,
+        context: "invoice",
+        ref_id: order.invoice_id,
+        contact_id: order.contact_id || "",
+        contact_name: order.customer_name || "",
+      });
+      onMessage?.("Fatura linki gönderildi.");
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "Fatura linki gönderilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const showCargo = canEdit && canChangeMarketplaceCargo(order);
-  const showEdit = canMutate && canStaffEditOrder(order);
+
+  const runMoreAction = (item: OrderMoreItem) => {
+    setMoreOpen(false);
+    if (item.eType || item.id.startsWith("ebelge_")) {
+      issueEBelge(item.eType || (item.id.replace(/^ebelge_/, "") as "e_invoice" | "e_archive"));
+      return;
+    }
+    switch (item.id) {
+      case "faturalastir":
+        if (order.invoice_id && !order.is_invoiced) postDraftInvoice();
+        else if (!order.is_invoiced) createDraftInvoice();
+        else onMessage?.("Sipariş zaten faturalanmış.");
+        return;
+      case "efatura_olustur":
+        issueEBelge(orderEBelgeTypeFromContact(contactFlag));
+        return;
+      case "invoice_date":
+        if (!order.invoice_id) {
+          onError?.("Önce fatura oluşturun.");
+          return;
+        }
+        setInvoiceDate(todayYmd());
+        setDateOpen(true);
+        return;
+      case "kargola":
+      case "cargo_change":
+        if (showCargo) openCargo();
+        else createShipment();
+        return;
+      case "cargo_mini":
+        printMiniCargo("100x150");
+        return;
+      case "cargo_10x10":
+        printMiniCargo("100x100");
+        return;
+      case "cargo_label":
+        printLabel();
+        return;
+      case "mini_10x15":
+      case "mini_8x20":
+        printMiniInvoice();
+        return;
+      case "print_form":
+        printForm();
+        return;
+      case "edit":
+        go("OrderEdit", { id: oid });
+        return;
+      case "dispatch":
+        makeDispatch();
+        return;
+      case "return":
+        openReturn();
+        return;
+      case "notify":
+      case "cargo_track_notify":
+        if (item.id === "cargo_track_notify" && !order.cargo_tracking_number) {
+          onError?.("Bu siparişte kargo takip kodu yok.");
+          return;
+        }
+        openNotify();
+        return;
+      case "refresh_status":
+        refreshMarketplace();
+        return;
+      case "xml":
+        downloadXml();
+        return;
+      case "invoice_link":
+        sendInvoiceLink();
+        return;
+      case "navlungo_create":
+        createShipment("navlungo");
+        return;
+      case "earsiv_send":
+        printMiniInvoice();
+        return;
+      case "digital_code_notify":
+        onMessage?.("Dijital kod bildirimi bu kanalda henüz bağlanmadı.");
+        return;
+      default:
+        onMessage?.("Bu işlem henüz bağlanmadı.");
+    }
+  };
+
+  const showApprove = canEdit && (marketplace ? canShowMarketplaceApprove(order) : canApproveOrder(order));
   const showDelete = canMutate && canStaffDeleteOrder(order);
   const canInvoice = can("/invoices", "edit") || canEdit;
-  const showDraftCreate = canInvoice && canCreateOrderDraftInvoice(order);
-  const showDraftPost = canInvoice && canPostOrderDraftInvoice(order);
   const showEBelge = canInvoice && canIssueOrderEBelge(order);
   const showInvoiced = isOrderFullyInvoiced(order);
   const showEFatura = canShowEFaturaOption(contactFlag);
-  const showReturn = canMutate && canReturnOrder(order.order_status);
   const formPrinted = !!order.form_printed_at;
 
-  const flags = {
-    showDelete,
-    showInvoice: showDraftCreate || showDraftPost,
-    showInvoiced,
-    showCargo,
-    showApprove,
-    showEBelge,
-    showEFatura,
-    showEdit,
-    showReturn,
-    showProduce: canProduce,
-    dispatchNumber: order.dispatch_number,
-    formPrinted,
-  };
+  const { kind, items: moreItems } = orderMoreMenuItems(order, {
+    eBelgeItems: showEBelge ? eBelgeMenuItems(showEFatura) : [],
+  });
+  const primary = mobilePrimaryAction(order);
+  const printTone = formPrinted ? "violet" : "slate";
 
-  const invoicePress = showDraftPost ? postDraftInvoice : createDraftInvoice;
-  const byKey: Record<string, ActionDef> = {
-      delete: { key: "delete", label: "Sil", icon: "trash", tone: "rose", busyKey: "delete", testID: `order-delete-${oid}`, onPress: remove },
-      invoice: {
-        key: "invoice",
-        label: faturalaActionLabel(order),
-        icon: "document-text",
-        tone: showDraftPost ? "amber" : "emerald",
-        busyKey: "invoice",
-        testID: `order-faturala-${oid}`,
-        onPress: invoicePress,
-      },
-      invoiced: {
-        key: "invoiced",
-        label: "Faturalandı",
-        icon: "checkmark-done",
-        tone: "emerald",
-        busyKey: "invoiced",
-        testID: `order-invoiced-${oid}`,
-        onPress: () => onMessage?.(order.invoice_number ? `Fatura: ${order.invoice_number}` : "Sipariş faturalandı."),
-      },
-      cargo: { key: "cargo", label: "Kargo firma", icon: "car", tone: "violet", busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: openCargo },
-      approve: { key: "approve", label: approveActionLabel(order), icon: "checkmark-circle", tone: "emerald", busyKey: "approve", testID: `order-approve-${oid}`, onPress: approve },
-      print: {
-        key: "print",
-        label: printMenuLabel(formPrinted),
-        icon: "print",
-        tone: formPrinted ? "violet" : "slate",
-        busyKey: "print",
-        testID: `print-order-btn-${num}`,
-        onPress: printForm,
-      },
-      more: {
-        key: "more",
-        label: "Diğer işlemler",
-        icon: "ellipsis-vertical",
-        tone: moreOpen ? "slate" : "slate",
-        busyKey: "more",
-        testID: `order-more-btn-${num}`,
-        onPress: () => setMoreOpen(true),
-      },
-      edit: {
-        key: "edit",
-        label: "Siparişi Düzenle",
-        icon: "create",
-        tone: "slate",
-        busyKey: "edit",
-        testID: `edit-order-menu-${num}`,
-        onPress: () => { setMoreOpen(false); go("OrderEdit", { id: oid }); },
-      },
-      dispatch: {
-        key: "dispatch",
-        label: dispatchMenuLabel(order.dispatch_number),
-        icon: "cube-outline",
-        tone: "orange",
-        busyKey: "dispatch",
-        testID: `dispatch-btn-${num}`,
-        onPress: makeDispatch,
-      },
-      return: {
-        key: "return",
-        label: "İade Al",
-        icon: "return-down-back",
-        tone: "rose",
-        busyKey: "return",
-        testID: `return-order-btn-${num}`,
-        onPress: openReturn,
-      },
-      label: {
-        key: "label",
-        label: "Kargo Etiketi Yazdır",
-        icon: "pricetag",
-        tone: "teal",
-        busyKey: "label",
-        testID: `cargo-label-btn-${num}`,
-        onPress: printLabel,
-      },
-      notify: {
-        key: "notify",
-        label: "Müşteriye Bildirim Gönder",
-        icon: "chatbubble-ellipses",
-        tone: "indigo",
-        busyKey: "notify",
-        testID: `notify-order-btn-${num}`,
-        onPress: openNotify,
-      },
-      prod: {
-        key: "prod",
-        label: "Üretim emri",
-        icon: "construct",
-        tone: "orange",
-        busyKey: "prod",
-        testID: `order-prod-${oid}`,
-        onPress: toProduction,
-      },
-    };
-  for (const item of eBelgeMenuItems(showEFatura)) {
-    byKey[item.key] = {
-      key: item.key,
-      label: item.label,
-      icon: "receipt",
-      tone: item.eType === "e_invoice" ? "indigo" : "violet",
-      busyKey: "ebelge",
-      testID: `e-belge-${item.testIdSuffix}-${num}`,
-      onPress: () => issueEBelge(item.eType),
-    };
-  }
-
-  const toolbar = orderToolbarKeys(flags).map((key) => byKey[key]).filter(Boolean);
-  const sections = orderMoreMenuSections(flags);
+  const toolbar: ActionDef[] = [
+    ...(showDelete
+      ? [{ key: "delete", label: "Sil", icon: "trash" as const, tone: "rose" as const, busyKey: "delete", testID: `order-delete-${oid}`, onPress: remove }]
+      : []),
+    ...(primary
+      ? [{
+          key: primary.id,
+          label: primary.label,
+          icon: "document-text" as const,
+          tone: "emerald" as const,
+          busyKey: "invoice",
+          testID: `order-primary-${num}`,
+          onPress: () => runMoreAction({ id: primary.id, label: primary.label, icon: "document-text", testId: primary.id, color: "#059669" }),
+        }]
+      : showInvoiced
+        ? [{
+            key: "invoiced",
+            label: "Faturalandı",
+            icon: "checkmark-done" as const,
+            tone: "emerald" as const,
+            busyKey: "invoiced",
+            testID: `order-invoiced-${oid}`,
+            onPress: () => onMessage?.(order.invoice_number ? `Fatura: ${order.invoice_number}` : "Sipariş faturalandı."),
+          }]
+        : []),
+    ...(!order.cargo_tracking_number
+      ? [{ key: "cargo", label: "Kargola", icon: "car" as const, tone: "violet" as const, busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: () => (showCargo ? openCargo() : createShipment()) }]
+      : [{ key: "label", label: "Kargo etiketi", icon: "car" as const, tone: "teal" as const, busyKey: "label", testID: `order-label-${oid}`, onPress: printLabel }]),
+    ...(showApprove
+      ? [{ key: "approve", label: approveActionLabel(order), icon: "checkmark-circle" as const, tone: "emerald" as const, busyKey: "approve", testID: `order-approve-${oid}`, onPress: approve }]
+      : []),
+    { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm },
+    { key: "more", label: "Diğer işlemler", icon: "ellipsis-vertical", tone: "slate", busyKey: "more", testID: `order-more-btn-${num}`, onPress: () => setMoreOpen(true) },
+  ];
 
   return (
     <>
@@ -665,45 +798,36 @@ export function OrderActions({
         onClose={() => setMoreOpen(false)}
         testID={`order-more-menu-${num}`}
       >
-        {sections.map((section, si) => (
-          <View key={section.title || `sec-${si}`} style={{ marginBottom: 8 }}>
-            {section.title ? (
-              <Text style={{ fontSize: 10, fontWeight: "800", color: "#94A3B8", letterSpacing: 0.6, textTransform: "uppercase", paddingHorizontal: 4, paddingBottom: 6 }}>
-                {section.title}
-              </Text>
-            ) : null}
-            {section.keys.map((key: OrderMoreKey, idx) => {
-              const item = byKey[key];
-              if (!item) return null;
-              const tone = QUICK_TONE_COLORS[item.tone];
-              const last = idx === section.keys.length - 1 && si === 0;
-              return (
-                <Pressable
-                  key={item.key}
-                  testID={item.testID}
-                  onPress={item.onPress}
-                  disabled={!!busy}
-                  style={({ pressed }) => ({
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 10,
-                    paddingVertical: 11,
-                    paddingHorizontal: 8,
-                    borderRadius: 10,
-                    backgroundColor: pressed ? colors.slate50 : "transparent",
-                    borderBottomWidth: last ? 1 : 0,
-                    borderBottomColor: colors.border,
-                    marginBottom: last ? 6 : 0,
-                    opacity: busy ? 0.5 : 1,
-                  })}
-                >
-                  <Ionicons name={busy === item.busyKey ? "hourglass-outline" : item.icon} size={18} color={tone.solid} />
-                  <Text style={{ flex: 1, fontWeight: "700", fontSize: 13, color: colors.text }} numberOfLines={1}>{item.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ))}
+        {moreItems.map((item, idx) => {
+          const section = item.section && moreItems[idx - 1]?.section !== item.section ? item.section : null;
+          return (
+            <View key={item.id}>
+              {section ? (
+                <Text style={{ fontSize: 10, fontWeight: "800", color: "#94A3B8", letterSpacing: 0.6, textTransform: "uppercase", paddingHorizontal: 4, paddingBottom: 6 }}>
+                  {section}
+                </Text>
+              ) : null}
+              <Pressable
+                testID={`order-more-${item.testId}-${num}`}
+                onPress={() => runMoreAction(item)}
+                disabled={!!busy}
+                style={({ pressed }) => ({
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                  paddingVertical: 11,
+                  paddingHorizontal: 8,
+                  borderRadius: 10,
+                  backgroundColor: pressed ? colors.slate50 : "transparent",
+                  opacity: busy ? 0.5 : 1,
+                })}
+              >
+                <Ionicons name={item.icon as keyof typeof Ionicons.glyphMap} size={18} color={item.color} />
+                <Text style={{ flex: 1, fontWeight: "600", fontSize: 13, color: colors.text }}>{item.label}</Text>
+              </Pressable>
+            </View>
+          );
+        })}
       </B2BSheet>
 
       <B2BSheet
@@ -728,6 +852,30 @@ export function OrderActions({
           loading={busy === "cargo"}
           disabled={!carrier || !!busy}
           onPress={saveCargo}
+        />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={dateOpen}
+        title="Fatura Tarihi Değiştir"
+        subtitle={order.order_number}
+        onClose={() => setDateOpen(false)}
+        testID={`order-invoice-date-${num}`}
+      >
+        <Field
+          label="Fatura tarihi (YYYY-AA-GG)"
+          testID="invoice-date-input"
+          value={invoiceDate}
+          onChangeText={setInvoiceDate}
+          placeholder="2026-09-24"
+        />
+        <View style={{ height: 10 }} />
+        <PrimaryButton
+          title="Kaydet"
+          testID="invoice-date-save"
+          loading={busy === "invoice"}
+          disabled={!!busy}
+          onPress={saveInvoiceDate}
         />
       </B2BSheet>
 
