@@ -30,7 +30,7 @@ PROVIDERS = {
         "token_path": "/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
-        "hint": "API Market: Müşteri Id/Secret + Api Anahtarı + RSA-SHA256 PEM. Bağlantı testi client_credentials (scope=public). Hesap hareketi: Account Transactions v4 — GET /v4/accounts/{ekNo}/transactions (+ RSA Signature). Gerekirse v1 fallback. Müşteri yetkili Access Token (Authorization Code + accounts) önerilir. Sandbox: prep-gateway / prep-identity; Canlı: gateway / identity.",
+        "hint": "API Market: Müşteri Id/Secret + Api Anahtarı + RSA-SHA256 PEM. Bağlantı testi client_credentials (scope=public). Hesap hareketi (portal Accounts V3): GET /v3/accounts/{ekNo}/transactions (+ RSA Signature). Liste: GET /v3/accounts. v4/v1 fallback. Müşteri yetkili Access Token (Authorization Code + accounts) önerilir. Sandbox: prep-gateway / prep-identity; Canlı: gateway / identity.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -852,7 +852,7 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
 
 
 def _kuveyt_account_suffix(conn: dict) -> str:
-    """Primary account ek no for path /v4|/v1/accounts/{suffix}/transactions."""
+    """Primary account ek no for path /v3|/v4|/v1/accounts/{suffix}/transactions."""
     cands = _kuveyt_account_suffix_candidates(conn)
     return cands[0] if cands else ""
 
@@ -911,19 +911,39 @@ def _kuveyt_account_suffix_candidates(conn: dict) -> List[str]:
 
 
 def _kuveyt_tx_paths(conn: dict) -> List[str]:
-    """Account Transactions v4 (Postman): GET /v4/accounts/{id}/transactions.
+    """Portal Accounts API: GET /v3/accounts/{suffix}/transactions (Own - Account Transactions V3).
 
-    v1 paths kept as fallback. Prefer suffix paths first (Postman uses /v4/accounts/5/...).
+    Also try Account List V3 with suffix: GET /v3/accounts/{suffix} is separate (balance).
+    Fallbacks: Postman v4, then v1. Prefer suffix paths first.
     """
     paths: List[str] = []
     for suf in _kuveyt_account_suffix_candidates(conn)[:8]:
-        for ver in ("v4", "v1"):
+        for ver in ("v3", "v4", "v1"):
             p = f"/{ver}/accounts/{suf}/transactions"
             if p not in paths:
                 paths.append(p)
-    for p in ("/v4/accounts/transactions", "/v1/accounts/transactions"):
+    for p in (
+        "/v3/accounts/transactions",
+        "/v4/accounts/transactions",
+        "/v1/accounts/transactions",
+    ):
         if p not in paths:
             paths.append(p)
+    return paths
+
+
+def _kuveyt_account_list_paths(conn: dict) -> List[str]:
+    """Portal: GET /v3/accounts and GET /v3/accounts/{suffix} (Account List V3)."""
+    paths: List[str] = []
+    for ver in ("v3", "v4", "v1"):
+        p = f"/{ver}/accounts"
+        if p not in paths:
+            paths.append(p)
+    for suf in _kuveyt_account_suffix_candidates(conn)[:4]:
+        for ver in ("v3", "v4", "v1"):
+            p = f"/{ver}/accounts/{suf}"
+            if p not in paths:
+                paths.append(p)
     return paths
 
 
@@ -2214,11 +2234,13 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
 
 
 async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
-    """API Market Hesap İşlem: GET /v4/accounts/{suffix}/transactions + RSA Signature.
+    """API Market Hesap İşlem: GET /v3/accounts/{suffix}/transactions + RSA Signature.
 
-    Postman «Account Transactions v4»: prep-gateway /v4/accounts/{id}/transactions,
-    Bearer + Signature. v1 path’ler fallback. Authorization Code + accounts tercih edilir;
-    client_credentials ile bağlantı testi (/v1/data/banks) geçebilir, hesap uçları 404/401 verebilir.
+    Portal Accounts ürünü (V3):
+      GET /v3/accounts , GET /v3/accounts/{suffix} ,
+      GET /v3/accounts/{suffix}/transactions ,
+      POST /v3/accounts/transactions/receipts (makbuz — sync’te kullanılmaz).
+    Fallbacks: Postman v4, ardından v1. Authorization Code + accounts tercih edilir.
     """
     pem = _kuveyt_private_key_pem(conn)
     if not pem:
@@ -2238,7 +2260,7 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     saw_ok_empty = False
     detail = ""
 
-    # Postman v4 sample: no query. Also try beginDate/endDate and startDate/endDate.
+    # Portal/Postman: no-query first; also beginDate/endDate and startDate/endDate.
     ranges = [
         {},
         {"beginDate": start_d, "endDate": end_d},
@@ -2292,8 +2314,8 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
             url = f"{base}{path}" + _kuveyt_query_string(qs_params)
             return await client.get(url, headers=headers)
 
-        # Hesap listesi — bakiyeyi al; suffix keşfi için (v4 önce)
-        for acc_path in ("/v4/accounts", "/v1/accounts"):
+        # Hesap listesi / tek hesap — bakiye (portal Account List V3 önce)
+        for acc_path in _kuveyt_account_list_paths(conn)[:6]:
             resp = await _get(acc_path)
             detail = f"GET {acc_path} HTTP {resp.status_code}: {_api_error_detail(resp)}"
             if resp.status_code in (401, 403):
@@ -2318,7 +2340,11 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
                 rows = _normalize_tx_rows(data)
                 if rows:
                     return {"transactions": rows, "balance": balance, "access_token": None}
-            break
+            # 200 list/detail without tx rows — keep balance, continue to tx paths
+            if balance is not None or acc_path.rstrip("/").endswith("/accounts"):
+                break
+        else:
+            pass
 
         for path in paths:
             for params in uniq[:12]:
@@ -2331,7 +2357,6 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
                 if resp.status_code in (401, 403):
                     saw_auth = True
                     best_err = detail
-                    # Token geçerli ama hesap API’si reddetti — diğer path’ler aynı sonucu verir
                     break
                 if resp.status_code == 404:
                     saw_404 = True
@@ -2349,7 +2374,6 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
                 if bal is not None:
                     balance = bal
                 rows = _normalize_tx_rows(data)
-                # 200 + boş liste geçerli (tarih aralığında hareket yok)
                 saw_ok_empty = True
                 return {"transactions": rows or [], "balance": balance, "access_token": None}
             if saw_auth:
@@ -2364,13 +2388,13 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
             " Hesap İşlem API’si müşteri yetkili token ister (Authorization Code + scope=accounts). "
             "Bağlantı testi yalnızca client_credentials ile geçer; hareket için portalden müşteri "
             "girişi sonrası Access Token (ve Refresh Token) alınarak Düzenle → Access Token alanına "
-            "yapıştırılmalı. Uygulamaya Hesap Yönetimi ürününün tanımlı olduğundan emin olun."
+            "yapıştırılmalı. Uygulamaya Accounts (V3) ürününün tanımlı olduğundan emin olun."
         )
         if token_kind == "cc":
             hint += " (Şu an client_credentials token kullanıldı.)"
     elif saw_404:
         hint = (
-            " Gateway 404: GET /v4/accounts/{ekNo}/transactions (Account Transactions v4) deneyin; "
+            " Gateway 404: GET /v3/accounts/{ekNo}/transactions (Account Transactions V3) deneyin; "
             "Hesap No’ya ek no (örn. 5) veya IBAN yazın — müşteri numarasını path’e koymayın."
         )
     elif not account and not ek_list:
