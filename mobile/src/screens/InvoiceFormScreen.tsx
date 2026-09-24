@@ -647,6 +647,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                   compact
                   label="Miktar"
                   testID={`inv-item-qty-${idx}`}
+                  clearTextOnFocus
                   value={lineFieldValue(idx, "quantity", it.quantity)}
                   onFocus={() => focusLineNumber(idx, "quantity")}
                   onBlur={() => blurLineNumber(idx, "quantity", 1)}
@@ -659,6 +660,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                   compact
                   label="Fiyat"
                   testID={`inv-item-price-${idx}`}
+                  clearTextOnFocus
                   value={lineFieldValue(idx, "unit_price", it.unit_price)}
                   onFocus={() => focusLineNumber(idx, "unit_price")}
                   onBlur={() => blurLineNumber(idx, "unit_price", 0)}
@@ -673,6 +675,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                   compact
                   label="KDV'li"
                   testID={`inv-item-price-incl-${idx}`}
+                  clearTextOnFocus
                   value={lineFieldValue(idx, "unit_price_incl", it.unit_price_incl)}
                   onFocus={() => focusLineNumber(idx, "unit_price_incl")}
                   onBlur={() => blurLineNumber(idx, "unit_price_incl", 0)}
@@ -685,6 +688,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                   compact
                   label="İsk %"
                   testID={`inv-item-disc-${idx}`}
+                  clearTextOnFocus
                   value={lineFieldValue(idx, "discount_rate", it.discount_rate)}
                   onFocus={() => focusLineNumber(idx, "discount_rate")}
                   onBlur={() => blurLineNumber(idx, "discount_rate", 0)}

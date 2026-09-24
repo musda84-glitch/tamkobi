@@ -184,6 +184,8 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [grossDraft, setGrossDraft] = useState<Record<number, string>>({});
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
+  const [qtyFocus, setQtyFocus] = useState<Record<number, boolean>>({});
+  const [priceFocus, setPriceFocus] = useState<Record<number, boolean>>({});
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [quote, setQuote] = useState<QuoteDoc | null>(null);
@@ -1108,14 +1110,28 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                               </Pressable>
                               <TextInput
                                 testID={`q-item-qty-${i}`}
-                                value={Object.prototype.hasOwnProperty.call(qtyDraft, i) ? qtyDraft[i] : String(it.quantity || "")}
-                                onPressIn={() => setQtyDraft((m) => ({ ...m, [i]: "" }))}
-                                onFocus={() => setQtyDraft((m) => ({ ...m, [i]: m[i] ?? "" }))}
-                                onBlur={() => setQtyDraft((m) => {
-                                  const next = { ...m };
-                                  delete next[i];
-                                  return next;
-                                })}
+                                clearTextOnFocus
+                                value={qtyFocus[i] ? (qtyDraft[i] ?? "") : String(it.quantity || "")}
+                                onPressIn={() => {
+                                  setQtyFocus((m) => ({ ...m, [i]: true }));
+                                  setQtyDraft((m) => ({ ...m, [i]: "" }));
+                                }}
+                                onFocus={() => {
+                                  setQtyFocus((m) => ({ ...m, [i]: true }));
+                                  setQtyDraft((m) => ({ ...m, [i]: "" }));
+                                }}
+                                onBlur={() => {
+                                  setQtyFocus((m) => {
+                                    const next = { ...m };
+                                    delete next[i];
+                                    return next;
+                                  });
+                                  setQtyDraft((m) => {
+                                    const next = { ...m };
+                                    delete next[i];
+                                    return next;
+                                  });
+                                }}
                                 onChangeText={(v) => {
                                   const typed = sanitizeMoneyInput(v);
                                   setQtyDraft((m) => ({ ...m, [i]: typed }));
@@ -1162,14 +1178,28 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                             >
                               <TextInput
                                 testID={`q-item-price-${i}`}
-                                value={Object.prototype.hasOwnProperty.call(priceDraft, i) ? priceDraft[i] : quotePriceText(it.unit_price)}
-                                onPressIn={() => setPriceDraft((m) => ({ ...m, [i]: "" }))}
-                                onFocus={() => setPriceDraft((m) => ({ ...m, [i]: m[i] ?? "" }))}
-                                onBlur={() => setPriceDraft((m) => {
-                                  const next = { ...m };
-                                  delete next[i];
-                                  return next;
-                                })}
+                                clearTextOnFocus
+                                value={priceFocus[i] ? (priceDraft[i] ?? "") : quotePriceText(it.unit_price)}
+                                onPressIn={() => {
+                                  setPriceFocus((m) => ({ ...m, [i]: true }));
+                                  setPriceDraft((m) => ({ ...m, [i]: "" }));
+                                }}
+                                onFocus={() => {
+                                  setPriceFocus((m) => ({ ...m, [i]: true }));
+                                  setPriceDraft((m) => ({ ...m, [i]: "" }));
+                                }}
+                                onBlur={() => {
+                                  setPriceFocus((m) => {
+                                    const next = { ...m };
+                                    delete next[i];
+                                    return next;
+                                  });
+                                  setPriceDraft((m) => {
+                                    const next = { ...m };
+                                    delete next[i];
+                                    return next;
+                                  });
+                                }}
                                 onChangeText={(v) => {
                                   const typed = sanitizeMoneyInput(v);
                                   setPriceDraft((m) => ({ ...m, [i]: typed }));
