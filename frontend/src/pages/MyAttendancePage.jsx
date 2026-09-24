@@ -6,7 +6,7 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Cal
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
@@ -324,9 +324,24 @@ export default function MyAttendancePage() {
                 />
               </label>
               <div className="text-[11px] text-amber-100 font-semibold">{mesaimPunchEditHint(punchEdit)}</div>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => { if (!/^\d{1,2}:\d{2}$/.test(String(punchEditTime || "").trim())) { toast.error("Saat seçin."); return; } act(punchEdit, String(punchEditTime).trim().slice(0, 5)); }} disabled={!!busy} className={`flex-1 px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 ${punchEdit === "check_out" ? "bg-rose-500" : "bg-emerald-500"}`} data-testid="my-att-punch-edit-yes">{busy === punchEdit ? "…" : "Onayla"}</button>
-                <button type="button" onClick={() => setPunchEdit(null)} className="px-3 py-2 rounded-lg font-bold bg-white/10" data-testid="my-att-punch-edit-no">Vazgeç</button>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const hm = resolveNowHm(data?.now);
+                    setPunchEditTime(hm);
+                    act(punchEdit, hm);
+                  }}
+                  disabled={!!busy}
+                  className={`w-full px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 ${punchEdit === "check_out" ? "bg-rose-500 hover:bg-rose-400" : "bg-indigo-500/90 hover:bg-indigo-500"}`}
+                  data-testid="my-att-punch-edit-now"
+                >
+                  {mesaimPunchNowLabel(punchEdit)}
+                </button>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => { if (!/^\d{1,2}:\d{2}$/.test(String(punchEditTime || "").trim())) { toast.error("Saat seçin."); return; } act(punchEdit, String(punchEditTime).trim().slice(0, 5)); }} disabled={!!busy} className={`flex-1 px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 ${punchEdit === "check_out" ? "bg-rose-500" : "bg-emerald-500"}`} data-testid="my-att-punch-edit-yes">{busy === punchEdit ? "…" : "Onayla"}</button>
+                  <button type="button" onClick={() => setPunchEdit(null)} className="px-3 py-2 rounded-lg font-bold bg-white/10" data-testid="my-att-punch-edit-no">Vazgeç</button>
+                </div>
               </div>
             </div>
           ) : (
