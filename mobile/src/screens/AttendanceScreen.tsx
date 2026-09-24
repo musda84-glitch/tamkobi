@@ -7,7 +7,7 @@ import { TimeField } from "../components/TimeField";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
-import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
@@ -90,6 +90,8 @@ export function AttendanceScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [earlyOpen, setEarlyOpen] = useState(false);
   const [outConfirm, setOutConfirm] = useState(false);
+  const [punchEdit, setPunchEdit] = useState<"check_in" | "check_out" | null>(null);
+  const [punchEditTime, setPunchEditTime] = useState("");
   const [earlyReason, setEarlyReason] = useState("");
   const [earlyTime, setEarlyTime] = useState("");
   const [intraOpen, setIntraOpen] = useState(false);
@@ -187,11 +189,12 @@ export function AttendanceScreen() {
     };
   }, [client, data?.today?.check_out, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
 
-  const act = async (action: "check_in" | "check_out") => {
+  const act = async (action: "check_in" | "check_out", time?: string) => {
     setBusy(action);
     setError(null);
     try {
-      let extra: { latitude?: number; longitude?: number; accuracy_m?: number } = {};
+      let extra: { latitude?: number; longitude?: number; accuracy_m?: number; time?: string } = {};
+      if (time) extra.time = time;
       const geoMode = selfAttendanceGeoMode(action, {
         hasTarget: Boolean(data?.location),
         requireGeo: data?.schedule?.require_geo !== false,
@@ -200,7 +203,7 @@ export function AttendanceScreen() {
       if (geoMode === "required" || geoMode === "attach") {
         try {
           const c = await coords();
-          extra = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
+          extra = { ...extra, latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
         } catch (err) {
           await reportLocation(apiErrorMessage(err, geoMode === "required" ? "Konum izni verilmedi." : "Konum alınamadı"));
           if (geoMode === "required") throw err;
@@ -209,6 +212,7 @@ export function AttendanceScreen() {
       const r = await post<{ message?: string }>(client, "/personnel/attendance/self", { action, ...extra });
       setMessage(r.message || "Kaydedildi.");
       if (action === "check_out") setOutConfirm(false);
+      setPunchEdit(null);
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "İşlem başarısız."));
@@ -412,8 +416,32 @@ export function AttendanceScreen() {
           intraOut={intraOut}
           intraReturn={intraReturn}
           geoPendingHint={geoPendingHint}
-          onCheckIn={() => act("check_in")}
-          onCheckOutAsk={() => setOutConfirm(true)}
+          punchEdit={punchEdit}
+          punchEditTime={punchEditTime}
+          onPunchEditTime={setPunchEditTime}
+          onPunchEditConfirm={() => {
+            if (!punchEdit) return;
+            if (!/^\d{1,2}:\d{2}$/.test(punchEditTime.trim())) { setError("Saat seçin."); return; }
+            act(punchEdit, punchEditTime.trim().slice(0, 5));
+          }}
+          onPunchEditCancel={() => setPunchEdit(null)}
+          onCheckIn={() => {
+            if (mesaimPunchOpensEditor({ action: "check_in", checkIn: today?.check_in })) {
+              setPunchEdit("check_in");
+              setPunchEditTime(today?.check_in || "");
+              return;
+            }
+            act("check_in");
+          }}
+          onCheckOutAsk={() => {
+            if (mesaimPunchOpensEditor({ action: "check_out", checkOut: today?.check_out })) {
+              setPunchEdit("check_out");
+              setPunchEditTime(today?.check_out || "");
+              return;
+            }
+            if (!today?.check_in) { setError("Önce giriş yapın."); return; }
+            setOutConfirm(true);
+          }}
           onCheckOutConfirm={() => act("check_out")}
           onCheckOutCancel={() => setOutConfirm(false)}
           onEarlyOpen={() => setEarlyOpen(true)}

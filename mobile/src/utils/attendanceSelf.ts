@@ -26,7 +26,21 @@ export function geoConfirmPending(rec?: { geo_confirm_request?: GeoConfirmReques
 export function geoConfirmReasonTr(reason?: string | null): string {
   if (reason === "location_off") return "konum kapalı";
   if (reason === "offsite") return "iş yerinde değil";
+  if (reason === "time_edit") return "saat düzeltme";
   return (reason || "").trim() || "konum doğrulanamadı";
+}
+
+export function mesaimPunchOpensEditor(opts: {
+  action: "check_in" | "check_out";
+  checkIn?: string | null;
+  checkOut?: string | null;
+}): boolean {
+  return opts.action === "check_in" ? Boolean(opts.checkIn) : Boolean(opts.checkOut);
+}
+
+export function mesaimPunchEditHint(action: "check_in" | "check_out"): string {
+  if (action === "check_in") return "Kayıtlı giriş saatini düzeltin. Onaylayınca yönetici teyidine düşer.";
+  return "Kayıtlı çıkış saatini düzeltin. Onaylayınca yönetici teyidine düşer.";
 }
 
 export function mesaimLongDate(ymd?: string | null): string {

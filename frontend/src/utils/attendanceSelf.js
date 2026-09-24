@@ -56,7 +56,17 @@ export function geoConfirmPending(rec) {
 export function geoConfirmReasonTr(reason) {
   if (reason === "location_off") return "konum kapalı";
   if (reason === "offsite") return "iş yerinde değil";
+  if (reason === "time_edit") return "saat düzeltme";
   return String(reason || "").trim() || "konum doğrulanamadı";
+}
+
+export function mesaimPunchOpensEditor({ action, checkIn, checkOut } = {}) {
+  return action === "check_in" ? Boolean(checkIn) : Boolean(checkOut);
+}
+
+export function mesaimPunchEditHint(action) {
+  if (action === "check_in") return "Kayıtlı giriş saatini düzeltin. Onaylayınca yönetici teyidine düşer.";
+  return "Kayıtlı çıkış saatini düzeltin. Onaylayınca yönetici teyidine düşer.";
 }
 
 export function geoConfirmHint(rec) {

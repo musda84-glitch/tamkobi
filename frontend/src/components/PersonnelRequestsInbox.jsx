@@ -15,7 +15,7 @@ export const KIND_META = {
   advance: { label: "Avans", Icon: Wallet, chip: "bg-amber-50 text-amber-800 border-amber-100" },
   yevmiye_adjustment: { label: "Geç giriş ücreti", Icon: Coins, chip: "bg-amber-50 text-amber-900 border-amber-200" },
   location_exit: { label: "Konum dışı", Icon: MapPin, chip: "bg-emerald-50 text-emerald-800 border-emerald-200" },
-  geo_confirm: { label: "Teyitli giriş", Icon: ShieldCheck, chip: "bg-violet-50 text-violet-800 border-violet-200" },
+  geo_confirm: { label: "Teyitli giriş / saat", Icon: ShieldCheck, chip: "bg-violet-50 text-violet-800 border-violet-200" },
 };
 
 const chipBtn = "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold disabled:opacity-50";

@@ -1,4 +1,4 @@
-import { earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "./attendanceSelf";
+import { earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "./attendanceSelf";
 
 describe("selfAttendanceGeoMode", () => {
   test("never blocks the punch — GPS is attached when a target or tracking exists", () => {
@@ -10,6 +10,9 @@ describe("selfAttendanceGeoMode", () => {
   test("describes pending manager-confirmed punches", () => {
     expect(geoConfirmPending({ geo_confirm_request: { status: "pending" } })).toBe(true);
     expect(geoConfirmHint({ geo_confirm_request: { status: "pending", action: "check_in", reason: "offsite", proposed_time: "09:10" } })).toMatch(/Giriş 09:10/);
+    expect(geoConfirmHint({ geo_confirm_request: { status: "pending", action: "check_out", reason: "time_edit", proposed_time: "18:00" } })).toMatch(/saat düzeltme/);
+    expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(true);
+    expect(mesaimPunchEditHint("check_in")).toMatch(/yönetici/);
   });
 
   test("attaches checkout geo when tracking is on and never requires it", () => {

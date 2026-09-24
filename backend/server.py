@@ -8542,14 +8542,14 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
         action = gcr.get("action") or "check_in"
         label = "Giriş" if action == "check_in" else "Çıkış"
         reason = gcr.get("reason")
-        why = "konum kapalı" if reason == "location_off" else ("iş yerinde değil" if reason == "offsite" else "konum doğrulanamadı")
+        why = attendance.geo_confirm_reason_tr(reason)
         dist = gcr.get("distance_m")
         items.append({
             "kind": "geo_confirm",
             "id": att.get("_id") or att.get("id"),
             "employee_id": att.get("employee_id"),
             "employee_name": att.get("employee_name") or "—",
-            "title": f"Yönetici teyitli {label.lower()}",
+            "title": "Saat düzeltme" if reason == "time_edit" else f"Yönetici teyitli {label.lower()}",
             "detail": f"{att.get('date') or ''}"
                       + (f" · {gcr.get('proposed_time')}" if gcr.get("proposed_time") else "")
                       + f" · {why}"
