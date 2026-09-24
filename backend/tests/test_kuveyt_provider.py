@@ -106,6 +106,15 @@ def test_kuveyt_account_suffix_from_iban():
     assert bp._kuveyt_account_suffix({"bank_account_number": "001234"}) == "001234"
 
 
+def test_kuveyt_tx_paths_use_transactions_not_accounttransactions():
+    paths = bp._kuveyt_tx_paths({"bank_account_number": "9698082300102"})
+    assert "/v1/accounts/transactions" in paths
+    assert any(p.endswith("/transactions") and "9698082300102" in p for p in paths)
+    assert all("accounttransactions" not in p for p in paths)
+    # Ek no adayları da denenir
+    assert any(p == "/v1/accounts/2/transactions" or "/v1/accounts/" in p for p in paths)
+
+
 def test_has_credentials_kuveyt_client_pair():
     assert not bp.has_credentials({"provider": "kuveytturk"})
     assert bp.has_credentials({"provider": "kuveytturk", "client_id": "a", "client_secret": "b"})
@@ -501,5 +510,45 @@ def test_fetch_kuveyt_signed_transactions():
     tx_url = get_calls[1].args[0]
     assert "/v1/accounts/transactions?" in tx_url
     assert "beginDate=" in tx_url
+    assert "accounttransactions" not in tx_url
     assert get_calls[1].kwargs["headers"]["Signature"]
     assert get_calls[1].kwargs["headers"]["Authorization"] == "Bearer tokBBB"
+
+
+def test_fetch_kuveyt_accepts_empty_200_transactions():
+    """Tarih aralığında hareket yoksa 200+[] başarıdır; accounttransactions 404’e düşülmez."""
+    pem = _rsa_pem()
+    conn = {
+        "provider": "kuveytturk", "mode": "live",
+        "client_id": "cid", "client_secret": "sec", "private_key": pem,
+        "bank_account_number": "9698082300102",
+    }
+    token_resp = MagicMock()
+    token_resp.status_code = 200
+    token_resp.content = b'{"access_token":"tok"}'
+    token_resp.json.return_value = {"access_token": "tok"}
+
+    empty_accounts = MagicMock()
+    empty_accounts.status_code = 200
+    empty_accounts.text = "{}"
+    empty_accounts.json.return_value = {}
+
+    empty_tx = MagicMock()
+    empty_tx.status_code = 200
+    empty_tx.text = '{"transactions":[]}'
+    empty_tx.json.return_value = {"transactions": []}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=token_resp)
+    mock_client.get = AsyncMock(side_effect=[empty_accounts, empty_tx])
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._fetch_kuveyt_transactions(conn, datetime(2026, 9, 1, tzinfo=timezone.utc))
+
+    out = asyncio.run(_run())
+    assert out["transactions"] == []
+    urls = [c.args[0] for c in mock_client.get.await_args_list]
+    assert all("accounttransactions" not in u for u in urls)

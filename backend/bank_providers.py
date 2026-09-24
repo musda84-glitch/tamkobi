@@ -30,7 +30,7 @@ PROVIDERS = {
         "token_path": "/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "customer_number"],
-        "hint": "API Market: Müşteri Id=Client ID, Client Secret (≠Api Anahtarı), Api Anahtarı=X-Gravitee-Api-Key. Token: POST prep-identity|identity.kuveytturk.com.tr/connect/token (grant_type=client_credentials, scope=public). Sandbox API: prep-gateway; Canlı: gateway. Eski idprep/apitest uçları kullanılmaz. RSA-SHA256 Signature için PKCS8 PEM.",
+        "hint": "API Market: Müşteri Id=Client ID, Client Secret (≠Api Anahtarı), Api Anahtarı=X-Gravitee-Api-Key. Token: POST prep-identity|identity …/connect/token (scope=public). Hareket: GET /v1/accounts/{ekNo}/transactions (beginDate, endDate) + RSA Signature — resmi SDK Authorization Code + accounts ister; connection test yalnızca client_credentials doğrular. Sandbox: prep-gateway; Canlı: gateway.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -788,13 +788,49 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
 
 
 def _kuveyt_account_suffix(conn: dict) -> str:
+    """Primary account suffix for path /v1/accounts/{suffix}/transactions (official SDK)."""
+    cands = _kuveyt_account_suffix_candidates(conn)
+    return cands[0] if cands else ""
+
+
+def _kuveyt_account_suffix_candidates(conn: dict) -> List[str]:
+    """Suffix / hesap no variants for Account Transactions API path param."""
+    out: List[str] = []
     raw = (conn.get("bank_account_number") or "").strip().replace(" ", "").upper()
-    if not raw or raw == "-":
-        return ""
-    if raw.startswith("TR") and len(raw) >= 16:
-        acct = raw[10:]
-        return acct.lstrip("0") or acct
-    return raw
+    if raw and raw != "-":
+        if raw.startswith("TR") and len(raw) >= 16:
+            acct = raw[10:]
+            stripped = acct.lstrip("0") or acct
+            out.extend([stripped, acct])
+        else:
+            out.append(raw)
+            # Uzun hesap no → olası ek no (son 1–5 hane); resmi path {suffix}
+            digits = "".join(ch for ch in raw if ch.isdigit())
+            if len(digits) >= 6:
+                for n in (5, 4, 3, 2, 1):
+                    ek = digits[-n:].lstrip("0") or digits[-n:]
+                    if ek and ek not in out:
+                        out.append(ek)
+    cust = (conn.get("customer_number") or "").strip()
+    if cust and cust not in out:
+        out.append(cust)
+    # dedupe preserve order
+    seen = set()
+    uniq: List[str] = []
+    for s in out:
+        if s and s not in seen:
+            seen.add(s)
+            uniq.append(s)
+    return uniq
+
+
+def _kuveyt_tx_paths(conn: dict) -> List[str]:
+    """Official C# SDK: GET /v1/accounts/{suffix?}/transactions (not …/accounttransactions)."""
+    paths = ["/v1/accounts/transactions"]
+    for suf in _kuveyt_account_suffix_candidates(conn)[:6]:
+        paths.append(f"/v1/accounts/{suf}/transactions")
+    # Legacy mistaken name — never use; Gravitee returns Path not found.
+    return paths
 
 
 def _enpara_dead_route(resp) -> bool:
@@ -2084,7 +2120,11 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
 
 
 async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
-    """API Market: Bearer + RSA-SHA256 Signature. GET query string is part of the signed payload."""
+    """API Market Hesap İşlem: GET /v1/accounts/{suffix}/transactions + RSA Signature.
+
+    Resmi SDK (KuveytTurkAPICSharp): Path=/v1/accounts/{suffix?}/transactions, GrantType=AuthorizationCode.
+    client_credentials ile bağlantı testi (/v1/data/banks) geçebilir; hesap uçları accounts scope ister.
+    """
     pem = _kuveyt_private_key_pem(conn)
     if not pem:
         raise RuntimeError(
@@ -2094,37 +2134,46 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     token = await _kuveyt_access_token(conn)
     base = _base_url(conn)
     account = (conn.get("bank_account_number") or "").strip().replace(" ", "")
-    suffix = _kuveyt_account_suffix(conn)
-    customer = (conn.get("customer_number") or "").strip()
     end = datetime.now(timezone.utc)
     start_d, end_d = since.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
-    last_detail = ""
     balance: Optional[float] = None
+    best_err = ""
+    saw_auth = False
+    saw_ok_empty = False
 
+    # Official samples use beginDate/endDate; also try startDate/endDate.
     ranges = [
         {"beginDate": start_d, "endDate": end_d},
         {"startDate": start_d, "endDate": end_d},
-        {"startDateTime": f"{start_d}T00:00:00", "endDateTime": f"{end_d}T23:59:59"},
     ]
     ident: Dict[str, str] = {}
-    if suffix:
-        ident["accountNumber"] = suffix
-        ident["accountSuffix"] = suffix
     if account:
-        ident["iban"] = account.replace(" ", "").upper()
-    if customer:
-        ident["customerNumber"] = customer
-        ident["customerId"] = customer
+        if account.upper().startswith("TR"):
+            ident["iban"] = account.upper()
+        else:
+            ident["accountNumber"] = account
+            # Bazı dokümanlar iban query bekler; hesap no da gönderilebilir
+            ident["iban"] = account
+    for suf in _kuveyt_account_suffix_candidates(conn)[:2]:
+        ident.setdefault("accountSuffix", suf)
+        ident.setdefault("accountNumber", suf)
+    cust = (conn.get("customer_number") or "").strip()
+    if cust:
+        ident["customerNumber"] = cust
+        ident["customerId"] = cust
 
     param_sets: List[Dict[str, str]] = []
     for rng in ranges:
         param_sets.append(dict(rng))
-        for extra in (
-            {k: ident[k] for k in ("accountNumber",) if k in ident},
-            {k: ident[k] for k in ("iban",) if k in ident},
-            {k: ident[k] for k in ("accountSuffix",) if k in ident},
-            {k: ident[k] for k in ident if k in ("accountNumber", "customerNumber")},
+        for keys in (
+            ("accountSuffix",),
+            ("accountNumber",),
+            ("iban",),
+            ("accountSuffix", "iban"),
+            ("accountNumber", "iban"),
+            ("customerNumber", "accountSuffix"),
         ):
+            extra = {k: ident[k] for k in keys if k in ident and ident[k]}
             if extra:
                 param_sets.append({**rng, **extra})
     seen = set()
@@ -2136,10 +2185,7 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
         seen.add(key)
         uniq.append(p)
 
-    paths = ["/v1/accounts/transactions"]
-    if suffix:
-        paths.append(f"/v1/accounts/{suffix}/transactions")
-        paths.append(f"/v1/accounts/{suffix}/accounttransactions")
+    paths = _kuveyt_tx_paths(conn)
 
     async with httpx.AsyncClient(timeout=45) as client:
         async def _get(path: str, params: Optional[Dict[str, str]] = None):
@@ -2148,21 +2194,19 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
             url = f"{base}{path}" + _kuveyt_query_string(qs_params)
             return await client.get(url, headers=headers)
 
+        # Hesap listesi — bakiyeyi al; suffix keşfi için
         resp = await _get("/v1/accounts")
-        last_detail = f"GET /v1/accounts HTTP {resp.status_code}: {_api_error_detail(resp)}"
+        detail = f"GET /v1/accounts HTTP {resp.status_code}: {_api_error_detail(resp)}"
         if resp.status_code in (401, 403):
-            raise RuntimeError(
-                f"Kuveyt Türk yetkilendirme hatası (HTTP {resp.status_code}). "
-                "client_credentials token ve RSA-SHA256 Signature’ı kontrol edin. "
-                f"{_api_error_detail(resp)[:200]}"
-            )
-        if resp.status_code < 400:
+            saw_auth = True
+            best_err = detail
+        elif resp.status_code < 400:
             try:
                 data = resp.json()
             except Exception:
                 data = None
             if data is not None:
-                bal = _extract_balance(data)
+                bal = _extract_balance(data, prefer_iban=account)
                 if bal is not None:
                     balance = bal
                 rows = _normalize_tx_rows(data)
@@ -2170,35 +2214,61 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
                     return {"transactions": rows, "balance": balance, "access_token": None}
 
         for path in paths:
-            for params in uniq[:8]:
+            for params in uniq[:10]:
                 resp = await _get(path, params)
-                last_detail = f"GET {path} HTTP {resp.status_code} ({','.join(params)}): {_api_error_detail(resp)}"
+                detail = (
+                    f"GET {path} HTTP {resp.status_code} "
+                    f"({','.join(f'{k}={v}' for k, v in params.items())}): {_api_error_detail(resp)}"
+                )
                 if resp.status_code in (401, 403):
-                    raise RuntimeError(
-                        f"Kuveyt Türk yetkilendirme hatası (HTTP {resp.status_code}). "
-                        f"{_api_error_detail(resp)[:200]}"
-                    )
+                    saw_auth = True
+                    best_err = detail
+                    # Token geçerli ama hesap API’si reddetti — diğer path’ler aynı sonucu verir
+                    break
+                if resp.status_code == 404:
+                    # Yanlış path / abonelik yok — daha iyi hata varsa sakla
+                    if not best_err or "404" in best_err:
+                        best_err = detail
+                    continue
                 if resp.status_code >= 400:
+                    best_err = detail
                     continue
                 try:
                     data = resp.json()
                 except Exception:
                     continue
-                bal = _extract_balance(data)
+                bal = _extract_balance(data, prefer_iban=account)
                 if bal is not None:
                     balance = bal
                 rows = _normalize_tx_rows(data)
-                if rows:
-                    return {"transactions": rows, "balance": balance, "access_token": None}
-                if _ticket_ready(data) is True:
-                    return {"transactions": [], "balance": balance, "access_token": None}
+                # 200 + boş liste geçerli (tarih aralığında hareket yok)
+                saw_ok_empty = True
+                return {"transactions": rows or [], "balance": balance, "access_token": None}
+            if saw_auth:
+                break
 
-    if balance is not None:
+    if saw_ok_empty or balance is not None:
         return {"transactions": [], "balance": balance, "access_token": None}
+
     hint = " Client ID/Secret, PKCS8 PEM ve hesap no/IBAN’ı kontrol edin."
-    if not account and not suffix:
-        hint = " Düzenle → Hesap No/IBAN alanına Kuveyt hesap numaranızı girin."
-    raise RuntimeError(f"Kuveyt Türk hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:360]}")
+    if saw_auth:
+        hint = (
+            " Token alındı ama Hesap İşlem API’si yetki reddetti (401/403). "
+            "Resmi SDK bu uç için Authorization Code + scope=accounts ister; "
+            "yalnızca client_credentials ile bağlantı testi geçebilir. "
+            "Portal uygulamasında Hesap Yönetimi ürününün ve accounts yetkisinin açık olduğundan emin olun."
+        )
+    elif best_err and "404" in best_err:
+        hint = (
+            " Gateway Path not found: doğru uç GET /v1/accounts/{ekNo}/transactions "
+            "(accounttransactions değil). Hesap No alanına ek no veya IBAN girin; "
+            "API Market’te Hesap Yönetimi ürününün uygulamaya tanımlı olduğunu kontrol edin."
+        )
+    elif not account and not _kuveyt_account_suffix_candidates(conn):
+        hint = " Düzenle → Hesap No/IBAN alanına Kuveyt hesap numaranızı veya IBAN’ı girin."
+    raise RuntimeError(
+        f"Kuveyt Türk hesap hareketi alınamadı.{hint} Son yanıt: {(best_err or detail)[:360]}"
+    )
 
 
 async def _fetch_live_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
