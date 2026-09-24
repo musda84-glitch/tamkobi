@@ -31,6 +31,7 @@ export function TimeField({ label, value, onChangeText, testID, optional, autoOp
 
   useEffect(() => {
     if (autoOpen) openPicker();
+    // Open once when the confirm row mounts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoOpen]);
 

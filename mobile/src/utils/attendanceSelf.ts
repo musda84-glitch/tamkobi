@@ -155,11 +155,14 @@ export function managerTimeEditHint(edit?: {
   check_in?: string | null;
   check_out?: string | null;
   pending_employee?: boolean;
+  attempt?: number | null;
 } | null): string {
   if (!edit?.pending_employee) return "";
   const prev = edit.prev_check_out || edit.prev_check_in || "—";
   const next = edit.check_out || edit.check_in || "—";
-  return `Yönetici saati düzeltti (${prev} → ${next}). Onaylamanız gerekir.`;
+  const attempt = Number(edit.attempt) || 0;
+  const extra = attempt ? ` (${attempt}/3)` : "";
+  return `Yönetici saati düzeltti (${prev} → ${next}). Onaylamanız gerekir${extra}.`;
 }
 
 /** Bekleyen erken çıkış veya mesai sonu için /me yenile — onay gelince çıkış açılır. */

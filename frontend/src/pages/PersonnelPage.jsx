@@ -15,7 +15,7 @@ import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
-import { cardPunchConfirmMessage, locationCellCaption, locationControllerLabel, locationTrackingEnabled, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
+import { cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint, locationCellCaption, locationControllerLabel, locationTrackingEnabled, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
 import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, fmtCardMoney, remainingLeaveDays } from "../utils/personnelCard";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
@@ -214,12 +214,17 @@ export default function PersonnelPage() {
     }
   };
 
-  const cardPunch = async (emp, action) => {
+  const cardPunch = async (emp, action, time) => {
     const id = empIdOf(emp);
     if (!id) return;
+    const invalid = cardPunchRequiresTime(time);
+    if (invalid) {
+      toast.error(invalid);
+      return;
+    }
     setPunchBusyId(id);
     try {
-      const r = await axios.post(`${API_URL}/personnel/attendance`, { employee_id: id, action });
+      const r = await axios.post(`${API_URL}/personnel/attendance`, { employee_id: id, ...cardPunchPayload(action, time) });
       toast.success(r.data?.message || (action === "check_in" ? "Giriş kaydedildi." : "Çıkış kaydedildi."));
       if (r.data?.overtime_hours) toast.info(`${r.data.overtime_hours} sa fazla mesai otomatik yazıldı.`);
       setPunchConfirm(null);
@@ -749,7 +754,7 @@ export default function PersonnelPage() {
                       <div className="min-w-0 col-span-2 grid grid-cols-2 gap-0.5" data-testid={`employee-card-today-${empKey}`}>
                       <button
                         type="button"
-                        onClick={() => setPunchConfirm({ id: empKey, action: "check_in", name: emp.full_name || "" })}
+                        onClick={() => setPunchConfirm({ id: empKey, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", attToday[empKey]) })}
                         disabled={punchBusyId === empKey}
                         className={`min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "bg-emerald-100" : "bg-white"}`}
                         data-testid={`employee-card-today-in-${empKey}`}
@@ -761,7 +766,7 @@ export default function PersonnelPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setPunchConfirm({ id: empKey, action: "check_out", name: emp.full_name || "" })}
+                        onClick={() => setPunchConfirm({ id: empKey, action: "check_out", name: emp.full_name || "", time: cardPunchDraftTime("check_out", attToday[empKey]) })}
                         disabled={punchBusyId === empKey}
                         className={`min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_out" ? "bg-rose-100" : "bg-white"}`}
                         data-testid={`employee-card-today-out-${empKey}`}
@@ -772,25 +777,39 @@ export default function PersonnelPage() {
                       </div>
                     </div>
                     {punchConfirm?.id === empKey ? (
-                      <div className="flex items-center gap-1.5 px-1 pt-1" data-testid={`employee-card-punch-confirm-${empKey}`}>
-                        <span className="min-w-0 flex-1 text-[10px] text-slate-600">{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</span>
-                        <button
-                          type="button"
-                          onClick={() => cardPunch(emp, punchConfirm.action)}
-                          disabled={punchBusyId === empKey}
-                          className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold text-white disabled:opacity-50 ${punchConfirm.action === "check_out" ? "bg-rose-600" : "bg-emerald-600"}`}
-                          data-testid={`employee-card-punch-yes-${empKey}`}
-                        >
-                          {punchBusyId === empKey ? "…" : "Onayla"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPunchConfirm(null)}
-                          className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700"
-                          data-testid={`employee-card-punch-no-${empKey}`}
-                        >
-                          Vazgeç
-                        </button>
+                      <div className="flex flex-col gap-1 px-1 pt-1" data-testid={`employee-card-punch-confirm-${empKey}`}>
+                        <label className="text-[10px] font-bold text-slate-500">
+                          {punchConfirm.action === "check_out" ? "Çıkış saati" : "Giriş saati"}
+                          <input
+                            type="time"
+                            autoFocus
+                            value={punchConfirm.time || ""}
+                            onChange={(e) => setPunchConfirm((cur) => (cur ? { ...cur, time: e.target.value } : cur))}
+                            className="mt-0.5 block w-full border rounded-lg p-1.5 bg-white"
+                            data-testid={`employee-card-punch-time-${empKey}`}
+                          />
+                        </label>
+                        <span className="min-w-0 text-[10px] text-slate-600">{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</span>
+                        <span className="text-[10px] font-semibold text-amber-700" data-testid={`employee-card-punch-hint-${empKey}`}>{cardPunchTimeHint(cardPunchAttempts(attToday[empKey], punchConfirm.action))}</span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => cardPunch(emp, punchConfirm.action, punchConfirm.time)}
+                            disabled={punchBusyId === empKey}
+                            className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold text-white disabled:opacity-50 ${punchConfirm.action === "check_out" ? "bg-rose-600" : "bg-emerald-600"}`}
+                            data-testid={`employee-card-punch-yes-${empKey}`}
+                          >
+                            {punchBusyId === empKey ? "…" : "Onayla"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPunchConfirm(null)}
+                            className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700"
+                            data-testid={`employee-card-punch-no-${empKey}`}
+                          >
+                            Vazgeç
+                          </button>
+                        </div>
                       </div>
                     ) : null}
                   </div>

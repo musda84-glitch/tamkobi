@@ -95,7 +95,7 @@ describe("selfCheckoutUnlocked", () => {
     expect(earlyLeaveApproved({ early_leave_request: { status: "pending" } })).toBe(false);
     expect(selfCheckoutLockedHint({ checkedIn: true })).toMatch(/açık/);
     expect(habitLabel({ typical_in: "08:50", typical_out: "18:05", sample_days: 6 })).toMatch(/08:50/);
-    expect(managerTimeEditHint({ pending_employee: true, prev_check_out: "18:10", check_out: "17:45" })).toMatch(/17:45/);
+    expect(managerTimeEditHint({ pending_employee: true, prev_check_out: "18:10", check_out: "17:45", attempt: 1 })).toMatch(/1\/3/);
     expect(managerTimeEditHint({ pending_employee: false })).toBe("");
   });
 });

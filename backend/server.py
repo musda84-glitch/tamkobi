@@ -9343,27 +9343,41 @@ async def upsert_attendance(req: Dict[str, Any]):
             patch[k] = req[k]
     if action in ("check_in", "check_out"):
         patch["status"] = "present"
-        patch[action] = now_hm
+        patch[action] = attendance.manager_punch_time(req, action, now_hm)
     existing = await db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
     rec = await attendance.apply_day(emp, date, patch, source=req.get("source") or "manager", confirmed=False if action or patch else None)
-    edit = attendance.manager_time_edit_doc(existing, rec, attendance._now())
+    round_info = attendance.apply_manager_time_edit_round(existing, rec, attendance._now(), action if action in ("check_in", "check_out") else None)
+    edit = round_info.get("edit")
     if edit:
+        auto = bool(round_info.get("auto_confirm"))
         rec["manager_time_edit"] = edit
-        rec["employee_confirmed"] = False
-        await db.attendance.update_one({"employee_id": emp["_id"], "date": date}, {"$set": {"manager_time_edit": edit, "employee_confirmed": False, "employee_confirmed_at": None}})
-        try:
-            import notify as _notify
-            await _notify.insert_notification(db, _notify.notification_doc(
-                emp["company_id"], "attendance_time_edit",
-                f"Puantaj saati düzeltildi: {date}",
-                f"Yönetici giriş/çıkış saatini güncelledi ({edit.get('prev_check_out') or edit.get('prev_check_in') or '—'} → {edit.get('check_out') or edit.get('check_in') or '—'}). Personel onayı gerekir.",
-                link="/mesai",
-                user_id=emp.get("user_id"),
-                employee_id=emp.get("_id"),
-                roles=[],
-            ))
-        except Exception:
-            pass
+        rec["manager_time_edit_rounds"] = round_info.get("rounds") or {}
+        rec["employee_confirmed"] = auto
+        rec["employee_confirmed_at"] = attendance._now() if auto else None
+        rec["message"] = attendance.manager_time_edit_result_message(round_info)
+        await db.attendance.update_one(
+            {"employee_id": emp["_id"], "date": date},
+            {"$set": {
+                "manager_time_edit": edit,
+                "manager_time_edit_rounds": rec["manager_time_edit_rounds"],
+                "employee_confirmed": auto,
+                "employee_confirmed_at": rec["employee_confirmed_at"],
+            }},
+        )
+        if not auto:
+            try:
+                import notify as _notify
+                await _notify.insert_notification(db, _notify.notification_doc(
+                    emp["company_id"], "attendance_time_edit",
+                    f"Puantaj saati düzeltildi: {date}",
+                    f"Yönetici giriş/çıkış saatini güncelledi ({edit.get('prev_check_out') or edit.get('prev_check_in') or '—'} → {edit.get('check_out') or edit.get('check_in') or '—'}). Personel onayı gerekir ({round_info.get('attempts')}/3).",
+                    link="/mesai",
+                    user_id=emp.get("user_id"),
+                    employee_id=emp.get("_id"),
+                    roles=[],
+                ))
+            except Exception:
+                pass
     return rec
 
 # ----------------- MALİ MÜŞAVİR PANELİ -----------------
