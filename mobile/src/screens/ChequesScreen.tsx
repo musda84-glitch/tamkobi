@@ -5,6 +5,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { Chip } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { ChequeScanButtons } from "../components/ChequeScanButtons";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
@@ -19,6 +20,7 @@ import {
   type ChequeFilter,
   type ChequeSummary,
 } from "../utils/cheques";
+import { chequeScanNavParams } from "../utils/chequeScan";
 import { paymentTargetGroups, type BankAccount } from "../utils/finance";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 
@@ -125,6 +127,21 @@ export function ChequesScreen() {
             { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "cheque-refresh", onPress: load },
           ]}
         />
+      ) : null}
+      {canEdit ? (
+        <Card testID="cheque-scan-card">
+          <ChequeScanButtons
+            testID="cheque-scan"
+            disabled={busy}
+            onDraft={(draft, match) => {
+              setMessage(null);
+              setError(null);
+              go("ChequeNew", chequeScanNavParams(draft, match));
+            }}
+            onHint={(hint) => { setMessage(hint); setError(null); }}
+            onError={(msg) => { setError(msg); setMessage(null); }}
+          />
+        </Card>
       ) : null}
       <Row style={{ flexWrap: "wrap" }}>
         {CHEQUE_FILTERS.map((f) => (

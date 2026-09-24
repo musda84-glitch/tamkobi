@@ -102,6 +102,13 @@ export function go(name: string, params?: Record<string, unknown>) {
           direction: String(params?.direction || ""),
           amount: String(params?.amount || ""),
           notes: String(params?.notes || ""),
+          serial_no: String(params?.serial_no || ""),
+          bank_name: String(params?.bank_name || ""),
+          bank_branch: String(params?.bank_branch || ""),
+          account_no: String(params?.account_no || ""),
+          drawer_name: String(params?.drawer_name || ""),
+          issue_date: String(params?.issue_date || ""),
+          due_date: String(params?.due_date || ""),
         },
       });
     case "ChequeDetail":

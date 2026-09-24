@@ -64,8 +64,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Keşif, proje, teklif ve stok kartı fotoğraflarını yüklemek için galeriye izin verin.",
-          "cameraPermission": "Keşif, proje, teklif ve stok kartı fotoğrafı çekmek için kameraya izin verin."
+          "photosPermission": "Çek, makbuz, keşif, proje, teklif ve stok kartı fotoğraflarını yüklemek için galeriye izin verin.",
+          "cameraPermission": "Çek, makbuz, keşif, proje, teklif ve stok kartı fotoğrafı çekmek için kameraya izin verin."
         }
       ],
       [

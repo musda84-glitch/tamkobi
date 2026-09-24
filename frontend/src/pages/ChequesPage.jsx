@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ScrollText, Plus, Trash2, X, Landmark, ArrowDownLeft, ArrowUpRight, Printer } from "lucide-react";
+import { ScrollText, Plus, Trash2, X, Landmark, ArrowDownLeft, ArrowUpRight, Printer, Camera, ImagePlus } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
@@ -10,6 +10,7 @@ import { ExportButtons } from "../components/ExportButtons";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { PromissoryPrint } from "../components/PromissoryPrint";
 import { formatTrAmount } from "../utils/money";
+import { applyChequeScan, chequeScanHint } from "../utils/chequeScan";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -40,6 +41,36 @@ const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
     issue_date: todayISO(), due_date: todayISO(), serial_no: "", bank_name: "", bank_branch: "", account_no: "", drawer_name: "", notes: "",
   });
   const [busy, setBusy] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  const camRef = React.useRef(null);
+  const galRef = React.useRef(null);
+  const pickGuard = React.useRef(0);
+  const scanFile = async (file) => {
+    if (!file || scanBusy || !companyId) return;
+    setScanBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await axios.post(
+        `${API_URL}/ai/cheque-extract?company_id=${encodeURIComponent(companyId)}`,
+        fd,
+        { timeout: 180000 },
+      );
+      const draft = r.data?.draft;
+      if (!draft || !(Number(draft.amount) > 0)) {
+        toast.error("Çekten tutar okunamadı. Daha net bir fotoğraf deneyin.");
+        return;
+      }
+      setD((cur) => applyChequeScan(cur, draft, r.data?.matched_contact));
+      toast.success(chequeScanHint(draft));
+    } catch (err) {
+      toast.error(err.response?.data?.detail || (err.code === "ECONNABORTED" ? "İstek zaman aşımına uğradı." : "Çek okunamadı."));
+    } finally {
+      setScanBusy(false);
+      if (camRef.current) camRef.current.value = "";
+      if (galRef.current) galRef.current.value = "";
+    }
+  };
   const save = async (e) => {
     e.preventDefault();
     setBusy(true);
@@ -54,12 +85,25 @@ const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
       setBusy(false);
     }
   };
+  const openScan = (kind) => {
+    pickGuard.current = Date.now() + 1500;
+    (kind === "camera" ? camRef : galRef).current?.click();
+  };
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { if (Date.now() < pickGuard.current) return; onClose(); }}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-3 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="cheque-modal">
         <div className="flex items-center justify-between border-b pb-3">
           <h3 className="text-base font-bold flex items-center gap-2"><ScrollText className="w-5 h-5 text-teal-600" /> Yeni Çek / Senet</h3>
           <button type="button" onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+        <div className="space-y-1.5">
+          <p className="text-[10px] text-slate-500" data-testid="cheque-scan-hint">{scanBusy ? "Çek okunuyor…" : "Kamera veya galeri ile çek / senet okuyun; tutar, vade ve banka dolar."}</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" disabled={scanBusy} onClick={() => openScan("camera")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-indigo-50 text-indigo-800 border-indigo-200 disabled:opacity-50 text-xs" data-testid="cheque-scan-camera"><Camera className="w-3.5 h-3.5" /> Kamera</button>
+            <button type="button" disabled={scanBusy} onClick={() => openScan("gallery")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-emerald-50 text-emerald-800 border-emerald-200 disabled:opacity-50 text-xs" data-testid="cheque-scan-gallery"><ImagePlus className="w-3.5 h-3.5" /> Galeriden</button>
+          </div>
+          <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => scanFile(e.target.files?.[0])} data-testid="cheque-scan-camera-input" />
+          <input ref={galRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" className="hidden" onChange={(e) => scanFile(e.target.files?.[0])} data-testid="cheque-scan-gallery-input" />
         </div>
         <div className="grid grid-cols-2 gap-3 text-xs">
           <div>

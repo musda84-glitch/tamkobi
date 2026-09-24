@@ -4,6 +4,7 @@ import { get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { ChequeScanButtons } from "../components/ChequeScanButtons";
 import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact } from "../types";
@@ -27,6 +28,7 @@ import {
 } from "../utils/cheques";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups, type BankAccount } from "../utils/finance";
+import { applyChequeScan } from "../utils/chequeScan";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 
 type Partner = { id?: string; _id?: string; name?: string; is_active?: boolean; balance?: number };
@@ -40,6 +42,13 @@ export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
     direction?: string;
     amount?: string;
     notes?: string;
+    serial_no?: string;
+    bank_name?: string;
+    bank_branch?: string;
+    account_no?: string;
+    drawer_name?: string;
+    issue_date?: string;
+    due_date?: string;
   }>();
   const canEdit = can("/cheques", "edit");
   const isNew = !chequeId;
@@ -180,6 +189,18 @@ export function ChequeFormScreen({ chequeId }: { chequeId?: string }) {
       </Muted>
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
+
+      {canEdit && !locked ? (
+        <Card testID="cheque-scan-card">
+          <ChequeScanButtons
+            testID="cheque-scan"
+            disabled={busy}
+            onDraft={(scan, match) => setDraft((cur) => applyChequeScan(cur, scan, match))}
+            onHint={(hint) => { setMessage(hint); setError(null); }}
+            onError={(msg) => { setError(msg); setMessage(null); }}
+          />
+        </Card>
+      ) : null}
 
       {!isNew ? (
         <PrimaryButton
