@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { colors } from "../../theme";
 import { sheetBottomInset } from "../../utils/keyboardPad";
 import { useKeyboardAwareScroll } from "../../utils/useKeyboardAwareScroll";
@@ -29,26 +29,17 @@ export function B2BSheet({
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <Pressable
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(15,23,42,0.45)",
-            justifyContent: "flex-end",
-            paddingBottom: lift,
-          }}
-          onPress={onClose}
-        >
+        <View style={[styles.wrap, { paddingBottom: lift }]}>
           <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Kapat"
+            onPress={onClose}
+            style={styles.backdrop}
+            testID={`${testID || "sheet"}-backdrop`}
+          />
+          <View
             testID={testID}
-            onPress={() => { /* keep */ }}
-            style={{
-              backgroundColor: "#fff",
-              borderTopLeftRadius: 20,
-              borderTopRightRadius: 20,
-              maxHeight: lift > 0 ? "100%" : "92%",
-              padding: 16,
-              paddingBottom: footer ? 10 : 16,
-            }}
+            style={[styles.sheet, { maxHeight: lift > 0 ? "100%" : "92%", paddingBottom: footer ? 10 : 16 }]}
           >
             <View style={{ flexDirection: "row", alignItems: "flex-start", marginBottom: 10 }}>
               <View style={{ flex: 1 }}>
@@ -63,15 +54,34 @@ export function B2BSheet({
             <ScrollView
               ref={scrollRef}
               {...scrollProps}
+              nestedScrollEnabled
               keyboardShouldPersistTaps="handled"
-              contentContainerStyle={{ paddingBottom: 8 }}
+              style={styles.scroll}
+              contentContainerStyle={{ paddingBottom: 8, flexGrow: 0 }}
+              showsVerticalScrollIndicator
             >
               {children}
             </ScrollView>
             {footer ? <View style={{ paddingTop: 8 }}>{footer}</View> : null}
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );
 }
+
+const styles = StyleSheet.create({
+  wrap: { flex: 1, justifyContent: "flex-end" },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15,23,42,0.45)",
+  },
+  sheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 16,
+    flexShrink: 1,
+  },
+  scroll: { flexGrow: 0, flexShrink: 1 },
+});

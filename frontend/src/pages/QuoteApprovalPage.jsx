@@ -6,7 +6,7 @@ import { CheckCircle2, XCircle, Loader2, FileSignature, Building2, CalendarClock
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { lineGross, lineUnitGross } from "../utils/orderMoney";
-import { formatTrAmount } from "../utils/money";
+import { fmtDate, formatTrAmount } from "../utils/money";
 
 const fmt = (n) => formatTrAmount((n || 0));
 
@@ -41,14 +41,14 @@ export default function QuoteApprovalPage() {
         <div className="bg-white rounded-2xl shadow-sm p-5 sm:p-8 space-y-5 text-sm">
           <div className="flex flex-wrap justify-between gap-3">
             <div><div className="text-[10px] uppercase font-bold text-slate-400">Sayın</div><div className="font-bold text-base text-slate-900">{q.contact_name}</div><div className="text-slate-600">{q.title}</div></div>
-            <div className="text-right text-xs text-slate-500"><div>Tarih: <b>{q.issue_date}</b></div>{q.valid_until && <div className={q.is_expired ? "text-rose-600 font-semibold" : ""}>Geçerlilik: <b>{q.valid_until}</b>{q.is_expired && " (süresi doldu)"}</div>}</div>
+            <div className="text-right text-xs text-slate-500"><div>Tarih: <b>{fmtDate(q.issue_date)}</b></div>{q.valid_until && <div className={q.is_expired ? "text-rose-600 font-semibold" : ""}>Geçerlilik: <b>{fmtDate(q.valid_until)}</b>{q.is_expired && " (süresi doldu)"}</div>}</div>
           </div>
           <table className="w-full text-xs sm:text-sm">
             <thead><tr className="bg-slate-900 text-white"><th className="text-left p-2 rounded-l-lg">Açıklama</th><th className="text-right p-2">Miktar</th><th className="text-right p-2">Birim (KDV Dahil)</th><th className="text-right p-2 rounded-r-lg">Tutar (KDV Dahil)</th></tr></thead>
             <tbody>{(q.items || []).map((it, i) => <tr key={i} className="border-b border-slate-100" data-testid={`public-quote-item-${i}`}><td className="p-2">{it.name}</td><td className="p-2 text-right">{it.quantity} {it.unit || ""}</td><td className="p-2 text-right">{fmt(lineUnitGross(it))} ₺</td><td className="p-2 text-right font-semibold">{fmt(lineGross(it))} ₺</td></tr>)}</tbody>
           </table>
           <div className="flex justify-end"><div className="w-64 space-y-1 text-sm"><div className="flex justify-between text-slate-500"><span>Ara Toplam (KDV Hariç)</span><span>{fmt(q.subtotal)} ₺</span></div><div className="flex justify-between text-slate-500"><span>KDV</span><span>{fmt(q.vat_total)} ₺</span></div><div className="flex justify-between text-lg font-black border-t-2 border-slate-900 pt-1" data-testid="public-quote-grand"><span>TOPLAM (KDV Dahil)</span><span>{fmt(q.grand_total)} ₺</span></div></div></div>
-          {q.payment_plan?.rows?.length > 0 && <div className="bg-violet-50 border border-violet-100 rounded-xl p-3"><div className="flex items-center gap-1 font-bold text-violet-800 text-xs mb-1"><CalendarClock className="w-3.5 h-3.5" /> Ödeme Planı ({q.payment_plan.rows.length} taksit)</div><div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 text-xs">{q.payment_plan.rows.map((r) => <div key={r.no} className="flex justify-between border-b border-violet-100 py-1"><span>{r.label}</span><span className="text-slate-500">{r.due_date}</span><b>{fmt(r.amount)} ₺</b></div>)}</div></div>}
+          {q.payment_plan?.rows?.length > 0 && <div className="bg-violet-50 border border-violet-100 rounded-xl p-3"><div className="flex items-center gap-1 font-bold text-violet-800 text-xs mb-1"><CalendarClock className="w-3.5 h-3.5" /> Ödeme Planı ({q.payment_plan.rows.length} taksit)</div><div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 text-xs">{q.payment_plan.rows.map((r) => <div key={r.no} className="flex justify-between border-b border-violet-100 py-1"><span>{r.label}</span><span className="text-slate-500">{fmtDate(r.due_date)}</span><b>{fmt(r.amount)} ₺</b></div>)}</div></div>}
           {(q.notes || q.terms) && <div className="text-xs text-slate-600 whitespace-pre-wrap">{q.notes}{q.terms && <div className="mt-1"><b>Şartlar:</b> {q.terms}</div>}</div>}
           {q.images?.length > 0 && <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">{q.images.map((img) => <img key={img} src={resolveImageUrl(img)} alt="" className="w-full h-24 object-cover rounded-lg border" />)}</div>}
         </div>

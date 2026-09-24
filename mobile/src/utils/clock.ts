@@ -20,3 +20,14 @@ export function minuteOptions(step = 5): number[] {
   for (let m = 0; m < 60; m += step) out.push(m);
   return out;
 }
+
+/** Cihaz saati; tekerlek 5 dk adımlı olsa da şimdiki dakika korunur. */
+export function nowHm(now: Date = new Date()): string {
+  return formatHm(now.getHours(), now.getMinutes());
+}
+
+/** Karttaki canlı saat varsa onu kullan; yoksa cihaz saati. */
+export function resolveNowHm(clockNow?: string | null, now: Date = new Date()): string {
+  const parsed = parseHm(String(clockNow || "").trim().slice(0, 8));
+  return parsed ? formatHm(parsed.hour, parsed.minute) : nowHm(now);
+}

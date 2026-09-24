@@ -23,7 +23,7 @@ import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { computeLine, documentLineTotals, emptyLine, hydrateLine } from "../utils/documentLines";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, projectStageMap, finalProjectStageKey } from "../utils/projectStages";
-import { formatTrAmount } from "../utils/money";
+import { fmtDate, formatTrAmount } from "../utils/money";
 import { workMapsLink } from "../utils/mapsLink";
 import { addressToggleLabel, shouldCollapseAddress } from "../utils/addressToggle";
 import { DEFAULT_LOCATION_RADIUS_M, LOCATION_RADIUS_OPTIONS, normalizeRadiusM } from "../utils/locationRadius";
@@ -593,7 +593,7 @@ export default function ProjectsPage({ section } = {}) {
             {visibleQuotes.map((q) => (
               <div key={q.id} className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs" data-testid={`quote-row-${q.quote_number}`}>
                 <div className="flex justify-between gap-2 items-start">
-                  <div className="min-w-0"><div className="font-mono font-bold text-slate-900">{q.quote_number}</div><div className="text-slate-500 truncate">{q.title} • {q.issue_date}</div><div className="font-semibold mt-0.5">{q.contact_name || "—"}</div></div>
+                  <div className="min-w-0"><div className="font-mono font-bold text-slate-900">{q.quote_number}</div><div className="text-slate-500 truncate">{q.title} • {fmtDate(q.issue_date)}</div><div className="font-semibold mt-0.5">{q.contact_name || "—"}</div></div>
                   <div className="text-right shrink-0 space-y-0.5">
                     <div className="font-bold">{fmt(q.grand_total)} ₺</div>
                     <div className="flex flex-col gap-0.5 items-end">
@@ -626,7 +626,7 @@ export default function ProjectsPage({ section } = {}) {
             <tbody className="divide-y divide-slate-100">
               {visibleQuotes.map((q) => (
                 <tr key={q.id} data-testid={`quote-row-desk-${q.quote_number}`}>
-                  <td className="px-4 py-2"><div className="font-mono font-bold text-slate-900">{q.quote_number}</div><div className="text-slate-500">{q.title} • {q.issue_date}{q.valid_until && ` → ${q.valid_until}`}</div></td>
+                  <td className="px-4 py-2"><div className="font-mono font-bold text-slate-900">{q.quote_number}</div><div className="text-slate-500">{q.title} • {fmtDate(q.issue_date)}{q.valid_until && ` → ${fmtDate(q.valid_until)}`}</div></td>
                   <td className="px-4 py-2 font-semibold">{q.contact_name || "—"}</td>
                   <td className="px-4 py-2"><ImageStrip entity="quote" doc={q} onUpdated={load} /></td>
                   <td className="px-4 py-2 text-right font-bold">{fmt(q.grand_total)} ₺</td>

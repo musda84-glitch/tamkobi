@@ -491,7 +491,7 @@ describe("workDocs", () => {
 
   it("puts cari on top of the quote list, number underneath, and omits empty dates", () => {
     expect(quoteListTitle({ contact_name: "Mustafa BAL" })).toBe("Mustafa BAL");
-    expect(quoteListTitle({ contact_name: "Mustafa BAL", valid_until: "2026-10-01" })).toBe("Mustafa BAL · 1 Eki 2026");
+    expect(quoteListTitle({ contact_name: "Mustafa BAL", valid_until: "2026-10-01" })).toBe("Mustafa BAL · 01.10.2026");
     expect(quoteListSubtitle({ quote_number: "TKF-2026-0012" })).toBe("TKF-2026-0012");
     expect(quoteListSubtitle({ title: "Villa teklifi" })).toBe("Villa teklifi");
   });
@@ -515,6 +515,6 @@ describe("workDocs", () => {
     expect(isSurveyConverted({ status: "done" })).toBe(false);
     expect(isSurveyConverted({ status: "quoted" })).toBe(true);
     expect(isSurveyConverted({ status: "done", quote_id: "q1" })).toBe(true);
-    expect(surveyListSubtitle({ contact_name: "Mudenen", address: "", survey_date: "2026-09-18" })).toBe("Mudenen · 18 Eyl 2026");
+    expect(surveyListSubtitle({ contact_name: "Mudenen", address: "", survey_date: "2026-09-18" })).toBe("Mudenen · 18.09.2026");
   });
 });

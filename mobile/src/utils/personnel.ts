@@ -1,5 +1,5 @@
 import { splitPaymentTarget } from "./finance";
-import { idOf } from "./money";
+import { fmtDate, idOf } from "./money";
 import { hoursFromTimeRange } from "./overtimeRange";
 import { workplaceDays, workplaceHint, type Workplace } from "./workplace";
 
@@ -470,7 +470,7 @@ function dutyLines(opts: {
   const lines = [opts.kindLabel];
   if (opts.project) lines.push(opts.project);
   if (opts.days) lines.push(`${opts.days} gün`);
-  if (opts.due) lines.push(`Bitiş ${opts.due}`);
+  if (opts.due) lines.push(`Bitiş ${fmtDate(opts.due)}`);
   if (opts.park) lines.push(`Parkur: ${opts.park}`);
   if (opts.address) lines.push(opts.address);
   return lines;
@@ -1268,7 +1268,7 @@ export function leaveStatusTr(status?: string | null): string {
 }
 
 export function payrollStatusTr(status?: string | null, paidDate?: string | null): string {
-  if (status === "paid") return paidDate ? `Ödendi (${paidDate})` : "Ödendi";
+  if (status === "paid") return paidDate ? `Ödendi (${fmtDate(paidDate)})` : "Ödendi";
   return "Ödeme bekliyor";
 }
 

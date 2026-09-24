@@ -1363,7 +1363,7 @@ export function PersonnelScreen() {
                           <Muted key={t.id || t.title} testID={`emp-card-task-${eid}-${t.id || t.title}`}>
                             {t.title || "Görev"}
                             {t.project_number || t.project_name ? ` · ${t.project_number || t.project_name}` : ""}
-                            {t.kind === "office" ? ` · iç görev${t.park_name ? ` · ${t.park_name}` : ""}` : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${t.due_date}` : ""}
+                            {t.kind === "office" ? ` · iç görev${t.park_name ? ` · ${t.park_name}` : ""}` : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${fmtDmy(t.due_date)}` : ""}
                           </Muted>
                         ))}
                         {pendingDutyPhotoCount(cards[eid]?.tasks as AssignedDuty[]) ? (
@@ -1706,7 +1706,7 @@ export function PersonnelScreen() {
               <Row style={{ justifyContent: "space-between" }}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontWeight: "800", color: colors.text }}>{l.employee_name}</Text>
-                  <Muted>{leaveTypeTr(l.type)} · {l.start_date} → {l.end_date} · {l.days} gün</Muted>
+                  <Muted>{leaveTypeTr(l.type)} · {fmtDmy(l.start_date)} → {fmtDmy(l.end_date)} · {l.days} gün</Muted>
                 </View>
                 <Text style={{ fontWeight: "700", color: l.status === "approved" ? colors.primary : l.status === "rejected" ? colors.danger : colors.warning }}>
                   {leaveStatusTr(l.status)}

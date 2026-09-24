@@ -97,6 +97,24 @@ export function mesaimPunchEditHint(action) {
   return "Kayıtlı çıkış saatini düzeltin. Onaylayınca yönetici teyidine düşer.";
 }
 
+export function mesaimPunchNowLabel(action) {
+  return action === "check_out" ? "Şimdiki saat ile çıkış" : "Şimdiki saat ile giriş";
+}
+
+/** Karttaki canlı saat varsa onu kullan; yoksa cihaz saati. */
+export function resolveNowHm(clockNow, now = new Date()) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(clockNow || "").trim().slice(0, 8));
+  if (m) {
+    const hour = Number(m[1]);
+    const minute = Number(m[2]);
+    if (hour <= 23 && minute <= 59) {
+      return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    }
+  }
+  const d = now instanceof Date ? now : new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 export function geoConfirmHint(rec) {
   const g = rec?.geo_confirm_request;
   if (!g || g.status !== "pending") return "";

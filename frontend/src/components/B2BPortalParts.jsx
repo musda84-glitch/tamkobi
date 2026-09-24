@@ -10,7 +10,7 @@ import { statusTr } from "../utils/labels";
 import { B2BOrderPreview, PreviewOrderBtn } from "./B2BOrderPreview";
 import { formatOrderItemLabel } from "../utils/b2bCart";
 import { LegalConsent } from "./LegalConsent";
-import { fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney } from "../utils/money";
 
 export const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -164,7 +164,6 @@ export const MobileCartBar = ({ lines, total, open, setOpen, children }) => {
 };
 
 const STEP_LABELS = { created: "Hazırlanıyor", picked_up: "Kargoya Verildi", in_transit: "Yolda", out_for_delivery: "Dağıtımda", delivered: "Teslim Edildi", returned: "İade" };
-const fmtDate = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "short", weekday: "short" }) : "");
 
 export const TrackingCard = ({ t, orderNumber }) => {
   if (!t) return <span className="text-slate-400 text-xs">Kargo bekleniyor</span>;
@@ -340,10 +339,10 @@ export const StatementList = ({ invoices, company, balance }) => {
       <div className="md:hidden divide-y">{invoices.map((i) => (
         <div key={i.invoice_number} className="p-3 text-xs space-y-1" data-testid={`b2b-invoice-${i.invoice_number}`}>
           <div className="flex items-center justify-between gap-2"><span className="font-mono font-bold">{i.invoice_number}</span><span className={`px-1.5 py-0.5 rounded font-semibold ${payStatus(i.payment_status) === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{statusTr(payStatus(i.payment_status))}</span></div>
-          <div className="text-slate-500">Tarih {i.issue_date}{i.due_date ? ` · Vade ${i.due_date}` : ""}</div>
+          <div className="text-slate-500">Tarih {fmtDate(i.issue_date)}{i.due_date ? ` · Vade ${fmtDate(i.due_date)}` : ""}</div>
           <div className="flex items-center justify-between"><span className="font-bold text-sm">{fmt(i.grand_total)}</span><span className="text-slate-500">Ödenen {fmt(i.paid_amount)}{i.grand_total - (i.paid_amount || 0) > 0.01 && <b className="text-rose-600 ml-1">· kalan {fmt(i.grand_total - (i.paid_amount || 0))}</b>}</span></div>
         </div>))}</div>
-      {invoices.length > 0 && <table className="hidden md:table w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b"><tr><Th>Fatura</Th><Th>Tarih</Th><Th>Vade</Th><Th right>Tutar</Th><Th right>Ödenen</Th><Th>Durum</Th></tr></thead><tbody className="divide-y">{invoices.map((i) => <tr key={i.invoice_number}><td className="p-3 font-mono font-bold">{i.invoice_number}</td><td className="p-3">{i.issue_date}</td><td className="p-3">{i.due_date || "-"}</td><td className="p-3 text-right font-bold">{fmt(i.grand_total)}</td><td className="p-3 text-right">{fmt(i.paid_amount)}</td><td className="p-3"><span className={`px-1.5 py-0.5 rounded font-semibold ${payStatus(i.payment_status) === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{statusTr(payStatus(i.payment_status))}</span></td></tr>)}</tbody></table>}
+      {invoices.length > 0 && <table className="hidden md:table w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b"><tr><Th>Fatura</Th><Th>Tarih</Th><Th>Vade</Th><Th right>Tutar</Th><Th right>Ödenen</Th><Th>Durum</Th></tr></thead><tbody className="divide-y">{invoices.map((i) => <tr key={i.invoice_number}><td className="p-3 font-mono font-bold">{i.invoice_number}</td><td className="p-3">{fmtDate(i.issue_date)}</td><td className="p-3">{i.due_date ? fmtDate(i.due_date) : "-"}</td><td className="p-3 text-right font-bold">{fmt(i.grand_total)}</td><td className="p-3 text-right">{fmt(i.paid_amount)}</td><td className="p-3"><span className={`px-1.5 py-0.5 rounded font-semibold ${payStatus(i.payment_status) === "paid" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{statusTr(payStatus(i.payment_status))}</span></td></tr>)}</tbody></table>}
       {company.iban && <div className="p-3 text-xs text-slate-500 border-t break-all">Ödeme için: <b>{company.bank_name}</b> IBAN <span className="font-mono">{company.iban}</span></div>}
     </div>
   );

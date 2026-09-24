@@ -10,7 +10,8 @@ import { ChannelLogo } from "../components/ChannelLogo";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact, Order, Product } from "../types";
-import { addOrBump, cartTotals, lineFromProduct, removeCartLine, type CartLine } from "../utils/cart";
+import { addOrBump, cartTotals, findProductByScan, lineFromProduct, parseScanQty, removeCartLine, type CartLine } from "../utils/cart";
+import { normalizeScanText } from "../utils/b2bCatalog";
 import { orderNumberLabel, statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 
@@ -29,6 +30,8 @@ export function FieldSalesScreen() {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [notes, setNotes] = useState("");
   const [scan, setScan] = useState(false);
+  const [scanQty, setScanQty] = useState("1");
+  const [scanStatus, setScanStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -76,20 +79,28 @@ export function FieldSalesScreen() {
 
   const totals = cartTotals(cart);
 
-  const addProduct = (p: Product) => {
-    setCart((prev) => addOrBump(prev, lineFromProduct(p as unknown as Record<string, unknown>), 1));
+  const addProduct = (p: Product, qty = 1) => {
+    const n = parseScanQty(qty);
+    setCart((prev) => addOrBump(prev, lineFromProduct(p as unknown as Record<string, unknown>), n));
     setProdQ("");
-    setMessage(`${p.name} sepete eklendi`);
+    const msg = `${p.name} sepete eklendi (${n})`;
+    setMessage(msg);
+    setScanStatus(msg);
+    setError(null);
   };
 
   const lookupBarcode = async (code: string) => {
-    const local = products.find((p) => p.barcode === code || p.sku === code);
-    if (local) { addProduct(local); return; }
+    const cleaned = normalizeScanText(code);
+    const qty = parseScanQty(scanQty);
+    const local = findProductByScan(products, cleaned);
+    if (local) { addProduct(local, qty); return; }
     try {
-      const p = await get<Product>(client, `/products/barcode/${encodeURIComponent(code)}`, { company_id: companyId });
-      addProduct(p);
+      const p = await get<Product>(client, `/products/barcode/${encodeURIComponent(cleaned)}`, { company_id: companyId });
+      addProduct(p, qty);
     } catch (err) {
-      setError(apiErrorMessage(err, "Barkod ile ürün bulunamadı."));
+      const miss = apiErrorMessage(err, `Barkod bulunamadı: ${cleaned}`);
+      setError(miss);
+      setScanStatus(miss);
     }
   };
 
@@ -177,7 +188,7 @@ export function FieldSalesScreen() {
       <Card>
         <Row style={{ justifyContent: "space-between" }}>
           <Text style={{ fontWeight: "800", color: colors.text }}>2. Ürün</Text>
-          <PrimaryButton title="Barkod" onPress={() => setScan(true)} />
+          <PrimaryButton title="Barkod" onPress={() => { setScanStatus(""); setScan(true); }} testID="saha-scan" />
         </Row>
         <Field label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU / barkod" />
         {prodHits.map((p) => (
@@ -216,7 +227,16 @@ export function FieldSalesScreen() {
           <ListRow key={idOf(o)} title={orderNumberLabel({ ...o, channel: o.channel || "saha" })} subtitle={`${o.customer_name} · ${statusTr(o.order_status)}`} leading={<ChannelLogo channel={o.channel || "saha"} />} right={fmtMoney(o.grand_total || o.total_amount)} />
         ))}
       </Card>
-      <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={lookupBarcode} />
+      <BarcodeScannerModal
+        visible={scan}
+        continuous
+        qtyEnabled
+        qty={scanQty}
+        onQtyChange={setScanQty}
+        status={scanStatus}
+        onClose={() => { setScan(false); setScanStatus(""); }}
+        onScan={lookupBarcode}
+      />
     </Screen>
   );
 }

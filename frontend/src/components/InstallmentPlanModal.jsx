@@ -6,7 +6,7 @@ import { X, CalendarClock, CheckCircle2, Trash2, Wallet, Printer, ScrollText } f
 import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { PromissoryPrint } from "./PromissoryPrint";
-import { formatTrAmount } from "../utils/money";
+import { fmtDate, formatTrAmount } from "../utils/money";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const INTERVALS = [["month", "Aylık"], ["week", "Haftalık"], ["days", "Gün aralığı"]];
@@ -44,7 +44,7 @@ export const PlanForm = ({ total, onSaved, saveLabel = "Taksit Planını Oluştu
           : <F label="İlk Taksit Tarihi"><input type="date" value={cfg.first_due_date} onChange={(e) => setCfg({ ...cfg, first_due_date: e.target.value })} className={cls} data-testid="plan-first-date-input" /></F>}
       </div>
       <div className="bg-slate-50 rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-56 overflow-y-auto" data-testid="plan-preview">
-        {rows.map((r) => <div key={r.no} className="flex items-center justify-between px-3 py-1.5"><span className="font-semibold text-slate-700">{r.label}</span><span className="text-slate-500 font-mono">{r.due_date}</span><span className="font-bold text-slate-900">{fmt(r.amount)} ₺</span></div>)}
+        {rows.map((r) => <div key={r.no} className="flex items-center justify-between px-3 py-1.5"><span className="font-semibold text-slate-700">{r.label}</span><span className="text-slate-500 font-mono">{fmtDate(r.due_date)}</span><span className="font-bold text-slate-900">{fmt(r.amount)} ₺</span></div>)}
       </div>
       {allowPromissory && (
         <div className="rounded-xl border border-violet-200 bg-violet-50/70 p-3 space-y-2" data-testid="plan-promissory-options">
@@ -92,7 +92,7 @@ export const InstallmentRows = ({ rows, accounts, companyId, onPaid, compact = f
           <div key={r.id} className={`flex items-center gap-2 px-3 py-2 ${r.is_overdue ? "bg-rose-50/60" : ""}`} data-testid={`installment-row-${r.no}`}>
             <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${r.status === "paid" ? "bg-emerald-600 text-white" : r.is_overdue ? "bg-rose-600 text-white" : "bg-slate-200 text-slate-700"}`}>{r.status === "paid" ? <CheckCircle2 className="w-3 h-3" /> : r.no}</span>
             <span className="font-semibold text-slate-800 w-20">{r.label}</span>
-            <span className="text-slate-500 font-mono">{r.due_date}</span>
+            <span className="text-slate-500 font-mono">{fmtDate(r.due_date)}</span>
             {r.cheque_number && <span className="text-[10px] font-semibold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded" title="Bağlı senet">{r.cheque_number}</span>}
             {r.status !== "paid" && <span className={`text-[10px] font-semibold ${r.is_overdue ? "text-rose-600" : "text-slate-400"}`}>{r.is_overdue ? `${-r.days_left} gün gecikti` : `${r.days_left} gün kaldı`}</span>}
             <span className="ml-auto font-bold text-slate-900">{fmt(r.amount)} ₺</span>
@@ -186,7 +186,7 @@ export const InstallmentPlanModal = ({ doc, kind = "invoice", accounts = [], com
               <PlanForm total={total} onSaved={save} saveLabel={isQuote ? "Ödeme Planını Teklife Ekle" : "Taksit Planını Oluştur"} allowPromissory={!isQuote} />
             ) : (
               <>
-                {isQuote ? <div className="bg-slate-50 rounded-xl border divide-y text-xs">{rows.map((r) => <div key={r.no} className="flex justify-between px-3 py-1.5"><b>{r.label}</b><span className="font-mono text-slate-500">{r.due_date}</span><b>{fmt(r.amount)} ₺</b></div>)}</div>
+                {isQuote ? <div className="bg-slate-50 rounded-xl border divide-y text-xs">{rows.map((r) => <div key={r.no} className="flex justify-between px-3 py-1.5"><b>{r.label}</b><span className="font-mono text-slate-500">{fmtDate(r.due_date)}</span><b>{fmt(r.amount)} ₺</b></div>)}</div>
                   : <InstallmentRows rows={rows} accounts={accounts} companyId={companyId} onPaid={() => { load(); onChanged?.(); }} onPrintPromissory={openPrintFromRows} />}
                 {isQuote && <p className="text-[11px] text-slate-500">Teklif faturaya çevrildiğinde bu plan otomatik olarak fatura taksitlerine dönüşür.</p>}
                 {isBalance && <p className="text-[11px] text-slate-500">Taksitler <b>Taksitler</b> modülünde &quot;AÇIK BAKİYE&quot; olarak izlenir; senetler <b>Çek/Senet</b> portföyüne düşer.</p>}

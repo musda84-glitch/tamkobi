@@ -12,7 +12,7 @@ import { go } from "../nav";
 import { colors } from "../theme";
 import { normalizeYmd } from "../utils/calendar";
 import { leaveTr, statusTr } from "../utils/labels";
-import { fmtMoney, idOf } from "../utils/money";
+import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { type AssignedDuty } from "../utils/assignedDuty";
 import { locationConsentPayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
 import { advanceFormToggleIcon, advanceFormToggleLabel, advanceRequestPayload, leaveDays, selfLeavePayload, validateAdvance, validateSelfLeave } from "../utils/personnel";
@@ -413,7 +413,7 @@ export function PersonelimScreen() {
             <View key={idOf(l) || `${l.start_date}-${l.end_date}`}>
               <ListRow
                 title={`${leaveTr(l.type)} · ${l.days ?? "—"} gün`}
-                subtitle={`${l.start_date || "—"} → ${l.end_date || "—"}${l.reason ? ` · ${l.reason}` : ""}`}
+                subtitle={`${fmtDate(l.start_date)} → ${fmtDate(l.end_date)}${l.reason ? ` · ${l.reason}` : ""}`}
                 right={statusTr(l.status)}
               />
               {l.status === "pending" ? (
@@ -517,7 +517,7 @@ export function PersonelimScreen() {
             <ListRow
               key={w.id || String(i)}
               title={w.order_code || w.id || "İş emri"}
-              subtitle={[w.product_name, w.station, w.step_no != null ? `adım ${w.step_no}` : null, w.planned_date].filter(Boolean).join(" · ")}
+              subtitle={[w.product_name, w.station, w.step_no != null ? `adım ${w.step_no}` : null, w.planned_date ? fmtDate(w.planned_date) : null].filter(Boolean).join(" · ")}
               right={statusTr(w.status)}
             />
           ))

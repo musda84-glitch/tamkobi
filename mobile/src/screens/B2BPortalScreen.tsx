@@ -16,7 +16,7 @@ import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
 import { addCartLine, b2bFlashChrome, cartCount, formatCartSheetMeta, formatOrderItemLabel, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "../utils/b2bCart";
 import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
-import { canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bCatalog";
+import { applyB2BScan, canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bCatalog";
 import {
   addEditProduct,
   canCancelOrder,
@@ -256,6 +256,8 @@ export function B2BPortalScreen() {
   const [newPw, setNewPw] = useState("");
   const [newPw2, setNewPw2] = useState("");
   const [scan, setScan] = useState(false);
+  const [scanQty, setScanQty] = useState("1");
+  const [scanStatus, setScanStatus] = useState("");
   const [done, setDone] = useState<Order | null>(null);
   const [preview, setPreview] = useState<Order | null>(null);
   const [edit, setEdit] = useState<Order | null>(null);
@@ -341,6 +343,19 @@ export function B2BPortalScreen() {
     if (addedTimer.current) clearTimeout(addedTimer.current);
     addedTimer.current = setTimeout(() => setAddedId(null), 1600);
     setMessage(`${p.name} sepete eklendi (${qty})`);
+  };
+
+  const addFromScan = (code: string) => {
+    const hit = applyB2BScan({ products, code, qty: scanQty, allowOrders, showStock });
+    setScanStatus(hit.message);
+    setQ(normalizeScanText(code));
+    if (hit.action === "add" && hit.product) {
+      setCart((c) => addCartLine(c, hit.product.id, hit.qty, draftNotes[hit.product.id] || ""));
+      setAddedId(hit.product.id);
+      if (addedTimer.current) clearTimeout(addedTimer.current);
+      addedTimer.current = setTimeout(() => setAddedId(null), 1600);
+      setMessage(hit.message);
+    }
   };
 
   useEffect(() => () => {
@@ -715,7 +730,7 @@ export function B2BPortalScreen() {
                 <ListRow
                   key={i.invoice_number}
                   title={i.invoice_number || "Fatura"}
-                  subtitle={`Tarih ${i.issue_date || "—"}${i.due_date ? ` · Vade ${i.due_date}` : ""} · ${statusTr(payStatus(i.payment_status))} · ödenen ${fmtMoney(i.paid_amount)}`}
+                  subtitle={`Tarih ${fmtDate(i.issue_date)}${i.due_date ? ` · Vade ${fmtDate(i.due_date)}` : ""} · ${statusTr(payStatus(i.payment_status))} · ödenen ${fmtMoney(i.paid_amount)}`}
                   right={fmtMoney(i.grand_total)}
                   rightSub={remain > 0.01 ? `kalan ${fmtMoney(remain)}` : undefined}
                   rightSubColor={remain > 0.01 ? colors.danger : undefined}
@@ -862,7 +877,16 @@ export function B2BPortalScreen() {
         <PrimaryButton title={busy ? "Kaydediliyor…" : "Şifreyi güncelle"} onPress={changePassword} loading={busy} color={colors.primary} testID="b2b-password-save" />
       </B2BSheet>
 
-      <BarcodeScannerModal visible={scan} onClose={() => setScan(false)} onScan={(code) => { setQ(normalizeScanText(code)); setScan(false); }} />
+      <BarcodeScannerModal
+        visible={scan}
+        continuous
+        qtyEnabled
+        qty={scanQty}
+        onQtyChange={setScanQty}
+        status={scanStatus}
+        onClose={() => { setScan(false); setScanStatus(""); }}
+        onScan={addFromScan}
+      />
 
       <B2BSheet visible={!!preview} title="Sipariş önizleme" subtitle={preview?.order_number} onClose={() => setPreview(null)} testID="b2b-order-preview">
         {preview ? (
