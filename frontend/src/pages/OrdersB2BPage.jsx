@@ -42,7 +42,7 @@ import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
 import { eBelgeMenuItems, orderCanIssueEFatura, orderEBelgeType } from "../utils/orderEBelge";
-import { orderMoreMenuItems } from "../utils/orderMoreMenu";
+import { orderMoreMenuItems, orderMoreMenuKind } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import {
   DropdownMenu,
@@ -50,6 +50,65 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
+
+/** Masaüstü / mobil ortak «Diğer işlemler» menüsü. */
+function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side = "left", testSuffix = "" }) {
+  const { kind, items } = orderMoreMenuItems(ord, {
+    eBelgeItems: eBelgeMenuItems(ord, contacts),
+  });
+  let lastSection = null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 data-[state=open]:bg-slate-100 data-[state=open]:text-slate-900 data-[state=open]:ring-1 data-[state=open]:ring-slate-200"
+          title="Diğer işlemler"
+          data-testid={`order-more-btn${testSuffix}-${ord.order_number}`}
+        >
+          <MoreVertical className="w-4 h-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align={align}
+        side={side}
+        sideOffset={10}
+        collisionPadding={24}
+        className="z-[80] w-72 max-w-[min(18rem,calc(100vw-1.5rem))] rounded-xl p-1.5 shadow-lg"
+        data-testid={`order-more-menu${testSuffix}-${ord.order_number}`}
+        data-menu-kind={kind}
+      >
+        {items.map((it) => {
+          const Ico = it.icon;
+          const section = it.section && it.section !== lastSection ? it.section : null;
+          if (it.section) lastSection = it.section;
+          return (
+            <div key={it.id}>
+              {section && <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">{section}</div>}
+              <DropdownMenuItem
+                onSelect={() => onAction(it.id, ord, { eType: it.eType })}
+                className="gap-2 text-xs font-medium"
+                data-testid={`order-more-${it.testId}${testSuffix}-${ord.order_number}`}
+              >
+                <Ico className={`w-4 h-4 shrink-0 ${it.color || "text-slate-500"}`} />
+                <span className="truncate">{it.label}</span>
+              </DropdownMenuItem>
+            </div>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** Mobil kartta tek birincil kısayol (menünün ilk eylemi). */
+function mobilePrimaryAction(ord) {
+  const kind = orderMoreMenuKind(ord);
+  if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır", className: "bg-emerald-600 text-white" };
+  if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura", className: "bg-rose-500 text-white" };
+  if (kind === "integration_einvoice") return { id: "cargo_mini", label: "Etiket", className: "bg-sky-600 text-white" };
+  return null;
+}
 
 export default function OrdersB2BPage() {
   const { activeCompany } = useAuth();
@@ -773,7 +832,83 @@ export default function OrdersB2BPage() {
 
       {activeTab === "orders" ? (<>
         <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} rows={visibleOrders} selectedCount={selected.length} bulkBusy={bulkBusy} onBulkAction={bulk} />
-        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
+
+        {/* Mobil: sade kart + aynı Diğer işlemler menüsü */}
+        <div className="md:hidden space-y-2" data-testid="orders-mobile-list">
+          {visibleOrders.length === 0 && (
+            <div className="bg-white border border-dashed rounded-2xl px-4 py-8 text-center text-xs text-slate-400" data-testid="ord-empty-mobile">
+              Filtreye uyan sipariş yok.
+            </div>
+          )}
+          {visibleOrders.map((ord) => {
+            const primary = mobilePrimaryAction(ord);
+            return (
+              <div
+                key={ord.id || ord._id || ord.order_number}
+                className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs"
+                data-testid={`order-card-mobile-${ord.order_number}`}
+              >
+                <div className="flex justify-between gap-2 items-start">
+                  <div className="min-w-0">
+                    <div className="font-mono font-bold text-slate-900 truncate">{ord.order_number}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                      <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">{channelTr(ord.channel)}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${orderStatusBadgeClass(ord.order_status)}`}>{statusTr(ord.order_status)}</span>
+                    </div>
+                    <button type="button" onClick={() => goContact(ord)} className="mt-1 font-semibold text-slate-800 hover:text-indigo-700 truncate text-left block max-w-full">
+                      {ord.customer_name || "—"}
+                    </button>
+                  </div>
+                  <div className="text-right shrink-0 font-bold text-slate-900">
+                    {formatTrAmount(ord.grand_total ?? ord.total_amount)} ₺
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-slate-100" data-testid={`order-actions-mobile-${ord.order_number}`}>
+                  {primary && (
+                    <button
+                      type="button"
+                      onClick={() => handleOrderMoreAction(primary.id, ord)}
+                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold ${primary.className}`}
+                      data-testid={`order-primary-mobile-${ord.order_number}`}
+                    >
+                      {primary.label}
+                    </button>
+                  )}
+                  {!ord.cargo_tracking_number ? (
+                    <button
+                      type="button"
+                      onClick={() => setShipOrder(ord)}
+                      className={cargoActionButtonClass(ord)}
+                      title={cargoActionTitle(ord)}
+                      data-testid={`create-cargo-mobile-${ord.order_number}`}
+                    >
+                      <Truck className="w-4 h-4" />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setPrintOrder(ord)}
+                    className={printOrderButtonClass(ord)}
+                    title={printOrderTitle(ord)}
+                    data-testid={`print-order-mobile-${ord.order_number}`}
+                  >
+                    <Printer className="w-4 h-4" />
+                  </button>
+                  <OrderMoreMenuButton
+                    ord={ord}
+                    contacts={contacts}
+                    onAction={handleOrderMoreAction}
+                    align="end"
+                    side="top"
+                    testSuffix="-mobile"
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="hidden md:block bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="table-fixed w-full text-left text-xs text-slate-600" style={{ minWidth: tableWidth }}>
                   <colgroup>
@@ -955,38 +1090,11 @@ export default function OrdersB2BPage() {
                         >
                           <Printer className="w-4 h-4" />
                         </button>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button type="button" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 data-[state=open]:bg-slate-100 data-[state=open]:text-slate-900 data-[state=open]:ring-1 data-[state=open]:ring-slate-200" title="Diğer işlemler" data-testid={`order-more-btn-${ord.order_number}`}><MoreVertical className="w-4 h-4" /></button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="center" side="left" sideOffset={10} collisionPadding={24} className="z-[80] w-72 rounded-xl p-1.5 shadow-lg" data-testid={`order-more-menu-${ord.order_number}`}>
-                            {(() => {
-                              const { kind, items } = orderMoreMenuItems(ord, {
-                                eBelgeItems: eBelgeMenuItems(ord, contacts),
-                              });
-                              let lastSection = null;
-                              return items.map((it) => {
-                                const Ico = it.icon;
-                                const section = it.section && it.section !== lastSection ? it.section : null;
-                                if (it.section) lastSection = it.section;
-                                return (
-                                  <div key={it.id}>
-                                    {section && <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">{section}</div>}
-                                    <DropdownMenuItem
-                                      onSelect={() => handleOrderMoreAction(it.id, ord, { eType: it.eType })}
-                                      className="gap-2 text-xs font-medium"
-                                      data-testid={`order-more-${it.testId}-${ord.order_number}`}
-                                      data-menu-kind={kind}
-                                    >
-                                      <Ico className={`w-4 h-4 shrink-0 ${it.color || "text-slate-500"}`} />
-                                      <span className="truncate">{it.label}</span>
-                                    </DropdownMenuItem>
-                                  </div>
-                                );
-                              });
-                            })()}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        <OrderMoreMenuButton
+                          ord={ord}
+                          contacts={contacts}
+                          onAction={handleOrderMoreAction}
+                        />
                       </div>
                     </td>
                   </tr>
