@@ -32,6 +32,7 @@ from models import (
     SmsSettings, SmsLog, MailAccount, MailLog
 )
 import purchase_orders as po_mod
+from invoice_numbers import SALES_INVOICE_PREFIX, format_sales_invoice_number
 from line_totals import (
     enrich_line,
     enrich_items,
@@ -1585,7 +1586,7 @@ async def convert_quote_to_invoice(quote_id: str, req: Dict[str, Any] = None):
               "is_service": bool(it.get("is_service") or not it.get("product_id")),
               "description": it.get("description") or ""} for it in q.get("items", [])]
     await _fill_stock_codes(q["company_id"], items)
-    inv = {"_id": str(uuid.uuid4()), "company_id": q["company_id"], "invoice_number": f"NX{datetime.now(timezone.utc).year}{str(inv_count + 1).zfill(8)}", "contact_id": q.get("contact_id"),
+    inv = {"_id": str(uuid.uuid4()), "company_id": q["company_id"], "invoice_number": format_sales_invoice_number(inv_count + 1, datetime.now(timezone.utc).year), "contact_id": q.get("contact_id"),
            "contact_name": q.get("contact_name"), "invoice_type": "sales", "e_type": req.get("e_type", "e_archive"), "items": items, "subtotal": q["subtotal"], "vat_total": q["vat_total"],
            "grand_total": q["grand_total"], "currency": "TRY", "status": "draft", "gib_status": None, "payment_status": "unpaid", "paid_amount": 0,
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "due_date": req.get("due_date"), "notes": f"{q['quote_number']} numaralı tekliften oluşturuldu.",
@@ -5724,7 +5725,7 @@ async def create_invoice(invoice: Invoice):
             elif invoice.trade_kind == "import":
                 prefix = "ITH"
             elif invoice.invoice_type == "sales":
-                prefix = "NX"
+                prefix = SALES_INVOICE_PREFIX
             else:
                 prefix = "AL"
             invoice.invoice_number = f"{prefix}{year}{str(count).zfill(8)}"
@@ -9035,7 +9036,7 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
     inv_id = f"inv_{uuid.uuid4().hex[:8]}"
     year = datetime.now(timezone.utc).strftime("%Y")
     count = await db.invoices.count_documents({"company_id": order.get("company_id")}) + 1
-    invoice_number = f"NX{year}{str(count).zfill(8)}"
+    invoice_number = format_sales_invoice_number(count, year)
     e_type = "e_invoice" if contact.get("is_e_invoice_user") else "e_archive"
     now = datetime.now(timezone.utc)
     subtotal = float(inv_totals.get("subtotal") or 0)
@@ -11279,7 +11280,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
     inv_totals = invoice_document_totals(inv_items)
 
     inv_id = f"inv_{uuid.uuid4().hex[:8]}"
-    invoice_number = f"NX{datetime.now().strftime('%Y')}{str(uuid.uuid4().int)[:8]}"
+    invoice_number = format_sales_invoice_number(str(uuid.uuid4().int)[:8])
 
     new_invoice = {
         "_id": inv_id,

@@ -1228,7 +1228,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               {/* Totals & Barcode */}
               <div className="flex justify-between items-end border-t pt-4">
                 <div className="space-y-2">
-                  <BarcodeRenderer code={previewInvoice.invoice_number || "NX202600000104"} width={160} height={40} />
+                  <BarcodeRenderer code={previewInvoice.invoice_number || "TA202600000104"} width={160} height={40} />
                   <div className="text-[10px] text-slate-400">Bu belge 5070 sayılı kanun uyarınca elektronik imzalanmıştır.</div>
                 </div>
                 <div className="w-64 space-y-1.5 text-xs text-right">
