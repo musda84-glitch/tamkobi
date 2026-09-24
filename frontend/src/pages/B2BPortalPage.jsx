@@ -11,6 +11,7 @@ import { B2BAiCart } from "../components/B2BAiCart";
 import { ScanButton } from "../components/CameraScanner";
 import { addCartLine, parseStoredCart, setCartLineQty } from "../utils/b2bCart";
 import { applyB2BScan, matchesB2BQuery } from "../utils/b2bSearch";
+import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
 const ALL_TABS = [
   { id: "catalog", label: "Ürünler", Icon: Package },
@@ -262,8 +263,10 @@ export default function B2BPortalPage() {
                 <label className="shrink-0 flex flex-col justify-center">
                   <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Adet</span>
                   <input
-                    value={scanQty}
+                    value={scanQtyShown(scanQty)}
                     onChange={(e) => setScanQty(e.target.value.replace(/\D/g, ""))}
+                    onFocus={() => setScanQty(scanQtyOnFocus())}
+                    onBlur={() => setScanQty(scanQtyOnBlur(scanQty))}
                     inputMode="numeric"
                     className="w-14 border rounded-xl p-2 text-sm font-black text-center bg-white"
                     data-testid="b2b-scan-qty"

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { Camera, X, Loader2, FlipHorizontal, Zap } from "lucide-react";
+import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
 /** Yaygın 1D barkod + QR / Data Matrix / PDF417 / Aztec */
 export const SCAN_FORMATS = [
@@ -431,8 +432,10 @@ export const CameraScanner = ({ onScan, onClose, continuous = false, title = "Ba
           <label className="flex items-center justify-center gap-2 text-white pt-1">
             <span className="font-bold">Adet çarpan</span>
             <input
-              value={qty ?? "1"}
+              value={scanQtyShown(qty)}
               onChange={(e) => onQtyChange?.(e.target.value.replace(/\D/g, ""))}
+              onFocus={() => onQtyChange?.(scanQtyOnFocus())}
+              onBlur={() => onQtyChange?.(scanQtyOnBlur(qty))}
               inputMode="numeric"
               className="w-16 rounded-lg px-2 py-1 text-slate-900 font-black text-center"
               data-testid="camera-scanner-qty"
