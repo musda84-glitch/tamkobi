@@ -59,6 +59,22 @@ export function lineFromProduct(prod: Record<string, unknown>, quantity = 1): Ca
   });
 }
 
+export function parseScanQty(raw?: string | number | null): number {
+  return Math.max(1, parseInt(String(raw ?? "1").replace(/\D/g, ""), 10) || 1);
+}
+
+export function findProductByScan<T extends { barcode?: string | null; sku?: string | null; variants?: Array<{ barcode?: string | null; sku?: string | null }> }>(
+  products: T[] | null | undefined,
+  code?: string | null,
+): T | undefined {
+  const c = String(code || "").trim().toLowerCase();
+  if (!c) return undefined;
+  return (products || []).find((p) => {
+    if (String(p.barcode || "").trim().toLowerCase() === c || String(p.sku || "").trim().toLowerCase() === c) return true;
+    return (p.variants || []).some((v) => String(v.barcode || "").trim().toLowerCase() === c || String(v.sku || "").trim().toLowerCase() === c);
+  });
+}
+
 export function addOrBump(cart: CartLine[], line: CartLine, qty = 1): CartLine[] {
   const idx = cart.findIndex((x) => x.product_id && x.product_id === line.product_id);
   if (idx < 0) return [...cart, computeLine({ ...line, quantity: qty })];
