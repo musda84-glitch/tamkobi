@@ -40,8 +40,13 @@ export function todayAttendanceParts(today) {
 export function cardPunchConfirmMessage(action, name) {
   const who = String(name || "").trim();
   const prefix = who ? `${who} için ` : "";
+  if (action === "absent") return `${prefix}bugün devamsız işaretlensin mi? Giriş/çıkış silinir.`;
   if (action === "check_in") return `${prefix}giriş saati personel onayına gönderilsin mi?`;
   return `${prefix}çıkış saati personel onayına gönderilsin mi?`;
+}
+
+export function absentConfirmMessage(name) {
+  return cardPunchConfirmMessage("absent", name);
 }
 
 export function cardPunchDraftTime(action, today) {

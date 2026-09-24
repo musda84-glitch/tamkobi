@@ -13,6 +13,7 @@ import { workplaceShort } from "../utils/workplace";
 import { fmtDmy } from "../utils/dateFormat";
 import { attendanceGroupToggleLabel, groupAttendanceRecords } from "../utils/attendanceGroups";
 import { attendanceCalendarMonth } from "../utils/attendanceSelf";
+import { cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint } from "../utils/employeeCardStatus";
 
 export const AttendancePanel = ({ companyId }) => {
   const [month, setMonth] = useState(() => attendanceCalendarMonth());
@@ -20,9 +21,21 @@ export const AttendancePanel = ({ companyId }) => {
   const [schedEmp, setSchedEmp] = useState(null);
   const [otAssign, setOtAssign] = useState(null); // { employee_id, employee_name, hours, date, note }
   const [recOpen, setRecOpen] = useState({});
+  const [listPunch, setListPunch] = useState(null);
+  const [punchBusyId, setPunchBusyId] = useState(null);
   const load = useCallback(async () => { try { const r = await axios.get(`${API_URL}/personnel/attendance?company_id=${companyId}&month=${month}`); setData(r.data); } catch { toast.error("Puantaj yüklenemedi."); } }, [companyId, month]);
   useEffect(() => { load(); }, [load]);
-  const act = async (employee_id, body) => { try { const r = await axios.post(`${API_URL}/personnel/attendance`, { employee_id, ...body }); if (r.data.overtime_hours) toast.info(`${r.data.overtime_hours} sa fazla mesai otomatik yazıldı.`); load(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
+  const act = async (employee_id, body) => {
+    setPunchBusyId(employee_id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance`, { employee_id, ...body });
+      setListPunch(null);
+      if (r.data.message) toast.success(r.data.message);
+      else if (r.data.overtime_hours) toast.info(`${r.data.overtime_hours} sa fazla mesai otomatik yazıldı.`);
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
+    finally { setPunchBusyId(null); }
+  };
   const openOt = (s) => setOtAssign({
     employee_id: s.employee_id,
     employee_name: s.employee_name,
@@ -108,11 +121,34 @@ export const AttendancePanel = ({ companyId }) => {
             <td className="px-4 py-2 text-right font-bold text-emerald-700" title={`${s.overtime_method === "fixed" ? "Sabit" : "Yasal"} · saatlik ${s.overtime_rate} ₺`} data-testid={`att-otpay-${s.employee_id}`}>{formatTrAmount((s.overtime_pay || 0))} ₺</td>
             <td className={`px-4 py-2 text-right font-semibold ${s.late_count ? "text-rose-600" : "text-slate-400"}`} title={`${s.late_minutes} dk`}>{s.late_count}</td>
             <td className={`px-4 py-2 text-right font-semibold ${s.unconfirmed ? "text-amber-600" : "text-slate-400"}`}>{s.unconfirmed}</td>
-            <td className="px-4 py-2"><div className="flex justify-end gap-1">
-              <button onClick={() => act(s.employee_id, { action: "check_in" })} className="flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg font-semibold hover:bg-emerald-100" data-testid={`att-in-${s.employee_id}`}><LogIn className="w-3 h-3" /> Giriş</button>
-              <button onClick={() => act(s.employee_id, { action: "check_out" })} className="flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-700 rounded-lg font-semibold hover:bg-slate-200" data-testid={`att-out-${s.employee_id}`}><LogOut className="w-3 h-3" /> Çıkış</button>
-              <button onClick={() => act(s.employee_id, { status: "absent" })} className="flex items-center gap-1 px-2 py-1 bg-rose-50 text-rose-700 rounded-lg font-semibold hover:bg-rose-100" data-testid={`att-absent-${s.employee_id}`}><CalendarX2 className="w-3 h-3" /> Devamsız</button>
+            <td className="px-4 py-2"><div className="flex flex-col items-end gap-1.5">
+              <div className="flex justify-end gap-1">
+              <button onClick={() => setListPunch({ id: s.employee_id, action: "check_in", name: s.employee_name, time: cardPunchDraftTime("check_in", s.today) })} className={`flex items-center gap-1 px-2 py-1 rounded-lg font-semibold ${listPunch?.id === s.employee_id && listPunch.action === "check_in" ? "bg-emerald-200 text-emerald-900" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`} data-testid={`att-in-${s.employee_id}`}><LogIn className="w-3 h-3" /> Giriş</button>
+              <button onClick={() => setListPunch({ id: s.employee_id, action: "check_out", name: s.employee_name, time: cardPunchDraftTime("check_out", s.today) })} className={`flex items-center gap-1 px-2 py-1 rounded-lg font-semibold ${listPunch?.id === s.employee_id && listPunch.action === "check_out" ? "bg-slate-300 text-slate-900" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`} data-testid={`att-out-${s.employee_id}`}><LogOut className="w-3 h-3" /> Çıkış</button>
+              <button onClick={() => setListPunch({ id: s.employee_id, action: "absent", name: s.employee_name, time: "" })} className={`flex items-center gap-1 px-2 py-1 rounded-lg font-semibold ${listPunch?.id === s.employee_id && listPunch.action === "absent" ? "bg-rose-200 text-rose-900" : "bg-rose-50 text-rose-700 hover:bg-rose-100"}`} data-testid={`att-absent-${s.employee_id}`}><CalendarX2 className="w-3 h-3" /> Devamsız</button>
               <button onClick={() => openOt(s)} className="flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg font-semibold hover:bg-indigo-100" data-testid={`att-ot-${s.employee_id}`}><Timer className="w-3 h-3" /> F. Mesai</button>
+              </div>
+              {listPunch?.id === s.employee_id ? (
+                <div className="w-56 rounded-xl border border-slate-200 bg-slate-50 p-2 space-y-1.5 text-left" data-testid={`att-punch-confirm-${s.employee_id}`}>
+                  {listPunch.action !== "absent" ? (
+                    <label className="text-[10px] font-bold text-slate-500 block">
+                      {listPunch.action === "check_out" ? "Çıkış saati" : "Giriş saati"}
+                      <input type="time" autoFocus value={listPunch.time || ""} onChange={(e) => setListPunch((cur) => (cur ? { ...cur, time: e.target.value } : cur))} className="mt-0.5 block w-full border rounded-lg p-1.5 bg-white" data-testid={`att-punch-time-${s.employee_id}`} />
+                    </label>
+                  ) : null}
+                  <div className="text-[10px] text-slate-600">{cardPunchConfirmMessage(listPunch.action, listPunch.name)}</div>
+                  {listPunch.action !== "absent" ? <div className="text-[10px] font-semibold text-amber-700" data-testid={`att-punch-hint-${s.employee_id}`}>{cardPunchTimeHint(cardPunchAttempts(s.today, listPunch.action))}</div> : null}
+                  <div className="flex items-center gap-1.5">
+                    <button type="button" disabled={punchBusyId === s.employee_id} onClick={() => {
+                      if (listPunch.action === "absent") { act(s.employee_id, { status: "absent" }); return; }
+                      const invalid = cardPunchRequiresTime(listPunch.time);
+                      if (invalid) { toast.error(invalid); return; }
+                      act(s.employee_id, cardPunchPayload(listPunch.action, listPunch.time));
+                    }} className={`px-2 py-0.5 rounded-md text-[10px] font-bold text-white disabled:opacity-50 ${listPunch.action === "check_in" ? "bg-emerald-600" : "bg-rose-600"}`} data-testid={`att-punch-yes-${s.employee_id}`}>{punchBusyId === s.employee_id ? "…" : "Onayla"}</button>
+                    <button type="button" onClick={() => setListPunch(null)} className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white border text-slate-700" data-testid={`att-punch-no-${s.employee_id}`}>Vazgeç</button>
+                  </div>
+                </div>
+              ) : null}
             </div></td>
           </tr>))}</tbody></table></div></div>
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden"><div className="px-4 py-2.5 border-b font-bold text-slate-900 flex items-center justify-between"><span>Günlük Kayıtlar ({data.records.length})</span><span className="text-[10px] text-slate-400 font-normal">Personel kendi kaydını Personel Giriş Çıkış Kayıtları ekranından onaylar veya itiraz eder</span></div><div className="max-h-72 overflow-y-auto divide-y divide-slate-100">{groupAttendanceRecords(data.records).map((g) => {

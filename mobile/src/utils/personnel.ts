@@ -141,11 +141,16 @@ export function todayAttendanceParts(today?: AttendanceToday | null): {
   };
 }
 
-export function cardPunchConfirmMessage(action: "check_in" | "check_out", name?: string): string {
+export function cardPunchConfirmMessage(action: "check_in" | "check_out" | "absent", name?: string): string {
   const who = String(name || "").trim();
   const prefix = who ? `${who} için ` : "";
+  if (action === "absent") return `${prefix}bugün devamsız işaretlensin mi? Giriş/çıkış silinir.`;
   if (action === "check_in") return `${prefix}giriş saati personel onayına gönderilsin mi?`;
   return `${prefix}çıkış saati personel onayına gönderilsin mi?`;
+}
+
+export function absentConfirmMessage(name?: string): string {
+  return cardPunchConfirmMessage("absent", name);
 }
 
 export function cardPunchDraftTime(

@@ -14,6 +14,7 @@ describe("employeeCardStatus", () => {
     expect(todayAttendanceParts(null).empty).toBe(true);
     expect(cardPunchConfirmMessage("check_in", "Davut")).toBe("Davut için giriş saati personel onayına gönderilsin mi?");
     expect(cardPunchConfirmMessage("check_out")).toMatch(/çıkış saati/);
+    expect(cardPunchConfirmMessage("absent", "Davut")).toMatch(/devamsız/);
     expect(cardPunchDraftTime("check_in", { check_in: "09:13" })).toBe("09:13");
     expect(cardPunchRequiresTime("09:13")).toBeNull();
     expect(cardPunchPayload("check_out", "18:05")).toEqual({ action: "check_out", check_out: "18:05" });

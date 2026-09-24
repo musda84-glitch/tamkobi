@@ -364,6 +364,8 @@ describe("payroll helpers", () => {
     expect(todayAttendanceParts(null).empty).toBe(true);
     expect(cardPunchConfirmMessage("check_in", "Davut")).toBe("Davut için giriş saati personel onayına gönderilsin mi?");
     expect(cardPunchConfirmMessage("check_out")).toMatch(/çıkış saati/);
+    expect(cardPunchConfirmMessage("absent", "Davut")).toMatch(/devamsız/);
+    expect(cardPunchConfirmMessage("absent", "Davut")).toMatch(/Giriş\/çıkış silinir/);
     expect(cardPunchDraftTime("check_in", { check_in: "09:13" })).toBe("09:13");
     expect(cardPunchDraftTime("check_out", { check_out: "--:--" })).toBe("");
     expect(cardPunchRequiresTime("")).toMatch(/Saat/);

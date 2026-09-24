@@ -267,6 +267,7 @@ export function PersonnelScreen() {
   const [workplaceOpen, setWorkplaceOpen] = useState<Record<string, boolean>>({});
   const [requestsOpen, setRequestsOpen] = useState<Record<string, boolean>>({});
   const [punchConfirm, setPunchConfirm] = useState<{ id: string; action: "check_in" | "check_out"; name: string; time: string } | null>(null);
+  const [listPunch, setListPunch] = useState<{ id: string; action: "check_in" | "check_out" | "absent"; name: string; time: string } | null>(null);
   const [punchBusy, setPunchBusy] = useState<string | null>(null);
   const [attRecOpen, setAttRecOpen] = useState<Record<string, boolean>>({});
   const [movesPeriod, setMovesPeriod] = useState<PayMovesPeriod>("30d");
@@ -882,6 +883,7 @@ export function PersonnelScreen() {
     try {
       const r = await post<{ message?: string; employee_confirmed?: boolean }>(client, "/personnel/attendance", { employee_id: employeeId, ...body });
       setPunchConfirm(null);
+      setListPunch(null);
       if (r?.message) setMessage(r.message);
       else if (body.action === "check_in") setMessage("Giriş kaydedildi.");
       else if (body.action === "check_out") setMessage("Çıkış kaydedildi.");
@@ -1289,7 +1291,7 @@ export function PersonnelScreen() {
                           </Pressable>
                         </View>
                       </Row>
-                      {punchConfirm?.id === eid ? (
+                      {punchConfirm?.id === eid && punchConfirm.action !== "absent" ? (
                         <View testID={`emp-card-punch-confirm-${eid}`} style={{ paddingTop: 4, gap: 6 }}>
                           <TimeField
                             key={`${eid}-${punchConfirm.action}`}
@@ -1582,11 +1584,48 @@ export function PersonnelScreen() {
                 return <Muted testID={`att-yevmiye-${s.employee_id}`}>Yevmiye: {days} gün × {fmtMoney(wage)} = {fmtMoney(earned)}</Muted>;
               })()}
               {canEdit ? (
+                <View style={{ gap: 8 }}>
                 <Row style={{ flexWrap: "wrap" }}>
-                  <PrimaryButton title="Giriş" color={colors.primary} testID={`att-in-${s.employee_id}`} onPress={() => attAct(s.employee_id || "", { action: "check_in" })} />
-                  <PrimaryButton title="Çıkış" color={colors.secondary} testID={`att-out-${s.employee_id}`} onPress={() => attAct(s.employee_id || "", { action: "check_out" })} />
-                  <PrimaryButton title="Devamsız" color={colors.danger} testID={`att-absent-${s.employee_id}`} onPress={() => attAct(s.employee_id || "", { status: "absent" })} />
+                  <PrimaryButton title="Giriş" color={colors.primary} testID={`att-in-${s.employee_id}`} onPress={() => setListPunch({ id: s.employee_id || "", action: "check_in", name: s.employee_name || "", time: cardPunchDraftTime("check_in", s.today) })} />
+                  <PrimaryButton title="Çıkış" color={colors.secondary} testID={`att-out-${s.employee_id}`} onPress={() => setListPunch({ id: s.employee_id || "", action: "check_out", name: s.employee_name || "", time: cardPunchDraftTime("check_out", s.today) })} />
+                  <PrimaryButton title="Devamsız" color={colors.danger} testID={`att-absent-${s.employee_id}`} onPress={() => setListPunch({ id: s.employee_id || "", action: "absent", name: s.employee_name || "", time: "" })} />
                 </Row>
+                {listPunch?.id === s.employee_id ? (
+                  <View testID={`att-punch-confirm-${s.employee_id}`} style={{ gap: 6 }}>
+                    {listPunch.action !== "absent" ? (
+                      <TimeField
+                        key={`${s.employee_id}-${listPunch.action}`}
+                        label={listPunch.action === "check_out" ? "Çıkış saati" : "Giriş saati"}
+                        testID={`att-punch-time-${s.employee_id}`}
+                        value={listPunch.time}
+                        autoOpen
+                        onChangeText={(time) => setListPunch((cur) => (cur ? { ...cur, time } : cur))}
+                      />
+                    ) : null}
+                    <Text style={{ fontSize: 11, color: colors.text }}>{cardPunchConfirmMessage(listPunch.action, listPunch.name)}</Text>
+                    {listPunch.action !== "absent" ? (
+                      <Text testID={`att-punch-hint-${s.employee_id}`} style={{ fontSize: 11, color: "#B45309" }}>{cardPunchTimeHint(cardPunchAttempts(s.today, listPunch.action))}</Text>
+                    ) : null}
+                    <Row style={{ gap: 6 }}>
+                      <PrimaryButton
+                        title={punchBusy === s.employee_id ? "Kaydediliyor…" : "Onayla"}
+                        color={listPunch.action === "check_in" ? colors.primary : colors.danger}
+                        testID={`att-punch-yes-${s.employee_id}`}
+                        onPress={() => {
+                          if (listPunch.action === "absent") {
+                            attAct(s.employee_id || "", { status: "absent" });
+                            return;
+                          }
+                          const invalid = cardPunchRequiresTime(listPunch.time);
+                          if (invalid) { setError(invalid); return; }
+                          attAct(s.employee_id || "", cardPunchPayload(listPunch.action, listPunch.time));
+                        }}
+                      />
+                      <PrimaryButton title="Vazgeç" color={colors.secondary} testID={`att-punch-no-${s.employee_id}`} onPress={() => setListPunch(null)} />
+                    </Row>
+                  </View>
+                ) : null}
+                </View>
               ) : null}
               {(() => {
                 const recs = attendanceRecordsForEmployee(attendance?.records, s.employee_id, s.employee_name);
