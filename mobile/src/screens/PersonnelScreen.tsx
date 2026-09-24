@@ -1161,6 +1161,7 @@ export function PersonnelScreen() {
         testID="personnel-tab"
         value={tab}
         onChange={setTab}
+        columns={2}
         items={[
           { key: "payroll", label: "Bordro", icon: "people", count: employees.length },
           { key: "attendance", label: "Puantaj", icon: "time" },
