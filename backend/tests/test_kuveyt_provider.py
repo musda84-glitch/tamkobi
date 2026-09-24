@@ -109,7 +109,7 @@ def test_kuveyt_account_suffix_from_iban():
 
 
 def test_kuveyt_tx_paths_prefer_ek_no_not_customer():
-    """9698082300002 → ek 2 önce; müşteri no path’e girmez. v4 Postman path önce."""
+    """9698082300002 → ek 2 önce; müşteri no path’e girmez. Portal V3 path önce."""
     cands = bp._kuveyt_account_suffix_candidates({
         "bank_account_number": "9698082300002",
         "customer_number": "96980823",
@@ -117,12 +117,15 @@ def test_kuveyt_tx_paths_prefer_ek_no_not_customer():
     assert cands[0] == "2"
     assert "96980823" not in cands
     paths = bp._kuveyt_tx_paths({"bank_account_number": "9698082300002"})
-    assert paths[0] == "/v4/accounts/2/transactions"
+    assert paths[0] == "/v3/accounts/2/transactions"
+    assert "/v4/accounts/2/transactions" in paths
     assert "/v1/accounts/2/transactions" in paths
-    assert "/v4/accounts/transactions" in paths
-    assert "/v1/accounts/transactions" in paths
+    assert "/v3/accounts/transactions" in paths
     assert all("accounttransactions" not in p for p in paths)
     assert all("/96980823/" not in p for p in paths)
+    lists = bp._kuveyt_account_list_paths({"bank_account_number": "5"})
+    assert lists[0] == "/v3/accounts"
+    assert "/v3/accounts/5" in lists
 
 
 def test_kuveyt_scope_includes_postman_tx_v4():
@@ -525,11 +528,11 @@ def test_fetch_kuveyt_signed_transactions():
     assert out["transactions"][0]["amount"] == 150.25
     assert out["balance"] == 8800.5
     get_calls = mock_client.get.await_args_list
-    assert "/v4/accounts" in get_calls[0].args[0]
+    assert "/v3/accounts" in get_calls[0].args[0]
     tx_url = get_calls[1].args[0]
-    assert "/v4/accounts/" in tx_url and "/transactions" in tx_url
+    assert "/v3/accounts/" in tx_url and "/transactions" in tx_url
     assert "accounttransactions" not in tx_url
-    # Postman v4: first attempt is no-query
+    # First tx attempt is no-query
     assert "beginDate=" not in tx_url
     assert get_calls[1].kwargs["headers"]["Signature"]
     assert get_calls[1].kwargs["headers"]["Authorization"] == "Bearer tokBBB"

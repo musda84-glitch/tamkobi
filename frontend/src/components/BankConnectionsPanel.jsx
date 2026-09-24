@@ -535,7 +535,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="kuveyt-edit-hint">
                 Bağlantı testi: <b>client_credentials</b> (Müşteri Id/Secret). Hareket çekme: resmi SDK{" "}
                 <b>Authorization Code + accounts</b> ister — portal müşteri girişi sonrası{" "}
-                <b>Access Token</b> yapıştırın. Path: <code className="font-mono">/v4/accounts/&#123;ekNo&#125;/transactions</code> (Account Transactions v4; v1 fallback).
+                <b>Access Token</b> yapıştırın. Path: <code className="font-mono">/v3/accounts/&#123;ekNo&#125;/transactions</code> (Accounts V3; v4/v1 fallback).
                 Hesap No’ya ek no (örn. 5) veya IBAN; müşteri numarasını path sanmayın.
               </p>
             )}
@@ -590,7 +590,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <div><label className="block font-semibold mb-1">Müşteri No</label><input className={`${inputCls} font-mono`} value={editForm.customer_number} onChange={(e) => setEditForm({ ...editForm, customer_number: e.target.value })} data-testid="edit-conn-customer" /></div>
               <div><label className="block font-semibold mb-1">Hesap No / IBAN {editForm.provider === "enpara" ? <span className="text-rose-600">(Enpara hareket için gerekli)</span> : editForm.provider === "kuveytturk" ? <span className="text-slate-500 font-normal">(ek no veya IBAN)</span> : <span className="text-slate-400 font-normal">(opsiyonel)</span>}</label>
                 <input className={`${inputCls} font-mono`} value={editForm.bank_account_number} onChange={(e) => setEditForm({ ...editForm, bank_account_number: e.target.value })} data-testid="edit-conn-iban" placeholder={editForm.provider === "kuveytturk" ? "Örn. 1 veya TR… IBAN" : "TR… veya hesap no"} autoComplete="off" />
-                <p className="text-[10px] text-slate-500 mt-1">{editForm.provider === "kuveytturk" ? "Hareket: GET /v4/accounts/{ekNo}/transactions (v1 fallback). Bağlantı testi client_credentials ile geçer; hareket için portalda Hesap Yönetimi + accounts yetkisi gerekir. Boşsa bağlı hesabın IBAN’ı kullanılır." : "Boşsa bağlı TamKobi hesabının IBAN’ı kullanılır. Enpara şeması IBAN’ı tam 26 karakter (boşluksuz) ister."}</p>
+                <p className="text-[10px] text-slate-500 mt-1">{editForm.provider === "kuveytturk" ? "Hareket: GET /v3/accounts/{ekNo}/transactions (portal Accounts V3; v4/v1 fallback). Bağlantı testi client_credentials ile geçer; hareket için portalda Accounts + accounts yetkisi gerekir. Boşsa bağlı hesabın IBAN’ı kullanılır." : "Boşsa bağlı TamKobi hesabının IBAN’ı kullanılır. Enpara şeması IBAN’ı tam 26 karakter (boşluksuz) ister."}</p>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setEditForm({ ...editForm, mode: "sandbox" })} className={`p-2 rounded-lg border font-semibold ${editForm.mode === "sandbox" ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`} data-testid="edit-conn-mode-sandbox">Sandbox</button>
