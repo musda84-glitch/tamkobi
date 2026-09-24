@@ -4,7 +4,6 @@ import { API_URL } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { PlatformNoticeModal } from "./PlatformNoticeModal";
 import {
-  UPDATE_DONE_NOTICE,
   dismissNotice,
   isUpdateTransportError,
   makeTransportNotice,
@@ -17,16 +16,14 @@ const POLL_ACTIVE_MS = 8_000;
 /**
  * Şirket panellerinde bakım / duyuru pop-up'ı.
  * 502–504 veya ağ hatasında hata yerine güncelleme bilgilendirmesi gösterir.
- * Güncelleme bitince (API yeniden yanıt verince) tamamlandı bildirimi çıkar.
+ * Güncelleme bitince otomatik "Güncelleme Tamamlandı" ekranı GÖSTERİLMEZ (istenmeyen kesinti).
  */
 export function PlatformNoticesHost({ disabled = false }) {
   const { activeCompany } = useAuth() || {};
   const companyId = activeCompany?.id || activeCompany?._id || "";
   const [payload, setPayload] = useState(null);
   const [transportNotice, setTransportNotice] = useState(null);
-  const [doneNotice, setDoneNotice] = useState(null);
   const [closedIds, setClosedIds] = useState(() => new Set());
-  const sawActiveRef = useRef(false);
   const transportRef = useRef(null);
 
   const showTransport = useCallback((notice) => {
@@ -35,10 +32,8 @@ export function PlatformNoticesHost({ disabled = false }) {
   }, []);
 
   const clearTransport = useCallback(() => {
-    const had = !!transportRef.current;
     transportRef.current = null;
     setTransportNotice(null);
-    return had;
   }, []);
 
   const refresh = useCallback(async () => {
@@ -48,23 +43,10 @@ export function PlatformNoticesHost({ disabled = false }) {
         timeout: 12_000,
         params: companyId ? { company_id: companyId } : {},
       });
-      const next = r.data;
-      const visible = pickVisibleNotice(next);
-      const stillActive = !!(visible && visible.activeUpdate);
-      const recoveredTransport = clearTransport();
-
-      if (stillActive) {
-        sawActiveRef.current = true;
-      } else if (sawActiveRef.current || recoveredTransport) {
-        sawActiveRef.current = false;
-        setDoneNotice({ ...UPDATE_DONE_NOTICE });
-      }
-
-      setPayload(next);
+      clearTransport();
+      setPayload(r.data);
     } catch (err) {
       if (isUpdateTransportError(err)) {
-        sawActiveRef.current = true;
-        setDoneNotice(null);
         if (!transportRef.current) showTransport(makeTransportNotice());
       }
     }
@@ -86,22 +68,22 @@ export function PlatformNoticesHost({ disabled = false }) {
     const onErr = (ev) => {
       const err = ev?.detail || ev;
       if (isUpdateTransportError(err)) {
-        sawActiveRef.current = true;
-        setDoneNotice(null);
         if (!transportRef.current) showTransport(makeTransportNotice());
       }
     };
+    // ChunkLoadError: sessizce yenile — "Güncelleme Tamamlandı" popup’ı açma
     const onChunk = (ev) => {
       const msg = String(ev?.reason?.message || ev?.message || "");
       if (/ChunkLoadError|Loading chunk|Failed to fetch dynamically imported/i.test(msg)) {
-        setDoneNotice({
-          ...UPDATE_DONE_NOTICE,
-          title: "Yeni Sürüm Yayınlandı",
-          body:
-            "Değerli Kullanıcımız,\n\n" +
-            "Uygulamanın yeni bir sürümü yayınlandı. Sayfayı yenileyerek güncel arayüze geçebilirsiniz.\n\n" +
-            "İyi çalışmalar dileriz.",
-        });
+        try {
+          const key = "tk_chunk_reload";
+          if (!sessionStorage.getItem(key)) {
+            sessionStorage.setItem(key, "1");
+            window.location.reload();
+          }
+        } catch {
+          /* ignore */
+        }
       }
     };
     window.addEventListener("tamkobi:api-error", onErr);
@@ -115,14 +97,12 @@ export function PlatformNoticesHost({ disabled = false }) {
   if (disabled) return null;
 
   const notice =
-    doneNotice ||
     transportNotice ||
     (fromApi && !closedIds.has(fromApi.id) ? fromApi : null);
   if (!notice) return null;
 
   const close = () => {
     if (notice.activeUpdate) return;
-    if (doneNotice?.id === notice.id) setDoneNotice(null);
     setClosedIds((prev) => new Set(prev).add(notice.id));
     if (transportNotice?.id === notice.id) clearTransport();
   };
@@ -130,7 +110,6 @@ export function PlatformNoticesHost({ disabled = false }) {
   const dontShow = () => {
     dismissNotice(notice.id);
     setClosedIds((prev) => new Set(prev).add(notice.id));
-    if (doneNotice?.id === notice.id) setDoneNotice(null);
   };
 
   const reload = () => window.location.reload();
@@ -139,8 +118,8 @@ export function PlatformNoticesHost({ disabled = false }) {
     <PlatformNoticeModal
       notice={notice}
       onClose={close}
-      onDontShowAgain={notice.dismissible || notice.updateDone ? dontShow : undefined}
-      onReload={notice.activeUpdate || notice.updateDone ? reload : undefined}
+      onDontShowAgain={notice.dismissible ? dontShow : undefined}
+      onReload={notice.activeUpdate ? reload : undefined}
     />
   );
 }

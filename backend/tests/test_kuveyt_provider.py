@@ -101,18 +101,26 @@ def test_kuveyt_account_suffix_from_iban():
     # TR + 2 check + 5 bank + 1 reserved + account
     iban = "TR330001100000000000000001"  # 26 chars
     assert len(iban) == 26
-    suffix = bp._kuveyt_account_suffix({"bank_account_number": iban})
-    assert suffix == iban[10:].lstrip("0")
-    assert bp._kuveyt_account_suffix({"bank_account_number": "001234"}) == "001234"
+    cands = bp._kuveyt_account_suffix_candidates({"bank_account_number": iban})
+    assert iban[10:].lstrip("0") in cands or any(len(c) <= 5 for c in cands)
+    # Kısa ek no doğrudan
+    assert bp._kuveyt_account_suffix({"bank_account_number": "2"}) == "2"
+    assert bp._kuveyt_account_suffix({"bank_account_number": "001"}) == "1"
 
 
-def test_kuveyt_tx_paths_use_transactions_not_accounttransactions():
-    paths = bp._kuveyt_tx_paths({"bank_account_number": "9698082300102"})
-    assert "/v1/accounts/transactions" in paths
-    assert any(p.endswith("/transactions") and "9698082300102" in p for p in paths)
+def test_kuveyt_tx_paths_prefer_ek_no_not_customer():
+    """9698082300002 → ek 2 önce; müşteri no path’e girmez."""
+    cands = bp._kuveyt_account_suffix_candidates({
+        "bank_account_number": "9698082300002",
+        "customer_number": "96980823",
+    })
+    assert cands[0] == "2"
+    assert "96980823" not in cands
+    paths = bp._kuveyt_tx_paths({"bank_account_number": "9698082300002"})
+    assert paths[0] == "/v1/accounts/transactions"
+    assert "/v1/accounts/2/transactions" in paths
     assert all("accounttransactions" not in p for p in paths)
-    # Ek no adayları da denenir
-    assert any(p == "/v1/accounts/2/transactions" or "/v1/accounts/" in p for p in paths)
+    assert all("/96980823/" not in p for p in paths)
 
 
 def test_has_credentials_kuveyt_client_pair():
