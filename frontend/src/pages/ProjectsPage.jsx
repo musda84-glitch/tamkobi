@@ -46,12 +46,6 @@ const QuoteStatusLinks = ({ q, projects = [], onOpenProject }) => {
   const linkedToProject = !!(q?.project_id || projectNo);
   const invoiceNo = q?.invoice_number ? String(q.invoice_number) : "";
   if (!linkedToProject && !invoiceNo) return null;
-  const projectLabel = (
-    <>
-      <span className="font-sans font-semibold text-indigo-600">Proje</span>
-      {projectNo ? ` · ${projectNo}` : " · dönüştü"}
-    </>
-  );
   return (
     <>
       {linkedToProject && (
@@ -59,20 +53,22 @@ const QuoteStatusLinks = ({ q, projects = [], onOpenProject }) => {
           <button
             type="button"
             onClick={() => onOpenProject(q.project_id || projectNo)}
-            className="font-mono text-[10px] text-indigo-700 text-left hover:underline"
+            className="font-mono text-[10px] text-indigo-700 text-left hover:underline whitespace-nowrap"
             title={projectNo ? `Projeye git: ${projectNo}` : "Projeye dönüştü"}
             data-testid={`quote-project-link-${q.quote_number}`}
           >
-            {projectLabel}
+            <span className="font-sans font-semibold text-indigo-600">{projectNo ? "Proje" : "Projeye"}</span>
+            {projectNo ? ` · ${projectNo}` : " dönüştü"}
           </button>
         ) : (
-          <div className="font-mono text-[10px] text-indigo-700" data-testid={`quote-project-link-${q.quote_number}`}>
-            {projectLabel}
+          <div className="font-mono text-[10px] text-indigo-700 whitespace-nowrap" data-testid={`quote-project-link-${q.quote_number}`}>
+            <span className="font-sans font-semibold text-indigo-600">{projectNo ? "Proje" : "Projeye"}</span>
+            {projectNo ? ` · ${projectNo}` : " dönüştü"}
           </div>
         )
       )}
       {invoiceNo && (
-        <div className="font-mono text-[10px] text-emerald-700" data-testid={`quote-invoice-link-${q.quote_number}`}>
+        <div className="font-mono text-[10px] text-emerald-700 whitespace-nowrap" data-testid={`quote-invoice-link-${q.quote_number}`}>
           <span className="font-sans font-semibold text-emerald-600">Fatura</span>
           {` · ${invoiceNo}`}
         </div>
