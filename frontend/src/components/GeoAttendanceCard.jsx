@@ -4,7 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { MapPin, LogIn, LogOut, Loader2, Crosshair, Smartphone } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
-import { CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { LocationConsentCard } from "./LocationConsentCard";
 import { LocationSignal } from "./LocationSignal";
 import { locationConsentAccepted, locationUnavailablePayload } from "../utils/locationConsent";
@@ -19,6 +19,12 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
   const [signal, setSignal] = useState(null);
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/geo-status?company_id=${companyId}`, { withCredentials: true }).then((r) => { setSt(r.data); setSignal(r.data.location_signal || null); }).catch(() => {}), [companyId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (shouldReloadAttendanceDay(st?.today_date)) load();
+    }, ATTENDANCE_DAY_WATCH_MS);
+    return () => clearInterval(id);
+  }, [st?.today_date, load]);
 
   const reportLocation = useCallback(async (reason) => {
     let coords;

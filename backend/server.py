@@ -9319,6 +9319,7 @@ async def geo_status(company_id: str = "comp_nexus_main_01", user: dict = Depend
         "workplace": workplace,
         "employee": {"id": emp["_id"], "full_name": emp["full_name"]} if emp else None,
         "today": clean_doc(rec) if rec else None,
+        "today_date": today,
         "now": now_s,
         "schedule": {"start": (sched or {}).get("start"), "end": (sched or {}).get("end")},
         "checkout_unlocked": attendance.self_checkout_unlocked(rec, sched, now_s),
