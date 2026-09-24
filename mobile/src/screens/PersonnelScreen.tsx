@@ -1116,14 +1116,18 @@ export function PersonnelScreen() {
       {message ? <Muted testID="personnel-msg">{message}</Muted> : null}
 
       {canEdit ? (
-        <Row style={{ flexWrap: "wrap", gap: 8 }}>
-          <PrimaryButton title="Aylık bordro hesapla" onPress={generatePayroll} loading={busy} color={colors.indigo} testID="generate-payroll-btn" />
-          <PrimaryButton
-            title="Yeni personel ekle"
-            onPress={() => router.push("/personnel/new")}
-            color={colors.primary}
-            testID="personnel-add-btn"
-          />
+        <Row style={{ gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <PrimaryButton title="Aylık Bordro" onPress={generatePayroll} loading={busy} color={colors.indigo} testID="generate-payroll-btn" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <PrimaryButton
+              title="Yeni Personel"
+              onPress={() => router.push("/personnel/new")}
+              color={colors.primary}
+              testID="personnel-add-btn"
+            />
+          </View>
         </Row>
       ) : null}
 
