@@ -87,7 +87,12 @@ import {
   locationCellCaption,
   locationTrackingTogglePayload,
   todayAttendanceParts,
+  cardPunchAttempts,
   cardPunchConfirmMessage,
+  cardPunchDraftTime,
+  cardPunchPayload,
+  cardPunchRequiresTime,
+  cardPunchTimeHint,
   locModeSummary,
   DEFAULT_LOC_MODE,
   type LocMode,
@@ -261,7 +266,7 @@ export function PersonnelScreen() {
   const [busy, setBusy] = useState(false);
   const [workplaceOpen, setWorkplaceOpen] = useState<Record<string, boolean>>({});
   const [requestsOpen, setRequestsOpen] = useState<Record<string, boolean>>({});
-  const [punchConfirm, setPunchConfirm] = useState<{ id: string; action: "check_in" | "check_out"; name: string } | null>(null);
+  const [punchConfirm, setPunchConfirm] = useState<{ id: string; action: "check_in" | "check_out"; name: string; time: string } | null>(null);
   const [punchBusy, setPunchBusy] = useState<string | null>(null);
   const [attRecOpen, setAttRecOpen] = useState<Record<string, boolean>>({});
   const [movesPeriod, setMovesPeriod] = useState<PayMovesPeriod>("30d");
@@ -875,10 +880,11 @@ export function PersonnelScreen() {
   const attAct = async (employeeId: string, body: Record<string, unknown>) => {
     setPunchBusy(employeeId);
     try {
-      await post(client, "/personnel/attendance", { employee_id: employeeId, ...body });
+      const r = await post<{ message?: string; employee_confirmed?: boolean }>(client, "/personnel/attendance", { employee_id: employeeId, ...body });
       setPunchConfirm(null);
-      if (body.action === "check_in") setMessage("Giriş kaydedildi.");
-      if (body.action === "check_out") setMessage("Çıkış kaydedildi.");
+      if (r?.message) setMessage(r.message);
+      else if (body.action === "check_in") setMessage("Giriş kaydedildi.");
+      else if (body.action === "check_out") setMessage("Çıkış kaydedildi.");
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Puantaj kaydedilemedi."));
@@ -1262,7 +1268,7 @@ export function PersonnelScreen() {
                             disabled={!canEdit || punchBusy === eid}
                             accessibilityRole="button"
                             accessibilityLabel="Giriş kaydı"
-                            onPress={() => setPunchConfirm({ id: eid, action: "check_in", name: emp.full_name || "" })}
+                            onPress={() => setPunchConfirm({ id: eid, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", today) })}
                             style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: punchConfirm?.id === eid && punchConfirm.action === "check_in" ? "#D1FAE5" : "#fff" }}
                           >
                             <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>GİRİŞ</Text>
@@ -1275,7 +1281,7 @@ export function PersonnelScreen() {
                             disabled={!canEdit || punchBusy === eid}
                             accessibilityRole="button"
                             accessibilityLabel="Çıkış kaydı"
-                            onPress={() => setPunchConfirm({ id: eid, action: "check_out", name: emp.full_name || "" })}
+                            onPress={() => setPunchConfirm({ id: eid, action: "check_out", name: emp.full_name || "", time: cardPunchDraftTime("check_out", today) })}
                             style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: punchConfirm?.id === eid && punchConfirm.action === "check_out" ? "#FEE2E2" : "#fff" }}
                           >
                             <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>ÇIKIŞ</Text>
@@ -1285,13 +1291,26 @@ export function PersonnelScreen() {
                       </Row>
                       {punchConfirm?.id === eid ? (
                         <View testID={`emp-card-punch-confirm-${eid}`} style={{ paddingTop: 4, gap: 6 }}>
+                          <TimeField
+                            key={`${eid}-${punchConfirm.action}`}
+                            label={punchConfirm.action === "check_out" ? "Çıkış saati" : "Giriş saati"}
+                            testID={`emp-card-punch-time-${eid}`}
+                            value={punchConfirm.time}
+                            autoOpen
+                            onChangeText={(time) => setPunchConfirm((cur) => (cur ? { ...cur, time } : cur))}
+                          />
                           <Text style={{ fontSize: 11, color: colors.text }}>{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</Text>
+                          <Text testID={`emp-card-punch-hint-${eid}`} style={{ fontSize: 11, color: "#B45309" }}>{cardPunchTimeHint(cardPunchAttempts(today, punchConfirm.action))}</Text>
                           <Row style={{ gap: 6 }}>
                             <PrimaryButton
                               title={punchBusy === eid ? "Kaydediliyor…" : "Onayla"}
                               color={punchConfirm.action === "check_out" ? colors.danger : colors.primary}
                               testID={`emp-card-punch-yes-${eid}`}
-                              onPress={() => attAct(eid, { action: punchConfirm.action })}
+                              onPress={() => {
+                                const invalid = cardPunchRequiresTime(punchConfirm.time);
+                                if (invalid) { setError(invalid); return; }
+                                attAct(eid, cardPunchPayload(punchConfirm.action, punchConfirm.time));
+                              }}
                             />
                             <PrimaryButton title="Vazgeç" color={colors.secondary} testID={`emp-card-punch-no-${eid}`} onPress={() => setPunchConfirm(null)} />
                           </Row>

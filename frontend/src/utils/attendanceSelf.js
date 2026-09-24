@@ -30,7 +30,9 @@ export function managerTimeEditHint(edit) {
   if (!edit?.pending_employee) return "";
   const prev = edit.prev_check_out || edit.prev_check_in || "—";
   const next = edit.check_out || edit.check_in || "—";
-  return `Yönetici saati düzeltti (${prev} → ${next}). Onaylamanız gerekir.`;
+  const attempt = Number(edit.attempt) || 0;
+  const extra = attempt ? ` (${attempt}/3)` : "";
+  return `Yönetici saati düzeltti (${prev} → ${next}). Onaylamanız gerekir${extra}.`;
 }
 
 export const CHECKOUT_UNLOCK_WATCH_MS = 12_000;

@@ -95,7 +95,12 @@ import {
   locationTrackingTogglePayload,
   todayAttendanceLine,
   todayAttendanceParts,
+  cardPunchAttempts,
   cardPunchConfirmMessage,
+  cardPunchDraftTime,
+  cardPunchPayload,
+  cardPunchRequiresTime,
+  cardPunchTimeHint,
   advanceFormToggleIcon,
   advanceFormToggleLabel,
   filterPayMoves,
@@ -357,8 +362,16 @@ describe("payroll helpers", () => {
       checkIn: "01:37", checkOut: "10:26", late: 0, empty: false,
     });
     expect(todayAttendanceParts(null).empty).toBe(true);
-    expect(cardPunchConfirmMessage("check_in", "Davut")).toBe("Davut için giriş kaydı şimdi yazılsın mı?");
-    expect(cardPunchConfirmMessage("check_out")).toMatch(/çıkış kaydı/);
+    expect(cardPunchConfirmMessage("check_in", "Davut")).toBe("Davut için giriş saati personel onayına gönderilsin mi?");
+    expect(cardPunchConfirmMessage("check_out")).toMatch(/çıkış saati/);
+    expect(cardPunchDraftTime("check_in", { check_in: "09:13" })).toBe("09:13");
+    expect(cardPunchDraftTime("check_out", { check_out: "--:--" })).toBe("");
+    expect(cardPunchRequiresTime("")).toMatch(/Saat/);
+    expect(cardPunchRequiresTime("09:13")).toBeNull();
+    expect(cardPunchPayload("check_in", "09:13")).toEqual({ action: "check_in", check_in: "09:13" });
+    expect(cardPunchAttempts({ manager_time_edit_rounds: { check_in: { attempts: 2 } } }, "check_in")).toBe(2);
+    expect(cardPunchTimeHint(0)).toMatch(/teyidine/);
+    expect(cardPunchTimeHint(2)).toMatch(/3\. deneme/);
     expect(advanceFormToggleIcon(true)).toBe("eye-off-outline");
     expect(advanceFormToggleLabel(false)).toBe("Göster");
     expect(employeeCompRows({ daily_wage: 1500 }, { bonus_pending: 3000 }).find((r) => r.key === "bonus")).toMatchObject({

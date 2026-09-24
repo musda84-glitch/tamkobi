@@ -144,8 +144,41 @@ export function todayAttendanceParts(today?: AttendanceToday | null): {
 export function cardPunchConfirmMessage(action: "check_in" | "check_out", name?: string): string {
   const who = String(name || "").trim();
   const prefix = who ? `${who} için ` : "";
-  if (action === "check_in") return `${prefix}giriş kaydı şimdi yazılsın mı?`;
-  return `${prefix}çıkış kaydı şimdi yazılsın mı? Yanlışlıkla bastıysanız vazgeçin.`;
+  if (action === "check_in") return `${prefix}giriş saati personel onayına gönderilsin mi?`;
+  return `${prefix}çıkış saati personel onayına gönderilsin mi?`;
+}
+
+export function cardPunchDraftTime(
+  action: "check_in" | "check_out",
+  today?: { check_in?: string | null; check_out?: string | null } | null,
+): string {
+  const raw = action === "check_in" ? today?.check_in : today?.check_out;
+  const t = String(raw || "").trim();
+  return /^\d{1,2}:\d{2}$/.test(t) ? t.slice(0, 5) : "";
+}
+
+export function cardPunchAttempts(
+  today?: { manager_time_edit_rounds?: Record<string, { attempts?: number } | null> | null } | null,
+  action?: "check_in" | "check_out",
+): number {
+  if (!action) return 0;
+  const row = today?.manager_time_edit_rounds?.[action];
+  const n = Number(row?.attempts);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+export function cardPunchTimeHint(attempts?: number): string {
+  if (Number(attempts) >= 2) return "3. deneme: personel onayı atlanır.";
+  return "Onaylayınca değişiklik personelin teyidine düşer.";
+}
+
+export function cardPunchRequiresTime(time?: string | null): string | null {
+  return /^\d{1,2}:\d{2}$/.test(String(time || "").trim()) ? null : "Saat seçin.";
+}
+
+export function cardPunchPayload(action: "check_in" | "check_out", time?: string | null): Record<string, string> {
+  const t = String(time || "").trim().slice(0, 5);
+  return t ? { action, [action]: t } : { action };
 }
 
 export function advanceFormToggleIcon(open: boolean): "eye-off-outline" | "eye-outline" {
@@ -799,6 +832,12 @@ export type AttendanceToday = {
   status?: string;
   late_minutes?: number;
   assigned_overtime_hours?: number;
+  manager_time_edit?: {
+    pending_employee?: boolean;
+    field?: string;
+    attempt?: number;
+  } | null;
+  manager_time_edit_rounds?: Record<string, { attempts?: number; auto_confirmed?: boolean } | null> | null;
 };
 
 export type AttendanceSummary = {

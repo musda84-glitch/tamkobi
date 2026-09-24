@@ -298,6 +298,20 @@ export function AttendanceScreen() {
     }
   };
 
+  const rejectTimeEdit = async (recordId: string) => {
+    setBusy(`reject-${recordId}`);
+    setError(null);
+    try {
+      const r = await post<{ message?: string }>(client, `/personnel/attendance/${recordId}/time-edit-decision`, { decision: "reject" });
+      setMessage(r?.message || "Saat düzeltmesi reddedildi.");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Reddedilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const requestDispute = async (recordId: string) => {
     const invalid = validateAttendanceDispute(disputeNote, disputeIn, disputeOut);
     if (invalid) { setError(invalid); return; }
@@ -459,6 +473,14 @@ export function AttendanceScreen() {
                     onPress={() => confirmRecord(rid)}
                     color={colors.primary}
                     testID={`mesai-rec-confirm-${rid}`}
+                  />
+                ) : null}
+                {r.manager_time_edit?.pending_employee && rid ? (
+                  <PrimaryButton
+                    title={busy === `reject-${rid}` ? "Reddediliyor…" : "Reddet"}
+                    onPress={() => rejectTimeEdit(rid)}
+                    color={colors.danger}
+                    testID={`mesai-rec-reject-${rid}`}
                   />
                 ) : null}
                 {canRequestAttendanceFix(r) ? (
