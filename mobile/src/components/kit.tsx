@@ -119,8 +119,8 @@ export function PrimaryButton({
   );
 }
 
-export function Field(props: TextInputProps & { label: string; testID?: string; compact?: boolean; dense?: boolean }) {
-  const { label, style, compact, dense, ...rest } = props;
+export function Field(props: TextInputProps & { label: string; testID?: string; compact?: boolean; dense?: boolean; suffix?: string }) {
+  const { label, style, compact, dense, suffix, ...rest } = props;
   if (fieldUsesMonthPicker(props.testID, label, typeof props.placeholder === "string" ? props.placeholder : undefined)) {
     return (
       <MonthField
@@ -157,11 +157,22 @@ export function Field(props: TextInputProps & { label: string; testID?: string; 
   return (
     <View style={{ marginBottom: compact || dense ? 0 : spacing.md }}>
       <Text style={[styles.label, dense && styles.labelDense]}>{trUpper(label)}</Text>
-      <TextInput
-        placeholderTextColor={colors.muted}
-        style={[styles.input, compact && styles.inputCompact, dense && styles.inputDense, style]}
-        {...rest}
-      />
+      {suffix ? (
+        <View style={[styles.input, styles.inputSuffixRow, compact && styles.inputCompact, dense && styles.inputDense]}>
+          <TextInput
+            placeholderTextColor={colors.muted}
+            style={[styles.inputBare, compact && styles.inputCompact, dense && styles.inputDense, style]}
+            {...rest}
+          />
+          <Text testID={rest.testID ? `${rest.testID}-currency` : undefined} style={styles.inputSuffix}>{suffix}</Text>
+        </View>
+      ) : (
+        <TextInput
+          placeholderTextColor={colors.muted}
+          style={[styles.input, compact && styles.inputCompact, dense && styles.inputDense, style]}
+          {...rest}
+        />
+      )}
     </View>
   );
 }
@@ -333,6 +344,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     ...typeface("400"),
   },
+  inputSuffixRow: { flexDirection: "row", alignItems: "center", paddingVertical: 0, paddingRight: 12 },
+  inputBare: {
+    flex: 1,
+    borderWidth: 0,
+    minHeight: 44,
+    paddingHorizontal: 0,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: colors.text,
+    backgroundColor: "transparent",
+    ...typeface("400"),
+  },
+  inputSuffix: { fontSize: 16, color: colors.text, ...typeface("800"), paddingLeft: 8 },
   inputCompact: {
     minHeight: 40,
     paddingHorizontal: 8,

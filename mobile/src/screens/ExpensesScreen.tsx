@@ -101,7 +101,7 @@ export function ExpensesScreen() {
           testID={`exp-row-${idOf(e)}`}
           title={e.description || e.expense_number || "Masraf"}
           subtitle={`${e.expense_number || ""} · ${e.category || ""} · ${statusTr(e.payment_status)} · ${fmtDate(e.date)}`}
-          right={fmtMoney(e.total)}
+          right={fmtMoney(e.total, e.currency)}
           onPress={() => go("ExpenseDetail", { id: idOf(e) })}
         />
       ))}

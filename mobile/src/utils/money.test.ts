@@ -1,4 +1,4 @@
-import { fmtDate, fmtMoney, formatMoneyInput, getPriceDecimals, idOf, parseMoneyInput, sanitizeMoneyInput, setPriceDecimals } from "./money";
+import { fmtDate, fmtMoney, formatMoneyInput, getPriceDecimals, idOf, moneySuffix, parseMoneyInput, sanitizeMoneyInput, setPriceDecimals } from "./money";
 
 afterEach(() => {
   setPriceDecimals(2);
@@ -12,6 +12,8 @@ describe("fmtMoney", () => {
   });
 
   it("uses currency code for non-TRY", () => {
+    expect(moneySuffix("TRY")).toBe("₺");
+    expect(moneySuffix("USD")).toBe("USD");
     expect(fmtMoney(10, "USD")).toMatch(/10,00 USD/);
   });
 

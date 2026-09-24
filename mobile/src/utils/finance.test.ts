@@ -92,6 +92,7 @@ describe("finance drafts", () => {
     const body = expensePayload(d, "comp");
     expect(body.company_id).toBe("comp");
     expect(body.amount).toBe(100);
+    expect(body.currency).toBe("TRY");
     expect(body.account_id).toBe("acc1");
     expect(body.partner_id).toBeNull();
     expect(body.project_id).toBeNull();
