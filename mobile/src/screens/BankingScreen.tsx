@@ -199,9 +199,9 @@ export function BankingScreen() {
     <Screen
       onRefresh={load}
       refreshing={refreshing}
-      stickyTop={showAccountList ? <Field label="Ara" testID="bank-search" value={q} onChangeText={setQ} placeholder="Hesap / IBAN / kasa" /> : undefined}
       stickyBottom={tab === "partners" ? partnerDock : undefined}
     >
+      {showAccountList ? <Field label="Ara" testID="bank-search" value={q} onChangeText={setQ} placeholder="Hesap / IBAN / kasa" /> : null}
       <TabStrip
         testID="banking-tab"
         variant="icons"
