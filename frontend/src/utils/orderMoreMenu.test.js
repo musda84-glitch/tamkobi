@@ -49,6 +49,7 @@ describe("orderMoreMenu", () => {
       "Mini Kargo Etiketi Yazdır 10X10",
       "Fatura Tarihi Değiştir",
       "Kargola",
+      "Siparişi Sil",
       "Siparişi Excel İndir",
       "Siparişi PDF İndir",
     ]);

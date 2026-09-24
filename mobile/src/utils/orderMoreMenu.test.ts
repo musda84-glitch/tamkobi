@@ -37,6 +37,7 @@ describe("orderMoreMenu web variants", () => {
       "Mini Kargo Etiketi Yazdır 10X10",
       "Fatura Tarihi Değiştir",
       "Kargola",
+      "Siparişi Sil",
     ]);
     expect(mobilePrimaryAction(ord)).toEqual({ id: "faturalastir", label: "Faturalaştır" });
     expect(orderMoreMenuItems(ord).items.map((i) => i.label).join(" ")).not.toMatch(/İade Al|Üretim emri|E-İrsaliye/);
@@ -60,6 +61,7 @@ describe("orderMoreMenu web variants", () => {
       "Fatura Tarihi Değiştir",
       "Kargola",
     ]);
+    expect(orderMoreMenuItems(ord).items.map((i) => i.id)).not.toContain("delete");
     expect(mobilePrimaryAction(ord)?.label).toBe("E-Fatura");
   });
 
@@ -80,6 +82,7 @@ describe("orderMoreMenu web variants", () => {
     expect(labels[0]).toBe("E-Arşiv kes (GİB)");
     expect(labels).toContain("Siparişi Düzenle");
     expect(labels).toContain("İade Al");
+    expect(labels).toContain("Siparişi Sil");
     expect(labels).not.toContain("Üretim emri");
   });
 
@@ -93,5 +96,10 @@ describe("orderMoreMenu web variants", () => {
     ]);
     expect(isYmd("2026-09-24")).toBe(true);
     expect(isYmd("24.09.2026")).toBe(false);
+  });
+
+  it("hides delete when a draft or issued invoice exists", () => {
+    expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: false, invoice_id: "inv1" }).items.map((i) => i.id)).not.toContain("delete");
+    expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: true, e_type: "e_archive" }).items.map((i) => i.id)).not.toContain("delete");
   });
 });
