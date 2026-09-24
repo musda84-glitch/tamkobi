@@ -76,8 +76,8 @@ describe("contactDisplay", () => {
     expect(contactTypeLabel("both")).toBe("Müşteri & Tedarikçi");
     expect(balanceHint(4460).label).toMatch(/Alacaklı/);
     expect(balanceHint(-10).tone).toBe("red");
-    expect(contactBalanceLabel(8310).label).toBe("Alacaklı");
-    expect(contactBalanceLabel(-58497).label).toBe("Borçlu");
+    expect(contactBalanceLabel(8310).label).toBe("Alacak");
+    expect(contactBalanceLabel(-58497).label).toBe("Borç");
     expect(contactBalanceLabel(0).label).toBe("Cari bakiye");
   });
 
