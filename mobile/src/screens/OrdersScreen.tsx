@@ -4,17 +4,27 @@ import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { OrderActions } from "../components/OrderActions";
 import { ChannelLogo } from "../components/ChannelLogo";
+import { TabStrip } from "../components/TabStrip";
 import { Empty, ErrorBanner, Field, ListRow, Muted, Screen, Badge, Row } from "../components/kit";
 import { go } from "../nav";
 import type { Order } from "../types";
 import { orderNumberLabel, statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
+import {
+  ORDER_LIST_FILTERS,
+  ORDER_LIST_FILTER_DEFAULT,
+  filterOrders,
+  orderListEmptyTitle,
+  orderListFilterCounts,
+  type OrderListFilter,
+} from "../utils/orderListFilter";
 
 export function OrdersScreen() {
   const { client, companyId } = useAuth();
   const [rows, setRows] = useState<Order[]>([]);
   const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<OrderListFilter>(ORDER_LIST_FILTER_DEFAULT);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -33,21 +43,33 @@ export function OrdersScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    const list = s ? rows.filter((o) => [o.order_number, o.customer_name].some((v) => String(v || "").toLowerCase().includes(s))) : rows;
-    return list.slice(0, 80);
-  }, [q, rows]);
+  const counts = useMemo(() => orderListFilterCounts(rows), [rows]);
+  const filtered = useMemo(() => filterOrders(rows, filter, q), [filter, q, rows]);
+  const tabs = useMemo(
+    () => ORDER_LIST_FILTERS.map((t) => ({ ...t, count: t.key === "all" ? counts.all : counts[t.key] || undefined })),
+    [counts],
+  );
 
   return (
     <Screen
       onRefresh={load}
       refreshing={refreshing}
-      stickyTop={<Field label="Ara" value={q} onChangeText={setQ} placeholder="Sipariş no / müşteri" />}
+      stickyTop={(
+        <>
+          <TabStrip
+            testID="order-filter"
+            columns={3}
+            items={tabs}
+            value={filter}
+            onChange={setFilter}
+          />
+          <Field label="Ara" value={q} onChangeText={setQ} placeholder="Sipariş no / müşteri" />
+        </>
+      )}
     >
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
-      {!filtered.length ? <Empty icon="cart-outline" title="Sipariş yok" /> : filtered.map((o) => {
+      {!filtered.length ? <Empty icon="cart-outline" title={orderListEmptyTitle(filter)} /> : filtered.map((o) => {
         const invTone = orderInvoiceBadgeTone(o);
         const invLabel = orderInvoiceBadgeLabel(o);
         return (
