@@ -227,16 +227,59 @@ def _json_object(raw: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
+_STRONG_KEYS = ("due_date", "serial_no", "bank_name", "drawer_name", "issue_date")
+
+
+def cheque_draft_is_strong(draft: Optional[dict]) -> bool:
+    """Regex/heuristik yeterliyse yapay zekaya gitmeye gerek yok."""
+    if not draft:
+        return False
+    if float(draft.get("amount") or 0) <= 0:
+        return False
+    extras = sum(1 for key in _STRONG_KEYS if draft.get(key))
+    try:
+        conf = float(draft.get("confidence") or 0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    return extras >= 1 and conf >= 0.5
+
+
+def merge_cheque_drafts(primary: dict, fallback: dict) -> dict:
+    """AI taslağındaki boş alanları heuristikle tamamla."""
+    out = dict(primary or {})
+    extra = fallback or {}
+    for key in (
+        "due_date", "issue_date", "serial_no", "bank_name", "bank_branch",
+        "account_no", "drawer_name", "contact_name", "tax_number", "notes",
+    ):
+        if not out.get(key) and extra.get(key):
+            out[key] = extra[key]
+    if float(out.get("amount") or 0) <= 0 and float(extra.get("amount") or 0) > 0:
+        out["amount"] = extra["amount"]
+    return normalize_cheque_draft(out)
+
+
+def _is_ai_auth_error(err: BaseException) -> bool:
+    low = str(err).lower()
+    return "anahtar" in low or "api key" in low or "401" in str(err) or "403" in str(err)
+
+
+async def _ai_cheque_from_text(text: str) -> dict:
+    from ai_service import make_chat
+    from emergentintegrations.llm.chat import UserMessage
+    chat = await make_chat(f"cheque-extract-{abs(hash(text[:200]))}", CHEQUE_SYSTEM, purpose="extract")
+    raw = str(await chat.send_message(UserMessage(text=f"ÇEK / SENET METNİ:\n\n{text[:12000]}"))).strip()
+    return normalize_cheque_draft(_json_object(raw))
+
+
 async def extract_cheque_from_text(text: str) -> dict:
     heuristic = parse_cheque_text(text)
+    if cheque_draft_is_strong(heuristic):
+        return heuristic
     try:
-        from ai_service import make_chat
-        from emergentintegrations.llm.chat import UserMessage
-        chat = await make_chat(f"cheque-extract-{abs(hash(text[:200]))}", CHEQUE_SYSTEM, purpose="extract")
-        raw = str(await chat.send_message(UserMessage(text=f"ÇEK / SENET METNİ:\n\n{text[:12000]}"))).strip()
-        parsed = normalize_cheque_draft(_json_object(raw))
+        parsed = await _ai_cheque_from_text(text)
         if parsed["amount"] > 0:
-            return parsed
+            return merge_cheque_drafts(parsed, heuristic)
     except Exception as e:
         logger.info("AI cheque text extract fallback: %s", e)
     return heuristic
@@ -284,9 +327,7 @@ async def extract_cheque_file(data: bytes, filename: str = "", content_type: str
     raise ValueError("JPEG, PNG, WebP veya PDF yükleyin.")
 
 
-async def extract_cheque_from_image(data: bytes, mime: str = "image/jpeg") -> dict:
-    if not data:
-        raise ValueError("Görüntü boş.")
+async def _ai_cheque_from_image(data: bytes, mime: str) -> dict:
     b64 = base64.b64encode(data).decode("ascii")
     mime = (mime or "image/jpeg").split(";")[0].strip() or "image/jpeg"
     from ai_service import DirectChat, make_chat
@@ -297,10 +338,31 @@ async def extract_cheque_from_image(data: bytes, mime: str = "image/jpeg") -> di
     else:
         from emergentintegrations.llm.chat import UserMessage
         raw = str(await chat.send_message(UserMessage(text=f"{prompt}\n(görüntü base64, {mime}, {len(data)} bayt)"))).strip()
-    parsed = normalize_cheque_draft(_json_object(raw))
-    if parsed["amount"] <= 0:
-        raise ValueError("Çekten tutar okunamadı.")
-    return parsed
+    return normalize_cheque_draft(_json_object(raw))
+
+
+async def extract_cheque_from_image(data: bytes, mime: str = "image/jpeg") -> dict:
+    """Fotoğrafta regex yetmez; tutar için yapay zeka gerekir. AI boş dönerse notes heuristiği denenir."""
+    if not data:
+        raise ValueError("Görüntü boş.")
+    last_err: Optional[BaseException] = None
+    try:
+        parsed = await _ai_cheque_from_image(data, mime)
+        if parsed["amount"] > 0:
+            return parsed
+        notes = " ".join(
+            str(parsed.get(k) or "")
+            for k in ("notes", "drawer_name", "contact_name", "serial_no", "bank_name")
+        )
+        heuristic = parse_cheque_text(notes)
+        if heuristic["amount"] > 0:
+            return merge_cheque_drafts(heuristic, parsed)
+    except Exception as e:
+        last_err = e
+        logger.info("AI cheque image extract fallback: %s", e)
+        if _is_ai_auth_error(e):
+            raise
+    raise ValueError("Çekten tutar okunamadı.") from last_err
 
 
 async def _send_vision(chat: Any, text: str, image_b64: str, mime: str) -> str:

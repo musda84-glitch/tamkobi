@@ -65,6 +65,9 @@ export function applyChequeScan(
   };
 }
 
+export const CHEQUE_SCAN_IDLE_HINT =
+  "Kamera veya galeri ile çek / senet okuyun; tutar, vade ve banka dolar. Gerekirse yapay zeka okur.";
+
 export function chequeScanHint(draft?: ChequeScanDraft | null): string {
   if (!draft || !(Number(draft.amount) > 0)) return "Çek okunamadı.";
   const kind = draft.instrument === "promissory" ? "Senet" : "Çek";
