@@ -7,6 +7,7 @@ import {
   orderMoreMenuKind,
   integrationEInvoiceMoreItems,
   panelDraftMoreItems,
+  panelEInvoiceMoreItems,
   isYmd,
 } from "./orderMoreMenu";
 
@@ -39,6 +40,14 @@ describe("orderMoreMenu web variants", () => {
     ]);
     expect(mobilePrimaryAction(ord)).toEqual({ id: "faturalastir", label: "Faturalaştır" });
     expect(orderMoreMenuItems(ord).items.map((i) => i.label).join(" ")).not.toMatch(/İade Al|Üretim emri|E-İrsaliye/);
+  });
+
+  it("B2B + GİB e-belge uses panel e-invoice ops menu", () => {
+    const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", order_number: "B2B-2026-0009" };
+    expect(orderMoreMenuKind(ord)).toBe("panel_einvoice");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual(panelEInvoiceMoreItems().map((i) => i.label));
+    expect(mobilePrimaryAction(ord)).toEqual({ id: "mini_10x15", label: "E-Arşiv" });
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("E-Fatura Oluştur");
   });
 
   it("panel invoiced shows E-Fatura Oluştur menu", () => {

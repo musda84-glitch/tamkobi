@@ -72,6 +72,66 @@ export function cargoNameOf(items: CargoCatalogItem[], code: string, fallback?: 
   return hit?.carrier_name || fallback || code;
 }
 
+export type CargoIntegrationItem = {
+  carrier_code?: string;
+  carrier_name?: string;
+  kind?: string;
+  status?: string;
+  is_active?: boolean;
+};
+
+/** Web CreateShipmentModal: bağlı entegrasyonlar önce, sonra katalog. */
+export function mergeShipCarriers(
+  integrations?: CargoIntegrationItem[] | null,
+  catalog?: CargoCatalogItem[] | null,
+): CargoCatalogItem[] {
+  const seen = new Set<string>();
+  const out: CargoCatalogItem[] = [];
+  const connected = [...(integrations || [])].sort((a, b) => {
+    const okA = Number(a.status === "connected" && a.is_active !== false);
+    const okB = Number(b.status === "connected" && b.is_active !== false);
+    return okB - okA;
+  });
+  for (const it of connected) {
+    const code = String(it.carrier_code || "").trim();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    out.push({
+      carrier_code: code,
+      carrier_name: it.carrier_name || code,
+      kind: it.kind,
+      installed: true,
+    });
+  }
+  const rest = catalog?.length ? catalog : FALLBACK_CARGO_CATALOG;
+  for (const it of rest) {
+    const code = String(it.carrier_code || "").trim();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    out.push(it);
+  }
+  return out.length ? out : FALLBACK_CARGO_CATALOG;
+}
+
+export function defaultShipCarrier(items: CargoCatalogItem[], current?: string): string {
+  const cur = String(current || "").trim();
+  if (cur && items.some((i) => i.carrier_code === cur)) return cur;
+  const installed = items.find((i) => i.installed);
+  if (installed) return installed.carrier_code;
+  return items[0]?.carrier_code || "";
+}
+
+export function shipCreateConfirm(
+  order: Pick<Order, "order_number" | "customer_name" | "city">,
+  carrierName: string,
+): string {
+  return [
+    `${order.order_number || "Sipariş"} kargolansın mı?`,
+    [order.customer_name, order.city].filter(Boolean).join(" • "),
+    `Firma: ${carrierName}`,
+  ].filter(Boolean).join("\n");
+}
+
 export function cargoSelectGroups(
   items: CargoCatalogItem[],
   current?: string,

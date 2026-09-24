@@ -17,8 +17,12 @@ import {
   cargoChangeConfirm,
   cargoNameOf,
   cargoSelectGroups,
+  defaultShipCarrier,
   FALLBACK_CARGO_CATALOG,
+  mergeShipCarriers,
+  shipCreateConfirm,
   type CargoCatalogItem,
+  type CargoIntegrationItem,
 } from "../utils/orderCargo";
 import { waDigits } from "../utils/contactStatement";
 import { idOf } from "../utils/money";
@@ -114,6 +118,7 @@ export function OrderActions({
   const { client, activeCompany, companyId, can } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
   const [cargoOpen, setCargoOpen] = useState(false);
+  const [cargoMode, setCargoMode] = useState<"ship" | "change">("ship");
   const [moreOpen, setMoreOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnReason, setReturnReason] = useState("");
@@ -208,6 +213,8 @@ export function OrderActions({
   };
 
   const openCargo = async () => {
+    setMoreOpen(false);
+    setCargoMode("change");
     setCarrier(String(order.cargo_carrier || ""));
     setCargoOpen(true);
     try {
@@ -215,6 +222,26 @@ export function OrderActions({
       setCarriers(list?.length ? list : FALLBACK_CARGO_CATALOG);
     } catch {
       setCarriers(FALLBACK_CARGO_CATALOG);
+    }
+  };
+
+  const openShip = async () => {
+    setMoreOpen(false);
+    setCargoMode("ship");
+    setCarrier(String(order.cargo_carrier || ""));
+    setCargoOpen(true);
+    try {
+      const [integrations, catalog] = await Promise.all([
+        get<CargoIntegrationItem[]>(client, "/integrations/cargo", { company_id: companyId }).catch(() => []),
+        get<CargoCatalogItem[]>(client, "/integrations/cargo/catalog", { company_id: companyId }).catch(() => FALLBACK_CARGO_CATALOG),
+      ]);
+      const list = mergeShipCarriers(integrations, catalog);
+      setCarriers(list);
+      setCarrier(defaultShipCarrier(list, order.cargo_carrier));
+    } catch {
+      const list = FALLBACK_CARGO_CATALOG;
+      setCarriers(list);
+      setCarrier(defaultShipCarrier(list, order.cargo_carrier));
     }
   };
 
@@ -519,35 +546,33 @@ export function OrderActions({
   };
 
   const createShipment = async (carrierCode?: string) => {
-    setMoreOpen(false);
-    setBusy("cargo");
-    try {
-      let carrier = carrierCode || order.cargo_carrier || "geliver";
-      if (!carrierCode) {
-        try {
-          const list = await get<Array<{ carrier_code?: string; status?: string; is_active?: boolean }>>(client, "/integrations/cargo", { company_id: companyId });
-          const connected = (list || []).find((c) => c.status === "connected" && c.is_active !== false);
-          carrier = connected?.carrier_code || carrier;
-        } catch {
-          /* default */
-        }
-      }
-      const r = await post<{ message?: string; tracking_number?: string }>(client, "/cargo/create-shipment", {
-        carrier_code: carrier,
-        order_id: oid,
-        customer_name: order.customer_name,
-        address: order.shipping_address,
-        city: order.city,
-        customer_phone: order.customer_phone,
-        company_id: companyId,
-      });
-      onMessage?.(r.message || `Kargo fişi oluşturuldu${r.tracking_number ? `: ${r.tracking_number}` : ""}.`);
-      onChanged?.();
-    } catch (err) {
-      onError?.(apiErrorMessage(err, "Kargo kaydı oluşturulamadı."));
-    } finally {
-      setBusy(null);
+    const code = String(carrierCode || carrier || "").trim();
+    if (!code) {
+      onError?.("Kargo firması seçin.");
+      return;
     }
+    const name = cargoNameOf(carriers, code, order.cargo_carrier_name);
+    confirmAction("Kargola", shipCreateConfirm(order, name), async () => {
+      setBusy("cargo");
+      try {
+        const r = await post<{ message?: string; tracking_number?: string }>(client, "/cargo/create-shipment", {
+          carrier_code: code,
+          order_id: oid,
+          customer_name: order.customer_name,
+          address: order.shipping_address,
+          city: order.city,
+          customer_phone: order.customer_phone,
+          company_id: companyId,
+        });
+        onMessage?.(r.message || `Kargo fişi oluşturuldu${r.tracking_number ? `: ${r.tracking_number}` : ""}.`);
+        setCargoOpen(false);
+        onChanged?.();
+      } catch (err) {
+        onError?.(apiErrorMessage(err, "Kargo kaydı oluşturulamadı."));
+      } finally {
+        setBusy(null);
+      }
+    });
   };
 
   const saveInvoiceDate = async () => {
@@ -670,9 +695,11 @@ export function OrderActions({
         setDateOpen(true);
         return;
       case "kargola":
+        openShip();
+        return;
       case "cargo_change":
         if (showCargo) openCargo();
-        else createShipment();
+        else openShip();
         return;
       case "cargo_mini":
         printMiniCargo("100x150");
@@ -770,7 +797,7 @@ export function OrderActions({
           }]
         : []),
     ...(!order.cargo_tracking_number
-      ? [{ key: "cargo", label: "Kargola", icon: "car" as const, tone: "violet" as const, busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: () => (showCargo ? openCargo() : createShipment()) }]
+      ? [{ key: "cargo", label: "Kargola", icon: "car" as const, tone: "violet" as const, busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: () => (showCargo ? openCargo() : openShip()) }]
       : [{ key: "label", label: "Kargo etiketi", icon: "car" as const, tone: "teal" as const, busyKey: "label", testID: `order-label-${oid}`, onPress: printLabel }]),
     ...(showApprove
       ? [{ key: "approve", label: approveActionLabel(order), icon: "checkmark-circle" as const, tone: "emerald" as const, busyKey: "approve", testID: `order-approve-${oid}`, onPress: approve }]
@@ -832,27 +859,37 @@ export function OrderActions({
 
       <B2BSheet
         visible={cargoOpen}
-        title="Pazaryeri kargo firması"
-        subtitle={order.order_number}
+        title={cargoMode === "ship" ? "Kargo Oluştur" : "Pazaryeri kargo firması"}
+        subtitle={[order.order_number, order.customer_name, order.city].filter(Boolean).join(" • ")}
         onClose={() => setCargoOpen(false)}
-        testID={`order-cargo-sheet-${oid}`}
+        testID={cargoMode === "ship" ? `order-ship-sheet-${num}` : `order-cargo-sheet-${oid}`}
       >
         <GroupedSelect
           label="Kargo firması"
-          testID={`order-cargo-select-${oid}`}
+          testID={cargoMode === "ship" ? `order-ship-select-${num}` : `order-cargo-select-${oid}`}
           value={carrier}
           onChange={setCarrier}
           groups={cargoSelectGroups(carriers, order.cargo_carrier, order.cargo_carrier_name)}
           emptyLabel="Kargo firması seçin"
         />
         <View style={{ height: 10 }} />
-        <PrimaryButton
-          title="Pazaryerine kaydet"
-          testID={`order-cargo-save-${oid}`}
-          loading={busy === "cargo"}
-          disabled={!carrier || !!busy}
-          onPress={saveCargo}
-        />
+        {cargoMode === "ship" ? (
+          <PrimaryButton
+            title="Kargola"
+            testID={`order-ship-submit-${num}`}
+            loading={busy === "cargo"}
+            disabled={!carrier || !!busy}
+            onPress={() => createShipment(carrier)}
+          />
+        ) : (
+          <PrimaryButton
+            title="Pazaryerine kaydet"
+            testID={`order-cargo-save-${oid}`}
+            loading={busy === "cargo"}
+            disabled={!carrier || !!busy}
+            onPress={saveCargo}
+          />
+        )}
       </B2BSheet>
 
       <B2BSheet
