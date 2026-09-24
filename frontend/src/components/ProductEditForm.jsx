@@ -6,6 +6,7 @@ import { ScanButton } from "./CameraScanner";
 import { API_URL } from "../context/AuthContext";
 import { confirmGenerateBarcode } from "../utils/barcodeFormat";
 import { CURRENCIES, fmtMoney, moneySuffix } from "../utils/money";
+import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi } from "../utils/stockUnits";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const F = ({ label, children }) => <div><label className="block font-semibold text-slate-700 mb-1">{label}</label>{children}</div>;
@@ -14,9 +15,8 @@ const pkgNum = (v) => (v === "" || v == null ? "" : v);
 
 export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
   const companyId = product.company_id || product.companyId;
-  const unitsListId = `product-units-list-${product.id || product._id || "edit"}`;
   const [f, setF] = useState({
-    name: product.name, sku: product.sku, barcode: product.barcode, category: product.category, unit: product.unit,
+    name: product.name, sku: product.sku, barcode: product.barcode, category: product.category, unit: product.unit || DEFAULT_STOCK_UNIT,
     vat_rate: product.vat_rate, purchase_price: product.purchase_price, sale_price: product.sale_price,
     currency: product.currency || "TRY",
     min_stock_alert: product.min_stock_alert, stock_quantity: product.stock_quantity, type: product.type,
@@ -85,7 +85,6 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
   };
   return (
     <form onSubmit={save} className="space-y-3 text-xs" data-testid="product-edit-form">
-      <datalist id={unitsListId}>{units.map((u) => <option key={u.name} value={u.name} />)}</datalist>
       <F label="Ürün Adı"><input value={f.name} onChange={(e) => set("name", e.target.value)} className={`${inputCls} font-semibold`} required data-testid="edit-name-input" /></F>
       <div className="grid grid-cols-2 gap-2">
         <F label="SKU"><input value={f.sku} onChange={(e) => set("sku", e.target.value)} className={`${inputCls} font-mono`} data-testid="edit-sku-input" /></F>
@@ -113,15 +112,16 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
         <F label="Kategori"><input list="product-categories-list" value={f.category} onChange={(e) => set("category", e.target.value)} className={inputCls} data-testid="edit-category-input" /></F>
         <F label="Tür"><select value={f.type} onChange={(e) => set("type", e.target.value)} className={inputCls}><option value="product">Ticari Mal</option><option value="raw_material">Hammadde</option><option value="finished_good">Mamul</option><option value="service">Hizmet</option></select></F>
         <F label="Birim">
-          <input
-            list={unitsListId}
-            value={f.unit}
-            onChange={(e) => set("unit", e.target.value)}
+          <select
+            value={f.unit || DEFAULT_STOCK_UNIT}
+            onChange={(e) => set("unit", e.target.value || DEFAULT_STOCK_UNIT)}
             className={inputCls}
-            placeholder="Adet, Kg…"
             data-testid="edit-unit-input"
-          />
-          <p className="text-[10px] text-slate-400 mt-0.5">Firma ayarlarındaki birimler; yeni yazılan kayıt edilir.</p>
+          >
+            {mergeUnitOptions(unitNamesFromApi(units), f.unit).map((u) => (
+              <option key={u} value={u}>{u}</option>
+            ))}
+          </select>
         </F>
       </div>
       <div className="bg-sky-50/60 border border-sky-100 rounded-xl p-3 space-y-2" data-testid="product-trade-fields">
