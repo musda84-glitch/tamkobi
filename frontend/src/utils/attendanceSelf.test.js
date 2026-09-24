@@ -12,6 +12,7 @@ describe("selfAttendanceGeoMode", () => {
     expect(geoConfirmHint({ geo_confirm_request: { status: "pending", action: "check_in", reason: "offsite", proposed_time: "09:10" } })).toMatch(/Giriş 09:10/);
     expect(geoConfirmHint({ geo_confirm_request: { status: "pending", action: "check_out", reason: "time_edit", proposed_time: "18:00" } })).toMatch(/saat düzeltme/);
     expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(true);
+    expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "09:30", checkOut: "12:00" })).toBe(false);
     expect(mesaimPunchEditHint("check_in")).toMatch(/yönetici/);
   });
 

@@ -66,10 +66,12 @@ describe("mesaim card copy", () => {
     expect(mesaimLongDate("2026-09-23")).toMatch(/23/);
     expect(mesaimInSubtitle("01:37")).toBe("Giriş 01:37");
     expect(mesaimInSubtitle(null)).toBe("henüz giriş yok");
-    expect(mesaimOutSubtitle({ checkOut: "10:26" })).toBe("Çıkış 10:26");
+    expect(mesaimInSubtitle("09:30", "12:00")).toMatch(/tekrar giriş/);
+    expect(mesaimOutSubtitle({ checkOut: "10:26" })).toMatch(/Çıkış 10:26/);
     expect(mesaimOutSubtitle({ checkIn: null })).toBe("önce giriş yapın");
     expect(mesaimOutSubtitle({ checkIn: "01:37", confirming: true })).toBe("onay için tekrar basın");
     expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(true);
+    expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "09:30", checkOut: "12:00" })).toBe(false);
     expect(mesaimPunchOpensEditor({ action: "check_out", checkOut: "01:20" })).toBe(true);
     expect(mesaimPunchOpensEditor({ action: "check_in" })).toBe(false);
     expect(mesaimPunchEditHint("check_out")).toMatch(/yönetici/);

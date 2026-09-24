@@ -89,12 +89,25 @@ export function geoConfirmReasonTr(reason) {
 }
 
 export function mesaimPunchOpensEditor({ action, checkIn, checkOut } = {}) {
-  return action === "check_in" ? Boolean(checkIn) : Boolean(checkOut);
+  if (action === "check_in") return Boolean(checkIn) && !checkOut;
+  return Boolean(checkOut);
 }
 
 export function mesaimPunchEditHint(action) {
   if (action === "check_in") return "Kayıtlı giriş saatini düzeltin. Onaylayınca yönetici teyidine düşer.";
   return "Kayıtlı çıkış saatini düzeltin. Onaylayınca yönetici teyidine düşer.";
+}
+
+export function mesaimInSubtitle(checkIn, checkOut) {
+  if (checkOut) return checkIn ? `Son giriş ${checkIn} · tekrar giriş` : "tekrar giriş yapın";
+  return checkIn ? `Giriş ${checkIn}` : "henüz giriş yok";
+}
+
+export function mesaimOutSubtitle({ checkIn, checkOut, confirming } = {}) {
+  if (checkOut) return `Çıkış ${checkOut} · tekrar girişten sonra`;
+  if (!checkIn) return "önce giriş yapın";
+  if (confirming) return "onay için tekrar basın";
+  return "saat ve konum basınca yazılır";
 }
 
 export function geoConfirmHint(rec) {

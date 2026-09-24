@@ -49,5 +49,6 @@ def test_self_punch_correction_uses_explicit_clock():
     assert self_punch_is_correction({"check_in": "06:55"}, "check_in") is True
     assert self_punch_is_correction({"check_out": "01:20"}, "check_out") is True
     assert self_punch_is_correction({"check_in": "06:55"}, "check_out") is False
+    assert self_punch_is_correction({"check_in": "09:30", "check_out": "07:00"}, "check_in") is False
     assert self_punch_clock({"action": "check_out", "time": "18:00"}, "check_out", "12:00") == "18:00"
     assert self_punch_clock({"action": "check_in"}, "check_in", "12:00") == "12:00"

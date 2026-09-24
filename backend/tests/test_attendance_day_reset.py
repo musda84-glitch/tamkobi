@@ -6,12 +6,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from attendance import (  # noqa: E402
     DEFAULT_SCHEDULE,
+    archive_closed_segment,
     compute_day,
     is_early_hours,
     is_overnight_pair,
     previous_ymd,
     same_morning_early_shift,
     same_shift_order_error,
+    self_punch_is_correction,
+    self_punch_is_reentry,
     should_clear_orphan_early_checkout,
     should_close_previous_day,
     should_rehome_early_checkout,
@@ -109,3 +112,22 @@ def test_screenshot_inverted_still_invalid():
     out = compute_day(rec, SCH)
     assert out["time_order_invalid"] is True
     assert out["hours"] == 0.0
+
+
+def test_reentry_after_checkout_is_new_segment():
+    closed = {"check_in": "09:30", "check_out": "12:00"}
+    assert self_punch_is_reentry(closed, "check_in") is True
+    assert self_punch_is_correction(closed, "check_in") is False
+    segs = archive_closed_segment(closed)
+    assert segs == [{"check_in": "09:30", "check_out": "12:00"}]
+    rec = {
+        "date": "2026-09-24",
+        "check_in": "13:00",
+        "check_out": "18:00",
+        "punch_segments": segs,
+    }
+    out = compute_day(rec, SCH)
+    assert out["time_order_invalid"] is False
+    # 09:30–12:00 = 150 + 13:00–18:00 = 300 → 7.5 sa (mola dilimler arası)
+    assert out["hours"] == 7.5
+    assert out["late_minutes"] == 20  # 09:30 − 09:00 − 10 dk

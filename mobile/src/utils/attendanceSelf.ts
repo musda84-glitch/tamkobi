@@ -35,7 +35,8 @@ export function mesaimPunchOpensEditor(opts: {
   checkIn?: string | null;
   checkOut?: string | null;
 }): boolean {
-  return opts.action === "check_in" ? Boolean(opts.checkIn) : Boolean(opts.checkOut);
+  if (opts.action === "check_in") return Boolean(opts.checkIn) && !opts.checkOut;
+  return Boolean(opts.checkOut);
 }
 
 export function mesaimPunchEditHint(action: "check_in" | "check_out"): string {
@@ -63,12 +64,13 @@ export function mesaimScheduleLine(sch?: { start?: string; end?: string; break_m
   return `Mesai ${sch.start}–${sch.end}${br}`;
 }
 
-export function mesaimInSubtitle(checkIn?: string | null): string {
+export function mesaimInSubtitle(checkIn?: string | null, checkOut?: string | null): string {
+  if (checkOut) return checkIn ? `Son giriş ${checkIn} · tekrar giriş` : "tekrar giriş yapın";
   return checkIn ? `Giriş ${checkIn}` : "henüz giriş yok";
 }
 
 export function mesaimOutSubtitle(opts?: { checkIn?: string | null; checkOut?: string | null; confirming?: boolean } | null): string {
-  if (opts?.checkOut) return `Çıkış ${opts.checkOut}`;
+  if (opts?.checkOut) return `Çıkış ${opts.checkOut} · tekrar girişten sonra`;
   if (!opts?.checkIn) return "önce giriş yapın";
   if (opts.confirming) return "onay için tekrar basın";
   return "saat ve konum basınca yazılır";

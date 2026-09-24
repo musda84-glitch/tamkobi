@@ -6,7 +6,7 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Cal
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimInSubtitle, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
@@ -175,7 +175,7 @@ export default function MyAttendancePage() {
   };
   const onCheckInClick = () => {
     const t = data?.today;
-    if (mesaimPunchOpensEditor({ action: "check_in", checkIn: t?.check_in })) {
+    if (mesaimPunchOpensEditor({ action: "check_in", checkIn: t?.check_in, checkOut: t?.check_out })) {
       setPunchEdit("check_in");
       setPunchEditTime(t.check_in);
       return;
@@ -184,7 +184,7 @@ export default function MyAttendancePage() {
   };
   const onCheckoutClick = () => {
     const t = data?.today;
-    if (mesaimPunchOpensEditor({ action: "check_out", checkOut: t?.check_out })) {
+    if (mesaimPunchOpensEditor({ action: "check_out", checkIn: t?.check_in, checkOut: t?.check_out })) {
       setPunchEdit("check_out");
       setPunchEditTime(t.check_out);
       return;
@@ -332,7 +332,7 @@ export default function MyAttendancePage() {
           ) : (
           <div className="grid grid-cols-2 gap-3">
             <button onClick={onCheckInClick} disabled={!!busy} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
-              {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">Giriş Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{t?.check_in ? `Giriş ${t.check_in}` : "henüz giriş yok"}</span>
+              {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">Giriş Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{mesaimInSubtitle(t?.check_in, t?.check_out)}</span>
             </button>
             <button
               type="button"
@@ -346,7 +346,7 @@ export default function MyAttendancePage() {
               {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}
               <span className="text-lg sm:text-base">{outArmed ? "Tekrar tıklayın" : (earlyOk && !t?.check_out ? "Çıkış (onaylı erken)" : "Çıkış Yap")}</span>
               <span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-out">
-                {t?.check_out ? `Çıkış ${t.check_out}` : !t?.check_in ? "önce giriş yapın" : (outArmed ? "onay için tekrar tıklayın" : "çift tıklayın · saat ve konum basınca veya konumla yazılır")}
+                {mesaimOutSubtitle({ checkIn: t?.check_in, checkOut: t?.check_out, confirming: outArmed })}
               </span>
             </button>
           </div>

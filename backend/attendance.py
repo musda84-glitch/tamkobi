@@ -324,7 +324,7 @@ def geo_auto_action(
     if not rec.get("check_in"):
         return "check_in" if inside else None
     if rec.get("check_out"):
-        return None
+        return "check_in" if inside else None
     if inside:
         return None
     if was_inside or rec.get("geo_check_in") or rec.get("location_inside_at"):
@@ -700,30 +700,43 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
     out["expected_end"] = expected_end_hm
     leave_m = approved_intraday_gap_minutes(rec)
     out["intraday_leave_minutes"] = leave_m
-    if ci and not out["is_off_day"]:
-        out["late_minutes"] = max(0, _hm(ci) - start_m - int(schedule.get("late_tolerance_minutes") or 0))
-    if not (ci and co):
+    first_in = first_check_in(rec) or ci
+    if first_in and not out["is_off_day"]:
+        out["late_minutes"] = max(0, _hm(first_in) - start_m - int(schedule.get("late_tolerance_minutes") or 0))
+    segs = [s for s in (rec.get("punch_segments") or []) if isinstance(s, dict)]
+    closed_mins = [pair_worked_minutes(s) for s in segs]
+    closed_ok = [m for m in closed_mins if m is not None]
+    current = {"check_in": ci, "check_out": co, "overnight_checkout": rec.get("overnight_checkout")}
+    current_m = pair_worked_minutes(current) if ci and co else None
+    if ci and co and current_m is None and not closed_ok:
+        out["time_order_invalid"] = True
+        try:
+            out["early_leave_minutes"] = max(0, expected_end_m - _hm(co)) if not out["is_off_day"] else 0
+        except Exception:
+            pass
         return out
-    a, b = _hm(ci), _hm(co)
-    if b < a:
-        if rec.get("overnight_checkout"):
+    if current_m is None and not closed_ok:
+        return out
+    raw = sum(closed_ok) + (current_m or 0)
+    # Çok dilimde ara zaten çıkış-giriş boşluğu; tek dilimde tarifeli mola düşülür.
+    break_m = 0 if segs else win["break_minutes"]
+    worked = max(0, raw - break_m - leave_m)
+    last_out = co if (ci and co) else None
+    try:
+        a = _hm(str(first_in)[:5]) if first_in else 0
+        b = _hm(str(last_out)[:5]) if last_out else a
+        if last_out and first_in and b < a and (rec.get("overnight_checkout") or any(s.get("overnight_checkout") for s in segs)):
             b += 24 * 60
-        else:
-            # Aynı gün mesaisinde çıkış < giriş → gece vardiyası değil, bozuk kayıt
-            out["time_order_invalid"] = True
-            out["early_leave_minutes"] = max(0, expected_end_m - b) if not out["is_off_day"] else 0
-            return out
-    worked = max(0, b - a - win["break_minutes"] - leave_m)
+    except Exception:
+        a, b = 0, 0
     if out["is_off_day"]:
         ot = worked
     else:
         tol = int(schedule.get("overtime_tolerance_minutes") or 0)
-        # Fazla mesai: kayıtlı mesai bitişine göre
-        ot = (b - end_m) if b - end_m > tol else 0
-        if schedule.get("count_early_as_overtime") and a < start_m:
+        ot = (b - end_m) if last_out and b - end_m > tol else 0
+        if schedule.get("count_early_as_overtime") and first_in and a < start_m:
             ot += start_m - a
-        # Erken çıkış: atanan fazla mesai dahil beklenen çıkışa göre
-        out["early_leave_minutes"] = max(0, expected_end_m - b)
+        out["early_leave_minutes"] = max(0, expected_end_m - b) if last_out else 0
         ot = min(ot, worked)
     out["hours"] = round(worked / 60, 2)
     out["overtime_hours"] = round(ot / 60, 2)
@@ -977,8 +990,58 @@ def self_punch_clock(req: Optional[dict], action: str, now_hm: str) -> str:
     return _valid_time(str(raw).strip()[:5])
 
 
+def self_punch_is_reentry(existing: Optional[dict], action: str) -> bool:
+    """Çıkış yapılmış güne yeniden giriş — saat düzeltme değil, yeni dilim."""
+    rec = existing or {}
+    return action == "check_in" and bool(rec.get("check_out"))
+
+
 def self_punch_is_correction(existing: Optional[dict], action: str) -> bool:
-    return bool((existing or {}).get(action))
+    rec = existing or {}
+    if self_punch_is_reentry(rec, action):
+        return False
+    return bool(rec.get(action))
+
+
+def archive_closed_segment(rec: Optional[dict]) -> list:
+    rec = rec or {}
+    segs = [dict(s) for s in (rec.get("punch_segments") or []) if isinstance(s, dict)]
+    inn, out = rec.get("check_in"), rec.get("check_out")
+    if not (inn and out):
+        return segs
+    pair = {"check_in": str(inn)[:5], "check_out": str(out)[:5]}
+    if rec.get("overnight_checkout"):
+        pair["overnight_checkout"] = True
+    last = segs[-1] if segs else None
+    if last and last.get("check_in") == pair["check_in"] and last.get("check_out") == pair["check_out"]:
+        return segs
+    segs.append(pair)
+    return segs
+
+
+def first_check_in(rec: Optional[dict]) -> Optional[str]:
+    rec = rec or {}
+    for seg in rec.get("punch_segments") or []:
+        if isinstance(seg, dict) and seg.get("check_in"):
+            return str(seg["check_in"])[:5]
+    inn = rec.get("check_in")
+    return str(inn)[:5] if inn else None
+
+
+def pair_worked_minutes(pair: dict) -> Optional[int]:
+    inn, out = pair.get("check_in"), pair.get("check_out")
+    if not (inn and out):
+        return None
+    try:
+        a, b = _hm(str(inn)[:5]), _hm(str(out)[:5])
+    except Exception:
+        return None
+    if b < a:
+        if pair.get("overnight_checkout"):
+            b += 24 * 60
+        else:
+            return None
+    return max(0, b - a)
 
 
 def geo_confirm_action_tr(action: Optional[str]) -> str:
@@ -1192,7 +1255,7 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
            "assigned_overtime_hours": assigned_ot}
     if rec["status"] in ("absent", "leave"):
         rec.update({"check_in": None, "check_out": None})
-    for k in ("early_leave_request", "early_leave_approved", "intraday_leave_request", "intraday_leave_approved", "geo_confirm_request", "manager_confirmed", "overnight_checkout"):
+    for k in ("early_leave_request", "early_leave_approved", "intraday_leave_request", "intraday_leave_approved", "geo_confirm_request", "manager_confirmed", "overnight_checkout", "punch_segments"):
         if k in patch:
             rec[k] = patch[k]
         elif existing.get(k) is not None:
@@ -1574,6 +1637,16 @@ async def self_attendance(req: Dict[str, Any], request: Request):
         date = await punch_date_for_action(emp, schedule, action, clock, today)
     existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
     overnight = date != today and action == "check_out"
+    if self_punch_is_reentry(existing, action):
+        segs = archive_closed_segment(existing)
+        await apply_day(emp, date, {
+            "status": "present",
+            "check_in": None,
+            "check_out": None,
+            "overnight_checkout": False,
+            "punch_segments": segs,
+        }, source=existing.get("source") or "self")
+        existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
     correcting = self_punch_is_correction(existing, action)
     explicit_clock = bool((req or {}).get("time") or (req or {}).get(action))
     if action == "check_out" and not existing.get("check_in") and not existing.get("check_out"):
@@ -1985,8 +2058,11 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
                 action = "check_out"
                 rec = yest
                 punch_date = ydate
-        if action == "check_in" and not rec.get("check_in"):
-            rec = await apply_day(emp, today, {"status": "present", "check_in": now_s}, source="geo", confirmed=True)
+        if action == "check_in" and (not rec.get("check_in") or rec.get("check_out")):
+            patch = {"status": "present", "check_in": now_s, "check_out": None, "overnight_checkout": False}
+            if rec.get("check_out"):
+                patch["punch_segments"] = archive_closed_segment(rec)
+            rec = await apply_day(emp, today, patch, source="geo", confirmed=True)
             punched = "check_in"
             punch_date = today
             punch_msg = f"Konumla giriş {now_s} kaydedildi."

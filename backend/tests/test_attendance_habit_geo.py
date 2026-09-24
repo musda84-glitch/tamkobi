@@ -31,6 +31,7 @@ def test_geo_auto_check_in_and_out():
     assert geo_auto_action(inside=False, rec=on, was_inside=False) is None
     done = {"check_in": "09:00", "check_out": "18:00"}
     assert geo_auto_action(inside=False, rec=done, was_inside=True) is None
+    assert geo_auto_action(inside=True, rec=done, was_inside=False) == "check_in"
 
 
 def test_habit_median_and_deviation():

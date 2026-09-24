@@ -433,7 +433,7 @@ export function AttendanceScreen() {
           }}
           onPunchEditCancel={() => setPunchEdit(null)}
           onCheckIn={() => {
-            if (mesaimPunchOpensEditor({ action: "check_in", checkIn: today?.check_in })) {
+            if (mesaimPunchOpensEditor({ action: "check_in", checkIn: today?.check_in, checkOut: today?.check_out })) {
               setPunchEdit("check_in");
               setPunchEditTime(today?.check_in || "");
               return;
@@ -441,7 +441,7 @@ export function AttendanceScreen() {
             act("check_in");
           }}
           onCheckOutAsk={() => {
-            if (mesaimPunchOpensEditor({ action: "check_out", checkOut: today?.check_out })) {
+            if (mesaimPunchOpensEditor({ action: "check_out", checkIn: today?.check_in, checkOut: today?.check_out })) {
               setPunchEdit("check_out");
               setPunchEditTime(today?.check_out || "");
               return;

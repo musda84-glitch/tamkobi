@@ -282,7 +282,7 @@ export function MesaimTodayCard({
           testID="mesai-in"
           icon="log-in-outline"
           title={busy === "check_in" ? "Kaydediliyor…" : "Giriş Yap"}
-          subtitle={mesaimInSubtitle(today?.check_in)}
+          subtitle={mesaimInSubtitle(today?.check_in, today?.check_out)}
           color={EMERALD}
           disabled={busy === "check_in"}
           onPress={onCheckIn}
