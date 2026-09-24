@@ -170,7 +170,7 @@ export const OrdersToolbar = ({ f, setF, orders, count, total, rows = [], select
         <select value={f.invoiced} onChange={(e) => set("invoiced", e.target.value)} className={sel} data-testid="ord-invoiced">
           <option value="all">Fatura: Tümü</option>
           <option value="yes">Faturalandı</option>
-          <option value="einvoice">E-Fatura Kesildi</option>
+          <option value="einvoice">E Fatura Kesildi</option>
           <option value="no">Faturalanmadı</option>
         </select>
         <select value={f.cargo} onChange={(e) => set("cargo", e.target.value)} className={sel} data-testid="ord-cargo"><option value="all">Kargo: Tümü</option><option value="yes">Kargolandı</option><option value="no">Kargo Bekliyor</option></select>
