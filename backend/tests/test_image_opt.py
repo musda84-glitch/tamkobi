@@ -142,6 +142,35 @@ def test_as_meta_omits_payload():
     assert "saved_bytes" in meta
 
 
+def test_looks_like_image_accepts_heic_name_and_signature():
+    jpeg = _photo_jpeg(w=80, h=60, quality=80)
+    assert image_opt.looks_like_image(jpeg, "application/octet-stream", "IMG_1.HEIC") is True
+    assert image_opt.looks_like_image(b"xx", "application/msword", "note.docx") is False
+    heic_hdr = b"\x00\x00\x00\x18ftypheic" + b"\x00" * 40
+    assert image_opt.looks_like_image(heic_hdr, "application/octet-stream", "photo.bin") is True
+
+
+def test_prepare_vision_image_returns_jpeg():
+    raw = _photo_jpeg(w=400, h=300, quality=90)
+    data, mime = image_opt.prepare_vision_image(raw, "image/jpeg", "shot.jpg")
+    assert mime == "image/jpeg"
+    im = Image.open(io.BytesIO(data))
+    im.load()
+    assert im.format == "JPEG"
+    assert max(im.size) <= image_opt._settings()["max_edge"]
+
+
+def test_prepare_vision_image_normalizes_png_and_odd_mime():
+    raw = _photo_png(w=200, h=160)
+    data, mime = image_opt.prepare_vision_image(raw, "image/png", "slip.png")
+    assert mime == "image/jpeg"
+    im = Image.open(io.BytesIO(data))
+    assert im.format == "JPEG"
+    leftover, leftover_mime = image_opt.prepare_vision_image(b"not-an-image", "image/heic", "IMG_9.HEIC")
+    assert leftover == b"not-an-image"
+    assert leftover_mime == "image/jpeg"
+
+
 def test_photo_prefers_small_webp_or_jpeg():
     raw = _photo_jpeg(w=2000, h=1500, quality=95)
     r = image_opt.optimize_upload(raw, "image/jpeg", "big.jpg")

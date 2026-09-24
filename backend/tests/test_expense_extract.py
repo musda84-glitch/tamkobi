@@ -96,6 +96,27 @@ def test_extract_expense_file_rejects_empty_and_unknown():
         asyncio.run(extract_expense_file(b"xx", "note.docx", "application/msword"))
 
 
+def test_extract_expense_file_accepts_heic_name_as_image(monkeypatch):
+    seen = {}
+
+    async def fake_ai(data, mime):
+        seen["mime"] = mime
+        seen["data"] = data
+        return normalize_expense_draft({"amount": 1035.84, "category": "Yakıt", "confidence": 0.9})
+
+    monkeypatch.setattr("expense_extract._ai_expense_from_image", fake_ai)
+    from PIL import Image
+    import io
+    buf = io.BytesIO()
+    Image.new("RGB", (80, 50), (240, 240, 240)).save(buf, format="JPEG", quality=85)
+    jpeg = buf.getvalue()
+    out = asyncio.run(extract_expense_file(jpeg, "IMG_2141.HEIC", "application/octet-stream"))
+    assert out["source"] == "image"
+    assert out["draft"]["amount"] == 1035.84
+    assert seen["mime"] == "image/jpeg"
+    assert seen["data"][:2] == b"\xff\xd8"
+
+
 def test_expense_draft_is_strong_needs_amount_plus_key_field():
     assert expense_draft_is_strong(None) is False
     assert expense_draft_is_strong({"amount": 0, "confidence": 0.9, "date": "2026-09-21"}) is False

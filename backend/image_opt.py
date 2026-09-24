@@ -140,6 +140,72 @@ def _try_register_heif() -> None:
         pass
 
 
+IMAGE_NAME_EXTS = (
+    ".jpg", ".jpeg", ".png", ".webp", ".gif",
+    ".heic", ".heif", ".bmp", ".tif", ".tiff", ".avif",
+)
+VISION_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+def looks_like_image(data: bytes, content_type: str = "", filename: str = "") -> bool:
+    """Content-type, uzantı veya dosya imzasına bakarak görüntü mü diye bak."""
+    ctype = (content_type or "").split(";")[0].strip().lower()
+    name = (filename or "").lower()
+    if ctype.startswith("image/"):
+        return True
+    if name.endswith(IMAGE_NAME_EXTS):
+        return True
+    sniffed = _sniff_type(data or b"", ctype)
+    return sniffed.startswith("image/")
+
+
+def prepare_vision_image(data: bytes, content_type: str = "", filename: str = "") -> Tuple[bytes, str]:
+    """Vision API'lerin kabul ettiği JPEG üret (HEIC/HEIF dahil). Asla raise etmez."""
+    fallback_mime = "image/jpeg"
+    if not data:
+        return data, fallback_mime
+    sniffed = _sniff_type(data, content_type)
+    name = (filename or "").lower()
+    if not sniffed.startswith("image/"):
+        if name.endswith((".heic", ".heif", ".avif")):
+            sniffed = "image/heic"
+        elif name.endswith(".png"):
+            sniffed = "image/png"
+        elif name.endswith(".webp"):
+            sniffed = "image/webp"
+        elif name.endswith(".gif"):
+            sniffed = "image/gif"
+        elif name.endswith((".jpg", ".jpeg")):
+            sniffed = "image/jpeg"
+    if sniffed in {"image/heic", "image/heif", "image/avif"}:
+        _try_register_heif()
+    try:
+        from PIL import Image, ImageOps
+    except Exception as e:
+        logger.warning("Pillow unavailable for vision convert: %s", e)
+        return data, sniffed if sniffed in VISION_MIME else fallback_mime
+    try:
+        im = Image.open(io.BytesIO(data))
+        im.load()
+        if getattr(im, "is_animated", False) and getattr(im, "n_frames", 1) > 1:
+            im.seek(0)
+        im = ImageOps.exif_transpose(im) or im
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+        max_edge = _settings()["max_edge"]
+        if max(im.size) > max_edge:
+            im.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+        payload = _save(im, "JPEG", quality=max(70, _settings()["jpeg_quality"]), optimize=True)
+        if payload:
+            return payload, "image/jpeg"
+    except Exception as e:
+        logger.warning("prepare_vision_image failed (%s); sending original", e)
+    mime = sniffed if sniffed in VISION_MIME else fallback_mime
+    if mime == "image/jpg":
+        mime = "image/jpeg"
+    return data, mime
+
+
 def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> OptimizeResult:
     """Orijinal veya daha küçük yüksek kaliteli varyant döner. Asla raise etmez."""
     original = OptimizeResult(
