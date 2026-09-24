@@ -33,6 +33,54 @@ const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const STATUS = { draft: ["Taslak", "bg-slate-100 text-slate-600"], sent: ["Gönderildi", "bg-blue-50 text-blue-700"], accepted: ["Kabul / Faturalandı", "bg-emerald-50 text-emerald-700"], rejected: ["Reddedildi", "bg-rose-50 text-rose-700"], planning: ["Planlama", "bg-slate-100 text-slate-600"], active: ["Devam Ediyor", "bg-blue-50 text-blue-700"], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700"], on_hold: ["Beklemede", "bg-amber-50 text-amber-700"], planned: ["Planlandı", "bg-slate-100 text-slate-600"], done: ["Yapıldı", "bg-blue-50 text-blue-700"], quoted: ["Teklife Dönüştü", "bg-emerald-50 text-emerald-700"] };
 const Badge = ({ s, map }) => { const [l, c] = (map && map[s]) || STATUS[s] || [s, "bg-slate-100"]; return <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${c}`}>{l}</span>; };
 
+/** Durum sütunu: proje / fatura bağlantısını etiketli göster. */
+const resolveQuoteProjectNumber = (q, projects) => {
+  if (q?.project_number) return String(q.project_number);
+  if (!q?.project_id || !Array.isArray(projects)) return "";
+  const hit = projects.find((p) => String(p.id || p._id) === String(q.project_id));
+  return hit?.project_number ? String(hit.project_number) : "";
+};
+
+const QuoteStatusLinks = ({ q, projects = [], onOpenProject }) => {
+  const projectNo = resolveQuoteProjectNumber(q, projects);
+  const linkedToProject = !!(q?.project_id || projectNo);
+  const invoiceNo = q?.invoice_number ? String(q.invoice_number) : "";
+  if (!linkedToProject && !invoiceNo) return null;
+  const projectLabel = (
+    <>
+      <span className="font-sans font-semibold text-indigo-600">Proje</span>
+      {projectNo ? ` · ${projectNo}` : " · dönüştü"}
+    </>
+  );
+  return (
+    <>
+      {linkedToProject && (
+        onOpenProject ? (
+          <button
+            type="button"
+            onClick={() => onOpenProject(q.project_id || projectNo)}
+            className="font-mono text-[10px] text-indigo-700 text-left hover:underline"
+            title={projectNo ? `Projeye git: ${projectNo}` : "Projeye dönüştü"}
+            data-testid={`quote-project-link-${q.quote_number}`}
+          >
+            {projectLabel}
+          </button>
+        ) : (
+          <div className="font-mono text-[10px] text-indigo-700" data-testid={`quote-project-link-${q.quote_number}`}>
+            {projectLabel}
+          </div>
+        )
+      )}
+      {invoiceNo && (
+        <div className="font-mono text-[10px] text-emerald-700" data-testid={`quote-invoice-link-${q.quote_number}`}>
+          <span className="font-sans font-semibold text-emerald-600">Fatura</span>
+          {` · ${invoiceNo}`}
+        </div>
+      )}
+    </>
+  );
+};
+
 /** Sabit slot’lu teklif aksiyon çubuğu — satırlar hizalı kalsın. */
 const QuoteActions = ({
   q, dense = false,
@@ -449,6 +497,13 @@ export default function ProjectsPage({ section } = {}) {
     }
   };
   const del = (coll, id) => act(() => axios.delete(`${API_URL}/${coll}/${id}`), "Silindi.");
+  const openProjectFromQuote = (idOrNumber) => {
+    if (!idOrNumber) return;
+    setTab("projects");
+    const next = new URLSearchParams(searchParams);
+    next.set("focus", String(idOrNumber));
+    setSearchParams(next);
+  };
 
   // Varsayılan: teklif/keşifte tüm kayıtlar; projelerde tamamlananlar gizli.
   const [onlyPending, setOnlyPending] = useState(() => {
@@ -543,7 +598,14 @@ export default function ProjectsPage({ section } = {}) {
               <div key={q.id} className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs" data-testid={`quote-row-${q.quote_number}`}>
                 <div className="flex justify-between gap-2 items-start">
                   <div className="min-w-0"><div className="font-mono font-bold text-slate-900">{q.quote_number}</div><div className="text-slate-500 truncate">{q.title} • {q.issue_date}</div><div className="font-semibold mt-0.5">{q.contact_name || "—"}</div></div>
-                  <div className="text-right shrink-0"><div className="font-bold">{fmt(q.grand_total)} ₺</div><Badge s={q.status} /></div>
+                  <div className="text-right shrink-0 space-y-0.5">
+                    <div className="font-bold">{fmt(q.grand_total)} ₺</div>
+                    <div className="flex flex-col gap-0.5 items-end">
+                      <Badge s={q.status} />
+                      <ApprovalBadge quote={q} />
+                      <QuoteStatusLinks q={q} projects={projects} onOpenProject={openProjectFromQuote} />
+                    </div>
+                  </div>
                 </div>
                 <ImageStrip entity="quote" doc={q} onUpdated={load} />
                 <div className="pt-1 border-t">
@@ -572,7 +634,13 @@ export default function ProjectsPage({ section } = {}) {
                   <td className="px-4 py-2 font-semibold">{q.contact_name || "—"}</td>
                   <td className="px-4 py-2"><ImageStrip entity="quote" doc={q} onUpdated={load} /></td>
                   <td className="px-4 py-2 text-right font-bold">{fmt(q.grand_total)} ₺</td>
-                  <td className="px-4 py-2"><div className="flex flex-col gap-0.5 items-start"><Badge s={q.status} /><ApprovalBadge quote={q} />{q.project_number && <div className="font-mono text-[10px] text-indigo-700">{q.project_number}</div>}{q.invoice_number && <div className="font-mono text-[10px] text-emerald-700">{q.invoice_number}</div>}</div></td>
+                  <td className="px-4 py-2">
+                    <div className="flex flex-col gap-0.5 items-start">
+                      <Badge s={q.status} />
+                      <ApprovalBadge quote={q} />
+                      <QuoteStatusLinks q={q} projects={projects} onOpenProject={openProjectFromQuote} />
+                    </div>
+                  </td>
                   <td className="px-4 py-2">
                     <QuoteActions
                       dense
