@@ -59,6 +59,7 @@ export function InvoiceDetailScreen() {
   const [busy, setBusy] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [editLine, setEditLine] = useState<{ index: number; name: string; quantity: string; unit_price: string; vat_rate: number } | null>(null);
+  const [editLineFocus, setEditLineFocus] = useState<{ quantity?: string; unit_price?: string }>({});
   const [gdMode, setGdMode] = useState<GdMode>("amount");
   const [gdValue, setGdValue] = useState("");
   const [catalog, setCatalog] = useState<Record<string, Product>>({});
@@ -145,6 +146,7 @@ export function InvoiceDetailScreen() {
     run(async () => {
       await put(client, `/invoices/${id}`, invoiceDipPayload(next.map((it) => hydrateLine(it)), gdMode, gdNum));
       setMessage(okMsg);
+      setEditLineFocus({});
       setEditLine(null);
       setOpenRow(null);
     }, "Kalemler kaydedilemedi.");
@@ -166,6 +168,7 @@ export function InvoiceDetailScreen() {
     if (!itemsEditable) { blockedItems(); return; }
     const it = lines[index] || {};
     setOpenRow(null);
+    setEditLineFocus({});
     setEditLine({
       index,
       name: String(it.product_name || it.name || ""),
@@ -479,12 +482,42 @@ export function InvoiceDetailScreen() {
         visible={!!editLine}
         title="Kalemi düzenle"
         subtitle={inv.invoice_number}
-        onClose={() => setEditLine(null)}
+        onClose={() => { setEditLineFocus({}); setEditLine(null); }}
         testID="inv-item-edit"
       >
         <Field label="Ad" testID="inv-item-name" value={editLine?.name || ""} onChangeText={(v) => setEditLine((cur) => (cur ? { ...cur, name: v } : cur))} />
-        <Field label="Miktar" testID="inv-item-qty" value={editLine?.quantity || ""} onChangeText={(v) => setEditLine((cur) => (cur ? { ...cur, quantity: v } : cur))} keyboardType="decimal-pad" />
-        <Field label="Birim fiyat" testID="inv-item-price" value={editLine?.unit_price || ""} onChangeText={(v) => setEditLine((cur) => (cur ? { ...cur, unit_price: v } : cur))} keyboardType="decimal-pad" />
+        <Field
+          label="Miktar"
+          testID="inv-item-qty"
+          value={editLineFocus.quantity !== undefined ? editLineFocus.quantity : (editLine?.quantity || "")}
+          onFocus={() => setEditLineFocus((f) => ({ ...f, quantity: "" }))}
+          onBlur={() => setEditLineFocus((f) => {
+            const next = { ...f };
+            delete next.quantity;
+            return next;
+          })}
+          onChangeText={(v) => {
+            setEditLineFocus((f) => ({ ...f, quantity: v }));
+            if (String(v).trim()) setEditLine((cur) => (cur ? { ...cur, quantity: v } : cur));
+          }}
+          keyboardType="decimal-pad"
+        />
+        <Field
+          label="Birim fiyat"
+          testID="inv-item-price"
+          value={editLineFocus.unit_price !== undefined ? editLineFocus.unit_price : (editLine?.unit_price || "")}
+          onFocus={() => setEditLineFocus((f) => ({ ...f, unit_price: "" }))}
+          onBlur={() => setEditLineFocus((f) => {
+            const next = { ...f };
+            delete next.unit_price;
+            return next;
+          })}
+          onChangeText={(v) => {
+            setEditLineFocus((f) => ({ ...f, unit_price: v }));
+            if (String(v).trim()) setEditLine((cur) => (cur ? { ...cur, unit_price: v } : cur));
+          }}
+          keyboardType="decimal-pad"
+        />
         <Muted>KDV</Muted>
         <Row>
           {VAT_OPTIONS.map((v) => (

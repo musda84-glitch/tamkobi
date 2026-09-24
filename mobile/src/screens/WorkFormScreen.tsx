@@ -1109,7 +1109,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                               <TextInput
                                 testID={`q-item-qty-${i}`}
                                 value={qtyDraft[i] ?? String(it.quantity || "")}
-                                onFocus={() => setQtyDraft((m) => ({ ...m, [i]: String(it.quantity || "") }))}
+                                onFocus={() => setQtyDraft((m) => ({ ...m, [i]: "" }))}
                                 onBlur={() => setQtyDraft((m) => {
                                   const next = { ...m };
                                   delete next[i];
@@ -1118,7 +1118,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 onChangeText={(v) => {
                                   const typed = sanitizeMoneyInput(v);
                                   setQtyDraft((m) => ({ ...m, [i]: typed }));
-                                  patchItem(i, "quantity", parseMoneyInput(typed));
+                                  if (typed.trim()) patchItem(i, "quantity", parseMoneyInput(typed));
                                 }}
                                 keyboardType="decimal-pad"
                                 editable={canEdit}
@@ -1162,7 +1162,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                               <TextInput
                                 testID={`q-item-price-${i}`}
                                 value={priceDraft[i] ?? quotePriceText(it.unit_price)}
-                                onFocus={() => setPriceDraft((m) => ({ ...m, [i]: quotePriceText(it.unit_price) }))}
+                                onFocus={() => setPriceDraft((m) => ({ ...m, [i]: "" }))}
                                 onBlur={() => setPriceDraft((m) => {
                                   const next = { ...m };
                                   delete next[i];
@@ -1171,7 +1171,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
                                 onChangeText={(v) => {
                                   const typed = sanitizeMoneyInput(v);
                                   setPriceDraft((m) => ({ ...m, [i]: typed }));
-                                  patchItem(i, "unit_price", parseMoneyInput(typed));
+                                  if (typed.trim()) patchItem(i, "unit_price", parseMoneyInput(typed));
                                 }}
                                 keyboardType="decimal-pad"
                                 editable={canEdit}
