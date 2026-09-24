@@ -168,6 +168,7 @@ export type Order = {
   customer_order_number?: string;
   customer_name?: string;
   customer_phone?: string;
+  customer_email?: string;
   channel?: string;
   order_status?: string;
   total_amount?: number;
@@ -196,6 +197,9 @@ export type Order = {
   customer_notes?: string;
   created_at?: string;
   label_printed_at?: string;
+  form_printed_at?: string;
+  dispatch_id?: string;
+  dispatch_number?: string;
   marketplace_status?: string;
   shipment_package_id?: string | number;
   external_id?: string | number;
@@ -203,6 +207,9 @@ export type Order = {
   is_invoiced?: boolean;
   invoice_id?: string;
   invoice_number?: string;
+  e_type?: string;
+  invoice_e_type?: string;
+  einvoice_state?: string;
   status?: string;
   cancel_request?: { status?: string; reason?: string; at?: string } | null;
   tracking?: {
