@@ -45,7 +45,8 @@ import {
 } from "../utils/invoiceDraft";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { contactTypeTr } from "../utils/labels";
-import { fmtMoney, idOf } from "../utils/money";
+import { lineDraftKey, lineNumberCommit, lineNumberOnFocus, lineNumberShown } from "../utils/lineNumberDraft";
+import { fmtMoney, idOf, sanitizeMoneyInput } from "../utils/money";
 
 type Project = { id?: string; _id?: string; name?: string; project_number?: string };
 
@@ -122,6 +123,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
   const [quickPhone, setQuickPhone] = useState("");
   const [gibTax, setGibTax] = useState("");
   const [scan, setScan] = useState(false);
+  const [lineDrafts, setLineDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -136,6 +138,31 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       ...d,
       items: d.items.map((it, i) => (i === index ? computeLine({ ...it, [field]: value } as InvoiceLine, field) : it)),
     }));
+  };
+
+  const lineFieldValue = (index: number, field: string, stored: unknown) =>
+    lineNumberShown(lineDrafts, lineDraftKey(index, field), stored);
+
+  const focusLineNumber = (index: number, field: string) => {
+    setLineDrafts((m) => ({ ...m, [lineDraftKey(index, field)]: lineNumberOnFocus() }));
+  };
+
+  const changeLineNumber = (index: number, field: string, raw: string, emptyFallback: number) => {
+    const typed = sanitizeMoneyInput(raw);
+    setLineDrafts((m) => ({ ...m, [lineDraftKey(index, field)]: typed }));
+    const next = lineNumberCommit(typed, emptyFallback);
+    if (next != null) patchLine(index, field, next);
+  };
+
+  const blurLineNumber = (index: number, field: string, emptyFallback: number) => {
+    const key = lineDraftKey(index, field);
+    const next = lineNumberCommit(lineDrafts[key], emptyFallback);
+    if (next != null) patchLine(index, field, next);
+    setLineDrafts((m) => {
+      const copy = { ...m };
+      delete copy[key];
+      return copy;
+    });
   };
 
   const loadLookups = useCallback(async () => {
@@ -616,18 +643,54 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
                 <Field compact label="Birim" testID={`inv-item-unit-${idx}`} value={it.unit} onChangeText={(v) => patchLine(idx, "unit", v)} />
               </View>
               <View style={{ width: 72, flexShrink: 0 }}>
-                <Field compact label="Miktar" testID={`inv-item-qty-${idx}`} value={String(it.quantity)} onChangeText={(v) => patchLine(idx, "quantity", n(v))} keyboardType="decimal-pad" />
+                <Field
+                  compact
+                  label="Miktar"
+                  testID={`inv-item-qty-${idx}`}
+                  value={lineFieldValue(idx, "quantity", it.quantity)}
+                  onFocus={() => focusLineNumber(idx, "quantity")}
+                  onBlur={() => blurLineNumber(idx, "quantity", 1)}
+                  onChangeText={(v) => changeLineNumber(idx, "quantity", v, 1)}
+                  keyboardType="decimal-pad"
+                />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Field compact label="Fiyat" testID={`inv-item-price-${idx}`} value={String(it.unit_price)} onChangeText={(v) => patchLine(idx, "unit_price", n(v))} keyboardType="decimal-pad" />
+                <Field
+                  compact
+                  label="Fiyat"
+                  testID={`inv-item-price-${idx}`}
+                  value={lineFieldValue(idx, "unit_price", it.unit_price)}
+                  onFocus={() => focusLineNumber(idx, "unit_price")}
+                  onBlur={() => blurLineNumber(idx, "unit_price", 0)}
+                  onChangeText={(v) => changeLineNumber(idx, "unit_price", v, 0)}
+                  keyboardType="decimal-pad"
+                />
               </View>
             </Row>
             <Row style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 6 }}>
               <View style={{ flex: 1, minWidth: 88 }}>
-                <Field compact label="KDV'li" testID={`inv-item-price-incl-${idx}`} value={String(it.unit_price_incl)} onChangeText={(v) => patchLine(idx, "unit_price_incl", n(v))} keyboardType="decimal-pad" />
+                <Field
+                  compact
+                  label="KDV'li"
+                  testID={`inv-item-price-incl-${idx}`}
+                  value={lineFieldValue(idx, "unit_price_incl", it.unit_price_incl)}
+                  onFocus={() => focusLineNumber(idx, "unit_price_incl")}
+                  onBlur={() => blurLineNumber(idx, "unit_price_incl", 0)}
+                  onChangeText={(v) => changeLineNumber(idx, "unit_price_incl", v, 0)}
+                  keyboardType="decimal-pad"
+                />
               </View>
               <View style={{ width: 64, flexShrink: 0 }}>
-                <Field compact label="İsk %" testID={`inv-item-disc-${idx}`} value={String(it.discount_rate)} onChangeText={(v) => patchLine(idx, "discount_rate", n(v))} keyboardType="decimal-pad" />
+                <Field
+                  compact
+                  label="İsk %"
+                  testID={`inv-item-disc-${idx}`}
+                  value={lineFieldValue(idx, "discount_rate", it.discount_rate)}
+                  onFocus={() => focusLineNumber(idx, "discount_rate")}
+                  onBlur={() => blurLineNumber(idx, "discount_rate", 0)}
+                  onChangeText={(v) => changeLineNumber(idx, "discount_rate", v, 0)}
+                  keyboardType="decimal-pad"
+                />
               </View>
             </Row>
             <Row style={{ flexWrap: "wrap", gap: 4, alignItems: "center" }}>
