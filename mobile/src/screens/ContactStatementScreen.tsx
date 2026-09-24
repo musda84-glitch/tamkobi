@@ -11,7 +11,7 @@ import { printHtmlNative } from "../utils/nativePrint";
 import { openPrintHtml, printDocumentHtml } from "../utils/orderPrint";
 import { enrichPrintCompany } from "../utils/orderShare";
 import { buildStatementRows, smsBalanceText, statementPrintHtml, statementText, waDigits } from "../utils/contactStatement";
-import { fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney } from "../utils/money";
 
 export function ContactStatementScreen() {
   const { client, companyId, activeCompany } = useAuth();
@@ -156,7 +156,7 @@ export function ContactStatementScreen() {
             key={`${r.kind}-${idx}`}
             testID={`statement-row-${r.kind}-${idx}`}
             title={r.doc}
-            subtitle={r.date}
+            subtitle={fmtDate(r.date)}
             right={`${r.debit ? `B ${fmtMoney(r.debit)}` : `A ${fmtMoney(r.credit)}`}`}
           />
         ))}

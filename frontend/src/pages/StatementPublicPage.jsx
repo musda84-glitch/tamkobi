@@ -4,7 +4,7 @@ import { useParams } from "react-router-dom";
 import { Loader2, Building2, AlertTriangle, FileDown } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney } from "../utils/money";
 
 export default function StatementPublicPage() {
   const { token } = useParams();
@@ -60,7 +60,7 @@ export default function StatementPublicPage() {
                 {rows.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Hareket yok.</td></tr>}
                 {rows.map((r, i) => (
                   <tr key={`${r.date}-${i}`} data-testid={`public-statement-row-${i}`}>
-                    <td className="py-2 px-2 font-mono text-slate-500">{r.date}</td>
+                    <td className="py-2 px-2 font-mono text-slate-500">{fmtDate(r.date)}</td>
                     <td className="py-2 px-2 font-semibold text-slate-800">{r.doc}</td>
                     <td className="py-2 px-2 text-right text-rose-700">{r.debit ? money(r.debit) : "—"}</td>
                     <td className="py-2 px-2 text-right text-emerald-700">{r.credit ? money(r.credit) : "—"}</td>
@@ -70,7 +70,7 @@ export default function StatementPublicPage() {
               </tbody>
             </table>
           </div>
-          {data.issued_at && <p className="text-[11px] text-slate-400">Oluşturulma: {data.issued_at}. Bu sayfa yalnızca görüntülemedir.</p>}
+          {data.issued_at && <p className="text-[11px] text-slate-400">Oluşturulma: {fmtDate(data.issued_at)}. Bu sayfa yalnızca görüntülemedir.</p>}
         </div>
       </div>
     </div>

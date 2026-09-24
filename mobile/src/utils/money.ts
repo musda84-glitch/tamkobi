@@ -1,3 +1,5 @@
+import { fmtDmy } from "./calendar";
+
 /** Same company price precision as the web panel (0–4, default 2 kuruş). */
 let priceDecimals = 2;
 
@@ -56,11 +58,9 @@ export function fmtMoney(n: unknown, currency = "TRY"): string {
   return `${formatTrAmount(n)} ${suffix}`;
 }
 
+/** Görünen tarihler gün.ay.yıl (21.09.2026). API hâlâ YYYY-MM-DD taşır. */
 export function fmtDate(value?: string | null): string {
-  if (!value) return "—";
-  const d = new Date(value.length <= 10 ? `${value}T00:00:00` : value);
-  if (Number.isNaN(d.getTime())) return String(value).slice(0, 10);
-  return d.toLocaleDateString("tr-TR", { day: "numeric", month: "short", year: "numeric" });
+  return fmtDmy(value);
 }
 
 export function idOf(row: { id?: string; _id?: string } | null | undefined): string {

@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Modal, Platform, Pressable, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
-import { monthGrid, monthTitle, normalizeYmd, parseYmd, shiftMonth, toYmd, weekdayLabels, ymdOrToday } from "../utils/calendar";
+import { fmtDmy, monthGrid, monthTitle, normalizeYmd, parseYmd, shiftMonth, toYmd, weekdayLabels, ymdOrToday } from "../utils/calendar";
 
 type DateFieldProps = {
   label: string;
@@ -89,7 +89,7 @@ export function DateField({ label, value, onChangeText, testID, min, editable = 
         disabled={!editable}
         style={[inputStyle, { flexDirection: "row", alignItems: "center", justifyContent: "space-between", opacity: editable ? 1 : 0.6 }]}
       >
-        <Text style={{ color: ymd ? colors.text : colors.muted, fontSize: 15 }}>{ymd || "Tarih seçin"}</Text>
+        <Text style={{ color: ymd ? colors.text : colors.muted, fontSize: 15 }}>{ymd ? fmtDmy(ymd) : "Tarih seçin"}</Text>
         <Ionicons name="calendar-outline" size={18} color={colors.muted} />
       </Pressable>
       )}

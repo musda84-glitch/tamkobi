@@ -21,7 +21,7 @@ import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 import { INVOICE_ACTIONS_COL } from "../utils/invoiceTableLayout";
 import { FxPicker } from "../components/FxPicker";
-import { fmtMoney, formatTrAmount } from "../utils/money";
+import { fmtDate, fmtMoney, formatTrAmount } from "../utils/money";
 import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "../utils/documentLines";
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
@@ -668,8 +668,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       <div className="text-[11px] text-slate-400 truncate">VKN/TCKN: {inv.contact_tax_id || '-'}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <div>{inv.issue_date}</div>
-                      <div className="text-[11px] text-slate-400">Vade: {inv.due_date || 'Peşin'}</div>
+                      <div>{fmtDate(inv.issue_date)}</div>
+                      <div className="text-[11px] text-slate-400">Vade: {inv.due_date ? fmtDate(inv.due_date) : 'Peşin'}</div>
                     </td>
                     <td className="px-4 py-3">
                       {(() => {
@@ -1174,7 +1174,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     {previewInvoice.e_type === 'expense_slip' ? 'GİDER PUSULASI' : previewInvoice.e_type === 'e_export' || previewInvoice.trade_kind === 'export' ? 'e-İHRACAT' : previewInvoice.e_type === 'e_invoice' ? 'E-FATURA' : previewInvoice.e_type === 'paper' ? 'FATURA' : previewInvoice.e_type === 'e_dispatch' ? 'E-İRSALİYE' : previewInvoice.trade_kind === 'import' ? 'İTHALAT FATURASI' : 'E-ARŞİV FATURA'}
                   </div>
                   <div className="font-mono text-xs font-bold mt-2 text-slate-900">{previewInvoice.invoice_number}</div>
-                  <div className="text-xs text-slate-500">Tarih: {previewInvoice.issue_date}</div>
+                  <div className="text-xs text-slate-500">Tarih: {fmtDate(previewInvoice.issue_date)}</div>
                 </div>
               </div>
 

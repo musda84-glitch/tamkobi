@@ -1,3 +1,5 @@
+import { fmtDate } from "./money";
+
 export type DutyWorkflowStep = {
   id?: string;
   title?: string;
@@ -117,10 +119,11 @@ export const DUTY_PHOTO_SHOW = "Görsün";
 export const DUTY_PHOTO_HIDE = "Görmesin";
 
 export function dutySubtitle(t: AssignedDuty): string {
+  const due = t.due_date ? `son ${fmtDate(t.due_date)}` : null;
   if (t.kind === "office") {
-    return [t.park_name || t.project_name, t.due_date ? `son ${t.due_date}` : null].filter(Boolean).join(" · ");
+    return [t.park_name || t.project_name, due].filter(Boolean).join(" · ");
   }
-  return [t.project_number, t.project_name || t.park_name, t.due_date ? `son ${t.due_date}` : null].filter(Boolean).join(" · ");
+  return [t.project_number, t.project_name || t.park_name, due].filter(Boolean).join(" · ");
 }
 
 export function openAssignedDuties(tasks: AssignedDuty[] | null | undefined): AssignedDuty[] {

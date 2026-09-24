@@ -6,7 +6,7 @@ import { Loader2, Building2, AlertTriangle, CheckCircle2, Circle, MapPin, Calend
 import { API_URL } from "../context/AuthContext";
 import { PublicQuoteContents } from "../components/PublicQuoteContents";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { formatTrAmount } from "../utils/money";
+import { fmtDate, formatTrAmount } from "../utils/money";
 import { publicProjectQuoteUrl, publicQuoteStatusLabel } from "../utils/publicProjectQuote";
 
 const SURVEY_TR = { planned: "Planlandı", done: "Yapıldı", quoted: "Teklife dönüştü" };
@@ -99,7 +99,7 @@ export default function ProjectTrackingPage() {
                     {(p.statement.rows || []).length === 0 && <tr><td colSpan={5} className="py-3 px-2 text-slate-400">Hareket yok.</td></tr>}
                     {(p.statement.rows || []).map((r, i) => (
                       <tr key={`${r.date}-${i}`} className="border-t border-slate-100" data-testid={`public-project-statement-row-${i}`}>
-                        <td className="py-1.5 px-2 font-mono text-slate-500">{r.date}</td>
+                        <td className="py-1.5 px-2 font-mono text-slate-500">{fmtDate(r.date)}</td>
                         <td className="py-1.5 px-2">{r.doc}</td>
                         <td className="py-1.5 px-2 text-right">{r.debit ? fmt(r.debit) : ""}</td>
                         <td className="py-1.5 px-2 text-right">{r.credit ? fmt(r.credit) : ""}</td>

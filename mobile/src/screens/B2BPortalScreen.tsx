@@ -713,7 +713,7 @@ export function B2BPortalScreen() {
                 <ListRow
                   key={i.invoice_number}
                   title={i.invoice_number || "Fatura"}
-                  subtitle={`Tarih ${i.issue_date || "—"}${i.due_date ? ` · Vade ${i.due_date}` : ""} · ${statusTr(payStatus(i.payment_status))} · ödenen ${fmtMoney(i.paid_amount)}`}
+                  subtitle={`Tarih ${fmtDate(i.issue_date)}${i.due_date ? ` · Vade ${fmtDate(i.due_date)}` : ""} · ${statusTr(payStatus(i.payment_status))} · ödenen ${fmtMoney(i.paid_amount)}`}
                   right={fmtMoney(i.grand_total)}
                   rightSub={remain > 0.01 ? `kalan ${fmtMoney(remain)}` : undefined}
                   rightSubColor={remain > 0.01 ? colors.danger : undefined}
