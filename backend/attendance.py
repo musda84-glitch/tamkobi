@@ -214,6 +214,9 @@ def geo_auto_action(
     return None
 
 
+MANAGER_TIME_EDIT_AUTO_AFTER = 3
+
+
 def manager_time_edit_doc(existing: Optional[dict], rec: Optional[dict], now: str) -> Optional[dict]:
     prev = existing or {}
     nxt = rec or {}
@@ -226,6 +229,93 @@ def manager_time_edit_doc(existing: Optional[dict], rec: Optional[dict], now: st
         "check_out": nxt.get("check_out"),
         "at": now,
         "pending_employee": True,
+    }
+
+
+def changed_punch_field(existing: Optional[dict], rec: Optional[dict], preferred: Optional[str] = None) -> Optional[str]:
+    prev = existing or {}
+    nxt = rec or {}
+    if preferred in ("check_in", "check_out") and str(prev.get(preferred) or "") != str(nxt.get(preferred) or ""):
+        return preferred
+    for key in ("check_in", "check_out"):
+        if str(prev.get(key) or "") != str(nxt.get(key) or ""):
+            return key
+    return None
+
+
+def time_edit_attempts(existing: Optional[dict], action: str) -> int:
+    rounds = (existing or {}).get("manager_time_edit_rounds") or {}
+    row = rounds.get(action) or {}
+    try:
+        return max(0, int(row.get("attempts") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def manager_time_edit_skips_employee(attempts: int) -> bool:
+    return int(attempts or 0) >= MANAGER_TIME_EDIT_AUTO_AFTER
+
+
+def manager_punch_time(req: Optional[dict], action: str, now_hm: str) -> str:
+    raw = (req or {}).get(action) or (req or {}).get("time")
+    if raw is None or str(raw).strip() == "":
+        return now_hm
+    return _valid_time(str(raw).strip()[:5])
+
+
+def apply_manager_time_edit_round(existing: Optional[dict], rec: Optional[dict], now: str, action: Optional[str] = None) -> dict:
+    field = changed_punch_field(existing, rec, action)
+    rounds = dict((existing or {}).get("manager_time_edit_rounds") or {})
+    if not field:
+        return {"edit": None, "rounds": rounds, "auto_confirm": False, "attempts": 0, "field": None}
+    attempts = time_edit_attempts(existing, field) + 1
+    skip = manager_time_edit_skips_employee(attempts)
+    edit = manager_time_edit_doc(existing, rec, now) or {
+        "prev_check_in": (existing or {}).get("check_in"),
+        "prev_check_out": (existing or {}).get("check_out"),
+        "check_in": (rec or {}).get("check_in"),
+        "check_out": (rec or {}).get("check_out"),
+        "at": now,
+    }
+    edit["pending_employee"] = not skip
+    edit["attempt"] = attempts
+    edit["auto_confirmed"] = skip
+    edit["field"] = field
+    rounds[field] = {"attempts": attempts, "at": now, "auto_confirmed": skip}
+    return {"edit": edit, "rounds": rounds, "auto_confirm": skip, "attempts": attempts, "field": field}
+
+
+def manager_time_edit_result_message(round_info: Optional[dict]) -> str:
+    info = round_info or {}
+    attempts = int(info.get("attempts") or 0)
+    if info.get("auto_confirm"):
+        return "Saat personel onayı olmadan kaydedildi (3. deneme)."
+    return f"Saat personel onayına gönderildi ({attempts}/3)."
+
+
+def apply_time_edit_decision(rec: Optional[dict], decision: str, now: str) -> dict:
+    raw = str(decision or "").strip().lower()
+    accepted = raw in ("approve", "approved", "confirm")
+    rejected = raw in ("reject", "rejected")
+    if not accepted and not rejected:
+        raise HTTPException(status_code=400, detail="decision: approve veya reject olmalı.")
+    edit = dict((rec or {}).get("manager_time_edit") or {})
+    if not edit.get("pending_employee"):
+        raise HTTPException(status_code=400, detail="Bekleyen saat düzeltmesi yok.")
+    if accepted:
+        edit["pending_employee"] = False
+        edit["confirmed_at"] = now
+        return {
+            "accepted": True,
+            "restore": None,
+            "upd": {"employee_confirmed": True, "employee_confirmed_at": now, "manager_time_edit": edit},
+        }
+    edit["pending_employee"] = False
+    edit["rejected_at"] = now
+    return {
+        "accepted": False,
+        "restore": {"check_in": edit.get("prev_check_in"), "check_out": edit.get("prev_check_out")},
+        "upd": {"employee_confirmed": False, "employee_confirmed_at": None, "manager_time_edit": edit},
     }
 
 
@@ -2314,6 +2404,27 @@ async def confirm_attendance(att_id: str, request: Request, req: Dict[str, Any] 
         upd["dispute_resolved_by"] = str(user.get("_id") or user.get("id") or "")
     await _db.attendance.update_one({"_id": att_id}, {"$set": upd})
     return _clean(await _db.attendance.find_one({"_id": att_id}))
+
+
+@router.post("/personnel/attendance/{att_id}/time-edit-decision")
+async def decide_time_edit(att_id: str, req: Dict[str, Any], request: Request):
+    """Personel yönetici saat düzeltmesini onaylar veya reddeder (önceki saate döner)."""
+    user = await _current_user(request)
+    rec = await _db.attendance.find_one({"_id": att_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+    emp = await employee_for_user(user)
+    if user.get("role") != "admin" and (not emp or emp["_id"] != rec["employee_id"]):
+        raise HTTPException(status_code=403, detail="Yalnızca kendi puantaj kaydınızı yanıtlayabilirsiniz.")
+    result = apply_time_edit_decision(rec, (req or {}).get("decision"), _now())
+    if result.get("restore") is not None:
+        emp_doc = await _db.employees.find_one({"_id": rec["employee_id"]})
+        if emp_doc:
+            await apply_day(emp_doc, rec["date"], result["restore"], source=rec.get("source") or "manager")
+    await _db.attendance.update_one({"_id": att_id}, {"$set": result["upd"]})
+    out = _clean(await _db.attendance.find_one({"_id": att_id}))
+    out["message"] = "Saat onaylandı." if result.get("accepted") else "Saat düzeltmesi reddedildi; önceki saat geri yüklendi."
+    return out
 
 
 @router.post("/personnel/attendance/{att_id}/dispute")

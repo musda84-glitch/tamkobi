@@ -25,7 +25,7 @@ const Stat = ({ label, value, sub, tone = "slate", testId }) => (
   </div>
 );
 
-const RecordRow = ({ r, onConfirm, onDispute }) => {
+const RecordRow = ({ r, onConfirm, onRejectTimeEdit, onDispute }) => {
   const [note, setNote] = useState("");
   const [fixIn, setFixIn] = useState(r.check_in || "");
   const [fixOut, setFixOut] = useState(r.check_out || "");
@@ -50,6 +50,7 @@ const RecordRow = ({ r, onConfirm, onDispute }) => {
               {r.dispute_note && !r.dispute_resolved && <span className="inline-flex items-center gap-1 text-rose-600 font-semibold" title={r.dispute_note}><MessageSquareWarning className="w-3.5 h-3.5" /> Düzeltme talebi iletildi</span>}
               {r.dispute_note && r.dispute_resolved && <span className="inline-flex items-center gap-1 text-slate-500 font-semibold" title={r.dispute_note}><MessageSquareWarning className="w-3.5 h-3.5" /> Düzeltme kapatıldı{r.dispute_resolution === "rejected" ? " (red)" : ""}</span>}
               <button onClick={() => onConfirm(r)} className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700" data-testid={`my-att-confirm-${r.id}`}>{r.dispute_note && !r.dispute_resolved ? "Yine de Onayla" : "Onayla"}</button>
+              {r.manager_time_edit?.pending_employee ? <button onClick={() => onRejectTimeEdit(r)} className="px-2.5 py-1 bg-rose-600 text-white rounded-lg font-semibold hover:bg-rose-700" data-testid={`my-att-reject-${r.id}`}>Reddet</button> : null}
               {(!r.dispute_note || r.dispute_resolved) && <button onClick={() => setOpen(!open)} className="px-2.5 py-1 border rounded-lg font-semibold hover:bg-slate-50" data-testid={`my-att-dispute-toggle-${r.id}`}>Düzeltme talep et</button>}
             </>}
         </span>
@@ -179,6 +180,7 @@ export default function MyAttendancePage() {
     }
   };
   const confirm = async (r) => { try { await axios.post(`${API_URL}/personnel/attendance/${r.id}/confirm`, {}, { withCredentials: true }); toast.success("Kayıt onaylandı."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } };
+  const rejectTimeEdit = async (r) => { try { const res = await axios.post(`${API_URL}/personnel/attendance/${r.id}/time-edit-decision`, { decision: "reject" }, { withCredentials: true }); toast.success(res.data?.message || "Saat düzeltmesi reddedildi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Reddedilemedi."); } };
   const dispute = async (r, note) => { try { await axios.post(`${API_URL}/personnel/attendance/${r.id}/dispute`, { note }, { withCredentials: true }); toast.success("Düzeltme talebi yöneticiye iletildi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Gönderilemedi."); } };
   const requestEarly = async (e) => {
     e.preventDefault();
@@ -419,7 +421,7 @@ export default function MyAttendancePage() {
         <div className="px-4 py-2.5 border-b flex items-center justify-between"><span className="font-bold text-slate-900 text-sm flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-emerald-600" /> Giriş / Çıkış Kayıtlarım ({data.records.length})</span><span className="text-[11px] text-slate-400 flex items-center gap-1"><Moon className="w-3 h-3" /> Sarı satır: tatil günü</span></div>
         <div className="divide-y divide-slate-100 max-h-[480px] overflow-y-auto">
           {data.records.length === 0 && <div className="p-8 text-center text-xs text-slate-400">Bu ay kayıt yok.</div>}
-          {data.records.map((r) => <RecordRow key={r.id} r={r} onConfirm={confirm} onDispute={dispute} />)}
+          {data.records.map((r) => <RecordRow key={r.id} r={r} onConfirm={confirm} onRejectTimeEdit={rejectTimeEdit} onDispute={dispute} />)}
         </div>
       </div>
       {s.unconfirmed > 0 && <div className="text-[11px] text-slate-500 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> Yönetici tarafından girilen kayıtları "Onayla" ile doğrulayın; yanlışsa "Düzeltme talep et" ile açıklama gönderin.</div>}
