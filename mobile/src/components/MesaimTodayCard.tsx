@@ -12,14 +12,16 @@ import {
   mesaimLongDate,
   mesaimOutSubtitle,
   mesaimPunchEditHint,
+  mesaimPunchNowLabel,
   mesaimScheduleLine,
   mesaimWorkDaysLine,
   type AttendanceHabit,
   type GeoConfirmRequest,
 } from "../utils/attendanceSelf";
-import { workplaceHint, type Workplace } from "../utils/workplace";
+import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
 import type { LocationSignal } from "../utils/locationConsent";
+import { resolveNowHm } from "../utils/clock";
 
 const DARK = "#0F172A";
 const DARK_META = "#CBD5E1";
@@ -200,7 +202,7 @@ export function MesaimTodayCard({
   punchEdit?: "check_in" | "check_out" | null;
   punchEditTime?: string;
   onPunchEditTime?: (v: string) => void;
-  onPunchEditConfirm?: () => void;
+  onPunchEditConfirm?: (time?: string) => void;
   onPunchEditCancel?: () => void;
   onCheckIn: () => void;
   onCheckOutAsk: () => void;
@@ -228,6 +230,9 @@ export function MesaimTodayCard({
   const workDays = mesaimWorkDaysLine(schedule?.work_days, dayLabels);
   const dateLine = mesaimLongDate(todayDate);
   const yevLine = yevmiyeStatusLine(today);
+  const geoPlace = workplace || location;
+  const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo });
+  const geoInLabel = mesaimGeoInLabel({ workplace: geoPlace, requireGeo });
 
   return (
     <View
@@ -253,6 +258,20 @@ export function MesaimTodayCard({
         <Text style={{ color: workplace?.kind === "task" ? "#C7D2FE" : "#6EE7B7", fontSize: 12, fontWeight: "600", textAlign: "center" }} testID="mesai-workplace">
           {workplaceHint(workplace || location, requireGeo !== false)}
         </Text>
+        <View
+          testID="mesai-geo-in"
+          style={{
+            marginTop: 2,
+            paddingHorizontal: 10,
+            paddingVertical: 4,
+            borderRadius: 999,
+            backgroundColor: geoInOn ? "rgba(16,185,129,0.22)" : "rgba(244,63,94,0.22)",
+          }}
+        >
+          <Text style={{ color: geoInOn ? "#6EE7B7" : "#FECDD3", fontSize: 12, fontWeight: "800" }}>
+            {geoInLabel}
+          </Text>
+        </View>
       </View>
 
       {punchEdit ? (
@@ -263,9 +282,26 @@ export function MesaimTodayCard({
             testID="mesai-punch-edit-time"
             value={punchEditTime || ""}
             autoOpen
+            nowLabel={mesaimPunchNowLabel(punchEdit)}
+            nowKind={punchEdit}
+            nowValue={now}
+            onNow={(hm) => {
+              onPunchEditTime?.(hm);
+              onPunchEditConfirm?.(hm);
+            }}
             onChangeText={(v) => onPunchEditTime?.(v)}
           />
           <Text style={{ color: "#FDE68A", fontSize: 12, fontWeight: "600" }}>{mesaimPunchEditHint(punchEdit)}</Text>
+          <PrimaryButton
+            title={mesaimPunchNowLabel(punchEdit)}
+            onPress={() => {
+              const hm = resolveNowHm(now);
+              onPunchEditTime?.(hm);
+              onPunchEditConfirm?.(hm);
+            }}
+            color={punchEdit === "check_out" ? ROSE : colors.indigo}
+            testID="mesai-punch-edit-now"
+          />
           <View style={{ flexDirection: "row", gap: 8 }}>
             <PrimaryButton
               title={busy === punchEdit ? "Gönderiliyor…" : "Onayla"}

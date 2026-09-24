@@ -31,6 +31,7 @@ GROUPS = (("ai", "Yapay zeka"), ("support", "Destek araçları"))
 ADDON_PATHS: Tuple[Tuple[str, str], ...] = (
     ("/api/ai/invoice-extract", "ai.invoice"),
     ("/api/ai/expense-extract", "ai.finance_docs"),
+    ("/api/ai/receipt-extract", "ai.finance_docs"),
     ("/api/ai/order-extract", "ai.orders"),
     ("/api/ai/product-extract", "ai.stock"),
     ("/api/ai/financial-advisor", "ai.advisor"),

@@ -34,6 +34,7 @@ export function formatTrAmount(n) {
 }
 
 export const fmtMoney = (n, c) => `${formatTrAmount(n)} ${moneySuffix(c)}`;
+export { fmtDmy as fmtDate } from "./dateFormat";
 
 export function priceInputStep() {
   const d = priceDecimals;

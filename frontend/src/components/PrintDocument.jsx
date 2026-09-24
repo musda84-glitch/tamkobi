@@ -3,7 +3,7 @@ import { X, Printer, Settings2, LayoutTemplate } from "lucide-react";
 import axios from "axios";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { moneySuffix, formatTrAmount } from "../utils/money";
+import { moneySuffix, formatTrAmount, fmtDate } from "../utils/money";
 import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
 import { BarcodeRenderer } from "./BarcodeRenderer";
 
@@ -176,7 +176,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, 
                 {tpl.show_logo && company?.logo_url && <img src={resolveImageUrl(company.logo_url)} alt="logo" className="h-14 object-contain bg-white rounded-lg p-1" />}
                 <div><div className="text-lg font-bold">{company?.name}</div><div className="opacity-80">{company?.address} {company?.city}</div>{tpl.show_tax_info && <div className="opacity-80">VD: {company?.tax_office} • VKN: {company?.tax_number}</div>}<div className="opacity-80">{company?.phone} • {company?.email}</div></div>
               </div>
-              <div className="text-right"><div className="text-2xl font-black tracking-tight">{title}</div><div className="font-mono font-semibold">{number}</div><div className="opacity-80">Tarih: {doc.issue_date || (doc.order_date || doc.created_at || "").slice(0, 10)}</div>{doc.valid_until && <div className="opacity-80">Geçerlilik: {doc.valid_until}</div>}{doc.due_date && <div className="opacity-80">Vade: {doc.due_date}</div>}</div>
+              <div className="text-right"><div className="text-2xl font-black tracking-tight">{title}</div><div className="font-mono font-semibold">{number}</div><div className="opacity-80">Tarih: {fmtDate(doc.issue_date || doc.order_date || doc.created_at)}</div>{doc.valid_until && <div className="opacity-80">Geçerlilik: {fmtDate(doc.valid_until)}</div>}{doc.due_date && <div className="opacity-80">Vade: {fmtDate(doc.due_date)}</div>}</div>
             </div>
           ) : (
           <div className={`flex justify-between items-start pb-4 ${isMinimal ? "border-b border-slate-900" : "border-b-4"}`} style={isMinimal ? {} : { borderColor: color }}>
@@ -192,9 +192,9 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, 
             <div className="text-right">
               <div className={`${isBold ? "text-3xl" : "text-2xl"} font-black tracking-tight`} style={{ color: isBold ? "#0f172a" : color }}>{title}</div>
               <div className="font-mono font-semibold">{number}</div>
-              <div className="text-slate-500">Tarih: {doc.issue_date || (doc.order_date || doc.created_at || "").slice(0, 10)}</div>
-              {doc.valid_until && <div className="text-slate-500">Geçerlilik: {doc.valid_until}</div>}
-              {doc.due_date && <div className="text-slate-500">Vade: {doc.due_date}</div>}
+              <div className="text-slate-500">Tarih: {fmtDate(doc.issue_date || doc.order_date || doc.created_at)}</div>
+              {doc.valid_until && <div className="text-slate-500">Geçerlilik: {fmtDate(doc.valid_until)}</div>}
+              {doc.due_date && <div className="text-slate-500">Vade: {fmtDate(doc.due_date)}</div>}
             </div>
           </div>
           )}
@@ -361,7 +361,7 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, 
           {plan?.length > 0 && (
             <div className="mt-6" data-testid="print-payment-plan">
               <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Ödeme Planı ({plan.length} taksit)</div>
-              <table className="w-full border-collapse"><tbody>{plan.map((r) => <tr key={r.no} className="border-b border-slate-100"><td className="py-1 font-semibold">{r.label}</td><td className="py-1 text-slate-500 font-mono">{r.due_date}</td><td className="py-1 text-right font-semibold">{fmtM(r.amount)}</td><td className="py-1 text-right w-20">{r.status === "paid" ? <span className="text-emerald-700 font-bold">Ödendi</span> : r.status ? <span className="text-slate-400">Bekliyor</span> : null}</td></tr>)}</tbody></table>
+              <table className="w-full border-collapse"><tbody>{plan.map((r) => <tr key={r.no} className="border-b border-slate-100"><td className="py-1 font-semibold">{r.label}</td><td className="py-1 text-slate-500 font-mono">{fmtDate(r.due_date)}</td><td className="py-1 text-right font-semibold">{fmtM(r.amount)}</td><td className="py-1 text-right w-20">{r.status === "paid" ? <span className="text-emerald-700 font-bold">Ödendi</span> : r.status ? <span className="text-slate-400">Bekliyor</span> : null}</td></tr>)}</tbody></table>
             </div>
           )}
           {(doc.notes || doc.terms) && <div className="mt-6 text-slate-600 whitespace-pre-wrap">{doc.notes}{doc.terms && <div className="mt-2"><b>Şartlar:</b> {doc.terms}</div>}</div>}

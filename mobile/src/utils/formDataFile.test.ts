@@ -69,6 +69,7 @@ describe("pickBrowserReceipt", () => {
     const picked = await pickBrowserReceipt("camera", () => input as unknown as HTMLInputElement);
     expect(input.accept).toBe("image/*");
     expect(attrs.capture).toBe("environment");
+    expect(input.multiple).toBe(false);
     expect(picked?.fileName).toBe("shot.jpg");
   });
 });

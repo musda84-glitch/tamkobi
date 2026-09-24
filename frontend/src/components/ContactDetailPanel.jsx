@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2 } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { workMapsLink } from "../utils/mapsLink";
@@ -24,9 +24,10 @@ import { ContactStatementMenu } from "./ContactStatementMenu";
 import { StatementShareBar, StatementPrint, buildStatementRows } from "./StatementShare";
 import { shareStatementLink } from "../utils/statementShare";
 import { buildContactPayForm, contactPayModalMeta } from "../utils/contactPayMenu";
+import { applyReceiptDraft, receiptScanHint } from "../utils/receiptScan";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
-import { fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney } from "../utils/money";
 import { DocumentLineEditor } from "./DocumentLineEditor";
 import { documentLineTotals, hydrateLine } from "../utils/documentLines";
 import { orderFooterTotals } from "../utils/orderMoney";
@@ -236,6 +237,40 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [payForm, setPayForm] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [accounts, setAccounts] = useState([]);
+  const [receiptScanBusy, setReceiptScanBusy] = useState(false);
+  const receiptCamRef = useRef(null);
+  const receiptGalRef = useRef(null);
+  const receiptPickGuard = useRef(0);
+  const scanReceiptFile = async (file) => {
+    if (!file || receiptScanBusy || !c?.company_id) return;
+    setReceiptScanBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await axios.post(
+        `${API_URL}/ai/receipt-extract?company_id=${encodeURIComponent(c.company_id)}`,
+        fd,
+        { timeout: 180000 },
+      );
+      const draft = r.data?.draft;
+      if (!draft || !(Number(draft.amount) > 0)) {
+        toast.error("Makbuzdan tutar okunamadı. Daha net bir fotoğraf deneyin.");
+        return;
+      }
+      setPayForm((cur) => applyReceiptDraft(cur, draft));
+      toast.success(receiptScanHint(draft));
+    } catch (err) {
+      toast.error(err.response?.data?.detail || (err.code === "ECONNABORTED" ? "İstek zaman aşımına uğradı." : "Makbuz okunamadı."));
+    } finally {
+      setReceiptScanBusy(false);
+      if (receiptCamRef.current) receiptCamRef.current.value = "";
+      if (receiptGalRef.current) receiptGalRef.current.value = "";
+    }
+  };
+  const openReceiptPicker = (kind) => {
+    receiptPickGuard.current = Date.now() + 1500;
+    (kind === "camera" ? receiptCamRef : receiptGalRef).current?.click();
+  };
   const openPay = async (opts = {}) => {
     try {
       const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`);
@@ -495,7 +530,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 {data.invoices.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
                 {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const cells = {
                     number: <td key="number" className="py-2 font-mono font-semibold text-slate-900"><button onClick={() => setEditInv({ ...inv })} className={`hover:underline ${inv.status === "draft" ? "text-emerald-700" : "text-slate-900"}`} title={inv.status === "draft" ? "Taslağı düzenle" : "Faturayı düzenle (vade / not)"} data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button></td>,
-                    date: <td key="date" className="py-2 text-slate-500">{inv.issue_date}</td>,
+                    date: <td key="date" className="py-2 text-slate-500">{fmtDate(inv.issue_date)}</td>,
                     type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{E_TYPE_TR[inv.e_type] || inv.e_type}</span></td>,
                     amount: <td key="amount" className={`py-2 text-right font-bold ${inv.status === "draft" ? "text-slate-400" : ""}`}>{fmt(inv.grand_total)}{inv.status === "draft" && <div className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide" data-testid={`detail-inv-draft-${inv.invoice_number}`}>Taslak · bakiye dışı</div>}</td>,
                     gib: <td key="gib" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>,
@@ -545,7 +580,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   <tr key={ch.id} data-testid={`detail-cheque-${ch.number}`}>
                     <td className="py-2 font-mono font-semibold">{ch.number}</td>
                     <td className="py-2">{ch.direction === "received" ? "Alınan" : "Verilen"} {ch.instrument === "promissory" ? "senet" : "çek"}</td>
-                    <td className="py-2 font-mono">{ch.due_date}</td>
+                    <td className="py-2 font-mono">{fmtDate(ch.due_date)}</td>
                     <td className="py-2"><span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100">{ch.status_label || ch.status}</span></td>
                     <td className="py-2 text-right font-bold">{fmt(ch.amount)}</td>
                     <td className="py-2 text-right">
@@ -626,7 +661,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <thead className="text-slate-500 uppercase text-[10px] font-semibold border-b"><tr><th className="py-2">Teklif</th><th className="py-2">Başlık</th><th className="py-2">Tarih</th><th className="py-2 text-right">Tutar</th><th className="py-2">Durum</th><th className="py-2"></th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {(data.quotes || []).length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-400">Teklif yok. <button onClick={() => navigate("/quotes")} className="text-emerald-700 underline">Teklif oluştur</button></td></tr>}
-                {(data.quotes || []).map((q) => <tr key={q.id} data-testid={`detail-quote-${q.quote_number}`}><td className="py-2 font-mono font-semibold"><button onClick={() => setEditQuote(q)} className="hover:underline text-emerald-700" data-testid={`detail-quote-open-${q.quote_number}`}>{q.quote_number}</button></td><td className="py-2">{q.title}</td><td className="py-2 text-slate-500">{q.issue_date}</td><td className="py-2 text-right font-bold">{fmt(q.grand_total)}</td><td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${q.status === "accepted" ? "bg-emerald-50 text-emerald-700" : q.status === "rejected" ? "bg-rose-50 text-rose-700" : q.status === "sent" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{statusTr(q.status)}{q.approval?.status === "pending" && q.status === "sent" ? " • Onay bekliyor" : ""}</span></td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setEditQuote(q)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-quote-edit-${q.quote_number}`}><Pencil className="w-3 h-3" /> Düzenle</button><button onClick={() => setPrintDoc({ ...q, _docType: "quote" })} className="px-2 py-1 border rounded-md text-[10px] font-semibold">Yazdır</button>{!q.project_id && <button onClick={() => convertQuoteToProject(q)} className="px-2 py-1 bg-slate-900 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-quote-to-project-${q.quote_number}`}>Projeye Çevir</button>}{!q.invoice_id && <button onClick={() => convertQuote(q)} className="px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-quote-convert-${q.quote_number}`}>Faturaya Çevir</button>}</div></td></tr>)}
+                {(data.quotes || []).map((q) => <tr key={q.id} data-testid={`detail-quote-${q.quote_number}`}><td className="py-2 font-mono font-semibold"><button onClick={() => setEditQuote(q)} className="hover:underline text-emerald-700" data-testid={`detail-quote-open-${q.quote_number}`}>{q.quote_number}</button></td><td className="py-2">{q.title}</td><td className="py-2 text-slate-500">{fmtDate(q.issue_date)}</td><td className="py-2 text-right font-bold">{fmt(q.grand_total)}</td><td className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${q.status === "accepted" ? "bg-emerald-50 text-emerald-700" : q.status === "rejected" ? "bg-rose-50 text-rose-700" : q.status === "sent" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{statusTr(q.status)}{q.approval?.status === "pending" && q.status === "sent" ? " • Onay bekliyor" : ""}</span></td><td className="py-2 text-right"><div className="flex justify-end gap-1"><button onClick={() => setEditQuote(q)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-quote-edit-${q.quote_number}`}><Pencil className="w-3 h-3" /> Düzenle</button><button onClick={() => setPrintDoc({ ...q, _docType: "quote" })} className="px-2 py-1 border rounded-md text-[10px] font-semibold">Yazdır</button>{!q.project_id && <button onClick={() => convertQuoteToProject(q)} className="px-2 py-1 bg-slate-900 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-quote-to-project-${q.quote_number}`}>Projeye Çevir</button>}{!q.invoice_id && <button onClick={() => convertQuote(q)} className="px-2 py-1 bg-emerald-600 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-quote-convert-${q.quote_number}`}>Faturaya Çevir</button>}</div></td></tr>)}
               </tbody>
             </table>
           )}
@@ -814,7 +849,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   {statementView.rows.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Hareket yok.</td></tr>}
                   {statementView.rows.map((r, idx) => (
                     <tr key={`${r.kind}-${idx}`} className={r.kind === "payment" ? "bg-emerald-50/40" : r.kind === "cheque" ? "bg-indigo-50/40" : ""}>
-                      <td className="py-1.5 px-2 font-mono text-slate-500">{r.date}</td>
+                      <td className="py-1.5 px-2 font-mono text-slate-500">{fmtDate(r.date)}</td>
                       <td className="py-1.5 px-2 font-semibold text-slate-800">{r.doc}</td>
                       <td className="py-1.5 px-2 text-right text-rose-700">{r.debit ? fmt(r.debit) : "—"}</td>
                       <td className="py-1.5 px-2 text-right text-emerald-700">{r.credit ? fmt(r.credit) : "—"}</td>
@@ -854,7 +889,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {payForm && (() => {
           const meta = contactPayModalMeta(payForm);
           return (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setPayForm(null)}>
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => { if (Date.now() < receiptPickGuard.current) return; setPayForm(null); }}>
             <form onSubmit={savePay} className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="collect-modal" data-menu-id={payForm.menuId || ""}>
               <div className="flex justify-between border-b pb-2">
                 <div>
@@ -911,6 +946,15 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   {payForm.type === "inflow" && !payForm.preferPos && <p className="text-[10px] text-slate-400">Tahsilatta kredi kartı seçilemez; ortaklar hesabı kullanılabilir.</p>}
                 </>
               )}
+              <div className="space-y-1.5">
+                <p className="text-[10px] text-slate-500" data-testid="collect-receipt-hint">{receiptScanBusy ? "Makbuz okunuyor…" : "Kamera veya galeri ile makbuz okuyun; tutar ve açıklama dolar."}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" disabled={receiptScanBusy} onClick={() => openReceiptPicker("camera")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-indigo-50 text-indigo-800 border-indigo-200 disabled:opacity-50" data-testid="collect-receipt-camera"><Camera className="w-3.5 h-3.5" /> Kamera</button>
+                  <button type="button" disabled={receiptScanBusy} onClick={() => openReceiptPicker("gallery")} className="px-2 py-1.5 rounded-lg border font-semibold inline-flex items-center justify-center gap-1 bg-emerald-50 text-emerald-800 border-emerald-200 disabled:opacity-50" data-testid="collect-receipt-gallery"><ImagePlus className="w-3.5 h-3.5" /> Galeriden</button>
+                </div>
+                <input ref={receiptCamRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => scanReceiptFile(e.target.files?.[0])} data-testid="collect-receipt-camera-input" />
+                <input ref={receiptGalRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" className="hidden" onChange={(e) => scanReceiptFile(e.target.files?.[0])} data-testid="collect-receipt-gallery-input" />
+              </div>
               <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2 font-bold text-base" required data-testid="collect-amount-input" /></div>
               <div><label className="block font-semibold mb-1">Açıklama</label><input value={payForm.description} onChange={(e) => setPayForm({ ...payForm, description: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="collect-desc-input" /></div>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setPayForm(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="collect-save-btn">{payForm.method === "ledger" ? "Fişi Kaydet" : "Kaydet"}</button></div>

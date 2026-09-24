@@ -27,6 +27,8 @@ describe("contactStatement", () => {
     const text = statementText({ name: "Acme", balance: 50 }, rows, "TamKobi");
     expect(text).toContain("TamKobi - Cari Hesap Ekstresi");
     expect(text).toContain("Sayın Acme");
+    expect(text).toContain("02.01.2026");
+    expect(text).not.toContain("2026-01-02");
     expect(text).toContain("SF-1");
     expect(smsBalanceText({ name: "Acme", balance: 50 })).toMatch(/borç/);
     expect(balanceMessage({ name: "Acme", balance: 50 })).toMatch(/cari hesap bakiyeniz/);
@@ -39,10 +41,31 @@ describe("contactStatement", () => {
     });
     const html = statementPrintHtml({ name: "Acme", tax_number_or_id: "123", balance: 50 }, rows, "TamKobi");
     expect(html).toContain("CARİ HESAP EKSTRESİ");
+    expect(html).toContain("02.01.2026");
+    expect(html).not.toContain("2026-01-02");
     expect(html).toContain("SF-1");
     expect(html).toContain("VKN/TCKN: 123");
     expect(html).toContain("TamKobi");
     expect(html).toContain("TOPLAM");
     expect(html).toContain("<table");
+  });
+
+  it("adds cheque lines only on the detailed ekstre", () => {
+    const data = {
+      invoices: [{ invoice_number: "SF-1", invoice_type: "sales" as const, issue_date: "2026-01-02", grand_total: 50, status: "approved" }],
+      cheques: [{ instrument: "cheque", direction: "received", amount: 20, due_date: "2026-01-05", serial_no: "CK-1", bank_name: "Ziraat" }],
+    };
+    expect(buildStatementRows(data).map((r) => r.kind)).toEqual(["invoice"]);
+    const detailed = buildStatementRows(data, { includeCheques: true });
+    expect(detailed.map((r) => r.kind)).toEqual(["invoice", "cheque"]);
+    expect(detailed[1].doc).toContain("Alınan Çek");
+    expect(detailed[1].credit).toBe(20);
+  });
+
+  it("prints a mutabakat mektubu heading", () => {
+    const html = statementPrintHtml({ name: "Acme" }, [], "TamKobi", { variant: "reconciliation" });
+    expect(html).toContain("CARİ HESAP MUTABAKAT MEKTUBU");
+    expect(html).toContain("mutabakatını rica ederiz");
+    expect(html).toContain("mutabakat mektubu");
   });
 });

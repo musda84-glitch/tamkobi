@@ -130,7 +130,7 @@ describe("invoiceDraft", () => {
       e_type: "e_archive",
       status: "draft",
       issue_date: "2026-09-21",
-    })).toBe("NX202600000017 · Satış · E-Arşiv · Taslak · 21 Eyl 2026");
+    })).toBe("NX202600000017 · Satış · E-Arşiv · Taslak · 21.09.2026");
     expect(invoiceListSubtitle({ invoice_type: "sales" })).toMatch(/^Fatura · Satış/);
   });
 

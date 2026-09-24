@@ -1,4 +1,4 @@
-"""Masraf fişi / POS belgesinden tutar, KDV, kategori ve açıklama çıkar."""
+"""Tahsilat / tediye makbuzundan tutar, yön ve açıklama çıkar."""
 from __future__ import annotations
 
 import base64
@@ -9,75 +9,25 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-CATEGORIES = (
-    "Kira", "Elektrik / Su / Doğalgaz", "İnternet / Telefon", "Yakıt", "Yemek",
-    "Yol / Ulaşım", "Ofis Malzemesi", "Personel Masrafı", "Vergi / Harç / SGK",
-    "Bakım / Onarım", "Pazarlama / Reklam", "Yazılım / Abonelik", "Kargo / Nakliye",
-    "Muhasebe / Danışmanlık", "Diğer",
-)
-
-EXPENSE_SYSTEM = """Sen bir Türk ön muhasebe asistanısın. Sana bir MASRAF FİŞİ, POS slip veya gider faturası verilecek.
+RECEIPT_SYSTEM = """Sen bir Türk ön muhasebe asistanısın. Sana bir TAHSİLAT veya TEDİYE / ÖDEME makbuzunun görüntüsü veya metni verilecek.
 Yalnızca TEK bir JSON nesnesi döndür. Açıklama, markdown veya kod bloğu YAZMA.
 Şema:
-{"amount":number,"vat_rate":0|1|10|20,"vat_included":true|false,"date":"YYYY-MM-DD"|null,"description":str,"category":str,"document_no":str|null,"contact_name":str|null,"tax_number":str|null,"notes":str,"confidence":number}
+{"type":"inflow"|"outflow","amount":number,"date":"YYYY-MM-DD"|null,"description":str,"contact_name":str|null,"tax_number":str|null,"confidence":number}
 Kurallar:
-- amount: ödenen tutar. Türkçe 1.035,84 → 1035.84. POS fişinde genellikle KDV DAHİL genel toplam.
-- vat_included: tutar KDV dahil ise true (POS/fiş genel toplamı için true).
-- vat_rate: yalnızca 0, 1, 10 veya 20.
-- category: tam olarak şu listeden biri: """ + ", ".join(CATEGORIES) + """.
-- description: kısa masraf açıklaması (işyeri + ne alındı).
-- document_no: fiş / fatura numarası.
+- type=inflow: tahsilat, alınan, müşteriden, alacak makbuzu.
+- type=outflow: tediye, ödeme, verilen, cariye ödeme.
+- amount: ödenen/tahsil edilen tutar. Türkçe 1.250,00 → 1250.00.
+- date: belge tarihi ISO. Yoksa null.
+- description: kısa işlem açıklaması (Cari tahsilat, POS tahsilat, vs.).
 - Bulamadığın metin alanlarına null yaz. amount yoksa 0."""
 
-# Formu doldurmak için yeterli alanlar; portal token / bakiye dönülmez.
-_EXPENSE_MATCH_KEYS = ("name", "tax_number_or_id", "phone", "email")
-
-
-def public_expense_match(match: Optional[dict]) -> Optional[dict]:
-    """Cari eşleşmesini masraf formuna güvenli alanlarla indirger."""
-    if not match:
-        return None
-    out = {"id": str(match.get("_id") or match.get("id") or "")}
-    for key in _EXPENSE_MATCH_KEYS:
-        value = match.get(key)
-        if value not in (None, ""):
-            out[key] = value
-    return out
-
-
-def session_token_from_headers(authorization: str = "", cookie: str = "") -> Optional[str]:
-    """Bearer or cookie session; empty means the caller is anonymous."""
-    if (authorization or "").startswith("Bearer "):
-        token = authorization[7:].strip()
-        if token:
-            return token
-    cookie = (cookie or "").strip()
-    return cookie or None
-
-
 _AMOUNT_RE = re.compile(
-    r"(?:genel\s*toplam|kdv\s*dahil|ödenecek|odenecek|toplam|tutar|yalnız)\s*[:.]?\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{1,2})|[0-9]+(?:[.,][0-9]{1,2})?)\s*(?:₺|tl|try)?",
+    r"(?:tutar|toplam|ödenen|tahsil(?:at)?|bedel|yalnız)\s*[:.]?\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{1,2})|[0-9]+(?:[.,][0-9]{1,2})?)\s*(?:₺|tl|try)?",
     re.I,
 )
 _BARE_AMOUNT_RE = re.compile(r"([0-9]{1,3}(?:\.[0-9]{3})+,[0-9]{2}|[0-9]+,[0-9]{2})\s*(?:₺|tl|try)")
 _DATE_DMY_RE = re.compile(r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4})\b")
 _DATE_ISO_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
-_VAT_RE = re.compile(r"(?:kdv|katma\s*değer)\s*%?\s*(0|1|10|20)\b", re.I)
-_DOC_RE = re.compile(r"(?:fiş\s*no|fis\s*no|belge\s*no|fatura\s*no|no)\s*[:.]?\s*([A-ZÇĞİÖŞÜ0-9\-/]{3,24})", re.I)
-_DESC_RE = re.compile(r"(?:açıklama|aciklama)\s*[:.]\s*(.+)", re.I)
-_CATEGORY_KEYS = (
-    ("Yakıt", ("yakit", "benzin", "motorin", "shell", "opet", "petrol", "bp ", "totalenergies")),
-    ("Yemek", ("yemek", "restoran", "lokanta", "cafe", "kahve", "kebap", "burger", "pizza", "starbucks")),
-    ("Yol / Ulaşım", ("taksi", "uber", "otogar", "bilet", "metro", "otopark", "ulasim")),
-    ("Kargo / Nakliye", ("kargo", "yurtici", "aras", "mng", "surat", "ptt kargo")),
-    ("Elektrik / Su / Doğalgaz", ("elektrik", "dogalgaz", "igdas", "ayedas", "su fatur")),
-    ("İnternet / Telefon", ("turkcell", "vodafone", "telekom", "internet", "superonline")),
-    ("Kira", ("kira",)),
-    ("Yazılım / Abonelik", ("abonelik", "adobe", "microsoft", "hosting", "yazilim")),
-    ("Ofis Malzemesi", ("kirtasiye", "ofis", "bim ", "a101", "sok ", "migros", "market")),
-    ("Bakım / Onarım", ("bakim", "onarim", "servis")),
-    ("Vergi / Harç / SGK", ("vergi", "harc", "sgk")),
-)
 
 
 def parse_tr_amount(raw: Any) -> float:
@@ -112,105 +62,67 @@ def parse_tr_date(raw: Any) -> Optional[str]:
     return f"{y:04d}-{m:02d}-{d:02d}"
 
 
-def _fold_tr(text: str) -> str:
-    table = str.maketrans({
-        "I": "i", "İ": "i", "ı": "i",
-        "Ş": "s", "ş": "s",
-        "Ğ": "g", "ğ": "g",
-        "Ü": "u", "ü": "u",
-        "Ö": "o", "ö": "o",
-        "Ç": "c", "ç": "c",
-    })
-    return (text or "").translate(table).lower()
+def _guess_type(text: str) -> str:
+    low = (text or "").lower()
+    out_hits = sum(k in low for k in ("tediye", "ödeme", "odeme", "verilen", "cariye"))
+    in_hits = sum(k in low for k in ("tahsilat", "alınan", "alinan", "müşteriden", "musteriden", "alacak makbuz"))
+    if out_hits > in_hits:
+        return "outflow"
+    return "inflow"
 
 
-def guess_category(text: str) -> str:
-    low = _fold_tr(text)
-    for name, keys in _CATEGORY_KEYS:
-        if any(k in low for k in keys):
-            return name
-    return "Diğer"
-
-
-def _vat_rate(raw: Any, text: str = "") -> int:
-    try:
-        n = int(round(float(raw)))
-        if n in (0, 1, 10, 20):
-            return n
-    except (TypeError, ValueError):
-        pass
-    m = _VAT_RE.search(text or "")
-    if m:
-        return int(m.group(1))
-    return 20
-
-
-def parse_expense_text(text: str) -> dict:
+def parse_receipt_text(text: str) -> dict:
     raw = str(text or "")
     amount = 0.0
     m = _AMOUNT_RE.search(raw) or _BARE_AMOUNT_RE.search(raw)
     if m:
         amount = parse_tr_amount(m.group(1))
-    desc = ""
-    dm = _DESC_RE.search(raw)
-    if dm:
-        desc = dm.group(1).strip()[:160]
-    if not desc:
-        for line in raw.splitlines():
-            ls = line.strip()
-            if len(ls) >= 4 and not re.match(r"^[\d.,\s₺tlTRY/%:-]+$", ls, re.I):
-                if not re.match(r"(?i)^(fiş|fis|kdv|toplam|tutar|tarih|vkn|vergi)", ls):
-                    desc = ls[:160]
-                    break
-    if not desc:
-        desc = "Masraf fişi"
-    doc = ""
-    dcm = _DOC_RE.search(raw)
-    if dcm:
-        doc = dcm.group(1).strip()
-    return normalize_expense_draft({
+    desc = "Cari tahsilat"
+    typ = _guess_type(raw)
+    if typ == "outflow":
+        desc = "Cari ödeme"
+    for line in raw.splitlines():
+        ls = line.strip()
+        if re.match(r"(?i)açıklama\s*[:.]", ls):
+            rest = re.sub(r"(?i)^açıklama\s*[:.]\s*", "", ls).strip()
+            if rest:
+                desc = rest[:160]
+                break
+    return normalize_receipt_draft({
+        "type": typ,
         "amount": amount,
-        "vat_rate": _vat_rate(None, raw),
-        "vat_included": True,
         "date": parse_tr_date(raw),
         "description": desc,
-        "category": guess_category(raw),
-        "document_no": doc,
         "contact_name": None,
         "tax_number": None,
-        "notes": "",
         "confidence": 0.55 if amount else 0.2,
     })
 
 
-def normalize_expense_draft(raw: Any) -> dict:
+def normalize_receipt_draft(raw: Any) -> dict:
     d = raw if isinstance(raw, dict) else {}
-    cat = str(d.get("category") or "").strip()
-    if cat not in CATEGORIES:
-        cat = guess_category(" ".join(str(d.get(k) or "") for k in ("category", "description", "notes")))
+    typ = str(d.get("type") or "").strip().lower()
+    if typ not in ("inflow", "outflow"):
+        typ = _guess_type(" ".join(str(d.get(k) or "") for k in ("description", "notes", "kind")))
+    amount = parse_tr_amount(d.get("amount"))
     desc = str(d.get("description") or d.get("notes") or "").strip()[:160]
     if not desc:
-        desc = "Masraf fişi"
-    vat_included = d.get("vat_included")
-    if vat_included is None:
-        vat_included = True
+        desc = "Cari tahsilat" if typ == "inflow" else "Cari ödeme"
     try:
         conf = float(d.get("confidence") or 0)
     except (TypeError, ValueError):
         conf = 0.0
-    amount = parse_tr_amount(d.get("amount") or d.get("total"))
+    conf = max(0.0, min(1.0, conf))
+    tax = str(d.get("tax_number") or d.get("vkn") or "").strip() or None
+    name = str(d.get("contact_name") or d.get("name") or "").strip() or None
     return {
+        "type": typ,
         "amount": amount,
-        "vat_rate": _vat_rate(d.get("vat_rate"), ""),
-        "vat_included": bool(vat_included),
         "date": parse_tr_date(d.get("date")) or parse_tr_date(d.get("issue_date")),
         "description": desc,
-        "category": cat,
-        "document_no": str(d.get("document_no") or d.get("fis_no") or "").strip()[:24] or None,
-        "contact_name": str(d.get("contact_name") or d.get("merchant") or "").strip()[:120] or None,
-        "tax_number": str(d.get("tax_number") or d.get("vkn") or "").strip() or None,
-        "notes": str(d.get("notes") or "").strip()[:160],
-        "confidence": max(0.0, min(1.0, conf)) or (0.7 if amount else 0.2),
+        "contact_name": name,
+        "tax_number": tax,
+        "confidence": conf or (0.7 if amount else 0.2),
     }
 
 
@@ -225,18 +137,18 @@ def _json_object(raw: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
-async def extract_expense_from_text(text: str) -> dict:
-    heuristic = parse_expense_text(text)
+async def extract_receipt_from_text(text: str) -> dict:
+    heuristic = parse_receipt_text(text)
     try:
         from ai_service import make_chat
         from emergentintegrations.llm.chat import UserMessage
-        chat = await make_chat(f"expense-extract-{abs(hash(text[:200]))}", EXPENSE_SYSTEM, purpose="extract")
-        raw = str(await chat.send_message(UserMessage(text=f"MASRAF FİŞİ METNİ:\n\n{text[:12000]}"))).strip()
-        parsed = normalize_expense_draft(_json_object(raw))
+        chat = await make_chat(f"receipt-extract-{abs(hash(text[:200]))}", RECEIPT_SYSTEM, purpose="extract")
+        raw = str(await chat.send_message(UserMessage(text=f"MAKBUZ METNİ:\n\n{text[:12000]}"))).strip()
+        parsed = normalize_receipt_draft(_json_object(raw))
         if parsed["amount"] > 0:
             return parsed
     except Exception as e:
-        logger.info("AI expense text extract fallback: %s", e)
+        logger.info("AI receipt text extract fallback: %s", e)
     return heuristic
 
 
@@ -251,7 +163,8 @@ def _mime_from_name(name: str) -> str:
     return "image/jpeg"
 
 
-async def extract_expense_file(data: bytes, filename: str = "", content_type: str = "") -> dict:
+async def extract_receipt_file(data: bytes, filename: str = "", content_type: str = "") -> dict:
+    """Dosya türüne göre makbuz taslağı çıkar (görüntü / PDF / metin)."""
     if not data:
         raise ValueError("Dosya boş.")
     name = (filename or "").lower()
@@ -261,7 +174,7 @@ async def extract_expense_file(data: bytes, filename: str = "", content_type: st
     is_img = ctype.startswith("image/") or name.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif"))
     if is_img:
         mime = ctype if ctype.startswith("image/") else _mime_from_name(name)
-        draft = await extract_expense_from_image(data, mime)
+        draft = await extract_receipt_from_image(data, mime)
         return {"draft": draft, "source": "image"}
     if is_pdf:
         import io
@@ -272,32 +185,32 @@ async def extract_expense_file(data: bytes, filename: str = "", content_type: st
         except Exception as e:
             raise ValueError(f"PDF okunamadı: {str(e)[:100]}") from e
         if len(text.strip()) < 20:
-            raise ValueError("PDF'de okunabilir metin yok. Fişin fotoğrafını çekin.")
-        draft = await extract_expense_from_text(text)
+            raise ValueError("PDF'de okunabilir metin yok. Makbuzun fotoğrafını çekin.")
+        draft = await extract_receipt_from_text(text)
         return {"draft": draft, "source": "pdf", "text_preview": text[:1200]}
     if is_text:
         text = data.decode("utf-8", "ignore")
-        draft = await extract_expense_from_text(text)
+        draft = await extract_receipt_from_text(text)
         return {"draft": draft, "source": "text", "text_preview": text[:1200]}
     raise ValueError("JPEG, PNG, WebP veya PDF yükleyin.")
 
 
-async def extract_expense_from_image(data: bytes, mime: str = "image/jpeg") -> dict:
+async def extract_receipt_from_image(data: bytes, mime: str = "image/jpeg") -> dict:
     if not data:
         raise ValueError("Görüntü boş.")
     b64 = base64.b64encode(data).decode("ascii")
     mime = (mime or "image/jpeg").split(";")[0].strip() or "image/jpeg"
-    from ai_service import DirectChat, make_chat
-    chat = await make_chat(f"expense-img-{abs(hash(b64[:80]))}", EXPENSE_SYSTEM, purpose="extract")
-    prompt = "Bu masraf fişini oku ve JSON şemasına uy."
+    from ai_service import DirectChat, make_chat, protocol_of
+    chat = await make_chat(f"receipt-img-{abs(hash(b64[:80]))}", RECEIPT_SYSTEM, purpose="extract")
+    prompt = "Bu makbuz görüntüsünü oku ve JSON şemasına uy."
     if isinstance(chat, DirectChat):
         raw = await _send_vision(chat, prompt, b64, mime)
     else:
         from emergentintegrations.llm.chat import UserMessage
         raw = str(await chat.send_message(UserMessage(text=f"{prompt}\n(görüntü base64, {mime}, {len(data)} bayt)"))).strip()
-    parsed = normalize_expense_draft(_json_object(raw))
+    parsed = normalize_receipt_draft(_json_object(raw))
     if parsed["amount"] <= 0:
-        raise ValueError("Fişten tutar okunamadı.")
+        raise ValueError("Makbuzdan tutar okunamadı.")
     return parsed
 
 

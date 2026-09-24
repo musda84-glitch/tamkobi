@@ -1,3 +1,5 @@
+import { fmtDmy } from "./dateFormat";
+
 export const DUTY_MAPS_ACTION = "Görev yerine git";
 export const DUTY_SITE_ACTION = DUTY_MAPS_ACTION;
 export const DUTY_ATOLYE_ACTION = "Atölyeye git";
@@ -61,10 +63,11 @@ export const DUTY_PHOTO_HIDE = "Görmesin";
 
 export function dutySubtitle(t) {
   if (!t) return "";
+  const due = t.due_date ? `son ${fmtDmy(t.due_date)}` : null;
   if (t.kind === "office") {
-    return [t.park_name || t.project_name, t.due_date ? `son ${t.due_date}` : null].filter(Boolean).join(" · ");
+    return [t.park_name || t.project_name, due].filter(Boolean).join(" · ");
   }
-  return [t.project_number, t.project_name || t.park_name, t.due_date ? `son ${t.due_date}` : null].filter(Boolean).join(" · ");
+  return [t.project_number, t.project_name || t.park_name, due].filter(Boolean).join(" · ");
 }
 
 export function dutyIsField(t) {

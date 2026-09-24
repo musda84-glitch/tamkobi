@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
-import { formatHm, hourOptions, minuteOptions, parseHm } from "../utils/clock";
+import { formatHm, hourOptions, minuteOptions, parseHm, resolveNowHm } from "../utils/clock";
 
 type TimeFieldProps = {
   label: string;
@@ -12,9 +12,13 @@ type TimeFieldProps = {
   testID?: string;
   optional?: boolean;
   autoOpen?: boolean;
+  nowLabel?: string;
+  nowValue?: string;
+  nowKind?: "check_in" | "check_out";
+  onNow?: (value: string) => void;
 };
 
-export function TimeField({ label, value, onChangeText, testID, optional, autoOpen }: TimeFieldProps) {
+export function TimeField({ label, value, onChangeText, testID, optional, autoOpen, nowLabel, nowValue, nowKind, onNow }: TimeFieldProps) {
   const [open, setOpen] = useState(false);
   const parsed = parseHm(value);
   const [hour, setHour] = useState(parsed?.hour ?? 16);
@@ -40,6 +44,18 @@ export function TimeField({ label, value, onChangeText, testID, optional, autoOp
     setOpen(false);
   };
 
+  const pickNow = () => {
+    const hm = resolveNowHm(nowValue);
+    const parsed = parseHm(hm);
+    if (parsed) {
+      setHour(parsed.hour);
+      setMinute(parsed.minute);
+    }
+    onChangeText(hm);
+    setOpen(false);
+    onNow?.(hm);
+  };
+
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted, marginBottom: 4 }}>{trUpper(label)}</Text>
@@ -63,7 +79,26 @@ export function TimeField({ label, value, onChangeText, testID, optional, autoOp
             style={{ backgroundColor: colors.surface, borderRadius: radius.lg, padding: 14, borderWidth: 1, borderColor: colors.border }}
           >
             <Text style={{ fontWeight: "800", color: colors.text, marginBottom: 10 }}>Saat seçin</Text>
-            <View style={{ flexDirection: "row", gap: 12, height: 200 }}>
+            {nowLabel || onNow ? (
+              <Pressable
+                testID={testID ? `${testID}-now` : undefined}
+                onPress={pickNow}
+                style={{
+                  minHeight: 44,
+                  marginBottom: 10,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: nowKind === "check_out" ? colors.rose50 : colors.indigo50,
+                  borderRadius: radius.md,
+                  paddingHorizontal: 10,
+                }}
+              >
+                <Text style={{ fontWeight: "800", color: nowKind === "check_out" ? colors.danger : colors.indigo, textAlign: "center" }}>
+                  {nowLabel || "Şimdiki saat"}
+                </Text>
+              </Pressable>
+            ) : null}
+            <View style={{ flexDirection: "row", gap: 12, height: 168 }}>
               <ScrollView style={{ flex: 1 }} testID={testID ? `${testID}-hours` : undefined}>
                 {hourOptions().map((h) => (
                   <Pressable

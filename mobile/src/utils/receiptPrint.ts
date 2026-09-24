@@ -1,4 +1,4 @@
-import { fmtMoney } from "./money";
+import { fmtDate, fmtMoney } from "./money";
 import type { PrintCompany } from "./orderPrint";
 import { chequeReceiptKind, type Cheque } from "./cheques";
 
@@ -47,7 +47,7 @@ export function chequeAsReceiptTx(row: Cheque): ReceiptTx {
     category: settled
       ? (kind === "collection" ? "Çek/Senet Tahsilatı" : "Çek/Senet Ödemesi")
       : `${way} ${instrument}`,
-    description: [row.number, row.serial_no ? `seri ${row.serial_no}` : "", row.due_date ? `vade ${row.due_date}` : ""]
+    description: [row.number, row.serial_no ? `seri ${row.serial_no}` : "", row.due_date ? `vade ${fmtDate(row.due_date)}` : ""]
       .filter(Boolean)
       .join(" · "),
     amount: row.amount,
@@ -77,7 +77,7 @@ export function receiptPrintHtml(tx: ReceiptTx, company?: PrintCompany | null, c
       <div style="text-align:right">
         <div style="font-size:18px;font-weight:900">${titleUpper}</div>
         <div style="font-family:ui-monospace,monospace">No: ${esc(no)}</div>
-        <div style="color:#64748b">Tarih: ${esc(tx.date || "")}</div>
+        <div style="color:#64748b">Tarih: ${esc(fmtDate(tx.date))}</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">

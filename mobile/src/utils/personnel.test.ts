@@ -255,7 +255,7 @@ describe("employee draft", () => {
     );
     expect(duties.headline).toBe("Şu an: Montaj");
     expect(duties.current?.title).toBe("Montaj");
-    expect(duties.current?.lines).toEqual(["Dış görev", "PRJ-2026-0012 · Villa", "3 gün", "Bitiş 2026-09-26"]);
+    expect(duties.current?.lines).toEqual(["Dış görev", "PRJ-2026-0012 · Villa", "3 gün", "Bitiş 26.09.2026"]);
     expect(duties.open.map((t) => t.title)).toEqual(["Montaj", "Keşif"]);
     expect(duties.done).toHaveLength(1);
     expect(employeeDutyHeadline({ current: null, open: [] })).toBe("Atanmış görev yok");
@@ -282,7 +282,7 @@ describe("payroll helpers", () => {
   it("sums monthly net load and formats status / extras", () => {
     expect(monthlyPayrollLoad([{ salary: 30000 }, { salary: 25000 }])).toBe(55000);
     expect(payrollStatusTr("pending")).toBe("Ödeme bekliyor");
-    expect(payrollStatusTr("paid", "2026-09-15")).toBe("Ödendi (2026-09-15)");
+    expect(payrollStatusTr("paid", "2026-09-15")).toBe("Ödendi (15.09.2026)");
     expect(payrollBreakdown({ overtime_pay: 1200, overtime_hours: 8, second_salary: 5000 })).toContain("mesai");
     expect(payrollBreakdown({ overtime_pay: 0, second_salary: 0 })).toBe("");
     expect(payrollBreakdown({ pay_type: "daily", worked_days: 18, daily_wage: 1500 })).toBe("18 gün × 1500 ₺");

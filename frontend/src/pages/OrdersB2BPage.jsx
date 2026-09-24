@@ -38,6 +38,7 @@ import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
 import { OrdersToolbar, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
+import { exportExcel, exportPdf } from "../components/ExportButtons";
 import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
@@ -50,6 +51,38 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
+
+const ORDER_EXPORT_LINE_COLS = [
+  { label: "Sipariş No", value: (r) => r.order_number },
+  { label: "Müşteri", value: (r) => r.customer_name },
+  { label: "SKU", value: (r) => r.sku || "" },
+  { label: "Ürün", value: (r) => r.product_name || r.name || "" },
+  { label: "Miktar", num: true, value: (r) => r.quantity },
+  { label: "Birim Fiyat", num: true, value: (r) => Number(r.unit_price || 0) },
+  { label: "Tutar", num: true, value: (r) => Number(r.line_total ?? r.total ?? (Number(r.quantity || 0) * Number(r.unit_price || 0))) },
+];
+
+function orderExportRows(ord) {
+  const items = Array.isArray(ord?.items) ? ord.items : [];
+  if (!items.length) {
+    return [{
+      order_number: ord.order_number,
+      customer_name: ord.customer_name,
+      sku: "",
+      product_name: "(kalem yok)",
+      quantity: "",
+      unit_price: "",
+      line_total: ord.grand_total ?? ord.total_amount ?? 0,
+    }];
+  }
+  return items.map((it) => ({
+    ...it,
+    order_number: ord.order_number,
+    customer_name: ord.customer_name,
+    product_name: it.product_name || it.name,
+    line_total: it.line_total ?? it.total ?? (Number(it.quantity || 0) * Number(it.unit_price || 0)),
+  }));
+}
 
 /** Masaüstü / mobil ortak «Diğer işlemler» menüsü. */
 function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side = "left", testSuffix = "" }) {
@@ -583,6 +616,22 @@ export default function OrdersB2BPage() {
       case "notify":
         setNotifyOrder(ord);
         return;
+      case "download_xlsx": {
+        const rows = orderExportRows(ord);
+        exportExcel(rows, ORDER_EXPORT_LINE_COLS, `siparis-${ord.order_number || "order"}`);
+        return;
+      }
+      case "download_pdf": {
+        const rows = orderExportRows(ord);
+        exportPdf(
+          rows,
+          ORDER_EXPORT_LINE_COLS,
+          `siparis-${ord.order_number || "order"}`,
+          `Sipariş ${ord.order_number || ""}`,
+          activeCompany?.name || activeCompany?.title || "",
+        );
+        return;
+      }
       default:
         toast.message("Bu işlem henüz bağlanmadı.");
     }
