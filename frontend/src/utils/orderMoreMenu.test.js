@@ -54,4 +54,16 @@ describe("orderMoreMenu", () => {
     expect(orderMoreMenuKind(ord)).toBe("panel_draft");
     expect(orderMoreMenuItems(ord).items.map((i) => i.id)).toContain("faturalastir");
   });
+
+  it("panel invoiced shows E-Fatura Oluştur menu", () => {
+    const ord = { channel: "b2b", is_invoiced: true, e_type: "paper", order_number: "B2B-2" };
+    expect(orderMoreMenuKind(ord)).toBe("panel_invoiced");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
+      "E-Fatura Oluştur",
+      "Mini Kargo Etiketi Yazdır",
+      "Mini Kargo Etiketi Yazdır 10X10",
+      "Fatura Tarihi Değiştir",
+      "Kargola",
+    ]);
+  });
 });

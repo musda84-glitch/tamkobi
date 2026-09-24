@@ -426,6 +426,9 @@ export default function OrdersB2BPage() {
           toast.info("Sipariş zaten faturalanmış.");
         }
         return;
+      case "efatura_olustur":
+        await handleEBelgeInvoice(ord, orderEBelgeType(ord, contacts));
+        return;
       case "invoice_date": {
         if (!ord.invoice_id) {
           toast.error("Önce fatura oluşturun.");
