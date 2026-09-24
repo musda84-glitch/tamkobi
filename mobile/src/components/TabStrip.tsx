@@ -11,6 +11,12 @@ export type TabStripItem<K extends string = string> = {
   color?: string;
 };
 
+function chunkItems<T>(items: T[], size: number): T[][] {
+  const rows: T[][] = [];
+  for (let i = 0; i < items.length; i += size) rows.push(items.slice(i, i + size));
+  return rows;
+}
+
 /** Kaydırılabilir ince sekme şeridi: ikon + kısa etiket + sayaç. */
 export function TabStrip<K extends string>({
   items,
@@ -18,12 +24,14 @@ export function TabStrip<K extends string>({
   onChange,
   testID = "tab-strip",
   variant = "pill",
+  columns,
 }: {
   items: TabStripItem<K>[];
   value: K;
   onChange: (key: K) => void;
   testID?: string;
   variant?: "pill" | "icons";
+  columns?: number;
 }) {
   if (variant === "icons") {
     return (
@@ -77,6 +85,55 @@ export function TabStrip<K extends string>({
     );
   }
 
+  const pill = (item: TabStripItem<K>, grow?: boolean) => {
+    const active = item.key === value;
+    const accent = item.color || colors.primary;
+    return (
+      <Pressable
+        key={item.key}
+        testID={`${testID}-${item.key}`}
+        onPress={() => onChange(item.key)}
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 5,
+          paddingVertical: 8,
+          paddingHorizontal: 10,
+          borderRadius: 999,
+          borderWidth: 1,
+          borderColor: active ? accent : colors.border,
+          backgroundColor: active ? accent : colors.surface,
+          opacity: pressed ? 0.85 : 1,
+          ...(grow ? { flex: 1 } : null),
+        })}
+      >
+        <Ionicons name={item.icon} size={14} color={active ? "#fff" : colors.muted} />
+        <Text style={{ fontSize: 12, fontWeight: "700", color: active ? "#fff" : colors.text }}>{item.label}</Text>
+        {item.count ? (
+          <View style={{ borderRadius: 999, paddingHorizontal: 5, backgroundColor: active ? "rgba(255,255,255,0.25)" : colors.slate100 }}>
+            <Text style={{ fontSize: 10, fontWeight: "800", color: active ? "#fff" : colors.muted }}>{item.count}</Text>
+          </View>
+        ) : null}
+      </Pressable>
+    );
+  };
+
+  if (columns && columns > 1) {
+    return (
+      <View testID={testID} style={{ gap: 6 }}>
+        {chunkItems(items, columns).map((row, i) => (
+          <View key={i} style={{ flexDirection: "row", gap: 6 }}>
+            {row.map((item) => pill(item, true))}
+            {row.length < columns
+              ? Array.from({ length: columns - row.length }, (_, k) => <View key={`pad-${k}`} style={{ flex: 1 }} />)
+              : null}
+          </View>
+        ))}
+      </View>
+    );
+  }
+
   return (
     <View style={{ flexGrow: 0, flexShrink: 0 }} testID={`${testID}-wrap`}>
     <ScrollView
@@ -87,37 +144,7 @@ export function TabStrip<K extends string>({
       style={{ flexGrow: 0 }}
       contentContainerStyle={{ gap: 6, paddingVertical: 2, alignItems: "center", flexGrow: 0 }}
     >
-      {items.map((item) => {
-        const active = item.key === value;
-        const accent = item.color || colors.primary;
-        return (
-          <Pressable
-            key={item.key}
-            testID={`${testID}-${item.key}`}
-            onPress={() => onChange(item.key)}
-            style={({ pressed }) => ({
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 5,
-              paddingVertical: 6,
-              paddingHorizontal: 10,
-              borderRadius: 999,
-              borderWidth: 1,
-              borderColor: active ? accent : colors.border,
-              backgroundColor: active ? accent : colors.surface,
-              opacity: pressed ? 0.85 : 1,
-            })}
-          >
-            <Ionicons name={item.icon} size={14} color={active ? "#fff" : colors.muted} />
-            <Text style={{ fontSize: 12, fontWeight: "700", color: active ? "#fff" : colors.text }}>{item.label}</Text>
-            {item.count ? (
-              <View style={{ borderRadius: 999, paddingHorizontal: 5, backgroundColor: active ? "rgba(255,255,255,0.25)" : colors.slate100 }}>
-                <Text style={{ fontSize: 10, fontWeight: "800", color: active ? "#fff" : colors.muted }}>{item.count}</Text>
-              </View>
-            ) : null}
-          </Pressable>
-        );
-      })}
+      {items.map((item) => pill(item))}
     </ScrollView>
     </View>
   );
