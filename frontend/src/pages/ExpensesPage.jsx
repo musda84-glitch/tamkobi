@@ -19,7 +19,9 @@ const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
 const sel = "bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none";
-const EMPTY = { date: new Date().toISOString().slice(0, 10), category: "Diğer", description: "", amount: "", vat_rate: 20, vat_included: false, account_id: "", contact_id: "", employee_id: "", document_no: "", notes: "", is_recurring: false, receipt_url: "", currency: "TRY", fx_rate: 1, fx_source: "try" };
+const EMPTY = { date: new Date().toISOString().slice(0, 10), category: "Diğer", description: "", amount: "", vat_rate: 20, vat_included: false, account_id: "", contact_id: "", employee_id: "", project_id: "", document_no: "", notes: "", is_recurring: false, receipt_url: "", currency: "TRY", fx_rate: 1, fx_source: "try" };
+const projectLabel = (p) => [p.project_number, p.name].filter(Boolean).join(" · ") || "Proje";
+const projectIdOf = (p) => String(p?.id || p?._id || "");
 const PRESETS = [["", "Tüm zamanlar"], ["month", "Bu ay"], ["last_month", "Geçen ay"], ["quarter", "Bu çeyrek"], ["year", "Bu yıl"]];
 const range = (p) => { const d = new Date(); const iso = (x) => x.toISOString().slice(0, 10); const m0 = new Date(d.getFullYear(), d.getMonth(), 1);
   if (p === "month") return [iso(m0), iso(d)]; if (p === "last_month") return [iso(new Date(d.getFullYear(), d.getMonth() - 1, 1)), iso(new Date(d.getFullYear(), d.getMonth(), 0))];
@@ -33,7 +35,7 @@ const accountLabel = (a) => {
   return `${bank ? `${bank} — ` : ""}${name} · ${fmt(a.current_balance)} ₺`;
 };
 
-const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, contacts, employees, onClose, onSaved }) => {
+const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, contacts, employees, projects: projectsProp, onClose, onSaved }) => {
   useEscape(onClose);
   const [f, setF] = useState(initial);
   const [newCat, setNewCat] = useState(false);
@@ -74,6 +76,7 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
   };
   // Modal açılışında taze çek — sayfa açıkken eklenen kasa/banka eski listede kalmasın.
   const [accounts, setAccounts] = useState(accountsProp || []);
+  const [projects, setProjects] = useState(projectsProp || []);
   const [accountsLoading, setAccountsLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
@@ -82,6 +85,13 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
       .then((r) => { if (!cancelled) setAccounts(Array.isArray(r.data) ? r.data : []); })
       .catch(() => { if (!cancelled) toast.error("Kasa / banka listesi yenilenemedi."); })
       .finally(() => { if (!cancelled) setAccountsLoading(false); });
+    axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } })
+      .then((r) => {
+        if (cancelled) return;
+        const rows = Array.isArray(r.data) ? r.data : (r.data?.projects || []);
+        setProjects(rows.map((p) => ({ ...p, id: projectIdOf(p) })).filter((p) => p.id));
+      })
+      .catch(() => { if (!cancelled) setProjects(projectsProp || []); });
     return () => { cancelled = true; };
   }, [companyId]);
   const isEdit = !!initial.id;
@@ -102,7 +112,7 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
   const save = async (e) => {
     e.preventDefault(); setBusy(true);
     try {
-      const { account_id: _acc, ...rest } = f; const body = { ...rest, company_id: companyId, amount: Number(f.amount), vat_rate: Number(f.vat_rate), contact_id: f.contact_id || null, employee_id: f.employee_id || null, ...splitPaymentTarget(f.account_id) };
+      const { account_id: _acc, ...rest } = f; const body = { ...rest, company_id: companyId, amount: Number(f.amount), vat_rate: Number(f.vat_rate), contact_id: f.contact_id || null, employee_id: f.employee_id || null, project_id: f.project_id || null, ...splitPaymentTarget(f.account_id) };
       if (isEdit) await axios.put(`${API_URL}/expenses/${f.id}`, body); else await axios.post(`${API_URL}/expenses`, body);
       toast.success(isEdit ? "Masraf güncellendi." : `Masraf kaydedildi${f.account_id ? " ve ödendi" : ""}.`); if (f.account_id) await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); onSaved(); onClose();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
@@ -142,6 +152,12 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
               className={inputCls}
               disabled={(isEdit && f.payment_status !== "paid") || accountsLoading}
             /></div>
+          <div className="col-span-2 md:col-span-3"><label className="block font-semibold mb-1">Proje (opsiyonel)</label>
+            <select value={f.project_id || ""} onChange={(e) => setF({ ...f, project_id: e.target.value })} className={inputCls} data-testid="exp-project">
+              <option value="">Projesiz</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{projectLabel(p)}</option>)}
+            </select>
+          </div>
           <div className="col-span-2 md:col-span-3 grid grid-cols-2 gap-3">
             <div><label className="block font-semibold mb-1">Tedarikçi (opsiyonel)</label><SearchSelect value={f.contact_id} options={contacts} getLabel={(c) => c.name} getSub={(c) => c.tax_number_or_id} placeholder="Cari ara…" onChange={(id) => setF({ ...f, contact_id: id })} testId="exp-contact" /></div>
             <div><label className="block font-semibold mb-1">Personel (masraf sahibi)</label><select value={f.employee_id || ""} onChange={(e) => setF({ ...f, employee_id: e.target.value })} className={inputCls} data-testid="exp-employee"><option value="">—</option>{employees.map((e) => <option key={e.id} value={e.id}>{e.full_name}</option>)}</select></div>
@@ -165,14 +181,17 @@ export default function ExpensesPage() {
   const [accounts, setAccounts] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [employees, setEmployees] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [filters, setFilters] = useState({ q: "", category: "all", status: "all", preset: "month", from: range("month")[0], to: range("month")[1], sort: "date_desc" });
   const [modal, setModal] = useState(null);
   const [payFor, setPayFor] = useState(null);
   const [payAcc, setPayAcc] = useState("");
   const load = useCallback(async ({ silent = false } = {}) => {
     const p = new URLSearchParams({ company_id: companyId, category: filters.category, status: filters.status, ...(filters.from && { date_from: filters.from }), ...(filters.to && { date_to: filters.to }), ...(filters.q && { q: filters.q }) });
-    const [e, c, a, ct, em] = await Promise.all([axios.get(`${API_URL}/expenses?${p}`), axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`), axios.get(`${API_URL}/contacts?company_id=${companyId}`), axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`)]);
+    const [e, c, a, ct, em, pr] = await Promise.all([axios.get(`${API_URL}/expenses?${p}`), axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`), axios.get(`${API_URL}/contacts?company_id=${companyId}`), axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`), axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } }).catch(() => ({ data: [] }))]);
     setData(e.data); setCategories(c.data); setAccounts(a.data); setContacts(ct.data.filter((x) => x.type !== "customer")); setEmployees(em.data);
+    const projRows = Array.isArray(pr.data) ? pr.data : (pr.data?.projects || []);
+    setProjects(projRows.map((x) => ({ ...x, id: projectIdOf(x) })).filter((x) => x.id));
   }, [companyId, filters.category, filters.status, filters.from, filters.to, filters.q]);
   useEffect(() => { load().catch(() => toast.error("Masraflar yüklenemedi.")); }, [load]);
   const refreshLoadSilent = useCallback(() => load({ silent: true }), [load]);
@@ -239,7 +258,7 @@ export default function ExpensesPage() {
                 }} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 hover:bg-amber-100" data-testid={`exp-pay-${x.expense_number}`}><Clock className="w-3 h-3" /> Öde</button>}</td>
                 <td className="px-4 py-2.5 text-center whitespace-nowrap">
                   {x.receipt_url && <a href={resolveImageUrl(x.receipt_url)} target="_blank" rel="noreferrer" className="inline-block p-1.5 text-slate-500 hover:text-indigo-600" title="Fiş / belge"><Paperclip className="w-3.5 h-3.5" /></a>}
-                  <button onClick={() => setModal({ ...EMPTY, ...x, account_id: x.account_id || "" })} className="p-1.5 text-slate-500 hover:text-indigo-600" title="Düzenle" data-testid={`exp-edit-${x.expense_number}`}><Pencil className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => setModal({ ...EMPTY, ...x, account_id: x.account_id || "", project_id: x.project_id || "" })} className="p-1.5 text-slate-500 hover:text-indigo-600" title="Düzenle" data-testid={`exp-edit-${x.expense_number}`}><Pencil className="w-3.5 h-3.5" /></button>
                   <button onClick={() => del(x)} className="p-1.5 text-slate-500 hover:text-rose-600" title="Sil" data-testid={`exp-del-${x.expense_number}`}><Trash2 className="w-3.5 h-3.5" /></button>
                 </td>
               </tr>
@@ -247,7 +266,7 @@ export default function ExpensesPage() {
           </tbody>
         </table>
       </div>
-      {modal && <ExpenseModal companyId={companyId} initial={modal} categories={categories} accounts={accounts} contacts={contacts} employees={employees} onClose={() => setModal(null)} onSaved={load} />}
+      {modal && <ExpenseModal companyId={companyId} initial={modal} categories={categories} accounts={accounts} contacts={contacts} employees={employees} projects={projects} onClose={() => setModal(null)} onSaved={load} />}
       {payFor && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setPayFor(null)}>
           <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 text-xs shadow-2xl" data-testid="exp-pay-modal">

@@ -129,6 +129,7 @@ export function go(name: string, params?: Record<string, unknown>) {
           vat_included: String(params?.vat_included || ""),
           notes: String(params?.notes || ""),
           contact_id: String(params?.contact_id || ""),
+          project_id: String(params?.project_id || ""),
         },
       });
     case "ExpenseDetail":

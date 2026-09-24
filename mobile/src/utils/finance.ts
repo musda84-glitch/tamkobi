@@ -578,11 +578,24 @@ export type ExpenseDraft = {
   vat_included: boolean;
   account_id: string;
   contact_id: string;
+  project_id: string;
   document_no: string;
   notes: string;
   is_recurring: boolean;
   currency: string;
 };
+
+export type ExpenseProject = { id?: string; _id?: string; name?: string; project_number?: string };
+
+export function expenseProjectSelectGroups(projects?: ExpenseProject[] | null) {
+  return [{
+    label: "Projeler",
+    options: (projects || []).filter((p) => idOf(p)).map((p) => ({
+      value: idOf(p),
+      label: [p.project_number, p.name].filter(Boolean).join(" · ") || "Proje",
+    })),
+  }];
+}
 
 export function emptyExpenseDraft(today: string): ExpenseDraft {
   return {
@@ -594,6 +607,7 @@ export function emptyExpenseDraft(today: string): ExpenseDraft {
     vat_included: false,
     account_id: "",
     contact_id: "",
+    project_id: "",
     document_no: "",
     notes: "",
     is_recurring: false,
@@ -612,6 +626,7 @@ export function draftFromExpense(e: Expense, today: string): ExpenseDraft {
     vat_included: !!e.vat_included,
     account_id: e.account_id || "",
     contact_id: e.contact_id || "",
+    project_id: e.project_id || "",
     document_no: e.document_no || "",
     notes: e.notes || "",
     is_recurring: !!e.is_recurring,
@@ -646,7 +661,7 @@ export function expensePayload(d: ExpenseDraft, companyId: string, projectId?: s
     account_id: target.account_id,
     partner_id: target.partner_id,
     contact_id: d.contact_id || null,
-    project_id: projectId || null,
+    project_id: (projectId !== undefined ? projectId : d.project_id) || null,
     document_no: d.document_no,
     notes: d.notes,
     is_recurring: d.is_recurring,

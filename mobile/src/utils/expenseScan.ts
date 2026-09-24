@@ -98,6 +98,7 @@ export function applyExpensePrefill(
     vat_included?: string | string[];
     notes?: string | string[];
     contact_id?: string | string[];
+    project_id?: string | string[];
   } | null,
 ): ExpenseDraft {
   const one = (v?: string | string[]) => String(Array.isArray(v) ? v[0] : v || "").trim();
@@ -116,6 +117,7 @@ export function applyExpensePrefill(
     vat_included: one(params?.vat_included) ? one(params?.vat_included) !== "0" : draft.vat_included,
     notes: one(params?.notes) || draft.notes,
     contact_id: one(params?.contact_id) || draft.contact_id,
+    project_id: one(params?.project_id) || draft.project_id,
   };
 }
 
