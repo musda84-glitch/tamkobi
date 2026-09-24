@@ -106,6 +106,7 @@ function mobilePrimaryAction(ord) {
   const kind = orderMoreMenuKind(ord);
   if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır", className: "bg-emerald-600 text-white" };
   if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura", className: "bg-rose-500 text-white" };
+  if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv", className: "bg-sky-600 text-white" };
   if (kind === "integration_einvoice") return { id: "cargo_mini", label: "Etiket", className: "bg-sky-600 text-white" };
   return null;
 }
