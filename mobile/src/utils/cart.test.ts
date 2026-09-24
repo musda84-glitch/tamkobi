@@ -1,4 +1,4 @@
-import { addOrBump, cartTotals, lineFromProduct, removeCartLine } from "./cart";
+import { addOrBump, cartTotals, findProductByScan, lineFromProduct, parseScanQty, removeCartLine } from "./cart";
 
 describe("cart", () => {
   it("adds VAT on net sale price", () => {
@@ -13,6 +13,15 @@ describe("cart", () => {
     const line = lineFromProduct({ id: "p1", name: "Masa", sale_price: 120, vat_rate: 20, price_includes_vat: true }, 1);
     expect(line.unit_price).toBe(100);
     expect(line.total_incl).toBe(120);
+  });
+
+  it("parses the scan multiplier and matches barcode or SKU", () => {
+    expect(parseScanQty("4")).toBe(4);
+    expect(parseScanQty("")).toBe(1);
+    const rows = [{ id: "1", sku: "MS-1", barcode: "869" }, { id: "2", sku: "X", barcode: "111", variants: [{ barcode: "222" }] }];
+    expect(findProductByScan(rows, "869")?.id).toBe("1");
+    expect(findProductByScan(rows, "222")?.id).toBe("2");
+    expect(findProductByScan(rows, "000")).toBeUndefined();
   });
 
   it("bumps quantity for the same product", () => {
