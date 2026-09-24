@@ -100,6 +100,7 @@ export function PrimaryButton({
   color = colors.secondary,
   testID,
   icon,
+  compact,
 }: {
   title: string;
   onPress: () => void;
@@ -108,6 +109,7 @@ export function PrimaryButton({
   color?: string;
   testID?: string;
   icon?: keyof typeof Ionicons.glyphMap;
+  compact?: boolean;
 }) {
   return (
     <Pressable
@@ -115,12 +117,17 @@ export function PrimaryButton({
       onPress={onPress}
       disabled={disabled || loading}
       accessibilityLabel={title}
-      style={[styles.btn, icon ? styles.btnIcon : null, { backgroundColor: color, opacity: disabled ? 0.5 : 1 }]}
+      style={[
+        styles.btn,
+        icon ? styles.btnIcon : null,
+        compact ? styles.btnCompact : null,
+        { backgroundColor: color, opacity: disabled ? 0.5 : 1 },
+      ]}
     >
       {loading ? <ActivityIndicator color="#fff" /> : icon ? (
-        <Ionicons name={icon} size={18} color="#fff" />
+        <Ionicons name={icon} size={compact ? 14 : 18} color="#fff" />
       ) : (
-        <Text style={styles.btnText}>{title}</Text>
+        <Text style={[styles.btnText, compact ? styles.btnTextCompact : null]} numberOfLines={1}>{title}</Text>
       )}
     </Pressable>
   );
@@ -336,8 +343,10 @@ const styles = StyleSheet.create({
   badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
   badgeText: { fontSize: 10, ...typeface("700") },
   btn: { borderRadius: radius.md, minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
+  btnCompact: { minHeight: 36, paddingHorizontal: 6, flexShrink: 1, minWidth: 0 },
   btnIcon: { paddingHorizontal: 0, minWidth: 44 },
   btnText: { color: "#fff", fontSize: 14, ...typeface("700") },
+  btnTextCompact: { fontSize: 11 },
   label: { fontSize: 11, color: colors.muted, marginBottom: 4, ...typeface("700") },
   labelDense: { fontSize: 10, marginBottom: 2 },
   input: {

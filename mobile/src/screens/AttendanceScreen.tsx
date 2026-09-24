@@ -502,9 +502,10 @@ export function AttendanceScreen() {
                 <PrimaryButton title="Vazgeç" onPress={() => { setDisputeId(null); setDisputeNote(""); setDisputeIn(""); setDisputeOut(""); }} color={colors.secondary} testID={`mesai-rec-dispute-close-${rid}`} />
               </View>
             ) : (
-              <Row>
+              <Row style={{ gap: 4, flexWrap: "nowrap" }}>
                 {!r.employee_confirmed && rid ? (
                   <PrimaryButton
+                    compact
                     title={busy === `confirm-${rid}` ? "Onaylanıyor…" : "Saati onayla"}
                     onPress={() => confirmRecord(rid)}
                     color={colors.primary}
@@ -513,6 +514,7 @@ export function AttendanceScreen() {
                 ) : null}
                 {r.manager_time_edit?.pending_employee && rid ? (
                   <PrimaryButton
+                    compact
                     title={busy === `reject-${rid}` ? "Reddediliyor…" : "Reddet"}
                     onPress={() => rejectTimeEdit(rid)}
                     color={colors.danger}
@@ -521,6 +523,7 @@ export function AttendanceScreen() {
                 ) : null}
                 {canRequestAttendanceFix(r) ? (
                   <PrimaryButton
+                    compact
                     title="Düzeltme talep et"
                     onPress={() => { setDisputeId(rid); setDisputeNote(""); setDisputeIn(r.check_in || ""); setDisputeOut(r.check_out || ""); }}
                     color={colors.warning}
