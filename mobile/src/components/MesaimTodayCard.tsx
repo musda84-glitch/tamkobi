@@ -11,6 +11,7 @@ import {
   mesaimInSubtitle,
   mesaimLongDate,
   mesaimOutSubtitle,
+  mesaimPunchEditHint,
   mesaimScheduleLine,
   mesaimWorkDaysLine,
   type AttendanceHabit,
@@ -135,6 +136,11 @@ export function MesaimTodayCard({
   intraOut,
   intraReturn,
   geoPendingHint,
+  punchEdit,
+  punchEditTime,
+  onPunchEditTime,
+  onPunchEditConfirm,
+  onPunchEditCancel,
   onCheckIn,
   onCheckOutAsk,
   onCheckOutConfirm,
@@ -191,6 +197,11 @@ export function MesaimTodayCard({
   intraOut: string;
   intraReturn: string;
   geoPendingHint?: string;
+  punchEdit?: "check_in" | "check_out" | null;
+  punchEditTime?: string;
+  onPunchEditTime?: (v: string) => void;
+  onPunchEditConfirm?: () => void;
+  onPunchEditCancel?: () => void;
   onCheckIn: () => void;
   onCheckOutAsk: () => void;
   onCheckOutConfirm: () => void;
@@ -213,8 +224,6 @@ export function MesaimTodayCard({
   const checkedOut = Boolean(today?.check_out);
   const early = today?.early_leave_request;
   const intra = today?.intraday_leave_request;
-  const geoPending = today?.geo_confirm_request?.status === "pending";
-  const geoAction = today?.geo_confirm_request?.action;
   const scheduleLine = mesaimScheduleLine(schedule);
   const workDays = mesaimWorkDaysLine(schedule?.work_days, dayLabels);
   const dateLine = mesaimLongDate(todayDate);
@@ -246,6 +255,28 @@ export function MesaimTodayCard({
         </Text>
       </View>
 
+      {punchEdit ? (
+        <View testID="mesai-punch-edit" style={{ gap: 8 }}>
+          <TimeField
+            key={punchEdit}
+            label={punchEdit === "check_out" ? "Çıkış saati" : "Giriş saati"}
+            testID="mesai-punch-edit-time"
+            value={punchEditTime || ""}
+            autoOpen
+            onChangeText={(v) => onPunchEditTime?.(v)}
+          />
+          <Text style={{ color: "#FDE68A", fontSize: 12, fontWeight: "600" }}>{mesaimPunchEditHint(punchEdit)}</Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <PrimaryButton
+              title={busy === punchEdit ? "Gönderiliyor…" : "Onayla"}
+              onPress={() => onPunchEditConfirm?.()}
+              color={punchEdit === "check_out" ? ROSE : EMERALD}
+              testID="mesai-punch-edit-yes"
+            />
+            <PrimaryButton title="Vazgeç" onPress={() => onPunchEditCancel?.()} color={colors.secondary} testID="mesai-punch-edit-no" />
+          </View>
+        </View>
+      ) : (
       <View style={{ flexDirection: "row", gap: 10 }}>
         <PunchTile
           testID="mesai-in"
@@ -253,10 +284,10 @@ export function MesaimTodayCard({
           title={busy === "check_in" ? "Kaydediliyor…" : "Giriş Yap"}
           subtitle={mesaimInSubtitle(today?.check_in)}
           color={EMERALD}
-          disabled={checkedIn || (geoPending && geoAction === "check_in")}
+          disabled={busy === "check_in"}
           onPress={onCheckIn}
         />
-        {outConfirm && checkoutOn ? (
+        {outConfirm && (checkedIn || checkoutOn) ? (
           <View testID="mesai-out-confirm" style={{ flex: 1, gap: 8, justifyContent: "center" }}>
             <Text testID="mesai-out-confirm-text" style={{ color: "#FDE68A", fontSize: 11, fontWeight: "600" }}>
               {checkoutConfirmMessage(today?.check_in)}
@@ -281,11 +312,12 @@ export function MesaimTodayCard({
             title={busy === "check_out" ? "Kaydediliyor…" : (earlyOk && !checkedOut ? "Çıkış (onaylı erken)" : "Çıkış Yap")}
             subtitle={mesaimOutSubtitle({ checkIn: today?.check_in, checkOut: today?.check_out })}
             color={earlyOk && !checkedOut ? ROSE : ROSE}
-            disabled={!checkoutOn || (geoPending && geoAction === "check_out")}
+            disabled={busy === "check_out"}
             onPress={onCheckOutAsk}
           />
         )}
       </View>
+      )}
 
       {geoPendingHint ? (
         <View testID="mesai-geo-confirm-pending" style={{ backgroundColor: "rgba(245,158,11,0.2)", borderRadius: 12, padding: 10 }}>

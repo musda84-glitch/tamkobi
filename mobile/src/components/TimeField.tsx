@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
@@ -11,9 +11,10 @@ type TimeFieldProps = {
   onChangeText: (value: string) => void;
   testID?: string;
   optional?: boolean;
+  autoOpen?: boolean;
 };
 
-export function TimeField({ label, value, onChangeText, testID, optional }: TimeFieldProps) {
+export function TimeField({ label, value, onChangeText, testID, optional, autoOpen }: TimeFieldProps) {
   const [open, setOpen] = useState(false);
   const parsed = parseHm(value);
   const [hour, setHour] = useState(parsed?.hour ?? 16);
@@ -27,6 +28,11 @@ export function TimeField({ label, value, onChangeText, testID, optional }: Time
     }
     setOpen(true);
   };
+
+  useEffect(() => {
+    if (autoOpen) openPicker();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpen]);
 
   const confirm = () => {
     onChangeText(formatHm(hour, minute));

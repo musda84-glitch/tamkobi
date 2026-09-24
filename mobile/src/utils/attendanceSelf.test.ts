@@ -1,4 +1,4 @@
-import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimInSubtitle, mesaimLongDate, mesaimOutSubtitle, mesaimScheduleLine, mesaimWorkDaysLine, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimInSubtitle, mesaimLongDate, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -53,6 +53,9 @@ describe("geoConfirmHint", () => {
       geo_confirm_request: { status: "pending", action: "check_out", reason: "offsite", place: "Firma", distance_m: 1200 },
     })).toMatch(/iş yerinde değil/);
     expect(geoConfirmHint({ geo_confirm_request: { status: "approved" } })).toBe("");
+    expect(geoConfirmHint({
+      geo_confirm_request: { status: "pending", action: "check_out", reason: "time_edit", proposed_time: "18:00" },
+    })).toMatch(/saat düzeltme/);
   });
 });
 
@@ -66,6 +69,10 @@ describe("mesaim card copy", () => {
     expect(mesaimOutSubtitle({ checkOut: "10:26" })).toBe("Çıkış 10:26");
     expect(mesaimOutSubtitle({ checkIn: null })).toBe("önce giriş yapın");
     expect(mesaimOutSubtitle({ checkIn: "01:37", confirming: true })).toBe("onay için tekrar basın");
+    expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(true);
+    expect(mesaimPunchOpensEditor({ action: "check_out", checkOut: "01:20" })).toBe(true);
+    expect(mesaimPunchOpensEditor({ action: "check_in" })).toBe(false);
+    expect(mesaimPunchEditHint("check_out")).toMatch(/yönetici/);
   });
 });
 

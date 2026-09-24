@@ -185,7 +185,7 @@ export const AttendancePanel = ({ companyId }) => {
             <span className="inline-flex items-center gap-1.5 text-[10px] flex-wrap" data-testid={`att-geoconfirm-pending-${r.id}`}>
               <ShieldCheck className="w-3 h-3 text-violet-700" />
               <span className="font-semibold text-violet-800">Yönetici teyitli {r.geo_confirm_request.action === "check_out" ? "çıkış" : "giriş"}{r.geo_confirm_request.proposed_time ? ` · ${r.geo_confirm_request.proposed_time}` : ""}</span>
-              <span className="text-slate-500">{r.geo_confirm_request.reason === "location_off" ? "konum kapalı" : r.geo_confirm_request.reason === "offsite" ? "iş yerinde değil" : "konum"}{r.geo_confirm_request.place ? ` · ${r.geo_confirm_request.place}` : ""}{r.geo_confirm_request.distance_m != null ? ` · ${r.geo_confirm_request.distance_m} m` : ""}</span>
+              <span className="text-slate-500">{r.geo_confirm_request.reason === "location_off" ? "konum kapalı" : r.geo_confirm_request.reason === "offsite" ? "iş yerinde değil" : r.geo_confirm_request.reason === "time_edit" ? "saat düzeltme" : "konum"}{r.geo_confirm_request.place ? ` · ${r.geo_confirm_request.place}` : ""}{r.geo_confirm_request.distance_m != null ? ` · ${r.geo_confirm_request.distance_m} m` : ""}</span>
               <button type="button" onClick={() => decideGeoConfirm(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-geoconfirm-approve-${r.id}`}>Teyit et</button>
               <button type="button" onClick={() => decideGeoConfirm(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-geoconfirm-reject-${r.id}`}>Reddet</button>
             </span>

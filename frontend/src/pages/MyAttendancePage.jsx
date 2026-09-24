@@ -6,7 +6,7 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Cal
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { workplaceHint } from "../utils/workplace";
@@ -73,6 +73,8 @@ export default function MyAttendancePage() {
   const [intraOut, setIntraOut] = useState("");
   const [intraReturn, setIntraReturn] = useState("");
   const [outArmed, setOutArmed] = useState(false);
+  const [punchEdit, setPunchEdit] = useState(null);
+  const [punchEditTime, setPunchEditTime] = useState("");
   const [consentBusy, setConsentBusy] = useState(false);
   const [signal, setSignal] = useState(null);
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => { setData(r.data); setSignal(r.data.location_signal || null); }).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
@@ -138,7 +140,7 @@ export default function MyAttendancePage() {
     const id = setInterval(() => { load(); }, CHECKOUT_UNLOCK_WATCH_MS);
     return () => clearInterval(id);
   }, [load, data?.today?.check_in, data?.today?.check_out, data?.today?.early_leave_request?.status, data?.checkout_unlocked]);
-  const act = async (action) => {
+  const act = async (action, time) => {
     setBusy(action);
     try {
       let coords = {};
@@ -157,16 +159,36 @@ export default function MyAttendancePage() {
           if (geoMode === "required") throw geoErr;
         }
       }
-      const r = await axios.post(`${API_URL}/personnel/attendance/self`, { action, ...coords }, { withCredentials: true });
+      const r = await axios.post(`${API_URL}/personnel/attendance/self`, { action, ...(time ? { time } : {}), ...coords }, { withCredentials: true });
       toast.success(r.data.message, { duration: 6000 });
       if (action === "check_out") setOutArmed(false);
+      setPunchEdit(null);
       load();
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "İşlem başarısız."); } finally { setBusy(null); }
   };
+  const onCheckInClick = () => {
+    const t = data?.today;
+    if (mesaimPunchOpensEditor({ action: "check_in", checkIn: t?.check_in })) {
+      setPunchEdit("check_in");
+      setPunchEditTime(t.check_in);
+      return;
+    }
+    act("check_in");
+  };
   const onCheckoutClick = () => {
+    const t = data?.today;
+    if (mesaimPunchOpensEditor({ action: "check_out", checkOut: t?.check_out })) {
+      setPunchEdit("check_out");
+      setPunchEditTime(t.check_out);
+      return;
+    }
+    if (!t?.check_in) {
+      toast.error("Önce giriş yapın.");
+      return;
+    }
     const canCheckout = !busy && (data?.checkout_unlocked != null
-      ? Boolean(data.checkout_unlocked) && !data?.today?.check_out
-      : selfCheckoutUnlocked({ checkedIn: !!data?.today?.check_in, checkedOut: !!data?.today?.check_out, nowHm: data?.now, scheduleStart: data?.schedule?.start, scheduleEnd: data?.schedule?.end, expectedEnd: data?.today?.expected_end, checkIn: data?.today?.check_in, earlyApproved: earlyLeaveApproved(data?.today) }));
+      ? Boolean(data.checkout_unlocked)
+      : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: data?.now, scheduleStart: data?.schedule?.start, scheduleEnd: data?.schedule?.end, expectedEnd: t?.expected_end, checkIn: t?.check_in, earlyApproved: earlyLeaveApproved(t) }));
     const next = resolveCheckoutClick({ armed: outArmed, canCheckout });
     if (next === "arm") {
       setOutArmed(true);
@@ -280,18 +302,38 @@ export default function MyAttendancePage() {
               </span>
             </div>
           </div>
+          {punchEdit ? (
+            <div className="rounded-2xl bg-white/10 border border-white/15 p-3 space-y-2" data-testid="my-att-punch-edit">
+              <label className="block text-[10px] font-bold text-slate-300">
+                {punchEdit === "check_out" ? "Çıkış saati" : "Giriş saati"}
+                <input
+                  type="time"
+                  autoFocus
+                  value={punchEditTime || ""}
+                  onChange={(e) => setPunchEditTime(e.target.value)}
+                  className="mt-1 block w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white"
+                  data-testid="my-att-punch-edit-time"
+                />
+              </label>
+              <div className="text-[11px] text-amber-100 font-semibold">{mesaimPunchEditHint(punchEdit)}</div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => { if (!/^\d{1,2}:\d{2}$/.test(String(punchEditTime || "").trim())) { toast.error("Saat seçin."); return; } act(punchEdit, String(punchEditTime).trim().slice(0, 5)); }} disabled={!!busy} className={`flex-1 px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 ${punchEdit === "check_out" ? "bg-rose-500" : "bg-emerald-500"}`} data-testid="my-att-punch-edit-yes">{busy === punchEdit ? "…" : "Onayla"}</button>
+                <button type="button" onClick={() => setPunchEdit(null)} className="px-3 py-2 rounded-lg font-bold bg-white/10" data-testid="my-att-punch-edit-no">Vazgeç</button>
+              </div>
+            </div>
+          ) : (
           <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => act("check_in")} disabled={!!busy || !!t?.check_in || (geoConfirmPending(t) && t?.geo_confirm_request?.action === "check_in")} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
+            <button onClick={onCheckInClick} disabled={!!busy} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
               {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">Giriş Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{t?.check_in ? `Giriş ${t.check_in}` : "henüz giriş yok"}</span>
             </button>
             <button
               type="button"
               onClick={onCheckoutClick}
-              disabled={!!busy || !checkoutOn || (geoConfirmPending(t) && t?.geo_confirm_request?.action === "check_out")}
+              disabled={!!busy}
               className={`flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition ${outArmed ? "bg-amber-500 hover:bg-amber-400 ring-2 ring-amber-200 ring-offset-2 ring-offset-slate-900" : "bg-rose-500 hover:bg-rose-400"}`}
               data-testid="my-att-checkout"
               aria-pressed={outArmed}
-              title={outArmed ? "Onaylamak için tekrar tıklayın" : checkoutOn ? "Çıkış için iki kez tıklayın" : "Çıkış için önce giriş yapın"}
+              title={outArmed ? "Onaylamak için tekrar tıklayın" : t?.check_out ? "Saati düzeltmek için tıklayın" : checkoutOn ? "Çıkış için iki kez tıklayın" : "Çıkış için önce giriş yapın"}
             >
               {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}
               <span className="text-lg sm:text-base">{outArmed ? "Tekrar tıklayın" : (earlyOk && !t?.check_out ? "Çıkış (onaylı erken)" : "Çıkış Yap")}</span>
@@ -300,6 +342,7 @@ export default function MyAttendancePage() {
               </span>
             </button>
           </div>
+          )}
           {geoConfirmHint(t) ? (
             <div className="rounded-xl bg-amber-500/20 border border-amber-300/30 px-3 py-2 text-xs text-amber-100 font-semibold" data-testid="my-att-geo-confirm-pending">{geoConfirmHint(t)}</div>
           ) : null}

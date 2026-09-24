@@ -753,7 +753,20 @@ def geo_confirm_reason_tr(reason: Optional[str]) -> str:
         return "konum kapalı"
     if reason == "offsite":
         return "iş yerinde değil"
+    if reason == "time_edit":
+        return "saat düzeltme"
     return (reason or "").strip() or "konum doğrulanamadı"
+
+
+def self_punch_clock(req: Optional[dict], action: str, now_hm: str) -> str:
+    raw = (req or {}).get("time") or (req or {}).get(action)
+    if raw is None or str(raw).strip() == "":
+        return now_hm
+    return _valid_time(str(raw).strip()[:5])
+
+
+def self_punch_is_correction(existing: Optional[dict], action: str) -> bool:
+    return bool((existing or {}).get(action))
 
 
 def geo_confirm_action_tr(action: Optional[str]) -> str:
@@ -1247,21 +1260,47 @@ async def self_attendance(req: Dict[str, Any], request: Request):
         geo = {"latitude": lat, "longitude": lng, "distance_m": None, "accuracy_m": acc or 0, "at": _now(), "enforced": False}
     today = _today(schedule)
     existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
-    if action == "check_in" and existing.get("check_in"):
-        raise HTTPException(status_code=400, detail=f"Bugün {existing['check_in']} saatinde giriş yapılmış.")
-    if action == "check_out" and not existing.get("check_in"):
-        raise HTTPException(status_code=400, detail="Önce giriş yapmalısınız.")
-    if action == "check_out" and existing.get("check_out"):
-        raise HTTPException(status_code=400, detail=f"Bugün {existing['check_out']} saatinde çıkış yapılmış.")
     now_s = now_hm(schedule)
+    clock = self_punch_clock(req, action, now_s)
+    correcting = self_punch_is_correction(existing, action)
+    explicit_clock = bool((req or {}).get("time") or (req or {}).get(action))
+    if action == "check_out" and not existing.get("check_in") and not existing.get("check_out"):
+        raise HTTPException(status_code=400, detail="Önce giriş yapmalısınız.")
+    if correcting and not explicit_clock:
+        label = "giriş" if action == "check_in" else "çıkış"
+        raise HTTPException(status_code=400, detail=f"Bugün {existing[action]} saatinde {label} yapılmış. Düzeltmek için yeni saat gönderin.")
+    if correcting:
+        prev = str(existing.get(action) or "")[:5]
+        if clock == prev:
+            raise HTTPException(status_code=400, detail=f"Bu saat zaten kayıtlı ({prev}). Farklı bir saat seçin.")
+        if action == "check_out" and existing.get("check_in"):
+            try:
+                if _hm(clock) < _hm(str(existing["check_in"])[:5]):
+                    raise HTTPException(status_code=400, detail=f"Çıkış saati ({clock}) girişten ({existing['check_in']}) önce olamaz.")
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+        if action == "check_in" and existing.get("check_out"):
+            try:
+                if _hm(clock) > _hm(str(existing["check_out"])[:5]):
+                    raise HTTPException(status_code=400, detail=f"Giriş saati ({clock}) çıkıştan ({existing['check_out']}) sonra olamaz.")
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+        return await open_geo_confirm_request(
+            emp, user, existing, today, action, clock, verdict, lat, lng, acc, workplace,
+            reason="time_edit",
+        )
     if action == "check_out" and not self_checkout_unlocked(existing, schedule, now_s):
         raise HTTPException(status_code=400, detail="Çıkış için önce giriş yapın.")
     if action == "check_out" and existing.get("check_in"):
         try:
-            if _hm(now_s) < _hm(str(existing["check_in"])[:5]):
+            if _hm(clock) < _hm(str(existing["check_in"])[:5]):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Çıkış saati ({now_s}) girişten ({existing['check_in']}) önce olamaz. Cihaz saatini kontrol edin.",
+                    detail=f"Çıkış saati ({clock}) girişten ({existing['check_in']}) önce olamaz. Cihaz saatini kontrol edin.",
                 )
         except HTTPException:
             raise
@@ -1275,9 +1314,9 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             raise HTTPException(status_code=400, detail="Önce bekleyen yönetici teyitli giriş talebinizin onaylanması gerekir.")
     if geo_confirm_needs_manager(verdict.get("verdict")):
         return await open_geo_confirm_request(
-            emp, user, existing, today, action, now_s, verdict, lat, lng, acc, workplace,
+            emp, user, existing, today, action, clock, verdict, lat, lng, acc, workplace,
         )
-    patch = {"status": "present", action: now_s}
+    patch = {"status": "present", action: clock}
     rec = await apply_day(emp, today, patch, source="self", confirmed=True)
     extra = {}
     if workplace:
@@ -1381,9 +1420,10 @@ async def open_geo_confirm_request(
     lng: Optional[float],
     acc: Optional[float],
     workplace: Optional[dict],
+    reason: Optional[str] = None,
 ) -> dict:
-    """Konum kapalı veya iş yerinde değilken giriş/çıkış yönetici teyidine düşer; saat onayda yazılır."""
-    reason = verdict.get("verdict") or "location_off"
+    """Konum kapalı / iş yerinde değil / kayıtlı saat düzeltmesi yönetici teyidine düşer."""
+    reason = reason or verdict.get("verdict") or "location_off"
     gcr = build_geo_confirm_request(
         action=action,
         reason=reason,
