@@ -6,6 +6,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
 import { lineFromProduct } from "../utils/documentLines";
 import { ScanButton } from "../components/CameraScanner";
+import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
 import { formatTrAmount } from "../utils/money";
 import {
@@ -293,8 +294,10 @@ export default function FieldSalesPage() {
             <label className="shrink-0 flex flex-col justify-center">
               <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Adet</span>
               <input
-                value={scanQty}
+                value={scanQtyShown(scanQty)}
                 onChange={(e) => setScanQty(e.target.value.replace(/\D/g, ""))}
+                onFocus={() => setScanQty(scanQtyOnFocus())}
+                onBlur={() => setScanQty(scanQtyOnBlur(scanQty))}
                 inputMode="numeric"
                 className="w-14 border rounded-xl p-2 text-sm font-black text-center bg-white min-h-12"
                 data-testid="saha-scan-qty"

@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { colors, radius } from "../theme";
 import { normalizeScanText } from "../utils/b2bCatalog";
+import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import { WebBarcodeCamera } from "./WebBarcodeCamera";
 import { PrimaryButton } from "./kit";
 
@@ -75,10 +76,11 @@ export function BarcodeScannerModal({
             <Text style={styles.qtyLabel}>Adet çarpan</Text>
             <TextInput
               testID="barcode-qty"
-              value={qty ?? "1"}
+              value={scanQtyShown(qty)}
               onChangeText={(v) => onQtyChange?.(v.replace(/[^\d]/g, ""))}
+              onFocus={() => onQtyChange?.(scanQtyOnFocus())}
+              onBlur={() => onQtyChange?.(scanQtyOnBlur(qty))}
               keyboardType="number-pad"
-              selectTextOnFocus
               style={styles.qtyInput}
             />
           </View>
