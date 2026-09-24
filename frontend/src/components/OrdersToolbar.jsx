@@ -6,6 +6,7 @@ import { ExportButtons } from "./ExportButtons";
 import { OrdersBulkMenu } from "./OrdersBulkMenu";
 import { orderGross } from "../utils/orderMoney";
 import { formatTrAmount } from "../utils/money";
+import { orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
 
 const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => (r.order_date || "").slice(0, 10) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { label: "Tutar (KDV dahil)", num: true, value: (r) => orderGross(r) }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
 
@@ -43,6 +44,7 @@ export const applyOrderFilters = (orders, f) => {
     if (f.status !== "all" && f.status !== "incoming" && f.status !== "dispatched" && o.order_status !== f.status) return false;
     if (f.channel !== "all" && (o.channel || "b2b") !== f.channel) return false;
     if (f.invoiced === "yes" && !o.invoice_id) return false;
+    if (f.invoiced === "einvoice" && !orderHasEInvoiceIssued(o)) return false;
     if (f.invoiced === "no" && o.invoice_id) return false;
     if (f.cargo === "yes" && !o.cargo_tracking_number) return false;
     if (f.cargo === "no" && o.cargo_tracking_number) return false;
@@ -73,7 +75,12 @@ export const OrdersToolbar = ({ f, setF, orders, count, total, rows = [], select
         <div className="relative flex-1 min-w-[220px]"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input value={f.q} onChange={(e) => set("q", e.target.value)} placeholder="Sipariş no, müşteri, telefon, ürün, kargo takip no…" className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500" data-testid="ord-search" />{f.q && <button onClick={() => set("q", "")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" data-testid="ord-search-clear"><X className="w-3.5 h-3.5" /></button>}</div>
         <select value={f.status} onChange={(e) => set("status", e.target.value)} className={`${sel} ${f.status !== "all" ? "border-emerald-300 bg-emerald-50 font-semibold" : ""}`} data-testid="ord-status">{STATUS.map(([k, l]) => <option key={k} value={k}>{l}{k !== "all" && counts[k] ? ` (${counts[k]})` : ""}</option>)}</select>
         <select value={f.channel} onChange={(e) => set("channel", e.target.value)} className={`${sel} ${f.channel !== "all" ? "border-sky-300 bg-sky-50 font-semibold" : ""}`} data-testid="ord-channel"><option value="all">Tüm Kanallar</option>{channels.map((c) => <option key={c} value={c}>{channelTr(c)}</option>)}</select>
-        <select value={f.invoiced} onChange={(e) => set("invoiced", e.target.value)} className={sel} data-testid="ord-invoiced"><option value="all">Fatura: Tümü</option><option value="yes">Faturalandı</option><option value="no">Faturalanmadı</option></select>
+        <select value={f.invoiced} onChange={(e) => set("invoiced", e.target.value)} className={sel} data-testid="ord-invoiced">
+          <option value="all">Fatura: Tümü</option>
+          <option value="yes">Faturalandı</option>
+          <option value="einvoice">E-Fatura Kesildi</option>
+          <option value="no">Faturalanmadı</option>
+        </select>
         <select value={f.cargo} onChange={(e) => set("cargo", e.target.value)} className={sel} data-testid="ord-cargo"><option value="all">Kargo: Tümü</option><option value="yes">Kargolandı</option><option value="no">Kargo Bekliyor</option></select>
         <div className="flex items-center gap-1 text-xs"><ArrowUpDown className="w-3.5 h-3.5 text-slate-400" /><select value={f.sort} onChange={(e) => set("sort", e.target.value)} className={sel} data-testid="ord-sort">{SORT.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
       </div>
