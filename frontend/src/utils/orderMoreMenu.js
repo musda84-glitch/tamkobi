@@ -10,6 +10,7 @@ import {
   Download,
   Link2,
   Code2,
+  Trash2,
   Pencil,
   RotateCcw,
   Tag,
@@ -158,6 +159,14 @@ export function orderDownloadMoreItems() {
  * Siparişe göre menü satırları.
  * @returns {{ kind: string, items: array }}
  */
+export function canDeleteFromMoreMenu(ord) {
+  return !!ord && !ord.is_invoiced && !ord.invoice_id;
+}
+
+export function orderDeleteMoreItem() {
+  return item("delete", "Siparişi Sil", Trash2, { color: "text-rose-600", testId: "delete" });
+}
+
 export function orderMoreMenuItems(ord, opts = {}) {
   const kind = orderMoreMenuKind(ord);
   let items;
@@ -166,5 +175,6 @@ export function orderMoreMenuItems(ord, opts = {}) {
   else if (kind === "panel_draft") items = panelDraftMoreItems();
   else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
   else items = defaultMoreItems(ord, opts);
+  if (canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
   return { kind, items: [...items, ...orderDownloadMoreItems()] };
 }

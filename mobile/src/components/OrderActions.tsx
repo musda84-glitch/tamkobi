@@ -717,6 +717,9 @@ export function OrderActions({
       case "print_form":
         printForm();
         return;
+      case "delete":
+        remove();
+        return;
       case "edit":
         go("OrderEdit", { id: oid });
         return;

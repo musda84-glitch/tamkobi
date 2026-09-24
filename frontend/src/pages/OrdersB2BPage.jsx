@@ -595,6 +595,21 @@ export default function OrdersB2BPage() {
       case "cargo_change":
         setShipOrder(ord);
         return;
+      case "delete": {
+        if (ord.is_invoiced || ord.invoice_id) {
+          toast.error("Faturalanmış sipariş silinemez.");
+          return;
+        }
+        if (!window.confirm(`${ord.order_number || "Sipariş"} silinsin mi?`)) return;
+        try {
+          await axios.delete(`${API_URL}/orders/${ord.id || ord._id}`);
+          toast.success("Sipariş silindi.");
+          loadData();
+        } catch (err) {
+          toast.error(err.response?.data?.detail || "Silinemedi.");
+        }
+        return;
+      }
       case "edit": {
         const reason = orderEditBlockedReason(ord);
         if (reason) toast.error(reason);

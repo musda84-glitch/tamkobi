@@ -165,16 +165,27 @@ export function defaultMoreItems(
   return rows.filter((r) => !r.hidden);
 }
 
+export function canDeleteFromMoreMenu(ord?: OrderMoreOrder | null): boolean {
+  return !!ord && !ord.is_invoiced && !ord.invoice_id;
+}
+
+export function orderDeleteMoreItem(): OrderMoreItem {
+  return item("delete", "Siparişi Sil", "trash", { color: "#E11D48", testId: "delete" });
+}
+
 export function orderMoreMenuItems(
   ord?: OrderMoreOrder | null,
   opts: { eBelgeItems?: Array<{ eType: "e_invoice" | "e_archive"; label: string; testIdSuffix: string }> } = {},
 ): { kind: OrderMoreKind; items: OrderMoreItem[] } {
   const kind = orderMoreMenuKind(ord);
-  if (kind === "panel_einvoice") return { kind, items: panelEInvoiceMoreItems() };
-  if (kind === "integration_einvoice") return { kind, items: integrationEInvoiceMoreItems() };
-  if (kind === "panel_draft") return { kind, items: panelDraftMoreItems() };
-  if (kind === "panel_invoiced") return { kind, items: panelInvoicedMoreItems() };
-  return { kind, items: defaultMoreItems(ord, opts) };
+  let items: OrderMoreItem[];
+  if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
+  else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
+  else if (kind === "panel_draft") items = panelDraftMoreItems();
+  else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
+  else items = defaultMoreItems(ord, opts);
+  if (canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
+  return { kind, items };
 }
 
 /** Web mobil karttaki tek birincil kısayol. */
