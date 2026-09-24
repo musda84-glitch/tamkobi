@@ -8,7 +8,10 @@ from attendance import (  # noqa: E402
     DEFAULT_SCHEDULE,
     compute_day,
     is_early_hours,
+    is_overnight_pair,
     previous_ymd,
+    same_morning_early_shift,
+    same_shift_order_error,
     should_clear_orphan_early_checkout,
     should_close_previous_day,
     should_rehome_early_checkout,
@@ -34,29 +37,49 @@ def test_is_early_hours_before_schedule_start():
 def test_should_close_previous_day_after_midnight():
     yest = {"check_in": "18:00"}
     assert should_close_previous_day("01:20", SCH, {}, yest) is True
-    assert should_close_previous_day("01:20", SCH, {"check_in": "06:55"}, yest) is False
+    # 09:30 bugünün girişi — 07:00 hâlâ dünü kapatır (ekran kaydı)
+    assert should_close_previous_day("07:00", SCH, {"check_in": "09:30"}, yest) is True
+    assert should_close_previous_day("01:20", SCH, {"check_in": "06:55"}, yest) is True
+    # Aynı sabah 06:00–07:00 bugünün vardiyası
+    assert should_close_previous_day("07:00", SCH, {"check_in": "06:00"}, yest) is False
     assert should_close_previous_day("10:00", SCH, {}, yest) is False
     assert should_close_previous_day("01:20", SCH, {}, {"check_in": "18:00", "check_out": "23:00"}) is False
     assert should_close_previous_day("01:20", SCH, {}, {}) is False
+
+
+def test_screenshot_0930_in_0700_out_are_different_days():
+    assert is_overnight_pair("09:30", "07:00", SCH) is True
+    assert same_morning_early_shift("09:30", "07:00", SCH) is False
+    assert same_shift_order_error("check_in", "09:30", {"check_out": "07:00"}, SCH) is None
+    assert same_shift_order_error("check_out", "07:00", {"check_in": "09:30"}, SCH) is None
+    # Aynı gün bozuk sıra hâlâ hata
+    assert same_shift_order_error("check_in", "13:09", {"check_out": "13:07"}, SCH)
+    assert "sonra olamaz" in same_shift_order_error("check_in", "13:09", {"check_out": "13:07"}, SCH)
 
 
 def test_should_rehome_inverted_today_out_to_open_yesterday():
     today = {"check_in": "06:55", "check_out": "01:20"}
     yest = {"check_in": "18:00"}
     assert should_rehome_early_checkout(today, yest, SCH) is True
+    assert should_rehome_early_checkout({"check_in": "09:30", "check_out": "07:00"}, yest, SCH) is True
     assert should_rehome_early_checkout({"check_out": "01:20"}, yest, SCH) is True
     assert should_rehome_early_checkout(today, {"check_in": "18:00", "check_out": "23:50"}, SCH) is False
     # Geçerli aynı-gün erken vardiya 00:30–02:00 taşınmaz
     assert should_rehome_early_checkout({"check_in": "00:30", "check_out": "02:00"}, yest, SCH) is False
+    # 06:00–07:00 durur; 09:30'a çevrilince 07:00 düne gider
+    assert should_rehome_early_checkout({"check_in": "06:00", "check_out": "07:00"}, yest, SCH) is False
+    assert should_rehome_early_checkout({"check_in": "06:00", "check_out": "07:00"}, yest, SCH, proposed_in="09:30") is True
 
 
 def test_should_clear_orphan_inverted_or_lone_early_out():
     today = {"check_in": "06:55", "check_out": "01:20"}
     closed = {"check_in": "09:00", "check_out": "18:00"}
     assert should_clear_orphan_early_checkout(today, closed, SCH) is True
+    assert should_clear_orphan_early_checkout({"check_in": "09:30", "check_out": "07:00"}, closed, SCH) is True
     assert should_clear_orphan_early_checkout({"check_out": "01:20"}, closed, SCH) is True
     assert should_clear_orphan_early_checkout(today, {"check_in": "18:00"}, SCH) is False
     assert should_clear_orphan_early_checkout({"check_in": "00:30", "check_out": "02:00"}, closed, SCH) is False
+    assert should_clear_orphan_early_checkout({"check_in": "06:00", "check_out": "07:00"}, closed, SCH, proposed_in="09:30") is True
 
 
 def test_overnight_checkout_wraps_hours():
