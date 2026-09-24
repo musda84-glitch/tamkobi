@@ -13,22 +13,23 @@ const TYPE_ALIAS = { cash: "cash_box", kasa: "cash_box", cashbox: "cash_box", na
 const normalizeType = (t) => TYPE_ALIAS[String(t || "").toLowerCase()] || t;
 const collectableOnly = (accounts) => (accounts || []).filter((a) => normalizeType(a.type) !== "credit_card");
 
+/** Her menü maddesi kendi işlem ekranına gider (tek karışık form yok). */
 export const CONTACT_PAY_MENU_SECTIONS = [
   {
     id: "instruments",
     items: [
-      { id: "cash", label: "Nakit - Kredi Kartı - Banka", icon: Banknote, iconClass: "text-emerald-600", preset: { method: "cash" } },
-      { id: "contactless", label: "Temassız Kredi Kartı", icon: Nfc, iconClass: "text-amber-700", preset: { method: "cash", preferPos: true } },
-      { id: "cheque", label: "Çek", icon: CreditCard, iconClass: "text-sky-600", preset: { method: "cheque", type: "inflow" } },
-      { id: "promissory_in", label: "Müşteriden Senet Al", icon: FileSpreadsheet, iconClass: "text-rose-600", preset: { method: "promissory", type: "inflow" } },
-      { id: "promissory_out", label: "Müşteriye Senet Ver", icon: ScrollText, iconClass: "text-amber-800", preset: { method: "promissory", type: "outflow" } },
+      { id: "cash", label: "Nakit - Kredi Kartı - Banka", icon: Banknote, iconClass: "text-emerald-600", preset: { menuId: "cash", method: "cash" } },
+      { id: "contactless", label: "Temassız Kredi Kartı", icon: Nfc, iconClass: "text-amber-700", preset: { menuId: "contactless", method: "cash", preferPos: true } },
+      { id: "cheque", label: "Çek", icon: CreditCard, iconClass: "text-sky-600", preset: { menuId: "cheque", method: "cheque", type: "inflow" } },
+      { id: "promissory_in", label: "Müşteriden Senet Al", icon: FileSpreadsheet, iconClass: "text-rose-600", preset: { menuId: "promissory_in", method: "promissory", type: "inflow" } },
+      { id: "promissory_out", label: "Müşteriye Senet Ver", icon: ScrollText, iconClass: "text-amber-800", preset: { menuId: "promissory_out", method: "promissory", type: "outflow" } },
     ],
   },
   {
     id: "ledger",
     items: [
-      { id: "balance_fix", label: "Bakiye düzelt", icon: Pencil, iconClass: "text-sky-600", preset: { method: "ledger", balanceFix: true } },
-      { id: "ledger_slips", label: "Borç-Alacak Fişleri", icon: ArrowLeftRight, iconClass: "text-sky-600", preset: { method: "ledger" } },
+      { id: "balance_fix", label: "Bakiye düzelt", icon: Pencil, iconClass: "text-sky-600", preset: { menuId: "balance_fix", method: "ledger", balanceFix: true } },
+      { id: "ledger_slips", label: "Borç-Alacak Fişleri", icon: ArrowLeftRight, iconClass: "text-sky-600", preset: { menuId: "ledger_slips", method: "ledger" } },
     ],
   },
   {
@@ -43,6 +44,42 @@ export const CONTACT_PAY_MENU_ITEMS = CONTACT_PAY_MENU_SECTIONS.flatMap((s) => s
 
 const POS_TYPES = new Set(["pos", "okc_pos"]);
 
+const MENU_TITLES = {
+  cash: "Nakit / Kredi Kartı / Banka",
+  contactless: "Temassız Kredi Kartı",
+  cheque: "Çek",
+  promissory_in: "Müşteriden Senet Al",
+  promissory_out: "Müşteriye Senet Ver",
+  balance_fix: "Bakiye düzelt",
+  ledger_slips: "Borç-Alacak Fişi",
+};
+
+/** Modal başlığı ve kilit bayrakları — menüden açılınca yalnızca o işlem alanı. */
+export function contactPayModalMeta(formOrOpts = {}) {
+  const menuId = formOrOpts.menuId || "";
+  const methodFromMenu = {
+    cash: "cash",
+    contactless: "cash",
+    cheque: "cheque",
+    promissory_in: "promissory",
+    promissory_out: "promissory",
+    balance_fix: "ledger",
+    ledger_slips: "ledger",
+  };
+  const method = formOrOpts.method || methodFromMenu[menuId] || "cash";
+  const locked = !!menuId;
+  return {
+    menuId,
+    title: MENU_TITLES[menuId] || (method === "ledger" ? "Borç-Alacak Fişi" : "Tahsilat / Ödeme"),
+    lockMethod: locked,
+    lockType: menuId === "promissory_in" || menuId === "promissory_out" || menuId === "balance_fix" || menuId === "contactless",
+    lockSlip: menuId === "balance_fix",
+    showTypeToggle: !locked || (menuId === "cash" || menuId === "cheque" || menuId === "ledger_slips"),
+    showMethodTabs: !locked,
+    showSlipToggle: method === "ledger" && menuId !== "balance_fix",
+  };
+}
+
 export function pickPayAccount(accounts, { type = "inflow", preferPos = false } = {}) {
   const list = accounts || [];
   if (preferPos) {
@@ -56,9 +93,13 @@ export function pickPayAccount(accounts, { type = "inflow", preferPos = false } 
 export function buildContactPayForm(contact, accounts, opts = {}) {
   const balance = Number(contact?.balance) || 0;
   const defaultIn = balance >= 0;
-  const type = opts.type || (defaultIn ? "inflow" : "outflow");
+  const menuId = opts.menuId || "";
+  let type = opts.type || (defaultIn ? "inflow" : "outflow");
+  if (menuId === "contactless") type = "inflow";
+  if (menuId === "promissory_in") type = "inflow";
+  if (menuId === "promissory_out") type = "outflow";
   const method = opts.method || "cash";
-  const balanceFix = !!opts.balanceFix;
+  const balanceFix = !!opts.balanceFix || menuId === "balance_fix";
   let amount = Math.max(0, balance).toFixed(2);
   let slip = opts.slip || "debit";
   let description =
@@ -75,11 +116,14 @@ export function buildContactPayForm(contact, accounts, opts = {}) {
     slip = balance >= 0 ? "credit" : "debit";
     description = "Bakiye düzeltme";
   }
-  if (opts.preferPos) description = type === "inflow" ? "Temassız tahsilat" : "Temassız ödeme";
+  if (opts.preferPos || menuId === "contactless") {
+    description = type === "inflow" ? "Temassız tahsilat" : "Temassız ödeme";
+  }
 
   return {
+    menuId,
     amount,
-    account_id: pickPayAccount(accounts, { type, preferPos: !!opts.preferPos }),
+    account_id: pickPayAccount(accounts, { type, preferPos: !!opts.preferPos || menuId === "contactless" }),
     description: opts.description || description,
     type,
     method,
@@ -88,6 +132,7 @@ export function buildContactPayForm(contact, accounts, opts = {}) {
     serial_no: "",
     bank_name: "",
     slip,
-    preferPos: !!opts.preferPos,
+    preferPos: !!opts.preferPos || menuId === "contactless",
+    balanceFix,
   };
 }
