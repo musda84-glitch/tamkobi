@@ -126,6 +126,13 @@ describe("cheques", () => {
       amount: "250",
       notes: "Senet ödemesi",
     });
+    const scanned = applyChequePrefill(emptyChequeDraft("2026-09-21"), {
+      serial_no: "1234567",
+      bank_name: "Garanti",
+      due_date: "2026-10-21",
+      amount: "50000",
+    });
+    expect(scanned).toMatchObject({ serial_no: "1234567", bank_name: "Garanti", due_date: "2026-10-21", amount: "50000" });
     expect(chequeReturnContact({ contact_id: "c9", contact_name: "Acme" })).toEqual({ id: "c9", name: "Acme" });
     expect(chequeReturnContact({})).toBeNull();
   });

@@ -140,10 +140,18 @@ export function applyChequePrefill(
     direction?: string | string[];
     amount?: string | string[];
     notes?: string | string[];
+    serial_no?: string | string[];
+    bank_name?: string | string[];
+    bank_branch?: string | string[];
+    account_no?: string | string[];
+    drawer_name?: string | string[];
+    issue_date?: string | string[];
+    due_date?: string | string[];
   } | null,
 ): ChequeDraft {
   const instrument = paramOne(params?.instrument);
   const direction = paramOne(params?.direction);
+  const ymd = (v: string) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "");
   return {
     ...draft,
     contact_id: paramOne(params?.contact_id) || draft.contact_id,
@@ -152,6 +160,13 @@ export function applyChequePrefill(
     direction: direction === "issued" ? "issued" : direction === "received" ? "received" : draft.direction,
     amount: paramOne(params?.amount) || draft.amount,
     notes: paramOne(params?.notes) || draft.notes,
+    serial_no: paramOne(params?.serial_no) || draft.serial_no,
+    bank_name: paramOne(params?.bank_name) || draft.bank_name,
+    bank_branch: paramOne(params?.bank_branch) || draft.bank_branch,
+    account_no: paramOne(params?.account_no) || draft.account_no,
+    drawer_name: paramOne(params?.drawer_name) || draft.drawer_name,
+    issue_date: ymd(paramOne(params?.issue_date)) || draft.issue_date,
+    due_date: ymd(paramOne(params?.due_date)) || draft.due_date,
   };
 }
 
