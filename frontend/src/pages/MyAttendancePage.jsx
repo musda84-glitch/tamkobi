@@ -333,7 +333,7 @@ export default function MyAttendancePage() {
                     act(punchEdit, hm);
                   }}
                   disabled={!!busy}
-                  className="w-full px-3 py-2 rounded-lg font-bold bg-indigo-500/90 hover:bg-indigo-500 text-white disabled:opacity-50"
+                  className={`w-full px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 ${punchEdit === "check_out" ? "bg-rose-500 hover:bg-rose-400" : "bg-indigo-500/90 hover:bg-indigo-500"}`}
                   data-testid="my-att-punch-edit-now"
                 >
                   {mesaimPunchNowLabel(punchEdit)}

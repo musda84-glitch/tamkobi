@@ -14,10 +14,11 @@ type TimeFieldProps = {
   autoOpen?: boolean;
   nowLabel?: string;
   nowValue?: string;
+  nowKind?: "check_in" | "check_out";
   onNow?: (value: string) => void;
 };
 
-export function TimeField({ label, value, onChangeText, testID, optional, autoOpen, nowLabel, nowValue, onNow }: TimeFieldProps) {
+export function TimeField({ label, value, onChangeText, testID, optional, autoOpen, nowLabel, nowValue, nowKind, onNow }: TimeFieldProps) {
   const [open, setOpen] = useState(false);
   const parsed = parseHm(value);
   const [hour, setHour] = useState(parsed?.hour ?? 16);
@@ -78,7 +79,26 @@ export function TimeField({ label, value, onChangeText, testID, optional, autoOp
             style={{ backgroundColor: colors.surface, borderRadius: radius.lg, padding: 14, borderWidth: 1, borderColor: colors.border }}
           >
             <Text style={{ fontWeight: "800", color: colors.text, marginBottom: 10 }}>Saat seçin</Text>
-            <View style={{ flexDirection: "row", gap: 12, height: 200 }}>
+            {nowLabel || onNow ? (
+              <Pressable
+                testID={testID ? `${testID}-now` : undefined}
+                onPress={pickNow}
+                style={{
+                  minHeight: 44,
+                  marginBottom: 10,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: nowKind === "check_out" ? colors.rose50 : colors.indigo50,
+                  borderRadius: radius.md,
+                  paddingHorizontal: 10,
+                }}
+              >
+                <Text style={{ fontWeight: "800", color: nowKind === "check_out" ? colors.danger : colors.indigo, textAlign: "center" }}>
+                  {nowLabel || "Şimdiki saat"}
+                </Text>
+              </Pressable>
+            ) : null}
+            <View style={{ flexDirection: "row", gap: 12, height: 168 }}>
               <ScrollView style={{ flex: 1 }} testID={testID ? `${testID}-hours` : undefined}>
                 {hourOptions().map((h) => (
                   <Pressable
@@ -104,34 +124,23 @@ export function TimeField({ label, value, onChangeText, testID, optional, autoOp
                 ))}
               </ScrollView>
             </View>
-            <View style={{ gap: 8, marginTop: 12 }}>
-              {nowLabel || onNow ? (
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              {optional ? (
                 <Pressable
-                  testID={testID ? `${testID}-now` : undefined}
-                  onPress={pickNow}
-                  style={{ minHeight: 44, alignItems: "center", justifyContent: "center", backgroundColor: colors.indigo50, borderRadius: radius.md, paddingHorizontal: 10 }}
+                  testID={testID ? `${testID}-clear` : undefined}
+                  onPress={() => { onChangeText(""); setOpen(false); }}
+                  style={{ flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center" }}
                 >
-                  <Text style={{ fontWeight: "800", color: colors.indigo, textAlign: "center" }}>{nowLabel || "Şimdiki saat"}</Text>
+                  <Text style={{ fontWeight: "700", color: colors.muted }}>Temizle</Text>
                 </Pressable>
               ) : null}
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                {optional ? (
-                  <Pressable
-                    testID={testID ? `${testID}-clear` : undefined}
-                    onPress={() => { onChangeText(""); setOpen(false); }}
-                    style={{ flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center" }}
-                  >
-                    <Text style={{ fontWeight: "700", color: colors.muted }}>Temizle</Text>
-                  </Pressable>
-                ) : null}
-                <Pressable
-                  onPress={confirm}
-                  testID={testID ? `${testID}-ok` : undefined}
-                  style={{ flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary, borderRadius: radius.md }}
-                >
-                  <Text style={{ fontWeight: "800", color: "#fff" }}>Seç</Text>
-                </Pressable>
-              </View>
+              <Pressable
+                onPress={confirm}
+                testID={testID ? `${testID}-ok` : undefined}
+                style={{ flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary, borderRadius: radius.md }}
+              >
+                <Text style={{ fontWeight: "800", color: "#fff" }}>Seç</Text>
+              </Pressable>
             </View>
           </Pressable>
         </Pressable>

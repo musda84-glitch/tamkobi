@@ -21,6 +21,7 @@ import {
 import { workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
 import type { LocationSignal } from "../utils/locationConsent";
+import { resolveNowHm } from "../utils/clock";
 
 const DARK = "#0F172A";
 const DARK_META = "#CBD5E1";
@@ -265,6 +266,7 @@ export function MesaimTodayCard({
             value={punchEditTime || ""}
             autoOpen
             nowLabel={mesaimPunchNowLabel(punchEdit)}
+            nowKind={punchEdit}
             nowValue={now}
             onNow={(hm) => {
               onPunchEditTime?.(hm);
@@ -273,6 +275,16 @@ export function MesaimTodayCard({
             onChangeText={(v) => onPunchEditTime?.(v)}
           />
           <Text style={{ color: "#FDE68A", fontSize: 12, fontWeight: "600" }}>{mesaimPunchEditHint(punchEdit)}</Text>
+          <PrimaryButton
+            title={mesaimPunchNowLabel(punchEdit)}
+            onPress={() => {
+              const hm = resolveNowHm(now);
+              onPunchEditTime?.(hm);
+              onPunchEditConfirm?.(hm);
+            }}
+            color={punchEdit === "check_out" ? ROSE : colors.indigo}
+            testID="mesai-punch-edit-now"
+          />
           <View style={{ flexDirection: "row", gap: 8 }}>
             <PrimaryButton
               title={busy === punchEdit ? "Gönderiliyor…" : "Onayla"}
