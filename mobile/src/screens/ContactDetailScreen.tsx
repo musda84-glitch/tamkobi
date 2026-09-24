@@ -55,7 +55,7 @@ import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 import { normalizeProjectStages, type ProjectStage } from "../utils/projectStages";
 import { mergeContactProjects, projectsForContact, type ProjectDoc } from "../utils/workDocs";
 import type { BankAccount } from "../utils/finance";
-import { canDeleteInvoice, canEditInvoiceItems } from "../utils/invoiceDraft";
+import { canDeleteInvoice, canEditInvoiceItems, invoiceRowDangerAction } from "../utils/invoiceDraft";
 import { canStaffDeleteOrder, canStaffEditOrder, orderStatusOf } from "../utils/orderEdit";
 import { printPaymentReceipt } from "../utils/chequeShare";
 import { applyReceiptDraft } from "../utils/receiptScan";
@@ -460,11 +460,30 @@ export function ContactDetailScreen() {
     );
   };
 
-  const removeInvoice = (inv: { id?: string; _id?: string; invoice_number?: string; status?: string; e_type?: string; paid_amount?: number; payment_status?: string }) => {
+  const removeInvoice = (inv: { id?: string; _id?: string; invoice_number?: string; status?: string; e_type?: string; invoice_type?: string; paid_amount?: number; payment_status?: string }) => {
     if (!canInvoice) { setError("Fatura silme yetkiniz yok."); return; }
-    if (!canDeleteInvoice(inv)) {
+    const danger = invoiceRowDangerAction(inv);
+    if (danger === "cancel") {
+      confirmAction(
+        "Faturayı iptal et",
+        `${inv.invoice_number || "Fatura"} numaralı fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; kayıt listede kalır.`,
+        async () => {
+          try {
+            await post(client, `/invoices/${idOf(inv)}/cancel`, {});
+            setMessage("Fatura iptal edildi.");
+            setOpenInvRow(null);
+            setError(null);
+            await load();
+          } catch (err) {
+            setError(apiErrorMessage(err, "Fatura iptal edilemedi."));
+          }
+        },
+      );
+      return;
+    }
+    if (danger !== "delete" && !canDeleteInvoice(inv)) {
       setOpenInvRow(null);
-      setError("Kesilmiş e-belge silinemez. Taslak veya ödenmemiş kağıt faturayı sola kaydırarak silebilirsiniz.");
+      setError("Bu fatura silinemez veya iptal edilemez.");
       return;
     }
     const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
@@ -884,9 +903,10 @@ export function ContactDetailScreen() {
       {tab === "invoices" ? (
         !invoices.length ? <Muted>Fatura yok.</Muted> : (
         <>
-        <Muted>Düzenlemek veya silmek için satırı sola kaydırın.</Muted>
+        <Muted>Düzenlemek, silmek veya e-faturayı iptal etmek için satırı sola kaydırın.</Muted>
         {invoices.map((inv: any, idx: number) => {
           const iid = idOf(inv) || String(idx);
+          const danger = invoiceRowDangerAction(inv);
           return (
             <SwipeRevealRow
               key={iid}
@@ -896,6 +916,8 @@ export function ContactDetailScreen() {
               onPress={() => go("InvoiceDetail", { id: idOf(inv) })}
               onEdit={() => editInvoice(inv)}
               onDelete={() => removeInvoice(inv)}
+              deleteLabel={danger === "cancel" ? "İptal" : "Sil"}
+              deleteColor={danger === "cancel" ? colors.warning : colors.danger}
               testID={`detail-inv-${iid}`}
             >
               <ListRow

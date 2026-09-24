@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { mapsLink } from "./ContactLocationModal";
 import { workMapsLink } from "../utils/mapsLink";
@@ -13,7 +13,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, canDeleteInvoice } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, canDeleteInvoice, canCancelInvoice } from "./InvoiceContextMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
@@ -548,9 +548,12 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                         {inv.status === "draft" && !incoming ? (
                           <button onClick={() => sendToGib(inv, inv.e_type)} disabled={busy === inv.id} className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition disabled:opacity-40" title={`${E_TYPE_TR[inv.e_type] || inv.e_type} olarak kes — başka tür için ⋮`} data-testid={`detail-gib-btn-${inv.invoice_number}`}>{busy === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}</button>
                         ) : busy === inv.id ? <Loader2 className="w-4 h-4 animate-spin text-slate-400" /> : <span className="w-7 h-7" aria-hidden="true" />}
-                                                {canDeleteInvoice(inv) && (
+                        {canCancelInvoice(inv) ? (
+                          <button onClick={() => cancelInvoice(inv)} className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition" title="Faturayı iptal et" data-testid={`detail-inv-cancel-${inv.invoice_number}`}><XCircle className="w-4 h-4" /></button>
+                        ) : null}
+                        {canDeleteInvoice(inv) ? (
                           <button onClick={() => deleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : "Kağıt faturayı sil"} data-testid={`detail-inv-delete-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
-                        )}
+                        ) : null}
 <button type="button" onClick={(e) => openInvCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`detail-inv-more-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                       </div>
                     </td>

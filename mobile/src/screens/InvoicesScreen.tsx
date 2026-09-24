@@ -1,14 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { Fragment, useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { get } from "../api/client";
+import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { Empty, ErrorBanner, Field, ListRow, PrimaryButton, Screen } from "../components/kit";
+import { confirmAction } from "../components/chips";
+import { SwipeRevealRow } from "../components/SwipeRevealRow";
+import { Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
-import { createInvoiceButtonLabel, INVOICE_FILTERS, invoiceListSubtitle, invoiceListTitle } from "../utils/invoiceDraft";
+import { createInvoiceButtonLabel, INVOICE_FILTERS, invoiceListSubtitle, invoiceListTitle, invoiceRowDangerAction } from "../utils/invoiceDraft";
 import { fmtMoney, idOf } from "../utils/money";
 
 const FILTER_ICONS: Record<string, { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
@@ -30,6 +32,7 @@ export function InvoicesScreen() {
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [openRow, setOpenRow] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -45,6 +48,41 @@ export function InvoicesScreen() {
   }, [client, companyId, type]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const actOnInvoice = (inv: Invoice) => {
+    if (!canEdit) { setError("Fatura düzenleme yetkiniz yok."); return; }
+    const kind = invoiceRowDangerAction(inv);
+    if (kind === "delete") {
+      const label = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
+      confirmAction("Faturayı sil", `${inv.invoice_number || "Fatura"} numaralı ${label} çöp kutusuna taşınsın mı?`, async () => {
+        try {
+          await del(client, `/invoices/${idOf(inv)}`);
+          setOpenRow(null);
+          setError(null);
+          await load();
+        } catch (err) {
+          setError(apiErrorMessage(err, "Fatura silinemedi."));
+        }
+      });
+      return;
+    }
+    if (kind === "cancel") {
+      confirmAction(
+        "Faturayı iptal et",
+        `${inv.invoice_number || "Fatura"} numaralı fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; kayıt listede kalır.`,
+        async () => {
+          try {
+            await post(client, `/invoices/${idOf(inv)}/cancel`, {});
+            setOpenRow(null);
+            setError(null);
+            await load();
+          } catch (err) {
+            setError(apiErrorMessage(err, "Fatura iptal edilemedi."));
+          }
+        },
+      );
+    }
+  };
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -106,16 +144,42 @@ export function InvoicesScreen() {
           title="Fatura yok"
           hint={canEdit ? "Yeni fatura kesin veya taslak düzenleyin." : "Aramayı veya filtreyi değiştirin."}
         />
-      ) : filtered.map((inv) => (
-        <ListRow
-          key={idOf(inv)}
-          testID={`inv-row-${idOf(inv)}`}
-          title={invoiceListTitle(inv)}
-          subtitle={invoiceListSubtitle(inv)}
-          right={fmtMoney(inv.grand_total, inv.currency)}
-          onPress={() => go("InvoiceDetail", { id: idOf(inv) })}
-        />
-      ))}
+      ) : (
+        <>
+          {canEdit ? <Muted>Silmek veya e-faturayı iptal etmek için satırı sola kaydırın.</Muted> : null}
+          {filtered.map((inv) => {
+            const iid = idOf(inv);
+            const danger = invoiceRowDangerAction(inv);
+            const row = (
+              <ListRow
+                testID={canEdit && danger ? undefined : `inv-row-${iid}`}
+                title={invoiceListTitle(inv)}
+                subtitle={invoiceListSubtitle(inv)}
+                right={fmtMoney(inv.grand_total, inv.currency)}
+                onPress={canEdit && danger ? undefined : () => go("InvoiceDetail", { id: iid })}
+              />
+            );
+            if (!canEdit || !danger) {
+              return <Fragment key={iid}>{row}</Fragment>;
+            }
+            return (
+              <SwipeRevealRow
+                key={iid}
+                rowKey={iid}
+                openKey={openRow}
+                onOpen={setOpenRow}
+                onPress={() => go("InvoiceDetail", { id: iid })}
+                onDelete={() => actOnInvoice(inv)}
+                deleteLabel={danger === "cancel" ? "İptal" : "Sil"}
+                deleteColor={danger === "cancel" ? colors.warning : colors.danger}
+                testID={`inv-row-${iid}`}
+              >
+                {row}
+              </SwipeRevealRow>
+            );
+          })}
+        </>
+      )}
     </Screen>
   );
 }
