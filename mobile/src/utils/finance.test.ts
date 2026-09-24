@@ -7,6 +7,7 @@ import {
   expenseCalc,
   expenseCategoryGroups,
   expensePayload,
+  expenseProjectSelectGroups,
   accountGroupTone,
   bankingFilterLabel,
   bankingListFilterKeys,
@@ -100,6 +101,8 @@ describe("finance drafts", () => {
     const partnerBody = expensePayload(d, "comp");
     expect(partnerBody.account_id).toBeNull();
     expect(partnerBody.partner_id).toBe("p9");
+    d.project_id = "prj-from-form";
+    expect(expensePayload(d, "comp").project_id).toBe("prj-from-form");
     const proj = emptyProjectExpenseDraft("2026-09-19");
     proj.description = "Şantiye";
     proj.amount = "250";
@@ -109,6 +112,10 @@ describe("finance drafts", () => {
       description: "Şantiye",
       vat_included: true,
     });
+    expect(expenseProjectSelectGroups([
+      { id: "p1", name: "Villa", project_number: "PRJ-1" },
+      { name: "boş" },
+    ])[0].options).toEqual([{ value: "p1", label: "PRJ-1 · Villa" }]);
   });
 
   it("groups payment targets like web PaymentTargetSelect", () => {

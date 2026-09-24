@@ -41,7 +41,7 @@ describe("expenseScan", () => {
       vat_included: "1",
       contact_id: "c1",
     });
-    const filled = applyExpensePrefill(emptyExpenseDraft("2026-09-21"), params);
+    const filled = applyExpensePrefill(emptyExpenseDraft("2026-09-21"), { ...params, project_id: "prj1" });
     expect(filled).toMatchObject({
       amount: "80",
       category: "Yemek",
@@ -49,6 +49,7 @@ describe("expenseScan", () => {
       vat_rate: "10",
       vat_included: true,
       contact_id: "c1",
+      project_id: "prj1",
     });
   });
 });

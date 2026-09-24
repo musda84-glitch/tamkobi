@@ -16,6 +16,7 @@ import {
   expenseCalc,
   expenseCategoryGroups,
   expensePayload,
+  expenseProjectSelectGroups,
   paymentTargetGroups,
   splitPaymentTarget,
   validateExpenseDraft,
@@ -23,10 +24,12 @@ import {
   type Expense,
   type ExpenseCategory,
   type ExpenseDraft,
+  type ExpenseProject,
   type Partner,
 } from "../utils/finance";
 import { applyExpensePrefill, applyExpenseScan } from "../utils/expenseScan";
 import { fmtMoney, idOf, moneySuffix, todayIso } from "../utils/money";
+import { asWorkList } from "../utils/workDocs";
 
 export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const { client, companyId, can } = useAuth();
@@ -41,6 +44,7 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
     vat_included?: string;
     notes?: string;
     contact_id?: string;
+    project_id?: string;
   }>();
   const canEdit = can("/expenses", "edit");
   const isNew = !expenseId;
@@ -48,6 +52,7 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [projects, setProjects] = useState<ExpenseProject[]>([]);
   const [categories, setCategories] = useState<ExpenseCategory[]>([]);
   const [addedCats, setAddedCats] = useState<string[]>([]);
   const [custQ, setCustQ] = useState("");
@@ -62,16 +67,18 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
 
   const load = useCallback(async () => {
     try {
-      const [acc, cats, cnt, pars] = await Promise.all([
+      const [acc, cats, cnt, pars, prjs] = await Promise.all([
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
         get<ExpenseCategory[]>(client, "/expenses/categories", { company_id: companyId }).catch(() => []),
         get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }).catch(() => []),
         get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
+        get<ExpenseProject[]>(client, "/projects", { company_id: companyId, light: 1 }).catch(() => []),
       ]);
       setAccounts(acc || []);
       setPartners((pars || []).filter((p) => p.is_active !== false));
       setCategories(cats || []);
       setContacts((cnt || []).filter((c) => c.type !== "customer"));
+      setProjects(asWorkList<ExpenseProject>(prjs));
       if (expenseId) {
         const list = await get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, q: expenseId });
         const found = (list.expenses || []).find((e) => idOf(e) === expenseId)
@@ -206,6 +213,14 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       {catQ.trim() ? (
         <PrimaryButton title={`Kategori: ${catQ.trim()}`} onPress={addCategory} color={colors.primary} testID="exp-cat-add" />
       ) : null}
+      <GroupedSelect
+        label="Proje (opsiyonel)"
+        testID="exp-project-select"
+        value={draft.project_id}
+        onChange={(v) => canEdit && set("project_id", v)}
+        emptyLabel="Projesiz"
+        groups={expenseProjectSelectGroups(projects)}
+      />
       <Field label="Açıklama" testID="exp-description" value={draft.description} onChangeText={(v) => set("description", v)} editable={canEdit} />
       <Muted>Para birimi</Muted>
       <Row style={{ flexWrap: "wrap" }}>
