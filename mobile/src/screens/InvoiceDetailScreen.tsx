@@ -16,6 +16,7 @@ import { splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups, type BankAccount, type Partner } from "../utils/finance";
 import { computeLine, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
 import {
+  canCancelInvoice,
   canDeleteInvoice,
   canEditInvoiceItems,
   E_TYPES,
@@ -220,6 +221,20 @@ export function InvoiceDetailScreen() {
         router.back();
       }, "Silinemedi.");
     });
+  };
+
+  const cancel = () => {
+    if (!canCancelInvoice(inv) || !canEdit) return;
+    confirmAction(
+      "Faturayı iptal et",
+      `${inv.invoice_number} numaralı fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; kayıt listede kalır.`,
+      () => {
+        run(async () => {
+          const r = await post<{ message?: string }>(client, `/invoices/${id}/cancel`, {});
+          setMessage(r.message || "Fatura iptal edildi.");
+        }, "İptal edilemedi.");
+      },
+    );
   };
 
   return (
@@ -464,6 +479,12 @@ export function InvoiceDetailScreen() {
         />
       ) : null}
 
+      {canEdit && canCancelInvoice(inv) ? (
+        <Pressable onPress={cancel} testID="inv-cancel" style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14 }}>
+          <Ionicons name="close-circle-outline" size={18} color={colors.warning} />
+          <Text style={{ color: colors.warning, fontWeight: "800" }}>Faturayı iptal et</Text>
+        </Pressable>
+      ) : null}
       {canEdit && canDeleteInvoice(inv) ? (
         <Pressable onPress={remove} testID="inv-delete" style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14 }}>
           <Ionicons name="trash-outline" size={18} color={colors.danger} />

@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice } from "../components/InvoiceContextMenu";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { GibContactLookup } from "../components/GibContactLookup";
@@ -48,7 +48,7 @@ import {
   ArrowDown,
   ArrowUpDown,
   ChevronDown,
-  FileCheck2, CheckCircle, XCircle } from "lucide-react";
+  FileCheck2, CheckCircle, XCircle, Trash2 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const typeBadge = (inv) => {
@@ -747,7 +747,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       ) : (() => {
                         const incoming = isIncomingPurchaseInvoice(inv);
                         return (
-                      <div className="grid grid-cols-[repeat(7,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
+                      <div className="grid grid-cols-[repeat(9,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
                         {inv.status === "draft" && !incoming ? (
                           <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
@@ -778,6 +778,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                             <CheckCircle2 className="w-4 h-4" />
                           </button>
                         )}
+                        {canCancelInvoice(inv) ? (
+                          <button type="button" onClick={() => handleCancelInvoice(inv)} className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition" title="Faturayı iptal et" data-testid={`cancel-inv-btn-${inv.invoice_number}`}><XCircle className="w-4 h-4" /></button>
+                        ) : <span className="w-7 h-7" aria-hidden="true" />}
+                        {canDeleteInvoice(inv) ? (
+                          <button type="button" onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : "Kağıt faturayı sil"} data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
+                        ) : <span className="w-7 h-7" aria-hidden="true" />}
                         <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                         {inv.invoice_type === 'dispatch' ? (
                           <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>

@@ -437,6 +437,21 @@ export function canDeleteInvoice(inv?: Invoice | null): boolean {
   return true;
 }
 
+/** Onaylı faturalar iptal edilebilir (silinmez). Ödemeli olanlarda düğme görünür; sunucu tahsilatı ister. */
+export function canCancelInvoice(inv?: Invoice | null): boolean {
+  if (!inv) return false;
+  if (inv.status === "cancelled" || inv.status === "draft") return false;
+  if (inv.invoice_type === "dispatch") return false;
+  return true;
+}
+
+/** Liste kaydırması: kağıt/taslak silinir, e-belge iptal edilir. */
+export function invoiceRowDangerAction(inv?: Invoice | null): "delete" | "cancel" | null {
+  if (canDeleteInvoice(inv)) return "delete";
+  if (canCancelInvoice(inv)) return "cancel";
+  return null;
+}
+
 export function isIncomingPurchaseInvoice(inv?: Invoice | null): boolean {
   if (!inv || inv.invoice_type !== "purchase") return false;
   if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return true;

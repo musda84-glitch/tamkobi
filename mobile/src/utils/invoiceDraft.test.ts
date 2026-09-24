@@ -1,6 +1,8 @@
 import {
   applyTradeKind,
+  canCancelInvoice,
   canDeleteInvoice,
+  invoiceRowDangerAction,
   canEditInvoiceItems,
   createInvoiceButtonLabel,
   invoiceDetailTotals,
@@ -172,6 +174,18 @@ describe("invoiceDraft", () => {
     expect(canDeleteInvoice({ status: "approved", e_type: "paper", paid_amount: 0 })).toBe(true);
     expect(canDeleteInvoice({ status: "approved", e_type: "e_invoice" })).toBe(false);
     expect(canDeleteInvoice({ status: "approved", e_type: "paper", paid_amount: 10 })).toBe(false);
+  });
+
+  it("cancels issued e-invoices and paper, not drafts or dispatches", () => {
+    expect(canCancelInvoice({ status: "approved", e_type: "e_invoice" })).toBe(true);
+    expect(canCancelInvoice({ status: "approved", e_type: "e_archive", payment_status: "paid" })).toBe(true);
+    expect(canCancelInvoice({ status: "draft", e_type: "e_invoice" })).toBe(false);
+    expect(canCancelInvoice({ status: "cancelled", e_type: "e_invoice" })).toBe(false);
+    expect(canCancelInvoice({ status: "approved", invoice_type: "dispatch" })).toBe(false);
+    expect(invoiceRowDangerAction({ status: "draft" })).toBe("delete");
+    expect(invoiceRowDangerAction({ status: "approved", e_type: "paper", paid_amount: 0 })).toBe("delete");
+    expect(invoiceRowDangerAction({ status: "approved", e_type: "e_invoice" })).toBe("cancel");
+    expect(invoiceRowDangerAction({ status: "cancelled", e_type: "e_invoice" })).toBe(null);
   });
 
   it("flags incoming purchase e-invoices pending GİB response", () => {

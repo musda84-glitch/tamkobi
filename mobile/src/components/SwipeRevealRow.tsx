@@ -19,6 +19,8 @@ export function SwipeRevealRow({
   onPress,
   children,
   testID,
+  deleteLabel = "Sil",
+  deleteColor = colors.danger,
 }: {
   rowKey: string;
   openKey: string | null;
@@ -28,6 +30,8 @@ export function SwipeRevealRow({
   onPress?: () => void;
   children: React.ReactNode;
   testID?: string;
+  deleteLabel?: string;
+  deleteColor?: string;
 }) {
   const open = openKey === rowKey;
   const pan = useRef(new Animated.Value(open ? -SWIPE_MENU_W : 0)).current;
@@ -115,10 +119,10 @@ export function SwipeRevealRow({
         <Pressable
           testID={testID ? `${testID}-del` : undefined}
           onPress={onDelete}
-          style={{ width: onEdit ? ACTION_W : SWIPE_MENU_W, alignItems: "center", justifyContent: "center", backgroundColor: colors.danger }}
+          style={{ width: onEdit ? ACTION_W : SWIPE_MENU_W, alignItems: "center", justifyContent: "center", backgroundColor: deleteColor }}
         >
-          <Ionicons name="trash-outline" size={18} color="#fff" />
-          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11, marginTop: 2 }}>Sil</Text>
+          <Ionicons name={deleteLabel === "İptal" ? "close-circle-outline" : "trash-outline"} size={18} color="#fff" />
+          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 11, marginTop: 2 }}>{deleteLabel}</Text>
         </Pressable>
       </View>
       <Animated.View
