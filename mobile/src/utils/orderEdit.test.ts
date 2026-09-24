@@ -1,4 +1,4 @@
-import { cartFromOrderItems, canStaffDeleteOrder, canStaffEditOrder, orderStatusOf, orderUpdatePayload, setCartLineQty } from "./orderEdit";
+import { cartFromOrderItems, canStaffDeleteOrder, canStaffEditOrder, orderStatusOf, orderUpdatePayload, removeOrderLine, setCartLineQty } from "./orderEdit";
 
 describe("staff order gates", () => {
   it("lets pending B2B/saha orders be edited and deleted", () => {
@@ -41,5 +41,13 @@ describe("order edit cart", () => {
     expect(payload.notes).toBe("not");
     expect(payload.customer_order_number).toBe("PO-1");
     expect(payload.items[0].product_id).toBe("a");
+  });
+
+  it("refuses deleting the last order line", () => {
+    const rows = [{ name: "A" }, { name: "B" }];
+    expect(removeOrderLine(rows, 0)).toEqual([{ name: "B" }]);
+    expect(removeOrderLine(rows, 1)).toEqual([{ name: "A" }]);
+    expect(removeOrderLine([{ name: "A" }], 0)).toBeNull();
+    expect(removeOrderLine(rows, -1)).toEqual(rows);
   });
 });
