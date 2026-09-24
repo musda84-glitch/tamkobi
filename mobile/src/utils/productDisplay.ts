@@ -111,6 +111,43 @@ export function asList<T>(raw: unknown): T[] {
 const MAX_LIST_THUMB = 2048;
 
 /** Liste küçük resmi: data/blob ve aşırı uzun URI bellek patlatır. */
+/** Sipariş / fatura satır görseli: satır alanı, yoksa stok kartı. */
+export function lineItemImage(
+  item?: Record<string, unknown> | null,
+  catalog?: Record<string, Pick<Product, "thumbnail_url" | "image_url" | "images"> & { image?: unknown; photo?: unknown }> | null,
+): string {
+  if (item) {
+    const fromLine = mediaRef(item.thumbnail_url)
+      || mediaRef(item.image_url)
+      || mediaRef(item.print_image_url)
+      || mediaRef(item.photo)
+      || mediaRef(item.image);
+    if (fromLine) return listSafeThumb(fromLine);
+  }
+  if (!item || !catalog) return "";
+  const pid = String(item.product_id || "").trim();
+  const sku = String(item.sku || "").trim();
+  const prod = (pid && catalog[pid]) || (sku ? catalog[`sku:${sku}`] : null) || null;
+  return prod ? listSafeThumb(productImage(prod)) : "";
+}
+
+export function lineProductIds(items?: Array<Record<string, unknown>> | null): string[] {
+  return [...new Set((items || []).map((it) => String(it.product_id || "").trim()).filter(Boolean))];
+}
+
+export function indexProductsByKey<T extends { id?: string; _id?: string; sku?: string }>(
+  rows?: T[] | null,
+): Record<string, T> {
+  const map: Record<string, T> = {};
+  for (const p of rows || []) {
+    const id = String(p.id || p._id || "").trim();
+    if (id) map[id] = p;
+    const sku = String(p.sku || "").trim();
+    if (sku) map[`sku:${sku}`] = p;
+  }
+  return map;
+}
+
 export function listSafeThumb(uri: unknown): string {
   const s = mediaRef(uri);
   if (!s || s.length > MAX_LIST_THUMB) return "";

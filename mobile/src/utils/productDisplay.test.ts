@@ -1,4 +1,4 @@
-import { asList, filterProducts, lastPurchaseLabel, lastSaleLabel, listSafeThumb, productCategoryGroups, productGalleryUrls, productImage, productPickSubtitle, productSkuLabel, slimListProducts, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
+import { asList, filterProducts, indexProductsByKey, lastPurchaseLabel, lastSaleLabel, lineItemImage, lineProductIds, listSafeThumb, productCategoryGroups, productGalleryUrls, productImage, productPickSubtitle, productSkuLabel, slimListProducts, stockBadge, stockBarcodeLabel, stockQtyLabel, stockRightLabel, stockRowSubtitle } from "./productDisplay";
 
 describe("productDisplay", () => {
   it("prefers thumbnail, then main image, then gallery", () => {
@@ -95,5 +95,16 @@ describe("productDisplay", () => {
     expect(lastSaleLabel({ last_sale_price: 120, last_sale_contact: "Mustafa" }, (n) => `${n} ₺`)).toBe("Son satış 120 ₺ · Mustafa");
     expect(lastSaleLabel({ sale_price: 99 }, (n) => `${n} ₺`)).toBe("Son satış 99 ₺");
     expect(lastSaleLabel({}, (n) => `${n} ₺`)).toBe("");
+  });
+
+  it("reads the line photo then falls back to the stock card", () => {
+    const catalog = indexProductsByKey([
+      { id: "p1", sku: "DRD-70", image_url: "/api/files/stok.jpg" },
+    ]);
+    expect(lineItemImage({ image_url: "/api/files/satir.jpg", product_id: "p1" }, catalog)).toBe("/api/files/satir.jpg");
+    expect(lineItemImage({ product_id: "p1" }, catalog)).toBe("/api/files/stok.jpg");
+    expect(lineItemImage({ sku: "DRD-70" }, catalog)).toBe("/api/files/stok.jpg");
+    expect(lineItemImage({ product_name: "Raf" }, catalog)).toBe("");
+    expect(lineProductIds([{ product_id: "p1" }, { product_id: "p1" }, { product_id: "p2" }])).toEqual(["p1", "p2"]);
   });
 });
