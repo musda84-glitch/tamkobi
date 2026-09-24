@@ -10,6 +10,7 @@ import {
   pendingPickCount,
   pendingSevkCount,
   scanErrorMessage,
+  scanPickPayload,
 } from "./orderPick";
 
 describe("orderPick", () => {
@@ -42,6 +43,12 @@ describe("orderPick", () => {
     expect(adjustPayload(line, -4).picked_qty).toBe(0);
     expect(adjustPayload(line, 3)).toMatchObject({ line_index: 2, product_id: "p1" });
     expect(lineRemaining(line)).toBe(4);
+  });
+
+  it("sends the scan multiplier with the barcode", () => {
+    expect(scanPickPayload(" ABC ", "4")).toEqual({ barcode: "ABC", quantity: 4 });
+    expect(scanPickPayload("x", "")).toEqual({ barcode: "x", quantity: 1 });
+    expect(scanPickPayload("x", "0")).toEqual({ barcode: "x", quantity: 1 });
   });
 
   it("parses typed pick qty like the web kiosk", () => {

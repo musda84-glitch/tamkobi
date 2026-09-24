@@ -1,3 +1,5 @@
+import { parseScanQtyInput } from "./scanQty";
+
 export type PickLine = {
   line_index?: number;
   product_id?: string;
@@ -132,6 +134,10 @@ export function adjustPayload(line: PickLine, nextQty: number) {
     product_name: line.product_name,
     picked_qty: Math.max(0, Math.min(nextQty, ordered)),
   };
+}
+
+export function scanPickPayload(barcode: string, qtyRaw?: string | number | null): { barcode: string; quantity: number } {
+  return { barcode: String(barcode || "").trim(), quantity: parseScanQtyInput(qtyRaw) };
 }
 
 /** Web kiosk ile aynı: virgül/nokta, boş/geçersiz → mevcut, fazla → sipariş adedi. */

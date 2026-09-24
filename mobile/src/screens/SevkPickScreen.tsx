@@ -20,9 +20,11 @@ import {
   pickStatusTr,
   pickSummaryText,
   scanErrorMessage,
+  scanPickPayload,
   type PickLine,
   type PickSession,
 } from "../utils/orderPick";
+import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import { printPickProductLabels } from "../utils/pickLabelPrint";
 import { ProgressBar } from "./SevkScreen";
 
@@ -37,6 +39,7 @@ export function SevkPickScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
+  const [scanQty, setScanQty] = useState("1");
 
   const load = useCallback(async () => {
     try {
@@ -64,7 +67,7 @@ export function SevkPickScreen() {
     if (!value) return;
     setBusy(true);
     try {
-      const s = await post<PickSession>(client, `/order-picks/${id}/scan`, { barcode: value, quantity: 1 });
+      const s = await post<PickSession>(client, `/order-picks/${id}/scan`, scanPickPayload(value, scanQty));
       apply(s);
       setCode("");
       setError(null);
@@ -174,6 +177,29 @@ export function SevkPickScreen() {
             onSubmitEditing={() => submitScan(code)}
           />
           <Row>
+            <View style={{ width: 64 }}>
+              <Text style={{ fontSize: 10, fontWeight: "800", color: colors.muted, textAlign: "center" }}>Adet</Text>
+              <TextInput
+                testID="sevk-scan-qty"
+                accessibilityLabel="Adet çarpan"
+                value={scanQtyShown(scanQty)}
+                onChangeText={(v) => setScanQty(v.replace(/[^\d]/g, ""))}
+                onFocus={() => setScanQty(scanQtyOnFocus())}
+                onBlur={() => setScanQty(scanQtyOnBlur(scanQty))}
+                keyboardType="number-pad"
+                selectTextOnFocus
+                style={{
+                  minHeight: 44,
+                  textAlign: "center",
+                  fontWeight: "800",
+                  fontSize: 18,
+                  color: colors.text,
+                  borderBottomWidth: 2,
+                  borderBottomColor: colors.border,
+                  padding: 0,
+                }}
+              />
+            </View>
             <View style={{ flex: 1 }}>
               <PrimaryButton title="Okut" onPress={() => setScan("once")} color={colors.indigo} testID="sevk-scan-btn" />
             </View>
@@ -280,6 +306,9 @@ export function SevkPickScreen() {
       <BarcodeScannerModal
         visible={!!scan}
         continuous={scan === "serial"}
+        qtyEnabled
+        qty={scanQty}
+        onQtyChange={setScanQty}
         onClose={() => setScan(null)}
         onScan={submitScan}
       />
