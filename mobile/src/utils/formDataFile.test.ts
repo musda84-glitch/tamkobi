@@ -7,6 +7,7 @@ import {
   isExpoFetchFilePart,
   pickBrowserImage,
   pickBrowserImages,
+  pickBrowserReceipt,
   pickerFileMeta,
   resolveUploadBlob,
   uploadedImageUrl,
@@ -49,6 +50,26 @@ describe("pickBrowserImage", () => {
     const picked = await pickBrowserImages(() => input as unknown as HTMLInputElement);
     expect(input.multiple).toBe(true);
     expect(picked.map((x) => x.fileName)).toEqual(["a.jpg", "b.jpg"]);
+  });
+});
+
+describe("pickBrowserReceipt", () => {
+  it("opens the camera capture input", async () => {
+    const file = { name: "shot.jpg", type: "image/jpeg" } as File;
+    const attrs: Record<string, string> = {};
+    const input = {
+      type: "",
+      accept: "",
+      multiple: true,
+      files: [file],
+      onchange: null as (() => void) | null,
+      setAttribute(name: string, value: string) { attrs[name] = value; },
+      click() { this.onchange?.(); },
+    };
+    const picked = await pickBrowserReceipt("camera", () => input as unknown as HTMLInputElement);
+    expect(input.accept).toBe("image/*");
+    expect(attrs.capture).toBe("environment");
+    expect(picked?.fileName).toBe("shot.jpg");
   });
 });
 

@@ -50,6 +50,28 @@ export async function pickBrowserImage(
   return rows[0] || null;
 }
 
+/** Web Glass: kamera capture veya galeri/PDF. Native ImagePicker ayrı. */
+export function pickBrowserReceipt(
+  mode: "camera" | "gallery" = "gallery",
+  createInput: () => HTMLInputElement | null = () => (typeof document !== "undefined" ? document.createElement("input") : null),
+): Promise<PickerAssetLike | null> {
+  const input = createInput();
+  if (!input) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    input.type = "file";
+    input.accept = mode === "gallery" ? "image/*,application/pdf" : "image/*";
+    input.multiple = false;
+    if (mode === "camera") {
+      try { input.setAttribute("capture", "environment"); } catch { /* jsdom */ }
+    }
+    input.onchange = () => {
+      const files = Array.from(input.files || []);
+      resolve(files[0] ? fileToPickerAsset(files[0]) : null);
+    };
+    input.click();
+  });
+}
+
 export function pickerFileMeta(asset: PickerAssetLike, fallbackName = "photo.jpg") {
   const name = (asset.fileName || "").trim() || fallbackName;
   const type = (asset.mimeType || "").trim() || "image/jpeg";
