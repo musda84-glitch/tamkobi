@@ -51,6 +51,124 @@ def now_hm(schedule: Optional[dict] = None) -> str:
     return local_now(schedule).strftime("%H:%M")
 
 
+def previous_ymd(date: str) -> str:
+    return (datetime.strptime(str(date)[:10], "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def is_early_hours(hm: str, schedule: Optional[dict] = None) -> bool:
+    """00:00–mesai başı: bir önceki iş gününün gece kapanışı."""
+    start = str((schedule or {}).get("start") or DEFAULT_SCHEDULE["start"])[:5]
+    try:
+        return _hm(str(hm)[:5]) < _hm(start)
+    except Exception:
+        return False
+
+
+def is_overnight_pair(inn: Optional[str], out: Optional[str], schedule: Optional[dict] = None) -> bool:
+    """07:00 çıkış + 09:30 giriş aynı vardiya değil: çıkış dünün kapanışı, giriş yeni gün."""
+    inn_s, out_s = str(inn or "")[:5], str(out or "")[:5]
+    if not inn_s or not out_s or not is_early_hours(out_s, schedule):
+        return False
+    try:
+        return _hm(inn_s) > _hm(out_s)
+    except Exception:
+        return False
+
+
+def same_morning_early_shift(inn: Optional[str], out: Optional[str], schedule: Optional[dict] = None) -> bool:
+    """00:30–07:00 gibi aynı takvim sabahı: ikisi de mesai başından önce ve giriş < çıkış."""
+    inn_s, out_s = str(inn or "")[:5], str(out or "")[:5]
+    if not inn_s or not out_s:
+        return False
+    if not is_early_hours(inn_s, schedule) or not is_early_hours(out_s, schedule):
+        return False
+    try:
+        return _hm(inn_s) < _hm(out_s)
+    except Exception:
+        return False
+
+
+def same_shift_order_error(action: str, clock: str, existing: Optional[dict], schedule: Optional[dict] = None) -> Optional[str]:
+    """Aynı vardiyada giriş çıkıştan sonra / çıkış girişten önce olamaz.
+    09:30 giriş ile 07:00 gece çıkışı kıyaslanmaz."""
+    rec = existing or {}
+    inn = clock if action == "check_in" else rec.get("check_in")
+    out = clock if action == "check_out" else rec.get("check_out")
+    inn_s, out_s = str(inn or "")[:5], str(out or "")[:5]
+    if not inn_s or not out_s:
+        return None
+    if rec.get("overnight_checkout") or is_overnight_pair(inn_s, out_s, schedule):
+        return None
+    try:
+        if action == "check_in" and _hm(inn_s) > _hm(out_s):
+            return f"Giriş saati ({inn_s}) çıkıştan ({out_s}) sonra olamaz."
+        if action == "check_out" and _hm(out_s) < _hm(inn_s):
+            return f"Çıkış saati ({out_s}) girişten ({inn_s}) önce olamaz."
+    except Exception:
+        return None
+    return None
+
+
+def should_close_previous_day(clock: str, schedule: Optional[dict], today_rec: Optional[dict], yesterday_rec: Optional[dict]) -> bool:
+    """Mesai başından önceki çıkış dünü kapatır — bugün 09:30 giriş olsa bile."""
+    today_rec = today_rec or {}
+    yesterday_rec = yesterday_rec or {}
+    if not is_early_hours(clock, schedule):
+        return False
+    if not (yesterday_rec.get("check_in") and not yesterday_rec.get("check_out")):
+        return False
+    inn = str(today_rec.get("check_in") or "")[:5]
+    if inn and same_morning_early_shift(inn, clock, schedule):
+        return False
+    return True
+
+
+def should_rehome_early_checkout(
+    today_rec: Optional[dict],
+    yesterday_rec: Optional[dict],
+    schedule: Optional[dict] = None,
+    proposed_in: Optional[str] = None,
+) -> bool:
+    """Bugünkü 07:00 çıkışı dünün açık mesaisini kapatır; 09:30 girişi bugünde kalır."""
+    rec = dict(today_rec or {})
+    if proposed_in:
+        rec["check_in"] = proposed_in
+    yest = yesterday_rec or {}
+    out = str(rec.get("check_out") or "")[:5]
+    if not out or not is_early_hours(out, schedule):
+        return False
+    if not yest.get("check_in") or yest.get("check_out"):
+        return False
+    inn = str(rec.get("check_in") or "")[:5]
+    if inn and same_morning_early_shift(inn, out, schedule):
+        return False
+    return True
+
+
+def should_clear_orphan_early_checkout(
+    today_rec: Optional[dict],
+    yesterday_rec: Optional[dict],
+    schedule: Optional[dict] = None,
+    proposed_in: Optional[str] = None,
+) -> bool:
+    """Dün kapalıysa bugüne yazılmış gece çıkışını sil — 09:30 giriş yeni güne aittir."""
+    rec = dict(today_rec or {})
+    if proposed_in:
+        rec["check_in"] = proposed_in
+    yest = yesterday_rec or {}
+    out = str(rec.get("check_out") or "")[:5]
+    if not out or not is_early_hours(out, schedule):
+        return False
+    if yest.get("check_in") and not yest.get("check_out"):
+        return False
+    inn = str(rec.get("check_in") or "")[:5]
+    if not inn:
+        return True
+    if same_morning_early_shift(inn, out, schedule):
+        return False
+    return is_overnight_pair(inn, out, schedule)
+
+
 def _hm(s: str) -> int:
     h, m = map(int, s.split(":"))
     return h * 60 + m
@@ -553,7 +671,8 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
     Onaylı gün içi izin (çıkış–dönüş) çalışılan dakikadan düşülür.
 
     Not: Firma mesaisi aynı takvim günü içindedir (end > start). Çıkış < giriş
-    olduğunda +24s gece sarması yapılmaz — bu veri hatasıdır ve ~24 sa şişirme üretir.
+    olduğunda +24s gece sarması yalnızca overnight_checkout işaretliyken yapılır
+    (00:00 sonrası dünün kapanışı). Aynı gün ters sıra (13:09/13:07) veri hatasıdır.
     """
     out = {"hours": 0.0, "normal_hours": 0.0, "overtime_hours": 0.0, "late_minutes": 0, "early_leave_minutes": 0, "is_off_day": False,
            "assigned_overtime_hours": 0.0, "expected_end": None, "intraday_leave_minutes": 0, "time_order_invalid": False}
@@ -587,10 +706,13 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
         return out
     a, b = _hm(ci), _hm(co)
     if b < a:
-        # Aynı gün mesaisinde çıkış < giriş → gece vardiyası değil, bozuk kayıt
-        out["time_order_invalid"] = True
-        out["early_leave_minutes"] = max(0, expected_end_m - b) if not out["is_off_day"] else 0
-        return out
+        if rec.get("overnight_checkout"):
+            b += 24 * 60
+        else:
+            # Aynı gün mesaisinde çıkış < giriş → gece vardiyası değil, bozuk kayıt
+            out["time_order_invalid"] = True
+            out["early_leave_minutes"] = max(0, expected_end_m - b) if not out["is_off_day"] else 0
+            return out
     worked = max(0, b - a - win["break_minutes"] - leave_m)
     if out["is_off_day"]:
         ot = worked
@@ -1070,7 +1192,7 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
            "assigned_overtime_hours": assigned_ot}
     if rec["status"] in ("absent", "leave"):
         rec.update({"check_in": None, "check_out": None})
-    for k in ("early_leave_request", "early_leave_approved", "intraday_leave_request", "intraday_leave_approved", "geo_confirm_request", "manager_confirmed"):
+    for k in ("early_leave_request", "early_leave_approved", "intraday_leave_request", "intraday_leave_approved", "geo_confirm_request", "manager_confirmed", "overnight_checkout"):
         if k in patch:
             rec[k] = patch[k]
         elif existing.get(k) is not None:
@@ -1284,6 +1406,90 @@ def enrich_attendance_row(rec: Optional[dict], schedule: dict, plan: Optional[di
     return row
 
 
+async def rehome_early_checkout(emp: dict, today: str, schedule: Optional[dict] = None, proposed_in: Optional[str] = None) -> bool:
+    """00:00 sonrası yanlışlıkla bugüne yazılan gece çıkışını düne taşı; bugünü boşalt."""
+    ydate = previous_ymd(today)
+    today_rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+    yest = await _db.attendance.find_one({"employee_id": emp["_id"], "date": ydate}) or {}
+    out = str(today_rec.get("check_out") or "")[:5]
+    inn = today_rec.get("check_in")
+    gcr = _pending_overnight_checkout(today_rec, schedule)
+    if should_rehome_early_checkout(today_rec, yest, schedule, proposed_in=proposed_in):
+        y_patch = {"status": "present", "check_out": out, "overnight_checkout": True}
+        if gcr and not ((yest.get("geo_confirm_request") or {}).get("status") == "pending"):
+            y_patch["geo_confirm_request"] = gcr
+        await apply_day(emp, ydate, y_patch, source=today_rec.get("source") or "self", confirmed=True)
+        await apply_day(emp, today, _today_after_early_out_removed(today_rec, inn, schedule), source=today_rec.get("source") or "self")
+        return True
+    if should_clear_orphan_early_checkout(today_rec, yest, schedule, proposed_in=proposed_in):
+        await apply_day(emp, today, _today_after_early_out_removed(today_rec, inn, schedule), source=today_rec.get("source") or "self")
+        return True
+    if gcr and (proposed_in or is_overnight_pair(inn, gcr.get("proposed_time") or out, schedule)):
+        if today_rec.get("_id"):
+            await _db.attendance.update_one(
+                {"_id": today_rec["_id"]},
+                {"$unset": {"geo_confirm_request": ""}, "$set": {"updated_at": _now()}},
+            )
+            return True
+    return False
+
+
+def _pending_overnight_checkout(rec: Optional[dict], schedule: Optional[dict] = None) -> Optional[dict]:
+    gcr = (rec or {}).get("geo_confirm_request") or {}
+    if gcr.get("status") != "pending" or gcr.get("action") != "check_out":
+        return None
+    when = str(gcr.get("proposed_time") or (rec or {}).get("check_out") or "")[:5]
+    if when and is_early_hours(when, schedule):
+        return gcr
+    return None
+
+
+def _today_after_early_out_removed(today_rec: dict, inn, schedule: Optional[dict] = None) -> dict:
+    gcr = _pending_overnight_checkout(today_rec, schedule)
+    patch: Dict[str, Any] = {"check_out": None, "overnight_checkout": False}
+    if gcr:
+        patch["geo_confirm_request"] = None
+    if inn:
+        patch["check_in"] = inn
+        patch["status"] = "present"
+        return patch
+    patch["check_in"] = None
+    patch["status"] = today_rec.get("status") if today_rec.get("status") in ("leave", "absent") else "absent"
+    return patch
+
+
+async def rehome_early_checkouts_for_company(company: dict, today: str) -> int:
+    """Personel kartı / puantaj listesi: gece çıkışlarını takvim gününe oturt."""
+    company_id = company.get("_id")
+    if not company_id or _db is None:
+        return 0
+    today_rows = await _db.attendance.find({
+        "company_id": company_id, "date": today, "check_out": {"$nin": [None, ""]},
+    }).to_list(500)
+    if not today_rows:
+        return 0
+    n = 0
+    emps = {e["_id"]: e for e in await _db.employees.find({"_id": {"$in": list({r["employee_id"] for r in today_rows})}}).to_list(500)}
+    for rec in today_rows:
+        emp = emps.get(rec["employee_id"])
+        if not emp:
+            continue
+        if await rehome_early_checkout(emp, today, merge_schedule(company, emp)):
+            n += 1
+    return n
+
+
+async def punch_date_for_action(emp: dict, schedule: dict, action: str, clock: str, today: str) -> str:
+    proposed_in = clock if action == "check_in" else None
+    await rehome_early_checkout(emp, today, schedule, proposed_in=proposed_in)
+    today_rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+    ydate = previous_ymd(today)
+    yest = await _db.attendance.find_one({"employee_id": emp["_id"], "date": ydate}) or {}
+    if action == "check_out" and should_close_previous_day(clock, schedule, today_rec, yest):
+        return ydate
+    return today
+
+
 # ---------- Personel self-servis ----------
 @router.get("/personnel/attendance/me")
 async def my_attendance(request: Request, company_id: Optional[str] = None, month: Optional[str] = None):
@@ -1295,6 +1501,7 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
     schedule = merge_schedule(company, emp)
     month = month or _today(schedule)[:7]
     today_s = _today(schedule)
+    await rehome_early_checkout(emp, today_s, schedule)
     rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(100)
     today = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today_s})
     plans = {p["date"]: p for p in await _db.shift_plans.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}}).to_list(100)}
@@ -1360,9 +1567,13 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     elif action == "check_out" and verdict["verdict"] == "skip" and lat is not None and lng is not None:
         geo = {"latitude": lat, "longitude": lng, "distance_m": None, "accuracy_m": acc or 0, "at": _now(), "enforced": False}
     today = _today(schedule)
-    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
     now_s = now_hm(schedule)
     clock = self_punch_clock(req, action, now_s)
+    date = today
+    if not (req or {}).get("date"):
+        date = await punch_date_for_action(emp, schedule, action, clock, today)
+    existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
+    overnight = date != today and action == "check_out"
     correcting = self_punch_is_correction(existing, action)
     explicit_clock = bool((req or {}).get("time") or (req or {}).get(action))
     if action == "check_out" and not existing.get("check_in") and not existing.get("check_out"):
@@ -1374,39 +1585,19 @@ async def self_attendance(req: Dict[str, Any], request: Request):
         prev = str(existing.get(action) or "")[:5]
         if clock == prev:
             raise HTTPException(status_code=400, detail=f"Bu saat zaten kayıtlı ({prev}). Farklı bir saat seçin.")
-        if action == "check_out" and existing.get("check_in"):
-            try:
-                if _hm(clock) < _hm(str(existing["check_in"])[:5]):
-                    raise HTTPException(status_code=400, detail=f"Çıkış saati ({clock}) girişten ({existing['check_in']}) önce olamaz.")
-            except HTTPException:
-                raise
-            except Exception:
-                pass
-        if action == "check_in" and existing.get("check_out"):
-            try:
-                if _hm(clock) > _hm(str(existing["check_out"])[:5]):
-                    raise HTTPException(status_code=400, detail=f"Giriş saati ({clock}) çıkıştan ({existing['check_out']}) sonra olamaz.")
-            except HTTPException:
-                raise
-            except Exception:
-                pass
+        order_err = same_shift_order_error(action, clock, existing, schedule)
+        if order_err:
+            raise HTTPException(status_code=400, detail=order_err)
         return await open_geo_confirm_request(
-            emp, user, existing, today, action, clock, verdict, lat, lng, acc, workplace,
-            reason="time_edit",
+            emp, user, existing, date, action, clock, verdict, lat, lng, acc, workplace,
+            reason="time_edit", overnight=overnight,
         )
     if action == "check_out" and not self_checkout_unlocked(existing, schedule, now_s):
         raise HTTPException(status_code=400, detail="Çıkış için önce giriş yapın.")
-    if action == "check_out" and existing.get("check_in"):
-        try:
-            if _hm(clock) < _hm(str(existing["check_in"])[:5]):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Çıkış saati ({clock}) girişten ({existing['check_in']}) önce olamaz. Cihaz saatini kontrol edin.",
-                )
-        except HTTPException:
-            raise
-        except Exception:
-            pass
+    if action == "check_out" and existing.get("check_in") and not overnight:
+        order_err = same_shift_order_error(action, clock, existing, schedule)
+        if order_err:
+            raise HTTPException(status_code=400, detail=order_err + " Cihaz saatini kontrol edin.")
     pending = existing.get("geo_confirm_request") or {}
     if pending.get("status") == "pending":
         if pending.get("action") == action:
@@ -1415,10 +1606,13 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             raise HTTPException(status_code=400, detail="Önce bekleyen yönetici teyitli giriş talebinizin onaylanması gerekir.")
     if geo_confirm_needs_manager(verdict.get("verdict")):
         return await open_geo_confirm_request(
-            emp, user, existing, today, action, clock, verdict, lat, lng, acc, workplace,
+            emp, user, existing, date, action, clock, verdict, lat, lng, acc, workplace,
+            overnight=overnight,
         )
     patch = {"status": "present", action: clock}
-    rec = await apply_day(emp, today, patch, source="self", confirmed=True)
+    if overnight:
+        patch["overnight_checkout"] = True
+    rec = await apply_day(emp, date, patch, source="self", confirmed=True)
     extra = {}
     if workplace:
         extra["workplace"] = workplace
@@ -1522,6 +1716,7 @@ async def open_geo_confirm_request(
     acc: Optional[float],
     workplace: Optional[dict],
     reason: Optional[str] = None,
+    overnight: bool = False,
 ) -> dict:
     """Konum kapalı / iş yerinde değil / kayıtlı saat düzeltmesi yönetici teyidine düşer."""
     reason = reason or verdict.get("verdict") or "location_off"
@@ -1538,6 +1733,8 @@ async def open_geo_confirm_request(
         user_id=str(user.get("_id") or user.get("id") or ""),
     )
     extra = {"geo_confirm_request": gcr, "updated_at": _now()}
+    if overnight:
+        extra["overnight_checkout"] = True
     if workplace:
         extra["workplace"] = workplace
     if existing.get("_id"):
@@ -1611,16 +1808,25 @@ async def decide_geo_confirm(att_id: str, req: Dict[str, Any], request: Request)
     if approved:
         if not when:
             raise HTTPException(status_code=400, detail="Talebin saati eksik.")
-        if action == "check_out" and rec.get("check_in"):
-            try:
-                if _hm(when) < _hm(str(rec["check_in"])[:5]):
-                    raise HTTPException(status_code=400, detail=f"Çıkış saati ({when}) girişten ({rec['check_in']}) önce olamaz.")
-            except HTTPException:
-                raise
-            except Exception:
-                pass
+        apply_date = rec.get("date")
+        apply_rec = rec
+        if action == "check_out" and is_early_hours(when, schedule):
+            today_s = _today(schedule)
+            if apply_date == today_s:
+                ydate = previous_ymd(today_s)
+                yest = await _db.attendance.find_one({"employee_id": emp["_id"], "date": ydate}) or {}
+                if should_close_previous_day(when, schedule, rec, yest):
+                    apply_date = ydate
+                    apply_rec = yest or rec
+                    await apply_day(emp, today_s, _today_after_early_out_removed(rec, rec.get("check_in"), schedule), source=rec.get("source") or "self")
+        if action == "check_out" and apply_rec.get("check_in"):
+            order_err = same_shift_order_error(action, when, apply_rec, schedule)
+            if order_err and not apply_rec.get("overnight_checkout"):
+                raise HTTPException(status_code=400, detail=order_err)
         patch = {"status": "present", action: when, "geo_confirm_request": gcr, "manager_confirmed": True}
-        rec = await apply_day(emp, rec.get("date"), patch, source="manager_confirm", confirmed=True)
+        if apply_rec.get("overnight_checkout") or apply_date != rec.get("date"):
+            patch["overnight_checkout"] = True
+        rec = await apply_day(emp, apply_date, patch, source="manager_confirm", confirmed=True)
         extra = {"manager_confirmed": True, "geo_confirm_request": gcr}
         lat, lng = gcr.get("latitude"), gcr.get("longitude")
         geo = None
@@ -1634,8 +1840,8 @@ async def decide_geo_confirm(att_id: str, req: Dict[str, Any], request: Request)
         workplace = rec.get("workplace") or await workplace_for_employee(emp, company)
         if workplace:
             extra["workplace"] = workplace
-        await _db.attendance.update_one({"_id": att_id}, {"$set": extra})
-        rec = _clean(await _db.attendance.find_one({"_id": att_id}))
+        await _db.attendance.update_one({"_id": rec["id"]}, {"$set": extra})
+        rec = _clean(await _db.attendance.find_one({"_id": rec["id"]}))
         try:
             if action == "check_in":
                 await accrue_task_yevmiye(emp, rec, workplace, schedule)
@@ -1643,7 +1849,7 @@ async def decide_geo_confirm(att_id: str, req: Dict[str, Any], request: Request)
                 await sync_yevmiye_adjustment(emp, rec, schedule)
         except Exception:
             pass
-        rec = _clean(await _db.attendance.find_one({"_id": att_id}))
+        rec = _clean(await _db.attendance.find_one({"_id": rec["id"]}))
         msg = f"Yönetici teyitli {geo_confirm_action_tr(action).lower()} {when} kaydedildi."
     else:
         await _db.attendance.update_one(
@@ -1752,6 +1958,8 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
     lt = normalize_location_tracking(emp.get("location_tracking"))
     active_lt = location_mode_for(lt, workplace)
     today = _today(schedule)
+    now_s = now_hm(schedule)
+    await rehome_early_checkout(emp, today, schedule)
     rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
     if rec:
         rec["id"] = rec.get("_id") or rec.get("id")
@@ -1765,16 +1973,30 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
     was_inside = bool(rec.get("location_inside_at") or rec.get("geo_check_in") or emp.get("location_inside_at"))
     punched = None
     punch_msg = None
+    punch_date = today
     if loc and active_lt.get("enabled") and location_ping_checks_out():
         action = geo_auto_action(inside=inside, rec=rec, was_inside=was_inside)
+        if action is None and not inside:
+            ydate = previous_ymd(today)
+            yest = await _db.attendance.find_one({"employee_id": emp["_id"], "date": ydate}) or {}
+            if should_close_previous_day(now_s, schedule, rec, yest) and (
+                was_inside or yest.get("geo_check_in") or yest.get("location_inside_at")
+            ):
+                action = "check_out"
+                rec = yest
+                punch_date = ydate
         if action == "check_in" and not rec.get("check_in"):
-            now_s = now_hm(schedule)
             rec = await apply_day(emp, today, {"status": "present", "check_in": now_s}, source="geo", confirmed=True)
             punched = "check_in"
+            punch_date = today
             punch_msg = f"Konumla giriş {now_s} kaydedildi."
         elif action == "check_out" and rec.get("check_in") and not rec.get("check_out"):
-            now_s = now_hm(schedule)
-            rec = await apply_day(emp, today, {"status": "present", "check_out": now_s}, source="geo", confirmed=True)
+            punch_date = await punch_date_for_action(emp, schedule, "check_out", now_s, today)
+            overnight = punch_date != today
+            patch = {"status": "present", "check_out": now_s}
+            if overnight:
+                patch["overnight_checkout"] = True
+            rec = await apply_day(emp, punch_date, patch, source="geo", confirmed=True)
             punched = "check_out"
             punch_msg = f"Konumla çıkış {now_s} kaydedildi."
         if punched:
@@ -1782,17 +2004,17 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
             extra = {f"geo_{punched}": geo}
             if inside:
                 extra["location_inside_at"] = _now()
-            await _db.attendance.update_one({"employee_id": emp["_id"], "date": today}, {"$set": extra})
+            await _db.attendance.update_one({"employee_id": emp["_id"], "date": punch_date}, {"$set": extra})
             rec.update(extra)
             try:
-                month_rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{today[:7]}"}}).to_list(40)
+                month_rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{punch_date[:7]}"}}).to_list(40)
                 note = habit_deviation(attendance_habit(month_rows), rec.get("check_in") if punched == "check_in" else None, rec.get("check_out") if punched == "check_out" else None)
                 if note:
                     await notify_managers(
                         emp["company_id"], "attendance_habit",
                         f"Giriş/çıkış alışkanlığı: {emp.get('full_name')}",
                         f"{emp.get('full_name')} konumla {punched} — {note}.",
-                        dedupe_key=f"habit:{emp['_id']}:{today}:{punched}",
+                        dedupe_key=f"habit:{emp['_id']}:{punch_date}:{punched}",
                     )
             except Exception:
                 pass

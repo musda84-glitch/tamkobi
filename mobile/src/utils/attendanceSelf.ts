@@ -167,6 +167,34 @@ export function managerTimeEditHint(edit?: {
 
 /** Bekleyen erken çıkış veya mesai sonu için /me yenile — onay gelince çıkış açılır. */
 export const CHECKOUT_UNLOCK_WATCH_MS = 12_000;
+export const ATTENDANCE_DAY_WATCH_MS = 30_000;
+export const ATTENDANCE_TZ = "Europe/Istanbul";
+
+export function attendanceCalendarDate(now?: Date, timeZone = ATTENDANCE_TZ): string {
+  const d = now || new Date();
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+  } catch {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+}
+
+export function attendanceCalendarMonth(now?: Date, timeZone = ATTENDANCE_TZ): string {
+  return attendanceCalendarDate(now, timeZone).slice(0, 7);
+}
+
+export function shouldReloadAttendanceDay(todayDate?: string | null, now?: Date, timeZone = ATTENDANCE_TZ): boolean {
+  if (!todayDate) return true;
+  return attendanceCalendarDate(now, timeZone) !== String(todayDate).slice(0, 10);
+}
 
 export function shouldWatchCheckoutUnlock(opts: {
   earlyPending?: boolean;
