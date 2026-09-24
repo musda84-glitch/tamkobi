@@ -48,11 +48,11 @@ export const CHEQUE_STATUS_TR: Record<string, string> = {
 };
 
 export const CHEQUE_FILTERS = [
-  { key: "all", label: "Tümü" },
-  { key: "received", label: "Alınan" },
-  { key: "issued", label: "Verilen" },
-  { key: "open", label: "Açık" },
-  { key: "overdue", label: "Vadesi geçen" },
+  { key: "all", label: "Tümü", icon: "apps-outline" },
+  { key: "received", label: "Alınan", icon: "arrow-down-circle-outline" },
+  { key: "issued", label: "Verilen", icon: "arrow-up-circle-outline" },
+  { key: "open", label: "Açık", icon: "time-outline" },
+  { key: "overdue", label: "Vadesi geçen", icon: "alert-circle-outline" },
 ] as const;
 
 export type ChequeFilter = (typeof CHEQUE_FILTERS)[number]["key"];

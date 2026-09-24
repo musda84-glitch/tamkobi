@@ -1,4 +1,5 @@
 import {
+  CHEQUE_FILTERS,
   applyChequePrefill,
   chequeAction,
   chequeReturnContact,
@@ -24,6 +25,11 @@ const rows: Cheque[] = [
 ];
 
 describe("cheques", () => {
+  it("keeps five compact filter chips with icons", () => {
+    expect(CHEQUE_FILTERS.map((f) => f.key)).toEqual(["all", "received", "issued", "open", "overdue"]);
+    expect(CHEQUE_FILTERS.every((f) => f.icon && f.label)).toBe(true);
+  });
+
   it("names the record by instrument and direction", () => {
     expect(chequeTitle(rows[0])).toBe("CEK-2026-0001 · alınan çek");
     expect(chequeTitle(rows[1])).toBe("SNT-2026-0002 · verilen senet");

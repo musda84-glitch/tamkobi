@@ -143,9 +143,18 @@ export function ChequesScreen() {
           />
         </Card>
       ) : null}
-      <Row style={{ flexWrap: "wrap" }}>
+      <Row style={{ gap: 4 }}>
         {CHEQUE_FILTERS.map((f) => (
-          <Chip key={f.key} label={f.label} active={filter === f.key} testID={`cheque-filter-${f.key}`} onPress={() => setFilter(f.key)} />
+          <Chip
+            key={f.key}
+            label={f.label}
+            icon={f.icon}
+            compact
+            fill
+            active={filter === f.key}
+            testID={`cheque-filter-${f.key}`}
+            onPress={() => setFilter(f.key)}
+          />
         ))}
       </Row>
       <ErrorBanner message={error} />
