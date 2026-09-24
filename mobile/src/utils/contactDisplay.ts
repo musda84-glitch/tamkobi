@@ -163,8 +163,8 @@ export function balanceHint(balance: unknown): { label: string; tone: "green" | 
 /** Cari listesi / kart yan etiketi. */
 export function contactBalanceLabel(balance: unknown): { label: string; tone: "green" | "red" | "slate" } {
   const n = Number(balance) || 0;
-  if (n > 0) return { label: "Alacaklı", tone: "green" };
-  if (n < 0) return { label: "Borçlu", tone: "red" };
+  if (n > 0) return { label: "Alacak", tone: "green" };
+  if (n < 0) return { label: "Borç", tone: "red" };
   return { label: "Cari bakiye", tone: "slate" };
 }
 
