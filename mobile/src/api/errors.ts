@@ -15,14 +15,17 @@ function statusFromText(text: string): number | undefined {
   return m ? Number(m[1]) : undefined;
 }
 
+const GENERIC_UPSTREAM = /service unavailable|bad gateway|gateway timeout|internal server error/i;
+
 export function publicErrorMessage(raw: string | null | undefined, fallback = "İşlem başarısız.", status?: number): string {
   const text = String(raw || "").trim();
-  const code = status && GATEWAY[status] ? status : text ? statusFromText(text) : undefined;
-  if (code && GATEWAY[code]) return GATEWAY[code];
-  if (!text) return fallback;
-  if (looksLikeHtml(text)) return GATEWAY[502];
-  if (text.length > 220) return `${text.slice(0, 200).trim()}…`;
-  return text;
+  if (looksLikeHtml(text) || GENERIC_UPSTREAM.test(text)) {
+    const code = (status && GATEWAY[status] ? status : statusFromText(text)) || 502;
+    return GATEWAY[code] || GATEWAY[502];
+  }
+  if (text) return text.length > 220 ? `${text.slice(0, 200).trim()}…` : text;
+  if (status && GATEWAY[status]) return GATEWAY[status];
+  return fallback;
 }
 
 export function apiErrorMessage(err: unknown, fallback = "İşlem başarısız."): string {

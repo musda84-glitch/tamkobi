@@ -81,6 +81,8 @@ def test_cheque_extract_handler_requires_session_and_company():
     assert "_require_request_token(request)" in chunk
     assert "saas._require_company_access(user, company_id)" in chunk
     assert "public_cheque_match(match)" in chunk
+    assert "status_code=400, detail=f\"Çek okunamadı:" in chunk
+    assert "status_code=502, detail=f\"Çek okunamadı:" not in chunk
 
 
 def test_session_token_from_headers_requires_bearer_or_cookie():
@@ -213,4 +215,13 @@ def test_extract_cheque_from_image_raises_when_ai_empty(monkeypatch):
 
     monkeypatch.setattr("cheque_extract._ai_cheque_from_image", boom)
     with pytest.raises(ValueError, match="tutar"):
+        asyncio.run(extract_cheque_from_image(b"jpeg-bytes", "image/jpeg"))
+
+
+def test_extract_cheque_from_image_auth_error_is_value_error(monkeypatch):
+    async def boom(_data, _mime):
+        raise RuntimeError("401 invalid api key")
+
+    monkeypatch.setattr("cheque_extract._ai_cheque_from_image", boom)
+    with pytest.raises(ValueError, match="anahtar"):
         asyncio.run(extract_cheque_from_image(b"jpeg-bytes", "image/jpeg"))
