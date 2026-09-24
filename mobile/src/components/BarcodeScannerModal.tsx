@@ -27,11 +27,19 @@ export function BarcodeScannerModal({
   onClose,
   onScan,
   continuous = false,
+  qtyEnabled = false,
+  qty,
+  onQtyChange,
+  status,
 }: {
   visible: boolean;
   onClose: () => void;
   onScan: (code: string) => void;
   continuous?: boolean;
+  qtyEnabled?: boolean;
+  qty?: string;
+  onQtyChange?: (value: string) => void;
+  status?: string | null;
 }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [manual, setManual] = useState("");
@@ -62,6 +70,20 @@ export function BarcodeScannerModal({
       <View style={styles.wrap} testID="barcode-scanner-modal">
         <Text style={styles.title}>{continuous ? "Seri barkod okut" : "Barkod okut"}</Text>
         {continuous ? <Text style={styles.hint}>Okuttukça açık kalır. Bitince Kapat.</Text> : null}
+        {qtyEnabled ? (
+          <View style={styles.qtyRow}>
+            <Text style={styles.qtyLabel}>Adet çarpan</Text>
+            <TextInput
+              testID="barcode-qty"
+              value={qty ?? "1"}
+              onChangeText={(v) => onQtyChange?.(v.replace(/[^\d]/g, ""))}
+              keyboardType="number-pad"
+              selectTextOnFocus
+              style={styles.qtyInput}
+            />
+          </View>
+        ) : null}
+        {status ? <Text style={styles.status} testID="barcode-status">{status}</Text> : null}
         {Platform.OS === "web" ? (
           visible ? <WebBarcodeCamera active={visible} continuous={continuous} onScan={emit} /> : null
         ) : permission?.granted ? (
@@ -101,6 +123,10 @@ const styles = StyleSheet.create({
   camera: { flex: 1, borderRadius: radius.lg, overflow: "hidden", minHeight: 240 },
   fallback: { backgroundColor: "#1E293B", borderRadius: radius.lg, padding: 16, gap: 12, minHeight: 160, justifyContent: "center" },
   hint: { color: "#CBD5E1" },
+  status: { color: "#A7F3D0", fontWeight: "700" },
+  qtyRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  qtyLabel: { color: "#E2E8F0", fontWeight: "800" },
+  qtyInput: { backgroundColor: "#fff", borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 8, minWidth: 72, textAlign: "center", fontWeight: "800", fontSize: 18 },
   input: { backgroundColor: "#fff", borderRadius: radius.md, padding: 12, fontSize: 16 },
   cancel: { alignItems: "center", padding: 12 },
   cancelText: { color: "#94A3B8", fontWeight: "700" },
