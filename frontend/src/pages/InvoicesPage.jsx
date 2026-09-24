@@ -47,6 +47,7 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  ChevronDown,
   FileCheck2, CheckCircle, XCircle } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
@@ -152,12 +153,45 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [paymentAccount, setPaymentAccount] = useState("");
   const [ctxMenu, setCtxMenu] = useState(null);
   const [installmentInv, setInstallmentInv] = useState(null);
+  const [expandedInvId, setExpandedInvId] = useState(null);
+  const [expandedItemsById, setExpandedItemsById] = useState({});
+  const [expandLoadingId, setExpandLoadingId] = useState(null);
   const closeCtx = React.useCallback(() => setCtxMenu(null), []);
   const openCtxFromButton = (e, inv) => {
     e.preventDefault();
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
     setCtxMenu({ x: Math.max(8, r.right - 256), y: r.bottom + 4, inv });
+  };
+  const invRowId = (inv) => inv?.id || inv?._id || inv?.invoice_number;
+  const itemsForInv = (inv) => {
+    const id = invRowId(inv);
+    if (Array.isArray(inv?.items) && inv.items.length) return inv.items;
+    if (Array.isArray(expandedItemsById[id])) return expandedItemsById[id];
+    return [];
+  };
+  const toggleInvLines = async (inv) => {
+    const id = invRowId(inv);
+    if (!id) return;
+    if (expandedInvId === id) {
+      setExpandedInvId(null);
+      return;
+    }
+    setExpandedInvId(id);
+    const have = (Array.isArray(inv.items) && inv.items.length) || Array.isArray(expandedItemsById[id]);
+    if (have) return;
+    setExpandLoadingId(id);
+    try {
+      const url = inv._is_quote ? `${API_URL}/quotes/${id}` : `${API_URL}/invoices/${id}`;
+      const r = await axios.get(url);
+      const items = Array.isArray(r.data?.items) ? r.data.items : [];
+      setExpandedItemsById((prev) => ({ ...prev, [id]: items }));
+    } catch {
+      toast.error("Kalemler yüklenemedi.");
+      setExpandedItemsById((prev) => ({ ...prev, [id]: [] }));
+    } finally {
+      setExpandLoadingId(null);
+    }
   };
   const handleConvertDispatch = async (inv) => {
     if (!window.confirm(`${inv.invoice_number} irsaliyesinden satış faturası oluşturulsun mu?`)) return;
@@ -594,19 +628,39 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </td>
                 </tr>
               ) : (
-                pagedInvoices.map((inv) => (
-                  <tr key={inv.id || inv._id || inv.invoice_number} className={`group/row hover:bg-slate-50/70 transition ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""}`} data-testid={inv._is_quote ? `quote-row-${inv.invoice_number}` : `invoice-row-${inv.invoice_number}`}>
+                pagedInvoices.map((inv) => {
+                  const rowId = invRowId(inv);
+                  const linesOpen = expandedInvId === rowId;
+                  const lineItems = linesOpen ? itemsForInv(inv) : [];
+                  const linesLoading = expandLoadingId === rowId;
+                  return (
+                  <React.Fragment key={rowId}>
+                  <tr className={`group/row hover:bg-slate-50/70 transition ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""} ${linesOpen ? "bg-slate-50/50" : ""}`} data-testid={inv._is_quote ? `quote-row-${inv.invoice_number}` : `invoice-row-${inv.invoice_number}`}>
                     <td className="px-4 py-3 font-medium overflow-hidden">
-                      <div className="text-slate-900 font-mono font-semibold truncate">{inv.invoice_number}</div>
-                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                        <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${typeBadge(inv)[1]}`}>
-                          {typeBadge(inv)[0]}
-                        </span>
-                        <SourceBadge channel={inv.source_channel} testId={`inv-source-${inv.invoice_number}`} />
-                        <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded uppercase" data-testid={`inv-etype-badge-${inv.invoice_number}`}>
-                          {inv._is_quote ? "Teklif" : (E_TYPE_LABELS[inv.e_type] || "İrsaliye")}
-                        </span>
-                        {inv.installment_plan && <button onClick={() => setInstallmentInv(inv)} className="text-[10px] bg-violet-50 text-violet-700 px-1.5 py-0.2 rounded font-semibold hover:bg-violet-100" data-testid={`inv-installment-badge-${inv.invoice_number}`}>{inv.installment_plan.paid_count}/{inv.installment_plan.count} Taksit</button>}
+                      <div className="flex items-start gap-1.5 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => toggleInvLines(inv)}
+                          className="mt-0.5 shrink-0 p-0.5 rounded text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition"
+                          title={linesOpen ? "Kalemleri gizle" : "Kalemleri göster"}
+                          aria-expanded={linesOpen}
+                          data-testid={`inv-lines-toggle-${inv.invoice_number}`}
+                        >
+                          <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${linesOpen ? "rotate-180 text-emerald-700" : ""}`} />
+                        </button>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-slate-900 font-mono font-semibold truncate">{inv.invoice_number}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${typeBadge(inv)[1]}`}>
+                              {typeBadge(inv)[0]}
+                            </span>
+                            <SourceBadge channel={inv.source_channel} testId={`inv-source-${inv.invoice_number}`} />
+                            <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded uppercase" data-testid={`inv-etype-badge-${inv.invoice_number}`}>
+                              {inv._is_quote ? "Teklif" : (E_TYPE_LABELS[inv.e_type] || "İrsaliye")}
+                            </span>
+                            {inv.installment_plan && <button onClick={() => setInstallmentInv(inv)} className="text-[10px] bg-violet-50 text-violet-700 px-1.5 py-0.2 rounded font-semibold hover:bg-violet-100" data-testid={`inv-installment-badge-${inv.invoice_number}`}>{inv.installment_plan.paid_count}/{inv.installment_plan.count} Taksit</button>}
+                          </div>
+                        </div>
                       </div>
                     </td>
                     <td className="px-4 py-3 overflow-hidden">
@@ -742,7 +796,45 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       })()}
                     </td>
                   </tr>
-                ))
+                  {linesOpen && (
+                    <tr className="bg-slate-50/80" data-testid={`inv-lines-row-${inv.invoice_number}`}>
+                      <td colSpan={7} className="px-4 py-3 border-t border-slate-100">
+                        {linesLoading ? (
+                          <div className="text-[11px] text-slate-400 pl-6">Kalemler yükleniyor…</div>
+                        ) : lineItems.length === 0 ? (
+                          <div className="text-[11px] text-slate-400 pl-6" data-testid={`inv-lines-empty-${inv.invoice_number}`}>Bu belgede kalem yok.</div>
+                        ) : (
+                          <div className="pl-6 overflow-x-auto">
+                            <table className="w-full text-[11px] text-slate-600" data-testid={`inv-lines-table-${inv.invoice_number}`}>
+                              <thead>
+                                <tr className="text-slate-400 uppercase text-[10px]">
+                                  <th className="py-1 pr-3 text-left font-semibold">Ürün / Hizmet</th>
+                                  <th className="py-1 px-2 text-center font-semibold w-20">Miktar</th>
+                                  <th className="py-1 px-2 text-right font-semibold w-28">Birim</th>
+                                  <th className="py-1 px-2 text-center font-semibold w-14">KDV</th>
+                                  <th className="py-1 pl-2 text-right font-semibold w-28">Tutar</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {lineItems.map((it, i) => (
+                                  <tr key={i} data-testid={`inv-line-${inv.invoice_number}-${i}`}>
+                                    <td className="py-1.5 pr-3 font-medium text-slate-800">{it.name || it.description || "—"}{it.sku ? <span className="ml-1.5 font-mono text-[10px] text-slate-400">{it.sku}</span> : null}</td>
+                                    <td className="py-1.5 px-2 text-center whitespace-nowrap">{it.quantity} {it.unit || ""}</td>
+                                    <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMoney(it.unit_price, inv.currency || "TRY")}</td>
+                                    <td className="py-1.5 px-2 text-center">%{it.vat_rate ?? 0}</td>
+                                    <td className="py-1.5 pl-2 text-right font-semibold text-slate-900 whitespace-nowrap">{fmtMoney(it.total_incl ?? it.total, inv.currency || "TRY")}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
+                  );
+                })
               )}
             </tbody>
           </table>
