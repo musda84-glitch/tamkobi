@@ -7,6 +7,7 @@ import {
   announceAudienceLabel,
   buildChatList,
   chatAvatarColor,
+  chatClockLabel,
   chatInitials,
   chatPeer,
   chatTimeLabel,
@@ -14,6 +15,7 @@ import {
   MESSAGES_COLLAPSED_KEY,
   inboxUnreadTotal,
   isOwnMessage,
+  messageTickKind,
   parseHiddenFlag,
   mergeInboxWithDirectory,
   mergeManagerInbox,
@@ -21,7 +23,7 @@ import {
   peerPostBody,
   peerQuery,
   peerSelectGroups,
-  threadInOrder,
+  threadDayItems,
   validateMessageBody,
 } from "../utils/staffMessages";
 
@@ -33,13 +35,41 @@ function Avatar({ name, tint, icon: Icon }) {
   );
 }
 
+function Tick({ kind }) {
+  if (kind === "none") return null;
+  return (
+    <span
+      data-testid={kind === "read" ? "msg-tick-read" : "msg-tick-delivered"}
+      className={`text-[11px] leading-none font-bold ${kind === "read" ? "text-[#53BDEB]" : "text-slate-400"}`}
+      aria-label={kind === "read" ? "Okundu" : "Görüldü"}
+    >
+      ✓✓
+    </span>
+  );
+}
+
+function DayChip({ label }) {
+  return (
+    <div className="flex justify-center my-2">
+      <span data-testid="msg-day-chip" className="text-[10px] font-extrabold text-slate-500 bg-slate-200 rounded-full px-2.5 py-0.5">{label}</span>
+    </div>
+  );
+}
+
 function Bubble({ m, own, showAuthor }) {
+  const tick = messageTickKind(m, own);
+  const clock = chatClockLabel(m.created_at);
   return (
     <div className={`flex ${own ? "justify-end" : "justify-start"}`} data-testid={`staff-msg-${m.id}`}>
       <div className={`max-w-[80%] rounded-2xl px-3 py-1.5 shadow-sm ${own ? "bg-emerald-100 rounded-br-md" : "bg-white border border-slate-100 rounded-bl-md"}`}>
         {showAuthor && !own ? <div className="text-[10px] font-extrabold text-violet-700">{m.from_name || "Kişi"}</div> : null}
         <div className="text-xs text-slate-800 whitespace-pre-wrap">{m.body}</div>
-        {m.created_at ? <div className="text-[10px] text-slate-400 text-right font-semibold">{chatTimeLabel(m.created_at)}</div> : null}
+        {clock || tick !== "none" ? (
+          <div className="flex items-center justify-end gap-1 mt-0.5">
+            {clock ? <span className="text-[10px] text-slate-400 font-semibold">{clock}</span> : null}
+            <Tick kind={tick} />
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -149,7 +179,7 @@ export function StaffMessagesPanel({
     [data?.directory, managers, selfId, data?.manager_inbox],
   );
   const badge = inboxUnreadTotal(chats);
-  const threadRows = threadInOrder(data?.thread || []);
+  const threadRows = threadDayItems(data?.thread || []);
   const showThread = locked || !!channel;
   const threadTitle = channel?.kind === "group"
     ? (data?.group?.title || "Grup")
@@ -322,8 +352,10 @@ export function StaffMessagesPanel({
           <div className={`${compact ? "max-h-72" : "max-h-[28rem]"} overflow-y-auto space-y-1.5 bg-slate-100 rounded-2xl p-2.5`} data-testid={`${testId}-thread`}>
             {threadRows.length === 0 ? (
               <div className="text-xs text-slate-400 text-center py-6">Henüz mesaj yok. Aşağıdan yazın.</div>
-            ) : threadRows.map((m) => (
-              <Bubble key={m.id || m.created_at} m={m} own={isOwnMessage(m, selfId, mode)} showAuthor={channel?.kind === "group"} />
+            ) : threadRows.map((item) => item.type === "day" ? (
+              <DayChip key={item.key} label={item.label} />
+            ) : (
+              <Bubble key={item.key} m={item.message} own={isOwnMessage(item.message, selfId, mode)} showAuthor={channel?.kind === "group"} />
             ))}
           </div>
           <form onSubmit={send} className="flex gap-2 items-end">

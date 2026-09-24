@@ -17,11 +17,15 @@ import {
   announceAudienceLabel,
   announcementUnread,
   buildChatList,
+  chatClockLabel,
+  chatDayLabel,
   chatInitials,
   chatPeer,
   chatTimeLabel,
   filterChatList,
   isOwnMessage,
+  messageTickKind,
+  threadDayItems,
   threadInOrder,
 } from "./staffMessages";
 
@@ -104,5 +108,21 @@ describe("staffMessages", () => {
       { id: "2", created_at: "2026-09-23T12:00:00" },
       { id: "1", created_at: "2026-09-23T10:00:00" },
     ]).map((m) => m.id)).toEqual(["1", "2"]);
+  });
+
+  it("stamps bubbles like WhatsApp with day chips and ticks", () => {
+    const noon = new Date("2026-09-23T12:00:00").getTime();
+    expect(chatClockLabel("2026-09-22T11:05:00")).toMatch(/11[:.]05/);
+    expect(chatDayLabel("2026-09-23T11:05:00", noon)).toBe("Bugün");
+    expect(chatDayLabel("2026-09-22T11:05:00", noon)).toBe("Dün");
+    expect(chatDayLabel("2026-09-20T11:05:00", noon)).toBe("20.09.2026");
+    expect(messageTickKind({ body: "x", read_at: null }, true)).toBe("delivered");
+    expect(messageTickKind({ body: "x", read_at: "2026-09-23T11:10:00" }, true)).toBe("read");
+    expect(messageTickKind({ body: "x", read_at: "2026-09-23T11:10:00" }, false)).toBe("none");
+    const items = threadDayItems([
+      { id: "1", body: "dün", created_at: "2026-09-22T11:05:00", read_at: null },
+      { id: "2", body: "bugün", created_at: "2026-09-23T10:00:00", read_at: "2026-09-23T10:01:00" },
+    ], noon);
+    expect(items.map((it) => it.type === "day" ? it.label : it.message.id)).toEqual(["Dün", "1", "Bugün", "2"]);
   });
 });

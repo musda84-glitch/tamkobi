@@ -195,8 +195,53 @@ export function chatTimeLabel(value, now = Date.now()) {
   return fmtDmy(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
 }
 
+export function chatClockLabel(value) {
+  const t = Date.parse(String(value || ""));
+  if (Number.isNaN(t)) return "";
+  return new Date(t).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+}
+
+export function chatDayKey(value) {
+  const t = Date.parse(String(value || ""));
+  if (Number.isNaN(t)) return "";
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export function chatDayLabel(value, now = Date.now()) {
+  const t = Date.parse(String(value || ""));
+  if (Number.isNaN(t)) return "";
+  const d = new Date(t);
+  const n = new Date(now);
+  const sameDay = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+  if (sameDay) return "Bugün";
+  const yest = new Date(n);
+  yest.setDate(n.getDate() - 1);
+  if (d.getFullYear() === yest.getFullYear() && d.getMonth() === yest.getMonth() && d.getDate() === yest.getDate()) return "Dün";
+  return fmtDmy(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+}
+
+export function messageTickKind(m, own) {
+  if (!own || !m) return "none";
+  return m.read_at ? "read" : "delivered";
+}
+
 export function threadInOrder(rows) {
   return [...(rows || [])].sort((a, b) => (Date.parse(a.created_at || "") || 0) - (Date.parse(b.created_at || "") || 0));
+}
+
+export function threadDayItems(rows, now = Date.now()) {
+  const items = [];
+  let lastDay = "";
+  for (const m of threadInOrder(rows)) {
+    const day = chatDayKey(m.created_at);
+    if (day && day !== lastDay) {
+      items.push({ type: "day", key: `day-${day}`, label: chatDayLabel(m.created_at, now) });
+      lastDay = day;
+    }
+    items.push({ type: "msg", key: String(m.id || m.created_at || items.length), message: m });
+  }
+  return items;
 }
 
 export function isOwnMessage(m, selfId, mode) {
