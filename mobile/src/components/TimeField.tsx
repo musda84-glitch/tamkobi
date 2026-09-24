@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
-import { formatHm, hourOptions, minuteOptions, parseHm } from "../utils/clock";
+import { formatHm, hourOptions, minuteOptions, parseHm, resolveNowHm } from "../utils/clock";
 
 type TimeFieldProps = {
   label: string;
@@ -12,9 +12,12 @@ type TimeFieldProps = {
   testID?: string;
   optional?: boolean;
   autoOpen?: boolean;
+  nowLabel?: string;
+  nowValue?: string;
+  onNow?: (value: string) => void;
 };
 
-export function TimeField({ label, value, onChangeText, testID, optional, autoOpen }: TimeFieldProps) {
+export function TimeField({ label, value, onChangeText, testID, optional, autoOpen, nowLabel, nowValue, onNow }: TimeFieldProps) {
   const [open, setOpen] = useState(false);
   const parsed = parseHm(value);
   const [hour, setHour] = useState(parsed?.hour ?? 16);
@@ -38,6 +41,18 @@ export function TimeField({ label, value, onChangeText, testID, optional, autoOp
   const confirm = () => {
     onChangeText(formatHm(hour, minute));
     setOpen(false);
+  };
+
+  const pickNow = () => {
+    const hm = resolveNowHm(nowValue);
+    const parsed = parseHm(hm);
+    if (parsed) {
+      setHour(parsed.hour);
+      setMinute(parsed.minute);
+    }
+    onChangeText(hm);
+    setOpen(false);
+    onNow?.(hm);
   };
 
   return (
@@ -89,23 +104,34 @@ export function TimeField({ label, value, onChangeText, testID, optional, autoOp
                 ))}
               </ScrollView>
             </View>
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
-              {optional ? (
+            <View style={{ gap: 8, marginTop: 12 }}>
+              {nowLabel || onNow ? (
                 <Pressable
-                  testID={testID ? `${testID}-clear` : undefined}
-                  onPress={() => { onChangeText(""); setOpen(false); }}
-                  style={{ flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center" }}
+                  testID={testID ? `${testID}-now` : undefined}
+                  onPress={pickNow}
+                  style={{ minHeight: 44, alignItems: "center", justifyContent: "center", backgroundColor: colors.indigo50, borderRadius: radius.md, paddingHorizontal: 10 }}
                 >
-                  <Text style={{ fontWeight: "700", color: colors.muted }}>Temizle</Text>
+                  <Text style={{ fontWeight: "800", color: colors.indigo, textAlign: "center" }}>{nowLabel || "Şimdiki saat"}</Text>
                 </Pressable>
               ) : null}
-              <Pressable
-                onPress={confirm}
-                testID={testID ? `${testID}-ok` : undefined}
-                style={{ flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary, borderRadius: radius.md }}
-              >
-                <Text style={{ fontWeight: "800", color: "#fff" }}>Seç</Text>
-              </Pressable>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {optional ? (
+                  <Pressable
+                    testID={testID ? `${testID}-clear` : undefined}
+                    onPress={() => { onChangeText(""); setOpen(false); }}
+                    style={{ flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center" }}
+                  >
+                    <Text style={{ fontWeight: "700", color: colors.muted }}>Temizle</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  onPress={confirm}
+                  testID={testID ? `${testID}-ok` : undefined}
+                  style={{ flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary, borderRadius: radius.md }}
+                >
+                  <Text style={{ fontWeight: "800", color: "#fff" }}>Seç</Text>
+                </Pressable>
+              </View>
             </View>
           </Pressable>
         </Pressable>

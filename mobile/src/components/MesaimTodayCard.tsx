@@ -12,6 +12,7 @@ import {
   mesaimLongDate,
   mesaimOutSubtitle,
   mesaimPunchEditHint,
+  mesaimPunchNowLabel,
   mesaimScheduleLine,
   mesaimWorkDaysLine,
   type AttendanceHabit,
@@ -200,7 +201,7 @@ export function MesaimTodayCard({
   punchEdit?: "check_in" | "check_out" | null;
   punchEditTime?: string;
   onPunchEditTime?: (v: string) => void;
-  onPunchEditConfirm?: () => void;
+  onPunchEditConfirm?: (time?: string) => void;
   onPunchEditCancel?: () => void;
   onCheckIn: () => void;
   onCheckOutAsk: () => void;
@@ -263,6 +264,12 @@ export function MesaimTodayCard({
             testID="mesai-punch-edit-time"
             value={punchEditTime || ""}
             autoOpen
+            nowLabel={mesaimPunchNowLabel(punchEdit)}
+            nowValue={now}
+            onNow={(hm) => {
+              onPunchEditTime?.(hm);
+              onPunchEditConfirm?.(hm);
+            }}
             onChangeText={(v) => onPunchEditTime?.(v)}
           />
           <Text style={{ color: "#FDE68A", fontSize: 12, fontWeight: "600" }}>{mesaimPunchEditHint(punchEdit)}</Text>

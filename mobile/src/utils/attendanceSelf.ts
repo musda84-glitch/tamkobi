@@ -43,6 +43,10 @@ export function mesaimPunchEditHint(action: "check_in" | "check_out"): string {
   return "Kayıtlı çıkış saatini düzeltin. Onaylayınca yönetici teyidine düşer.";
 }
 
+export function mesaimPunchNowLabel(action: "check_in" | "check_out"): string {
+  return action === "check_out" ? "Şimdiki saat ile çıkış" : "Şimdiki saat ile giriş";
+}
+
 export function mesaimLongDate(ymd?: string | null): string {
   const raw = String(ymd || "").trim().slice(0, 10);
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
