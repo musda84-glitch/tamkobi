@@ -36,14 +36,22 @@ describe("orderMoreMenu", () => {
     expect(labels).toContain("Navlungo Siparişi Oluştur");
   });
 
-  it("panel draft keeps default edit/e-belge style menu", () => {
+  it("panel draft (B2B/manual) shows Faturalaştır / Kargola menu", () => {
     const ord = { channel: "b2b", is_invoiced: false, order_number: "B2B-1" };
     expect(orderMoreMenuKind(ord)).toBe("panel_draft");
-    const { items } = orderMoreMenuItems(ord, {
-      eBelgeItems: [{ eType: "e_archive", label: "E-Arşiv kes (GİB)", testIdSuffix: "earsiv" }],
-    });
-    expect(items.some((i) => i.id === "edit")).toBe(true);
-    expect(items.some((i) => i.id === "ebelge_e_archive")).toBe(true);
-    expect(items.some((i) => i.id === "navlungo_create")).toBe(false);
+    const { items } = orderMoreMenuItems(ord);
+    expect(items.map((i) => i.label)).toEqual([
+      "Faturalaştır",
+      "Mini Kargo Etiketi Yazdır",
+      "Mini Kargo Etiketi Yazdır 10X10",
+      "Fatura Tarihi Değiştir",
+      "Kargola",
+    ]);
+  });
+
+  it("manual panel draft uses same short menu", () => {
+    const ord = { channel: "manual", is_invoiced: false, order_number: "ORD-1" };
+    expect(orderMoreMenuKind(ord)).toBe("panel_draft");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.id)).toContain("faturalastir");
   });
 });

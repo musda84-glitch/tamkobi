@@ -24,7 +24,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Pencil, Stamp } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { printMiniInvoices } from "../utils/miniInvoicePrint";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
@@ -417,6 +417,38 @@ export default function OrdersB2BPage() {
       return;
     }
     switch (actionId) {
+      case "faturalastir":
+        if (ord.invoice_id && !ord.is_invoiced) {
+          await handlePostDraftInvoice(ord);
+        } else if (!ord.is_invoiced) {
+          await handleConvertToInvoice(ord.id || ord._id, orderEBelgeType(ord, contacts));
+        } else {
+          toast.info("Sipariş zaten faturalanmış.");
+        }
+        return;
+      case "invoice_date": {
+        if (!ord.invoice_id) {
+          toast.error("Önce fatura oluşturun.");
+          return;
+        }
+        const date = window.prompt("Yeni fatura tarihi (YYYY-AA-GG)", new Date().toISOString().slice(0, 10));
+        if (!date) return;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          toast.error("Tarih YYYY-AA-GG olmalı.");
+          return;
+        }
+        try {
+          await axios.put(`${API_URL}/invoices/${ord.invoice_id}`, { issue_date: date });
+          toast.success("Fatura tarihi güncellendi.");
+          loadData();
+        } catch (err) {
+          toast.error(err.response?.data?.detail || "Fatura tarihi değiştirilemedi.");
+        }
+        return;
+      }
+      case "kargola":
+        setShipOrder(ord);
+        return;
       case "navlungo_create": {
         const has = String(ord.cargo_carrier || "").toLowerCase().includes("navlungo");
         if (has) {

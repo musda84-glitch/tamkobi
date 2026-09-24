@@ -83,7 +83,18 @@ export function integrationEInvoiceMoreItems() {
   ];
 }
 
-/** Varsayılan / panel menü (mevcut davranış; panel_draft / panel_invoiced sonraki mesajlarla özelleşir). */
+/** B2B / panel / manuel taslak (henüz faturalanmamış) sipariş menüsü. */
+export function panelDraftMoreItems() {
+  return [
+    item("faturalastir", "Faturalaştır", FileText, { color: "text-emerald-600" }),
+    item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
+    item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
+    item("invoice_date", "Fatura Tarihi Değiştir", History, { color: "text-amber-600" }),
+    item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
+  ];
+}
+
+/** Varsayılan menü (entegrasyon taslak vb.). */
 export function defaultMoreItems(ord, { eBelgeItems = [] } = {}) {
   const rows = eBelgeItems.map((eb) =>
     item(`ebelge_${eb.eType}`, eb.label, Stamp, {
@@ -111,5 +122,6 @@ export function defaultMoreItems(ord, { eBelgeItems = [] } = {}) {
 export function orderMoreMenuItems(ord, opts = {}) {
   const kind = orderMoreMenuKind(ord);
   if (kind === "integration_einvoice") return { kind, items: integrationEInvoiceMoreItems() };
+  if (kind === "panel_draft") return { kind, items: panelDraftMoreItems() };
   return { kind, items: defaultMoreItems(ord, opts) };
 }
