@@ -21,6 +21,25 @@ export function workplaceDays(w?: Workplace | null): number {
   return n > 0 ? n : 0;
 }
 
+export function workplaceHasCoords(w?: Workplace | null): boolean {
+  if (!w) return false;
+  if (w.has_coords === false) return false;
+  if (w.has_coords === true) return true;
+  const lat = Number(w.latitude);
+  const lng = Number(w.longitude);
+  return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
+}
+
+/** Mesaim kartı: konumlu giriş politikası (iş yeri koordinatı + require_geo). */
+export function mesaimGeoInOn(opts?: { workplace?: Workplace | null; requireGeo?: boolean } | null): boolean {
+  if (!opts?.workplace || !workplaceHasCoords(opts.workplace)) return false;
+  return opts.requireGeo !== false;
+}
+
+export function mesaimGeoInLabel(opts?: { workplace?: Workplace | null; requireGeo?: boolean } | null): string {
+  return mesaimGeoInOn(opts) ? "Konumlu giriş açık" : "Konumlu giriş kapalı";
+}
+
 export function workplaceHint(w?: Workplace | null, requireGeo = true): string {
   if (!w) return "İş yeri konumu tanımsız — konumsuz giriş";
   const place = [w.task_title, w.project_name || w.label].filter(Boolean).join(" · ");
