@@ -36,6 +36,9 @@ export function applyExpenseScan(form, draft, match) {
   };
 }
 
+export const EXPENSE_SCAN_IDLE_HINT =
+  "Kamera veya galeri ile fiş okuyun; masraf taslağı dolar. Gerekirse yapay zeka okur.";
+
 export function expenseScanHint(draft) {
   if (!draft || !(Number(draft.amount) > 0)) return "Fiş okunamadı.";
   const cat = String(draft.category || "Masraf").trim() || "Masraf";
