@@ -27,6 +27,8 @@ describe("contactStatement", () => {
     const text = statementText({ name: "Acme", balance: 50 }, rows, "TamKobi");
     expect(text).toContain("TamKobi - Cari Hesap Ekstresi");
     expect(text).toContain("Sayın Acme");
+    expect(text).toContain("02.01.2026");
+    expect(text).not.toContain("2026-01-02");
     expect(text).toContain("SF-1");
     expect(smsBalanceText({ name: "Acme", balance: 50 })).toMatch(/borç/);
     expect(balanceMessage({ name: "Acme", balance: 50 })).toMatch(/cari hesap bakiyeniz/);
@@ -39,6 +41,8 @@ describe("contactStatement", () => {
     });
     const html = statementPrintHtml({ name: "Acme", tax_number_or_id: "123", balance: 50 }, rows, "TamKobi");
     expect(html).toContain("CARİ HESAP EKSTRESİ");
+    expect(html).toContain("02.01.2026");
+    expect(html).not.toContain("2026-01-02");
     expect(html).toContain("SF-1");
     expect(html).toContain("VKN/TCKN: 123");
     expect(html).toContain("TamKobi");

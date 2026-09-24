@@ -231,14 +231,14 @@ function customerOrderNo(order: Order): string {
 
 function orderDate(order: Order): string {
   const extra = order as Order & { issue_date?: string };
-  return String(extra.issue_date || order.order_date || order.created_at || "").slice(0, 10) || fmtDate(order.order_date);
+  return fmtDate(extra.issue_date || order.order_date || order.created_at);
 }
 
 function quoteExtras(order: Order): { validUntil?: string; dueDate?: string; subject?: string; terms?: string } {
   const extra = order as Order & { valid_until?: string; due_date?: string; title?: string; terms?: string };
   return {
-    validUntil: extra.valid_until ? String(extra.valid_until) : undefined,
-    dueDate: extra.due_date ? String(extra.due_date) : undefined,
+    validUntil: extra.valid_until ? fmtDate(extra.valid_until) : undefined,
+    dueDate: extra.due_date ? fmtDate(extra.due_date) : undefined,
     subject: extra.title ? String(extra.title) : undefined,
     terms: extra.terms ? String(extra.terms) : undefined,
   };
@@ -457,7 +457,7 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const plan = (options?.paymentPlan || []).length
     ? `<div data-print-payment-plan style="margin-top:24px">
         <div style="font-size:10px;text-transform:uppercase;font-weight:700;color:#94a3b8;margin-bottom:4px">Ödeme Planı (${options!.paymentPlan!.length} taksit)</div>
-        <table style="width:100%;border-collapse:collapse">${options!.paymentPlan!.map((r) => `<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:4px 0;font-weight:600">${esc(r.label || "")}</td><td style="padding:4px 0;color:#64748b;font-family:ui-monospace,monospace">${esc(r.due_date || "")}</td><td style="padding:4px 0;text-align:right;font-weight:600">${esc(money(r.amount, "TRY"))}</td><td style="padding:4px 0;text-align:right;width:80px">${r.status === "paid" ? `<span style="color:#047857;font-weight:700">Ödendi</span>` : r.status ? `<span style="color:#94a3b8">Bekliyor</span>` : ""}</td></tr>`).join("")}</table>
+        <table style="width:100%;border-collapse:collapse">${options!.paymentPlan!.map((r) => `<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:4px 0;font-weight:600">${esc(r.label || "")}</td><td style="padding:4px 0;color:#64748b;font-family:ui-monospace,monospace">${esc(fmtDate(r.due_date))}</td><td style="padding:4px 0;text-align:right;font-weight:600">${esc(money(r.amount, "TRY"))}</td><td style="padding:4px 0;text-align:right;width:80px">${r.status === "paid" ? `<span style="color:#047857;font-weight:700">Ödendi</span>` : r.status ? `<span style="color:#94a3b8">Bekliyor</span>` : ""}</td></tr>`).join("")}</table>
       </div>`
     : "";
   const docImages = Array.isArray(doc.images) ? (doc.images as unknown[]).slice(0, 8) : [];

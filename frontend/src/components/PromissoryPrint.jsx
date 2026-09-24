@@ -1,6 +1,6 @@
 import React from "react";
 import { X, Printer } from "lucide-react";
-import { fmtMoney, moneySuffix } from "../utils/money";
+import { fmtDate, fmtMoney, moneySuffix } from "../utils/money";
 
 const currencyName = (c) => ({ TRY: "Türk Lirası", USD: "Amerikan Doları", EUR: "Euro", GBP: "Sterlin", CHF: "İsviçre Frangı", JPY: "Japon Yeni" }[c] || c);
 const moneyWords = (n, c) => `${fmtMoney(n, c).replace(` ${moneySuffix(c)}`, "")} ${currencyName(c)}`;
@@ -34,8 +34,8 @@ export const PromissoryPrint = ({ notes = [], contact, company, onClose }) => {
                 <div className="text-right">
                   <div className="text-lg font-black uppercase">Emre Yazılı Senet</div>
                   <div className="font-mono">No: {n.number}</div>
-                  <div>Vade: <b>{n.due_date}</b></div>
-                  <div>Keşide: {n.issue_date}</div>
+                  <div>Vade: <b>{fmtDate(n.due_date)}</b></div>
+                  <div>Keşide: {fmtDate(n.issue_date)}</div>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4 mb-4">

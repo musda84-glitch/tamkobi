@@ -8,7 +8,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { colors, radius, spacing } from "../theme";
 import { openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
-import { idOf } from "../utils/money";
+import { fmtDate, idOf } from "../utils/money";
 import type { Employee } from "../utils/personnel";
 import {
   employeeLabel,
@@ -61,7 +61,7 @@ function WoCard({
           w.duration_min ? `Hedef ${w.duration_min} dk` : null,
           w.elapsed_min != null ? `${w.elapsed_min} dk geçti` : null,
           who,
-          w.planned_date ? `Plan: ${w.planned_date}` : null,
+          w.planned_date ? `Plan: ${fmtDate(w.planned_date)}` : null,
         ].filter(Boolean).join(" · ")}
       </Muted>
       {w.notes ? <Muted>{w.notes}</Muted> : null}

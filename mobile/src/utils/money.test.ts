@@ -1,4 +1,4 @@
-import { fmtMoney, formatMoneyInput, getPriceDecimals, idOf, parseMoneyInput, sanitizeMoneyInput, setPriceDecimals } from "./money";
+import { fmtDate, fmtMoney, formatMoneyInput, getPriceDecimals, idOf, parseMoneyInput, sanitizeMoneyInput, setPriceDecimals } from "./money";
 
 afterEach(() => {
   setPriceDecimals(2);
@@ -37,6 +37,14 @@ describe("money input draft", () => {
     expect(parseMoneyInput("")).toBe(0);
     expect(formatMoneyInput(2.1)).toBe("2.10");
     expect(formatMoneyInput(5.05)).toBe("5.05");
+  });
+});
+
+describe("fmtDate", () => {
+  it("shows day-month-year, not ISO", () => {
+    expect(fmtDate("2026-09-21")).toBe("21.09.2026");
+    expect(fmtDate("2026-09-21T08:30:00")).toBe("21.09.2026");
+    expect(fmtDate("")).toBe("—");
   });
 });
 

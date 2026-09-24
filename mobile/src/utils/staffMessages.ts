@@ -1,3 +1,5 @@
+import { fmtDmy, toYmd } from "./calendar";
+
 export type StaffMessage = {
   id?: string;
   employee_id?: string;
@@ -319,7 +321,7 @@ export function chatTimeLabel(value?: string | null, now: number = Date.now()): 
   const yest = new Date(n);
   yest.setDate(n.getDate() - 1);
   if (d.getFullYear() === yest.getFullYear() && d.getMonth() === yest.getMonth() && d.getDate() === yest.getDate()) return "dün";
-  return d.toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
+  return fmtDmy(toYmd(d));
 }
 
 export function threadInOrder(rows?: StaffMessage[] | null): StaffMessage[] {

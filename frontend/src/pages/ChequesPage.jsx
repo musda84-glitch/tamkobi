@@ -9,7 +9,7 @@ import { useEscape } from "../utils/useEscape";
 import { ExportButtons } from "../components/ExportButtons";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { PromissoryPrint } from "../components/PromissoryPrint";
-import { formatTrAmount } from "../utils/money";
+import { fmtDate, formatTrAmount } from "../utils/money";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -312,7 +312,7 @@ export default function ChequesPage() {
                     </span>
                   </td>
                   <td className="px-3 py-2 font-medium">{r.contact_name}</td>
-                  <td className={`px-3 py-2 font-mono ${r.overdue ? "text-rose-700 font-bold" : ""}`}>{r.due_date}</td>
+                  <td className={`px-3 py-2 font-mono ${r.overdue ? "text-rose-700 font-bold" : ""}`}>{fmtDate(r.due_date)}</td>
                   <td className="px-3 py-2 text-slate-500">{r.bank_name || "—"}{r.serial_no ? ` · ${r.serial_no}` : ""}</td>
                   <td className="px-3 py-2 text-right font-bold">{fmt(r.amount)} ₺</td>
                   <td className="px-3 py-2"><span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${STATUS_CLS[r.status] || "bg-slate-100"}`}>{r.status_label}</span></td>

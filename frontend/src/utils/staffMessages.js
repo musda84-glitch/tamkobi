@@ -1,3 +1,5 @@
+import { fmtDmy } from "./dateFormat";
+
 export function validateMessageBody(text) {
   if (!String(text || "").trim()) return "Mesaj yazın.";
   return null;
@@ -190,7 +192,7 @@ export function chatTimeLabel(value, now = Date.now()) {
   const yest = new Date(n);
   yest.setDate(n.getDate() - 1);
   if (d.getFullYear() === yest.getFullYear() && d.getMonth() === yest.getMonth() && d.getDate() === yest.getDate()) return "dün";
-  return d.toLocaleDateString("tr-TR", { day: "numeric", month: "short" });
+  return fmtDmy(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
 }
 
 export function threadInOrder(rows) {

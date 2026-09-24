@@ -2,7 +2,7 @@ import React from "react";
 import { CalendarClock } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { lineGross, lineUnitGross } from "../utils/orderMoney";
-import { fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney } from "../utils/money";
 
 const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -12,10 +12,10 @@ export function PublicQuoteContents({ q, testIdPrefix = "public-quote" }) {
   return (
     <div className="space-y-3 text-sm" data-testid={`${testIdPrefix}-detail`}>
       <div className="flex flex-wrap justify-between gap-2 text-xs text-slate-500">
-        {q.issue_date ? <div>Tarih: <b className="text-slate-800">{q.issue_date}</b></div> : null}
+        {q.issue_date ? <div>Tarih: <b className="text-slate-800">{fmtDate(q.issue_date)}</b></div> : null}
         {q.valid_until ? (
           <div className={q.is_expired ? "text-rose-600 font-semibold" : ""}>
-            Geçerlilik: <b>{q.valid_until}</b>{q.is_expired ? " (süresi doldu)" : ""}
+            Geçerlilik: <b>{fmtDate(q.valid_until)}</b>{q.is_expired ? " (süresi doldu)" : ""}
           </div>
         ) : null}
       </div>
@@ -59,7 +59,7 @@ export function PublicQuoteContents({ q, testIdPrefix = "public-quote" }) {
             {q.payment_plan.rows.map((r) => (
               <div key={r.no || r.label} className="flex justify-between border-b border-violet-100 py-1">
                 <span>{r.label}</span>
-                <span className="text-slate-500">{r.due_date}</span>
+                <span className="text-slate-500">{fmtDate(r.due_date)}</span>
                 <b>{fmt(r.amount, q.currency || "TRY")}</b>
               </div>
             ))}

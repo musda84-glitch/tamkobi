@@ -2,7 +2,7 @@
 import React, { useMemo } from "react";
 import { Printer, X } from "lucide-react";
 import { useEscape } from "../utils/useEscape";
-import { fmtMoney } from "../utils/money";
+import { fmtDate, fmtMoney } from "../utils/money";
 
 export const txSignedAmount = (tx, accountId) => {
   const amt = Number(tx.amount) || 0;
@@ -98,7 +98,7 @@ export const AccountStatementPrint = ({ company, account, title, transactions, o
               )}
               {rows.map((r, i) => (
                 <tr key={r.id || r._id || i} className={`border-b border-slate-100 ${i % 2 ? "bg-slate-50" : ""}`}>
-                  <td className="p-2 font-mono text-slate-500">{r.date}</td>
+                  <td className="p-2 font-mono text-slate-500">{fmtDate(r.date)}</td>
                   <td className="p-2 font-semibold">{r.account_name}{r.type === "transfer" && r.target_account_name ? ` → ${r.target_account_name}` : ""}</td>
                   <td className="p-2">{typeLabel(r)}</td>
                   <td className="p-2">{[r.description, r.contact_name].filter(Boolean).join(" • ")}</td>
