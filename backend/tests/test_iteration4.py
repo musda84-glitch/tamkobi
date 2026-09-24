@@ -228,7 +228,7 @@ class TestQuotes:
         assert r.status_code == 200, r.text
         inv = r.json()["invoice"]
         assert inv["status"] == "draft" and inv["grand_total"] == 2400 and inv["subtotal"] == 2000
-        assert inv["invoice_number"].startswith("NX")
+        assert inv["invoice_number"].startswith("TA")
         assert inv.get("quote_id") == q["id"]
         upd = client.get(f"{BASE}/quotes/{q['id']}", timeout=30).json()
         assert upd["status"] == "accepted" and upd["invoice_number"] == inv["invoice_number"]

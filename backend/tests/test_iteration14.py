@@ -173,7 +173,7 @@ class TestDispatch:
         cb = c.json()
         assert cb["status"] == "success", cb
         new_inv = cb["invoice"]
-        assert new_inv["invoice_number"].startswith("NX"), new_inv["invoice_number"]
+        assert new_inv["invoice_number"].startswith("TA"), new_inv["invoice_number"]
         assert new_inv["invoice_type"] == "sales"
         assert new_inv["status"] == "draft"
         assert new_inv.get("dispatch_number") == disp["invoice_number"]
