@@ -11,6 +11,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { type TabStripItem } from "../components/TabStrip";
 import { ChannelLogo } from "../components/ChannelLogo";
 import { ProjectCardsHost } from "../components/ProjectCard";
+import { ReceiptScanButtons } from "../components/ReceiptScanButtons";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { go } from "../nav";
@@ -57,6 +58,7 @@ import type { BankAccount } from "../utils/finance";
 import { canDeleteInvoice, canEditInvoiceItems } from "../utils/invoiceDraft";
 import { canStaffDeleteOrder, canStaffEditOrder, orderStatusOf } from "../utils/orderEdit";
 import { printPaymentReceipt } from "../utils/chequeShare";
+import { applyReceiptDraft } from "../utils/receiptScan";
 
 type Partner = { id?: string; _id?: string; name?: string; is_active?: boolean; balance?: number };
 type PayMethod = "cash" | "cheque" | "promissory";
@@ -821,6 +823,13 @@ export function ContactDetailScreen() {
             onChange={(id) => setPayForm({ ...payForm, account_id: id })}
             emptyLabel="Hesap seçin"
             groups={payPool}
+          />
+          <ReceiptScanButtons
+            testID="collect-receipt"
+            disabled={!canBank || payBusy}
+            onDraft={(draft) => setPayForm((cur) => (cur ? applyReceiptDraft(cur, draft) : cur))}
+            onHint={(hint) => { setMessage(hint); setError(null); }}
+            onError={(msg) => { setError(msg); setMessage(null); }}
           />
           <Field label="Tutar" testID="collect-amount" value={payForm.amount} onChangeText={(v) => setPayForm({ ...payForm, amount: v })} keyboardType="decimal-pad" />
           <Field label="Açıklama" testID="collect-desc" value={payForm.description} onChangeText={(v) => setPayForm({ ...payForm, description: v })} />

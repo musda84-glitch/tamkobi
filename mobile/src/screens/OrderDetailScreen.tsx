@@ -7,17 +7,19 @@ import { ChannelLogo } from "../components/ChannelLogo";
 import { OrderActions } from "../components/OrderActions";
 import { Badge, Card, ErrorBanner, H1, ListRow, Muted, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
-import type { Order } from "../types";
+import type { Order, Product } from "../types";
 import { channelTr, orderNumberLabel, statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
+import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 
 export function OrderDetailScreen() {
-  const { client } = useAuth();
+  const { client, companyId } = useAuth();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [catalog, setCatalog] = useState<Record<string, Product>>({});
 
   const load = useCallback(async () => {
     try {
@@ -30,6 +32,20 @@ export function OrderDetailScreen() {
   }, [client, id]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const ids = lineProductIds(order?.items);
+    if (!ids.length) {
+      setCatalog({});
+      return;
+    }
+    let cancelled = false;
+    get<Product[]>(client, "/products", { company_id: companyId, lite: 1, ids: ids.join(",") })
+      .then((rows) => { if (!cancelled) setCatalog(indexProductsByKey(rows)); })
+      .catch(() => { if (!cancelled) setCatalog({}); });
+    return () => { cancelled = true; };
+  }, [client, companyId, order?.items]);
+
   if (!order) return <Screen><ErrorBanner message={error || "Yükleniyor…"} /></Screen>;
 
   return (
@@ -63,9 +79,11 @@ export function OrderDetailScreen() {
       {(order.items || []).map((it, i) => (
         <ListRow
           key={i}
-          title={String(it.product_name || "Kalem")}
+          testID={`order-item-${i}`}
+          title={String(it.product_name || it.name || "Kalem")}
           subtitle={`${it.quantity} × ${fmtMoney(it.unit_price)}`}
           right={fmtMoney(it.total_incl || it.total)}
+          image={lineItemImage(it, catalog)}
         />
       ))}
     </Screen>

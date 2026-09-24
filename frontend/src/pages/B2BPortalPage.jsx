@@ -10,7 +10,7 @@ import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, 
 import { B2BAiCart } from "../components/B2BAiCart";
 import { ScanButton } from "../components/CameraScanner";
 import { addCartLine, parseStoredCart, setCartLineQty } from "../utils/b2bCart";
-import { matchesB2BQuery } from "../utils/b2bSearch";
+import { applyB2BScan, matchesB2BQuery } from "../utils/b2bSearch";
 
 const ALL_TABS = [
   { id: "catalog", label: "Ürünler", Icon: Package },
@@ -33,6 +33,8 @@ export default function B2BPortalPage() {
   const [err, setErr] = useState("");
   const [tab, setTab] = useState("catalog");
   const [q, setQ] = useState("");
+  const [scanQty, setScanQty] = useState("1");
+  const [scanStatus, setScanStatus] = useState("");
   const [cat, setCat] = useState("all");
   const [cart, setCart] = useState(() => {
     try { return parseStoredCart(localStorage.getItem(`b2b_cart_${token}`) || "{}"); }
@@ -107,6 +109,18 @@ export default function B2BPortalPage() {
     if (!allowOrders) return;
     const qty = Math.max(1, parseInt(String(draftQty[p.id] ?? "1"), 10) || 1);
     setCart((c) => addCartLine(c, p.id, qty, draftNotes[p.id] || ""));
+  };
+  const addFromScan = (code) => {
+    const hit = applyB2BScan({ products: data.products, code, qty: scanQty, allowOrders, showStock });
+    setQ(String(code || "").trim());
+    setScanStatus(hit.message);
+    if (hit.action === "add" && hit.product) {
+      setCart((c) => addCartLine(c, hit.product.id, hit.qty, draftNotes[hit.product.id] || ""));
+      toast.success(hit.message);
+      return;
+    }
+    if (hit.action === "miss") toast.error(hit.message);
+    else toast.message(hit.message);
   };
 
   const submit = async () => {
@@ -245,12 +259,28 @@ export default function B2BPortalPage() {
                     inputMode="search"
                   />
                 </div>
+                <label className="shrink-0 flex flex-col justify-center">
+                  <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Adet</span>
+                  <input
+                    value={scanQty}
+                    onChange={(e) => setScanQty(e.target.value.replace(/\D/g, ""))}
+                    inputMode="numeric"
+                    className="w-14 border rounded-xl p-2 text-sm font-black text-center bg-white"
+                    data-testid="b2b-scan-qty"
+                    aria-label="Adet çarpan"
+                  />
+                </label>
                 <ScanButton
                   size="sm"
-                  label="Kamera"
-                  title="Kamera ile barkod okut"
+                  continuous
+                  qtyEnabled
+                  qty={scanQty}
+                  onQtyChange={setScanQty}
+                  statusText={scanStatus}
+                  label="Okut"
+                  title="Seri barkod okut — adet çarpan"
                   className="!px-3 !rounded-xl shrink-0"
-                  onScan={(code) => setQ(String(code || "").trim())}
+                  onScan={addFromScan}
                 />
               </div>
 

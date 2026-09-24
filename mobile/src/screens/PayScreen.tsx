@@ -4,11 +4,13 @@ import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip, n } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { ReceiptScanButtons } from "../components/ReceiptScanButtons";
 import { Card, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Contact } from "../types";
 import { contactPaymentRequest, paymentTargetGroups, validateContactPayment, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf } from "../utils/money";
+import { applyReceiptDraft } from "../utils/receiptScan";
 
 type PayForm = { type: "inflow" | "outflow"; amount: string; account_id: string; description: string };
 
@@ -145,6 +147,13 @@ export function PayScreen() {
               ? "Tahsilatta kredi kartı yok; ortaklar kasası (Ortaklar Hesabı) listenin başında."
               : "Ödemede kasa, banka, kart ve ortaklar kasası seçilebilir."}
           </Muted>
+          <ReceiptScanButtons
+            testID="pay-receipt"
+            disabled={!canPay || busy}
+            onDraft={(draft) => setForm((cur) => applyReceiptDraft(cur, draft))}
+            onHint={(hint) => { setMessage(hint); setError(null); }}
+            onError={(msg) => { setError(msg); setMessage(null); }}
+          />
           <Field label="Tutar" testID="pay-amount" value={form.amount} onChangeText={(v) => setForm({ ...form, amount: v })} keyboardType="decimal-pad" />
           <Field label="Açıklama" testID="pay-desc" value={form.description} onChangeText={(v) => setForm({ ...form, description: v })} />
           <PrimaryButton title={busy ? "Kaydediliyor…" : "Kaydet"} onPress={save} loading={busy} color={colors.primary} testID="pay-save" />

@@ -3,6 +3,7 @@
 import {
   RefreshCw,
   FileText,
+  FileSpreadsheet,
   Truck,
   Mail,
   History,
@@ -145,15 +146,25 @@ export function defaultMoreItems(ord, { eBelgeItems = [] } = {}) {
   return rows.filter((r) => !r.hidden);
 }
 
+/** Tüm menü varyantlarında ortak: siparişi Excel / PDF indir. */
+export function orderDownloadMoreItems() {
+  return [
+    item("download_xlsx", "Siparişi Excel İndir", FileSpreadsheet, { color: "text-emerald-600" }),
+    item("download_pdf", "Siparişi PDF İndir", FileText, { color: "text-rose-600" }),
+  ];
+}
+
 /**
  * Siparişe göre menü satırları.
  * @returns {{ kind: string, items: array }}
  */
 export function orderMoreMenuItems(ord, opts = {}) {
   const kind = orderMoreMenuKind(ord);
-  if (kind === "panel_einvoice") return { kind, items: panelEInvoiceMoreItems() };
-  if (kind === "integration_einvoice") return { kind, items: integrationEInvoiceMoreItems() };
-  if (kind === "panel_draft") return { kind, items: panelDraftMoreItems() };
-  if (kind === "panel_invoiced") return { kind, items: panelInvoicedMoreItems() };
-  return { kind, items: defaultMoreItems(ord, opts) };
+  let items;
+  if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
+  else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
+  else if (kind === "panel_draft") items = panelDraftMoreItems();
+  else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
+  else items = defaultMoreItems(ord, opts);
+  return { kind, items: [...items, ...orderDownloadMoreItems()] };
 }

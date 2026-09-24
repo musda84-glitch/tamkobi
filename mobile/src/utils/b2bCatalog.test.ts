@@ -1,4 +1,4 @@
-import { canAddProduct, catalogCategories, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty } from "./b2bCatalog";
+import { applyB2BScan, canAddProduct, catalogCategories, categorySelectGroups, filterCatalog, findCatalogByScan, hasListDiscount, normalizeScanText, parseDraftQty } from "./b2bCatalog";
 
 const p = (over: Record<string, unknown> = {}) => ({
   id: "1",
@@ -56,6 +56,22 @@ describe("parseDraftQty / canAddProduct", () => {
     expect(canAddProduct(p({ in_stock: false }), true, true)).toBe(false);
     expect(canAddProduct(p({ in_stock: false }), false, true)).toBe(true);
     expect(canAddProduct(p(), true, false)).toBe(false);
+  });
+});
+
+describe("applyB2BScan", () => {
+  it("adds the scan multiplier when the barcode matches", () => {
+    const rows = [p(), p({ id: "2", name: "Masa", sku: "MS-1", barcode: "111" })];
+    expect(findCatalogByScan(rows, "]C1869")?.id).toBe("1");
+    const hit = applyB2BScan({ products: rows, code: "111", qty: "4", allowOrders: true, showStock: true });
+    expect(hit).toMatchObject({ action: "add", qty: 4, message: "Masa sepete eklendi (4)" });
+    expect(hit.product?.id).toBe("2");
+  });
+
+  it("misses unknown codes and filters when orders are closed", () => {
+    expect(applyB2BScan({ products: [p()], code: "000", allowOrders: true }).action).toBe("miss");
+    expect(applyB2BScan({ products: [p()], code: "869", allowOrders: false }).action).toBe("filter");
+    expect(applyB2BScan({ products: [p({ in_stock: false })], code: "869", allowOrders: true, showStock: true }).action).toBe("filter");
   });
 });
 

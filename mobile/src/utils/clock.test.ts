@@ -1,4 +1,4 @@
-import { formatHm, hourOptions, minuteOptions, parseHm } from "./clock";
+import { formatHm, hourOptions, minuteOptions, nowHm, parseHm, resolveNowHm } from "./clock";
 
 describe("clock", () => {
   it("parses and formats HH:MM", () => {
@@ -12,5 +12,11 @@ describe("clock", () => {
   it("lists 24 hours and 5-minute steps", () => {
     expect(hourOptions()).toHaveLength(24);
     expect(minuteOptions(5)).toEqual([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]);
+  });
+
+  it("takes the live clock when present", () => {
+    expect(nowHm(new Date(2026, 8, 24, 16, 43))).toBe("16:43");
+    expect(resolveNowHm("16:43:09")).toBe("16:43");
+    expect(resolveNowHm("", new Date(2026, 8, 24, 9, 5))).toBe("09:05");
   });
 });
