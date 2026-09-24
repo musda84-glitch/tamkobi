@@ -139,8 +139,18 @@ export function latestNotifications(
   return [...(rows || [])].sort((a, b) => time(b) - time(a)).slice(0, limit);
 }
 
+export function localizeNotificationText(text?: string | null): string {
+  return String(text || "").replace(/\b(approved|rejected|pending)\b/gi, (raw) => {
+    const key = raw.toLowerCase();
+    if (key === "approved") return "onaylandı";
+    if (key === "rejected") return "reddedildi";
+    if (key === "pending") return "bekliyor";
+    return raw;
+  });
+}
+
 export function notificationText(n: Notification): string {
-  return n.message || n.body || "";
+  return localizeNotificationText(n.message || n.body || "");
 }
 
 export function notificationTitle(n: Notification): string {
