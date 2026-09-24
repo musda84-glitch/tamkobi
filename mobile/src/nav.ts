@@ -111,7 +111,18 @@ export function go(name: string, params?: Record<string, unknown>) {
     case "ExpenseNew":
       return router.push({
         pathname: "/expenses/new",
-        params: { account_id: String(params?.account_id || "") },
+        params: {
+          account_id: String(params?.account_id || ""),
+          amount: String(params?.amount || ""),
+          description: String(params?.description || ""),
+          category: String(params?.category || ""),
+          date: String(params?.date || ""),
+          document_no: String(params?.document_no || ""),
+          vat_rate: String(params?.vat_rate || ""),
+          vat_included: String(params?.vat_included || ""),
+          notes: String(params?.notes || ""),
+          contact_id: String(params?.contact_id || ""),
+        },
       });
     case "ExpenseDetail":
       return router.push({ pathname: "/expenses/[id]", params: { id: String(params?.id || "") } });

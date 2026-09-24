@@ -30,6 +30,7 @@ GROUPS = (("ai", "Yapay zeka"), ("support", "Destek araçları"))
 # Longest prefix wins. Public B2B paths are skipped by RBAC; they check in the handler.
 ADDON_PATHS: Tuple[Tuple[str, str], ...] = (
     ("/api/ai/invoice-extract", "ai.invoice"),
+    ("/api/ai/expense-extract", "ai.finance_docs"),
     ("/api/ai/receipt-extract", "ai.finance_docs"),
     ("/api/ai/order-extract", "ai.orders"),
     ("/api/ai/product-extract", "ai.stock"),

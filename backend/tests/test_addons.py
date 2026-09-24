@@ -82,6 +82,7 @@ def test_lock_turns_ai_off_keeps_lock_safe_support():
 def test_addon_for_path_longest_prefix_and_statement():
     assert addons.addon_for_path("/api/ai/invoice-extract") == "ai.invoice"
     assert addons.addon_for_path("/api/ai/invoice-extract/confirm") == "ai.invoice"
+    assert addons.addon_for_path("/api/ai/expense-extract") == "ai.finance_docs"
     assert addons.addon_for_path("/api/ai/receipt-extract") == "ai.finance_docs"
     assert addons.addon_for_path("/api/ai/order-extract") == "ai.orders"
     assert addons.addon_for_path("/api/ai/product-extract") == "ai.stock"

@@ -4,11 +4,13 @@ import { Text } from "react-native";
 import { get } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { Chip } from "../components/chips";
+import { ExpenseScanButtons } from "../components/ExpenseScanButtons";
 import { Card, Empty, ErrorBanner, Field, ListRow, PrimaryButton, Row, Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Expense } from "../utils/finance";
 import { statusTr } from "../utils/labels";
+import { expenseScanNavParams } from "../utils/expenseScan";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 
 type ExpenseList = {
@@ -60,7 +62,17 @@ export function ExpensesScreen() {
       stickyTop={(
         <>
           {canEdit ? (
-            <PrimaryButton title="Yeni masraf" onPress={() => go("ExpenseNew")} color={colors.danger} testID="exp-new-btn" />
+            <>
+              <PrimaryButton title="Yeni masraf" onPress={() => go("ExpenseNew")} color={colors.danger} testID="exp-new-btn" />
+              <ExpenseScanButtons
+                testID="exp-scan"
+                onDraft={(draft, match) => {
+                  setError(null);
+                  go("ExpenseNew", expenseScanNavParams(draft, match));
+                }}
+                onError={setError}
+              />
+            </>
           ) : null}
           {s ? (
             <Card>
