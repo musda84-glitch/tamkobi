@@ -26,7 +26,7 @@ import {
   type Partner,
 } from "../utils/finance";
 import { applyExpensePrefill, applyExpenseScan } from "../utils/expenseScan";
-import { fmtMoney, idOf, todayIso } from "../utils/money";
+import { fmtMoney, idOf, moneySuffix, todayIso } from "../utils/money";
 
 export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
   const { client, companyId, can } = useAuth();
@@ -207,7 +207,27 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
         <PrimaryButton title={`Kategori: ${catQ.trim()}`} onPress={addCategory} color={colors.primary} testID="exp-cat-add" />
       ) : null}
       <Field label="Açıklama" testID="exp-description" value={draft.description} onChangeText={(v) => set("description", v)} editable={canEdit} />
-      <Field label="Tutar" testID="exp-amount" value={draft.amount} onChangeText={(v) => set("amount", v)} keyboardType="decimal-pad" editable={canEdit} />
+      <Muted>Para birimi</Muted>
+      <Row style={{ flexWrap: "wrap" }}>
+        {["TRY", "USD", "EUR", "GBP"].map((c) => (
+          <Chip
+            key={c}
+            label={c === "TRY" ? "₺ TRY" : c}
+            active={(draft.currency || "TRY") === c}
+            onPress={() => canEdit && set("currency", c)}
+            testID={`exp-currency-${c}`}
+          />
+        ))}
+      </Row>
+      <Field
+        label={`Tutar (${moneySuffix(draft.currency)})`}
+        testID="exp-amount"
+        value={draft.amount}
+        onChangeText={(v) => set("amount", v)}
+        keyboardType="decimal-pad"
+        editable={canEdit}
+        suffix={moneySuffix(draft.currency)}
+      />
       <Muted>KDV %</Muted>
       <Row>
         {[0, 1, 10, 20].map((v) => (
@@ -216,9 +236,9 @@ export function ExpenseFormScreen({ expenseId }: { expenseId?: string }) {
       </Row>
       <Chip label="Tutar KDV dahil" active={draft.vat_included} onPress={() => canEdit && set("vat_included", !draft.vat_included)} testID="exp-vat-included" />
       <Card>
-        <Row style={{ justifyContent: "space-between" }}><Muted>Net</Muted><Text>{fmtMoney(totals.net)}</Text></Row>
-        <Row style={{ justifyContent: "space-between" }}><Muted>KDV</Muted><Text testID="exp-vat-amount">{fmtMoney(totals.vat)}</Text></Row>
-        <Row style={{ justifyContent: "space-between" }}><Text style={{ fontWeight: "800" }}>Toplam</Text><Text style={{ fontWeight: "800", color: colors.danger }} testID="exp-total">{fmtMoney(totals.total)}</Text></Row>
+        <Row style={{ justifyContent: "space-between" }}><Muted>Net</Muted><Text>{fmtMoney(totals.net, draft.currency)}</Text></Row>
+        <Row style={{ justifyContent: "space-between" }}><Muted>KDV</Muted><Text testID="exp-vat-amount">{fmtMoney(totals.vat, draft.currency)}</Text></Row>
+        <Row style={{ justifyContent: "space-between" }}><Text style={{ fontWeight: "800" }}>Toplam</Text><Text style={{ fontWeight: "800", color: colors.danger }} testID="exp-total">{fmtMoney(totals.total, draft.currency)}</Text></Row>
       </Card>
       {isNew ? (
         <>

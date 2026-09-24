@@ -53,9 +53,12 @@ export function formatTrAmount(n: unknown): string {
   return amount.toLocaleString("tr-TR", { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
+export function moneySuffix(currency?: string | null): string {
+  return !currency || currency === "TRY" ? "₺" : String(currency);
+}
+
 export function fmtMoney(n: unknown, currency = "TRY"): string {
-  const suffix = !currency || currency === "TRY" ? "₺" : currency;
-  return `${formatTrAmount(n)} ${suffix}`;
+  return `${formatTrAmount(n)} ${moneySuffix(currency)}`;
 }
 
 /** Görünen tarihler gün.ay.yıl (21.09.2026). API hâlâ YYYY-MM-DD taşır. */
