@@ -7,8 +7,11 @@ import {
   matchAssignedDuty,
   dutyFromCurrent,
   applyDutyPhotoVisibility,
+  dutyCanShowPhotos,
+  dutyCanUploadPhotos,
   dutyHasProject,
   dutyIsField,
+  dutyPhotosHint,
   dutyKindLabel,
   dutyPhotos,
   dutyShowAtolye,
@@ -65,6 +68,10 @@ describe("assigned duty field extras", () => {
     expect(dutyShowAtolye(office, true)).toBe(true);
     expect(dutyShowSite(office)).toBe(false);
     expect(dutyKindLabel(office)).toBe("İç görev");
+    expect(dutyCanShowPhotos({ id: "ot_1", kind: "office" })).toBe(true);
+    expect(dutyCanUploadPhotos({ id: "ot_1", kind: "office", done: true }, false)).toBe(true);
+    expect(dutyCanUploadPhotos({ id: "ot_1" }, true)).toBe(false);
+    expect(dutyPhotosHint({ kind: "office" })).toMatch(/yapılan görev/);
     expect(mapsLink({ address: "" })).toBeNull();
     expect(dutySiteHint({ project_number: "PRJ-1", address: "Ankara" })).toBe("PRJ-1 · Ankara");
   });

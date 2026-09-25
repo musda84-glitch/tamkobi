@@ -1,5 +1,7 @@
 from work_parks import (
+    append_office_task_photo,
     clear_duty_if_task,
+    find_office_task,
     find_park,
     is_assignment_done,
     mark_office_task_done,
@@ -44,6 +46,13 @@ def test_office_task_row():
     view = office_assignment_view(named)
     assert view["kind"] == "office"
     assert view["project_name"] == "Makina parkuru"
+    assert view["photos"] == []
+    with_photo = {**named, "photos": [{"url": "/api/files/ot.jpg", "task_id": "ot_2"}]}
+    assert [p["url"] for p in office_assignment_view(with_photo)["photos"]] == ["/api/files/ot.jpg"]
+    tasks, found = append_office_task_photo([named], "ot_2", {"url": "/api/files/ot.jpg", "task_id": "ot_2"})
+    assert found["photos"][0]["url"] == "/api/files/ot.jpg"
+    assert find_office_task(tasks, "ot_2")["photos"]
+    assert find_office_task(tasks, "missing") is None
 
 
 def test_mark_office_task_done():

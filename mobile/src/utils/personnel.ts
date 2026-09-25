@@ -451,6 +451,7 @@ export type EmployeePresenceChip = {
   label: string;
   color: string;
   bg: string;
+  border: string;
 };
 
 type PresenceToday = {
@@ -479,7 +480,7 @@ function presenceInside(opts: {
   return null;
 }
 
-/** Aktif yanındaki anlık yer: görev yerinde / işte / dışarda. */
+/** Aktif yanındaki anlık yer: dış görev / iş yeri / dışarı. */
 export function employeePresenceChip(opts?: {
   status?: string | null;
   workplace?: Workplace | null;
@@ -494,12 +495,12 @@ export function employeePresenceChip(opts?: {
   const inside = presenceInside(opts);
   if (inside === true) {
     if (opts.workplace?.kind === "task") {
-      return { key: "duty", label: "Görev yerinde", color: "#3730A3", bg: "#EEF2FF" };
+      return { key: "duty", label: "Dış Görev Yerinde", color: "#3730A3", bg: "#EEF2FF", border: "#A5B4FC" };
     }
-    return { key: "work", label: "İşte", color: "#047857", bg: "#D1FAE5" };
+    return { key: "work", label: "İş Yerinde Şuan", color: "#047857", bg: "#D1FAE5", border: "#6EE7B7" };
   }
   if (inside === false) {
-    return { key: "out", label: "Dışarda", color: "#C2410C", bg: "#FFEDD5" };
+    return { key: "out", label: "Şuan Dışarıda", color: "#C2410C", bg: "#FFEDD5", border: "#FDBA74" };
   }
   return null;
 }
@@ -878,6 +879,14 @@ export function locationMoveDidLabel(kind?: string | null): string {
   if (kind === "leave") return "İş yerine çıkış yaptı";
   if (kind === "lost") return "Konum kaybı";
   return "Konum hareketi";
+}
+
+export function locationMoveColor(kind?: string | null, ignored = false): string {
+  if (ignored) return "#94A3B8";
+  if (kind === "enter") return "#047857";
+  if (kind === "leave") return "#BE123C";
+  if (kind === "lost") return "#C2410C";
+  return "#0F172A";
 }
 
 /** Sistem tarih saat: 25.09.2026 08:32 (Europe/Istanbul). */
@@ -1591,6 +1600,28 @@ export function overtimeCanApprove(ot?: CalculatedOvertime | null): boolean {
 
 export function overtimeCanEdit(ot?: CalculatedOvertime | null): boolean {
   return !ot || ot.status !== "paid";
+}
+
+export function overtimeCanDelete(ot?: CalculatedOvertime | null): boolean {
+  return !!ot && !!ot.bonusId && ot.status !== "paid";
+}
+
+export const OVERTIME_APPROVE_CONFIRM = {
+  title: "Fazla mesai onayla",
+  message: "İşlemi onaylıyor musunuz?",
+};
+
+export const OVERTIME_DELETE_CONFIRM = {
+  title: "Fazla mesai sil",
+  message: "Fazla mesai kaydını silmek istiyor musunuz?",
+};
+
+export function overtimeApproveConfirm(): { title: string; message: string } {
+  return { ...OVERTIME_APPROVE_CONFIRM };
+}
+
+export function overtimeDeleteConfirm(): { title: string; message: string } {
+  return { ...OVERTIME_DELETE_CONFIRM };
 }
 
 export function overtimeSummaryLine(ot?: CalculatedOvertime | null): string {

@@ -301,7 +301,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                 today: card?.attendance?.today,
               });
               return presence ? (
-                <span data-testid="emp-presence-modal" className="ml-1.5 align-middle text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ color: presence.color, backgroundColor: presence.bg }}>{presence.label}</span>
+                <span data-testid="emp-presence-modal" className="ml-1.5 align-middle text-[10px] font-bold px-1.5 py-0.5 rounded-full border" style={{ color: presence.color, backgroundColor: presence.bg, borderColor: presence.border }}>{presence.label}</span>
               ) : null;
             })()}</h3><div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div><div className="text-[11px] text-slate-400">İşe giriş: {formatTrDate(e.start_date)}{e.end_date ? ` · Ayrılış: ${formatTrDate(e.end_date)}` : ""} · TCKN: {e.tc_kimlik}</div></div>
           </div>
@@ -387,7 +387,9 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                           : (card.tasks || []).find((t) => !t.done) || null,
                         workplace: card.workplace,
                       });
-                      const rest = (card.tasks || []).filter((t) => !currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)).filter((t) => !t.done || (t.photos || []).length);
+                      const restOpen = (card.tasks || []).filter((t) => !t.done && (!currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)));
+                      const restDone = (card.tasks || []).filter((t) => t.done && (!currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)));
+                      const rest = [...restOpen, ...restDone];
                       if (!currentDuty && !rest.length && !pendingDutyPhotoCount(card.tasks)) return null;
                       return (
                       <div className="space-y-2" data-testid="emp-card-tasks">
@@ -407,7 +409,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                             />
                           </div>
                         ) : null}
-                        {rest.slice(0, 8).map((t, i) => (
+                        {restOpen.slice(0, 8).map((t, i) => (
                           <AssignedDutyCard
                             key={t.id || i}
                             duty={t}
@@ -417,6 +419,21 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                             onChanged={() => reload()}
                           />
                         ))}
+                        {restDone.length ? (
+                          <div className="space-y-2" data-testid="emp-card-done-tasks">
+                            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Yapılan görevler ({restDone.length})</div>
+                            {restDone.slice(0, 8).map((t, i) => (
+                              <AssignedDutyCard
+                                key={t.id || i}
+                                duty={t}
+                                index={i}
+                                testId={`emp-card-done-${t.id || i}`}
+                                reviewPhotos
+                                onChanged={() => reload()}
+                              />
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                       );
                     })()}

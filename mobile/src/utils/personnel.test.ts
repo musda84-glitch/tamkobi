@@ -25,9 +25,12 @@ import {
   calculatedOvertimeFromCard,
   mergeOvertimePreview,
   overtimeAmountFromHours,
+  overtimeApproveConfirm,
   overtimeApprovePayload,
   overtimeCanApprove,
+  overtimeCanDelete,
   overtimeCanEdit,
+  overtimeDeleteConfirm,
   overtimeEditPayload,
   overtimeStatusLabel,
   overtimeSummaryLine,
@@ -117,6 +120,7 @@ import {
   filterPayMoves,
   fmtLocationMoveAt,
   locationMoveCanIgnore,
+  locationMoveColor,
   locationMoveDidLabel,
   locationMoveIgnorePath,
   locationMoveLine,
@@ -189,9 +193,15 @@ describe("employee draft", () => {
   it("labels requests and sums period bonuses", () => {
     expect(employeeStatusLabel("terminated")).toBe("İşten çıktı");
     expect(employeeStatusLabel("active")).toBe("Aktif");
-    expect(employeePresenceChip({ location_last_inside: true, workplace: { kind: "task" } })?.label).toBe("Görev yerinde");
-    expect(employeePresenceChip({ location_last_inside: true, workplace: { kind: "company" } })?.label).toBe("İşte");
-    expect(employeePresenceChip({ location_last_inside: false })?.label).toBe("Dışarda");
+    expect(employeePresenceChip({ location_last_inside: true, workplace: { kind: "task" } })).toMatchObject({
+      label: "Dış Görev Yerinde", border: "#A5B4FC",
+    });
+    expect(employeePresenceChip({ location_last_inside: true, workplace: { kind: "company" } })).toMatchObject({
+      label: "İş Yerinde Şuan", border: "#6EE7B7",
+    });
+    expect(employeePresenceChip({ location_last_inside: false })).toMatchObject({
+      label: "Şuan Dışarıda", border: "#FDBA74",
+    });
     expect(employeePresenceChip({ status: "terminated", location_last_inside: true })).toBeNull();
     expect(employeePresenceChip({ today: { check_in: "08:30", location_inside_at: "2026-09-25T05:30:00Z" } })?.key).toBe("work");
     expect(requestKindLabel("early_leave")).toBe("Erken çıkış");
@@ -294,6 +304,9 @@ describe("employee draft", () => {
     expect(filterPayMoves([{ id: "1", kind: "bonus", title: "Avans", subtitle: "", amount: 1, date: "2026-07-01" }], "30d", new Date("2026-09-22"), "2026-09")).toHaveLength(0);
     expect(locationMoveDidLabel("enter")).toBe("İş yerine giriş yaptı");
     expect(locationMoveDidLabel("leave")).toBe("İş yerine çıkış yaptı");
+    expect(locationMoveColor("enter")).toBe("#047857");
+    expect(locationMoveColor("leave")).toBe("#BE123C");
+    expect(locationMoveColor("leave", true)).toBe("#94A3B8");
     expect(locationMoveDidLabel("lost")).toBe("Konum kaybı");
     expect(fmtLocationMoveAt("2026-09-24T08:32:00")).toBe("24.09.2026 08:32");
     expect(fmtLocationMoveAt("2026-09-24T05:32:00+00:00")).toBe("24.09.2026 08:32");
@@ -442,7 +455,18 @@ describe("payroll helpers", () => {
     }, "2026-09")).toMatchObject({ status: "paid", amount: 800, hours: 2 });
     expect(overtimeCanApprove({ status: "calculated", amount: 1750, hours: 3.5, weekdayHours: 0, holidayHours: 0, weekdayRate: 0, holidayRate: 0, period: "2026-09" })).toBe(true);
     expect(overtimeCanApprove({ status: "approved", amount: 1750, hours: 3.5, weekdayHours: 0, holidayHours: 0, weekdayRate: 0, holidayRate: 0, period: "2026-09" })).toBe(false);
+    expect(overtimeCanDelete({ status: "calculated", amount: 1750, hours: 3.5, weekdayHours: 0, holidayHours: 0, weekdayRate: 0, holidayRate: 0, period: "2026-09" })).toBe(false);
+    expect(overtimeCanDelete({ status: "approved", amount: 1600, hours: 3, weekdayHours: 0, holidayHours: 0, weekdayRate: 0, holidayRate: 0, period: "2026-09", bonusId: "b1" })).toBe(true);
+    expect(overtimeCanDelete({ status: "paid", amount: 800, hours: 2, weekdayHours: 0, holidayHours: 0, weekdayRate: 0, holidayRate: 0, period: "2026-09", bonusId: "p1" })).toBe(false);
     expect(overtimeCanEdit({ status: "paid", amount: 800, hours: 2, weekdayHours: 0, holidayHours: 0, weekdayRate: 0, holidayRate: 0, period: "2026-09" })).toBe(false);
+    expect(overtimeApproveConfirm()).toEqual({
+      title: "Fazla mesai onayla",
+      message: "İşlemi onaylıyor musunuz?",
+    });
+    expect(overtimeDeleteConfirm()).toEqual({
+      title: "Fazla mesai sil",
+      message: "Fazla mesai kaydını silmek istiyor musunuz?",
+    });
     expect(overtimeStatusLabel("calculated")).toBe("Hesaplandı");
     expect(overtimeSummaryLine({
       hours: 3.5, amount: 1750, weekdayHours: 3.5, holidayHours: 0, weekdayRate: 500, holidayRate: 0, period: "2026-09", status: "calculated",

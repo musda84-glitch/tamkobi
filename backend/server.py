@@ -13068,7 +13068,13 @@ async def upload_my_task_photo(
     if not emp:
         raise HTTPException(status_code=400, detail="Personel kartınız bağlı değil.")
     proj, task = await _find_assigned_project(emp.get("company_id"), emp["_id"], task_id)
+    import work_parks as wp
+    office_emp = None
+    office_task = None
     if not proj or not task:
+        office_emp = await db.employees.find_one({"_id": emp["_id"]}, {"office_tasks": 1, "company_id": 1, "full_name": 1}) or {}
+        office_task = wp.find_office_task(office_emp.get("office_tasks") or [], task_id)
+    if (not proj or not task) and not office_task:
         raise HTTPException(status_code=404, detail="Görev bulunamadı.")
     content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
     if content_type not in ALLOWED_IMAGE_TYPES:
@@ -13080,12 +13086,13 @@ async def upload_my_task_photo(
     data, content_type, ext = opt.data, opt.content_type, opt.ext
     company_id = emp.get("company_id")
     await saas.check_storage_limit(company_id, len(data))
+    entity = "project" if proj and task else "office_task"
     try:
         import storage_manager
         await storage_manager.ensure_account_folders(company_id)
-        path = storage_manager.object_path(company_id, "project", ext)
+        path = storage_manager.object_path(company_id, entity, ext)
     except Exception:
-        path = f"{APP_NAME}/project/{company_id}/{uuid.uuid4()}.{ext}"
+        path = f"{APP_NAME}/{entity}/{company_id}/{uuid.uuid4()}.{ext}"
     try:
         result = put_object(path, data, content_type)
     except Exception as e:
@@ -13093,6 +13100,35 @@ async def upload_my_task_photo(
         raise HTTPException(status_code=502, detail="Dosya depolama servisine yüklenemedi.")
     url = f"/api/files/{result['path']}"
     now = datetime.now(timezone.utc).isoformat()
+    if office_task:
+        row = {
+            "url": url,
+            "created_at": now,
+            "uploaded_by": str(emp["_id"]),
+            "task_id": str(office_task.get("id") or task_id),
+            "source": "employee",
+            "visibility": "show",
+            "visibility_label": "Yönetici görür",
+            "customer_visible": False,
+            "stage": "office",
+            "stage_label": office_task.get("park_name") or "İç görev",
+        }
+        tasks, found = wp.append_office_task_photo(office_emp.get("office_tasks") or [], task_id, row)
+        await db.files.insert_one({
+            "_id": str(uuid.uuid4()), "storage_path": result["path"], "original_filename": file.filename,
+            "content_type": content_type, "size": len(data), "company_id": company_id,
+            "entity": "office_task", "entity_id": str(office_task.get("id") or task_id), "is_deleted": False, "created_at": now,
+        })
+        await db.employees.update_one(
+            {"_id": emp["_id"]},
+            {"$set": {"office_tasks": tasks, "updated_at": now}},
+        )
+        return {
+            "status": "success",
+            "message": "Fotoğraf yüklendi. Yönetici yapılan görevlerde görür.",
+            "photo": row,
+            "task": wp.office_assignment_view(found or {**office_task, "photos": [row]}),
+        }
     stage = project_photos.clean_stage_key(proj.get("status")) or "active"
     row = project_photos.employee_photo_row(
         url,

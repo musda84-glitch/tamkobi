@@ -142,6 +142,18 @@ export function dutyHasProject(t?: AssignedDuty | null): boolean {
   return Boolean(t?.project_id || t?.project_number || (dutyIsField(t) && t?.project_name));
 }
 
+export function dutyCanShowPhotos(t?: AssignedDuty | null): boolean {
+  return Boolean(t?.id) || dutyHasProject(t);
+}
+
+export function dutyCanUploadPhotos(t?: AssignedDuty | null, review = false): boolean {
+  return !review && Boolean(t?.id);
+}
+
+export function dutyPhotosHint(t?: AssignedDuty | null): string {
+  return dutyIsField(t) ? DUTY_PHOTOS_HINT : "İş fotoğrafları — yönetici yapılan görevlerde görür";
+}
+
 export function dutyWorkflow(t?: AssignedDuty | null): DutyWorkflowStep[] {
   return Array.isArray(t?.workflow) ? t!.workflow! : [];
 }

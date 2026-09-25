@@ -726,8 +726,8 @@ export default function PersonnelPage() {
                     return presence ? (
                       <span
                         data-testid={`emp-presence-${empKey}`}
-                        className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
-                        style={{ color: presence.color, backgroundColor: presence.bg }}
+                        className="text-[10px] px-2 py-0.5 rounded-full font-semibold border"
+                        style={{ color: presence.color, backgroundColor: presence.bg, borderColor: presence.border }}
                       >
                         {presence.label}
                       </span>

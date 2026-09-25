@@ -7,6 +7,7 @@ import {
   filterPayMoves,
   fmtLocationMoveAt,
   locationMoveCanIgnore,
+  locationMoveColor,
   locationMoveDidLabel,
   locationMoveIgnorePath,
   locationMoveLine,
@@ -29,10 +30,10 @@ describe("personnelCard", () => {
 
   test("shows live presence next to Aktif from GPS inside flag", () => {
     expect(employeePresenceChip({ status: "active", location_last_inside: true, workplace: { kind: "office" } })).toMatchObject({
-      key: "work", label: "İşte",
+      key: "work", label: "İş Yerinde Şuan", border: "#6EE7B7",
     });
-    expect(employeePresenceChip({ status: "active", location_last_inside: true, workplace: { kind: "task" } }).label).toBe("Görev yerinde");
-    expect(employeePresenceChip({ status: "active", location_last_inside: false }).label).toBe("Dışarda");
+    expect(employeePresenceChip({ status: "active", location_last_inside: true, workplace: { kind: "task" } }).label).toBe("Dış Görev Yerinde");
+    expect(employeePresenceChip({ status: "active", location_last_inside: false }).label).toBe("Şuan Dışarıda");
     expect(employeePresenceChip({ status: "terminated", location_last_inside: true })).toBeNull();
     expect(employeePresenceChip({ status: "active", location_last_ok: false })).toBeNull();
   });
@@ -47,6 +48,8 @@ describe("personnelCard", () => {
     expect(filterPayMoves([{ id: "1", date: "2026-07-01" }], "30d", new Date("2026-09-22"), "2026-09")).toHaveLength(0);
     expect(locationMoveDidLabel("enter")).toBe("İş yerine giriş yaptı");
     expect(locationMoveDidLabel("leave")).toBe("İş yerine çıkış yaptı");
+    expect(locationMoveColor("enter")).toBe("#047857");
+    expect(locationMoveColor("leave")).toBe("#BE123C");
     expect(fmtLocationMoveAt("2026-09-24T08:32:00")).toBe("24.09.2026 08:32");
     expect(locationMoveLine({ at: "2026-09-24T08:32:00", kind: "enter" })).toBe("24.09.2026 08:32 · İş yerine giriş yaptı");
     expect(locationMoveCanIgnore({ kind: "leave", ignorable: true })).toBe(true);
