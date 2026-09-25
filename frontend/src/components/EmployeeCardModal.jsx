@@ -13,6 +13,7 @@ import { EmployeeAssignTaskModal } from "./EmployeeAssignTaskModal";
 import { EmployeeLedgerModal } from "./EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "./EmployeeYevmiyeModal";
 import { EmployeeMovesModal } from "./EmployeeMovesModal";
+import { EmployeePuantajPanel } from "./EmployeePuantajPanel";
 import { empStatusLabel, formatTrDate, performanceTone, remainingTone } from "../utils/employeeCardSummary";
 import { employeePresenceChip } from "../utils/personnelCard";
 import { roleCodeFromPosition } from "../utils/employeePosition";
@@ -471,14 +472,19 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
               </div>
             )}
             {tab === "leaves" && (
-              <div className="space-y-3"><div className="grid grid-cols-3 gap-2"><Stat label="Yıllık Hak" value={`${card.leave_balance.annual} gün`} /><Stat label="Kullanılan" value={`${card.leave_balance.used} gün`} /><Stat label="Kalan" value={`${card.leave_balance.remaining} gün`} testid="emp-leave-remaining" /></div>
+              <div className="space-y-3"><div className="grid grid-cols-2 md:grid-cols-4 gap-2"><Stat label={`Yıllık Hak${card.leave_balance?.year ? ` (${card.leave_balance.year})` : ""}`} value={`${card.leave_balance.annual} gün`} /><Stat label="Kullanılan" value={`${card.leave_balance.used} gün`} /><Stat label="Devir" value={`${card.leave_balance.carry || 0} gün`} testid="emp-leave-carry" /><Stat label="Kalan" value={`${card.leave_balance.remaining} gün`} testid="emp-leave-remaining" /></div>
                 <table className="w-full" data-testid="emp-leaves-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Tür</th><th className="text-left">Tarih</th><th className="text-right">Gün</th><th className="text-left pl-3">Açıklama</th><th className="text-right">Durum</th></tr></thead>
                   <tbody className="divide-y">{card.leaves.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">İzin kaydı yok.</td></tr>}{card.leaves.map((l) => <tr key={l.id}><td className="py-1.5 font-semibold">{LEAVE[l.type] || l.type}</td><td>{l.start_date} → {l.end_date}</td><td className="text-right">{l.days}</td><td className="pl-3 text-slate-500">{l.reason}</td><td className="text-right"><Badge s={l.status} /></td></tr>)}</tbody></table></div>
             )}
             {tab === "attendance" && (
               <div className="space-y-3" data-testid="emp-attendance">
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-2"><Stat label={`Ay (${card.attendance.month})`} value="Özet" /><Stat label="Çalışılan Gün" value={card.attendance.days_present} /><Stat label="Devamsız" value={card.attendance.days_absent} /><Stat label="İzinli" value={card.attendance.days_leave} /><Stat label="Toplam / Mesai Saat" value={`${card.attendance.total_hours} / ${card.attendance.overtime_hours}`} />{isDailyWage(e) ? <Stat label="Yevmiye hak ediş" value={`${fmt(periodWage(e, card.attendance.days_present))} ₺`} sub={`${card.attendance.days_present || 0} gün × ${fmt(e.daily_wage)} ₺`} testid="emp-att-yevmiye" /> : null}</div>
                 {card.workplace?.kind === "task" ? <div className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-att-workplace">Dış görev: {workplaceShort(card.workplace)} — giriş/çıkış görev yerinden</div> : null}
+                {isDailyWage(e) ? <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2" data-testid="emp-att-yevmiye">Yevmiye hak ediş: {card.attendance.days_present || 0} gün × {fmt(e.daily_wage)} ₺ = {fmt(periodWage(e, card.attendance.days_present))} ₺</div> : null}
+                <EmployeePuantajPanel
+                  employeeId={id}
+                  initialMonth={card.attendance?.month}
+                  onLeaveYearChanged={reload}
+                />
               </div>
             )}
             {tab === "pay" && <EmployeeCompensationForm key={card.employee.updated_at || card.employee.id} employee={card.employee} companySchedule={schedule} onSaved={reload} />}

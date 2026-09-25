@@ -12862,7 +12862,7 @@ async def employee_card(emp_id: str):
     if invite_payload:
         invite_payload["role_name"] = role_names.get(invite_payload.get("role"), invite_payload.get("role"))
     return {"employee": clean_doc(emp), "payrolls": payrolls, "leaves": leaves, "bonuses": bonuses,
-            "leave_balance": {"annual": emp.get("annual_leave_days", 14), "used": used or emp.get("used_leave_days", 0), "remaining": emp.get("annual_leave_days", 14) - (used or emp.get("used_leave_days", 0)), "pending": sum(1 for l in leaves if l.get("status") == "pending")},
+            "leave_balance": {**attendance.leave_year_balance({**emp, "used_leave_days": used or emp.get("used_leave_days", 0)}), "pending": sum(1 for l in leaves if l.get("status") == "pending")},
             "attendance": {"month": month, **att_sum},
             "overtime": {"hours": ot["overtime_hours"], "weekday_hours": ot["weekday_hours"], "holiday_hours": ot["holiday_hours"],
                          "amount": ot["amount"], "method": ot["method"], "weekday_rate": ot["weekday_rate"], "holiday_rate": ot["holiday_rate"]},
