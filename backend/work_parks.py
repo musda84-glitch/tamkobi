@@ -62,6 +62,38 @@ def normalize_office_task_types(raw: Any) -> list:
     return normalize_named_list(raw, prefix="ot")
 
 
+def normalize_workshop_zones(raw: Any) -> list:
+    """Atölye bölgeleri — reçete adım adı (bölüm) seçenekleri."""
+    return normalize_named_list(raw, prefix="zone")
+
+
+def zone_names_from_list(raw: Any, fallback: Optional[list] = None) -> list:
+    """Reçete adım adı select: şirket atölye bölgeleri, yoksa fallback."""
+    names: list = []
+    seen: set = set()
+    for z in normalize_workshop_zones(raw):
+        name = str(z.get("name") or "").strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    if names:
+        return names
+    for s in fallback or []:
+        name = str(s or "").strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def find_workshop_zone(zones: list, zone_id: Optional[str]) -> Optional[dict]:
+    return find_named(zones, zone_id)
+
+
 def office_task_types_for_company(company: Optional[dict] = None) -> list:
     """İç görev listesi; yoksa eski tek listeden (work_parks) türet."""
     company = company or {}

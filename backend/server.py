@@ -505,6 +505,28 @@ async def put_office_task_types(company_id: str, req: Dict[str, Any], user: dict
     return {"status": "success", "message": "İç görev listesi kaydedildi.", "types": types}
 
 
+@api_router.get("/companies/{company_id}/workshop-zones")
+async def get_workshop_zones(company_id: str):
+    """Atölye bölgeleri — reçete üretim adımı (bölüm) seçenekleri."""
+    import work_parks as wp
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    return {"zones": wp.normalize_workshop_zones(c.get("workshop_zones"))}
+
+
+@api_router.put("/companies/{company_id}/workshop-zones")
+async def put_workshop_zones(company_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    import work_parks as wp
+    _require_company_member(user, company_id)
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    zones = wp.normalize_workshop_zones(req.get("zones"))
+    await db.companies.update_one({"_id": company_id}, {"$set": {"workshop_zones": zones}})
+    return {"status": "success", "message": "Atölye bölgeleri kaydedildi.", "zones": zones}
+
+
 @api_router.post("/personnel/employees/{emp_id}/office-tasks")
 async def assign_office_task(emp_id: str, req: Dict[str, Any]):
     import work_parks as wp
@@ -12045,20 +12067,36 @@ async def create_warehouse_transfer(transfer: WarehouseTransfer):
     return clean_doc(doc)
 
 # ----------------- ÜRETİM & REÇETE (BOM) -----------------
+def _material_unit_net(m: Dict[str, Any]) -> float:
+    """Birim maliyet net (KDV hariç). cost_includes_vat ise KDV düşülür."""
+    cost = float(m.get("cost_per_unit", 0) or 0)
+    if not m.get("cost_includes_vat"):
+        return cost
+    rate = float(m.get("vat_rate") or 0)
+    if rate <= 0:
+        return cost
+    return cost / (1 + rate / 100)
+
+
 def _recipe_costs(recipe: Dict[str, Any]) -> Dict[str, Any]:
-    mat = sum(float(m.get("cost_per_unit", 0)) * float(m.get("quantity", 0)) * (1 + float(m.get("wastage_percent", 0)) / 100) for m in recipe.get("materials", []))
+    mat = sum(
+        _material_unit_net(m) * float(m.get("quantity", 0)) * (1 + float(m.get("wastage_percent", 0)) / 100)
+        for m in recipe.get("materials", [])
+    )
     total = round(mat + float(recipe.get("labor_cost", 0)) + float(recipe.get("overhead_cost", 0)), 2)
     tq = float(recipe.get("target_quantity", 1) or 1)
     return {"material_cost": round(mat, 2), "total_estimated_cost": total, "unit_cost": round(total / tq, 2)}
 
 async def _fill_material_costs(materials: List[Dict[str, Any]]):
     for m in materials:
-        if not m.get("cost_per_unit"):
-            p = await db.products.find_one({"_id": m.get("product_id")})
-            if p:
+        p = await db.products.find_one({"_id": m.get("product_id")}) if m.get("product_id") else None
+        if p:
+            m.setdefault("unit", p.get("unit", "Adet"))
+            m.setdefault("product_name", p.get("name"))
+            if m.get("vat_rate") is None:
+                m["vat_rate"] = float(p.get("purchase_vat_rate") or p.get("vat_rate") or 20)
+            if not m.get("cost_per_unit"):
                 m["cost_per_unit"] = float(p.get("purchase_price", 0) or 0)
-                m.setdefault("unit", p.get("unit", "Adet"))
-                m.setdefault("product_name", p.get("name"))
 
 async def _requirements(recipe: Dict[str, Any], quantity: float) -> List[Dict[str, Any]]:
     rows = []
@@ -12067,7 +12105,8 @@ async def _requirements(recipe: Dict[str, Any], quantity: float) -> List[Dict[st
         p = await db.products.find_one({"_id": m.get("product_id")}) or {}
         needed = round(float(m.get("quantity", 0)) * factor * (1 + float(m.get("wastage_percent", 0)) / 100), 3)
         stock = float(p.get("stock_quantity", 0) or 0)
-        rows.append({"product_id": m.get("product_id"), "product_name": m.get("product_name") or p.get("name"), "unit": m.get("unit") or p.get("unit"), "needed": needed, "in_stock": stock, "shortage": round(max(0.0, needed - stock), 3), "cost": round(needed * float(m.get("cost_per_unit", 0)), 2)})
+        unit_net = _material_unit_net(m)
+        rows.append({"product_id": m.get("product_id"), "product_name": m.get("product_name") or p.get("name"), "unit": m.get("unit") or p.get("unit"), "needed": needed, "in_stock": stock, "shortage": round(max(0.0, needed - stock), 3), "cost": round(needed * unit_net, 2)})
     return rows
 
 @api_router.get("/production/recipes")

@@ -21,6 +21,10 @@ export function normalizeOfficeTaskTypes(raw) {
   return normalizeNamedList(raw, "ot");
 }
 
+export function normalizeWorkshopZones(raw) {
+  return normalizeNamedList(raw, "zone");
+}
+
 export function parkSelectGroups(parks) {
   const rows = normalizeWorkParks(parks);
   if (!rows.length) return [];
@@ -31,6 +35,12 @@ export function officeTaskTypeSelectGroups(types) {
   const rows = normalizeOfficeTaskTypes(types);
   if (!rows.length) return [];
   return [{ label: "İç görevler", options: rows.map((t) => ({ value: t.id, label: t.name })) }];
+}
+
+export function workshopZoneSelectGroups(zones) {
+  const rows = normalizeWorkshopZones(zones);
+  if (!rows.length) return [];
+  return [{ label: "Atölye bölgeleri", options: rows.map((z) => ({ value: z.id, label: z.name })) }];
 }
 
 export function stationNamesFromParks(parks, fallback) {
@@ -54,12 +64,37 @@ export function stationNamesFromParks(parks, fallback) {
   return names;
 }
 
+export function zoneNamesFromList(zones, fallback) {
+  const names = [];
+  const seen = new Set();
+  for (const z of normalizeWorkshopZones(zones)) {
+    const name = z.name.trim();
+    const key = name.toLocaleLowerCase("tr-TR");
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  if (names.length) return names;
+  for (const s of fallback || []) {
+    const name = String(s || "").trim();
+    const key = name.toLocaleLowerCase("tr-TR");
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  return names;
+}
+
 export function findWorkPark(parks, parkId) {
   return normalizeWorkParks(parks).find((p) => p.id === String(parkId || "")) || null;
 }
 
 export function findOfficeTaskType(types, typeId) {
   return normalizeOfficeTaskTypes(types).find((t) => t.id === String(typeId || "")) || null;
+}
+
+export function findWorkshopZone(zones, zoneId) {
+  return normalizeWorkshopZones(zones).find((z) => z.id === String(zoneId || "")) || null;
 }
 
 /** @deprecated parkId → task_type_id; geriye uyumluluk */
