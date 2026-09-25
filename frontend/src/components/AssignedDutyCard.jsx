@@ -12,11 +12,12 @@ import {
   dutyCompleteTitle,
   DUTY_PHOTO_HIDE,
   DUTY_PHOTO_SHOW,
-  DUTY_PHOTOS_HINT,
   DUTY_SITE_ACTION,
   applyDutyPhotoVisibility,
-  dutyHasProject,
+  dutyCanShowPhotos,
+  dutyCanUploadPhotos,
   dutyIsField,
+  dutyPhotosHint,
   dutyKindLabel,
   dutyPhotos,
   dutyShowAtolye,
@@ -132,9 +133,9 @@ export function AssignedDutyCard({
           )}
         </div>
       )}
-      {(dutyHasProject(duty) || (reviewPhotos && photos.length > 0)) && (
+      {(dutyCanShowPhotos(duty) || (reviewPhotos && photos.length > 0)) && (
         <div className="space-y-2" data-testid={`${tid}-photos`}>
-          <div className="text-[10px] font-bold uppercase text-slate-400 flex items-center gap-1"><MapPin className="w-3 h-3" /> {DUTY_PHOTOS_HINT}</div>
+          <div className="text-[10px] font-bold uppercase text-slate-400 flex items-center gap-1"><MapPin className="w-3 h-3" /> {dutyPhotosHint(duty)}</div>
           <div className="flex flex-wrap gap-2">
             {photos.map((p) => {
               const vis = photoVisibility(p);
@@ -158,7 +159,7 @@ export function AssignedDutyCard({
               );
             })}
             {!photos.length && reviewPhotos ? <div className="text-[10px] text-slate-400">Henüz iş fotoğrafı yok.</div> : null}
-            {!duty?.done && !reviewPhotos && (
+            {dutyCanUploadPhotos(duty, reviewPhotos) && (
               <label className={`w-14 h-14 rounded-lg border-2 border-dashed flex items-center justify-center cursor-pointer ${busy ? "opacity-50" : "border-indigo-300 text-indigo-700 bg-white"}`} data-testid={`${tid}-photo`}>
                 {busy ? "…" : <ImagePlus className="w-5 h-5" />}
                 <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" capture="environment" className="hidden" disabled={busy} onChange={uploadPhoto} />

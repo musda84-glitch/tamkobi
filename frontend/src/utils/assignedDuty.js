@@ -78,6 +78,18 @@ export function dutyHasProject(t) {
   return Boolean(t?.project_id || t?.project_number || (dutyIsField(t) && t?.project_name));
 }
 
+export function dutyCanShowPhotos(t) {
+  return Boolean(t?.id) || dutyHasProject(t);
+}
+
+export function dutyCanUploadPhotos(t, review = false) {
+  return !review && Boolean(t?.id);
+}
+
+export function dutyPhotosHint(t) {
+  return dutyIsField(t) ? DUTY_PHOTOS_HINT : "İş fotoğrafları — yönetici yapılan görevlerde görür";
+}
+
 export function dutyWorkflow(t) {
   return Array.isArray(t?.workflow) ? t.workflow : [];
 }

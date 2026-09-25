@@ -73,9 +73,12 @@ import {
   calculatedOvertimeFromCard,
   mergeOvertimePreview,
   overtimeAmountFromHours,
+  overtimeApproveConfirm,
   overtimeApprovePayload,
   overtimeCanApprove,
+  overtimeCanDelete,
   overtimeCanEdit,
+  overtimeDeleteConfirm,
   overtimeEditPayload,
   overtimeStatusLabel,
   overtimeSummaryLine,
@@ -110,6 +113,7 @@ import {
   type LocMode,
   filterPayMoves,
   locationMoveCanIgnore,
+  locationMoveColor,
   locationMoveIgnorePath,
   locationMoveLine,
   locationMovesPeriodHint,
@@ -1074,6 +1078,38 @@ export function PersonnelScreen() {
     }
   };
 
+  const askApproveMovesOvertime = () => {
+    const ask = overtimeApproveConfirm();
+    confirmAction(ask.title, ask.message, () => { void approveMovesOvertime(); }, "Onayla");
+  };
+
+  const deleteMovesOvertime = async () => {
+    const emp = movesEmp;
+    const ot = calculatedOvertimeFromCard(movesCard, movesMonth);
+    if (!emp) return;
+    if (!overtimeCanDelete(ot) || !ot.bonusId) {
+      setMessage("Silinecek onaylı fazla mesai yok.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await del(client, `/personnel/bonuses/${ot.bonusId}`);
+      setMessage(`${emp.full_name} için fazla mesai kaydı silindi.`);
+      setError(null);
+      await refreshMovesPay(emp);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fazla mesai silinemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const askDeleteMovesOvertime = () => {
+    const ask = overtimeDeleteConfirm();
+    confirmAction(ask.title, ask.message, () => { void deleteMovesOvertime(); }, "Sil");
+  };
+
   const openMovesOvertimeEdit = () => {
     const ot = calculatedOvertimeFromCard(movesCard, movesMonth);
     setOtEditHours(ot.hours > 0 ? String(ot.hours) : "");
@@ -1389,7 +1425,18 @@ export function PersonnelScreen() {
                       {presence ? (
                         <Text
                           testID={`emp-presence-${eid}`}
-                          style={{ fontSize: 10, fontWeight: "800", color: presence.color, backgroundColor: presence.bg, overflow: "hidden", borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 }}
+                          style={{
+                            fontSize: 10,
+                            fontWeight: "800",
+                            color: presence.color,
+                            backgroundColor: presence.bg,
+                            overflow: "hidden",
+                            borderRadius: 999,
+                            paddingHorizontal: 7,
+                            paddingVertical: 2,
+                            borderWidth: 1,
+                            borderColor: presence.border,
+                          }}
                         >
                           {presence.label}
                         </Text>
@@ -2081,7 +2128,7 @@ export function PersonnelScreen() {
                 style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}
               >
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ fontWeight: "800", color: colors.text }}>{locationMoveLine(row)}</Text>
+                  <Text style={{ fontWeight: "800", color: locationMoveColor(row.kind, !!row.ignored) }}>{locationMoveLine(row)}</Text>
                   {row.place ? <Muted>{row.place}</Muted> : null}
                   {row.ignored ? <Muted testID={`emp-loc-move-ignored-${row.id}`}>Görmezden gelindi</Muted> : null}
                 </View>
@@ -2116,6 +2163,7 @@ export function PersonnelScreen() {
           const ot = calculatedOvertimeFromCard(movesCard, movesMonth);
           const canApprove = canEdit && overtimeCanApprove(ot);
           const canChange = canEdit && overtimeCanEdit(ot);
+          const canRemove = canEdit && overtimeCanEdit(ot);
           return (
             <View
               testID="emp-pay-overtime-box"
@@ -2144,17 +2192,18 @@ export function PersonnelScreen() {
               <Text testID="emp-pay-overtime-amount" style={{ fontWeight: "800", fontSize: 18, color: colors.indigo }}>
                 {fmtMoney(ot.amount)}
               </Text>
-              {canApprove || canChange ? (
-                <Row style={{ gap: 8 }}>
+              {canApprove || canChange || canRemove ? (
+                <Row style={{ gap: 8, flexWrap: "wrap" }}>
                   {canApprove ? (
                     <Pressable
                       testID="emp-pay-overtime-approve"
                       accessibilityRole="button"
                       accessibilityLabel="Onayla"
-                      onPress={() => { void approveMovesOvertime(); }}
+                      onPress={askApproveMovesOvertime}
                       disabled={busy}
                       style={{
                         flex: 1,
+                        minWidth: 88,
                         paddingVertical: 10,
                         borderRadius: 10,
                         alignItems: "center",
@@ -2175,6 +2224,7 @@ export function PersonnelScreen() {
                       disabled={busy}
                       style={{
                         flex: 1,
+                        minWidth: 88,
                         paddingVertical: 10,
                         borderRadius: 10,
                         alignItems: "center",
@@ -2184,6 +2234,27 @@ export function PersonnelScreen() {
                       }}
                     >
                       <Text style={{ fontWeight: "800", fontSize: 13, color: colors.indigo }}>Düzenle</Text>
+                    </Pressable>
+                  ) : null}
+                  {canRemove ? (
+                    <Pressable
+                      testID="emp-pay-overtime-delete"
+                      accessibilityRole="button"
+                      accessibilityLabel="Sil"
+                      onPress={askDeleteMovesOvertime}
+                      disabled={busy}
+                      style={{
+                        flex: 1,
+                        minWidth: 88,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        alignItems: "center",
+                        backgroundColor: colors.rose50,
+                        borderWidth: 1,
+                        borderColor: "#FECDD3",
+                      }}
+                    >
+                      <Text style={{ fontWeight: "800", fontSize: 13, color: "#BE123C" }}>Sil</Text>
                     </Pressable>
                   ) : null}
                 </Row>
@@ -2477,9 +2548,9 @@ export function PersonnelScreen() {
                   <Muted testID="emp-duties-photo-pending">{pendingPhotos} iş fotoğrafı müşteri onayı bekliyor</Muted>
                 ) : null}
               </View>
-              {dutyRows.filter((t) => !currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)).length ? (
+              {dutyRows.filter((t) => !t.done && (!currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title))).length ? (
                 <View testID="emp-duties-cards" style={{ gap: 8 }}>
-                  {dutyRows.filter((t) => !currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)).map((t, i) => (
+                  {dutyRows.filter((t) => !t.done && (!currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title))).map((t, i) => (
                     <AssignedDutyCard
                       key={t.id || String(i)}
                       duty={t}
@@ -2508,7 +2579,19 @@ export function PersonnelScreen() {
                 </View>
               ) : null}
               {board.done.length ? (
-                <Muted testID="emp-duties-done">{board.done.length} tamamlanan görev</Muted>
+                <View testID="emp-duties-done" style={{ gap: 8 }}>
+                  <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Yapılan görevler ({board.done.length})</Text>
+                  {dutyRows.filter((t) => t.done).map((t, i) => (
+                    <AssignedDutyCard
+                      key={t.id || String(i)}
+                      duty={t}
+                      index={i}
+                      testID={`emp-duties-done-${t.id || i}`}
+                      reviewPhotos
+                      onChanged={patchDuty}
+                    />
+                  ))}
+                </View>
               ) : null}
               {canEdit ? (
                 <PrimaryButton

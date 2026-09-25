@@ -136,6 +136,7 @@ def clear_duty_if_task(duty: Any, task_id: str) -> Any:
 
 def office_assignment_view(task: dict) -> dict:
     park_name = task.get("park_name") or ""
+    photos = [p for p in (task.get("photos") or []) if isinstance(p, dict) and p.get("url")]
     return {
         "id": task.get("id"),
         "title": task.get("title") or park_name or "İç görev",
@@ -148,5 +149,32 @@ def office_assignment_view(task: dict) -> dict:
         "duration_days": None,
         "due_date": task.get("due_date"),
         "workflow": [],
-        "photos": [],
+        "photos": photos,
     }
+
+
+def find_office_task(tasks: Any, task_id: str) -> Optional[dict]:
+    tid = str(task_id or "")
+    if not tid:
+        return None
+    for t in tasks or []:
+        if isinstance(t, dict) and str(t.get("id") or "") == tid:
+            return t
+    return None
+
+
+def append_office_task_photo(tasks: Any, task_id: str, photo: dict) -> tuple[list, Optional[dict]]:
+    tid = str(task_id or "")
+    out: list = []
+    found: Optional[dict] = None
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        if tid and str(t.get("id") or "") == tid:
+            photos = [p for p in (t.get("photos") or []) if isinstance(p, dict)]
+            photos.append(photo)
+            found = {**t, "photos": photos}
+            out.append(found)
+        else:
+            out.append(t)
+    return out, found

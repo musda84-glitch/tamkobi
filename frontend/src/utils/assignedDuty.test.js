@@ -7,8 +7,11 @@ import {
   matchAssignedDuty,
   dutyFromCurrent,
   applyDutyPhotoVisibility,
+  dutyCanShowPhotos,
+  dutyCanUploadPhotos,
   dutyHasProject,
   dutyIsField,
+  dutyPhotosHint,
   dutyKindLabel,
   dutyPhotos,
   dutyShowAtolye,
@@ -64,6 +67,10 @@ describe("assigned duty field extras", () => {
     expect(dutyShowAtolye({ kind: "office" }, true)).toBe(true);
     expect(dutyShowSite({ kind: "office" })).toBe(false);
     expect(dutyKindLabel({ kind: "office" })).toBe("İç görev");
+    expect(dutyCanShowPhotos({ id: "ot_1", kind: "office" })).toBe(true);
+    expect(dutyCanUploadPhotos({ id: "ot_1", kind: "office", done: true }, false)).toBe(true);
+    expect(dutyCanUploadPhotos({ id: "ot_1" }, true)).toBe(false);
+    expect(dutyPhotosHint({ kind: "office" })).toMatch(/yapılan görev/);
   });
 
   test("keeps photos for the matching task and applies customer visibility", () => {

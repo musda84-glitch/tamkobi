@@ -93,7 +93,7 @@ function presenceInside(opts = {}) {
   return null;
 }
 
-/** Aktif yanındaki anlık yer: görev yerinde / işte / dışarda. */
+/** Aktif yanındaki anlık yer: dış görev / iş yeri / dışarı. */
 export function employeePresenceChip(opts) {
   if (!opts) return null;
   const status = String(opts.status || "active");
@@ -101,12 +101,12 @@ export function employeePresenceChip(opts) {
   const inside = presenceInside(opts);
   if (inside === true) {
     if (opts.workplace?.kind === "task") {
-      return { key: "duty", label: "Görev yerinde", color: "#3730A3", bg: "#EEF2FF" };
+      return { key: "duty", label: "Dış Görev Yerinde", color: "#3730A3", bg: "#EEF2FF", border: "#A5B4FC" };
     }
-    return { key: "work", label: "İşte", color: "#047857", bg: "#D1FAE5" };
+    return { key: "work", label: "İş Yerinde Şuan", color: "#047857", bg: "#D1FAE5", border: "#6EE7B7" };
   }
   if (inside === false) {
-    return { key: "out", label: "Dışarda", color: "#C2410C", bg: "#FFEDD5" };
+    return { key: "out", label: "Şuan Dışarıda", color: "#C2410C", bg: "#FFEDD5", border: "#FDBA74" };
   }
   return null;
 }
@@ -225,6 +225,14 @@ export function locationMoveDidLabel(kind) {
   if (kind === "leave") return "İş yerine çıkış yaptı";
   if (kind === "lost") return "Konum kaybı";
   return "Konum hareketi";
+}
+
+export function locationMoveColor(kind, ignored = false) {
+  if (ignored) return "#94A3B8";
+  if (kind === "enter") return "#047857";
+  if (kind === "leave") return "#BE123C";
+  if (kind === "lost") return "#C2410C";
+  return "#0F172A";
 }
 
 export function fmtLocationMoveAt(raw) {

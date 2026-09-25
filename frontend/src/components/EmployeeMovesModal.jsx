@@ -10,6 +10,7 @@ import {
   filterPayMoves,
   fmtPayMoveAmount,
   locationMoveCanIgnore,
+  locationMoveColor,
   locationMoveIgnorePath,
   locationMoveLine,
   locationMovesPeriodHint,
@@ -167,7 +168,7 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
                   className="flex items-center gap-2 py-2.5 border-b border-slate-100"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="font-extrabold text-slate-900">{locationMoveLine(row)}</div>
+                    <div className="font-extrabold" style={{ color: locationMoveColor(row.kind, !!row.ignored) }}>{locationMoveLine(row)}</div>
                     {row.place ? <div className="text-slate-500">{row.place}</div> : null}
                     {row.ignored ? <div className="text-slate-400" data-testid={`emp-loc-move-ignored-${row.id}`}>Görmezden gelindi</div> : null}
                   </div>

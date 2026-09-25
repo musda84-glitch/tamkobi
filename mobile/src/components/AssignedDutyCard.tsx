@@ -12,11 +12,12 @@ import {
   dutyCompleteTitle,
   DUTY_PHOTO_HIDE,
   DUTY_PHOTO_SHOW,
-  DUTY_PHOTOS_HINT,
   DUTY_SITE_ACTION,
   applyDutyPhotoVisibility,
-  dutyHasProject,
+  dutyCanShowPhotos,
+  dutyCanUploadPhotos,
   dutyIsField,
+  dutyPhotosHint,
   dutyKindLabel,
   dutyPhotos,
   dutyShowAtolye,
@@ -174,9 +175,9 @@ export function AssignedDutyCard({
           ) : null}
         </View>
       ) : null}
-      {dutyHasProject(duty) || (reviewPhotos && photos.length) ? (
+      {dutyCanShowPhotos(duty) || (reviewPhotos && photos.length) ? (
         <View style={{ gap: 8 }} testID={`${tid}-photos`}>
-          <Muted>{DUTY_PHOTOS_HINT}</Muted>
+          <Muted>{dutyPhotosHint(duty)}</Muted>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             {photos.map((p) => {
               const vis = photoVisibility(p);
@@ -218,7 +219,7 @@ export function AssignedDutyCard({
             })}
             {!photos.length && reviewPhotos ? <Muted>Henüz iş fotoğrafı yok.</Muted> : null}
           </View>
-          {!duty.done && !reviewPhotos ? (
+          {dutyCanUploadPhotos(duty, reviewPhotos) ? (
             <PrimaryButton
               title={busy ? "Yükleniyor…" : "İş fotoğrafı yükle"}
               onPress={pickPhoto}
