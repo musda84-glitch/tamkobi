@@ -61,6 +61,11 @@ describe("visibleQuickTiles", () => {
     expect(resolveMobilePath("/installments")).toBe("/installments");
   });
 
+  it("leaves stock count to the more menu", () => {
+    expect(QUICK_TILES.map((t) => t.id)).not.toContain("sayim");
+    expect(resolveMobilePath("/sayim")).toBe("/sayim");
+  });
+
   it("routes dashboard task paths that now have mobile screens", () => {
     expect(resolveMobilePath("/installments")).toBe("/installments");
     expect(resolveMobilePath("/cheques")).toBe("/cheques");
