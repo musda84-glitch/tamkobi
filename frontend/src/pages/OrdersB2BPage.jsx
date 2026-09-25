@@ -46,7 +46,7 @@ import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printO
 import { eBelgeMenuItems, orderCanIssueEFatura, orderEBelgeType } from "../utils/orderEBelge";
 import { orderMoreMenuItems, orderMoreMenuKind } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
-import { buildProduceFromOrderPayload, orderLineCanProduce, resolveOrderLineProduct } from "../utils/orderProduce";
+import { buildProduceFromOrderPayload, orderLineCanProduce, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import {
   DropdownMenu,
@@ -133,6 +133,62 @@ function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side =
             </div>
           );
         })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** Sipariş satırı → üretim emri (tek ürün doğrudan, çoklu seçici). */
+function OrderProduceButton({ ord, catalog, onProduce, testSuffix = "" }) {
+  const lines = producibleLinesForOrder(ord, catalog);
+  if (!lines.length) return null;
+  const btnClass = "p-1.5 rounded-lg text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100";
+  if (lines.length === 1) {
+    return (
+      <button
+        type="button"
+        onClick={() => onProduce(ord, lines[0])}
+        className={btnClass}
+        title="Üretim emri ver"
+        aria-label="Üretim"
+        data-testid={`order-produce-btn${testSuffix}-${ord.order_number}`}
+      >
+        <Factory className="w-4 h-4" />
+      </button>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className={btnClass}
+          title="Üretim emri ver"
+          aria-label="Üretim"
+          data-testid={`order-produce-btn${testSuffix}-${ord.order_number}`}
+        >
+          <Factory className="w-4 h-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        sideOffset={8}
+        collisionPadding={24}
+        className="z-[80] w-64 rounded-xl p-1.5 shadow-lg"
+        data-testid={`order-produce-menu${testSuffix}-${ord.order_number}`}
+      >
+        <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">Üretilecek ürün</div>
+        {lines.map((line) => (
+          <DropdownMenuItem
+            key={`${line.product.id}-${line.idx}`}
+            onSelect={() => onProduce(ord, line)}
+            className="gap-2 text-xs font-medium"
+            data-testid={`order-produce-pick${testSuffix}-${ord.order_number}-${line.idx}`}
+          >
+            <Factory className="w-3.5 h-3.5 shrink-0 text-amber-700" />
+            <span className="truncate">{line.label}</span>
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -451,6 +507,22 @@ export default function OrdersB2BPage() {
     const payload = buildProduceFromOrderPayload(ord, it, p);
     if (!payload) return;
     setProduceFromOrder({ product: payload, order: ord, lineIndex: idx });
+  };
+  const openProduceForOrder = (ord, line) => {
+    if (line?.product) {
+      setProduceFromOrder({ product: line.product, order: ord, lineIndex: line.idx });
+      return;
+    }
+    const lines = producibleLinesForOrder(ord, productCatalog);
+    if (!lines.length) {
+      toast.error("Bu siparişte üretilebilir ürün yok.");
+      return;
+    }
+    if (lines.length === 1) {
+      setProduceFromOrder({ product: lines[0].product, order: ord, lineIndex: lines[0].idx });
+      return;
+    }
+    setProduceFromOrder({ product: lines[0].product, order: ord, lineIndex: lines[0].idx, choices: lines });
   };
   const handleConvertToInvoice = async (orderId, eType) => {
     try {
@@ -1016,6 +1088,7 @@ export default function OrdersB2BPage() {
                       >
                         <Printer className="w-4 h-4" />
                       </button>
+                      <OrderProduceButton ord={ord} catalog={productCatalog} onProduce={openProduceForOrder} testSuffix="-mobile" />
                       <OrderMoreMenuButton
                         ord={ord}
                         contacts={contacts}
@@ -1272,6 +1345,7 @@ export default function OrdersB2BPage() {
                         >
                           <Printer className="w-4 h-4" />
                         </button>
+                        <OrderProduceButton ord={ord} catalog={productCatalog} onProduce={openProduceForOrder} />
                         <OrderMoreMenuButton
                           ord={ord}
                           contacts={contacts}
