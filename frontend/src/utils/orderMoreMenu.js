@@ -82,7 +82,7 @@ export function integrationEInvoiceMoreItems() {
     item("cargo_track_notify", "Kargo Takip Kodu Bildir", History, { color: "text-sky-500" }),
     item("digital_code_notify", "Dijital Kod Bildir", Download, { color: "text-rose-600" }),
     item("navlungo_create", "Navlungo Siparişi Oluştur", Truck, { color: "text-rose-600" }),
-    item("cargo_change", "Paketli Siparişin Kargo Firmasını Değiştir", Truck, { color: "text-sky-500" }),
+    item("cargo_change", "Pazaryeri Kargo Firmasını Değiştir", Truck, { color: "text-sky-500" }),
     item("invoice_link", "Fatura Linki Gönder", Link2, { color: "text-rose-500" }),
     item("xml", "E-Fatura XML'i İndir", Code2, { color: "text-sky-500" }),
   ];

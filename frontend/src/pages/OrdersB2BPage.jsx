@@ -32,6 +32,7 @@ import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
 import { CargoLabel } from "../components/CargoLabel";
 import { ApproveOrderModal } from "../components/ApproveOrderModal";
 import { CreateShipmentModal } from "../components/CreateShipmentModal";
+import { ChangeMarketplaceCargoModal } from "../components/ChangeMarketplaceCargoModal";
 import { channelTr, statusTr, orderStatusBadgeClass, marketplaceStatusTr } from "../utils/labels";
 import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
 import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components/OrderCreateModals";
@@ -159,6 +160,7 @@ export default function OrdersB2BPage() {
   const [returnOrder, setReturnOrder] = useState(null);
   const [approveOrder, setApproveOrder] = useState(null);
   const [shipOrder, setShipOrder] = useState(null);
+  const [cargoChangeOrder, setCargoChangeOrder] = useState(null);
   const [selected, setSelected] = useState([]);
   const [bulkLabels, setBulkLabels] = useState(null);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -595,7 +597,7 @@ export default function OrdersB2BPage() {
         toast.message("Dijital kod bildirimi bu kanalda henüz bağlanmadı.");
         return;
       case "cargo_change":
-        setShipOrder(ord);
+        setCargoChangeOrder(ord);
         return;
       case "delete": {
         if (ord.is_invoiced || ord.invoice_id) {
@@ -797,6 +799,13 @@ export default function OrdersB2BPage() {
     <div className="space-y-6" data-testid="orders-b2b-page">
       {dispatchDoc && <PrintDocument docType="dispatch" doc={dispatchDoc} company={activeCompany} onClose={() => setDispatchDoc(null)} />}
       {shipOrder && <CreateShipmentModal order={shipOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setShipOrder(null)} onDone={loadData} />}
+      {cargoChangeOrder && (
+        <ChangeMarketplaceCargoModal
+          order={cargoChangeOrder}
+          onClose={() => setCargoChangeOrder(null)}
+          onDone={loadData}
+        />
+      )}
       {approveOrder && <ApproveOrderModal order={approveOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setApproveOrder(null)} onDone={loadData} />}
       {returnOrder && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"><div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs" data-testid="return-modal">
