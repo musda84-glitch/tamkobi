@@ -572,6 +572,161 @@ def location_exit_decision_message(decision: str, wage_deduction: bool = False, 
     return "Konum dışı çıkış onaylandı (kesinti yok)."
 
 
+def day_end_hm(schedule: Optional[dict], date: Optional[str] = None, plan: Optional[dict] = None) -> Optional[str]:
+    """Günün mesai bitiş saati (vardiya planı varsa onu kullanır)."""
+    if plan and plan.get("off"):
+        return None
+    if plan and plan.get("end"):
+        return str(plan.get("end"))[:5]
+    sch = schedule or DEFAULT_SCHEDULE
+    try:
+        wd = datetime.strptime(str(date or "")[:10], "%Y-%m-%d").weekday()
+    except Exception:
+        wd = local_now(sch).weekday()
+    if wd not in (sch.get("work_days") or DEFAULT_SCHEDULE["work_days"]) and not plan:
+        return None
+    return str(day_window(sch, wd)["end"])[:5]
+
+
+def minutes_past_hm(end_hm: Optional[str], now_hm: Optional[str]) -> int:
+    """now_hm, end_hm'den kaç dakika sonra (aynı gün; gece sarması yok)."""
+    if not end_hm or not now_hm:
+        return 0
+    try:
+        return max(0, _hm(str(now_hm)[:5]) - _hm(str(end_hm)[:5]))
+    except Exception:
+        return 0
+
+
+def potential_overtime_hours(end_hm: Optional[str], now_hm: Optional[str]) -> float:
+    return round(minutes_past_hm(end_hm, now_hm) / 60.0, 2)
+
+
+def should_auto_checkout(
+    rec: Optional[dict],
+    *,
+    end_hm: Optional[str],
+    now_hm: Optional[str],
+) -> bool:
+    """Mesai bitişinde giriş var / çıkış yoksa otomatik çıkış yazılsın mı?"""
+    row = rec or {}
+    if not end_hm or not now_hm:
+        return False
+    if not row.get("check_in") or row.get("check_out"):
+        return False
+    if row.get("status") in ("leave", "absent"):
+        return False
+    try:
+        return _hm(str(now_hm)[:5]) >= _hm(str(end_hm)[:5])
+    except Exception:
+        return False
+
+
+def location_signal_fresh(
+    emp: Optional[dict],
+    mode: Optional[dict] = None,
+    *,
+    now: Optional[datetime] = None,
+    force_active: bool = False,
+) -> bool:
+    """Konum izleme açık ve yakın zamanda konum verisi alındı mı?"""
+    if force_active:
+        return True
+    if not emp or emp.get("location_last_ok") is not True:
+        return False
+    stamp = _parse_iso(emp.get("location_last_at"))
+    if not stamp:
+        return False
+    end = now or datetime.now(timezone.utc)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    interval = int((mode or {}).get("interval_minutes") or 0)
+    max_age_m = 15 if interval <= 0 else max(30, interval * 3)
+    return (end - stamp).total_seconds() <= max_age_m * 60
+
+
+def overtime_confirm_should_notify(
+    *,
+    location_active: bool,
+    end_hm: Optional[str] = None,
+    now_hm: Optional[str] = None,
+    tolerance_hours: int = 0,
+    existing: Optional[dict] = None,
+    rec: Optional[dict] = None,
+) -> bool:
+    """Mesai bitişi + çıkış toleransı sonrası konum hâlâ geliyorsa yöneticiye 'mesaide mi?' açılsın mı?"""
+    if not location_active or not end_hm or not now_hm:
+        return False
+    row = rec or {}
+    if not row.get("check_in"):
+        return False
+    if row.get("status") in ("leave", "absent"):
+        return False
+    # Manuel / onaylı çıkış mesai bitişinden sonraysa (zaten OT yazılmış) sorma.
+    co = str(row.get("check_out") or "")[:5]
+    if co and not row.get("auto_checkout"):
+        try:
+            if _hm(co) > _hm(str(end_hm)[:5]):
+                return False
+        except Exception:
+            pass
+    status = str((existing or {}).get("status") or "")
+    if status in ("pending", "approved", "rejected", "yes", "no"):
+        return False
+    past_m = minutes_past_hm(end_hm, now_hm)
+    need_m = max(0, int(tolerance_hours or 0)) * 60
+    return past_m >= need_m and past_m > 0
+
+
+def build_overtime_confirm_request(
+    *,
+    end_hm: str,
+    now_hm: str,
+    tolerance_hours: int = 0,
+    hours: Optional[float] = None,
+    now: Optional[str] = None,
+) -> dict:
+    stamp = now or _now()
+    ot_h = hours if hours is not None else potential_overtime_hours(end_hm, now_hm)
+    return {
+        "status": "pending",
+        "schedule_end": str(end_hm)[:5],
+        "proposed_out": str(now_hm)[:5],
+        "hours": round(float(ot_h or 0), 2),
+        "tolerance_hours": max(0, int(tolerance_hours or 0)),
+        "requested_at": stamp,
+        "decided_at": None,
+        "decided_by": None,
+        "decision": "",
+    }
+
+
+def parse_overtime_confirm_decision(req: Optional[dict] = None) -> str:
+    """Evet (mesaide / OT yaz) veya Hayır (OT yazma)."""
+    raw = req if isinstance(req, dict) else {}
+    decision = str(raw.get("decision") or raw.get("status") or "").strip().lower()
+    yes = {"yes", "evet", "approve", "approved", "ot", "overtime", "mesaide"}
+    no = {"no", "hayir", "hayır", "reject", "rejected", "degil", "değil"}
+    if decision in yes:
+        return "yes"
+    if decision in no:
+        return "no"
+    raise ValueError("decision: yes/evet veya no/hayır olmalı.")
+
+
+def overtime_confirm_decision_message(decision: str, hours: float = 0, out_hm: str = "") -> str:
+    if decision == "yes":
+        bits = ["Personel mesaide onaylandı."]
+        if hours:
+            bits.append(f"+{hours:g} sa fazla mesai yazıldı.")
+        if out_hm:
+            bits.append(f"Çıkış {out_hm}.")
+        return " ".join(bits)
+    return "Personel mesaide değil; fazla mesai yazılmadı (çıkış mesai bitişinde kaldı)."
+
+
 LOCATION_MOVE_KINDS = ("enter", "leave", "lost")
 LOCATION_MOVE_DEBOUNCE_S = 90
 
@@ -2335,6 +2490,130 @@ async def maybe_open_location_exit(
     return req
 
 
+async def maybe_auto_checkout(
+    emp: dict,
+    schedule: dict,
+    rec: dict,
+    *,
+    date: Optional[str] = None,
+    plan: Optional[dict] = None,
+    now_s: Optional[str] = None,
+) -> Optional[dict]:
+    """Mesai bitiş saatinde çıkış yoksa otomatik çıkış yazar (check_out = mesai bitişi)."""
+    day = date or rec.get("date") or _today(schedule)
+    end_hm = day_end_hm(schedule, day, plan)
+    clock = now_s or now_hm(schedule)
+    if not should_auto_checkout(rec, end_hm=end_hm, now_hm=clock):
+        return None
+    patch = {
+        "status": "present",
+        "check_out": end_hm,
+        "auto_checkout": True,
+        "auto_checkout_at": _now(),
+        "auto_checkout_end": end_hm,
+    }
+    saved = await apply_day(emp, day, patch, source="auto", confirmed=True)
+    await _db.attendance.update_one(
+        {"employee_id": emp["_id"], "date": day},
+        {"$set": {"auto_checkout": True, "auto_checkout_at": patch["auto_checkout_at"], "auto_checkout_end": end_hm}},
+    )
+    saved["auto_checkout"] = True
+    saved["auto_checkout_at"] = patch["auto_checkout_at"]
+    saved["auto_checkout_end"] = end_hm
+    return saved
+
+
+async def maybe_open_overtime_confirm(
+    emp: dict,
+    rec: dict,
+    schedule: dict,
+    mode: dict,
+    *,
+    location_active: bool = False,
+    date: Optional[str] = None,
+    plan: Optional[dict] = None,
+    now_s: Optional[str] = None,
+) -> Optional[dict]:
+    """Konum verisi mesai bitişinden sonra da geliyorsa, çıkış toleransı dolunca yöneticiye 'mesaide mi?' talebi."""
+    if not rec or not location_active:
+        return None
+    if not (mode or {}).get("enabled"):
+        return None
+    day = date or rec.get("date") or _today(schedule)
+    end_hm = day_end_hm(schedule, day, plan)
+    clock = now_s or now_hm(schedule)
+    existing = rec.get("overtime_confirm_request") if isinstance(rec.get("overtime_confirm_request"), dict) else None
+    if not overtime_confirm_should_notify(
+        location_active=True,
+        end_hm=end_hm,
+        now_hm=clock,
+        tolerance_hours=int((mode or {}).get("exit_tolerance_hours") or 0),
+        existing=existing,
+        rec=rec,
+    ):
+        return None
+    att_id = rec.get("id") or rec.get("_id")
+    if not att_id:
+        return None
+    req = build_overtime_confirm_request(
+        end_hm=end_hm,
+        now_hm=clock,
+        tolerance_hours=int((mode or {}).get("exit_tolerance_hours") or 0),
+    )
+    now = _now()
+    await _db.attendance.update_one(
+        {"_id": att_id},
+        {"$set": {"overtime_confirm_request": req, "updated_at": now}},
+    )
+    rec["overtime_confirm_request"] = req
+    hours = req.get("hours") or 0
+    await notify_managers(
+        emp["company_id"],
+        "overtime_confirm",
+        f"Mesaide mi?: {emp.get('full_name')}",
+        f"{emp.get('full_name')} mesai bitişi ({end_hm}) sonrası konum verisi alınıyor"
+        + (f" · ~{hours:g} sa potansiyel fazla mesai" if hours else "")
+        + (f" · tolerans {int((mode or {}).get('exit_tolerance_hours') or 0)} sa" if (mode or {}).get("exit_tolerance_hours") else "")
+        + ". Evet → artı mesai yaz · Hayır → yazma.",
+        link="/personnel?tab=attendance",
+        dedupe_key=f"otconfirm:{emp.get('_id')}:{day}",
+    )
+    return req
+
+
+async def process_auto_exit_overtime(
+    emp: dict,
+    company: dict,
+    schedule: dict,
+    rec: Optional[dict] = None,
+    *,
+    location_active: bool = False,
+    mode: Optional[dict] = None,
+    date: Optional[str] = None,
+    now_s: Optional[str] = None,
+) -> dict:
+    """Mesai bitişinde otomatik çıkış + (konum varsa) tolerans sonrası fazla mesai onayı."""
+    day = date or _today(schedule)
+    plan = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": day})
+    row = rec or await _db.attendance.find_one({"employee_id": emp["_id"], "date": day}) or {}
+    if row:
+        row["id"] = row.get("_id") or row.get("id")
+    clock = now_s or now_hm(schedule)
+    lt = mode or location_mode_for(normalize_location_tracking(emp.get("location_tracking")), None)
+    active = bool(location_active) or location_signal_fresh(emp, lt)
+    auto = await maybe_auto_checkout(emp, schedule, row, date=day, plan=plan, now_s=clock)
+    if auto:
+        row = auto
+        row["id"] = row.get("id") or row.get("_id")
+    opened = None
+    if active and row.get("check_in"):
+        opened = await maybe_open_overtime_confirm(
+            emp, row, schedule, lt,
+            location_active=True, date=day, plan=plan, now_s=clock,
+        )
+    return {"record": row or None, "auto_checkout": bool(auto), "overtime_confirm": opened}
+
+
 @router.post("/personnel/attendance/self/location")
 async def self_location_ping(req: Dict[str, Any], request: Request):
     """Sürekli/aralıklı takip: konum ping. İçeri/dışarı olunca otomatik giriş-çıkış; tolerans dolunca yönetici talebi."""
@@ -2389,13 +2668,19 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
             punch_msg = f"Konumla giriş {now_s} kaydedildi."
         elif action == "check_out" and rec.get("check_in") and not rec.get("check_out"):
             punch_date = await punch_date_for_action(emp, schedule, "check_out", now_s, today)
-            overnight = punch_date != today
-            patch = {"status": "present", "check_out": now_s}
-            if overnight:
-                patch["overnight_checkout"] = True
-            rec = await apply_day(emp, punch_date, patch, source="geo", confirmed=True)
-            punched = "check_out"
-            punch_msg = f"Konumla çıkış {now_s} kaydedildi."
+            plan_out = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": punch_date})
+            end_hm = day_end_hm(schedule, punch_date, plan_out)
+            # Mesai bitişinden sonra konumla geç çıkış: otomatik mesai-bitiş çıkışı + yönetici OT onayı
+            if end_hm and minutes_past_hm(end_hm, now_s) > 0:
+                pass
+            else:
+                overnight = punch_date != today
+                patch = {"status": "present", "check_out": now_s}
+                if overnight:
+                    patch["overnight_checkout"] = True
+                rec = await apply_day(emp, punch_date, patch, source="geo", confirmed=True)
+                punched = "check_out"
+                punch_msg = f"Konumla çıkış {now_s} kaydedildi."
         if punched:
             geo = {"latitude": lat, "longitude": lng, "distance_m": dist, "accuracy_m": float(req.get("accuracy_m") or 0), "at": _now(), "enforced": False, "auto": True}
             extra = {f"geo_{punched}": geo}
@@ -2441,12 +2726,34 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
         elif (not inside) and logged_inside:
             await save_location_move(rec, build_location_move(kind="leave", at=now_iso, place=place, ignorable=True))
     signal = await mark_employee_location_signal(emp["_id"], True)
+    emp["location_last_ok"] = True
+    emp["location_last_at"] = signal.get("at") or _now()
+    auto_ot = {"auto_checkout": False, "overtime_confirm": None}
+    if active_lt.get("enabled") and (rec.get("check_in") or punched == "check_in"):
+        if not rec.get("id") and not rec.get("_id"):
+            fresh = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+            if fresh:
+                fresh["id"] = fresh.get("_id")
+                rec = fresh
+        auto_ot = await process_auto_exit_overtime(
+            emp, company, schedule, rec,
+            location_active=True, mode=active_lt, date=today, now_s=now_s,
+        )
+        if auto_ot.get("record"):
+            rec = auto_ot["record"]
+            rec["id"] = rec.get("id") or rec.get("_id")
+        if auto_ot.get("overtime_confirm"):
+            opened = opened or auto_ot["overtime_confirm"]
+        if auto_ot.get("auto_checkout") and not punched:
+            punch_msg = punch_msg or f"Mesai bitişinde otomatik çıkış {(rec or {}).get('check_out') or ''}."
     return {
         "status": "success",
         "outside": outside,
         "distance_m": dist,
         "opened": bool(opened),
         "punched": punched,
+        "auto_checkout": bool(auto_ot.get("auto_checkout")),
+        "overtime_confirm": bool(auto_ot.get("overtime_confirm")),
         "message": punch_msg,
         "record": _clean(rec) if rec else None,
         "request": opened,
@@ -2598,6 +2905,96 @@ async def decide_location_exit(att_id: str, req: Dict[str, Any], request: Reques
         "created_at": _now(),
     })
     return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id})), "message": msg, "wage_deduction": deduct, "deduction_amount": amount}
+
+
+@router.post("/personnel/attendance/{att_id}/overtime-confirm-decision")
+async def decide_overtime_confirm(att_id: str, req: Dict[str, Any], request: Request):
+    """Yönetici: mesai bitişi sonrası konum devam ediyor — Evet → artı mesai, Hayır → yazma."""
+    user = await _current_user(request)
+    if user.get("role") not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="Fazla mesai onayını yanıtlamak için yönetici yetkisi gerekir.")
+    rec = await _db.attendance.find_one({"_id": att_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+    ocr = rec.get("overtime_confirm_request") or {}
+    if ocr.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen fazla mesai onayı yok.")
+    try:
+        decision = parse_overtime_confirm_decision(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id")}) or {}
+    company = await _db.companies.find_one({"_id": rec.get("company_id")}) or {}
+    schedule = merge_schedule(company, emp)
+    end_hm = str(ocr.get("schedule_end") or day_end_hm(schedule, rec.get("date")) or schedule.get("end") or "")[:5]
+    out_hm = str(req.get("check_out") or req.get("proposed_out") or ocr.get("proposed_out") or now_hm(schedule))[:5]
+    hours = potential_overtime_hours(end_hm, out_hm)
+    if hours <= 0:
+        hours = round(float(ocr.get("hours") or 0), 2)
+    ocr = {
+        **ocr,
+        "status": "approved" if decision == "yes" else "rejected",
+        "decision": decision,
+        "hours": hours if decision == "yes" else 0,
+        "proposed_out": out_hm if decision == "yes" else end_hm,
+        "decided_at": _now(),
+        "decided_by": str(user.get("_id") or user.get("id") or ""),
+        "decision_note": (req.get("note") or "")[:300],
+    }
+    if decision == "yes":
+        patch = {
+            "status": "present",
+            "check_out": out_hm,
+            "auto_checkout": False,
+            "overtime_confirm_request": ocr,
+        }
+        saved = await apply_day(emp, rec["date"], patch, source=rec.get("source") or "manager")
+        await _db.attendance.update_one(
+            {"_id": att_id},
+            {"$set": {
+                "overtime_confirm_request": ocr,
+                "auto_checkout": False,
+                "updated_at": _now(),
+            }},
+        )
+        saved = _clean(await _db.attendance.find_one({"_id": att_id}) or saved)
+        hours = float(saved.get("overtime_hours") or hours or 0)
+        ocr["hours"] = round(hours, 2)
+        await _db.attendance.update_one({"_id": att_id}, {"$set": {"overtime_confirm_request": ocr}})
+        saved = _clean(await _db.attendance.find_one({"_id": att_id}) or saved)
+    else:
+        # Hayır: çıkış mesai bitişinde kalsın, fazla mesai yazılmasın
+        if not rec.get("check_out") or rec.get("auto_checkout"):
+            await apply_day(emp, rec["date"], {
+                "status": "present",
+                "check_out": end_hm,
+                "auto_checkout": True,
+            }, source=rec.get("source") or "auto")
+        await _db.attendance.update_one(
+            {"_id": att_id},
+            {"$set": {
+                "overtime_confirm_request": ocr,
+                "auto_checkout": True,
+                "auto_checkout_end": end_hm,
+                "updated_at": _now(),
+            }},
+        )
+        saved = _clean(await _db.attendance.find_one({"_id": att_id}))
+        hours = 0
+    import notify as _notify
+    msg = overtime_confirm_decision_message(decision, hours if decision == "yes" else 0, out_hm if decision == "yes" else end_hm)
+    await _notify.insert_notification(_db, {
+        "_id": str(uuid.uuid4()),
+        "company_id": rec["company_id"],
+        "user_id": emp.get("user_id") or rec.get("employee_id"),
+        "type": "overtime_confirm_decision",
+        "title": "Mesai onayı: Evet" if decision == "yes" else "Mesai onayı: Hayır",
+        "message": f"{rec.get('employee_name')} — {msg}",
+        "link": "/mesai",
+        "is_read": False,
+        "created_at": _now(),
+    })
+    return {"status": "success", "record": saved, "message": msg, "decision": decision, "hours": hours if decision == "yes" else 0}
 
 
 @router.get("/personnel/employees/{emp_id}/location-moves")
@@ -3385,11 +3782,56 @@ async def run_missing_checkin_check(company_id: Optional[str] = None, force: boo
     return results
 
 
+async def run_auto_checkout_ot_check(company_id: Optional[str] = None) -> list:
+    """Mesai bitişinde otomatik çıkış; konum açıksa çıkış toleransı sonrası fazla mesai onayı."""
+    results = []
+    q = {"_id": company_id} if company_id else {}
+    async for company in _db.companies.find(q):
+        base = merge_schedule(company)
+        now = local_now(base)
+        today = now.strftime("%Y-%m-%d")
+        now_s = now.strftime("%H:%M")
+        emps = await _db.employees.find({"company_id": company["_id"], "status": "active"}).to_list(300)
+        for emp in emps:
+            sch = merge_schedule(company, emp)
+            plan = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": today})
+            end_hm = day_end_hm(sch, today, plan)
+            if not end_hm or minutes_past_hm(end_hm, now_s) <= 0:
+                continue
+            rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+            if not rec.get("check_in"):
+                continue
+            if await _on_leave_today(emp["_id"], today):
+                continue
+            workplace = await workplace_for_employee(emp, company)
+            lt = normalize_location_tracking(emp.get("location_tracking"))
+            mode = location_mode_for(lt, workplace)
+            out = await process_auto_exit_overtime(
+                emp, company, sch, rec,
+                location_active=False,  # watcher: freshness from emp signal
+                mode=mode, date=today, now_s=now_s,
+            )
+            if out.get("auto_checkout") or out.get("overtime_confirm"):
+                results.append({
+                    "company_id": company["_id"],
+                    "employee_id": emp["_id"],
+                    "employee_name": emp.get("full_name"),
+                    "auto_checkout": bool(out.get("auto_checkout")),
+                    "overtime_confirm": bool(out.get("overtime_confirm")),
+                    "check_out": (out.get("record") or {}).get("check_out"),
+                })
+    return results
+
+
 async def watcher_loop(interval_s: int = 60):
     import asyncio
     while True:
         try:
             await run_missing_checkin_check()
+        except Exception:
+            pass
+        try:
+            await run_auto_checkout_ot_check()
         except Exception:
             pass
         await asyncio.sleep(interval_s)
@@ -3402,7 +3844,9 @@ async def run_alerts_now(request: Request, company_id: Optional[str] = "comp_nex
         raise HTTPException(status_code=403, detail="Bu işlem için yönetici yetkisi gerekir.")
     if not await _db.companies.find_one({"_id": company_id}):
         raise HTTPException(status_code=404, detail="Firma bulunamadı.")
-    return {"status": "success", "results": await run_missing_checkin_check(company_id, force=force)}
+    missing = await run_missing_checkin_check(company_id, force=force)
+    auto_ot = await run_auto_checkout_ot_check(company_id)
+    return {"status": "success", "results": missing, "auto_checkout": auto_ot}
 
 
 @router.get("/personnel/overtime-preview")

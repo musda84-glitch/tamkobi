@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Bell, CalendarDays, Check, ChevronDown, ChevronUp, Clock, Coins, Loader2, MapPin, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight, ShieldCheck } from "lucide-react";
+import { Bell, CalendarDays, Check, ChevronDown, ChevronUp, Clock, Coins, Loader2, MapPin, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight, ShieldCheck, Timer } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { requestsDetailsToggleLabel } from "../utils/employeeCardStatus";
@@ -16,6 +16,7 @@ export const KIND_META = {
   yevmiye_adjustment: { label: "Geç giriş ücreti", Icon: Coins, chip: "bg-amber-50 text-amber-900 border-amber-200" },
   location_exit: { label: "Konum dışı", Icon: MapPin, chip: "bg-emerald-50 text-emerald-800 border-emerald-200" },
   geo_confirm: { label: "Teyitli giriş / saat", Icon: ShieldCheck, chip: "bg-violet-50 text-violet-800 border-violet-200" },
+  overtime_confirm: { label: "Mesai onayı", Icon: Timer, chip: "bg-indigo-50 text-indigo-800 border-indigo-200" },
 };
 
 const chipBtn = "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold disabled:opacity-50";
@@ -30,6 +31,7 @@ export function EmployeeRequestChips({
   onDecideAdvance,
   onDecideYevmiye,
   onDecideLocationExit,
+  onDecideOvertimeConfirm,
   onDecideGeoConfirm,
   onDecideDispute,
   onViewDispute,
@@ -147,6 +149,16 @@ export function EmployeeRequestChips({
                   </button>
                 </>
               )}
+              {it.kind === "overtime_confirm" && (
+                <>
+                  <button type="button" disabled={busy} onClick={() => onDecideOvertimeConfirm?.(it.id, "yes")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-yes-otconfirm-${it.id}`}>
+                    <Check className="w-2.5 h-2.5" /> Evet
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideOvertimeConfirm?.(it.id, "no")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-no-otconfirm-${it.id}`}>
+                    <X className="w-2.5 h-2.5" /> Hayır
+                  </button>
+                </>
+              )}
               {it.kind === "geo_confirm" && (
                 <>
                   <button type="button" disabled={busy} onClick={() => onDecideGeoConfirm?.(it.id, "approve")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-geoconfirm-${it.id}`}>
@@ -256,6 +268,20 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/location-exit-decision`, { decision, wage_deduction: !!wageDeduction });
       toast.success(r.data?.message || "Konum dışı çıkış yanıtlandı.");
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const decideOvertimeConfirm = async (id, decision) => {
+    setBusyId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/overtime-confirm-decision`, { decision });
+      toast.success(r.data?.message || (decision === "yes" ? "Fazla mesai yazıldı." : "Fazla mesai yazılmadı."));
       await load();
       onChanged?.();
     } catch (err) {
@@ -441,6 +467,16 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                       </button>
                       <button type="button" disabled={busy} onClick={() => decideLocationExit(it.id, "reject", false)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-locexit-${it.id}`}>
                         <X className="w-3 h-3" /> Reddet
+                      </button>
+                    </>
+                  )}
+                  {it.kind === "overtime_confirm" && (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => decideOvertimeConfirm(it.id, "yes")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-yes-otconfirm-${it.id}`}>
+                        <Check className="w-3 h-3" /> Evet · mesaide
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideOvertimeConfirm(it.id, "no")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-no-otconfirm-${it.id}`}>
+                        <X className="w-3 h-3" /> Hayır
                       </button>
                     </>
                   )}

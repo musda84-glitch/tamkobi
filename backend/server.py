@@ -8780,6 +8780,33 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
                 "wage_deduction": ler.get("wage_deduction"),
             },
         })
+    ot_conf = await db.attendance.find(
+        {"company_id": company_id, "overtime_confirm_request.status": "pending"}
+    ).sort("date", -1).to_list(200)
+    for att in ot_conf:
+        ocr = att.get("overtime_confirm_request") or {}
+        hours = ocr.get("hours")
+        items.append({
+            "kind": "overtime_confirm",
+            "id": att.get("_id") or att.get("id"),
+            "employee_id": att.get("employee_id"),
+            "employee_name": att.get("employee_name") or "—",
+            "title": "Personel mesaide mi?",
+            "detail": f"{att.get('date') or ''}"
+                      + (f" · mesai bitiş {ocr.get('schedule_end')}" if ocr.get("schedule_end") else "")
+                      + (f" · önerilen çıkış {ocr.get('proposed_out')}" if ocr.get("proposed_out") else "")
+                      + (f" · ~{hours:g} sa" if hours else "")
+                      + (f" · tolerans {ocr.get('tolerance_hours')} sa" if ocr.get("tolerance_hours") else ""),
+            "created_at": ocr.get("requested_at") or att.get("updated_at") or att.get("date") or "",
+            "link": "/personnel?tab=attendance",
+            "meta": {
+                "date": att.get("date"),
+                "schedule_end": ocr.get("schedule_end"),
+                "proposed_out": ocr.get("proposed_out"),
+                "hours": hours,
+                "tolerance_hours": ocr.get("tolerance_hours"),
+            },
+        })
     items.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
     return {"count": len(items), "items": items}
 
