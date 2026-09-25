@@ -13007,6 +13007,77 @@ async def start_production_order(order_id: str):
     await db.production_orders.update_one({"_id": order_id}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
     return {"status": "success", "message": "Üretim başlatıldı."}
 
+
+@api_router.post("/production/orders/{order_id}/produce-shortages")
+async def produce_production_order_shortages(order_id: str, req: Dict[str, Any] = None):
+    """Eksik hammaddeler için alt üretim emri aç (reçeteli veya reçetesiz)."""
+    from production_shortages import merge_shortage_children, shortage_produce_lines
+
+    req = req or {}
+    o = await db.production_orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
+    if o.get("status") in ("completed", "cancelled"):
+        raise HTTPException(status_code=400, detail="Kapalı emirde eksik ürün üretilemez.")
+
+    shortages = list(o.get("shortages") or [])
+    if not shortages and o.get("recipe_id"):
+        recipe = await db.recipes.find_one({"_id": o["recipe_id"]})
+        if recipe:
+            rows = await _requirements(recipe, float(o.get("planned_quantity") or 1))
+            shortages = [x for x in rows if float(x.get("shortage") or 0) > 0]
+            await db.production_orders.update_one({"_id": order_id}, {"$set": {"shortages": shortages}})
+
+    existing = list(o.get("shortage_production_orders") or [])
+    already = {str(c.get("product_id")) for c in existing if c.get("product_id")}
+    lines, skipped = shortage_produce_lines(
+        shortages,
+        already_pids=already,
+        parent_code=o.get("order_code") or "",
+    )
+    created = []
+    for line in lines:
+        try:
+            po = await create_production_order({
+                "company_id": o.get("company_id"),
+                "finished_product_id": line["product_id"],
+                "finished_product_name": line.get("product_name"),
+                "planned_quantity": line["planned_quantity"],
+                "source": "bom_shortage",
+                "allow_without_recipe": True,
+                "notes": line.get("notes") or f"{o.get('order_code')} hammaddesi eksik",
+                "planned_date": req.get("planned_date") or o.get("planned_date"),
+            })
+            row = {
+                "product_id": line["product_id"],
+                "product_name": line.get("product_name") or po.get("finished_product_name"),
+                "qty": line["planned_quantity"],
+                "order_code": po.get("order_code"),
+                "order_id": po.get("id"),
+                "needs_recipe": bool(po.get("needs_recipe")),
+            }
+            created.append(row)
+        except HTTPException as e:
+            skipped.append({"product_id": line["product_id"], "product_name": line.get("product_name"), "reason": str(e.detail)})
+        except Exception as e:
+            skipped.append({"product_id": line["product_id"], "product_name": line.get("product_name"), "reason": str(e)[:160]})
+
+    if created:
+        merged = merge_shortage_children(existing, created)
+        await db.production_orders.update_one(
+            {"_id": order_id},
+            {"$set": {"shortage_production_orders": merged, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+
+    if not created and skipped:
+        reasons = "; ".join(f"{s.get('product_name') or s.get('product_id')}: {s.get('reason')}" for s in skipped[:5])
+        raise HTTPException(status_code=400, detail=f"Üretim emri açılamadı. {reasons}")
+    if not created:
+        raise HTTPException(status_code=400, detail="Eksik hammadde yok veya hepsi zaten üretime alındı.")
+    msg = f"{len(created)} eksik ürün üretime alındı." + (f" {len(skipped)} kalem atlandı." if skipped else "")
+    return {"status": "ok", "message": msg, "created": created, "skipped": skipped}
+
+
 @api_router.post("/production/orders/{order_id}/cancel")
 async def cancel_production_order(order_id: str):
     o = await db.production_orders.find_one({"_id": order_id})
