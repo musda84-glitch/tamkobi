@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Timer, Save, Loader2, X, RotateCcw, Bell, Banknote, MapPin } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { isDailyWage, monthlyLoad } from "../utils/personnelWage";
+import { TimeInput } from "./TimeInput";
 
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
 export const DAY_LABELS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
@@ -84,8 +85,8 @@ export const DaySchedule = ({ s, onChange, fallback }) => {
           {DAY_LABELS.map((l, d) => { const on = workDays.includes(d); const custom = !!s.days?.[String(d)]; return (
             <tr key={l} className={on ? "" : "bg-slate-50/60 text-slate-400"} data-testid={`ds-row-${d}`}>
               <td className="px-3 py-1"><label className="flex items-center gap-2 cursor-pointer font-semibold"><input type="checkbox" checked={on} onChange={() => toggle(d)} data-testid={`ws-day-${d}`} /> {l}{custom && <span className="text-[9px] text-indigo-600 font-bold">özel</span>}</label></td>
-              <td className="px-3 py-1"><input type="time" disabled={!on} value={eff({ ...base, days: s.days }, String(d), "start")} onChange={(e) => setDay(String(d), "start", e.target.value)} className={inp} data-testid={`ds-start-${d}`} /></td>
-              <td className="px-3 py-1"><input type="time" disabled={!on} value={eff({ ...base, days: s.days }, String(d), "end")} onChange={(e) => setDay(String(d), "end", e.target.value)} className={inp} data-testid={`ds-end-${d}`} /></td>
+              <td className="px-3 py-1"><TimeInput disabled={!on} value={eff({ ...base, days: s.days }, String(d), "start")} onChange={(e) => setDay(String(d), "start", e.target.value)} className={inp} data-testid={`ds-start-${d}`} /></td>
+              <td className="px-3 py-1"><TimeInput disabled={!on} value={eff({ ...base, days: s.days }, String(d), "end")} onChange={(e) => setDay(String(d), "end", e.target.value)} className={inp} data-testid={`ds-end-${d}`} /></td>
               <td className="px-3 py-1"><input type="number" min="0" disabled={!on} value={eff({ ...base, days: s.days }, String(d), "break_minutes")} onChange={(e) => setDay(String(d), "break_minutes", e.target.value === "" ? "" : Number(e.target.value))} className={`${inp} w-20`} data-testid={`ds-break-${d}`} /></td>
               <td className="px-3 py-1 text-right">{custom && <button type="button" onClick={() => reset(String(d))} title="Varsayılana dön" className="text-slate-400 hover:text-slate-700" data-testid={`ds-reset-${d}`}><RotateCcw className="w-3.5 h-3.5" /></button>}</td>
             </tr>); })}
@@ -97,8 +98,8 @@ export const DaySchedule = ({ s, onChange, fallback }) => {
 
 export const ScheduleFields = ({ s, set, allowEmpty }) => (
   <div className="flex flex-wrap items-end gap-3 text-xs">
-    <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Varsayılan başlangıç</label><input type="time" value={s.start || ""} onChange={(e) => set("start", e.target.value)} className={inp} data-testid="ws-start" /></div>
-    <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Varsayılan bitiş</label><input type="time" value={s.end || ""} onChange={(e) => set("end", e.target.value)} className={inp} data-testid="ws-end" /></div>
+    <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Varsayılan başlangıç</label><TimeInput value={s.start || ""} onChange={(e) => set("start", e.target.value)} className={inp} data-testid="ws-start" /></div>
+    <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Varsayılan bitiş</label><TimeInput value={s.end || ""} onChange={(e) => set("end", e.target.value)} className={inp} data-testid="ws-end" /></div>
     <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Mola (dk)</label><input type="number" min="0" value={s.break_minutes ?? ""} onChange={(e) => set("break_minutes", e.target.value === "" ? (allowEmpty ? null : 0) : Number(e.target.value))} className={`${inp} w-20`} data-testid="ws-break" /></div>
     <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Geç tolerans (dk)</label><input type="number" min="0" value={s.late_tolerance_minutes ?? ""} onChange={(e) => set("late_tolerance_minutes", e.target.value === "" ? (allowEmpty ? null : 0) : Number(e.target.value))} className={`${inp} w-20`} data-testid="ws-late-tol" /></div>
     <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Mesai tolerans (dk)</label><input type="number" min="0" value={s.overtime_tolerance_minutes ?? ""} onChange={(e) => set("overtime_tolerance_minutes", e.target.value === "" ? (allowEmpty ? null : 0) : Number(e.target.value))} className={`${inp} w-20`} data-testid="ws-ot-tol" /></div>

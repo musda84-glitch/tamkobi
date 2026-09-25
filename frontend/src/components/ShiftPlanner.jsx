@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { CalendarRange, ChevronLeft, ChevronRight, Copy, Loader2, X, Trash2, AlertTriangle, Users } from "lucide-react";
 import { BulkAssignModal } from "./BulkAssignModal";
+import { TimeInput } from "./TimeInput";
 import { API_URL } from "../context/AuthContext";
 
 const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
@@ -26,8 +27,8 @@ const CellEditor = ({ row, cell, companyId, onClose, onSaved }) => {
         {cell.leave && <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800" data-testid="shift-leave-warning"><AlertTriangle className="w-4 h-4 shrink-0" /><span>Bu gün için <b>onaylı {cell.leave.label} izni</b> var. Çalışma saati atarsanız çakışma oluşur; "İzinli / tatil" işaretlemeniz önerilir.</span></div>}
         <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={f.off} onChange={(e) => setF({ ...f, off: e.target.checked })} data-testid="shift-off" /> İzinli / tatil (çalışma = fazla mesai)</label>
         {!f.off && <div className="grid grid-cols-3 gap-2">
-          <div><label className="block text-[10px] text-slate-500 mb-0.5">Başlangıç</label><input type="time" value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} className={`${inp} w-full`} data-testid="shift-start" /></div>
-          <div><label className="block text-[10px] text-slate-500 mb-0.5">Bitiş</label><input type="time" value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} className={`${inp} w-full`} data-testid="shift-end" /></div>
+          <div><label className="block text-[10px] text-slate-500 mb-0.5">Başlangıç</label><TimeInput value={f.start} onChange={(e) => setF({ ...f, start: e.target.value })} className={`${inp} w-full`} data-testid="shift-start" /></div>
+          <div><label className="block text-[10px] text-slate-500 mb-0.5">Bitiş</label><TimeInput value={f.end} onChange={(e) => setF({ ...f, end: e.target.value })} className={`${inp} w-full`} data-testid="shift-end" /></div>
           <div><label className="block text-[10px] text-slate-500 mb-0.5">Mola (dk)</label><input type="number" min="0" value={f.break_minutes} onChange={(e) => setF({ ...f, break_minutes: Number(e.target.value) })} className={`${inp} w-full`} data-testid="shift-break" /></div>
         </div>}
         <input value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="Not (örn. gece vardiyası, şube B)" className={`${inp} w-full`} data-testid="shift-note" />

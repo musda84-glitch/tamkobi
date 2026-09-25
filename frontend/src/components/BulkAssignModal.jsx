@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Users, X, Loader2, Save, Trash2, LayoutTemplate } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { TimeInput } from "./TimeInput";
 
 const DAYS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
@@ -46,8 +47,8 @@ export const BulkAssignModal = ({ companyId, weekStart, rows, onClose, onDone })
             <tbody className="divide-y divide-slate-100">{DAYS.map((l, i) => { const d = days[String(i)]; return (
               <tr key={l} className={d.off ? "bg-slate-50/60 text-slate-400" : ""} data-testid={`bulk-day-${i}`}>
                 <td className="px-3 py-1"><label className="flex items-center gap-2 cursor-pointer font-semibold"><input type="checkbox" checked={!d.off} onChange={(e) => setDay(String(i), e.target.checked ? { off: false, start: d.start || "09:00", end: d.end || "18:00", break_minutes: d.break_minutes ?? 60 } : { off: true })} data-testid={`bulk-on-${i}`} /> {l}{d.off && <span className="text-[9px] font-normal">izin</span>}</label></td>
-                <td className="px-3 py-1"><input type="time" disabled={d.off} value={d.start || ""} onChange={(e) => setDay(String(i), { start: e.target.value })} className={inp} data-testid={`bulk-start-${i}`} /></td>
-                <td className="px-3 py-1"><input type="time" disabled={d.off} value={d.end || ""} onChange={(e) => setDay(String(i), { end: e.target.value })} className={inp} data-testid={`bulk-end-${i}`} /></td>
+                <td className="px-3 py-1"><TimeInput disabled={d.off} value={d.start || ""} onChange={(e) => setDay(String(i), { start: e.target.value })} className={inp} data-testid={`bulk-start-${i}`} /></td>
+                <td className="px-3 py-1"><TimeInput disabled={d.off} value={d.end || ""} onChange={(e) => setDay(String(i), { end: e.target.value })} className={inp} data-testid={`bulk-end-${i}`} /></td>
                 <td className="px-3 py-1"><input type="number" min="0" disabled={d.off} value={d.break_minutes ?? ""} onChange={(e) => setDay(String(i), { break_minutes: Number(e.target.value) })} className={`${inp} w-20`} data-testid={`bulk-break-${i}`} /></td>
               </tr>); })}</tbody></table>
         </div>
