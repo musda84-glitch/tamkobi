@@ -94,6 +94,15 @@ describe("permissions", () => {
     expect(visibleModules(personel, null).map((m) => m.key)).not.toContain("stock");
   });
 
+  it("shows Stok Sayımı in Daha and hides it when licensed off", () => {
+    const warehouse = { role: "warehouse", permissions: { "/sayim": "edit", "/stock": "edit" } };
+    const sales = { role: "sales", permissions: { "/sayim": "none", "/stock": "view" } };
+    expect(isMoreLinkVisible({ path: "/sayim" }, warehouse, null)).toBe(true);
+    expect(isMoreLinkVisible({ path: "/sayim" }, sales, null)).toBe(false);
+    expect(isMoreLinkVisible({ path: "/sayim" }, { role: "admin" }, { modules: { "/sayim": false } })).toBe(false);
+    expect(visibleModules({ role: "admin" }, null).some((m) => m.key === "sayim")).toBe(true);
+  });
+
   it("shows Üretim Atölye for the production role and hides it when licensed off", () => {
     const production = { role: "production", permissions: { "/atolye": "edit", "/production": "edit" } };
     const accountant = { role: "accountant", permissions: { "/atolye": "none" } };

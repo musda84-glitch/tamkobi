@@ -15,6 +15,7 @@ const LINKS = [
   { title: "Gelen e-Faturalar", path: "/edoc-inbox", screen: "EdocInbox", icon: "file-tray" as const },
   { title: "Siparişler", path: "/orders", screen: "Orders", icon: "cart" as const },
   { title: "Depo Sevkiyat", path: "/sevk", screen: "Sevk", icon: "cube" as const },
+  { title: "Stok Sayımı", path: "/sayim", screen: "StockCount", icon: "clipboard" as const },
   { title: "Üretim Atölye", path: "/atolye", screen: "Atolye", icon: "build" as const },
   { title: "Kasa & Banka", path: "/banking", screen: "Banking", icon: "wallet" as const },
   { title: "Tahsilat & Ödeme Yap", path: "/banking", screen: "Pay", icon: "cash" as const },
