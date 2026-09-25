@@ -34,7 +34,8 @@ describe("orderMoreMenu", () => {
     expect(labels.slice(0, -2)).toEqual(integrationEInvoiceMoreItems().map((i) => i.label));
     expect(labels[0]).toBe("Siparişin Güncel Durumunu Getir");
     expect(labels).toContain("E-Fatura XML'i İndir");
-    expect(labels).toContain("Navlungo Siparişi Oluştur");
+    expect(labels).toContain("Kargola");
+    expect(labels).not.toContain("Navlungo Siparişi Oluştur");
     expect(labels).toContain("Pazaryeri Kargo Firmasını Değiştir");
     expect(labels).not.toContain("Paketli Siparişin Kargo Firmasını Değiştir");
     expect(labels).toContain("Siparişi Excel İndir");

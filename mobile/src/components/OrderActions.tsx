@@ -698,6 +698,9 @@ export function OrderActions({
       case "kargola":
         openShip();
         return;
+      case "navlungo_create":
+        openShip();
+        return;
       case "cargo_change":
         if (showCargo) openCargo();
         else openShip();
@@ -746,9 +749,6 @@ export function OrderActions({
         return;
       case "invoice_link":
         sendInvoiceLink();
-        return;
-      case "navlungo_create":
-        createShipment("navlungo");
         return;
       case "earsiv_send":
         printMiniInvoice();
