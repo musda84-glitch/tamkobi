@@ -9,7 +9,7 @@
  * Grupların sırası ve etiketleri navGroups.js → SYSTEM_NAV_GROUPS'ta.
  */
 import React from "react";
-import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive, UserX, Megaphone, ScrollText } from "lucide-react";
+import { LayoutGrid, Building2, Package, Boxes, Inbox, CreditCard, Settings, Bell, Users, Globe, Sparkles, Mail, Gauge, Bot, Headset, Database, HardDrive, UserX, Megaphone, ScrollText, MessageSquare } from "lucide-react";
 import { SaasOverview } from "./SaasOverview";
 import { CompaniesTable } from "./CompaniesTable";
 import { PlansPanel } from "./PlansPanel";
@@ -23,6 +23,7 @@ import { ModuleCatalogPanel } from "./ModuleCatalogPanel";
 import { QuotasPanel } from "./QuotasPanel";
 import { StorageManagerPanel } from "./StorageManagerPanel";
 import { PlatformMailPanel } from "./PlatformMailPanel";
+import { PlatformSmsPanel } from "./PlatformSmsPanel";
 import { AddonsPanel } from "./AddonsPanel";
 import { SupportTicketsPanel } from "./SupportTicketsPanel";
 import { DatabasePanel } from "./DatabasePanel";
@@ -50,6 +51,7 @@ export const SYSTEM_SECTIONS = [
   { key: "duyurular", label: "Güncelleme & Duyuru", icon: Megaphone, render: () => <MaintenanceAnnouncePanel /> },
   { key: "loglar", label: "Sistem Logları", icon: ScrollText, render: () => <SystemLogsPanel /> },
   { key: "posta", label: "Posta Sunucusu", icon: Mail, render: () => <PlatformMailPanel /> },
+  { key: "sms", label: "SMS Modülü", icon: MessageSquare, render: () => <PlatformSmsPanel /> },
   { key: "ai", label: "AI Entegrasyonu", icon: Sparkles, render: () => <AiProviderPanel /> },
   { key: "araclar", label: "AI & Destek", icon: Bot, render: () => <AddonsPanel /> },
   { key: "veritabani", label: "Veritabanı", icon: Database, render: () => <DatabasePanel /> },

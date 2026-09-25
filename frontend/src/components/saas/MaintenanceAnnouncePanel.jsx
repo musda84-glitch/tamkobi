@@ -20,6 +20,7 @@ const emptyAnnounce = () => ({
   status: "draft",
   audience: "all",
   company_ids: [],
+  notify_sms: false,
 });
 
 /** DEMO / test şirketi: isimde "demo" geçen ilk kayıt. */
@@ -93,6 +94,7 @@ export function MaintenanceAnnouncePanel() {
       const r = await axios.put(`${API_URL}/system/maintenance`, {
         enabled: !!m.enabled,
         notify_popup: m.notify_popup !== false,
+        notify_sms: !!m.notify_sms,
         title: m.title,
         body: m.body,
         starts_at: fromDatetimeLocalValue(m.starts_local),
@@ -149,6 +151,7 @@ export function MaintenanceAnnouncePanel() {
         company_ids: aud === "selected" ? cids : [],
         starts_at: fromDatetimeLocalValue(form.starts_at) || new Date().toISOString(),
         ends_at: fromDatetimeLocalValue(form.ends_at),
+        notify_sms: !!form.notify_sms,
       });
       toast.success(r.data.message || (status === "draft" ? "Taslak kaydedildi." : "Yayınlandı."));
       setForm(emptyAnnounce());
@@ -352,6 +355,10 @@ export function MaintenanceAnnouncePanel() {
             <Toggle on={m.notify_popup !== false} onChange={(v) => setM({ ...m, notify_popup: v })} testId="maint-notify-popup" />
             <span>Şirketlere bilgilendirme pop-up’ı göster (zamanlanmış veya aktif)</span>
           </label>
+          <label className="flex items-center gap-2 sm:col-span-2">
+            <Toggle on={!!m.notify_sms} onChange={(v) => setM({ ...m, notify_sms: v })} testId="maint-notify-sms" />
+            <span>Şirket adminlerine SMS gönder (Platform SMS Modülü)</span>
+          </label>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
           {demoId && (
@@ -393,6 +400,10 @@ export function MaintenanceAnnouncePanel() {
           </div>
           {audienceBlock(form, setForm, "announce")}
         </div>
+        <label className="flex items-center gap-2">
+          <Toggle on={!!form.notify_sms} onChange={(v) => setForm({ ...form, notify_sms: v })} testId="announce-notify-sms" />
+          <span>Yayınlanırken hedef şirket adminlerine SMS gönder</span>
+        </label>
         <div className="flex flex-wrap justify-end gap-2">
           <button type="button" disabled={busy} onClick={() => saveAnnounce("draft")} className="px-4 py-2 border border-slate-200 rounded-xl font-bold hover:bg-slate-50 disabled:opacity-60" data-testid="announce-draft">Taslak kaydet</button>
           <button type="button" disabled={busy || !demoId} onClick={publishToDemo} className="px-4 py-2 bg-amber-600 text-white rounded-xl font-bold disabled:opacity-60" data-testid="announce-publish-demo" title={!demoId ? "DEMO şirketi yok" : undefined}>

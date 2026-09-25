@@ -81,7 +81,7 @@ export const SYSTEM_NAV_GROUPS = [
   { id: "paketler", label: "Paketler", paths: ["/sistem/paketler", "/sistem/moduller"] },
   { id: "musteriler", label: "Müşteriler", paths: ["/sistem/sirketler", "/sistem/kotalar", "/sistem/depolama", "/sistem/kullanicilar", "/sistem/veri-silme"] },
   { id: "operasyon", label: "Operasyon", paths: ["/sistem/destek", "/sistem/talepler", "/sistem/odemeler", "/sistem/hatirlatmalar", "/sistem/duyurular", "/sistem/loglar"] },
-  { id: "entegrasyon", label: "Entegrasyon", paths: ["/sistem/posta", "/sistem/ai", "/sistem/araclar"] },
+  { id: "entegrasyon", label: "Entegrasyon", paths: ["/sistem/posta", "/sistem/sms", "/sistem/ai", "/sistem/araclar"] },
   { id: "kurallar", label: "Kurallar", paths: ["/sistem/veritabani", "/sistem/ayarlar"] },
 ];
 
