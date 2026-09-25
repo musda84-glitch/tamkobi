@@ -104,6 +104,12 @@ import {
   advanceFormToggleIcon,
   advanceFormToggleLabel,
   filterPayMoves,
+  fmtLocationMoveAt,
+  locationMoveCanIgnore,
+  locationMoveDidLabel,
+  locationMoveIgnorePath,
+  locationMoveLine,
+  locationMovesPeriodHint,
   payMoveInPeriod,
   payMovesPeriodHint,
   payMoveDeleteConfirm,
@@ -270,6 +276,17 @@ describe("employee draft", () => {
     expect(payMoveInPeriod({ date: "2026-07-01" }, "30d", new Date("2026-09-22T12:00:00"), "2026-09")).toBe(false);
     expect(payMoveInPeriod({ date: "2026-09" }, "month", new Date("2026-09-22"), "2026-09")).toBe(true);
     expect(filterPayMoves([{ id: "1", kind: "bonus", title: "Avans", subtitle: "", amount: 1, date: "2026-07-01" }], "30d", new Date("2026-09-22"), "2026-09")).toHaveLength(0);
+    expect(locationMoveDidLabel("enter")).toBe("İş yerine giriş yaptı");
+    expect(locationMoveDidLabel("leave")).toBe("İş yerine çıkış yaptı");
+    expect(locationMoveDidLabel("lost")).toBe("Konum kaybı");
+    expect(fmtLocationMoveAt("2026-09-24T08:32:00")).toBe("24.09.2026 08:32");
+    expect(fmtLocationMoveAt("2026-09-24T05:32:00+00:00")).toBe("24.09.2026 08:32");
+    expect(locationMoveLine({ at: "2026-09-24T08:32:00", kind: "enter" })).toBe("24.09.2026 08:32 · İş yerine giriş yaptı");
+    expect(locationMoveCanIgnore({ kind: "leave", ignorable: true })).toBe(true);
+    expect(locationMoveCanIgnore({ kind: "enter", official: true, ignorable: false })).toBe(false);
+    expect(locationMoveCanIgnore({ kind: "lost", ignorable: true, ignored: true })).toBe(false);
+    expect(locationMoveIgnorePath({ attendance_id: "a1", id: "m1" })).toBe("/personnel/attendance/a1/location-moves/m1/ignore");
+    expect(locationMovesPeriodHint(3, 8, "30d")).toBe("3 / 8 konum hareketi");
     expect(employeeCardChrome({ pay_type: "daily", daily_wage: 500 }).borderColor).toBe("#D97706");
     expect(employeeCardChrome({ pay_type: "monthly" }).backgroundColor).toBe("#D1FAE5");
     expect(employeeCardChrome({ pay_type: "daily", daily_wage: 500 }).borderWidth).toBe(2);

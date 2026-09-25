@@ -97,9 +97,15 @@ import {
   DEFAULT_LOC_MODE,
   type LocMode,
   filterPayMoves,
+  locationMoveCanIgnore,
+  locationMoveIgnorePath,
+  locationMoveLine,
+  locationMovesPeriodHint,
   payMoveDeleteConfirm,
   payMovesPeriodHint,
   payMovesPeriodLabel,
+  type LocationMove,
+  type MovesSheetTab,
   type PayMovesPeriod,
   pendingRequestDecision,
   pendingRequestDecisionMessage,
@@ -272,6 +278,9 @@ export function PersonnelScreen() {
   const [attRecOpen, setAttRecOpen] = useState<Record<string, boolean>>({});
   const [movesPeriod, setMovesPeriod] = useState<PayMovesPeriod>("30d");
   const [movesMonth, setMovesMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [movesTab, setMovesTab] = useState<MovesSheetTab>("pay");
+  const [locMoves, setLocMoves] = useState<LocationMove[]>([]);
+  const [locMovesBusy, setLocMovesBusy] = useState(false);
   const [balances, setBalances] = useState<Record<string, EmployeeBalance>>({});
   const [payItem, setPayItem] = useState<Payroll | null>(null);
   const [payAccount, setPayAccount] = useState("");
@@ -940,21 +949,58 @@ export function PersonnelScreen() {
     setExtraEmp(emp);
   };
 
+  const loadLocMoves = async (emp: Employee, period: PayMovesPeriod, monthVal: string) => {
+    setLocMovesBusy(true);
+    try {
+      const res = await get<{ items?: LocationMove[] }>(client, `/personnel/employees/${idOf(emp)}/location-moves`, {
+        period,
+        month: monthVal,
+      });
+      setLocMoves(res?.items || []);
+    } catch (err) {
+      setLocMoves([]);
+      setError(apiErrorMessage(err, "Konum hareketleri yüklenemedi."));
+    } finally {
+      setLocMovesBusy(false);
+    }
+  };
+
   const openMoves = async (emp: Employee) => {
     setMovesEmp(emp);
     setMoves([]);
+    setLocMoves([]);
+    setMovesTab("pay");
     setMovesPeriod("30d");
-    setMovesMonth(month || new Date().toISOString().slice(0, 7));
+    const ym = month || new Date().toISOString().slice(0, 7);
+    setMovesMonth(ym);
     setMovesBusy(true);
     try {
       const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
       setMoves(employeePayMoves(card));
       setError(null);
+      void loadLocMoves(emp, "30d", ym);
     } catch (err) {
       setError(apiErrorMessage(err, "Ödeme hareketleri yüklenemedi."));
       setMovesEmp(null);
     } finally {
       setMovesBusy(false);
+    }
+  };
+
+  const ignoreLocMove = async (row: LocationMove) => {
+    const path = locationMoveIgnorePath(row);
+    if (!path) return;
+    setBusy(true);
+    try {
+      const r = await post<{ message?: string }>(client, path, {});
+      setLocMoves((prev) => prev.map((m) => (m.id === row.id ? { ...m, ignored: true, ignored_at: new Date().toISOString() } : m)));
+      setMessage(r?.message || "Konum kaybı görmezden gelindi.");
+      setError(null);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Görmezden gelinemedi."));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1814,18 +1860,34 @@ export function PersonnelScreen() {
 
       <B2BSheet
         visible={!!movesEmp}
-        title="Ödeme hareketleri"
+        title={movesTab === "location" ? "Konum hareketleri" : "Ödeme hareketleri"}
         subtitle={movesEmp?.full_name}
-        onClose={() => { setMovesEmp(null); setMoves([]); }}
+        onClose={() => { setMovesEmp(null); setMoves([]); setLocMoves([]); setMovesTab("pay"); }}
         testID="emp-pay-moves-sheet"
         header={(
           <View testID="emp-pay-moves-period" style={{ gap: 8 }}>
+            <TabStrip
+              testID="emp-moves-tab"
+              value={movesTab}
+              columns={2}
+              onChange={(key) => {
+                setMovesTab(key);
+                if (key === "location" && movesEmp) void loadLocMoves(movesEmp, movesPeriod, movesMonth);
+              }}
+              items={[
+                { key: "pay", label: "Ödeme", icon: "cash" },
+                { key: "location", label: "Konum", icon: "location" },
+              ]}
+            />
             <Row style={{ flexWrap: "wrap", gap: 8 }}>
               {(["30d", "month", "all"] as PayMovesPeriod[]).map((key) => (
                 <Pressable
                   key={key}
                   testID={`emp-pay-moves-period-${key}`}
-                  onPress={() => setMovesPeriod(key)}
+                  onPress={() => {
+                    setMovesPeriod(key);
+                    if (movesEmp && movesTab === "location") void loadLocMoves(movesEmp, key, movesMonth);
+                  }}
                   style={{
                     paddingHorizontal: 10,
                     paddingVertical: 6,
@@ -1847,16 +1909,63 @@ export function PersonnelScreen() {
                 label="Dönem"
                 testID="emp-pay-moves-month"
                 value={movesMonth}
-                onChangeText={setMovesMonth}
+                onChangeText={(value) => {
+                  setMovesMonth(value);
+                  if (movesEmp && movesTab === "location") void loadLocMoves(movesEmp, "month", value);
+                }}
                 placeholder="YYYY-AA"
               />
             ) : null}
             <Muted testID="emp-pay-moves-count">
-              {payMovesPeriodHint(filterPayMoves(moves, movesPeriod, new Date(), movesMonth).length, moves.length, movesPeriod)}
+              {movesTab === "location"
+                ? locationMovesPeriodHint(locMoves.length, locMoves.length, "all")
+                : payMovesPeriodHint(filterPayMoves(moves, movesPeriod, new Date(), movesMonth).length, moves.length, movesPeriod)}
             </Muted>
           </View>
         )}
       >
+        {movesTab === "location" ? (
+          <>
+            {locMovesBusy ? <Muted>Yükleniyor…</Muted> : null}
+            {!locMovesBusy && !locMoves.length ? <Muted>Bu dönemde konum hareketi yok.</Muted> : null}
+            {locMoves.map((row) => (
+              <View
+                key={row.id || `${row.attendance_id}-${row.at}`}
+                testID={`emp-loc-move-${row.id || row.at}`}
+                style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}
+              >
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontWeight: "800", color: colors.text }}>{locationMoveLine(row)}</Text>
+                  {row.place ? <Muted>{row.place}</Muted> : null}
+                  {row.ignored ? <Muted testID={`emp-loc-move-ignored-${row.id}`}>Görmezden gelindi</Muted> : null}
+                </View>
+                {canEdit && locationMoveCanIgnore(row) ? (
+                  <Pressable
+                    testID={`emp-loc-move-ignore-${row.id}`}
+                    accessibilityRole="button"
+                    accessibilityLabel="Görmezden gel"
+                    onPress={() => { void ignoreLocMove(row); }}
+                    disabled={busy}
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 17,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: colors.slate50,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Ionicons name="eye-off-outline" size={16} color={colors.muted} />
+                  </Pressable>
+                ) : null}
+              </View>
+            ))}
+          </>
+        ) : (
+          <>
         {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
         {!movesBusy && !filterPayMoves(moves, movesPeriod, new Date(), movesMonth).length ? <Muted>Bu dönemde ödeme hareketi yok.</Muted> : null}
         {filterPayMoves(moves, movesPeriod, new Date(), movesMonth).map((row) => (
@@ -1928,6 +2037,8 @@ export function PersonnelScreen() {
             ) : null}
           </View>
         ))}
+          </>
+        )}
       </B2BSheet>
 
       <B2BSheet
