@@ -764,6 +764,36 @@ def location_move_public(rec: dict, move: dict) -> dict:
     }
 
 
+def overtime_move_public(rec: dict) -> Optional[dict]:
+    """Gün bazlı fazla mesai hareketi (atanan veya puantajdan hesaplanan)."""
+    if not rec:
+        return None
+    assigned = max(0.0, _as_float(rec.get("assigned_overtime_hours"), 0.0))
+    computed = max(0.0, _as_float(rec.get("overtime_hours"), 0.0))
+    if assigned <= 0 and computed <= 0:
+        return None
+    hours = assigned if assigned > 0 else computed
+    kind = "assigned" if assigned > 0 else "computed"
+    return {
+        "id": rec.get("_id") or rec.get("id"),
+        "attendance_id": rec.get("_id") or rec.get("id"),
+        "date": rec.get("date"),
+        "employee_id": rec.get("employee_id"),
+        "employee_name": rec.get("employee_name"),
+        "hours": round(hours, 2),
+        "assigned_hours": round(assigned, 2),
+        "computed_hours": round(computed, 2),
+        "start": rec.get("assigned_overtime_start") or None,
+        "end": rec.get("assigned_overtime_end") or None,
+        "note": (rec.get("assigned_overtime_note") or rec.get("note") or "")[:200] or None,
+        "kind": kind,
+        "check_in": rec.get("check_in"),
+        "check_out": rec.get("check_out"),
+        "can_edit": True,
+        "can_delete": assigned > 0,
+    }
+
+
 def record_has_location_signal(rec: Optional[dict] = None) -> bool:
     rec = rec or {}
     return bool(
@@ -2479,6 +2509,34 @@ async def list_employee_location_moves(emp_id: str, request: Request, period: st
         for mv in moves:
             items.append(location_move_public(rec, mv))
     items.sort(key=lambda x: str(x.get("at") or ""), reverse=True)
+    return {"items": items, "period": period_s, "month": month_s, "count": len(items)}
+
+
+@router.get("/personnel/employees/{emp_id}/overtime-moves")
+async def list_employee_overtime_moves(emp_id: str, request: Request, period: str = "30d", month: Optional[str] = None):
+    """Personel kartı: dönemsel fazla mesai hareketleri (atanan / hesaplanan)."""
+    user = await _current_user(request)
+    emp = await _db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    self_emp = await employee_for_user(user)
+    if user.get("role") not in ("admin", "manager", "accountant") and not (self_emp and self_emp.get("_id") == emp_id):
+        raise HTTPException(status_code=403, detail="Mesai hareketlerini görmek için yetki gerekir.")
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    schedule = merge_schedule(company, emp)
+    today = _today(schedule)
+    period_s = str(period or "30d").strip().lower()
+    if period_s not in ("30d", "month", "all"):
+        period_s = "30d"
+    month_s = str(month or today)[:7]
+    rows = await _db.attendance.find(
+        {"employee_id": emp_id, **location_moves_date_query(period_s, month_s, today)}
+    ).sort("date", -1).to_list(400)
+    items = []
+    for rec in rows:
+        pub = overtime_move_public(rec)
+        if pub:
+            items.append(pub)
     return {"items": items, "period": period_s, "month": month_s, "count": len(items)}
 
 

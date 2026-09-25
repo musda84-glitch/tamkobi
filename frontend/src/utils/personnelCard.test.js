@@ -12,6 +12,10 @@ import {
   locationMoveIgnorePath,
   locationMoveLine,
   locationMovesPeriodHint,
+  overtimeMoveCanDelete,
+  overtimeMoveCanEdit,
+  overtimeMoveLine,
+  overtimeMovesPeriodHint,
   payMovesPeriodHint,
   remainingLeaveDays,
 } from "./personnelCard";
@@ -56,5 +60,20 @@ describe("personnelCard", () => {
     expect(locationMoveCanIgnore({ kind: "enter", official: true, ignorable: false })).toBe(false);
     expect(locationMoveIgnorePath({ attendance_id: "a1", id: "m1" })).toBe("/personnel/attendance/a1/location-moves/m1/ignore");
     expect(locationMovesPeriodHint(3, 8, "30d")).toBe("3 / 8 konum hareketi");
+  });
+
+  test("formats overtime moves and gates edit/delete", () => {
+    expect(overtimeMoveLine({
+      date: "2026-09-20",
+      hours: 2.5,
+      start: "18:00",
+      end: "20:30",
+      kind: "assigned",
+    })).toBe("20.09.2026 · 2.5 sa · 18:00–20:30 · Atanan");
+    expect(overtimeMovesPeriodHint(2, 5, "30d")).toBe("2 / 5 mesai kaydı");
+    expect(overtimeMoveCanEdit({ can_edit: true }, true)).toBe(true);
+    expect(overtimeMoveCanDelete({ can_delete: true, assigned_hours: 2 }, true)).toBe(true);
+    expect(overtimeMoveCanDelete({ kind: "computed", assigned_hours: 0 }, true)).toBe(false);
+    expect(overtimeMoveCanEdit({ can_edit: true }, false)).toBe(false);
   });
 });

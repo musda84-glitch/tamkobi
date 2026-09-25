@@ -14,6 +14,7 @@ from attendance import (
     location_moves_date_query,
     location_moves_from_record,
     location_ping_checks_out,
+    overtime_move_public,
     parse_location_exit_decision,
     location_mode_for,
     merge_schedule,
@@ -227,3 +228,25 @@ def test_location_moves_date_query_periods():
     assert q30["date"]["$gte"] == "2026-08-25"
     assert combine_date_hm("2026-09-24", "08:32") == "2026-09-24T08:32:00"
     assert location_moves_from_record({"location_moves": [{"kind": "lost", "at": "2026-09-24T10:00:00+00:00", "ignorable": True}]})[0]["kind"] == "lost"
+
+
+def test_overtime_move_public_assigned_and_computed():
+    assert overtime_move_public({}) is None
+    assert overtime_move_public({"assigned_overtime_hours": 0, "overtime_hours": 0}) is None
+    assigned = overtime_move_public({
+        "_id": "att1",
+        "date": "2026-09-20",
+        "employee_id": "e1",
+        "assigned_overtime_hours": 2.5,
+        "assigned_overtime_start": "18:00",
+        "assigned_overtime_end": "20:30",
+        "assigned_overtime_note": "proje",
+    })
+    assert assigned["hours"] == 2.5
+    assert assigned["kind"] == "assigned"
+    assert assigned["can_delete"] is True
+    assert assigned["start"] == "18:00"
+    computed = overtime_move_public({"_id": "att2", "date": "2026-09-21", "overtime_hours": 1.25})
+    assert computed["kind"] == "computed"
+    assert computed["hours"] == 1.25
+    assert computed["can_delete"] is False
