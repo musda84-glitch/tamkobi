@@ -6,8 +6,13 @@ import { UserPlus, Shield, Activity, Copy, Trash2, Mail, KeyRound, Plus, Loader2
 import { API_URL, useAuth } from "../context/AuthContext";
 import { groupMenuItems } from "../navGroups";
 
-const LEVEL_LABEL = { none: "Yok", view: "Görüntüle", edit: "Düzenle" };
-const LEVEL_CLS = { none: "bg-slate-100 text-slate-500", view: "bg-sky-100 text-sky-700", edit: "bg-emerald-100 text-emerald-700" };
+const LEVEL_LABEL = { none: "Yok", view: "Görüntüle", edit: "Düzenle", delete: "Sil" };
+const LEVEL_CLS = {
+  none: "bg-slate-100 text-slate-500",
+  view: "bg-sky-100 text-sky-700",
+  edit: "bg-emerald-100 text-emerald-700",
+  delete: "bg-rose-100 text-rose-700",
+};
 
 const UsersTab = ({ companyId, roles, reload, data }) => {
   const { user: me } = useAuth();

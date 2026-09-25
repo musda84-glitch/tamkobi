@@ -27,6 +27,7 @@ const FILTER_ICONS: Record<string, { icon: keyof typeof Ionicons.glyphMap; color
 export function InvoicesScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/invoices", "edit");
+  const canDelete = can("/invoices", "delete");
   const [rows, setRows] = useState<Invoice[]>([]);
   const [type, setType] = useState("all");
   const [q, setQ] = useState("");
@@ -50,9 +51,9 @@ export function InvoicesScreen() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const actOnInvoice = (inv: Invoice) => {
-    if (!canEdit) { setError("Fatura düzenleme yetkiniz yok."); return; }
     const kind = invoiceRowDangerAction(inv);
     if (kind === "delete") {
+      if (!canDelete) { setError("Fatura silme yetkiniz yok."); return; }
       const label = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
       confirmAction("Faturayı sil", `${inv.invoice_number || "Fatura"} numaralı ${label} çöp kutusuna taşınsın mı?`, async () => {
         try {
@@ -67,6 +68,7 @@ export function InvoicesScreen() {
       return;
     }
     if (kind === "cancel") {
+      if (!canEdit) { setError("Fatura düzenleme yetkiniz yok."); return; }
       confirmAction(
         "Faturayı iptal et",
         `${inv.invoice_number || "Fatura"} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`,
@@ -146,20 +148,21 @@ export function InvoicesScreen() {
         />
       ) : (
         <>
-          {canEdit ? <Muted>Silmek veya e-faturayı iptal etmek için satırı sola kaydırın.</Muted> : null}
+          {canEdit || canDelete ? <Muted>Silmek veya e-faturayı iptal etmek için satırı sola kaydırın.</Muted> : null}
           {filtered.map((inv) => {
             const iid = idOf(inv);
             const danger = invoiceRowDangerAction(inv);
+            const allowDanger = (danger === "delete" && canDelete) || (danger === "cancel" && canEdit);
             const row = (
               <ListRow
-                testID={canEdit && danger ? undefined : `inv-row-${iid}`}
+                testID={allowDanger ? undefined : `inv-row-${iid}`}
                 title={invoiceListTitle(inv)}
                 subtitle={invoiceListSubtitle(inv)}
                 right={fmtMoney(inv.grand_total, inv.currency)}
-                onPress={canEdit && danger ? undefined : () => go("InvoiceDetail", { id: iid })}
+                onPress={allowDanger ? undefined : () => go("InvoiceDetail", { id: iid })}
               />
             );
-            if (!canEdit || !danger) {
+            if (!allowDanger || !danger) {
               return <Fragment key={iid}>{row}</Fragment>;
             }
             return (

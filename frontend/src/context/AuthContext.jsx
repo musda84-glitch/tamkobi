@@ -65,7 +65,14 @@ export const AuthProvider = ({ children }) => {
   const LICENSE_KEY = { "/panel": "/", "/personelim": "/mesai" }; // first-class modules keep their own role/license keys
   const permPath = (path) => LICENSE_KEY[path] || path;
   const perms = user?.permissions;
-  const can = (path, level = "view") => !perms || user?.role === "admin" || (level === "view" ? perms[permPath(path)] !== "none" : perms[permPath(path)] === "edit");
+  const can = (path, level = "view") => {
+    if (!perms || user?.role === "admin") return true;
+    const value = perms[permPath(path)];
+    if (level === "view") return value !== "none";
+    if (level === "edit") return value === "edit" || value === "delete";
+    if (level === "delete") return value === "delete";
+    return false;
+  };
   const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
   const moduleOn = (path) => !license?.modules || license.modules[LICENSE_KEY[path] || path] !== false;
   const addonOn = (key) => !license?.addons || license.addons[key] !== false;

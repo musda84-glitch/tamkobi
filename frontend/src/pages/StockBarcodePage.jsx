@@ -57,7 +57,8 @@ import {
 } from "../components/ui/dropdown-menu";
 
 export default function StockBarcodePage() {
-  const { activeCompany, addonOn } = useAuth();
+  const { activeCompany, addonOn, can } = useAuth();
+  const canDeleteStock = can("/stock", "delete");
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [pageTab, setPageTab] = useState(searchParams.get("tab") || "products");
@@ -921,6 +922,7 @@ export default function StockBarcodePage() {
                               <History className="w-4 h-4" /> Stok hareketleri
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
+                            {canDeleteStock ? (
                             <DropdownMenuItem
                               onSelect={() => handleDeleteProduct(prod)}
                               className="text-rose-600 focus:text-rose-700 focus:bg-rose-50"
@@ -928,6 +930,7 @@ export default function StockBarcodePage() {
                             >
                               <Trash2 className="w-4 h-4" /> Stok kartını sil
                             </DropdownMenuItem>
+                            ) : null}
                           </DropdownMenuContent>
                         </DropdownMenu>
                         <button

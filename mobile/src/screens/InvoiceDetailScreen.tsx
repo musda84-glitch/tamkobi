@@ -46,6 +46,7 @@ function confirmAction(title: string, msg: string, onYes: () => void) {
 export function InvoiceDetailScreen() {
   const { client, companyId, can, activeCompany } = useAuth();
   const canEdit = can("/invoices", "edit");
+  const canDelete = can("/invoices", "delete");
   const { id } = useLocalSearchParams<{ id: string }>();
   const [inv, setInv] = useState<Invoice | null>(null);
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
@@ -213,7 +214,7 @@ export function InvoiceDetailScreen() {
   };
 
   const remove = () => {
-    if (!canDeleteInvoice(inv) || !canEdit) return;
+    if (!canDeleteInvoice(inv) || !canDelete) return;
     const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
     confirmAction("Faturayı sil", `${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`, () => {
       run(async () => {
@@ -485,7 +486,7 @@ export function InvoiceDetailScreen() {
           <Text style={{ color: colors.warning, fontWeight: "800" }}>Faturayı iptal et</Text>
         </Pressable>
       ) : null}
-      {canEdit && canDeleteInvoice(inv) ? (
+      {canDelete && canDeleteInvoice(inv) ? (
         <Pressable onPress={remove} testID="inv-delete" style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14 }}>
           <Ionicons name="trash-outline" size={18} color={colors.danger} />
           <Text style={{ color: colors.danger, fontWeight: "800" }}>{draft ? "Taslağı sil" : "Kağıt faturayı sil"}</Text>

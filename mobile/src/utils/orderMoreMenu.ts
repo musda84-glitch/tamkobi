@@ -175,7 +175,10 @@ export function orderDeleteMoreItem(): OrderMoreItem {
 
 export function orderMoreMenuItems(
   ord?: OrderMoreOrder | null,
-  opts: { eBelgeItems?: Array<{ eType: "e_invoice" | "e_archive"; label: string; testIdSuffix: string }> } = {},
+  opts: {
+    eBelgeItems?: Array<{ eType: "e_invoice" | "e_archive"; label: string; testIdSuffix: string }>;
+    canDelete?: boolean;
+  } = {},
 ): { kind: OrderMoreKind; items: OrderMoreItem[] } {
   const kind = orderMoreMenuKind(ord);
   let items: OrderMoreItem[];
@@ -184,7 +187,8 @@ export function orderMoreMenuItems(
   else if (kind === "panel_draft") items = panelDraftMoreItems();
   else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
   else items = defaultMoreItems(ord, opts);
-  if (canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
+  const allowDelete = opts.canDelete !== false;
+  if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
   return { kind, items };
 }
 

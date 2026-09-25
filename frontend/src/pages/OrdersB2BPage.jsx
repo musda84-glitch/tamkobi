@@ -85,9 +85,10 @@ function orderExportRows(ord) {
 }
 
 /** Masaüstü / mobil ortak «Diğer işlemler» menüsü. */
-function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side = "left", testSuffix = "" }) {
+function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side = "left", testSuffix = "", canDelete = true }) {
   const { kind, items } = orderMoreMenuItems(ord, {
     eBelgeItems: eBelgeMenuItems(ord, contacts),
+    canDelete,
   });
   let lastSection = null;
   return (
@@ -145,7 +146,8 @@ function mobilePrimaryAction(ord) {
 }
 
 export default function OrdersB2BPage() {
-  const { activeCompany } = useAuth();
+  const { activeCompany, can } = useAuth();
+  const canDeleteOrder = can("/orders", "delete");
   const navigate = useNavigate();
   const goContact = (ord) => navigate(ord.contact_id ? `/contacts?contact_id=${ord.contact_id}` : `/contacts?search=${encodeURIComponent(ord.customer_name || "")}`);
   const [activeTab, setActiveTab] = useState("orders"); // orders | b2b_portal
@@ -839,7 +841,7 @@ export default function OrdersB2BPage() {
           <button onClick={() => bulk("invoice")} className="px-3 py-1.5 bg-blue-600 rounded-lg font-semibold" data-testid="bulk-invoice-btn">Toplu Taslak Fatura</button>
           <button onClick={() => bulk("thermal")} className="px-3 py-1.5 bg-amber-500 rounded-lg font-semibold flex items-center gap-1" data-testid="bulk-thermal-btn"><Printer className="w-3.5 h-3.5" /> Termal Etiket (100×150)</button>
           <button onClick={() => bulk("labels")} className="px-3 py-1.5 border border-amber-400 text-amber-200 rounded-lg font-semibold" data-testid="bulk-labels-btn">A4 Etiket</button>
-          <button onClick={() => bulk("delete")} className="px-3 py-1.5 bg-rose-600 rounded-lg font-semibold flex items-center gap-1" data-testid="bulk-delete-btn"><Trash2 className="w-3.5 h-3.5" /> Sil</button>
+          {canDeleteOrder ? <button onClick={() => bulk("delete")} className="px-3 py-1.5 bg-rose-600 rounded-lg font-semibold flex items-center gap-1" data-testid="bulk-delete-btn"><Trash2 className="w-3.5 h-3.5" /> Sil</button> : null}
           <button onClick={() => setSelected([])} className="ml-auto px-2 py-1 border border-slate-600 rounded-lg" data-testid="bulk-clear-btn">Seçimi Kaldır</button>
         </div>
       )}
@@ -966,6 +968,7 @@ export default function OrdersB2BPage() {
                     align="end"
                     side="top"
                     testSuffix="-mobile"
+                    canDelete={canDeleteOrder}
                   />
                 </div>
               </div>
@@ -1066,7 +1069,7 @@ export default function OrdersB2BPage() {
                     </td>
                     <td className={`px-3 py-3 text-center overflow-hidden sticky right-0 z-[1] ${selected.includes(ord.id) ? "bg-emerald-50" : "bg-white group-hover/row:bg-slate-50"}`} style={{ width: ORDER_ACTIONS_COL }}>
                       <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>
-                        {!ord.is_invoiced && !ord.invoice_id ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
+                        {!ord.is_invoiced && !ord.invoice_id && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
                           ord.invoice_id ? (
                             <button
@@ -1159,6 +1162,7 @@ export default function OrdersB2BPage() {
                           ord={ord}
                           contacts={contacts}
                           onAction={handleOrderMoreAction}
+                          canDelete={canDeleteOrder}
                         />
                       </div>
                     </td>
