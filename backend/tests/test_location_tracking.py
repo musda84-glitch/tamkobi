@@ -2,15 +2,24 @@
 from attendance import (
     DEFAULT_LOCATION_MODE,
     DEFAULT_LOCATION_TRACKING,
+    append_location_move,
     build_location_exit_request,
+    build_location_move,
     checkout_distance_blocks,
+    combine_date_hm,
+    ignore_location_move,
     location_exit_decision_message,
     location_exit_should_notify,
+    location_logged_inside,
+    location_moves_date_query,
+    location_moves_from_record,
     location_ping_checks_out,
     parse_location_exit_decision,
     location_mode_for,
     merge_schedule,
     normalize_location_tracking,
+    should_append_location_move,
+    synthesize_location_moves,
 )
 
 
@@ -156,3 +165,65 @@ def test_merge_schedule_without_employee_keeps_company_require_geo():
     s = merge_schedule(company, None)
     assert s["require_geo"] is True
     assert "location_tracking" not in s
+
+
+def test_synthesize_location_moves_from_punches_and_exit():
+    rec = {
+        "date": "2026-09-24",
+        "check_in": "08:32",
+        "check_out": "17:45",
+        "geo_check_in": {"at": "2026-09-24T05:32:00+00:00"},
+        "location_exit_request": {
+            "status": "pending",
+            "left_at": "2026-09-24T09:10:00+00:00",
+            "place": "Villa",
+        },
+    }
+    moves = synthesize_location_moves(rec)
+    kinds = [m["kind"] for m in moves]
+    assert kinds[0] == "enter"
+    assert kinds[-1] == "leave"
+    assert any(m["kind"] == "leave" and m["ignorable"] and m["place"] == "Villa" for m in moves)
+    assert moves[0]["official"] is True
+    assert moves[-1]["official"] is True
+
+
+def test_location_logged_inside_follows_last_move():
+    rec = {"location_moves": [
+        build_location_move(kind="enter", at="2026-09-24T08:00:00+00:00", official=True),
+        build_location_move(kind="leave", at="2026-09-24T12:00:00+00:00", ignorable=True),
+    ]}
+    assert location_logged_inside(rec) is False
+    rec["location_moves"].append(build_location_move(kind="enter", at="2026-09-24T13:00:00+00:00", ignorable=True))
+    assert location_logged_inside(rec) is True
+
+
+def test_append_and_ignore_intraday_gap():
+    rec = {"check_in": "08:00", "date": "2026-09-24"}
+    leave = build_location_move(kind="leave", at="2026-09-24T12:05:00+00:00", ignorable=True)
+    moves = append_location_move(rec, leave)
+    assert any(m["kind"] == "enter" for m in moves)
+    assert any(m["id"] == leave["id"] for m in moves)
+    found = ignore_location_move(moves, leave["id"], now="2026-09-24T12:06:00+00:00")
+    assert found and found["ignored"] is True
+    official = next(m for m in moves if m["official"] and m["kind"] == "enter")
+    try:
+        ignore_location_move(moves, official["id"])
+        assert False
+    except ValueError:
+        pass
+
+
+def test_should_append_debounces_same_kind():
+    existing = [build_location_move(kind="leave", at="2026-09-24T12:00:00+00:00")]
+    assert should_append_location_move(existing, "leave", "2026-09-24T12:00:30+00:00") is False
+    assert should_append_location_move(existing, "enter", "2026-09-24T12:00:30+00:00") is True
+    assert should_append_location_move(existing, "leave", "2026-09-24T12:02:00+00:00") is True
+
+
+def test_location_moves_date_query_periods():
+    assert location_moves_date_query("month", "2026-09", "2026-09-24") == {"date": {"$regex": "^2026-09"}}
+    q30 = location_moves_date_query("30d", "2026-09", "2026-09-24")
+    assert q30["date"]["$gte"] == "2026-08-25"
+    assert combine_date_hm("2026-09-24", "08:32") == "2026-09-24T08:32:00"
+    assert location_moves_from_record({"location_moves": [{"kind": "lost", "at": "2026-09-24T10:00:00+00:00", "ignorable": True}]})[0]["kind"] == "lost"

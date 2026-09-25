@@ -784,6 +784,79 @@ export function payMovesPeriodHint(shown: number, total: number, period: PayMove
   return `${shown} / ${total} hareket`;
 }
 
+export type LocationMoveKind = "enter" | "leave" | "lost";
+export type MovesSheetTab = "pay" | "location";
+
+export type LocationMove = {
+  id?: string;
+  kind?: LocationMoveKind | string;
+  at?: string;
+  date?: string;
+  place?: string;
+  source?: string;
+  official?: boolean;
+  ignorable?: boolean;
+  ignored?: boolean;
+  ignored_at?: string | null;
+  attendance_id?: string;
+  employee_id?: string;
+  employee_name?: string;
+};
+
+export function locationMoveDidLabel(kind?: string | null): string {
+  if (kind === "enter") return "İş yerine giriş yaptı";
+  if (kind === "leave") return "İş yerine çıkış yaptı";
+  if (kind === "lost") return "Konum kaybı";
+  return "Konum hareketi";
+}
+
+/** Sistem tarih saat: 25.09.2026 08:32 (Europe/Istanbul). */
+export function fmtLocationMoveAt(raw?: string | null): string {
+  const s = String(raw || "").trim();
+  if (!s) return "—";
+  const hasTz = /[zZ]|[+-]\d{2}:\d{2}$/.test(s);
+  const wall = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(s);
+  if (wall && !hasTz) return `${fmtDate(wall[1])} ${wall[2]}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return fmtDate(s);
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  const fmt = new Intl.DateTimeFormat("tr-TR", {
+    timeZone: "Europe/Istanbul",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(d).map((p) => [p.type, p.value]));
+  const hour = String(parts.hour || "00").padStart(2, "0");
+  const minute = String(parts.minute || "00").padStart(2, "0");
+  return `${parts.day}.${parts.month}.${parts.year} ${hour}:${minute}`;
+}
+
+export function locationMoveLine(row?: Pick<LocationMove, "at" | "kind"> | null): string {
+  return `${fmtLocationMoveAt(row?.at)} · ${locationMoveDidLabel(row?.kind)}`;
+}
+
+export function locationMoveCanIgnore(row?: Pick<LocationMove, "ignored" | "ignorable" | "official" | "kind"> | null): boolean {
+  if (!row || row.ignored) return false;
+  if (row.official && !row.ignorable) return false;
+  return Boolean(row.ignorable) && (row.kind === "leave" || row.kind === "lost" || row.kind === "enter");
+}
+
+export function locationMoveIgnorePath(row?: Pick<LocationMove, "attendance_id" | "id"> | null): string | null {
+  const att = String(row?.attendance_id || "").trim();
+  const id = String(row?.id || "").trim();
+  if (!att || !id) return null;
+  return `/personnel/attendance/${att}/location-moves/${id}/ignore`;
+}
+
+export function locationMovesPeriodHint(shown: number, total: number, period: PayMovesPeriod): string {
+  if (period === "all" || shown === total) return `${total} konum hareketi`;
+  return `${shown} / ${total} konum hareketi`;
+}
+
 export function employeeCardChrome(emp?: Pick<Employee, "pay_type" | "daily_wage"> | null): {
   backgroundColor: string;
   borderColor: string;
@@ -904,6 +977,11 @@ export type AttendanceRecord = {
     wage_deduction?: boolean | null;
     deduction_amount?: number;
   };
+  location_moves?: LocationMove[];
+  location_inside_at?: string;
+  location_left_at?: string;
+  geo_check_in?: { at?: string } | null;
+  geo_check_out?: { at?: string } | null;
   geo_confirm_request?: {
     status?: string;
     action?: string;

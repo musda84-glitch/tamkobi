@@ -572,6 +572,211 @@ def location_exit_decision_message(decision: str, wage_deduction: bool = False, 
     return "Konum dışı çıkış onaylandı (kesinti yok)."
 
 
+LOCATION_MOVE_KINDS = ("enter", "leave", "lost")
+LOCATION_MOVE_DEBOUNCE_S = 90
+
+
+def combine_date_hm(date: Optional[str], hm: Optional[str]) -> str:
+    day = str(date or "").strip()[:10]
+    clock = str(hm or "").strip()[:5]
+    if day and clock:
+        return f"{day}T{clock}:00"
+    return day or clock
+
+
+def build_location_move(
+    *,
+    kind: str,
+    at: Optional[str] = None,
+    place: str = "",
+    source: str = "geo",
+    official: bool = False,
+    ignorable: Optional[bool] = None,
+    move_id: Optional[str] = None,
+) -> dict:
+    kind_s = kind if kind in LOCATION_MOVE_KINDS else "lost"
+    official_b = bool(official)
+    can_ignore = (not official_b) if ignorable is None else bool(ignorable) and not official_b
+    return {
+        "id": move_id or str(uuid.uuid4()),
+        "kind": kind_s,
+        "at": at or _now(),
+        "place": str(place or "")[:120],
+        "source": str(source or "geo")[:32],
+        "official": official_b,
+        "ignorable": can_ignore,
+        "ignored": False,
+        "ignored_at": None,
+    }
+
+
+def normalize_location_move(raw: Optional[dict] = None) -> Optional[dict]:
+    if not isinstance(raw, dict):
+        return None
+    kind = str(raw.get("kind") or "").strip()
+    if kind not in LOCATION_MOVE_KINDS:
+        return None
+    at = str(raw.get("at") or "").strip()
+    if not at:
+        return None
+    official = bool(raw.get("official"))
+    ignorable = bool(raw.get("ignorable")) and not official
+    return {
+        "id": str(raw.get("id") or uuid.uuid4()),
+        "kind": kind,
+        "at": at,
+        "place": str(raw.get("place") or "")[:120],
+        "source": str(raw.get("source") or "geo")[:32],
+        "official": official,
+        "ignorable": ignorable,
+        "ignored": bool(raw.get("ignored")),
+        "ignored_at": raw.get("ignored_at"),
+    }
+
+
+def stored_location_moves(rec: Optional[dict] = None) -> list:
+    out = []
+    for raw in (rec or {}).get("location_moves") or []:
+        mv = normalize_location_move(raw)
+        if mv:
+            out.append(mv)
+    return out
+
+
+def synthesize_location_moves(rec: Optional[dict] = None) -> list:
+    """Kayıtlı hareket yoksa giriş/çıkış ve konum dışı talebinden türet."""
+    rec = rec or {}
+    moves: list = []
+    geo_in = rec.get("geo_check_in") if isinstance(rec.get("geo_check_in"), dict) else {}
+    geo_out = rec.get("geo_check_out") if isinstance(rec.get("geo_check_out"), dict) else {}
+    if rec.get("check_in") or geo_in:
+        at = str(geo_in.get("at") or "") or combine_date_hm(rec.get("date"), rec.get("check_in"))
+        if at:
+            moves.append(build_location_move(kind="enter", at=at, source="derived", official=True, place=""))
+    ler = rec.get("location_exit_request") if isinstance(rec.get("location_exit_request"), dict) else {}
+    left_at = rec.get("location_left_at") or ler.get("left_at") or ler.get("requested_at")
+    if left_at or ler:
+        status = str(ler.get("status") or "")
+        mv = build_location_move(
+            kind="leave",
+            at=str(left_at or ""),
+            place=ler.get("place") or "",
+            source="derived",
+            ignorable=True,
+        )
+        if status in ("acked", "approved", "rejected"):
+            mv["ignored"] = True
+            mv["ignored_at"] = ler.get("decided_at")
+        checkout_at = str(geo_out.get("at") or "") or combine_date_hm(rec.get("date"), rec.get("check_out"))
+        if not (checkout_at and str(left_at or "")[:16] == checkout_at[:16]):
+            moves.append(mv)
+    if rec.get("check_out") or geo_out:
+        at = str(geo_out.get("at") or "") or combine_date_hm(rec.get("date"), rec.get("check_out"))
+        if at:
+            moves.append(build_location_move(kind="leave", at=at, source="derived", official=True, place=""))
+    return moves
+
+
+def location_moves_from_record(rec: Optional[dict] = None) -> list:
+    stored = stored_location_moves(rec)
+    if stored:
+        return stored
+    return synthesize_location_moves(rec)
+
+
+def last_location_move(moves: Optional[list] = None) -> Optional[dict]:
+    rows = [m for m in (moves or []) if isinstance(m, dict) and m.get("at")]
+    if not rows:
+        return None
+    return sorted(rows, key=lambda m: str(m.get("at") or ""))[-1]
+
+
+def location_logged_inside(rec: Optional[dict] = None) -> bool:
+    """Son konum hareketine göre içeride mi? İlk girişten sonra employee.location_inside_at silinmez."""
+    rec = rec or {}
+    last = last_location_move(location_moves_from_record(rec))
+    if last:
+        return last.get("kind") == "enter"
+    return bool(rec.get("location_inside_at") or rec.get("geo_check_in"))
+
+
+def should_append_location_move(existing: Optional[list], kind: str, at: Optional[str] = None, debounce_s: int = LOCATION_MOVE_DEBOUNCE_S) -> bool:
+    last = last_location_move(existing)
+    if not last:
+        return True
+    if last.get("kind") != kind:
+        return True
+    start = _parse_iso(last.get("at"))
+    end = _parse_iso(at) or datetime.now(timezone.utc)
+    if not start:
+        return True
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    return abs((end - start).total_seconds()) >= max(0, int(debounce_s))
+
+
+def append_location_move(rec: Optional[dict], move: dict) -> list:
+    rec = rec if isinstance(rec, dict) else {}
+    moves = location_moves_from_record(rec)
+    if not should_append_location_move(moves, move.get("kind") or "", move.get("at")):
+        rec["location_moves"] = moves
+        return moves
+    moves.append(move)
+    rec["location_moves"] = moves
+    return moves
+
+
+def ignore_location_move(moves: list, move_id: str, now: Optional[str] = None) -> Optional[dict]:
+    stamp = now or _now()
+    want = str(move_id or "").strip()
+    for mv in moves:
+        if str(mv.get("id") or "") != want:
+            continue
+        if mv.get("official") and not mv.get("ignorable"):
+            raise ValueError("Resmi giriş/çıkış görmezden gelinemez.")
+        mv["ignored"] = True
+        mv["ignored_at"] = stamp
+        return mv
+    return None
+
+
+def location_moves_date_query(period: str, month: str, today: str) -> dict:
+    day = str(today or "")[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if period == "all":
+        start = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=366)).strftime("%Y-%m-%d")
+        return {"date": {"$gte": start}}
+    if period == "month":
+        ym = str(month or day)[:7]
+        return {"date": {"$regex": f"^{ym}"}}
+    start = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=30)).strftime("%Y-%m-%d")
+    return {"date": {"$gte": start}}
+
+
+def location_move_public(rec: dict, move: dict) -> dict:
+    return {
+        **move,
+        "attendance_id": rec.get("id") or rec.get("_id"),
+        "date": rec.get("date"),
+        "employee_id": rec.get("employee_id"),
+        "employee_name": rec.get("employee_name"),
+    }
+
+
+def record_has_location_signal(rec: Optional[dict] = None) -> bool:
+    rec = rec or {}
+    return bool(
+        rec.get("location_moves")
+        or rec.get("check_in")
+        or rec.get("check_out")
+        or rec.get("geo_check_in")
+        or rec.get("geo_check_out")
+        or rec.get("location_left_at")
+        or rec.get("location_exit_request")
+    )
+
+
 def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
     s = {**DEFAULT_SCHEDULE, **((company or {}).get("work_schedule") or {})}
     s["days"] = dict(s.get("days") or {})
@@ -1220,8 +1425,28 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
         elif existing.get(k) is not None:
             rec[k] = existing[k]
     rec["updated_at"] = _now()
+    if existing.get("location_moves"):
+        rec["location_moves"] = existing["location_moves"]
     await _db.attendance.update_one({"employee_id": employee["_id"], "date": date}, {"$set": rec, "$setOnInsert": {"_id": str(uuid.uuid4()), "created_at": _now()}}, upsert=True)
-    return _clean(await _db.attendance.find_one({"employee_id": employee["_id"], "date": date}))
+    saved = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date})
+    if saved:
+        saved["id"] = saved.get("_id")
+        if patch.get("check_in") and not existing.get("check_in"):
+            await save_location_move(saved, build_location_move(
+                kind="enter",
+                at=combine_date_hm(date, patch.get("check_in")),
+                source=source,
+                official=True,
+            ))
+        if patch.get("check_out") and not existing.get("check_out"):
+            await save_location_move(saved, build_location_move(
+                kind="leave",
+                at=combine_date_hm(date, patch.get("check_out")),
+                source=source,
+                official=True,
+            ))
+        saved = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date})
+    return _clean(saved or rec)
 
 
 def summarize(rows: list) -> dict:
@@ -1873,6 +2098,28 @@ async def decide_geo_confirm(att_id: str, req: Dict[str, Any], request: Request)
     return {"status": "success", "record": rec, "message": msg, "approved": approved}
 
 
+async def ensure_location_moves(rec: dict) -> list:
+    """Kayıtlı hareket yoksa türetip puantaja yazar (görmezden gel id'si sabit kalsın)."""
+    stored = stored_location_moves(rec)
+    if stored:
+        rec["location_moves"] = stored
+        return stored
+    moves = synthesize_location_moves(rec)
+    att_id = rec.get("id") or rec.get("_id")
+    if moves and att_id:
+        await _db.attendance.update_one({"_id": att_id}, {"$set": {"location_moves": moves, "updated_at": _now()}})
+        rec["location_moves"] = moves
+    return moves
+
+
+async def save_location_move(rec: dict, move: dict) -> list:
+    att_id = rec.get("id") or rec.get("_id")
+    moves = append_location_move(rec, move)
+    if att_id:
+        await _db.attendance.update_one({"_id": att_id}, {"$set": {"location_moves": moves, "updated_at": _now()}})
+    return moves
+
+
 async def maybe_open_location_exit(
     emp: dict,
     rec: dict,
@@ -2025,6 +2272,20 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
     opened = None
     if rec.get("check_in") and not rec.get("check_out") and loc and active_lt.get("enabled"):
         opened = await maybe_open_location_exit(emp, rec, workplace, loc, active_lt, lat, lng)
+    att_id = rec.get("id") or rec.get("_id")
+    if att_id and loc and not punched:
+        rec["id"] = att_id
+        last = last_location_move(stored_location_moves(rec))
+        if last:
+            logged_inside = last.get("kind") == "enter"
+        else:
+            logged_inside = bool(rec.get("location_inside_at") or rec.get("geo_check_in"))
+        place = workplace_place_label(workplace)
+        now_iso = _now()
+        if inside and not logged_inside:
+            await save_location_move(rec, build_location_move(kind="enter", at=now_iso, place=place, ignorable=True))
+        elif (not inside) and logged_inside:
+            await save_location_move(rec, build_location_move(kind="leave", at=now_iso, place=place, ignorable=True))
     signal = await mark_employee_location_signal(emp["_id"], True)
     return {
         "status": "success",
@@ -2054,6 +2315,10 @@ async def self_location_unavailable(req: Dict[str, Any], request: Request):
     schedule = merge_schedule(company, emp)
     today = _today(schedule)
     reason = (req.get("reason") or "Konum izni kapalı veya GPS alınamadı.").strip()[:200]
+    rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today})
+    if rec:
+        rec["id"] = rec.get("_id")
+        await save_location_move(rec, build_location_move(kind="lost", source="unavailable", ignorable=True, place=""))
     signal = await mark_employee_location_signal(emp["_id"], False)
     note = await notify_managers(
         emp["company_id"],
@@ -2179,6 +2444,75 @@ async def decide_location_exit(att_id: str, req: Dict[str, Any], request: Reques
         "created_at": _now(),
     })
     return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id})), "message": msg, "wage_deduction": deduct, "deduction_amount": amount}
+
+
+@router.get("/personnel/employees/{emp_id}/location-moves")
+async def list_employee_location_moves(emp_id: str, request: Request, period: str = "30d", month: Optional[str] = None):
+    """Personel kartı: iş yerine giriş/çıkış ve gün içi konum kayıpları."""
+    user = await _current_user(request)
+    emp = await _db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    self_emp = await employee_for_user(user)
+    if user.get("role") not in ("admin", "manager", "accountant") and not (self_emp and self_emp.get("_id") == emp_id):
+        raise HTTPException(status_code=403, detail="Konum hareketlerini görmek için yetki gerekir.")
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    schedule = merge_schedule(company, emp)
+    today = _today(schedule)
+    period_s = str(period or "30d").strip().lower()
+    if period_s not in ("30d", "month", "all"):
+        period_s = "30d"
+    month_s = str(month or today)[:7]
+    rows = await _db.attendance.find(
+        {"employee_id": emp_id, **location_moves_date_query(period_s, month_s, today)}
+    ).sort("date", -1).to_list(400)
+    items = []
+    for rec in rows:
+        if not record_has_location_signal(rec):
+            continue
+        rec["id"] = rec.get("_id") or rec.get("id")
+        moves = await ensure_location_moves(rec)
+        for mv in moves:
+            items.append(location_move_public(rec, mv))
+    items.sort(key=lambda x: str(x.get("at") or ""), reverse=True)
+    return {"items": items, "period": period_s, "month": month_s, "count": len(items)}
+
+
+@router.post("/personnel/attendance/{att_id}/location-moves/{move_id}/ignore")
+async def ignore_employee_location_move(att_id: str, move_id: str, request: Request):
+    """Gün içi konum kaybı / giriş-çıkış telafisi: görmezden gel (kesinti yok)."""
+    user = await _current_user(request)
+    if user.get("role") not in ("admin", "manager", "accountant"):
+        raise HTTPException(status_code=403, detail="Konum hareketini görmezden gelmek için yönetici yetkisi gerekir.")
+    rec = await _db.attendance.find_one({"_id": att_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+    rec["id"] = rec.get("_id")
+    moves = await ensure_location_moves(rec)
+    try:
+        found = ignore_location_move(moves, move_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not found:
+        raise HTTPException(status_code=404, detail="Konum hareketi bulunamadı.")
+    patch: Dict[str, Any] = {"location_moves": moves, "updated_at": _now()}
+    ler = rec.get("location_exit_request") if isinstance(rec.get("location_exit_request"), dict) else {}
+    if ler.get("status") == "pending" and found.get("kind") in ("leave", "lost"):
+        patch["location_exit_request"] = {
+            **ler,
+            "status": "acked",
+            "decision": "acked",
+            "wage_deduction": False,
+            "decided_at": _now(),
+            "decided_by": str(user.get("_id") or user.get("id") or ""),
+            "decision_note": "görmezden gel",
+        }
+    await _db.attendance.update_one({"_id": att_id}, {"$set": patch})
+    return {
+        "status": "success",
+        "message": "Konum kaybı görmezden gelindi.",
+        "item": location_move_public(rec, found),
+    }
 
 
 async def accrue_task_yevmiye(emp: dict, rec: dict, workplace: Optional[dict], schedule: dict) -> Optional[dict]:
