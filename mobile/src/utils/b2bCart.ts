@@ -327,6 +327,19 @@ export function heldCartsAsOrders(
 
 export function asPortalHeldOrder<T extends Record<string, unknown>>(o: T | null | undefined): T | null | undefined {
   if (!o) return o;
+  const active = o.is_active_cart || o.order_status === "active_cart" || o.source === "b2b_active_cart";
+  if (active) {
+    const label = String(o.held_label || "Aktif sepet");
+    return {
+      ...o,
+      is_active_cart: true,
+      is_held_cart: false,
+      view_only: true,
+      held_label: label,
+      order_number: label,
+      order_status: "active_cart",
+    } as T;
+  }
   const held = o.is_held_cart || o.order_status === "held_cart" || o.source === "b2b_held_cart";
   if (!held) return o;
   const seq = Number(o.held_seq) || 1;
@@ -334,12 +347,24 @@ export function asPortalHeldOrder<T extends Record<string, unknown>>(o: T | null
   return {
     ...o,
     is_held_cart: true,
+    is_active_cart: false,
     view_only: true,
     held_seq: seq,
     held_label: label,
     order_number: label,
     order_status: "held_cart",
   } as T;
+}
+
+function isServerCartOrder(o: Record<string, unknown> | null | undefined): boolean {
+  return !!(
+    o?.is_held_cart
+    || o?.is_active_cart
+    || o?.order_status === "held_cart"
+    || o?.order_status === "active_cart"
+    || o?.source === "b2b_held_cart"
+    || o?.source === "b2b_active_cart"
+  );
 }
 
 export function mergePortalOrderLists(opts: {
@@ -366,6 +391,11 @@ export function mergePortalOrderLists(opts: {
     activeCustomerOrderNo,
     priceGross,
   }) as unknown as Array<Record<string, unknown>>;
+  const serverActive = (serverOrders || [])
+    .filter((o) => o?.is_active_cart || o?.order_status === "active_cart" || o?.source === "b2b_active_cart")
+    .map((o) => asPortalHeldOrder(o)!)
+    .filter(Boolean);
+  const showServerActive = !cartHasItems(activeCart) ? serverActive : [];
   const serverHeld = (serverOrders || [])
     .filter((o) => o?.is_held_cart || o?.order_status === "held_cart" || o?.source === "b2b_held_cart")
     .map((o) => asPortalHeldOrder(o)!)
@@ -374,10 +404,8 @@ export function mergePortalOrderLists(opts: {
   const localHeld = (heldCartsAsOrders(heldLocal, products, { priceGross }) as unknown as Array<Record<string, unknown>>).filter(
     (r) => !r.is_active_cart && !serverHeldIds.has(String(r.id || "")),
   );
-  const real = (serverOrders || []).filter(
-    (o) => !(o?.is_held_cart || o?.order_status === "held_cart" || o?.source === "b2b_held_cart"),
-  );
-  return [...activeRows, ...serverHeld, ...localHeld, ...real];
+  const real = (serverOrders || []).filter((o) => !isServerCartOrder(o));
+  return [...activeRows, ...showServerActive, ...serverHeld, ...localHeld, ...real];
 }
 
 export function heldCartTabs(heldLocal: HeldCart[] = [], serverOrders: Array<Record<string, unknown>> = []) {

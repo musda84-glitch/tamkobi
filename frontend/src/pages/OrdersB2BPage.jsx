@@ -137,6 +137,10 @@ function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side =
 }
 
 /** Mobil kartta tek birincil kısayol (menünün ilk eylemi). */
+function isB2BCartOrder(ord) {
+  return !!(ord?.is_held_cart || ord?.is_active_cart || ord?.order_status === "held_cart" || ord?.order_status === "active_cart");
+}
+
 function mobilePrimaryAction(ord) {
   const kind = orderMoreMenuKind(ord);
   if (kind === "held_cart") return { id: "delete", label: "Sil", className: "bg-rose-600 text-white" };
@@ -903,7 +907,7 @@ export default function OrdersB2BPage() {
             return (
               <div
                 key={ord.id || ord._id || ord.order_number}
-                className={`bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs ${ord.is_held_cart || ord.order_status === "held_cart" ? "opacity-70 bg-slate-50" : ""}`}
+                className={`bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50" : ""}`}
                 data-testid={`order-card-mobile-${ord.order_number}`}
               >
                 <div className="flex justify-between gap-2 items-start">
@@ -932,7 +936,7 @@ export default function OrdersB2BPage() {
                       {primary.label}
                     </button>
                   )}
-                  {!ord.cargo_tracking_number && !(ord.is_held_cart || ord.order_status === "held_cart") ? (
+                  {!ord.cargo_tracking_number && !(isB2BCartOrder(ord)) ? (
                     <button
                       type="button"
                       onClick={() => setShipOrder(ord)}
@@ -993,7 +997,7 @@ export default function OrdersB2BPage() {
               <tbody className="divide-y divide-slate-100">
                 {visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-empty">Filtreye uyan sipariş yok.</td></tr>}
                 {visibleOrders.map((ord) => (
-                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""} ${ord.is_held_cart || ord.order_status === "held_cart" ? "opacity-70 bg-slate-50/90" : ""}`} data-testid={`order-row-${ord.order_number}`}>
+                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""} ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50/90" : ""}`} data-testid={`order-row-${ord.order_number}`}>
                     <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(ord.id)} onChange={() => toggleSel(ord.id)} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
                     <td className="px-4 py-3 font-medium overflow-hidden" data-testid={`order-no-cell-${ord.order_number}`}>
                       <div className="font-bold text-slate-900 font-mono">{ord.held_label || ord.order_number}</div>
@@ -1045,6 +1049,8 @@ export default function OrdersB2BPage() {
                           {ord.marketplace_status && <div className="text-[10px] text-slate-400 mt-0.5">{channelTr(ord.channel)}: {marketplaceStatusTr(ord.marketplace_status)}</div>}
                           {ord.channel === "shopphp" && <button onClick={async () => { try { const r = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/push-shopphp`); toast.success(r.data.message); loadData(); } catch (e) { toast.error(e.response?.data?.detail || "Bildirilemedi."); } }} className={`mt-1 text-[10px] font-semibold underline ${ord.shopphp_push?.ok ? "text-emerald-700" : ord.shopphp_push?.ok === false ? "text-rose-600" : "text-indigo-600"}`} title={ord.shopphp_push ? `Son bildirim: ${new Date(ord.shopphp_push.at).toLocaleString("tr-TR")}${ord.shopphp_push.error ? " — " + ord.shopphp_push.error : ""}` : "Onay/kargo/fatura bilgisini ShopPHP mağazasına yaz"} data-testid={`shopphp-push-${ord.order_number}`}>{ord.shopphp_push?.ok ? "Mağazaya bildirildi ✓" : ord.shopphp_push?.ok === false ? "Bildirim hatası — tekrar dene" : "Mağazaya Bildir"}</button>}
                         </div>
+                      ) : isB2BCartOrder(ord) ? (
+                        <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`} data-testid={`order-status-badge-${ord.order_number}`}>{statusTr(ord.order_status)}</span>
                       ) : (
                       <select
                         value={ord.order_status}

@@ -235,15 +235,28 @@ export function heldCartsAsOrders(held, products, opts = {}) {
   return rows;
 }
 
-/** Panel / portal: sunucudaki held_cart siparişini salt-önizleme satırına çevir. */
+/** Panel / portal: sunucudaki held/active sepet siparişini salt-önizleme satırına çevir. */
 export function asPortalHeldOrder(o) {
   if (!o) return o;
+  const active = o.is_active_cart || o.order_status === "active_cart" || o.source === "b2b_active_cart";
+  if (active) {
+    return {
+      ...o,
+      is_active_cart: true,
+      is_held_cart: false,
+      view_only: true,
+      held_label: o.held_label || "Aktif sepet",
+      order_number: o.held_label || o.order_number || "Aktif sepet",
+      order_status: "active_cart",
+    };
+  }
   const held = o.is_held_cart || o.order_status === "held_cart" || o.source === "b2b_held_cart";
   if (!held) return o;
   const seq = Number(o.held_seq) || 1;
   return {
     ...o,
     is_held_cart: true,
+    is_active_cart: false,
     view_only: true,
     held_seq: seq,
     held_label: o.held_label || `Bekleyen sepet #${seq}`,
@@ -252,7 +265,18 @@ export function asPortalHeldOrder(o) {
   };
 }
 
-/** Aktif sepet (yerel) + sunucu bekleyen sepetler + yerel yedek + gerçek siparişler. */
+function isServerCartOrder(o) {
+  return !!(
+    o?.is_held_cart
+    || o?.is_active_cart
+    || o?.order_status === "held_cart"
+    || o?.order_status === "active_cart"
+    || o?.source === "b2b_held_cart"
+    || o?.source === "b2b_active_cart"
+  );
+}
+
+/** Aktif sepet (yerel) + sunucu bekleyen/aktif sepetler + yerel yedek + gerçek siparişler. */
 export function mergePortalOrderLists({ serverOrders = [], heldLocal = [], products = [], activeCart, activeNote, activeCustomerOrderNo, priceGross } = {}) {
   const activeRows = heldCartsAsOrders([], products, {
     activeCart,
@@ -260,6 +284,11 @@ export function mergePortalOrderLists({ serverOrders = [], heldLocal = [], produ
     activeCustomerOrderNo,
     priceGross,
   });
+  const serverActive = (serverOrders || [])
+    .filter((o) => o?.is_active_cart || o?.order_status === "active_cart" || o?.source === "b2b_active_cart")
+    .map(asPortalHeldOrder);
+  // Yerel aktif sepet varken sunucu aktif satırını tekrar gösterme
+  const showServerActive = !cartHasItems(activeCart) ? serverActive : [];
   const serverHeld = (serverOrders || [])
     .filter((o) => o?.is_held_cart || o?.order_status === "held_cart" || o?.source === "b2b_held_cart")
     .map(asPortalHeldOrder);
@@ -267,10 +296,8 @@ export function mergePortalOrderLists({ serverOrders = [], heldLocal = [], produ
   const localHeld = heldCartsAsOrders(heldLocal, products, { priceGross }).filter(
     (r) => !r.is_active_cart && !serverHeldIds.has(String(r.id || "")),
   );
-  const real = (serverOrders || []).filter(
-    (o) => !(o?.is_held_cart || o?.order_status === "held_cart" || o?.source === "b2b_held_cart"),
-  );
-  return [...activeRows, ...serverHeld, ...localHeld, ...real];
+  const real = (serverOrders || []).filter((o) => !isServerCartOrder(o));
+  return [...activeRows, ...showServerActive, ...serverHeld, ...localHeld, ...real];
 }
 
 /** Sepet sekmeleri: yerel + sunucu bekleyenler. */

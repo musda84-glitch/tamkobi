@@ -51,7 +51,7 @@ export function orderHasEInvoiceIssued(ord?: OrderMoreOrder | null): boolean {
 }
 
 export function orderMoreMenuKind(ord?: OrderMoreOrder | null): OrderMoreKind {
-  if (ord?.is_held_cart || ord?.order_status === "held_cart") return "held_cart";
+  if (ord?.is_held_cart || ord?.order_status === "held_cart" || ord?.is_active_cart || ord?.order_status === "active_cart") return "held_cart";
   if (isPanelOrder(ord) && orderHasEInvoiceIssued(ord)) return "panel_einvoice";
   if (isIntegrationOrder(ord) && orderHasEInvoiceIssued(ord)) return "integration_einvoice";
   if (isPanelOrder(ord) && ord?.is_invoiced) return "panel_invoiced";

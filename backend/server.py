@@ -3879,10 +3879,7 @@ async def b2b_portal(token: str):
                 it["barcode"] = p.get("barcode") or ""
             if not it.get("sku"):
                 it["sku"] = p.get("sku") or ""
-    # Bekleyen sepetler listenin üstünde
-    held_first = [o for o in orders if o.get("is_held_cart")]
-    rest = [o for o in orders if not o.get("is_held_cart")]
-    orders = held_first + rest
+    orders = _sort_b2b_cart_orders(orders)
     invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     import addons as _addons
@@ -3913,17 +3910,148 @@ async def b2b_change_password(token: str, req: Dict[str, Any]):
     return {"status": "success", "message": "Şifreniz güncellendi."}
 
 def _decorate_b2b_held_order(o: Dict[str, Any]) -> Dict[str, Any]:
-    """Portal / panel: bekleyen sepet satırlarını silik ve salt-önizleme olarak işaretle."""
+    """Portal / panel: aktif ve bekleyen sepet satırlarını silik / salt-önizleme işaretle."""
     if not o:
+        return o
+    if o.get("order_status") == "active_cart" or o.get("is_active_cart") or o.get("source") == "b2b_active_cart":
+        o["is_active_cart"] = True
+        o["is_held_cart"] = False
+        o["view_only"] = True
+        o["held_label"] = o.get("held_label") or "Aktif sepet"
+        o["order_status"] = "active_cart"
         return o
     if o.get("order_status") == "held_cart" or o.get("is_held_cart") or o.get("source") == "b2b_held_cart":
         seq = int(o.get("held_seq") or 1)
         o["is_held_cart"] = True
+        o["is_active_cart"] = False
         o["view_only"] = True
         o["held_seq"] = seq
         o["held_label"] = o.get("held_label") or f"Bekleyen sepet #{seq}"
         o["order_status"] = "held_cart"
     return o
+
+
+def _sort_b2b_cart_orders(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Aktif sepet → bekleyen sepet → diğer siparişler."""
+    active = [o for o in docs if o.get("is_active_cart") or o.get("order_status") == "active_cart"]
+    held = [o for o in docs if (o.get("is_held_cart") or o.get("order_status") == "held_cart") and not (o.get("is_active_cart") or o.get("order_status") == "active_cart")]
+    rest = [o for o in docs if not (o.get("is_active_cart") or o.get("order_status") == "active_cart" or o.get("is_held_cart") or o.get("order_status") == "held_cart")]
+    return active + held + rest
+
+
+async def _clear_b2b_active_cart(company_id: str, contact_id: str) -> int:
+    """Cariye ait aktif sepet kayıtlarını sil (gecici taslak)."""
+    res = await db.orders.delete_many({
+        "company_id": company_id,
+        "contact_id": contact_id,
+        "$or": [
+            {"order_status": "active_cart"},
+            {"is_active_cart": True},
+            {"source": "b2b_active_cart"},
+        ],
+    })
+    return int(getattr(res, "deleted_count", 0) or 0)
+
+
+@api_router.put("/public/b2b/{token}/active-cart")
+async def b2b_upsert_active_cart(token: str, req: Dict[str, Any]):
+    """Sepetteki ürünleri aktif sepet siparişi olarak kaydet — panel / mobilde görünür."""
+    c = await _b2b_contact(token)
+    raw_items = req.get("items") or []
+    if not raw_items:
+        await _clear_b2b_active_cart(c["company_id"], c["_id"])
+        return {"status": "success", "order": None, "message": "Aktif sepet temizlendi."}
+    items = await _b2b_build_items(c, raw_items)
+    if not items:
+        await _clear_b2b_active_cart(c["company_id"], c["_id"])
+        return {"status": "success", "order": None, "message": "Aktif sepet temizlendi."}
+    _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
+    _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
+    if not _bs.get("allow_orders", True):
+        raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
+    subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
+    total = subtotal
+    cust_no = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
+    existing = await db.orders.find_one({
+        "company_id": c["company_id"],
+        "contact_id": c["_id"],
+        "$or": [
+            {"order_status": "active_cart"},
+            {"is_active_cart": True},
+            {"source": "b2b_active_cart"},
+        ],
+    })
+    payload = {
+        "items": [it.model_dump() if hasattr(it, "model_dump") else dict(it) for it in items],
+        "total_amount": total,
+        "subtotal": subtotal,
+        "vat_total": vat_total,
+        "discount_total": discount_total,
+        "grand_total": grand_total,
+        "notes": req.get("note", ""),
+        "customer_order_number": cust_no,
+        "customer_name": c.get("name"),
+        "customer_email": c.get("email"),
+        "customer_phone": c.get("phone"),
+        "shipping_address": req.get("shipping_address") or c.get("address") or "-",
+        "city": req.get("city") or c.get("city") or "-",
+        "order_status": "active_cart",
+        "source": "b2b_active_cart",
+        "is_active_cart": True,
+        "is_held_cart": False,
+        "held_label": "Aktif sepet",
+        "channel": "b2b",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if existing:
+        await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
+        doc = {**existing, **payload, "_id": existing["_id"]}
+    else:
+        order = Order(
+            company_id=c["company_id"],
+            order_number=await _next_order_number(c["company_id"], "BA"),
+            customer_order_number=cust_no,
+            channel="b2b",
+            customer_name=c.get("name"),
+            customer_email=c.get("email"),
+            customer_phone=c.get("phone"),
+            shipping_address=payload["shipping_address"],
+            city=payload["city"],
+            items=items,
+            total_amount=total,
+            subtotal=subtotal,
+            vat_total=vat_total,
+            discount_total=discount_total,
+            grand_total=grand_total,
+            order_status="active_cart",
+        )
+        doc = order.to_mongo()
+        doc.update({
+            "contact_id": c["_id"],
+            "notes": payload["notes"],
+            "source": "b2b_active_cart",
+            "is_active_cart": True,
+            "is_held_cart": False,
+            "held_label": "Aktif sepet",
+            "subtotal": subtotal,
+            "vat_total": vat_total,
+            "discount_total": discount_total,
+            "grand_total": grand_total,
+            "total_amount": total,
+        })
+        await db.orders.insert_one(doc)
+    return {
+        "status": "success",
+        "order": clean_doc(_decorate_b2b_held_order(doc)),
+        "message": "Aktif sepet kaydedildi.",
+    }
+
+
+@api_router.delete("/public/b2b/{token}/active-cart")
+async def b2b_delete_active_cart(token: str):
+    c = await _b2b_contact(token)
+    n = await _clear_b2b_active_cart(c["company_id"], c["_id"])
+    return {"status": "success", "deleted": n, "message": "Aktif sepet temizlendi."}
 
 
 @api_router.post("/public/b2b/{token}/held-carts")
@@ -3969,6 +4097,7 @@ async def b2b_hold_cart(token: str, req: Dict[str, Any]):
     doc["notes"] = req.get("note", "")
     doc["source"] = "b2b_held_cart"
     doc["is_held_cart"] = True
+    doc["is_active_cart"] = False
     doc["held_seq"] = seq
     doc["held_label"] = f"Bekleyen sepet #{seq}"
     doc["subtotal"] = subtotal
@@ -3977,6 +4106,7 @@ async def b2b_hold_cart(token: str, req: Dict[str, Any]):
     doc["grand_total"] = grand_total
     doc["total_amount"] = total
     await db.orders.insert_one(doc)
+    await _clear_b2b_active_cart(c["company_id"], c["_id"])
     await _notify_company(
         c["company_id"],
         "b2b_held_cart",
@@ -4033,6 +4163,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     doc["total_amount"] = total
     doc["legal_accept"] = legal_docs.acceptance_record(req)
     await db.orders.insert_one(doc)
+    await _clear_b2b_active_cart(c["company_id"], c["_id"])
     await _notify_company(c["company_id"], "b2b_order", f"Yeni B2B siparişi {doc['order_number']}", f"{c.get('name')} portaldan {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) sipariş verdi.", doc["_id"])
     await _attach_draft_invoice_on_intake(doc, source="b2b")
     refreshed = await db.orders.find_one({"_id": doc["_id"]}) or doc
@@ -4041,7 +4172,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
 @api_router.put("/public/b2b/{token}/orders/{order_id}")
 async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
     c, o = await _b2b_owned_order(token, order_id)
-    if o.get("order_status") not in ("pending", "new", "held_cart"):
+    if o.get("order_status") not in ("pending", "new", "held_cart", "active_cart"):
         raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler düzenlenebilir.")
     if o.get("is_invoiced"):
         raise HTTPException(status_code=400, detail="Faturalanmış sipariş düzenlenemez.")
@@ -4052,7 +4183,7 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
     total = subtotal
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
     _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
-    if o.get("order_status") != "held_cart" and float(_bs.get("min_order_amount", 0) or 0) > grand_total:
+    if o.get("order_status") not in ("held_cart", "active_cart") and float(_bs.get("min_order_amount", 0) or 0) > grand_total:
         raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
     update: Dict[str, Any] = {
         "items": [it.model_dump() for it in items],
@@ -4069,7 +4200,7 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
         update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
     await db.orders.update_one({"_id": order_id}, {"$set": update})
     updated = await db.orders.find_one({"_id": order_id})
-    if updated.get("order_status") != "held_cart":
+    if updated.get("order_status") not in ("held_cart", "active_cart"):
         await _sync_draft_invoice_items(updated, update.get("items") or [])
         await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) olacak şekilde düzenledi.", order_id)
     return {"status": "success", "order": clean_doc(_decorate_b2b_held_order(updated)), "message": f"{updated.get('held_label') or updated.get('order_number')} güncellendi."}
@@ -4077,7 +4208,7 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
 @api_router.delete("/public/b2b/{token}/orders/{order_id}")
 async def b2b_delete_order(token: str, order_id: str):
     c, o = await _b2b_owned_order(token, order_id)
-    if o.get("order_status") not in ("pending", "new", "held_cart"):
+    if o.get("order_status") not in ("pending", "new", "held_cart", "active_cart"):
         raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler silinebilir.")
     if o.get("is_invoiced"):
         raise HTTPException(status_code=400, detail="Faturalanmış sipariş silinemez.")
@@ -11615,10 +11746,7 @@ async def list_orders(company_id: Optional[str] = "comp_nexus_main_01", status: 
     docs = clean_docs(orders)
     for o in docs:
         _decorate_b2b_held_order(o)
-    # Bekleyen sepetler üstte
-    held = [o for o in docs if o.get("is_held_cart")]
-    rest = [o for o in docs if not o.get("is_held_cart")]
-    return held + rest
+    return _sort_b2b_cart_orders(docs)
 
 @api_router.post("/orders")
 async def create_order(order: Order):
