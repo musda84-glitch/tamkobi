@@ -13,6 +13,7 @@ import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { locationConsentAccepted, locationConsentPayload, locationUnavailablePayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
+import { syncLocationBackground } from "../utils/locationBackgroundSync";
 import { type Workplace } from "../utils/workplace";
 
 type LocationTracking = {
@@ -180,7 +181,15 @@ export function AttendanceScreen() {
   useEffect(() => {
     const tracking = data?.active_location_tracking || data?.location_tracking;
     const checkedOut = Boolean(data?.today?.check_out);
-    if (!locationConsentAccepted(data?.location_consent) || !tracking?.enabled || checkedOut) return;
+    const consented = locationConsentAccepted(data?.location_consent);
+    void syncLocationBackground({
+      consented,
+      enabled: Boolean(tracking?.enabled),
+      continuous: Boolean(tracking?.continuous),
+      interval_minutes: Number(tracking?.interval_minutes) || 0,
+      checkedOut,
+    });
+    if (!consented || !tracking?.enabled || checkedOut) return;
     let cancelled = false;
     const ping = async () => {
       if (cancelled) return;
@@ -396,6 +405,9 @@ export function AttendanceScreen() {
         <Card testID="mesai-consent-lock">
           <Muted>KVKK (K) ve konum paylaşımı (KK) sözleşmelerini kabul edince giriş / çıkış paneli açılır.</Muted>
         </Card>
+      ) : null}
+      {consentOk && (data?.active_location_tracking || data?.location_tracking)?.enabled && !data?.today?.check_out ? (
+        <Muted testID="mesai-loc-bg-hint">Konum takibi uygulama kapalıyken veya arka plandayken de çalışır.</Muted>
       ) : null}
       {(consentOk || !data?.employee) ? (
         <MesaimTodayCard
