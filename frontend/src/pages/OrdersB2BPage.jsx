@@ -24,7 +24,7 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical } from "lucide-react";
+import { Printer, Tag, CheckCircle, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Factory } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { printMiniInvoices } from "../utils/miniInvoicePrint";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
@@ -46,6 +46,8 @@ import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printO
 import { eBelgeMenuItems, orderCanIssueEFatura, orderEBelgeType } from "../utils/orderEBelge";
 import { orderMoreMenuItems, orderMoreMenuKind } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
+import { buildProduceFromOrderPayload, orderLineCanProduce, resolveOrderLineProduct } from "../utils/orderProduce";
+import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -434,6 +436,22 @@ export default function OrdersB2BPage() {
   useEffect(() => { loadData(); }, [loadData]);
 
   const [expandedItems, setExpandedItems] = useState(null);
+  const [produceFromOrder, setProduceFromOrder] = useState(null);
+  const productCatalog = allProducts.length ? allProducts : products;
+  const openProduceForLine = (ord, it, idx) => {
+    const p = resolveOrderLineProduct(it, productCatalog);
+    if (!p) {
+      toast.error("Ürün stok kartında bulunamadı.");
+      return;
+    }
+    if (!orderLineCanProduce(p)) {
+      toast.error("Bu ürün tipi için üretim emri verilemez.");
+      return;
+    }
+    const payload = buildProduceFromOrderPayload(ord, it, p);
+    if (!payload) return;
+    setProduceFromOrder({ product: payload, order: ord, lineIndex: idx });
+  };
   const handleConvertToInvoice = async (orderId, eType) => {
     try {
       const res = await axios.post(`${API_URL}/orders/${orderId}/convert-to-invoice`, {
@@ -889,6 +907,15 @@ export default function OrdersB2BPage() {
       {activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {newOrder && <NewOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} products={allProducts} onClose={() => setNewOrder(false)} onSaved={loadData} />}
       {editOrder && <OrderEditModal order={editOrder} products={allProducts} onClose={() => setEditOrder(null)} onSaved={loadData} />}
+      {produceFromOrder && (
+        <ProductionOrderModal
+          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          product={produceFromOrder.product}
+          source="sales_order"
+          onClose={() => setProduceFromOrder(null)}
+          onCreated={() => setProduceFromOrder(null)}
+        />
+      )}
       {autoShip && <AutoShipModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAutoShip(false)} onDone={loadData} />}
       {aiImport && <AiOrderImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiImport(false)} onSaved={loadData} />}
 
@@ -1058,17 +1085,33 @@ export default function OrdersB2BPage() {
                       <div className="text-[11px] text-slate-400">{ord.city}</div>
                     </td>
                     <td className="px-4 py-3 align-top overflow-hidden">
-                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it) => { const p = products.find((x) => (it.product_id && (x.id === it.product_id || x._id === it.product_id)) || (it.sku && x.sku === it.sku)); return resolveImageUrl(it.image_url || p?.image_url); }; return (
+                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it) => { const p = productCatalog.find((x) => (it.product_id && (x.id === it.product_id || x._id === it.product_id)) || (it.sku && x.sku === it.sku)); return resolveImageUrl(it.image_url || p?.image_url); }; return (
                         <div data-testid={`order-items-${ord.order_number}`}>
                           <div className={open ? "flex flex-col gap-1 max-h-64 overflow-y-auto pr-1 mb-1.5" : "space-y-1"}>
-                          {shown.map((it, idx) => (
+                          {shown.map((it, idx) => {
+                            const lineProd = resolveOrderLineProduct(it, productCatalog);
+                            const canProduce = orderLineCanProduce(lineProd);
+                            return (
                             <div key={idx} className={`flex items-center gap-2 ${open ? `rounded-lg p-1.5 ${idx % 2 === 0 ? "bg-slate-50" : "bg-emerald-50/80"}` : ""}`}>
                               {img(it) ? <img src={img(it)} alt="" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
                               <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`); }} className="text-left min-w-0 flex-1 text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
                                 <div className={`${open ? "font-semibold" : ""} truncate`}>{it.quantity}x {it.product_name || it.name}</div>
                                 {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{it.unit_price != null ? `${formatTrAmount(Number(it.unit_price))} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
                               </button>
-                            </div>))}
+                              {canProduce ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); openProduceForLine(ord, it, idx); }}
+                                  className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100"
+                                  title="Üretim emri ver"
+                                  data-testid={`order-produce-${ord.order_number}-${idx}`}
+                                >
+                                  <Factory className="w-3 h-3" />
+                                  <span className="hidden xl:inline">Üretim</span>
+                                </button>
+                              ) : null}
+                            </div>);
+                          })}
                           </div>
                           {items.length > 2 && <button type="button" onClick={() => setExpandedItems(open ? null : ord.id)} className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100" data-testid={`order-items-toggle-${ord.order_number}`}>{open ? "Daralt" : `+${items.length - 2} ürün daha · büyüt`}</button>}
                         </div>); })()}

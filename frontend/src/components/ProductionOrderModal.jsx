@@ -10,7 +10,7 @@ import { formatTrAmount } from "../utils/money";
 
 const fmt = (n) => formatTrAmount((n || 0));
 
-export const ProductionOrderModal = ({ companyId, product, recipes: recipesProp, onClose, onCreated }) => {
+export const ProductionOrderModal = ({ companyId, product, recipes: recipesProp, source: sourceProp, onClose, onCreated }) => {
   useEscape(onClose);
   const navigate = useNavigate();
   const [recipes, setRecipes] = useState(recipesProp || null);
@@ -21,6 +21,7 @@ export const ProductionOrderModal = ({ companyId, product, recipes: recipesProp,
   const [req, setReq] = useState(null);
   const [busy, setBusy] = useState(false);
   const productId = product?.id;
+  const source = sourceProp || (product ? "stock_card" : "manual");
   useEffect(() => {
     if (recipesProp) return;
     axios.get(`${API_URL}/production/recipes?company_id=${companyId}${productId ? `&product_id=${productId}` : ""}`).then((r) => setRecipes(r.data.filter((x) => x.is_active !== false))).catch(() => setRecipes([]));
@@ -32,7 +33,7 @@ export const ProductionOrderModal = ({ companyId, product, recipes: recipesProp,
     if (!recipeId) return;
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/production/orders`, { company_id: companyId, recipe_id: recipeId, planned_quantity: Number(qty), planned_date: date, notes, source: product ? "stock_card" : "manual" });
+      const r = await axios.post(`${API_URL}/production/orders`, { company_id: companyId, recipe_id: recipeId, planned_quantity: Number(qty), planned_date: date, notes, source });
       toast.success(r.data.message); onCreated?.(r.data); onClose();
     } catch (err) { toast.error(err.response?.data?.detail || "Üretim emri oluşturulamadı."); } finally { setBusy(false); }
   };
