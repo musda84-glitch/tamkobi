@@ -18,6 +18,7 @@ describe("locationConsent", () => {
     expect(validateLocationConsent({ accept_kvkk: true, accept_share: true })).toBeNull();
     expect(locationConsentAccepted({ accept_kvkk: true, accept_share: true, accepted: true })).toBe(true);
     expect(locationConsentAccepted({ accept_kvkk: true })).toBe(false);
+    expect(empty.share_text).toMatch(/uygulama kapalıyken/);
   });
 
   test("signal tones match last location outcome", () => {

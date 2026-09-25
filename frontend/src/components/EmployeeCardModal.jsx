@@ -12,7 +12,9 @@ import { QuickPayModal } from "./QuickPayModal";
 import { EmployeeAssignTaskModal } from "./EmployeeAssignTaskModal";
 import { EmployeeLedgerModal } from "./EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "./EmployeeYevmiyeModal";
+import { EmployeeMovesModal } from "./EmployeeMovesModal";
 import { empStatusLabel, formatTrDate, performanceTone, remainingTone } from "../utils/employeeCardSummary";
+import { employeePresenceChip } from "../utils/personnelCard";
 import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
 import { employeePayActionTitle, isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
@@ -173,6 +175,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const [msgOpen, setMsgOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [yevmiyeOpen, setYevmiyeOpen] = useState(null);
+  const [movesOpen, setMovesOpen] = useState(false);
   const [payItem, setPayItem] = useState(null);
   const [payAccountId, setPayAccountId] = useState("");
   const [busyPay, setBusyPay] = useState(false);
@@ -187,6 +190,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     if (taskOpen) { setTaskOpen(false); return; }
     if (ledgerOpen) { setLedgerOpen(false); return; }
     if (yevmiyeOpen) { setYevmiyeOpen(null); return; }
+    if (movesOpen) { setMovesOpen(false); return; }
     if (payItem) { setPayItem(null); return; }
     onClose();
   });
@@ -287,13 +291,25 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                 } catch (err) { toast.error(err.response?.data?.detail || "Fotoğraf yüklenemedi."); }
               }} data-testid="emp-card-photo-input" />
             </label>
-            <div className="min-w-0"><h3 className="text-base font-bold text-slate-900 truncate" data-testid="emp-card-name">{e.full_name}{isDailyWage(e) ? <span className="ml-1.5 align-middle text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid="emp-card-yevmiye-badge">Yevmiye</span> : null}</h3><div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div><div className="text-[11px] text-slate-400">İşe giriş: {formatTrDate(e.start_date)}{e.end_date ? ` · Ayrılış: ${formatTrDate(e.end_date)}` : ""} · TCKN: {e.tc_kimlik}</div></div>
+            <div className="min-w-0"><h3 className="text-base font-bold text-slate-900 truncate" data-testid="emp-card-name">{e.full_name}{isDailyWage(e) ? <span className="ml-1.5 align-middle text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid="emp-card-yevmiye-badge">Yevmiye</span> : null}{(() => {
+              const presence = employeePresenceChip({
+                status: e.status,
+                workplace: card?.workplace || e.workplace,
+                location_last_inside: e.location_last_inside,
+                location_last_ok: e.location_last_ok,
+                location_inside_at: e.location_inside_at,
+                today: card?.attendance?.today,
+              });
+              return presence ? (
+                <span data-testid="emp-presence-modal" className="ml-1.5 align-middle text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ color: presence.color, backgroundColor: presence.bg }}>{presence.label}</span>
+              ) : null;
+            })()}</h3><div className="text-xs text-indigo-600 font-semibold">{e.position} · {e.department}</div><div className="text-[11px] text-slate-400">İşe giriş: {formatTrDate(e.start_date)}{e.end_date ? ` · Ayrılış: ${formatTrDate(e.end_date)}` : ""} · TCKN: {e.tc_kimlik}</div></div>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 p-1 shrink-0" data-testid="emp-card-close"><X className="w-5 h-5" /></button>
         </div>
           <div className="space-y-1.5">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-            <button type="button" onClick={() => setTab("salary")} className={`${btn} bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200`} data-testid="emp-card-moves-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Hareketler</button>
+            <button type="button" onClick={() => setMovesOpen(true)} className={`${btn} bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200`} data-testid="emp-card-moves-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Hareketler</button>
             <button type="button" onClick={() => setQuickPay({ type: "advance" })} className={`${btn} bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200`} data-testid="emp-card-advance-btn"><Wallet className="w-3.5 h-3.5 inline mr-1" />Avans</button>
             <button type="button" onClick={() => (isDailyWage(e) ? setLedgerOpen(true) : openSalaryPay())} disabled={busyPay} className={`${btn} bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200 disabled:opacity-50`} data-testid="emp-card-salary-btn"><Banknote className="w-3.5 h-3.5 inline mr-1" />{employeePayActionTitle("salary", e)}</button>
             <button type="button" onClick={() => setQuickPay({ type: "expense", initialMode: "new" })} className={`${btn} bg-sky-50 hover:bg-sky-100 text-sky-800 border-sky-200`} data-testid="emp-card-expense-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Masraf ekle</button>
@@ -562,6 +578,13 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           </div>
         </div>
       )}
+      {movesOpen ? (
+        <EmployeeMovesModal
+          employee={e}
+          onClose={() => setMovesOpen(false)}
+          onChanged={() => { reload(); onChanged?.(); }}
+        />
+      ) : null}
     </div>
   );
 };

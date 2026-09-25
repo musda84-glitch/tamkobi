@@ -1,4 +1,19 @@
-import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, remainingLeaveDays } from "./personnelCard";
+import {
+  employeeCompGroups,
+  employeeCompRowCaption,
+  employeeCompRows,
+  employeePayMoves,
+  employeePresenceChip,
+  filterPayMoves,
+  fmtLocationMoveAt,
+  locationMoveCanIgnore,
+  locationMoveDidLabel,
+  locationMoveIgnorePath,
+  locationMoveLine,
+  locationMovesPeriodHint,
+  payMovesPeriodHint,
+  remainingLeaveDays,
+} from "./personnelCard";
 
 describe("personnelCard", () => {
   test("groups wage and allowance like the mobile employee card", () => {
@@ -10,5 +25,33 @@ describe("personnelCard", () => {
     expect(employeeCompRowCaption(rows.find((r) => r.key === "salary"), true)).toBe("Yevmiye / gün");
     expect(employeeCompRowCaption(rows.find((r) => r.key === "bonus"), true)).toBe("Yevmiye günü · 16 gün");
     expect(remainingLeaveDays({ annual_leave_days: 14, used_leave_days: 3 })).toBe(11);
+  });
+
+  test("shows live presence next to Aktif from GPS inside flag", () => {
+    expect(employeePresenceChip({ status: "active", location_last_inside: true, workplace: { kind: "office" } })).toMatchObject({
+      key: "work", label: "İşte",
+    });
+    expect(employeePresenceChip({ status: "active", location_last_inside: true, workplace: { kind: "task" } }).label).toBe("Görev yerinde");
+    expect(employeePresenceChip({ status: "active", location_last_inside: false }).label).toBe("Dışarda");
+    expect(employeePresenceChip({ status: "terminated", location_last_inside: true })).toBeNull();
+    expect(employeePresenceChip({ status: "active", location_last_ok: false })).toBeNull();
+  });
+
+  test("builds pay and location move lines like mobile", () => {
+    const moves = employeePayMoves({
+      payrolls: [{ id: "p1", period: "2026-09", status: "pending", final_payable: 30000 }],
+      bonuses: [{ id: "b1", type: "advance", status: "paid", period: "2026-09", amount: 2000, created_at: "2026-09-10" }],
+    });
+    expect(moves.map((m) => m.title)).toEqual(["Avans", "Maaş"]);
+    expect(payMovesPeriodHint(1, 2, "30d")).toBe("1 / 2 hareket");
+    expect(filterPayMoves([{ id: "1", date: "2026-07-01" }], "30d", new Date("2026-09-22"), "2026-09")).toHaveLength(0);
+    expect(locationMoveDidLabel("enter")).toBe("İş yerine giriş yaptı");
+    expect(locationMoveDidLabel("leave")).toBe("İş yerine çıkış yaptı");
+    expect(fmtLocationMoveAt("2026-09-24T08:32:00")).toBe("24.09.2026 08:32");
+    expect(locationMoveLine({ at: "2026-09-24T08:32:00", kind: "enter" })).toBe("24.09.2026 08:32 · İş yerine giriş yaptı");
+    expect(locationMoveCanIgnore({ kind: "leave", ignorable: true })).toBe(true);
+    expect(locationMoveCanIgnore({ kind: "enter", official: true, ignorable: false })).toBe(false);
+    expect(locationMoveIgnorePath({ attendance_id: "a1", id: "m1" })).toBe("/personnel/attendance/a1/location-moves/m1/ignore");
+    expect(locationMovesPeriodHint(3, 8, "30d")).toBe("3 / 8 konum hareketi");
   });
 });

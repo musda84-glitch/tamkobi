@@ -14,6 +14,7 @@ import { fmtDmy } from "../utils/dateFormat";
 import { attendanceGroupToggleLabel, groupAttendanceRecords } from "../utils/attendanceGroups";
 import { attendanceCalendarMonth } from "../utils/attendanceSelf";
 import { cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint } from "../utils/employeeCardStatus";
+import { punchLabelClass } from "../utils/punchLabels";
 
 export const AttendancePanel = ({ companyId }) => {
   const [month, setMonth] = useState(() => attendanceCalendarMonth());
@@ -115,7 +116,7 @@ export const AttendancePanel = ({ companyId }) => {
           <tr key={s.employee_id} data-testid={`att-row-${s.employee_id}`}>
             <td className="px-4 py-2 font-semibold text-slate-900">{s.employee_name}{isDailyWage(s) ? <span className="ml-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`att-yevmiye-badge-${s.employee_id}`}>Yevmiye</span> : null}{isDailyWage(s) ? <div className="text-[10px] font-semibold text-amber-700" data-testid={`att-yevmiye-${s.employee_id}`}>{(s.days_present || 0)} gün × {formatTrAmount(s.daily_wage || 0)} = {formatTrAmount(s.period_wage || 0)} ₺</div> : null}</td>
             <td className="px-4 py-2"><button onClick={() => setSchedEmp(s)} className={`inline-flex items-center gap-1 font-mono text-[11px] px-2 py-0.5 rounded-md border hover:bg-slate-50 ${s.has_override ? "border-indigo-300 text-indigo-700 bg-indigo-50" : "text-slate-500"}`} title="Personele özel mesai saatleri" data-testid={`att-sched-${s.employee_id}`}><Timer className="w-3 h-3" /> {s.schedule.start}–{s.schedule.end}{s.has_override ? " ★" : ""}</button></td>
-            <td className="px-4 py-2 font-mono text-slate-600">{s.today ? `${s.today.check_in || "--:--"} → ${s.today.check_out || "--:--"}${s.today.status !== "present" ? ` (${s.today.status === "absent" ? "Devamsız" : "İzinli"})` : ""}` : "—"}{s.today?.late_minutes ? <span className="ml-1 text-[9px] font-bold text-rose-600">{s.today.late_minutes} dk geç</span> : null}{s.today?.assigned_overtime_hours ? <span className="ml-1 text-[9px] font-bold text-indigo-600" title={`Beklenen çıkış ${s.today.expected_end || ""}`}>+{s.today.assigned_overtime_hours} sa atanan</span> : null}{s.workplace?.kind === "task" ? <div className="text-[10px] font-semibold text-indigo-700" data-testid={`att-workplace-${s.employee_id}`}>Dış görev · {workplaceShort(s.workplace)}{s.workplace.has_coords ? " · görev yeri iş yeri" : " · konum yok"}</div> : null}</td>
+            <td className="px-4 py-2 font-mono text-slate-600">{s.today ? <><span className="font-bold text-emerald-700">{s.today.check_in || "--:--"}</span>{" → "}<span className="font-bold text-rose-700">{s.today.check_out || "--:--"}</span>{s.today.status !== "present" ? ` (${s.today.status === "absent" ? "Devamsız" : "İzinli"})` : ""}</> : "—"}{s.today?.late_minutes ? <span className="ml-1 text-[9px] font-bold text-rose-600">{s.today.late_minutes} dk geç</span> : null}{s.today?.assigned_overtime_hours ? <span className="ml-1 text-[9px] font-bold text-indigo-600" title={`Beklenen çıkış ${s.today.expected_end || ""}`}>+{s.today.assigned_overtime_hours} sa atanan</span> : null}{s.workplace?.kind === "task" ? <div className="text-[10px] font-semibold text-indigo-700" data-testid={`att-workplace-${s.employee_id}`}>Dış görev · {workplaceShort(s.workplace)}{s.workplace.has_coords ? " · görev yeri iş yeri" : " · konum yok"}</div> : null}</td>
             <td className="px-4 py-2 text-right font-bold text-emerald-700">{s.days_present}</td><td className="px-4 py-2 text-right text-rose-600">{s.days_absent}</td><td className="px-4 py-2 text-right text-amber-600">{s.days_leave}</td>
             <td className="px-4 py-2 text-right font-bold">{s.total_hours}</td><td className="px-4 py-2 text-right font-bold text-indigo-700">{s.overtime_hours}</td>
             <td className="px-4 py-2 text-right font-bold text-emerald-700" title={`${s.overtime_method === "fixed" ? "Sabit" : "Yasal"} · saatlik ${s.overtime_rate} ₺`} data-testid={`att-otpay-${s.employee_id}`}>{formatTrAmount((s.overtime_pay || 0))} ₺</td>
@@ -124,14 +125,14 @@ export const AttendancePanel = ({ companyId }) => {
             <td className="px-4 py-2"><div className="flex flex-col items-end gap-1.5">
               <div className="flex justify-end gap-1">
               <button onClick={() => setListPunch({ id: s.employee_id, action: "check_in", name: s.employee_name, time: cardPunchDraftTime("check_in", s.today) })} className={`flex items-center gap-1 px-2 py-1 rounded-lg font-semibold ${listPunch?.id === s.employee_id && listPunch.action === "check_in" ? "bg-emerald-200 text-emerald-900" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`} data-testid={`att-in-${s.employee_id}`}><LogIn className="w-3 h-3" /> Giriş</button>
-              <button onClick={() => setListPunch({ id: s.employee_id, action: "check_out", name: s.employee_name, time: cardPunchDraftTime("check_out", s.today) })} className={`flex items-center gap-1 px-2 py-1 rounded-lg font-semibold ${listPunch?.id === s.employee_id && listPunch.action === "check_out" ? "bg-slate-300 text-slate-900" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`} data-testid={`att-out-${s.employee_id}`}><LogOut className="w-3 h-3" /> Çıkış</button>
+              <button onClick={() => setListPunch({ id: s.employee_id, action: "check_out", name: s.employee_name, time: cardPunchDraftTime("check_out", s.today) })} className={`flex items-center gap-1 px-2 py-1 rounded-lg font-semibold ${listPunch?.id === s.employee_id && listPunch.action === "check_out" ? "bg-rose-200 text-rose-900" : "bg-rose-50 text-rose-700 hover:bg-rose-100"}`} data-testid={`att-out-${s.employee_id}`}><LogOut className="w-3 h-3" /> Çıkış</button>
               <button onClick={() => setListPunch({ id: s.employee_id, action: "absent", name: s.employee_name, time: "" })} className={`flex items-center gap-1 px-2 py-1 rounded-lg font-semibold ${listPunch?.id === s.employee_id && listPunch.action === "absent" ? "bg-rose-200 text-rose-900" : "bg-rose-50 text-rose-700 hover:bg-rose-100"}`} data-testid={`att-absent-${s.employee_id}`}><CalendarX2 className="w-3 h-3" /> Devamsız</button>
               <button onClick={() => openOt(s)} className="flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg font-semibold hover:bg-indigo-100" data-testid={`att-ot-${s.employee_id}`}><Timer className="w-3 h-3" /> F. Mesai</button>
               </div>
               {listPunch?.id === s.employee_id ? (
                 <div className="w-56 rounded-xl border border-slate-200 bg-slate-50 p-2 space-y-1.5 text-left" data-testid={`att-punch-confirm-${s.employee_id}`}>
                   {listPunch.action !== "absent" ? (
-                    <label className="text-[10px] font-bold text-slate-500 block">
+                    <label className={`text-[10px] font-bold block ${punchLabelClass(listPunch.action === "check_out" ? "Çıkış saati" : "Giriş saati")}`}>
                       {listPunch.action === "check_out" ? "Çıkış saati" : "Giriş saati"}
                       <input type="time" autoFocus value={listPunch.time || ""} onChange={(e) => setListPunch((cur) => (cur ? { ...cur, time: e.target.value } : cur))} className="mt-0.5 block w-full border rounded-lg p-1.5 bg-white" data-testid={`att-punch-time-${s.employee_id}`} />
                     </label>
@@ -162,7 +163,7 @@ export const AttendancePanel = ({ companyId }) => {
           {open ? g.records.map((r) => (
         <div key={r.id} className={`px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 ${r.is_off_day ? "bg-amber-50/40" : ""}`} data-testid={`att-rec-${r.id}`}>
           <span className="text-slate-400 font-mono">{fmtDmy(r.date)}</span>
-          <span className="font-mono">{r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"} • ${r.hours || 0} sa` : r.status === "absent" ? "Devamsız" : "İzinli"}</span>
+          <span className="font-mono">{r.status === "present" ? <><span className="font-bold text-emerald-700">{r.check_in || "--:--"}</span>{" → "}<span className="font-bold text-rose-700">{r.check_out || "--:--"}</span>{` • ${r.hours || 0} sa`}</> : r.status === "absent" ? "Devamsız" : "İzinli"}</span>
           {r.status === "present" ? (
             <form
               className="inline-flex items-center gap-1"
@@ -174,6 +175,7 @@ export const AttendancePanel = ({ companyId }) => {
                 act(r.employee_id, { date: r.date, check_out: out });
               }}
             >
+              <span className={`text-[10px] font-bold ${punchLabelClass("Çıkış saati düzelt")}`}>Çıkış</span>
               <input name="out" type="time" defaultValue={r.check_out || ""} className="border rounded px-1 py-0.5 text-[11px]" data-testid={`att-correct-out-${r.id}`} />
               <button type="submit" className="px-1.5 py-0.5 rounded bg-indigo-600 text-white font-bold" data-testid={`att-correct-save-${r.id}`}>Saati düzelt</button>
             </form>

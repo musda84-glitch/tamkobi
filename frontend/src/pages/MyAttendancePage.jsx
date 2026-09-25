@@ -15,6 +15,7 @@ import { fmtDmy } from "../utils/dateFormat";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { LocationSignal } from "../components/LocationSignal";
 import { locationConsentAccepted, locationUnavailablePayload } from "../utils/locationConsent";
+import { punchLabelClass } from "../utils/punchLabels";
 
 
 const Stat = ({ label, value, sub, tone = "slate", testId }) => (
@@ -319,9 +320,14 @@ export default function MyAttendancePage() {
               </span>
             </div>
           </div>
+          {(data?.active_location_tracking || data?.location_tracking)?.enabled && !data?.today?.check_out ? (
+            <p className="text-[10px] text-slate-400" data-testid="mesai-loc-bg-hint">
+              Konum takibi bu sayfa açıkken çalışır. Telefon uygulamasında uygulama kapalıyken de devam eder.
+            </p>
+          ) : null}
           {punchEdit ? (
             <div className="rounded-2xl bg-white/10 border border-white/15 p-3 space-y-2" data-testid="my-att-punch-edit">
-              <label className="block text-[10px] font-bold text-slate-300">
+              <label className={`block text-[10px] font-bold ${punchLabelClass(punchEdit === "check_out" ? "Çıkış saati" : "Giriş saati", "text-slate-300")}`}>
                 {punchEdit === "check_out" ? "Çıkış saati" : "Giriş saati"}
                 <input
                   type="time"
