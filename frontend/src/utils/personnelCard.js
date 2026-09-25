@@ -299,6 +299,39 @@ export function locationMovesPeriodHint(shown, total, period) {
   return `${shown} / ${total} konum hareketi`;
 }
 
+export function overtimeMovesPeriodHint(shown, total, period) {
+  if (period === "all" || shown === total) return `${total} mesai kaydı`;
+  return `${shown} / ${total} mesai kaydı`;
+}
+
+export function overtimeMoveKindLabel(kind) {
+  if (kind === "assigned") return "Atanan";
+  if (kind === "computed") return "Hesaplanan";
+  return "Mesai";
+}
+
+export function overtimeMoveLine(row) {
+  const hours = Number(row?.hours) || 0;
+  const range = row?.start && row?.end ? `${row.start}–${row.end}` : "";
+  const bits = [formatTrDate(row?.date), `${hours} sa`, range, overtimeMoveKindLabel(row?.kind)].filter(Boolean);
+  return bits.join(" · ");
+}
+
+export function overtimeMoveCanEdit(row, canEdit = true) {
+  return !!canEdit && !!row && row.can_edit !== false;
+}
+
+export function overtimeMoveCanDelete(row, canEdit = true) {
+  return !!canEdit && !!row && (row.can_delete === true || (Number(row?.assigned_hours) || 0) > 0);
+}
+
+export function overtimeMoveDeleteConfirm() {
+  return {
+    title: "Fazla mesai sil",
+    message: "Bu günün fazla mesai ataması kaldırılsın mı?",
+  };
+}
+
 export function fmtPayMoveAmount(n) {
   return `${formatTrAmount(Number(n) || 0)} ₺`;
 }
