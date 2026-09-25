@@ -85,7 +85,7 @@ export function integrationEInvoiceMoreItems(): OrderMoreItem[] {
     item("earsiv_send", "E-Arşiv Yazdır & Gönder", "mail", { color: "#059669" }),
     item("cargo_track_notify", "Kargo Takip Kodu Bildir", "time", { color: "#0EA5E9" }),
     item("digital_code_notify", "Dijital Kod Bildir", "download", { color: "#E11D48" }),
-    item("navlungo_create", "Navlungo Siparişi Oluştur", "car", { color: "#E11D48" }),
+    item("kargola", "Kargola", "car", { color: "#E11D48" }),
     item("cargo_change", "Paketli Siparişin Kargo Firmasını Değiştir", "car", { color: "#0EA5E9" }),
     item("invoice_link", "Fatura Linki Gönder", "link", { color: "#F43F5E" }),
     item("xml", "E-Fatura XML'i İndir", "code-slash", { color: "#0EA5E9" }),

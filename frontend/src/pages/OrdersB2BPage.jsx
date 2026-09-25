@@ -547,29 +547,10 @@ export default function OrdersB2BPage() {
       case "kargola":
         setShipOrder(ord);
         return;
-      case "navlungo_create": {
-        const has = String(ord.cargo_carrier || "").toLowerCase().includes("navlungo");
-        if (has) {
-          carrierLabels([ord], "navlungo", "Navlungo");
-          return;
-        }
-        try {
-          await axios.post(`${API_URL}/cargo/create-shipment`, {
-            carrier_code: "navlungo",
-            order_id: ord.id || ord._id,
-            customer_name: ord.customer_name,
-            address: ord.shipping_address || ord.address,
-            city: ord.city,
-            customer_phone: ord.customer_phone,
-            company_id: companyId,
-          });
-          toast.success("Navlungo siparişi oluşturuldu.");
-          loadData();
-        } catch (err) {
-          toast.error(err.response?.data?.detail || "Navlungo oluşturulamadı.");
-        }
+      case "navlungo_create":
+        // Eski menü kimliği — kargo gönderim modalını aç
+        setShipOrder(ord);
         return;
-      }
       case "earsiv_send":
         openInvoicePdfs([ord]);
         if (ord.invoice_id) {
