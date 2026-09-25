@@ -227,12 +227,30 @@ export function locationMoveDidLabel(kind) {
   return "Konum hareketi";
 }
 
-export function locationMoveColor(kind, ignored = false) {
+export function locationMoveTone(kind, extra) {
+  const bits = `${kind || ""} ${extra || ""}`.toLocaleLowerCase("tr-TR");
+  if (bits.includes("lost") || bits.includes("kayıp") || bits.includes("kayb")) return "lost";
+  if (bits.includes("leave") || bits.includes("çıkış") || bits.includes("cikis")) return "out";
+  if (bits.includes("enter") || bits.includes("giriş") || bits.includes("giris")) return "in";
+  return null;
+}
+
+export function locationMoveColor(kind, ignored = false, extra) {
   if (ignored) return "#94A3B8";
-  if (kind === "enter") return "#047857";
-  if (kind === "leave") return "#BE123C";
-  if (kind === "lost") return "#C2410C";
+  const tone = locationMoveTone(kind, extra);
+  if (tone === "in") return "#047857";
+  if (tone === "out") return "#BE123C";
+  if (tone === "lost") return "#C2410C";
   return "#0F172A";
+}
+
+export function locationMoveBg(kind, ignored = false, extra) {
+  if (ignored) return "#F8FAFC";
+  const tone = locationMoveTone(kind, extra);
+  if (tone === "in") return "#ECFDF5";
+  if (tone === "out") return "#FFF1F2";
+  if (tone === "lost") return "#FFF7ED";
+  return "transparent";
 }
 
 export function fmtLocationMoveAt(raw) {

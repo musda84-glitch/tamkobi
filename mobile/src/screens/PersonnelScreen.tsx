@@ -112,8 +112,10 @@ import {
   DEFAULT_LOC_MODE,
   type LocMode,
   filterPayMoves,
+  locationMoveBg,
   locationMoveCanIgnore,
   locationMoveColor,
+  locationMoveDidLabel,
   locationMoveIgnorePath,
   locationMoveLine,
   locationMovesPeriodHint,
@@ -2125,10 +2127,21 @@ export function PersonnelScreen() {
               <View
                 key={row.id || `${row.attendance_id}-${row.at}`}
                 testID={`emp-loc-move-${row.id || row.at}`}
-                style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  paddingVertical: 10,
+                  paddingHorizontal: 8,
+                  marginBottom: 4,
+                  borderRadius: 10,
+                  borderLeftWidth: 4,
+                  borderLeftColor: locationMoveColor(row.kind, !!row.ignored, locationMoveDidLabel(row.kind)),
+                  backgroundColor: locationMoveBg(row.kind, !!row.ignored, locationMoveDidLabel(row.kind)),
+                }}
               >
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ fontWeight: "800", color: locationMoveColor(row.kind, !!row.ignored) }}>{locationMoveLine(row)}</Text>
+                  <Text style={{ fontWeight: "800", color: locationMoveColor(row.kind, !!row.ignored, locationMoveDidLabel(row.kind)) }}>{locationMoveLine(row)}</Text>
                   {row.place ? <Muted>{row.place}</Muted> : null}
                   {row.ignored ? <Muted testID={`emp-loc-move-ignored-${row.id}`}>Görmezden gelindi</Muted> : null}
                 </View>

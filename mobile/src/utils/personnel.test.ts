@@ -119,9 +119,11 @@ import {
   advanceFormToggleLabel,
   filterPayMoves,
   fmtLocationMoveAt,
+  locationMoveBg,
   locationMoveCanIgnore,
   locationMoveColor,
   locationMoveDidLabel,
+  locationMoveTone,
   locationMoveIgnorePath,
   locationMoveLine,
   locationMovesPeriodHint,
@@ -307,6 +309,10 @@ describe("employee draft", () => {
     expect(locationMoveColor("enter")).toBe("#047857");
     expect(locationMoveColor("leave")).toBe("#BE123C");
     expect(locationMoveColor("leave", true)).toBe("#94A3B8");
+    expect(locationMoveTone(null, "İş yerine giriş yaptı")).toBe("in");
+    expect(locationMoveTone(null, "İş yerine çıkış yaptı")).toBe("out");
+    expect(locationMoveBg("enter")).toBe("#ECFDF5");
+    expect(locationMoveBg("leave")).toBe("#FFF1F2");
     expect(locationMoveDidLabel("lost")).toBe("Konum kaybı");
     expect(fmtLocationMoveAt("2026-09-24T08:32:00")).toBe("24.09.2026 08:32");
     expect(fmtLocationMoveAt("2026-09-24T05:32:00+00:00")).toBe("24.09.2026 08:32");

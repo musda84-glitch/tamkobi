@@ -6,9 +6,11 @@ import {
   employeePresenceChip,
   filterPayMoves,
   fmtLocationMoveAt,
+  locationMoveBg,
   locationMoveCanIgnore,
   locationMoveColor,
   locationMoveDidLabel,
+  locationMoveTone,
   locationMoveIgnorePath,
   locationMoveLine,
   locationMovesPeriodHint,
@@ -50,6 +52,10 @@ describe("personnelCard", () => {
     expect(locationMoveDidLabel("leave")).toBe("İş yerine çıkış yaptı");
     expect(locationMoveColor("enter")).toBe("#047857");
     expect(locationMoveColor("leave")).toBe("#BE123C");
+    expect(locationMoveTone(null, "İş yerine giriş yaptı")).toBe("in");
+    expect(locationMoveTone(null, "İş yerine çıkış yaptı")).toBe("out");
+    expect(locationMoveBg("enter")).toBe("#ECFDF5");
+    expect(locationMoveBg("leave")).toBe("#FFF1F2");
     expect(fmtLocationMoveAt("2026-09-24T08:32:00")).toBe("24.09.2026 08:32");
     expect(locationMoveLine({ at: "2026-09-24T08:32:00", kind: "enter" })).toBe("24.09.2026 08:32 · İş yerine giriş yaptı");
     expect(locationMoveCanIgnore({ kind: "leave", ignorable: true })).toBe(true);
