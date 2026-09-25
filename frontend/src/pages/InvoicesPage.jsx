@@ -4,6 +4,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
 import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice } from "../components/InvoiceContextMenu";
+import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { GibContactLookup } from "../components/GibContactLookup";
@@ -368,6 +369,24 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     });
     setShowNewModal(true);
   };
+
+  const onInvoiceCopied = useCallback((result) => {
+    loadData();
+    if (result?.kind === "purchase_order") {
+      navigate("/purchase-orders");
+      return;
+    }
+    const inv = result?.invoice;
+    if (inv) {
+      setEditingInvoice(inv);
+      setShowNewModal(true);
+    }
+  }, [loadData, navigate]);
+  const invoiceCopy = useInvoiceCopyFromContext({
+    contacts,
+    companyId,
+    onCopied: onInvoiceCopied,
+  });
 
   useEffect(() => {
     if (!editParam) return undefined;
@@ -852,7 +871,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         )}
       </div>
 
-      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={handleDeleteInvoice} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} />
+      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={handleDeleteInvoice} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} onCopy={invoiceCopy.handleCopyMode} />
+      {invoiceCopy.modal}
       {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && printInv.e_type === "expense_slip" && (
         <ExpenseSlipPrint doc={printInv} company={activeCompany} onClose={() => setPrintInv(null)} />
@@ -881,14 +901,23 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       {showNewModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-7xl w-full p-6 sm:p-8 space-y-5 shadow-2xl border border-slate-200 max-h-[94vh] overflow-y-auto" data-testid="new-invoice-modal">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 gap-3">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">{editingInvoice ? `Taslak Düzenle · ${editingInvoice.invoice_number}` : "Yeni Fatura Düzenle"}</h2>
                 <p className="text-xs text-slate-500">E-Fatura & E-Arşiv Standartlarına Uygun</p>
               </div>
-              <button onClick={() => setShowNewModal(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                {editingInvoice && (
+                  <InvoiceCopyButton
+                    invoice={editingInvoice}
+                    onPickMode={(mode) => invoiceCopy.openPick(editingInvoice, mode)}
+                    onCopied={onInvoiceCopied}
+                  />
+                )}
+                <button onClick={() => setShowNewModal(false)} className="text-slate-400 hover:text-slate-600">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <form onSubmit={handleCreateInvoice} className="space-y-4 text-xs">

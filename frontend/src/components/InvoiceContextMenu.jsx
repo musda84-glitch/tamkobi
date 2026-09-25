@@ -3,8 +3,9 @@ import { createPortal } from "react-dom";
 import axios from "axios";
 import {
   FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock,
-  Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink, Trash2, Receipt, Pencil, Loader2,
+  Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink, Trash2, Receipt, Pencil, Loader2, Copy,
 } from "lucide-react";
+import { canCopyInvoice, INVOICE_COPY_MODES } from "./invoiceCopyModes";
 export const E_TYPE_LABELS = {
   e_invoice: "E-Fatura",
   e_archive: "E-Arşiv",
@@ -147,7 +148,7 @@ export function shouldResolveIssueFromGib(eType) {
 }
 export const InvoiceContextMenu = (props) => {
   const {
-    menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onDelete, onCancel, onExpenseSlip, onEdit,
+    menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onDelete, onCancel, onExpenseSlip, onEdit, onCopy,
   } = props;
   const onAcceptIncoming = props.onAcceptIncoming;
   const onRejectIncoming = props.onRejectIncoming;
@@ -223,6 +224,7 @@ export const InvoiceContextMenu = (props) => {
   const editable = canEditInvoice(inv);
   const cancellable = canCancelInvoice(inv);
   const slipable = canIssueExpenseSlip(inv);
+  const copyable = onCopy && canCopyInvoice(inv);
   const paid = invoiceHasPayment(inv);
   const showIssuedActions = issued && !incoming;
   const gibType = suggestedIssueTypeFromGib(gibLookup);
@@ -339,6 +341,21 @@ export const InvoiceContextMenu = (props) => {
       <Item icon={Eye} label="Görüntüle" onClick={() => onPreview(inv)} testId="ctx-preview" />
       <Item icon={Printer} label={inv.e_type === "expense_slip" ? "Gider Pusulası Yazdır" : "Şablonlu Yazdır"} onClick={() => onPrint(inv)} testId="ctx-print" />
       <Item icon={MessageSquare} label="SMS / E-posta Gönder" onClick={() => onNotify(inv)} testId="ctx-notify" />
+      {copyable && (
+        <div className="border-t border-slate-100 mt-1 pt-1" data-testid="ctx-copy-section">
+          <div className="px-3 pt-1 pb-0.5 text-[10px] font-bold text-indigo-700">KOPYALA</div>
+          {INVOICE_COPY_MODES.map((m) => (
+            <Item
+              key={m.key}
+              icon={Copy}
+              color="text-indigo-600"
+              label={m.label}
+              onClick={() => onCopy(inv, m.key)}
+              testId={`ctx-copy-${m.key}`}
+            />
+          ))}
+        </div>
+      )}
       {onDispatch && inv.invoice_type === "sales" && (
         <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />
       )}

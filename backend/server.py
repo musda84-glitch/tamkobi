@@ -5645,6 +5645,149 @@ def _expense_slip_block_reason(inv: dict) -> Optional[str]:
     return None
 
 
+def _invoice_copy_block_reason(inv: dict) -> Optional[str]:
+    if not inv:
+        return "Fatura bulunamadı."
+    if inv.get("status") == "cancelled":
+        return "İptal edilmiş fatura kopyalanamaz."
+    if not inv.get("items"):
+        return "Faturada kalem yok."
+    return None
+
+
+@api_router.post("/invoices/{invoice_id}/copy")
+async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None):
+    """Faturayı taslak olarak kopyala veya tedarikçi siparişine çevir.
+
+    mode:
+      - same_contact: aynı cari ile taslak fatura
+      - different_contact: contact_id ile başka cariye taslak
+      - to_supplier_order: kalemlerden verilen sipariş (tedarikçi)
+    """
+    req = req or {}
+    mode = str(req.get("mode") or "same_contact").strip()
+    if mode not in ("same_contact", "different_contact", "to_supplier_order"):
+        raise HTTPException(status_code=400, detail="Geçersiz kopyalama modu.")
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    reason = _invoice_copy_block_reason(inv)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
+    company_id = inv.get("company_id") or "comp_nexus_main_01"
+    src_no = inv.get("invoice_number") or invoice_id
+
+    if mode == "to_supplier_order":
+        contact_id = str(req.get("contact_id") or inv.get("contact_id") or "").strip()
+        if not contact_id:
+            raise HTTPException(status_code=400, detail="Tedarikçi cari seçin.")
+        contact = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
+        if not contact:
+            raise HTTPException(status_code=400, detail="Tedarikçi bulunamadı.")
+        po_items = []
+        for it in inv.get("items") or []:
+            d = it if isinstance(it, dict) else (it.model_dump() if hasattr(it, "model_dump") else dict(it))
+            po_items.append(po_mod.build_po_item(
+                product_id=str(d.get("product_id") or ""),
+                product_name=str(d.get("name") or d.get("product_name") or "Kalem"),
+                sku=str(d.get("sku") or ""),
+                quantity=float(d.get("quantity") or 1),
+                unit=str(d.get("unit") or "Adet"),
+                unit_price=float(d.get("unit_price") or 0),
+                vat_rate=float(d.get("vat_rate") if d.get("vat_rate") is not None else 20),
+            ))
+        if not po_items:
+            raise HTTPException(status_code=400, detail="Faturada kalem yok.")
+        po = po_mod.make_purchase_order(
+            company_id=company_id,
+            order_number=await _next_purchase_order_number(company_id),
+            supplier_name=contact.get("name") or inv.get("contact_name") or "",
+            contact_id=contact["_id"],
+            items=po_items,
+            notes=f"Faturadan kopyalandı: {src_no}",
+            source_channel="invoice_copy",
+            order_status="draft",
+        )
+        doc = po.to_mongo()
+        doc["copied_from_invoice_id"] = invoice_id
+        doc["copied_from_invoice_number"] = src_no
+        await db.purchase_orders.insert_one(doc)
+        out = clean_doc(doc)
+        return {
+            "status": "success",
+            "kind": "purchase_order",
+            "purchase_order": out,
+            "invoice": None,
+            "message": f"{out.get('order_number')} tedarikçi siparişi oluşturuldu.",
+        }
+
+    contact_id = str(inv.get("contact_id") or "")
+    contact_name = str(inv.get("contact_name") or "")
+    contact_tax_id = inv.get("contact_tax_id")
+    contact_tax_office = inv.get("contact_tax_office")
+    if mode == "different_contact":
+        contact_id = str(req.get("contact_id") or "").strip()
+        if not contact_id:
+            raise HTTPException(status_code=400, detail="Hedef cari seçin.")
+        contact = await db.contacts.find_one({"_id": contact_id, "company_id": company_id})
+        if not contact:
+            raise HTTPException(status_code=400, detail="Hedef cari bulunamadı.")
+        contact_name = contact.get("name") or ""
+        contact_tax_id = contact.get("tax_number_or_id") or contact.get("tax_id")
+        contact_tax_office = contact.get("tax_office")
+    elif not contact_id:
+        raise HTTPException(status_code=400, detail="Faturada cari yok; farklı cari seçerek kopyalayın.")
+
+    inv_type = inv.get("invoice_type") or "sales"
+    if inv_type == "dispatch":
+        inv_type = "sales"
+    e_type = inv.get("e_type") or "e_archive"
+    if e_type in ("expense_slip", "e_dispatch"):
+        e_type = "e_archive"
+
+    items = _invoice_item_models(inv.get("items") or [])
+    draft = Invoice(
+        company_id=company_id,
+        invoice_type=inv_type,
+        e_type=e_type,
+        contact_id=contact_id,
+        contact_name=contact_name,
+        contact_tax_id=contact_tax_id,
+        issue_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        items=items,
+        currency=inv.get("currency") or "TRY",
+        fx_rate=inv.get("fx_rate") or 1,
+        general_discount_rate=float(inv.get("general_discount_rate") or 0),
+        general_discount_amount=float(inv.get("general_discount_amount") or 0),
+        withholding_rate=float(inv.get("withholding_rate") or 0),
+        withholding_code=inv.get("withholding_code"),
+        price_mode=inv.get("price_mode") or "excl",
+        trade_kind=inv.get("trade_kind"),
+        notes=f"Kopya · kaynak: {src_no}" + (f" · {inv.get('notes')}" if inv.get("notes") else ""),
+        status="draft",
+        source_channel="invoice_copy",
+    )
+    created = await create_invoice(draft)
+    await db.invoices.update_one(
+        {"_id": created["id"]},
+        {"$set": {
+            "copied_from": invoice_id,
+            "copied_from_number": src_no,
+            "contact_tax_office": contact_tax_office,
+            "gib_status": "Taslak",
+            "einvoice_state": "draft",
+        }},
+    )
+    out = clean_doc(await db.invoices.find_one({"_id": created["id"]}))
+    return {
+        "status": "success",
+        "kind": "invoice",
+        "invoice": out,
+        "purchase_order": None,
+        "message": f"{out.get('invoice_number')} taslak olarak kopyalandı.",
+    }
+
+
 @api_router.post("/invoices/{invoice_id}/expense-slip")
 async def create_expense_slip_from_invoice(invoice_id: str):
     """Kesilmiş belgeden aynı cari ve kalemlerle alış gider pusulası düzenler."""

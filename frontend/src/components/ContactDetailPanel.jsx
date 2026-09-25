@@ -14,6 +14,7 @@ import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
 import { InvoiceContextMenu, isIncomingPurchaseInvoice, canDeleteInvoice, canCancelInvoice } from "./InvoiceContextMenu";
+import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
@@ -148,6 +149,19 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [editQuote, setEditQuote] = useState(null);
   const [termsOpen, setTermsOpen] = useState(false);
   const [invCtx, setInvCtx] = useState(null);
+  const onInvoiceCopied = useCallback((result) => {
+    load();
+    if (result?.kind === "purchase_order") {
+      navigate("/purchase-orders");
+      return;
+    }
+    const inv = result?.invoice;
+    if (inv) setEditInv({ ...inv });
+  }, [load, navigate]);
+  const invoiceCopy = useInvoiceCopyFromContext({
+    companyId: data?.contact?.company_id || activeCompany?.id || activeCompany?._id,
+    onCopied: onInvoiceCopied,
+  });
   const colState = useSortableColumns();
   const sortedInvoices = useSortedRows(data?.invoices || [], colState.sort);
   const closeInvCtx = React.useCallback(() => setInvCtx(null), []);
@@ -864,7 +878,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
           </div>
         )}
-        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} companyId={activeCompany?.id || activeCompany?._id || c?.company_id} onIssue={(inv, eType) => sendToGib(inv, eType)} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onEdit={(inv) => setEditInv({ ...inv })} onDelete={deleteInvoice} onCancel={cancelInvoice} onExpenseSlip={issueExpenseSlip} apiBase={API_URL} />
+        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} companyId={activeCompany?.id || activeCompany?._id || c?.company_id} onIssue={(inv, eType) => sendToGib(inv, eType)} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onEdit={(inv) => setEditInv({ ...inv })} onDelete={deleteInvoice} onCancel={cancelInvoice} onExpenseSlip={issueExpenseSlip} onCopy={invoiceCopy.handleCopyMode} apiBase={API_URL} />
+        {invoiceCopy.modal}
         {termsOpen && <ContactTermsModal contact={c} onClose={() => setTermsOpen(false)} onSaved={load} />}
         {balancePlan && <InstallmentPlanModal kind="balance" doc={{ id: c.id, contact_name: c.name, grand_total: Math.abs(c.balance || 0), invoice_number: "Açık Bakiye", direction: c.balance >= 0 ? "receivable" : "payable" }} accounts={accounts} companyId={c.company_id} onClose={() => setBalancePlan(false)} onChanged={() => { load(); loadInsts(); }} />}
         {editQuote && <QuoteEditModal quote={editQuote} onClose={() => setEditQuote(null)} onSaved={load} />}
@@ -968,7 +983,17 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {editInv && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditInv(null)}>
             <div className="bg-white rounded-2xl max-w-6xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="invoice-edit-modal">
-              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editInv.status === "draft" ? "Taslak Fatura Düzenle" : "Fatura Düzenle"} — {editInv.invoice_number}</h3><button onClick={() => setEditInv(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              <div className="flex justify-between items-center border-b pb-2 gap-3">
+                <h3 className="text-sm font-bold">{editInv.status === "draft" ? "Taslak Fatura Düzenle" : "Fatura Düzenle"} — {editInv.invoice_number}</h3>
+                <div className="flex items-center gap-2 shrink-0">
+                  <InvoiceCopyButton
+                    invoice={editInv}
+                    onPickMode={(mode) => invoiceCopy.openPick(editInv, mode)}
+                    onCopied={onInvoiceCopied}
+                  />
+                  <button type="button" onClick={() => setEditInv(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
+                </div>
+              </div>
               {editInv.status !== "draft" && <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800 flex items-center gap-1" data-testid="edit-inv-locked-note"><Lock className="w-3 h-3" /> Kesilmiş fatura: kalemler ve belge türü değiştirilemez; yalnızca vade ve not düzenlenebilir.</div>}
               <div className="grid grid-cols-3 gap-2">
                 <div><label className="block font-semibold mb-1">Belge Türü</label><select disabled={editInv.status !== "draft"} value={editInv.e_type} onChange={(e) => setEditInv({ ...editInv, e_type: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="edit-inv-etype"><option value="e_invoice">E-Fatura</option><option value="e_archive">E-Arşiv</option><option value="e_export">e-İhracat</option><option value="paper">Kağıt Fatura</option><option value="e_dispatch">E-İrsaliye</option></select></div>
