@@ -33,6 +33,16 @@ describe("projectStages", () => {
     expect(map.completed[1]).toBe(stageToneClass("emerald"));
   });
 
+  test("tone labels are Turkish", () => {
+    const { stageToneLabel, PROJECT_STAGE_TONES } = require("./projectStages");
+    expect(stageToneLabel("slate")).toBe("Gri");
+    expect(stageToneLabel("blue")).toBe("Mavi");
+    expect(stageToneLabel("emerald")).toBe("Yeşil");
+    expect(PROJECT_STAGE_TONES.map(stageToneLabel)).toEqual([
+      "Gri", "Mavi", "Amber", "Yeşil", "Gül", "Mor", "İndigo",
+    ]);
+  });
+
   test("forces a final stage when missing", () => {
     const list = normalizeProjectStages([
       { key: "a", label: "A" },

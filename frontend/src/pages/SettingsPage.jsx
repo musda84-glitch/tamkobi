@@ -23,7 +23,7 @@ import IsnetIntegrationPanel from "../components/IsnetIntegrationPanel";
 import IsnetPortalPanel from "../components/IsnetPortalPanel";
 import { FxRatesPanel } from "../components/FxRatesPanel";
 import { BrowserExtensionPanel } from "../components/BrowserExtensionPanel";
-import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, PROJECT_STAGE_TONES, stageToneClass, slugStageKey } from "../utils/projectStages";
+import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, PROJECT_STAGE_TONES, stageToneClass, stageToneLabel, slugStageKey } from "../utils/projectStages";
 import { normalizeWorkParks, normalizeOfficeTaskTypes } from "../utils/workParks";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -383,7 +383,7 @@ const ProjectStagesSettings = ({ companyId }) => {
             <span className="text-slate-300"><GripVertical className="w-4 h-4" /></span>
             <input value={s.label} onChange={(e) => update(i, { label: e.target.value })} className="flex-1 min-w-[120px] bg-white border rounded-lg px-2 py-1.5 font-semibold" data-testid={`project-stage-label-${s.key}`} />
             <select value={s.tone} onChange={(e) => update(i, { tone: e.target.value })} className="bg-white border rounded-lg px-2 py-1.5" data-testid={`project-stage-tone-${s.key}`}>
-              {PROJECT_STAGE_TONES.map((t) => <option key={t} value={t}>{t}</option>)}
+              {PROJECT_STAGE_TONES.map((t) => <option key={t} value={t}>{stageToneLabel(t)}</option>)}
             </select>
             <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${stageToneClass(s.tone)}`}>{s.label || "—"}</span>
             <button type="button" onClick={() => setFinal(i)} className={`p-1.5 rounded-lg border ${s.is_final ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-slate-400"}`} title="Tamamlanma aşaması" data-testid={`project-stage-final-${s.key}`}><Star className="w-3.5 h-3.5" /></button>

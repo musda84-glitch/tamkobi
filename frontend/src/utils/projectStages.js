@@ -16,7 +16,22 @@ const TONE_CLASS = {
   indigo: "bg-indigo-50 text-indigo-700",
 };
 
+/** Tone anahtarları (CSS) → Türkçe etiket */
+export const PROJECT_STAGE_TONE_LABELS = {
+  slate: "Gri",
+  blue: "Mavi",
+  amber: "Turuncu",
+  emerald: "Yeşil",
+  rose: "Pembe",
+  violet: "Mor",
+  indigo: "Lacivert",
+};
+
 export const PROJECT_STAGE_TONES = Object.keys(TONE_CLASS);
+
+export function stageToneLabel(tone) {
+  return PROJECT_STAGE_TONE_LABELS[tone] || PROJECT_STAGE_TONE_LABELS.slate;
+}
 
 export function stageToneClass(tone) {
   return TONE_CLASS[tone] || TONE_CLASS.slate;
