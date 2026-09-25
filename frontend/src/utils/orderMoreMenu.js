@@ -171,13 +171,17 @@ export function orderDeleteMoreItem() {
 export function orderMoreMenuItems(ord, opts = {}) {
   const kind = orderMoreMenuKind(ord);
   let items;
-  if (kind === "held_cart") items = [];
-  else if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
+  if (kind === "held_cart") {
+    // Aktif / bekleyen sepet: yalnızca Sil (Yazdır satır butonu olarak ayrıca var)
+    const allowDelete = opts.canDelete !== false;
+    return { kind, items: allowDelete ? [orderDeleteMoreItem()] : [] };
+  }
+  if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
   else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems();
   else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
   else items = defaultMoreItems(ord, opts);
   const allowDelete = opts.canDelete !== false;
-  if (allowDelete && (kind === "held_cart" || canDeleteFromMoreMenu(ord))) items = [...items, orderDeleteMoreItem()];
+  if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
   return { kind, items: [...items, ...orderDownloadMoreItems()] };
 }

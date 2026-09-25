@@ -100,7 +100,7 @@ export function OrderDetailScreen() {
       <Muted>{order.customer_name} · {fmtDate(order.order_date)}</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
-      {!isCart ? <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} onChanged={load} onDeleted={() => router.back()} /> : null}
+      <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} onChanged={load} onDeleted={() => router.back()} />
       <Card>
         <Badge label={channelTr(order.channel)} tone="indigo" />
         <Badge label={statusTr(order.order_status)} tone="amber" />

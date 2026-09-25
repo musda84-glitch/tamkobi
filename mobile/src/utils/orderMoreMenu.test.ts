@@ -107,4 +107,15 @@ describe("orderMoreMenu web variants", () => {
     expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: false, invoice_id: "inv1" }).items.map((i) => i.id)).not.toContain("delete");
     expect(orderMoreMenuItems({ channel: "b2b", is_invoiced: true, e_type: "e_archive" }).items.map((i) => i.id)).not.toContain("delete");
   });
+
+  it("held / active cart menus only expose delete", () => {
+    for (const ord of [
+      { channel: "b2b", order_status: "held_cart", is_held_cart: true },
+      { channel: "b2b", order_status: "active_cart", is_active_cart: true },
+    ]) {
+      expect(orderMoreMenuKind(ord)).toBe("held_cart");
+      expect(orderMoreMenuItems(ord).items.map((i) => i.id)).toEqual(["delete"]);
+      expect(mobilePrimaryAction(ord)).toEqual({ id: "delete", label: "Sil" });
+    }
+  });
 });

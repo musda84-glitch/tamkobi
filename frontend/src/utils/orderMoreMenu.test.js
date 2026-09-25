@@ -89,4 +89,15 @@ describe("orderMoreMenu", () => {
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("E-Fatura Oluştur");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Navlungo Siparişi Oluştur");
   });
+
+  it("held / active cart menus only expose delete", () => {
+    for (const ord of [
+      { channel: "b2b", order_status: "held_cart", is_held_cart: true, order_number: "BH-1" },
+      { channel: "b2b", order_status: "active_cart", is_active_cart: true, order_number: "BA-1" },
+    ]) {
+      expect(orderMoreMenuKind(ord)).toBe("held_cart");
+      expect(orderMoreMenuItems(ord).items.map((i) => i.id)).toEqual(["delete"]);
+      expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Siparişi Excel İndir");
+    }
+  });
 });
