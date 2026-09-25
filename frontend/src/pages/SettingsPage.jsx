@@ -24,10 +24,10 @@ import IsnetPortalPanel from "../components/IsnetPortalPanel";
 import { FxRatesPanel } from "../components/FxRatesPanel";
 import { BrowserExtensionPanel } from "../components/BrowserExtensionPanel";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, PROJECT_STAGE_TONES, stageToneClass, slugStageKey } from "../utils/projectStages";
-import { normalizeWorkParks } from "../utils/workParks";
+import { normalizeWorkParks, normalizeOfficeTaskTypes } from "../utils/workParks";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "İç görev parkurları", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -405,63 +405,122 @@ const ProjectStagesSettings = ({ companyId }) => {
   );
 };
 
-const WorkParksSettings = ({ companyId }) => {
-  const [parks, setParks] = useState([]);
-  const [busy, setBusy] = useState(false);
+const NamedListEditor = ({
+  title,
+  hint,
+  emptyText,
+  placeholder,
+  items,
+  setItems,
+  onSave,
+  busy,
+  testId,
+  rowPrefix,
+}) => {
   const [newName, setNewName] = useState("");
-  const load = useCallback(() => {
-    axios.get(`${API_URL}/companies/${companyId}/work-parks`)
-      .then((r) => setParks(normalizeWorkParks(r.data?.parks)))
-      .catch(() => setParks([]));
-  }, [companyId]);
-  useEffect(() => { load(); }, [load]);
-  const update = (idx, name) => setParks((list) => list.map((p, i) => (i === idx ? { ...p, name } : p)));
-  const remove = (idx) => setParks((list) => list.filter((_, i) => i !== idx));
+  const update = (idx, name) => setItems((list) => list.map((p, i) => (i === idx ? { ...p, name } : p)));
+  const remove = (idx) => setItems((list) => list.filter((_, i) => i !== idx));
   const add = (e) => {
     e.preventDefault();
     const name = newName.trim();
     if (!name) return;
-    if (parks.length >= 40) return toast.error("En fazla 40 parkur.");
-    setParks([...parks, { id: `park_${Date.now()}`, name }]);
+    if (items.length >= 40) return toast.error("En fazla 40 kayıt.");
+    setItems([...items, { id: `${rowPrefix}_${Date.now()}`, name }]);
     setNewName("");
   };
-  const save = async () => {
-    setBusy(true);
-    try {
-      const r = await axios.put(`${API_URL}/companies/${companyId}/work-parks`, { parks: normalizeWorkParks(parks) });
-      setParks(normalizeWorkParks(r.data.parks));
-      toast.success(r.data.message || "Kaydedildi.");
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Kaydedilemedi.");
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs max-w-2xl" data-testid="work-parks-settings">
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs max-w-2xl" data-testid={testId}>
       <div>
-        <div className="text-sm font-bold text-slate-900 flex items-center gap-2"><Briefcase className="w-4 h-4 text-indigo-600" /> İç görev parkurları</div>
-        <p className="text-slate-500 mt-1">Personel kartından <b>iç görev</b> atarken bu liste çıkar. Örn: Makina parkuru, Kaynak atölyesi, Montaj hattı.</p>
+        <div className="text-sm font-bold text-slate-900 flex items-center gap-2"><Briefcase className="w-4 h-4 text-indigo-600" /> {title}</div>
+        <p className="text-slate-500 mt-1">{hint}</p>
       </div>
-      {parks.length === 0 ? (
-        <p className="text-slate-400 bg-slate-50 border border-slate-100 rounded-lg p-3">Henüz parkur yok. Aşağıdan ekleyip kaydedin.</p>
+      {items.length === 0 ? (
+        <p className="text-slate-400 bg-slate-50 border border-slate-100 rounded-lg p-3">{emptyText}</p>
       ) : (
         <div className="space-y-2">
-          {parks.map((p, i) => (
-            <div key={p.id} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2" data-testid={`work-park-row-${p.id}`}>
-              <input value={p.name} onChange={(e) => update(i, e.target.value)} className="flex-1 min-w-[140px] bg-white border rounded-lg px-2 py-1.5 font-semibold" data-testid={`work-park-name-${p.id}`} />
-              <button type="button" onClick={() => remove(i)} className="p-1.5 text-slate-400 hover:text-rose-600" data-testid={`work-park-del-${p.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+          {items.map((p, i) => (
+            <div key={p.id} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-2" data-testid={`${rowPrefix}-row-${p.id}`}>
+              <input value={p.name} onChange={(e) => update(i, e.target.value)} className="flex-1 min-w-[140px] bg-white border rounded-lg px-2 py-1.5 font-semibold" data-testid={`${rowPrefix}-name-${p.id}`} />
+              <button type="button" onClick={() => remove(i)} className="p-1.5 text-slate-400 hover:text-rose-600" data-testid={`${rowPrefix}-del-${p.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
             </div>
           ))}
         </div>
       )}
       <form onSubmit={add} className="flex gap-2">
-        <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Örn: Makina parkuru" className="flex-1 bg-slate-50 border rounded-lg p-2" data-testid="work-park-new-input" />
-        <button type="submit" className="px-3 py-2 bg-slate-900 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="work-park-add"><Plus className="w-3.5 h-3.5" /> Ekle</button>
+        <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={placeholder} className="flex-1 bg-slate-50 border rounded-lg p-2" data-testid={`${rowPrefix}-new-input`} />
+        <button type="submit" className="px-3 py-2 bg-slate-900 text-white rounded-lg font-semibold flex items-center gap-1" data-testid={`${rowPrefix}-add`}><Plus className="w-3.5 h-3.5" /> Ekle</button>
       </form>
       <div className="flex justify-end pt-1 border-t">
-        <button type="button" onClick={save} disabled={busy} className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold flex items-center gap-1.5 disabled:opacity-60" data-testid="work-park-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button>
+        <button type="button" onClick={onSave} disabled={busy} className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold flex items-center gap-1.5 disabled:opacity-60" data-testid={`${rowPrefix}-save`}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Kaydet</button>
       </div>
+    </div>
+  );
+};
+
+const WorkParksSettings = ({ companyId }) => {
+  const [parks, setParks] = useState([]);
+  const [types, setTypes] = useState([]);
+  const [busyParks, setBusyParks] = useState(false);
+  const [busyTypes, setBusyTypes] = useState(false);
+  const load = useCallback(() => {
+    axios.get(`${API_URL}/companies/${companyId}/work-parks`)
+      .then((r) => setParks(normalizeWorkParks(r.data?.parks)))
+      .catch(() => setParks([]));
+    axios.get(`${API_URL}/companies/${companyId}/office-task-types`)
+      .then((r) => setTypes(normalizeOfficeTaskTypes(r.data?.types)))
+      .catch(() => setTypes([]));
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
+  const saveParks = async () => {
+    setBusyParks(true);
+    try {
+      const r = await axios.put(`${API_URL}/companies/${companyId}/work-parks`, { parks: normalizeWorkParks(parks) });
+      setParks(normalizeWorkParks(r.data.parks));
+      toast.success(r.data.message || "Parkurlar kaydedildi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Kaydedilemedi.");
+    } finally {
+      setBusyParks(false);
+    }
+  };
+  const saveTypes = async () => {
+    setBusyTypes(true);
+    try {
+      const r = await axios.put(`${API_URL}/companies/${companyId}/office-task-types`, { types: normalizeOfficeTaskTypes(types) });
+      setTypes(normalizeOfficeTaskTypes(r.data.types));
+      toast.success(r.data.message || "İç görev listesi kaydedildi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Kaydedilemedi.");
+    } finally {
+      setBusyTypes(false);
+    }
+  };
+  return (
+    <div className="space-y-6" data-testid="work-parks-settings">
+      <NamedListEditor
+        title="Parkurlar"
+        hint="Atölye / üretim istasyonları. Örn: CNC OEMAK, PVC bantlama, Montaj hattı."
+        emptyText="Henüz parkur yok. Aşağıdan ekleyip kaydedin."
+        placeholder="Örn: CNC OEMAK"
+        items={parks}
+        setItems={setParks}
+        onSave={saveParks}
+        busy={busyParks}
+        testId="work-parks-card"
+        rowPrefix="work-park"
+      />
+      <NamedListEditor
+        title="İç görevler"
+        hint="Personel kartından iç görev atarken bu liste çıkar. Parkurdan bağımsızdır. Örn: Ambar sayım, Makina bakımı, Ofis işi."
+        emptyText="Henüz iç görev yok. Aşağıdan ekleyip kaydedin."
+        placeholder="Örn: Ambar sayım"
+        items={types}
+        setItems={setTypes}
+        onSave={saveTypes}
+        busy={busyTypes}
+        testId="office-task-types-card"
+        rowPrefix="office-task-type"
+      />
     </div>
   );
 };

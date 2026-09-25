@@ -12,7 +12,7 @@ import {
   parseTaskDays,
   validateEmployeeTaskAssign,
 } from "../utils/employeeTaskAssign";
-import { findWorkPark, normalizeWorkParks, officeTaskPayload, validateOfficeTaskAssign } from "../utils/workParks";
+import { findOfficeTaskType, normalizeOfficeTaskTypes, officeTaskPayload, validateOfficeTaskAssign } from "../utils/workParks";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 
@@ -24,29 +24,29 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState("field");
-  const [form, setForm] = useState({ project_id: "", task_id: "", title: "", due_date: "", duration_days: "", park_id: "" });
-  const [parks, setParks] = useState([]);
+  const [form, setForm] = useState({ project_id: "", task_id: "", title: "", due_date: "", duration_days: "", task_type_id: "" });
+  const [officeTypes, setOfficeTypes] = useState([]);
   const [showCompleted, setShowCompleted] = useState(false);
 
   const load = useCallback(async () => {
     if (!companyId) return;
     setLoading(true);
     try {
-      const [r, pr] = await Promise.all([
+      const [r, ot] = await Promise.all([
         axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } }),
-        axios.get(`${API_URL}/companies/${companyId}/work-parks`).catch(() => ({ data: { parks: [] } })),
+        axios.get(`${API_URL}/companies/${companyId}/office-task-types`).catch(() => ({ data: { types: [] } })),
       ]);
       const rows = r.data || [];
       setProjects(rows);
-      const list = normalizeWorkParks(pr.data?.parks);
-      setParks(list);
+      const list = normalizeOfficeTaskTypes(ot.data?.types);
+      setOfficeTypes(list);
       setForm((s) => {
         const next = { ...s };
         if (!s.project_id) {
           const first = rows.find((p) => !isClosedProject(p)) || rows[0];
           next.project_id = first ? (first.id || first._id) : "";
         }
-        if (!s.park_id && list[0]) next.park_id = list[0].id;
+        if (!s.task_type_id && list[0]) next.task_type_id = list[0].id;
         return next;
       });
     } catch {
@@ -95,13 +95,13 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
   const save = async (e) => {
     e.preventDefault();
     if (kind === "office") {
-      const invalid = validateOfficeTaskAssign(form.park_id);
+      const invalid = validateOfficeTaskAssign(form.task_type_id);
       if (invalid) { toast.error(invalid); return; }
-      const park = findWorkPark(parks, form.park_id);
+      const taskType = findOfficeTaskType(officeTypes, form.task_type_id);
       setBusy(true);
       try {
-        await axios.post(`${API_URL}/personnel/employees/${empId}/office-tasks`, officeTaskPayload(park, form.title));
-        toast.success(`${employee.full_name} · ${park?.name || "iç görev"}`);
+        await axios.post(`${API_URL}/personnel/employees/${empId}/office-tasks`, officeTaskPayload(taskType, form.title));
+        toast.success(`${employee.full_name} · ${taskType?.name || "iç görev"}`);
         onSaved?.();
         onClose();
       } catch (err) {
@@ -209,24 +209,24 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
             </div>
 
             {kind === "office" ? (
-              parks.length === 0 ? (
+              officeTypes.length === 0 ? (
                 <p className="text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2" data-testid="emp-task-no-parks">
-                  Henüz parkur yok. Firma Ayarları → İç görev parkurları’ndan ekleyin (ör. Makina parkuru).
+                  Henüz iç görev yok. Firma Ayarları → Parkur & İç görev’den ekleyin (ör. Ambar sayım).
                 </p>
               ) : (
                 <>
-                  <p className="text-[11px] text-slate-500" data-testid="emp-task-office-hint">İç görev ofiste / parkurda yapılır; konum kontrolü ücreti etkilemez.</p>
+                  <p className="text-[11px] text-slate-500" data-testid="emp-task-office-hint">İç görev iş merkezinde yapılır; konum kontrolü ücreti etkilemez. Parkur listesinden bağımsızdır.</p>
                   <div>
-                    <label className="block font-semibold mb-1">Parkur</label>
+                    <label className="block font-semibold mb-1">İç görev</label>
                     <select
-                      value={form.park_id}
-                      onChange={(e) => setForm({ ...form, park_id: e.target.value })}
+                      value={form.task_type_id}
+                      onChange={(e) => setForm({ ...form, task_type_id: e.target.value })}
                       className={inputCls}
                       data-testid="emp-task-park"
                     >
-                      <option value="">Parkur seçin</option>
-                      {parks.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
+                      <option value="">İç görev seçin</option>
+                      {officeTypes.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
                       ))}
                     </select>
                   </div>
@@ -235,7 +235,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                     <input
                       value={form.title}
                       onChange={(e) => setForm({ ...form, title: e.target.value })}
-                      placeholder="Boş bırakılırsa parkur adı yazılır"
+                      placeholder="Boş bırakılırsa görev adı yazılır"
                       className={inputCls}
                       data-testid="emp-task-title"
                     />

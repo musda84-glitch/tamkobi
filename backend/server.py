@@ -470,7 +470,38 @@ async def put_work_parks(company_id: str, req: Dict[str, Any], user: dict = Depe
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     parks = wp.normalize_work_parks(req.get("parks"))
     await db.companies.update_one({"_id": company_id}, {"$set": {"work_parks": parks}})
-    return {"status": "success", "message": "İç görev parkurları kaydedildi.", "parks": parks}
+    return {"status": "success", "message": "Parkurlar kaydedildi.", "parks": parks}
+
+
+@api_router.get("/companies/{company_id}/office-task-types")
+async def get_office_task_types(company_id: str):
+    """İç görev kataloğu (personel atama). Boşsa eski parkur listesinden bir kez kopyalanır."""
+    import work_parks as wp
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    types = wp.normalize_office_task_types(c.get("office_task_types"))
+    seeded = False
+    if not types and c.get("work_parks"):
+        types = wp.normalize_work_parks(c.get("work_parks"))
+        if types:
+            await db.companies.update_one({"_id": company_id}, {"$set": {"office_task_types": types}})
+            seeded = True
+    return {"types": types, "seeded_from_parks": seeded}
+
+
+@api_router.put("/companies/{company_id}/office-task-types")
+async def put_office_task_types(company_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    import work_parks as wp
+    _require_company_member(user, company_id)
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    raw = req.get("types") if req.get("types") is not None else req.get("tasks")
+    types = wp.normalize_office_task_types(raw)
+    await db.companies.update_one({"_id": company_id}, {"$set": {"office_task_types": types}})
+    return {"status": "success", "message": "İç görev listesi kaydedildi.", "types": types}
+
 
 @api_router.post("/personnel/employees/{emp_id}/office-tasks")
 async def assign_office_task(emp_id: str, req: Dict[str, Any]):
@@ -479,11 +510,15 @@ async def assign_office_task(emp_id: str, req: Dict[str, Any]):
     if not emp:
         raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
     company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
+    types = wp.office_task_types_for_company(company)
+    type_id = req.get("task_type_id") or req.get("office_task_type_id") or req.get("park_id")
+    task_type = wp.find_office_task_type(types, type_id)
+    if not task_type:
+        raise HTTPException(status_code=400, detail="İç görev seçin.")
     parks = wp.normalize_work_parks(company.get("work_parks"))
-    park = wp.find_park(parks, req.get("park_id"))
-    if not park:
-        raise HTTPException(status_code=400, detail="Parkur seçin.")
-    row = wp.office_task_row(emp, park, req.get("title") or "")
+    park_id = req.get("park_id")
+    park = wp.find_park(parks, park_id) if park_id and str(park_id) != str(task_type.get("id") or "") else None
+    row = wp.office_task_row(emp, task_type, req.get("title") or "", park=park)
     # Önceki açık iç görevleri kapat; iş merkezine dönüşte dış görev çiti ücret kesmesin.
     tasks = []
     for t in (emp.get("office_tasks") or []):
@@ -497,7 +532,7 @@ async def assign_office_task(emp_id: str, req: Dict[str, Any]):
         task_id=row.get("id"),
         title=row.get("title") or "",
         park_id=row.get("park_id"),
-        park_name=row.get("park_name") or "",
+        park_name=row.get("park_name") or row.get("task_type_name") or "",
     )
     await db.employees.update_one(
         {"_id": emp_id},
