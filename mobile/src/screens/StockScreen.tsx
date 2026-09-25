@@ -16,8 +16,8 @@ import { productTypeTr } from "../utils/labels";
 import { cacheIsFresh, peekCachedRows, readCachedRows, writeCachedRows } from "../utils/listCache";
 import { listRowText } from "../utils/listRow";
 import { LIST_INITIAL_ROWS, nextRowLimit, visibleRows } from "../utils/listPaging";
-import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { nextStickyFilterHidden } from "../utils/listSticky";
+import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { asList, filterProducts, lastPurchaseLabel, lastSaleLabel, productCategoryGroups, productImage, slimListProducts, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
 import { moveChange, parseStockMoves, type StockMove } from "../utils/stockMoves";
 
