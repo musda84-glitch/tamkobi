@@ -1,5 +1,6 @@
 import {
   DUTY_ATOLYE_ACTION,
+  DUTY_PHOTO_ACTION,
   DUTY_COMPLETE_ACTION,
   DUTY_COMPLETE_APPROVED,
   DUTY_MAPS_ACTION,
@@ -48,6 +49,7 @@ describe("assigned duty field extras", () => {
       workplace: { kind: "task", task_title: "aa" },
     })?.photos?.[0]?.url).toBe("/a.jpg");
     expect(DUTY_ATOLYE_ACTION).toBe("Atölyeye git");
+    expect(DUTY_PHOTO_ACTION).toBe("Resim yükle");
     expect(dutyIsField(t)).toBe(true);
     expect(dutyHasProject(t)).toBe(true);
     expect(dutyShowSite(t)).toBe(true);
