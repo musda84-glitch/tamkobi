@@ -16,6 +16,7 @@ import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Sc
 import { TabStrip } from "../components/TabStrip";
 import { confirmAction } from "../components/chips";
 import { colors } from "../theme";
+import { PUNCH_IN_COLOR, PUNCH_OUT_COLOR } from "../utils/labels";
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import {
   appendUploadBlob,
@@ -176,11 +177,21 @@ function AttendanceRecCard({
   return (
     <View testID={`att-rec-${idOf(r)}`} style={{ paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border, marginTop: 8 }}>
       {hideName ? null : <Text style={{ fontWeight: "800", color: colors.text }}>{r.employee_name || "Personel"}</Text>}
-      <Muted>
-        {[fmtDmy(r.date), r.status === "present" ? `${r.check_in || "--:--"} → ${r.check_out || "--:--"}` : r.status === "absent" ? "Devamsız" : "İzinli"].join(" · ")}
-        {r.hours != null ? ` · ${r.hours} sa` : ""}
-        {r.late_minutes ? ` · ${r.late_minutes} dk geç` : ""}
-      </Muted>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center" }}>
+        <Muted>{fmtDmy(r.date)}</Muted>
+        {r.status === "present" ? (
+          <>
+            <Muted> · </Muted>
+            <Text style={{ fontSize: 12, fontWeight: "800", color: PUNCH_IN_COLOR }}>{r.check_in || "--:--"}</Text>
+            <Muted> → </Muted>
+            <Text style={{ fontSize: 12, fontWeight: "800", color: PUNCH_OUT_COLOR }}>{r.check_out || "--:--"}</Text>
+          </>
+        ) : (
+          <Muted>{` · ${r.status === "absent" ? "Devamsız" : "İzinli"}`}</Muted>
+        )}
+        {r.hours != null ? <Muted>{` · ${r.hours} sa`}</Muted> : null}
+        {r.late_minutes ? <Muted>{` · ${r.late_minutes} dk geç`}</Muted> : null}
+      </View>
       {r.manager_time_edit?.pending_employee ? (
         <Muted testID={`att-time-edit-${idOf(r)}`}>Personel onayı bekleniyor ({r.manager_time_edit.prev_check_out || r.manager_time_edit.prev_check_in || "—"} → {r.manager_time_edit.check_out || r.manager_time_edit.check_in || "—"})</Muted>
       ) : null}
@@ -1324,8 +1335,8 @@ export function PersonnelScreen() {
                             onPress={() => setPunchConfirm({ id: eid, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", today) })}
                             style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: punchConfirm?.id === eid && punchConfirm.action === "check_in" ? "#D1FAE5" : "#fff" }}
                           >
-                            <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>GİRİŞ</Text>
-                            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: colors.text }}>
+                            <Text style={{ fontSize: 9, fontWeight: "800", color: PUNCH_IN_COLOR, letterSpacing: 0.3 }}>GİRİŞ</Text>
+                            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: PUNCH_IN_COLOR }}>
                               {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
                             </Text>
                           </Pressable>
@@ -1337,8 +1348,8 @@ export function PersonnelScreen() {
                             onPress={() => setPunchConfirm({ id: eid, action: "check_out", name: emp.full_name || "", time: cardPunchDraftTime("check_out", today) })}
                             style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: punchConfirm?.id === eid && punchConfirm.action === "check_out" ? "#FEE2E2" : "#fff" }}
                           >
-                            <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>ÇIKIŞ</Text>
-                            <Text style={{ fontWeight: "800", fontSize: 12, color: colors.text }}>{punch.checkOut}</Text>
+                            <Text style={{ fontSize: 9, fontWeight: "800", color: PUNCH_OUT_COLOR, letterSpacing: 0.3 }}>ÇIKIŞ</Text>
+                            <Text style={{ fontWeight: "800", fontSize: 12, color: PUNCH_OUT_COLOR }}>{punch.checkOut}</Text>
                           </Pressable>
                         </View>
                       </Row>
@@ -1617,10 +1628,19 @@ export function PersonnelScreen() {
                   <Text testID={`att-yevmiye-badge-${s.employee_id}`} style={{ fontSize: 10, fontWeight: "800", color: "#B45309", backgroundColor: "#FFFBEB", overflow: "hidden", borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 }}>Yevmiye</Text>
                 ) : null}
               </View>
-              <Muted>
-                Bugün {s.today ? `${s.today.check_in || "--:--"} → ${s.today.check_out || "--:--"}` : "—"}
-                {s.today?.late_minutes ? ` · ${s.today.late_minutes} dk geç` : ""}
-              </Muted>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center" }}>
+                <Muted>Bugün </Muted>
+                {s.today ? (
+                  <>
+                    <Text style={{ fontSize: 12, fontWeight: "800", color: PUNCH_IN_COLOR }}>{s.today.check_in || "--:--"}</Text>
+                    <Muted> → </Muted>
+                    <Text style={{ fontSize: 12, fontWeight: "800", color: PUNCH_OUT_COLOR }}>{s.today.check_out || "--:--"}</Text>
+                  </>
+                ) : (
+                  <Muted>—</Muted>
+                )}
+                {s.today?.late_minutes ? <Muted>{` · ${s.today.late_minutes} dk geç`}</Muted> : null}
+              </View>
               {s.workplace?.kind === "task" ? (
                 <Muted testID={`att-workplace-${s.employee_id}`}>Dış görev · {workplaceShort(s.workplace)}</Muted>
               ) : null}

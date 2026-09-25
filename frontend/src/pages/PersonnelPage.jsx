@@ -759,8 +759,8 @@ export default function PersonnelPage() {
                         className={`min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "bg-emerald-100" : "bg-white"}`}
                         data-testid={`employee-card-today-in-${empKey}`}
                       >
-                        <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Giriş</div>
-                        <div className="text-[12px] font-black text-slate-900 leading-tight">
+                        <div className="text-[9px] font-bold uppercase tracking-wide text-emerald-700">Giriş</div>
+                        <div className="text-[12px] font-black text-emerald-800 leading-tight">
                           {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
                         </div>
                       </button>
@@ -771,8 +771,8 @@ export default function PersonnelPage() {
                         className={`min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_out" ? "bg-rose-100" : "bg-white"}`}
                         data-testid={`employee-card-today-out-${empKey}`}
                       >
-                        <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Çıkış</div>
-                        <div className="text-[12px] font-black text-slate-900 leading-tight">{punch.checkOut}</div>
+                        <div className="text-[9px] font-bold uppercase tracking-wide text-rose-700">Çıkış</div>
+                        <div className="text-[12px] font-black text-rose-700 leading-tight">{punch.checkOut}</div>
                       </button>
                       </div>
                     </div>

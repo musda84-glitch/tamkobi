@@ -157,6 +157,24 @@ export function trUpper(value: string): string {
   return String(value || "").toLocaleUpperCase("tr-TR");
 }
 
+export const PUNCH_IN_COLOR = "#047857";
+export const PUNCH_OUT_COLOR = "#BE123C";
+
+/** Giriş yeşil, çıkış kırmızı; diğer etiketler nötr. */
+export function punchLabelTone(label?: string | null): "in" | "out" | null {
+  const s = String(label || "").toLocaleLowerCase("tr-TR");
+  if (s.includes("çıkış") || s.includes("cikis")) return "out";
+  if (s.includes("giriş") || s.includes("giris")) return "in";
+  return null;
+}
+
+export function punchLabelColor(label?: string | null, fallback = "#64748B"): string {
+  const tone = punchLabelTone(label);
+  if (tone === "out") return PUNCH_OUT_COLOR;
+  if (tone === "in") return PUNCH_IN_COLOR;
+  return fallback;
+}
+
 export const statusTr = (v?: string | null) => tr(STATUS_TR, v);
 export const leaveTr = (v?: string | null) => tr(LEAVE_TYPE_TR, v);
 export const channelTr = (v?: string | null) => tr(CHANNEL_TR, v);
