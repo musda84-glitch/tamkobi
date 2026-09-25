@@ -764,8 +764,24 @@ def location_move_public(rec: dict, move: dict) -> dict:
     }
 
 
+def overtime_move_source(rec: dict, kind: str) -> tuple:
+    """(source_key, source_label) — mesainin nasıl işlendiği."""
+    if kind == "assigned":
+        return "manager", "Yönetici atadı"
+    # Hesaplanan: konum sinyali varsa konumdan, değilse puantaj saatlerinden
+    if (
+        rec.get("geo_check_in")
+        or rec.get("geo_check_out")
+        or rec.get("location_inside_at")
+        or rec.get("location_left_at")
+        or (isinstance(rec.get("location_moves"), list) and rec.get("location_moves"))
+    ):
+        return "location", "Konumdan tespit edildi"
+    return "punch", "Puantajdan hesaplandı"
+
+
 def overtime_move_public(rec: dict) -> Optional[dict]:
-    """Gün bazlı fazla mesai hareketi (atanan veya puantajdan hesaplanan)."""
+    """Gün bazlı fazla mesai hareketi (atanan veya puantajdan/konumdan hesaplanan)."""
     if not rec:
         return None
     assigned = max(0.0, _as_float(rec.get("assigned_overtime_hours"), 0.0))
@@ -774,6 +790,7 @@ def overtime_move_public(rec: dict) -> Optional[dict]:
         return None
     hours = assigned if assigned > 0 else computed
     kind = "assigned" if assigned > 0 else "computed"
+    source, source_label = overtime_move_source(rec, kind)
     return {
         "id": rec.get("_id") or rec.get("id"),
         "attendance_id": rec.get("_id") or rec.get("id"),
@@ -787,6 +804,10 @@ def overtime_move_public(rec: dict) -> Optional[dict]:
         "end": rec.get("assigned_overtime_end") or None,
         "note": (rec.get("assigned_overtime_note") or rec.get("note") or "")[:200] or None,
         "kind": kind,
+        "source": source,
+        "source_label": source_label,
+        "assigned_by": rec.get("assigned_overtime_by") or None,
+        "assigned_at": rec.get("assigned_overtime_at") or None,
         "check_in": rec.get("check_in"),
         "check_out": rec.get("check_out"),
         "can_edit": True,

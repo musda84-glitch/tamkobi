@@ -20,6 +20,7 @@ import {
   overtimeMoveCanDelete,
   overtimeMoveCanEdit,
   overtimeMoveDeleteConfirm,
+  overtimeMoveDetail,
   overtimeMoveLine,
   overtimeMovesPeriodHint,
   payMovesPeriodHint,
@@ -316,10 +317,10 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
                 >
                   <div className="min-w-0 flex-1">
                     <div className="font-extrabold text-indigo-800" data-testid={`emp-ot-move-line-${row.id || row.date}`}>{overtimeMoveLine(row)}</div>
-                    {row.note ? <div className="text-slate-500">{row.note}</div> : null}
-                    {(row.check_in || row.check_out) ? (
-                      <div className="text-slate-400">Puantaj {row.check_in || "—"} → {row.check_out || "—"}</div>
+                    {overtimeMoveDetail(row) ? (
+                      <div className="text-slate-500" data-testid={`emp-ot-move-punch-${row.id || row.date}`}>{overtimeMoveDetail(row)}</div>
                     ) : null}
+                    {row.note ? <div className="text-slate-400 italic">{row.note}</div> : null}
                   </div>
                   {overtimeMoveCanEdit(row, canEdit) || overtimeMoveCanDelete(row, canEdit) ? (
                     <div className="flex items-center gap-1 shrink-0">

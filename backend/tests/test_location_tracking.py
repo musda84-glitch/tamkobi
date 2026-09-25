@@ -241,12 +241,28 @@ def test_overtime_move_public_assigned_and_computed():
         "assigned_overtime_start": "18:00",
         "assigned_overtime_end": "20:30",
         "assigned_overtime_note": "proje",
+        "assigned_overtime_by": "mgr1",
     })
     assert assigned["hours"] == 2.5
     assert assigned["kind"] == "assigned"
+    assert assigned["source"] == "manager"
+    assert assigned["source_label"] == "Yönetici atadı"
+    assert assigned["assigned_by"] == "mgr1"
     assert assigned["can_delete"] is True
     assert assigned["start"] == "18:00"
     computed = overtime_move_public({"_id": "att2", "date": "2026-09-21", "overtime_hours": 1.25})
     assert computed["kind"] == "computed"
+    assert computed["source"] == "punch"
+    assert computed["source_label"] == "Puantajdan hesaplandı"
     assert computed["hours"] == 1.25
     assert computed["can_delete"] is False
+    from_loc = overtime_move_public({
+        "_id": "att3",
+        "date": "2026-09-23",
+        "overtime_hours": 15.93,
+        "check_in": "12:38",
+        "check_out": "10:26",
+        "geo_check_in": {"lat": 41.0, "lng": 29.0},
+    })
+    assert from_loc["source"] == "location"
+    assert from_loc["source_label"] == "Konumdan tespit edildi"
