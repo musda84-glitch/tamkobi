@@ -7,6 +7,22 @@ export const STATUS_TR = {
   error: "Hata", open: "Açık", closed: "Kapalı", present: "Geldi", absent: "Gelmedi", late: "Geç Geldi", leave: "İzinli", sent_to_gib: "GİB'e Gönderildi", matched: "Eşleşti", unmatched: "Eşleşmedi",
   declared: "Beyanname verildi", cleared: "Gümrük çıktı", invoiced: "Faturalandı"
 };
+/** Pazaryeri ham durumları (Trendyol/HB PascalCase) → Türkçe. */
+export const MARKETPLACE_STATUS_TR = {
+  Created: "Oluşturuldu",
+  Picking: "Hazırlanıyor",
+  Invoiced: "Faturalandı",
+  Shipped: "Kargolandı",
+  AtCollectionPoint: "Teslim Noktasında",
+  Delivered: "Teslim Edildi",
+  Cancelled: "İptal",
+  UnDelivered: "Teslim Edilemedi",
+  Returned: "İade",
+  UnSupplied: "Tedarik Edilemedi",
+  UnPacked: "Paketlenmedi",
+  ReadyToShip: "Kargoya Hazır",
+  WaitingInAction: "Aksiyon Bekliyor",
+};
 export const CHANNEL_TR = { manual: "Manuel", b2b: "B2B", saha: "Saha", trendyol: "Trendyol", hepsiburada: "Hepsiburada", amazon: "Amazon", shopify: "Shopify", n11: "N11", woocommerce: "WooCommerce", ciceksepeti: "Çiçeksepeti", pazarama: "Pazarama", sms: "SMS", email: "E-posta", whatsapp: "WhatsApp" };
 export const CONTEXT_TR = { manual: "Manuel", invoice: "Fatura", order: "Sipariş", contact: "Cari", campaign: "Kampanya", statement: "Ekstre", installment: "Taksit", quote_approval: "Teklif Onayı", whatsapp_api: "WhatsApp", reminder: "Hatırlatma", cargo: "Kargo" };
 export const DIRECTION_TR = { inbound: "Gelen", outbound: "Giden", receivable: "Alacak", payable: "Borç" };
@@ -17,6 +33,19 @@ export const tr = (map, value) => (value == null || value === "" ? "—" : map[v
 export const statusTr = (v) => tr(STATUS_TR, v);
 export const channelTr = (v) => tr(CHANNEL_TR, v);
 export const contextTr = (v) => tr(CONTEXT_TR, v);
+
+/** Trendyol vb. marketplace_status → Türkçe (Delivered → Teslim Edildi). */
+export function marketplaceStatusTr(v) {
+  if (v == null || v === "") return "—";
+  const raw = String(v).trim();
+  if (MARKETPLACE_STATUS_TR[raw]) return MARKETPLACE_STATUS_TR[raw];
+  const lower = raw.toLowerCase();
+  if (STATUS_TR[lower]) return STATUS_TR[lower];
+  // CamelCase parçalarını ayırıp STATUS_TR dene (UnDelivered vb. zaten tabloda)
+  const spaced = raw.replace(/([a-z])([A-Z])/g, "$1 $2");
+  if (spaced !== raw && MARKETPLACE_STATUS_TR[raw.replace(/\s/g, "")]) return MARKETPLACE_STATUS_TR[raw.replace(/\s/g, "")];
+  return spaced;
+}
 
 /** Sipariş durumu rozeti — arka plan / metin sınıfları */
 export function orderStatusBadgeClass(status) {

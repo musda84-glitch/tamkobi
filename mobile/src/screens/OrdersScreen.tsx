@@ -8,7 +8,7 @@ import { TabStrip } from "../components/TabStrip";
 import { Empty, ErrorBanner, Field, ListRow, Muted, Screen, Badge, Row } from "../components/kit";
 import { go } from "../nav";
 import type { Order } from "../types";
-import { orderNumberLabel, statusTr } from "../utils/labels";
+import { orderNumberLabel, statusTr, marketplaceStatusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
 import {
@@ -77,7 +77,7 @@ export function OrdersScreen() {
           <ListRow
             testID={`order-row-${idOf(o)}`}
             title={orderNumberLabel(o)}
-            subtitle={[o.customer_name, o.marketplace_status, statusTr(o.order_status), fmtDate(o.order_date)].filter(Boolean).join(" · ")}
+            subtitle={[o.customer_name, o.marketplace_status ? marketplaceStatusTr(o.marketplace_status) : null, statusTr(o.order_status), fmtDate(o.order_date)].filter(Boolean).join(" · ")}
             leading={<ChannelLogo channel={o.channel} testID={`order-channel-${idOf(o)}`} />}
             right={fmtMoney(o.grand_total || o.total_amount)}
             onPress={() => go("OrderDetail", { id: idOf(o) })}

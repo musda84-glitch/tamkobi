@@ -33,6 +33,23 @@ export const STATUS_TR: Record<string, string> = {
   bonus: "Prim",
 };
 
+/** Pazaryeri ham durumları (Trendyol PascalCase) → Türkçe. */
+export const MARKETPLACE_STATUS_TR: Record<string, string> = {
+  Created: "Oluşturuldu",
+  Picking: "Hazırlanıyor",
+  Invoiced: "Faturalandı",
+  Shipped: "Kargolandı",
+  AtCollectionPoint: "Teslim Noktasında",
+  Delivered: "Teslim Edildi",
+  Cancelled: "İptal",
+  UnDelivered: "Teslim Edilemedi",
+  Returned: "İade",
+  UnSupplied: "Tedarik Edilemedi",
+  UnPacked: "Paketlenmedi",
+  ReadyToShip: "Kargoya Hazır",
+  WaitingInAction: "Aksiyon Bekliyor",
+};
+
 export const LEAVE_TYPE_TR: Record<string, string> = {
   annual: "Yıllık",
   sick: "Hastalık",
@@ -185,3 +202,13 @@ export const paymentMethodTr = (v?: string | null) => tr(PAYMENT_METHOD_TR, v);
 export const riskStatusTr = (v?: string | null) => tr(RISK_STATUS_TR, v);
 export const productTypeTr = (v?: string | null) => tr(PRODUCT_TYPE_TR, v);
 export const tradeKindTr = (v?: string | null) => tr(TRADE_KIND_TR, v);
+
+/** Trendyol vb. marketplace_status → Türkçe (Delivered → Teslim Edildi). */
+export function marketplaceStatusTr(v?: string | null): string {
+  if (v == null || v === "") return "—";
+  const raw = String(v).trim();
+  if (MARKETPLACE_STATUS_TR[raw]) return MARKETPLACE_STATUS_TR[raw];
+  const lower = raw.toLowerCase();
+  if (STATUS_TR[lower]) return STATUS_TR[lower];
+  return raw.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
