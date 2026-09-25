@@ -73,6 +73,17 @@ describe("assigned duty field extras", () => {
     expect(dutyCanUploadPhotos({ id: "ot_1", kind: "office", done: true }, false)).toBe(true);
     expect(dutyCanUploadPhotos({ id: "ot_1" }, true)).toBe(false);
     expect(dutyPhotosHint({ kind: "office" })).toMatch(/yapılan görev/);
+    const office = dutyFromCurrent({
+      tasks: [{
+        id: "ot_47335df091",
+        kind: "office",
+        title: "CNC OEMAK",
+        done: true,
+        photos: [{ url: "/api/files/ot.jpg", task_id: "ot_47335df091" }],
+      }],
+      current: { id: "ot_47335df091", title: "CNC OEMAK", done: true },
+    });
+    expect(dutyPhotos(office).map((p) => p.url)).toEqual(["/api/files/ot.jpg"]);
   });
 
   test("keeps photos for the matching task and applies customer visibility", () => {
