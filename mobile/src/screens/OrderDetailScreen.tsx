@@ -81,18 +81,26 @@ export function OrderDetailScreen() {
 
   if (!order) return <Screen><ErrorBanner message={error || "Yükleniyor…"} /></Screen>;
 
+  const isCart = !!(order as { is_held_cart?: boolean; is_active_cart?: boolean }).is_held_cart
+    || !!(order as { is_active_cart?: boolean }).is_active_cart
+    || order.order_status === "held_cart"
+    || order.order_status === "active_cart";
+  const title = isCart
+    ? String((order as { held_label?: string }).held_label || order.order_number)
+    : orderNumberLabel(order);
+
   return (
     <Screen onRefresh={load}>
       <Row style={{ alignItems: "center", gap: 10 }}>
         <ChannelLogo channel={order.channel} size={40} testID="order-detail-channel" />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <H1>{orderNumberLabel(order)}</H1>
+          <H1>{title}</H1>
         </View>
       </Row>
       <Muted>{order.customer_name} · {fmtDate(order.order_date)}</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
-      <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} onChanged={load} onDeleted={() => router.back()} />
+      {!isCart ? <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} onChanged={load} onDeleted={() => router.back()} /> : null}
       <Card>
         <Badge label={channelTr(order.channel)} tone="indigo" />
         <Badge label={statusTr(order.order_status)} tone="amber" />
