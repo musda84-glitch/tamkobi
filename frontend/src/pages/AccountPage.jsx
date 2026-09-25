@@ -112,23 +112,46 @@ const ProfileTab = ({ user }) => {
 };
 
 const CompaniesTab = ({ companyId, companies, switchCompany, reloadSession, refreshLicense, canAdd }) => {
-  const [form, setForm] = useState({ name: "", tax_number: "", city: "" });
+  const empty = { name: "", tax_number: "", city: "", admin_name: "", admin_email: "", admin_password: "", admin_password2: "" };
+  const [form, setForm] = useState(empty);
   const [busy, setBusy] = useState(false);
   const mine = companies || [];
   const create = async (e) => {
     e.preventDefault();
+    if (form.admin_password !== form.admin_password2) {
+      toast.error("Şifreler eşleşmiyor.");
+      return;
+    }
+    if ((form.admin_password || "").length < 6) {
+      toast.error("Şifre en az 6 karakter olmalı.");
+      return;
+    }
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/license/companies`, { ...form, company_id: companyId });
-      toast.success(`${r.data.name} eklendi — verileri diğer şirketlerden ayrıdır.`);
-      setForm({ name: "", tax_number: "", city: "" });
-      if (reloadSession) await reloadSession();
+      const r = await axios.post(`${API_URL}/license/companies`, {
+        name: form.name,
+        tax_number: form.tax_number,
+        city: form.city,
+        admin_name: form.admin_name || form.name,
+        admin_email: form.admin_email,
+        admin_password: form.admin_password,
+        separate_login: true,
+        company_id: companyId,
+      });
+      toast.success(r.data.message || `${r.data.name} oluşturuldu. Giriş: ${r.data.admin_email}`);
+      setForm(empty);
       if (refreshLicense) await refreshLicense(companyId);
-      await switchCompany(r.data.id);
+      if (reloadSession) await reloadSession();
+      // Ayrı giriş: mevcut oturumda bu şirkete geçilmez — o e-posta ile giriş gerekir.
     } catch (err) { toast.error(err.response?.data?.detail || "Şirket açılamadı."); } finally { setBusy(false); }
   };
   return (
     <div className="space-y-4 text-xs" data-testid="account-companies">
+      <div className="bg-sky-50 border border-sky-200 rounded-2xl px-4 py-3 text-[11px] text-sky-950" data-testid="account-companies-hint">
+        <b>Nasıl çalışır?</b> Her yasal şirket kendi cari, fatura, stok ve kullanıcılarını tutar.
+        Yeni şirket açarken verdiğiniz e-posta/şifre yalnızca o şirkete aittir; mevcut hesabınızla ortak giriş yapılmaz.
+        Paket/lisans kotası şirketler arasında paylaşılabilir.
+      </div>
       <ul className="bg-white border border-slate-200 rounded-2xl divide-y">
         {mine.length === 0 && <li className="px-4 py-6 text-slate-400">Bu hesapta şirket yok.</li>}
         {mine.map((c) => {
@@ -146,11 +169,26 @@ const CompaniesTab = ({ companyId, companies, switchCompany, reloadSession, refr
         })}
       </ul>
       {canAdd && (
-        <form onSubmit={create} className="bg-white border border-slate-200 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-5 gap-2 items-end" data-testid="account-add-form">
-          <div className="sm:col-span-2"><label className="block font-semibold text-slate-700 mb-1">Yeni yasal şirket</label><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="Ünvan" data-testid="hesap-new-co-name" /></div>
-          <div><label className="block font-semibold text-slate-700 mb-1">VKN</label><input value={form.tax_number} onChange={(e) => setForm({ ...form, tax_number: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="hesap-new-co-tax" /></div>
-          <div><label className="block font-semibold text-slate-700 mb-1">Şehir</label><input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="İl" data-testid="hesap-new-co-city" /></div>
-          <button type="submit" disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold inline-flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="hesap-new-co-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Şirket aç</button>
+        <form onSubmit={create} className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="account-add-form">
+          <div>
+            <div className="font-bold text-slate-900 text-sm">Yeni yasal şirket</div>
+            <p className="text-[11px] text-slate-500 mt-0.5">Ünvan ve bu şirkete özel yönetici girişi. Veriler diğer şirketlerden ayrı tutulur.</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="sm:col-span-2"><label className="block font-semibold text-slate-700 mb-1">Ünvan</label><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="Ünvan" data-testid="hesap-new-co-name" /></div>
+            <div><label className="block font-semibold text-slate-700 mb-1">VKN</label><input value={form.tax_number} onChange={(e) => setForm({ ...form, tax_number: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="hesap-new-co-tax" /></div>
+            <div><label className="block font-semibold text-slate-700 mb-1">Şehir</label><input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="İl" data-testid="hesap-new-co-city" /></div>
+          </div>
+          <div className="border-t pt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="sm:col-span-2 text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Bu şirketin giriş bilgileri</div>
+            <div><label className="block font-semibold text-slate-700 mb-1">Yönetici adı</label><input value={form.admin_name} onChange={(e) => setForm({ ...form, admin_name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="Ad Soyad" data-testid="hesap-new-co-admin-name" /></div>
+            <div><label className="block font-semibold text-slate-700 mb-1">Giriş e-postası</label><input type="email" required value={form.admin_email} onChange={(e) => setForm({ ...form, admin_email: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" placeholder="ornek@firma.com" data-testid="hesap-new-co-admin-email" autoComplete="off" /></div>
+            <div><label className="block font-semibold text-slate-700 mb-1">Şifre (min 6)</label><input type="password" required minLength={6} value={form.admin_password} onChange={(e) => setForm({ ...form, admin_password: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="hesap-new-co-admin-password" autoComplete="new-password" /></div>
+            <div><label className="block font-semibold text-slate-700 mb-1">Şifre tekrar</label><input type="password" required minLength={6} value={form.admin_password2} onChange={(e) => setForm({ ...form, admin_password2: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="hesap-new-co-admin-password2" autoComplete="new-password" /></div>
+          </div>
+          <div className="flex justify-end">
+            <button type="submit" disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold inline-flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="hesap-new-co-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Şirket aç</button>
+          </div>
         </form>
       )}
     </div>

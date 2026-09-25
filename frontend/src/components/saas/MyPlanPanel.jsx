@@ -8,17 +8,18 @@ import { fmtTL, fmtDate, PlanChip, StatusBadge, groupByCategory } from "./saasUi
 import { sortCompanyTree } from "../../utils/companyTree";
 
 export const MyPlanPanel = ({ companyId }) => {
-  const { refreshLicense, reloadSession, switchCompany } = useAuth();
+  const { refreshLicense, reloadSession, switchCompany, companies: myCompanies } = useAuth();
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState(false);
   const [yearly, setYearly] = useState(false);
-  const [newCo, setNewCo] = useState({ name: "", tax_number: "", city: "" });
+  const [newCo, setNewCo] = useState({ name: "", tax_number: "", city: "", admin_email: "", admin_password: "" });
   const load = useCallback(() => axios.get(`${API_URL}/license/me`, { params: { company_id: companyId } }).then((r) => setD(r.data)).catch(() => toast.error("Paket bilgisi alınamadı.")), [companyId]);
   useEffect(() => { load(); }, [load]);
   const [providers, setProviders] = useState({ stripe: true, paytr: false });
   const [paytr, setPaytr] = useState(null);
   useEffect(() => { axios.get(`${API_URL}/payments/providers`).then((r) => setProviders(r.data)).catch(() => {}); }, []);
   if (!d) return <div className="text-xs text-slate-400 p-6">Yükleniyor…</div>;
+  const myIds = new Set((myCompanies || []).map((c) => c.id || c._id));
   const groups = groupByCategory(d.catalog);
   const request = async (plan) => {
     setBusy(true);
@@ -48,7 +49,7 @@ export const MyPlanPanel = ({ companyId }) => {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><Building2 className="w-4 h-4 text-slate-400" /> Lisansınızdaki şirketler ({(d.companies || []).length}{d.company_limit ? `/${d.company_limit}` : ""})</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">Alt şirketler bağlı oldukları ana şirketin altında durur. Her şirket kendi cari, fatura ve stokunu tutar; diğer müşteri hesaplarını göremez.</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Her şirket kendi cari, fatura ve stokunu tutar. Yeni şirket için ayrı e-posta/şifre verin — mevcut hesabınızla ortak giriş olmaz.</p>
           </div>
         </div>
         <ul className="divide-y">{sortCompanyTree((d.companies || []).map((c) => ({ ...c, is_primary: !!c.primary }))).map((c) => (
@@ -57,23 +58,35 @@ export const MyPlanPanel = ({ companyId }) => {
               <b className="text-slate-800">{c.tree_depth > 0 ? "└ " : ""}{c.name}</b>
               <div className="text-[10px] text-slate-400">{c.tax_number || "VKN yok"} · {c.city || "—"}{c.parent_company_name ? ` · bağlı: ${c.parent_company_name}` : c.primary ? " · ana şirket" : ""}</div>
             </div>
-            {c.id !== companyId && <button type="button" onClick={() => switchCompany(c.id)} className="text-[11px] font-semibold text-emerald-700 hover:underline">Bu şirkete geç</button>}
-            {c.id === companyId && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">Aktif</span>}
+            {c.id === companyId ? (
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">Aktif</span>
+            ) : myIds.has(c.id) ? (
+              <button type="button" onClick={() => switchCompany(c.id)} className="text-[11px] font-semibold text-emerald-700 hover:underline">Bu şirkete geç</button>
+            ) : (
+              <span className="text-[10px] text-slate-400" title="Ayrı giriş ile açıldı">Ayrı giriş</span>
+            )}
           </li>
         ))}</ul>
         {(!d.company_limit || (d.companies || []).length < d.company_limit) ? (
-          <form className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-end pt-1" onSubmit={async (e) => {
+          <form className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end pt-1" onSubmit={async (e) => {
             e.preventDefault(); setBusy(true);
             try {
-              const r = await axios.post(`${API_URL}/license/companies`, { ...newCo, company_id: companyId });
-              toast.success(`${r.data.name} lisansa eklendi. Verileri diğer şirketlerden ayrıdır.`);
-              setNewCo({ name: "", tax_number: "", city: "" });
+              const r = await axios.post(`${API_URL}/license/companies`, {
+                ...newCo,
+                separate_login: true,
+                company_id: companyId,
+              });
+              toast.success(r.data.message || `${r.data.name} oluşturuldu. Giriş: ${r.data.admin_email}`);
+              setNewCo({ name: "", tax_number: "", city: "", admin_email: "", admin_password: "" });
               await load(); await refreshLicense(companyId); if (reloadSession) await reloadSession();
             } catch (err) { toast.error(err.response?.data?.detail || "Şirket açılamadı."); } finally { setBusy(false); }
           }} data-testid="license-add-company">
-            <div className="sm:col-span-2"><label className="block font-semibold text-slate-700 mb-1">Yeni yasal şirket</label><input required value={newCo.name} onChange={(e) => setNewCo({ ...newCo, name: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" placeholder="Ünvan" data-testid="license-new-co-name" /></div>
+            <div className="sm:col-span-2"><label className="block font-semibold text-slate-700 mb-1">Ünvan</label><input required value={newCo.name} onChange={(e) => setNewCo({ ...newCo, name: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" placeholder="Ünvan" data-testid="license-new-co-name" /></div>
             <div><label className="block font-semibold text-slate-700 mb-1">VKN</label><input value={newCo.tax_number} onChange={(e) => setNewCo({ ...newCo, tax_number: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="license-new-co-tax" /></div>
-            <button type="submit" disabled={busy} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="license-new-co-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Şirket aç</button>
+            <div><label className="block font-semibold text-slate-700 mb-1">Şehir</label><input value={newCo.city} onChange={(e) => setNewCo({ ...newCo, city: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="license-new-co-city" /></div>
+            <div><label className="block font-semibold text-slate-700 mb-1">Giriş e-postası</label><input type="email" required value={newCo.admin_email} onChange={(e) => setNewCo({ ...newCo, admin_email: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" placeholder="ornek@firma.com" data-testid="license-new-co-email" autoComplete="off" /></div>
+            <div><label className="block font-semibold text-slate-700 mb-1">Şifre (min 6)</label><input type="password" required minLength={6} value={newCo.admin_password} onChange={(e) => setNewCo({ ...newCo, admin_password: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2" data-testid="license-new-co-password" autoComplete="new-password" /></div>
+            <button type="submit" disabled={busy} className="sm:col-span-2 px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="license-new-co-submit">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Şirket aç (ayrı giriş)</button>
           </form>
         ) : <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Paket şirket limitine ulaşıldı. Daha fazla şirket için paketi yükseltin.</p>}
       </div>
