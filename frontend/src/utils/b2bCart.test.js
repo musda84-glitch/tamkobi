@@ -1,5 +1,5 @@
 
-import { addCartLine, lineKey, normalizeNote, parseStoredCart, setCartLineQty } from "./b2bCart";
+import { addCartLine, cartHasItems, heldCartsAsOrders, holdActiveCart, lineKey, normalizeNote, parseStoredCart, resumeHeldCart, setCartLineQty } from "./b2bCart";
 
 describe("b2bCart", () => {
   test("same product + different notes stay separate lines", () => {
@@ -45,5 +45,36 @@ describe("b2bCart", () => {
   test("normalizeNote trims and caps length", () => {
     expect(normalizeNote("  ab  ")).toBe("ab");
     expect(normalizeNote("x".repeat(600)).length).toBe(500);
+  });
+
+  test("hold / resume / view-only order rows", () => {
+    let cart = addCartLine({}, "prod_01", 2, "kırmızı");
+    cart = addCartLine(cart, "prod_02", 1, "");
+    const held1 = holdActiveCart([], cart, { note: "acil", customerOrderNo: "PO-1" });
+    expect(cartHasItems(held1.cart)).toBe(false);
+    expect(held1.held).toHaveLength(1);
+    expect(held1.held[0].label).toBe("Bekleyen sepet #1");
+
+    let active = addCartLine({}, "prod_03", 5, "");
+    const resumed = resumeHeldCart(held1.held, active, held1.held[0].id, { note: "x" });
+    expect(resumed.cart[lineKey("prod_01", "kırmızı")].qty).toBe(2);
+    expect(resumed.held).toHaveLength(1);
+    expect(resumed.held[0].label).toBe("Bekleyen sepet #1");
+    expect(resumed.meta.customerOrderNo).toBe("PO-1");
+
+    const products = [
+      { id: "prod_01", name: "A", price_gross: 10 },
+      { id: "prod_02", name: "B", price_gross: 20 },
+      { id: "prod_03", name: "C", price_gross: 5 },
+    ];
+    const rows = heldCartsAsOrders(held1.held, products, {
+      activeCart: addCartLine({}, "prod_03", 1, ""),
+      priceGross: (p) => Number(p.price_gross) || 0,
+    });
+    expect(rows[0].order_number).toBe("Aktif sepet");
+    expect(rows[0].view_only).toBe(true);
+    expect(rows[1].order_number).toBe("Bekleyen sepet #1");
+    expect(rows[1].is_held_cart).toBe(true);
+    expect(rows[1].items).toHaveLength(2);
   });
 });

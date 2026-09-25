@@ -5,7 +5,8 @@ export const STATUS_TR = {
   delivered: "Teslim Edildi", returned: "İade Edildi", partially_returned: "Kısmi İade", in_transit: "Yolda", created: "Oluşturuldu", simulated: "Simüle", failed: "Hata",
   logged: "Kaydedildi", read: "Okundu", queued: "Sırada", connected: "Bağlı", disconnected: "Bağlı Değil", configured: "Yapılandırıldı", not_configured: "Yapılandırılmadı",
   error: "Hata", open: "Açık", closed: "Kapalı", present: "Geldi", absent: "Gelmedi", late: "Geç Geldi", leave: "İzinli", sent_to_gib: "GİB'e Gönderildi", matched: "Eşleşti", unmatched: "Eşleşmedi",
-  declared: "Beyanname verildi", cleared: "Gümrük çıktı", invoiced: "Faturalandı"
+  declared: "Beyanname verildi", cleared: "Gümrük çıktı", invoiced: "Faturalandı",
+  held_cart: "Bekleyen sepet", active_cart: "Aktif sepet",
 };
 /** Pazaryeri ham durumları (Trendyol/HB PascalCase) → Türkçe. */
 export const MARKETPLACE_STATUS_TR = {

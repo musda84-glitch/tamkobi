@@ -1,4 +1,4 @@
-import { addCartLine, b2bFlashChrome, cartCount, formatCartSheetLine, formatCartSheetMeta, lineKey, normalizeNote, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "./b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, formatCartSheetLine, formatCartSheetMeta, heldCartsAsOrders, holdActiveCart, lineKey, normalizeNote, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart } from "./b2bCart";
 
 describe("b2bCart", () => {
   test("same product + different notes stay separate lines", () => {
@@ -72,5 +72,22 @@ describe("b2bCart", () => {
     expect(idle.backgroundColor).toBe("#F8FAFC");
     expect(on.backgroundColor).toBe("#ECFDF5");
     expect(on.borderColor).toBe("#059669");
+  });
+
+  test("hold and siparişlerim view-only rows", () => {
+    let cart: B2BCart = addCartLine({}, "prod_01", 2, "kırmızı");
+    const held = holdActiveCart([], cart);
+    expect(cartHasItems(held.cart)).toBe(false);
+    expect(held.held[0].label).toBe("Bekleyen sepet #1");
+    const resumed = resumeHeldCart(held.held, addCartLine({}, "prod_02", 1, ""), held.held[0].id);
+    expect(resumed.cart[lineKey("prod_01", "kırmızı")].qty).toBe(2);
+    expect(resumed.held[0].label).toBe("Bekleyen sepet #1");
+    const rows = heldCartsAsOrders(held.held, [{ id: "prod_01", name: "A", price_gross: 10 }], {
+      activeCart: addCartLine({}, "prod_01", 1, ""),
+      priceGross: (p) => Number((p as { price_gross?: number }).price_gross) || 0,
+    });
+    expect(rows[0].order_number).toBe("Aktif sepet");
+    expect(rows[1].order_number).toBe("Bekleyen sepet #1");
+    expect(rows.every((r) => r.view_only)).toBe(true);
   });
 });

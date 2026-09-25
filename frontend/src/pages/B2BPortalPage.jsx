@@ -9,7 +9,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
 import { B2BAiCart } from "../components/B2BAiCart";
 import { ScanButton } from "../components/CameraScanner";
-import { addCartLine, parseStoredCart, setCartLineQty } from "../utils/b2bCart";
+import { addCartLine, cartHasItems, discardHeldCart, heldCartsAsOrders, heldStorageKey, holdActiveCart, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
 import { applyB2BScan, matchesB2BQuery, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bSearch";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
@@ -41,6 +41,10 @@ export default function B2BPortalPage() {
     try { return parseStoredCart(localStorage.getItem(`b2b_cart_${token}`) || "{}"); }
     catch { return {}; }
   });
+  const [heldCarts, setHeldCarts] = useState(() => {
+    try { return parseHeldCarts(localStorage.getItem(heldStorageKey(token)) || "[]"); }
+    catch { return []; }
+  });
   const [draftQty, setDraftQty] = useState({});
   const [draftNotes, setDraftNotes] = useState({});
   const [note, setNote] = useState("");
@@ -63,6 +67,7 @@ export default function B2BPortalPage() {
     return () => setPriceDecimals(prev);
   }, [data]);
   useEffect(() => { localStorage.setItem(`b2b_cart_${token}`, JSON.stringify(cart)); }, [cart, token]);
+  useEffect(() => { localStorage.setItem(heldStorageKey(token), JSON.stringify(heldCarts)); }, [heldCarts, token]);
 
   const settings = data?.settings || {};
   const showPrices = settings.show_prices !== false;
@@ -153,6 +158,44 @@ export default function B2BPortalPage() {
     }
   };
 
+  const holdCart = () => {
+    if (!cartHasItems(cart)) {
+      toast.error("Beklemeye alınacak ürün yok.");
+      return;
+    }
+    const r = holdActiveCart(heldCarts, cart, { note, customerOrderNo });
+    setHeldCarts(r.held);
+    setCart(r.cart);
+    setNote("");
+    setCustomerOrderNo("");
+    const label = r.held[r.held.length - 1]?.label || "Bekleyen sepet";
+    toast.success(`${label} beklemeye alındı. Yeni sepete devam edebilirsiniz.`);
+  };
+
+  const loadHeld = (holdId) => {
+    const r = resumeHeldCart(heldCarts, cart, holdId, { note, customerOrderNo });
+    setHeldCarts(r.held);
+    setCart(r.cart);
+    if (r.meta) {
+      setNote(r.meta.note || "");
+      setCustomerOrderNo(r.meta.customerOrderNo || "");
+    }
+    toast.message("Bekleyen sepet yüklendi.");
+  };
+
+  const removeHeld = (holdId) => {
+    if (!window.confirm("Bu bekleyen sepet silinsin mi?")) return;
+    setHeldCarts((prev) => discardHeldCart(prev, holdId));
+    toast.success("Bekleyen sepet silindi.");
+  };
+
+  const heldRows = heldCartsAsOrders(heldCarts, data.products || [], {
+    activeCart: cart,
+    activeNote: note,
+    activeCustomerOrderNo: customerOrderNo,
+    priceGross: b2bGross,
+  });
+
   const cartBodyProps = {
     lines,
     sub,
@@ -164,8 +207,10 @@ export default function B2BPortalPage() {
     busy,
     customerOrderNo,
     setCustomerOrderNo,
+    onHold: holdCart,
   };
   const tabCols = Math.min(4, Math.max(2, tabs.length));
+  const ordersTabCount = (data?.orders?.length || 0) + heldRows.length;
 
   return (
     <div className="min-h-screen bg-slate-100 pb-24 lg:pb-6" data-testid="b2b-portal">
@@ -193,7 +238,7 @@ export default function B2BPortalPage() {
               <Icon className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
               <span className="text-center">
                 {l}
-                {k === "orders" && data.orders.length > 0 ? ` (${data.orders.length})` : ""}
+                {k === "orders" && ordersTabCount > 0 ? ` (${ordersTabCount})` : ""}
                 {k === "installments" && installments.length > 0 ? ` (${installments.length})` : ""}
               </span>
             </button>
@@ -377,6 +422,23 @@ export default function B2BPortalPage() {
                 <div className="font-bold text-slate-900 flex items-center gap-2">
                   <ShoppingCart className="w-4 h-4" /> Sepet ({lines.length})
                 </div>
+                {heldCarts.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5" data-testid="b2b-held-tabs">
+                    {heldCarts.map((h) => (
+                      <div key={h.id} className="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => loadHeld(h.id)}
+                          className="px-2 py-1 rounded-lg text-[10px] font-bold border bg-amber-50 text-amber-900 border-amber-200"
+                          data-testid={`b2b-held-tab-${h.id}`}
+                        >
+                          {h.label}
+                        </button>
+                        <button type="button" onClick={() => removeHeld(h.id)} className="text-[10px] text-rose-600 font-semibold px-1" data-testid={`b2b-held-discard-${h.id}`} title="Sil">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {minOrder > 0 && <div className="text-[10px] text-slate-500">Min. sipariş: <b>{fmt(minOrder)} ₺</b></div>}
                 <CartBody {...cartBodyProps} />
               </div>
@@ -385,7 +447,7 @@ export default function B2BPortalPage() {
         )}
 
         {tab === "orders" && (
-          <OrdersList orders={data.orders} token={token} products={data.products} company={data.company} onChanged={load} />
+          <OrdersList orders={data.orders} heldRows={heldRows} token={token} products={data.products} company={data.company} onChanged={load} />
         )}
         {tab === "statement" && settings.show_statement !== false && (
           <StatementList invoices={data.invoices} company={data.company} balance={data.contact.balance} />
@@ -416,7 +478,16 @@ export default function B2BPortalPage() {
       </div>
 
       {tab === "catalog" && allowOrders && (
-        <MobileCartBar lines={lines} total={cartTotal} open={sheet} setOpen={setSheet}>
+        <MobileCartBar lines={lines} total={cartTotal} open={sheet} setOpen={setSheet} heldCount={heldCarts.length}>
+          {heldCarts.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pb-2" data-testid="b2b-held-tabs-mobile">
+              {heldCarts.map((h) => (
+                <button key={h.id} type="button" onClick={() => loadHeld(h.id)} className="px-2 py-1 rounded-lg text-[10px] font-bold border bg-amber-50 text-amber-900 border-amber-200" data-testid={`b2b-held-tab-mobile-${h.id}`}>
+                  {h.label}
+                </button>
+              ))}
+            </div>
+          )}
           <CartBody {...cartBodyProps} suffix="-mobile" />
         </MobileCartBar>
       )}

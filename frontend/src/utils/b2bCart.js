@@ -72,3 +72,165 @@ export function formatOrderItemLabel(item) {
   const note = normalizeNote(item?.note);
   return note ? `${qty}× ${name} (${note})` : `${qty}× ${name}`;
 }
+
+export function cartHasItems(cart) {
+  return Object.values(cart || {}).some((l) => (Number(l?.qty) || 0) > 0);
+}
+
+export function cartCount(cart) {
+  return Object.values(cart || {}).reduce((s, line) => s + (Number(line?.qty) || 0), 0);
+}
+
+export function heldStorageKey(token) {
+  return `b2b_held_carts_${String(token || "")}`;
+}
+
+export function renumberHeldCarts(held) {
+  return (held || []).map((h, i) => {
+    const seq = i + 1;
+    return { ...h, seq, label: `Bekleyen sepet #${seq}` };
+  });
+}
+
+/** Accepts array JSON or already-parsed list. */
+export function parseHeldCarts(raw) {
+  let v = raw;
+  if (typeof raw === "string") {
+    try { v = JSON.parse(raw || "[]"); } catch { return []; }
+  }
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  v.forEach((row, i) => {
+    if (!row || typeof row !== "object") return;
+    const cart = parseStoredCart(row.cart || {});
+    if (!cartHasItems(cart)) return;
+    const seq = Number(row.seq) || i + 1;
+    out.push({
+      id: String(row.id || `hold_${i + 1}`),
+      seq,
+      label: String(row.label || `Bekleyen sepet #${seq}`),
+      cart,
+      note: String(row.note || ""),
+      customerOrderNo: String(row.customerOrderNo || row.customer_order_number || ""),
+      heldAt: String(row.heldAt || row.held_at || new Date().toISOString()),
+    });
+  });
+  return renumberHeldCarts(out);
+}
+
+export function holdActiveCart(held, cart, meta = {}) {
+  if (!cartHasItems(cart)) return { held: renumberHeldCarts(held || []), cart: cart || {} };
+  const seq = (held || []).length + 1;
+  const entry = {
+    id: `hold_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    seq,
+    label: `Bekleyen sepet #${seq}`,
+    cart: { ...(cart || {}) },
+    note: String(meta.note || ""),
+    customerOrderNo: String(meta.customerOrderNo || ""),
+    heldAt: new Date().toISOString(),
+  };
+  return { held: renumberHeldCarts([...(held || []), entry]), cart: {} };
+}
+
+export function discardHeldCart(held, holdId) {
+  return renumberHeldCarts((held || []).filter((h) => h.id !== holdId));
+}
+
+/** Resume held cart; if active has items, park it first. */
+export function resumeHeldCart(held, activeCart, holdId, meta = {}) {
+  const list = held || [];
+  const hold = list.find((h) => h.id === holdId);
+  if (!hold) return { held: renumberHeldCarts(list), cart: activeCart || {}, meta: null };
+  let next = list.filter((h) => h.id !== holdId);
+  if (cartHasItems(activeCart)) {
+    const seq = next.length + 1;
+    next = [...next, {
+      id: `hold_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      seq,
+      label: `Bekleyen sepet #${seq}`,
+      cart: { ...(activeCart || {}) },
+      note: String(meta.note || ""),
+      customerOrderNo: String(meta.customerOrderNo || ""),
+      heldAt: new Date().toISOString(),
+    }];
+  }
+  return {
+    held: renumberHeldCarts(next),
+    cart: { ...(hold.cart || {}) },
+    meta: { note: hold.note || "", customerOrderNo: hold.customerOrderNo || "" },
+  };
+}
+
+/**
+ * Siparişlerim için silik / view-only satırlar.
+ * priceGross(product) → KDV dahil birim fiyat.
+ */
+export function heldCartsAsOrders(held, products, opts = {}) {
+  const {
+    activeCart = null,
+    activeNote = "",
+    activeCustomerOrderNo = "",
+    priceGross = (p) => Number(p?.price_gross ?? p?.price) || 0,
+  } = opts;
+  const byId = {};
+  (products || []).forEach((p) => {
+    const id = p?.id || p?._id;
+    if (id) byId[id] = p;
+  });
+
+  const toOrder = (entry, { isActive = false } = {}) => {
+    const items = Object.values(entry.cart || {}).map((line) => {
+      const p = byId[line.productId] || {};
+      const qty = Number(line.qty) || 0;
+      const unit = priceGross(p);
+      const vat = Number(p.vat_rate) || 0;
+      return {
+        product_id: line.productId,
+        product_name: p.name || line.productId,
+        quantity: qty,
+        unit: p.unit || "Adet",
+        unit_price: unit,
+        total: Math.round(unit * qty * 100) / 100,
+        total_incl: Math.round(unit * qty * 100) / 100,
+        vat_rate: vat,
+        note: line.note || "",
+        sku: p.sku || "",
+        barcode: p.barcode || "",
+        image_url: p.image_url || "",
+      };
+    }).filter((it) => it.quantity > 0);
+    const total = Math.round(items.reduce((s, it) => s + (Number(it.total_incl) || 0), 0) * 100) / 100;
+    const seq = Number(entry.seq) || 1;
+    return {
+      id: entry.id,
+      order_number: isActive ? "Aktif sepet" : `Bekleyen sepet #${seq}`,
+      order_status: isActive ? "active_cart" : "held_cart",
+      order_date: String(entry.heldAt || new Date().toISOString()).slice(0, 10),
+      customer_order_number: entry.customerOrderNo || "",
+      notes: entry.note || "",
+      items,
+      grand_total: total,
+      total_amount: total,
+      is_held_cart: true,
+      is_active_cart: !!isActive,
+      held_seq: isActive ? null : seq,
+      view_only: true,
+    };
+  };
+
+  const rows = [];
+  if (cartHasItems(activeCart)) {
+    rows.push(toOrder({
+      id: "active_cart",
+      cart: activeCart,
+      note: activeNote,
+      customerOrderNo: activeCustomerOrderNo,
+      heldAt: new Date().toISOString(),
+    }, { isActive: true }));
+  }
+  (held || []).forEach((h) => {
+    if (cartHasItems(h.cart)) rows.push(toOrder(h));
+  });
+  return rows;
+}

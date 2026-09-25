@@ -14,7 +14,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
-import { addCartLine, b2bFlashChrome, cartCount, formatCartSheetMeta, formatOrderItemLabel, parseStoredCart, productCartQty, setCartLineQty, type B2BCart } from "../utils/b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, discardHeldCart, formatCartSheetMeta, formatOrderItemLabel, heldCartsAsOrders, heldStorageKey, holdActiveCart, parseHeldCarts, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart, type HeldCart } from "../utils/b2bCart";
 import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
 import { applyB2BScan, canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bCatalog";
 import {
@@ -246,6 +246,7 @@ export function B2BPortalScreen() {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const [cart, setCart] = useState<B2BCart>({});
+  const [heldCarts, setHeldCarts] = useState<HeldCart[]>([]);
   const [draftQty, setDraftQty] = useState<Record<string, string>>({});
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
@@ -294,12 +295,18 @@ export function B2BPortalScreen() {
   useEffect(() => {
     if (!b2bToken) return;
     AsyncStorage.getItem(cartStorageKey(b2bToken)).then((raw) => setCart(parseStoredCart(raw || "{}")));
+    AsyncStorage.getItem(heldStorageKey(b2bToken)).then((raw) => setHeldCarts(parseHeldCarts(raw || "[]")));
   }, [b2bToken]);
 
   useEffect(() => {
     if (!b2bToken) return;
     AsyncStorage.setItem(cartStorageKey(b2bToken), JSON.stringify(cart));
   }, [b2bToken, cart]);
+
+  useEffect(() => {
+    if (!b2bToken) return;
+    AsyncStorage.setItem(heldStorageKey(b2bToken), JSON.stringify(heldCarts));
+  }, [b2bToken, heldCarts]);
 
   const settings = data?.settings || {};
   const showPrices = settings.show_prices !== false;
@@ -334,6 +341,17 @@ export function B2BPortalScreen() {
   const cartTotal = sub + vat;
   const count = cartCount(cart);
   const flash = b2bFlashChrome(flashOn);
+  const heldRows = useMemo(
+    () =>
+      heldCartsAsOrders(heldCarts, products, {
+        activeCart: cart,
+        activeNote: note,
+        activeCustomerOrderNo: customerOrderNo,
+        priceGross: (p) => b2bGross(p as B2BProduct),
+      }),
+    [heldCarts, products, cart, note, customerOrderNo]
+  );
+  const ordersTabCount = (data?.orders?.length || 0) + heldRows.length;
 
   const addProduct = (p: B2BProduct) => {
     if (!canAddProduct(p, showStock, allowOrders)) return;
@@ -435,6 +453,39 @@ export function B2BPortalScreen() {
     }
   };
 
+  const holdCart = () => {
+    if (!cartHasItems(cart)) {
+      setError("Beklemeye alınacak ürün yok.");
+      return;
+    }
+    const r = holdActiveCart(heldCarts, cart, { note, customerOrderNo });
+    setHeldCarts(r.held);
+    setCart(r.cart);
+    setNote("");
+    setCustomerOrderNo("");
+    const label = r.held[r.held.length - 1]?.label || "Bekleyen sepet";
+    setMessage(`${label} beklemeye alındı.`);
+    setError(null);
+  };
+
+  const loadHeld = (holdId: string) => {
+    const r = resumeHeldCart(heldCarts, cart, holdId, { note, customerOrderNo });
+    setHeldCarts(r.held);
+    setCart(r.cart);
+    if (r.meta) {
+      setNote(r.meta.note || "");
+      setCustomerOrderNo(r.meta.customerOrderNo || "");
+    }
+    setMessage("Bekleyen sepet yüklendi.");
+  };
+
+  const removeHeld = (holdId: string) => {
+    confirmAction("Bekleyen sepet", "Bu bekleyen sepet silinsin mi?", () => {
+      setHeldCarts((prev) => discardHeldCart(prev, holdId));
+      setMessage("Bekleyen sepet silindi.");
+    }, "Sil");
+  };
+
   const openEdit = (o: Order) => {
     setEdit(o);
     setEditLines(editLinesFromOrder(o.items));
@@ -523,7 +574,7 @@ export function B2BPortalScreen() {
             logo={logo}
             company={data?.company?.name}
             contact={data?.contact?.name || b2bName}
-            count={count}
+            count={count || heldCarts.length}
             ping={!!addedId}
             allowOrders={allowOrders}
             onCart={() => setCartOpen(true)}
@@ -580,7 +631,7 @@ export function B2BPortalScreen() {
           {tabs.map((t) => (
             <Chip
               key={t.id}
-              label={t.id === "orders" && data?.orders?.length ? `${t.label} (${data.orders.length})` : t.id === "installments" && installments.length ? `${t.label} (${installments.length})` : t.label}
+              label={t.id === "orders" && ordersTabCount ? `${t.label} (${ordersTabCount})` : t.id === "installments" && installments.length ? `${t.label} (${installments.length})` : t.label}
               active={tab === t.id}
               onPress={() => setTab(t.id)}
               testID={`b2b-tab-${t.id}`}
@@ -671,7 +722,27 @@ export function B2BPortalScreen() {
 
         {tab === "orders" ? (
           <View testID="b2b-orders">
-            {!data?.orders?.length ? <Empty icon="cart-outline" title="Henüz sipariş yok" /> : data.orders.map((o) => {
+            {!heldRows.length && !data?.orders?.length ? <Empty icon="cart-outline" title="Henüz sipariş yok" /> : null}
+            {heldRows.map((o) => (
+              <Card key={o.id} testID={`b2b-held-row-${o.id}`} style={{ opacity: 0.62 }}>
+                <Row style={{ justifyContent: "space-between" }}>
+                  <Text style={{ fontWeight: "800", color: colors.muted }}>{o.order_number}</Text>
+                  <Badge
+                    label={o.is_active_cart ? "Aktif sepet" : (o.held_seq ? `Bekleyen sepet #${o.held_seq}` : "Bekleyen sepet")}
+                    tone={o.is_active_cart ? "indigo" : "amber"}
+                  />
+                </Row>
+                <Muted>{fmtDate(o.order_date)}{o.customer_order_number ? ` · Sizin no ${o.customer_order_number}` : ""}</Muted>
+                <Muted>{(o.items || []).map((it) => formatOrderItemLabel(it as { quantity?: number; product_name?: string; name?: string; note?: string })).join(", ")}</Muted>
+                <Text style={{ fontWeight: "800", color: colors.muted }}>{fmtMoney(b2bOrderGross(o as unknown as Order))}</Text>
+                <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                  <Pressable testID={`b2b-held-preview-${o.id}`} onPress={() => setPreview(o as unknown as Order)}>
+                    <Text style={{ color: colors.indigo, fontWeight: "800" }}>Önizle</Text>
+                  </Pressable>
+                </Row>
+              </Card>
+            ))}
+            {(data?.orders || []).map((o) => {
               const oid = String(o.id || o._id || o.order_number);
               const extra = cancelBadge(o);
               return (
@@ -757,6 +828,24 @@ export function B2BPortalScreen() {
       </View>
 
       <B2BSheet visible={cartOpen} title={`Sepet · ${count} kalem`} onClose={() => setCartOpen(false)} testID="b2b-cart">
+        {heldCarts.length ? (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }} testID="b2b-held-tabs">
+            {heldCarts.map((h) => (
+              <Row key={h.id} style={{ gap: 4, alignItems: "center" }}>
+                <Pressable
+                  testID={`b2b-held-tab-${h.id}`}
+                  onPress={() => loadHeld(h.id)}
+                  style={{ backgroundColor: "#FFFBEB", borderColor: "#FDE68A", borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 }}
+                >
+                  <Text style={{ color: "#92400E", fontWeight: "800", fontSize: 11 }}>{h.label}</Text>
+                </Pressable>
+                <Pressable testID={`b2b-held-discard-${h.id}`} onPress={() => removeHeld(h.id)}>
+                  <Text style={{ color: colors.danger, fontWeight: "800" }}>×</Text>
+                </Pressable>
+              </Row>
+            ))}
+          </View>
+        ) : null}
         {!lines.length ? <Empty icon="cart-outline" title="Sepet boş" /> : (
           <View>
             {lines.map((l) => (
@@ -845,6 +934,7 @@ export function B2BPortalScreen() {
                 })}
               </View>
             ) : null}
+            <PrimaryButton testID="b2b-hold-cart" title="Beklemeye Al" onPress={holdCart} color="#B45309" />
             <PrimaryButton testID="b2b-order-submit" title={busy ? "Gönderiliyor…" : "Siparişi Gönder"} onPress={submitOrder} loading={busy} color={colors.primary} />
           </View>
         )}
