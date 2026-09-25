@@ -2,8 +2,9 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { ContactB2BPortalPanel } from "./ContactB2BPortalPanel";
 import { mapsLink } from "./ContactLocationModal";
 import { workMapsLink } from "../utils/mapsLink";
 import { PrintDocument, PrintTemplateEditor } from "./PrintDocument";
@@ -38,7 +39,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { orderEditBlockedReason, orderLinesLocked as orderChannelLocked } from "../utils/orderEdit";
 
 const fmt = (n, c = "TRY") => fmtMoney(n, c);
-const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["comm", "İletişim", MessageSquare], ["mail_status", "E-posta Durumu", Mail], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
+const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["b2b", "B2B Portal", KeyRound], ["comm", "İletişim", MessageSquare], ["mail_status", "E-posta Durumu", Mail], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
 
 const MAIL_KIND = {
   manual: "Mesaj", contact: "Cari", invoice: "Fatura", order: "Sipariş", cargo: "Kargo", quote: "Teklif", quote_approval: "Teklif",
@@ -522,6 +523,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               : k === "whatsapp" ? data.communications.filter((m) => m.channel === "whatsapp").length
               : k === "mail_status" ? (data.email_deliveries || []).length
               : k === "comm" ? data.communications.length
+              : k === "b2b" ? (c.b2b_enabled ? 1 : 0)
               : 0;
             return (
             <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-2.5 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap shrink-0 ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-800"}`} data-testid={`detail-tab-${k}`}>
@@ -634,6 +636,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 ))}
               </tbody>
             </table>
+          )}
+          {tab === "b2b" && (
+            <ContactB2BPortalPanel
+              contactId={c.id || c._id || contactId}
+              contactName={c.name}
+              onChanged={load}
+            />
           )}
           {tab === "orders" && (
             <table className="w-full text-left">

@@ -10,11 +10,25 @@ import { compressImageFile } from "../utils/compressImage";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30";
 const TABS = [["general", "Genel", User], ["tax", "Vergi & e-Fatura", Receipt], ["address", "Adres & Konum", MapPin], ["finance", "Finans & Vade", Wallet], ["b2b", "B2B Portal", ShoppingCart], ["notes", "Notlar & Etiket", StickyNote]];
-const EMPTY = { type: "customer", name: "", company_title: "", contact_person: "", contact_person_phone: "", tax_number_or_id: "", tax_office: "", is_e_invoice_user: false, email: "", phone: "", website: "", address: "", city: "İstanbul", district: "", location_url: "", credit_limit: 0, payment_term_days: 0, late_fee_rate: 0, default_discount: 0, currency: "TRY", payment_method: "", iban: "", bank_name: "", category: "Genel", sales_rep: "", risk_status: "normal", b2b_enabled: false, b2b_discount: 0, b2b_login_email: "", b2b_password: "", sms_opt_in: true, email_opt_in: true, tags: [], notes: "", logo_url: "" };
+const EMPTY = { type: "customer", name: "", company_title: "", contact_person: "", contact_person_phone: "", tax_number_or_id: "", tax_office: "", is_e_invoice_user: false, email: "", phone: "", website: "", address: "", city: "İstanbul", district: "", location_url: "", credit_limit: 0, payment_term_days: 0, late_fee_rate: 0, default_discount: 0, currency: "TRY", payment_method: "", iban: "", bank_name: "", category: "Genel", sales_rep: "", risk_status: "normal", b2b_enabled: false, b2b_discount: 0, b2b_login_email: "", b2b_password: "", b2b_allow_orders: true, b2b_show_prices: true, b2b_show_stock: true, b2b_show_statement: true, b2b_show_installments: true, b2b_allow_ai_cart: true, b2b_min_order_amount: 0, b2b_welcome_note: "", sms_opt_in: true, email_opt_in: true, tags: [], notes: "", logo_url: "" };
+
+const b2bSettingsFromContact = (contact) => {
+  const s = contact?.b2b_portal_settings || {};
+  return {
+    b2b_allow_orders: s.allow_orders !== false,
+    b2b_show_prices: s.show_prices !== false,
+    b2b_show_stock: s.show_stock !== false,
+    b2b_show_statement: s.show_statement !== false,
+    b2b_show_installments: s.show_installments !== false,
+    b2b_allow_ai_cart: s.allow_ai_cart !== false,
+    b2b_min_order_amount: Number(s.min_order_amount) || 0,
+    b2b_welcome_note: s.welcome_note || "",
+  };
+};
 
 export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const [tab, setTab] = useState("general");
-  const [f, setF] = useState({ ...EMPTY, ...(contact || {}), b2b_password: "", tags: contact?.tags || [] });
+  const [f, setF] = useState({ ...EMPTY, ...(contact || {}), ...b2bSettingsFromContact(contact), b2b_password: "", tags: contact?.tags || [] });
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.type === "number" ? Number(e.target.value) : e.target.value });
   const F = (k, l, type = "text", extra = {}) => <div className={extra.span ? "sm:col-span-2" : ""}><label className="block font-semibold text-slate-700 mb-1">{l}</label><input type={type} value={f[k] ?? ""} onChange={set(k)} placeholder={extra.ph || ""} className={inp} data-testid={`cf-${k}`} /></div>;
@@ -43,8 +57,30 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
     try {
       const payload = { ...f, tags: Array.isArray(f.tags) ? f.tags : String(f.tags).split(",").map((t) => t.trim()).filter(Boolean) };
       if (!payload.b2b_password) delete payload.b2b_password;
+      // UI-only B2B feature fields → API settings payload
+      const b2bSettings = {
+        allow_orders: !!payload.b2b_allow_orders,
+        show_prices: !!payload.b2b_show_prices,
+        show_stock: !!payload.b2b_show_stock,
+        show_statement: !!payload.b2b_show_statement,
+        show_installments: !!payload.b2b_show_installments,
+        allow_ai_cart: !!payload.b2b_allow_ai_cart,
+        min_order_amount: Number(payload.b2b_min_order_amount) || 0,
+        welcome_note: payload.b2b_welcome_note || "",
+      };
+      ["b2b_allow_orders", "b2b_show_prices", "b2b_show_stock", "b2b_show_statement", "b2b_show_installments", "b2b_allow_ai_cart", "b2b_min_order_amount", "b2b_welcome_note"].forEach((k) => delete payload[k]);
       const r = contact?.id ? await axios.put(`${API_URL}/contacts/${contact.id}`, payload) : await axios.post(`${API_URL}/contacts`, { company_id: companyId, ...payload });
-      if (payload.b2b_enabled && (payload.b2b_password || payload.b2b_login_email)) await axios.post(`${API_URL}/contacts/${r.data.id}/b2b-access`, { enabled: true, discount: payload.b2b_discount, password: payload.b2b_password, login_email: payload.b2b_login_email, base_url: window.location.origin }).catch(() => {});
+      const id = r.data.id || r.data._id || contact?.id;
+      if (id) {
+        await axios.put(`${API_URL}/contacts/${id}/b2b-portal`, {
+          enabled: !!payload.b2b_enabled,
+          discount: payload.b2b_discount,
+          password: payload.b2b_password || undefined,
+          login_email: payload.b2b_login_email,
+          settings: b2bSettings,
+          base_url: window.location.origin,
+        }).catch(() => {});
+      }
       toast.success(contact?.id ? "Cari bilgileri güncellendi." : "Cari kartı oluşturuldu.");
       onSaved?.(r.data);
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
@@ -92,7 +128,17 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
             <div className="sm:col-span-2">{C("b2b_enabled", "B2B sipariş portalı erişimi açık")}</div>
             {F("b2b_discount", "B2B İskonto (%)", "number")}{F("b2b_login_email", "Portal Giriş E-postası", "email", { ph: "boş = cari e-postası / VKN" })}
             {F("b2b_password", contact?.b2b_password_hash || contact?.has_b2b_password ? "Portal Şifresi (değiştirmek için yazın)" : "Portal Şifresi (min 6)", "password", { span: true })}
-            <p className="sm:col-span-2 text-[11px] text-slate-500">Müşteri <b>{window.location.origin}/b2b/giris</b> adresinden e-posta/VKN + şifre ile giriş yapar; Excel/PDF sipariş listesini yükleyip AI ile sepet oluşturabilir.</p>
+            <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t">
+              {C("b2b_allow_orders", "Sipariş alımı")}
+              {C("b2b_show_prices", "Fiyatları göster")}
+              {C("b2b_show_stock", "Stok durumunu göster")}
+              {C("b2b_show_statement", "Hesap ekstresi sekmesi")}
+              {C("b2b_show_installments", "Taksitler sekmesi")}
+              {C("b2b_allow_ai_cart", "AI sepet (Excel/PDF)")}
+            </div>
+            {F("b2b_min_order_amount", "Minimum sipariş (₺)", "number")}
+            {F("b2b_welcome_note", "Karşılama notu", "text", { span: true, ph: "Hoş geldiniz…" })}
+            <p className="sm:col-span-2 text-[11px] text-slate-500">Bu özellikler yalnızca bu cariye uygulanır. Müşteri <b>{window.location.origin}/b2b/giris</b> adresinden e-posta/VKN + şifre ile girer. Detaylı yönetim cari kartı → B2B Portal sekmesinden de yapılır.</p>
           </div>}
           {tab === "notes" && <div className="space-y-3">
             <div><label className="block font-semibold text-slate-700 mb-1">Etiketler (virgülle)</label><input value={Array.isArray(f.tags) ? f.tags.join(", ") : f.tags} onChange={(e) => setF({ ...f, tags: e.target.value })} placeholder="vip, ihracat, gecikmeli…" className={inp} data-testid="cf-tags" /></div>
