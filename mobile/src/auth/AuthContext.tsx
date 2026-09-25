@@ -302,6 +302,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const client = useMemo<ApiClient>(() => ({ baseUrl: state.baseUrl, token: state.token }), [state.baseUrl, state.token]);
   const companyId = state.activeCompany?.id || state.activeCompany?._id || state.user?.active_company_id || "";
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { setMobileLogContext } = await import("../utils/reportMobileLog");
+        if (!cancelled) {
+          setMobileLogContext(
+            state.sessionKind === "erp" && state.token ? client : null,
+            state.sessionKind === "erp" ? companyId || null : null
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, companyId, state.sessionKind, state.token]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       ...state,

@@ -633,6 +633,12 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "collection", "doc", "entity_type", "deleted_at", "expires_at"),
         "refs": (),
     },
+    "mobile_client_logs": {
+        "scope": SCOPE_TENANT,
+        "description": "Panel / mobil istemci hata ve tanı logları (Çöp Kutusu > Mobil Loglar).",
+        "keys": ("_id", "company_id", "source", "level", "message", "screen", "user_id", "created_at", "expires_at"),
+        "refs": ("companies._id",),
+    },
     "migration_api_configs": {
         "scope": SCOPE_TENANT,
         "description": "Logo/Mikro vb. migrasyon API ayarı.",
