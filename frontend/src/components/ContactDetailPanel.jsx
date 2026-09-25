@@ -651,14 +651,15 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 {data.orders.length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-400">Sipariş yok.</td></tr>}
                 {data.orders.map((o) => {
                   const marketplace = orderChannelLocked(o);
+                  const isCart = !!(o.is_held_cart || o.is_active_cart || o.order_status === "held_cart" || o.order_status === "active_cart");
                   const canDelete = !o.is_invoiced && !o.invoice_id;
                   return (
-                    <tr key={o.id} data-testid={`detail-order-${o.order_number}`}>
-                      <td className="py-2 font-mono font-semibold">{o.order_number}</td>
+                    <tr key={o.id} className={isCart ? "opacity-70 bg-slate-50/80" : undefined} data-testid={`detail-order-${o.order_number}`}>
+                      <td className="py-2 font-mono font-semibold">{o.held_label || o.order_number}</td>
                       <td className="py-2 text-slate-500">{channelTr(o.channel)}</td>
                       <td className="py-2">
-                        {marketplace ? (
-                          <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold" title="Durum pazaryerinden güncellenir">{statusTr(o.order_status)}</span>
+                        {marketplace || isCart ? (
+                          <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold" title={marketplace ? "Durum pazaryerinden güncellenir" : undefined}>{statusTr(o.order_status)}</span>
                         ) : (
                           <select value={o.order_status || "pending"} onChange={(e) => changeOrderStatus(o, e.target.value)} className="bg-slate-100 border border-slate-200 rounded p-1 text-[11px] font-semibold" data-testid={`detail-order-status-${o.order_number}`}>
                             {ORDER_STATUS_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
@@ -670,10 +671,19 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                       <td className="py-2 text-right font-bold">{fmt(o.grand_total ?? o.total_amount)}</td>
                       <td className="py-2 text-right">
                         <div className="flex justify-end gap-1">
-                          <button type="button" onClick={() => openEditOrder(o)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-order-edit-${o.order_number}`}><Pencil className="w-3 h-3" /> Düzenle</button>
-                          {canDelete && <button type="button" onClick={() => deleteContactOrder(o)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`detail-order-delete-${o.order_number}`}><Trash2 className="w-3 h-3" /> Sil</button>}
-                          <button type="button" onClick={() => setPrintDoc(o)} className="px-2 py-1 border rounded-md text-[10px] font-semibold" title="Sipariş Yazdır" data-testid={`detail-order-print-${o.order_number}`}>Yazdır</button>
-                          <button type="button" onClick={() => setOrderDetail(o)} className="px-2 py-1 bg-slate-900 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-order-btn-${o.order_number}`}>Detay</button>
+                          {isCart ? (
+                            <>
+                              {canDelete && <button type="button" onClick={() => deleteContactOrder(o)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`detail-order-delete-${o.order_number}`}><Trash2 className="w-3 h-3" /> Sil</button>}
+                              <button type="button" onClick={() => setPrintDoc(o)} className="px-2 py-1 border rounded-md text-[10px] font-semibold" title="Sipariş Yazdır" data-testid={`detail-order-print-${o.order_number}`}>Yazdır</button>
+                            </>
+                          ) : (
+                            <>
+                              <button type="button" onClick={() => openEditOrder(o)} className="inline-flex items-center gap-1 px-2 py-1 border rounded-md text-[10px] font-semibold hover:bg-slate-50" data-testid={`detail-order-edit-${o.order_number}`}><Pencil className="w-3 h-3" /> Düzenle</button>
+                              {canDelete && <button type="button" onClick={() => deleteContactOrder(o)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`detail-order-delete-${o.order_number}`}><Trash2 className="w-3 h-3" /> Sil</button>}
+                              <button type="button" onClick={() => setPrintDoc(o)} className="px-2 py-1 border rounded-md text-[10px] font-semibold" title="Sipariş Yazdır" data-testid={`detail-order-print-${o.order_number}`}>Yazdır</button>
+                              <button type="button" onClick={() => setOrderDetail(o)} className="px-2 py-1 bg-slate-900 text-white rounded-md text-[10px] font-semibold" data-testid={`detail-order-btn-${o.order_number}`}>Detay</button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
