@@ -8796,7 +8796,9 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
                       + (f" · mesai bitiş {ocr.get('schedule_end')}" if ocr.get("schedule_end") else "")
                       + (f" · önerilen çıkış {ocr.get('proposed_out')}" if ocr.get("proposed_out") else "")
                       + (f" · ~{hours:g} sa" if hours else "")
-                      + (f" · tolerans {ocr.get('tolerance_hours')} sa" if ocr.get("tolerance_hours") else ""),
+                      + (f" · çıkış toleransı {ocr.get('tolerance_minutes')} dk" if ocr.get("tolerance_minutes") else (
+                          f" · tolerans {ocr.get('tolerance_hours')} sa" if ocr.get("tolerance_hours") else ""
+                      )),
             "created_at": ocr.get("requested_at") or att.get("updated_at") or att.get("date") or "",
             "link": "/personnel?tab=attendance",
             "meta": {
@@ -8804,6 +8806,7 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
                 "schedule_end": ocr.get("schedule_end"),
                 "proposed_out": ocr.get("proposed_out"),
                 "hours": hours,
+                "tolerance_minutes": ocr.get("tolerance_minutes"),
                 "tolerance_hours": ocr.get("tolerance_hours"),
             },
         })
@@ -12825,7 +12828,7 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
             for kk in ("start", "end"):
                 if v.get(kk):
                     ws[kk] = attendance._valid_time(v[kk])
-            for kk in ("break_minutes", "late_tolerance_minutes", "overtime_tolerance_minutes"):
+            for kk in ("break_minutes", "late_tolerance_minutes", "exit_tolerance_minutes", "overtime_tolerance_minutes"):
                 if v.get(kk) not in (None, ""):
                     ws[kk] = max(0, int(v[kk]))
             if isinstance(v.get("work_days"), list) and v["work_days"]:
