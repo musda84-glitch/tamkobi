@@ -28,7 +28,6 @@ export const AuthProvider = ({ children }) => {
     { label: "Faturalar", path: "/invoices", badge: "GİB" },
     { label: "İthalat / İhracat", path: "/dis-ticaret", badge: "Gümrük" },
     { label: "Gelen e-Belgeler", path: "/edoc-inbox", badge: "Kutu" },
-    { label: "B2B Portal Yönetimi", path: "/b2b-yonetim", badge: "Bayi" },
     { label: "İrsaliyeler", path: "/dispatches", badge: "e-İrsaliye" },
     { label: "Masraflar", path: "/expenses", badge: "Gider" },
     { label: "Krediler", path: "/loans", badge: "Banka" },
