@@ -71,6 +71,9 @@ describe("orderMoreMenu web variants", () => {
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual(
       integrationEInvoiceMoreItems().map((i) => i.label),
     );
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Kargola");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.id)).toContain("kargola");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Navlungo Siparişi Oluştur");
   });
 
   it("default menu keeps E-Belge + edit / irsaliye / iade", () => {
