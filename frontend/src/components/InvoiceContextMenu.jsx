@@ -95,12 +95,16 @@ export function invoiceHasPayment(inv) {
   return ["paid", "partially_paid", "partial"].includes(String(inv.payment_status || ""));
 }
 
-/** Onaylı faturalar iptal edilebilir (silinmez). Ödemeli olanlarda düğme görünür; tahsilat varsa sunucu geri almayı ister. */
+/** Onaylı e-Fatura / e-Arşiv / e-İhracat iptal edilebilir (silinmez). Kağıt silinir. Ödemeli olsa da menüde görünür. */
 export function canCancelInvoice(inv) {
   if (!inv) return false;
   if (inv.status === "cancelled" || inv.status === "draft") return false;
   if (inv.invoice_type === "dispatch") return false;
-  return true;
+  if (inv.e_type === "paper" || inv.e_type === "expense_slip" || inv.e_type === "e_dispatch") return false;
+  if (inv.e_type === "e_invoice" || inv.e_type === "e_archive" || inv.e_type === "e_export") return true;
+  // Gelen GİB alış e-faturası
+  if (isIncomingPurchaseInvoice(inv)) return true;
+  return false;
 }
 
 /** Taslak satış/alış belgesi ⋮ menüden düzenlenir (satır ikonu yok). */
@@ -346,7 +350,7 @@ export const InvoiceContextMenu = (props) => {
       {showIssuedActions && ((onCancel && cancellable) || (onExpenseSlip && slipable)) && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-issued-actions">
           {onCancel && cancellable && (
-            <Item icon={XCircle} color="text-amber-600" label="Faturayı İptal Et" sub={paid ? "Önce tahsilatı / ödemeyi geri alın" : "Cari/stok geri alınır; kayıt listede kalır"} onClick={() => onCancel(inv)} testId="ctx-cancel" />
+            <Item icon={XCircle} color="text-amber-600" label="Faturayı İptal Et" sub={paid ? "Ödemeli e-belge: cari/stok geri alınır, sipariş serbest kalır" : "Cari/stok geri alınır; kayıt listeden gizlenir"} onClick={() => onCancel(inv)} testId="ctx-cancel" />
           )}
           {onExpenseSlip && slipable && (
             <Item icon={Receipt} color="text-rose-600" label={inv.expense_slip_number ? `Gider Pusulası: ${inv.expense_slip_number}` : "Gider Pusulası Kes"} sub={inv.expense_slip_number ? "Bu fatura için kesilmiş pusula" : "Aynı cari ve kalemlerle alış pusulası"} onClick={() => onExpenseSlip(inv)} testId="ctx-expense-slip" />
@@ -366,7 +370,7 @@ export const InvoiceContextMenu = (props) => {
       {(onDelete && deletable) || (onCancel && cancellable && !showIssuedActions) ? (
         <div className="border-t border-slate-100 mt-1 pt-1" data-testid="ctx-danger-actions">
           {onCancel && cancellable && !showIssuedActions && (
-            <Item icon={XCircle} color="text-amber-600" label="Faturayı İptal Et" sub={paid ? "Önce tahsilatı / ödemeyi geri alın" : "Cari/stok geri alınır; kayıt listede kalır"} onClick={() => onCancel(inv)} testId="ctx-cancel" />
+            <Item icon={XCircle} color="text-amber-600" label="Faturayı İptal Et" sub={paid ? "Ödemeli e-belge: cari/stok geri alınır, sipariş serbest kalır" : "Cari/stok geri alınır; kayıt listeden gizlenir"} onClick={() => onCancel(inv)} testId="ctx-cancel" />
           )}
           {onDelete && deletable && (
             <Item icon={Trash2} color="text-rose-600" label={inv.status === "draft" ? "Taslağı Sil" : "Kağıt Faturayı Sil"} sub="Çöp kutusuna taşınır (30 gün)" onClick={() => onDelete(inv)} testId="ctx-delete" />

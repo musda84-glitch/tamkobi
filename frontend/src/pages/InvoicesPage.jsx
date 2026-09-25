@@ -421,10 +421,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     try { const r = await axios.delete(`${API_URL}/invoices/${inv.id}`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
   const handleCancelInvoice = async (inv) => {
-    if (!window.confirm(`${inv.invoice_number} numaralı fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; kayıt listede kalır.`)) return;
+    if (!window.confirm(`${inv.invoice_number} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`)) return;
     try {
       const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/cancel`, {});
-      toast.success(r.data.message);
+      toast.success(r.data.message || "Fatura iptal edildi.");
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "İptal edilemedi.");

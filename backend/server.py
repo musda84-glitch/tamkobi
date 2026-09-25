@@ -3968,7 +3968,7 @@ async def get_contact_overview(contact_id: str):
     contact = await db.contacts.find_one({"_id": contact_id})
     if not contact:
         raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
-    invoices = await db.invoices.find({"contact_id": contact_id}).sort("issue_date", -1).to_list(200)
+    invoices = await db.invoices.find({"contact_id": contact_id, "status": {"$ne": "cancelled"}}).sort("issue_date", -1).to_list(200)
     payments = await db.bank_transactions.find({"contact_id": contact_id}).sort("date", -1).to_list(200)
     for ptx in await db.partner_transactions.find({"contact_id": contact_id}).to_list(200):
         is_out = ptx.get("type") != "withdrawal" or ptx.get("expense_id")
@@ -5578,7 +5578,7 @@ async def _fill_stock_codes(company_id: str, items: list):
 
 # ----------------- FATURALAR & E-FATURA / E-ARŞİV -----------------
 @api_router.get("/invoices")
-async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: Optional[str] = None, project_id: Optional[str] = None):
+async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: Optional[str] = None, project_id: Optional[str] = None, include_cancelled: Optional[bool] = False):
     query = {"company_id": company_id}
     if type == "export":
         query["trade_kind"] = "export"
@@ -5592,6 +5592,8 @@ async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: 
         query["invoice_type"] = {"$ne": "dispatch"}
     if project_id:
         query["project_id"] = project_id
+    if not include_cancelled:
+        query["status"] = {"$ne": "cancelled"}
     invoices = await db.invoices.find(query).sort("created_at", -1).to_list(1000)
     return clean_docs(invoices)
 
@@ -6159,22 +6161,39 @@ async def delete_invoice(invoice_id: str):
     }
 
 
+def _invoice_is_electronic(inv: dict) -> bool:
+    """GİB e-belge (e-Fatura / e-Arşiv / e-İhracat) veya gelen e-fatura — kağıt değil."""
+    if not inv:
+        return False
+    et = inv.get("e_type")
+    if et in ("e_invoice", "e_archive", "e_export"):
+        return True
+    # Gelen GİB alış e-faturası (e_type bazen boş gelebilir)
+    if inv.get("invoice_type") == "purchase" and (
+        inv.get("direction") == "incoming" or inv.get("source") == "edoc_inbox" or inv.get("edoc_id")
+    ):
+        return True
+    return False
+
+
 def _invoice_cancel_block_reason(inv: dict) -> Optional[str]:
-    """None = iptal edilebilir. Taslaklar silinir; ödemesi olanlar önce tahsilat geri alınır."""
+    """None = iptal edilebilir. Yalnızca e-belge; ödemeli olsa da sipariş bağı koparılsın diye izin verilir."""
     if not inv:
         return "Fatura bulunamadı."
     if inv.get("status") == "cancelled":
         return "Fatura zaten iptal edilmiş."
     if inv.get("status") == "draft":
         return "Taslak fatura iptal edilmez; silin (çöp kutusu)."
-    if float(inv.get("paid_amount") or 0) > 0.01 or inv.get("payment_status") in ("paid", "partially_paid", "partial"):
-        return "Ödemesi olan fatura iptal edilemez. Önce tahsilatı / ödemeyi geri alın."
+    if inv.get("invoice_type") == "dispatch" or inv.get("e_type") in ("paper", "expense_slip", "e_dispatch"):
+        return "Yalnızca e-Fatura / e-Arşiv iptal edilebilir. Kağıt fatura için silme kullanın."
+    if not _invoice_is_electronic(inv):
+        return "Yalnızca e-Fatura / e-Arşiv iptal edilebilir. Kağıt fatura için silme kullanın."
     return None
 
 
 @api_router.post("/invoices/{invoice_id}/cancel")
 async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None):
-    """Onaylı faturayı iptal et: cari/stok etkilerini geri al, kaydı cancelled bırak (silmez)."""
+    """Onaylı e-faturayı iptal et: cari/stok etkilerini geri al, sipariş bağını kopar, kaydı cancelled bırak (listede gizlenir)."""
     req = req or {}
     inv = await db.invoices.find_one({"_id": invoice_id})
     if not inv:
@@ -6182,14 +6201,16 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None):
     reason = _invoice_cancel_block_reason(inv)
     if reason:
         raise HTTPException(status_code=400, detail=reason)
-    paid_inst = await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"})
-    if paid_inst:
-        raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan fatura iptal edilemez. Önce taksit tahsilatlarını geri alın.")
     applied = bool(inv.get("effects_applied")) or inv.get("status") in ("approved", "sent_to_gib", "paid")
     if applied:
         await _reverse_invoice_effects(inv)
     await _unlink_orders_from_invoice(invoice_id)
     await _cancel_promissory_for_query({"invoice_id": invoice_id})
+    # Ödenmiş / bekleyen taksit planını iptal say; sipariş silinebilsin diye fatura bağını temizle.
+    await db.installments.update_many(
+        {"invoice_id": invoice_id, "status": {"$ne": "paid"}},
+        {"$set": {"status": "cancelled"}},
+    )
     now = datetime.now(timezone.utc).isoformat()
     note = (req.get("reason") or "").strip()[:300]
     updates = {
@@ -6211,9 +6232,11 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None):
     elif inv.get("e_type") and inv.get("e_type") != "paper":
         updates["einvoice_state"] = "cancelled"
     await db.invoices.update_one({"_id": invoice_id}, {"$set": updates})
-    msg = f"{inv.get('invoice_number')} iptal edildi; cari/stok etkileri geri alındı."
+    msg = f"{inv.get('invoice_number')} iptal edildi; cari/stok etkileri geri alındı, bağlı siparişler serbest bırakıldı."
     if inv.get("e_type") not in (None, "paper") and not _is_incoming_purchase_invoice(inv):
         msg += " GİB e-belge iptali ayrı süreçtir; gerekirse entegratörden iptal/iade düzenleyin."
+    if float(inv.get("paid_amount") or 0) > 0.01:
+        msg += " Tahsilat/ödeme kayıtları kasada durur; cari bakiyede alacak/borç olarak kalabilir."
     return {"status": "success", "message": msg}
 
 @api_router.post("/invoices/{invoice_id}/send-to-gib")

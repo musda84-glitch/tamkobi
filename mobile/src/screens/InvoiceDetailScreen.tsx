@@ -227,7 +227,7 @@ export function InvoiceDetailScreen() {
     if (!canCancelInvoice(inv) || !canEdit) return;
     confirmAction(
       "Faturayı iptal et",
-      `${inv.invoice_number} numaralı fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; kayıt listede kalır.`,
+      `${inv.invoice_number} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`,
       () => {
         run(async () => {
           const r = await post<{ message?: string }>(client, `/invoices/${id}/cancel`, {});
