@@ -1,4 +1,4 @@
-export type PermissionLevel = "none" | "view" | "edit" | string;
+export type PermissionLevel = "none" | "view" | "edit" | "delete" | string;
 
 export type SessionUser = {
   role?: string;
@@ -31,14 +31,21 @@ export function hasSelfPersonnelRecord(user: SessionUser): boolean {
 export function hasPersonnelAccess(user: SessionUser): boolean {
   if (user?.role === "admin") return true;
   const value = permissionLevel(user, "/personnel");
-  return value === "view" || value === "edit";
+  return value === "view" || value === "edit" || value === "delete";
 }
 
-export function can(user: SessionUser, path: string, level: "view" | "edit" = "view"): boolean {
+function levelAllows(value: PermissionLevel | undefined, level: "view" | "edit" | "delete"): boolean {
+  if (level === "view") return value !== "none" && value != null;
+  if (level === "edit") return value === "edit" || value === "delete";
+  if (level === "delete") return value === "delete";
+  return false;
+}
+
+export function can(user: SessionUser, path: string, level: "view" | "edit" | "delete" = "view"): boolean {
   if (user?.role === "admin") return true;
   if (path === "/personnel") {
-    if (level === "edit") return permissionLevel(user, path) === "edit";
-    return hasPersonnelAccess(user);
+    if (level === "view") return hasPersonnelAccess(user);
+    return levelAllows(permissionLevel(user, path), level);
   }
   if (!user?.permissions) return true;
   const value = permissionLevel(user, path);
@@ -51,7 +58,7 @@ export function can(user: SessionUser, path: string, level: "view" | "edit" = "v
     return can(user, "/stock", level);
   }
   if (level === "view") return value !== "none";
-  return value === "edit";
+  return levelAllows(value, level);
 }
 
 export function moduleOn(license: License, path: string): boolean {

@@ -63,7 +63,8 @@ const isBankAcc = (a) => {
 };
 
 export default function PersonnelPage() {
-  const { activeCompany } = useAuth();
+  const { activeCompany, can } = useAuth();
+  const canDeletePersonnel = can("/personnel", "delete");
   const [employees, setEmployees] = useState([]);
   const [attToday, setAttToday] = useState({});
   const [attWork, setAttWork] = useState({});
@@ -715,6 +716,7 @@ export default function PersonnelPage() {
                   >
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
+                  {canDeletePersonnel ? (
                   <button
                     type="button"
                     onClick={() => handleDeleteEmployee(emp)}
@@ -724,6 +726,7 @@ export default function PersonnelPage() {
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
+                  ) : null}
                   <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">
                     Aktif
                   </span>

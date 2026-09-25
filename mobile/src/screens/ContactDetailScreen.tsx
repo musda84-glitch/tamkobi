@@ -93,11 +93,15 @@ export function ContactDetailScreen() {
   const { id, name, collect } = useLocalSearchParams<{ id: string; name?: string; collect?: string }>();
   const canEditContact = can("/contacts", "edit");
   const canInvoice = can("/invoices", "edit");
+  const canDeleteInvoicePerm = can("/invoices", "delete");
   const canBank = can("/banking", "edit");
+  const canDeleteBank = can("/banking", "delete");
   const canQuote = can("/quotes", "edit");
   const canSurvey = can("/surveys", "edit");
   const canOrder = can("/orders", "edit") || can("/saha", "edit");
+  const canDeleteOrder = can("/orders", "delete") || can("/saha", "delete");
   const canCheque = can("/cheques", "edit");
+  const canDeleteCheque = can("/cheques", "delete");
   const canPaper = canCheque || canBank;
   const canProject = can("/projects", "edit");
   const canExp = can("/expenses", "edit");
@@ -441,7 +445,7 @@ export function ContactDetailScreen() {
 
   const removeChequePayment = (p: ContactPayment) => {
     const cid = chequeIdOfPayment(p, cheques);
-    if (!(canCheque || canBank)) { setError("Çek / senet silme yetkiniz yok."); return; }
+    if (!(canDeleteCheque || canDeleteBank)) { setError("Çek / senet silme yetkiniz yok."); return; }
     if (!cid) { setError("Çek kaydı bulunamadı."); return; }
     confirmAction(
       "Çek / seneti sil",
@@ -461,9 +465,9 @@ export function ContactDetailScreen() {
   };
 
   const removeInvoice = (inv: { id?: string; _id?: string; invoice_number?: string; status?: string; e_type?: string; invoice_type?: string; paid_amount?: number; payment_status?: string }) => {
-    if (!canInvoice) { setError("Fatura silme yetkiniz yok."); return; }
     const danger = invoiceRowDangerAction(inv);
     if (danger === "cancel") {
+      if (!canInvoice) { setError("Fatura düzenleme yetkiniz yok."); return; }
       confirmAction(
         "Faturayı iptal et",
         `${inv.invoice_number || "Fatura"} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`,
@@ -481,6 +485,7 @@ export function ContactDetailScreen() {
       );
       return;
     }
+    if (!canDeleteInvoicePerm) { setError("Fatura silme yetkiniz yok."); return; }
     if (danger !== "delete" && !canDeleteInvoice(inv)) {
       setOpenInvRow(null);
       setError("Bu fatura silinemez veya iptal edilemez.");
@@ -512,7 +517,7 @@ export function ContactDetailScreen() {
   };
 
   const removeOrder = (o: { order_number?: string; is_invoiced?: boolean; invoice_id?: string }) => {
-    if (!canOrder) { setError("Sipariş silme yetkiniz yok."); return; }
+    if (!canDeleteOrder) { setError("Sipariş silme yetkiniz yok."); return; }
     if (!canStaffDeleteOrder(o)) { setError("Faturalanmış sipariş silinemez."); return; }
     confirmAction(
       "Siparişi sil",
@@ -556,7 +561,7 @@ export function ContactDetailScreen() {
   };
 
   const removePayment = (p: ContactPayment) => {
-    if (!canBank) { setError("Hareket silme yetkiniz yok."); return; }
+    if (!canDeleteBank) { setError("Hareket silme yetkiniz yok."); return; }
     const ask = paymentDeleteConfirm(p);
     confirmAction(
       ask.title,
@@ -907,6 +912,7 @@ export function ContactDetailScreen() {
         {invoices.map((inv: any, idx: number) => {
           const iid = idOf(inv) || String(idx);
           const danger = invoiceRowDangerAction(inv);
+          const allowDelete = (danger === "delete" && canDeleteInvoicePerm) || (danger === "cancel" && canInvoice);
           return (
             <SwipeRevealRow
               key={iid}
@@ -914,8 +920,8 @@ export function ContactDetailScreen() {
               openKey={openInvRow}
               onOpen={setOpenInvRow}
               onPress={() => go("InvoiceDetail", { id: idOf(inv) })}
-              onEdit={() => editInvoice(inv)}
-              onDelete={() => removeInvoice(inv)}
+              onEdit={canInvoice ? () => editInvoice(inv) : undefined}
+              onDelete={allowDelete ? () => removeInvoice(inv) : undefined}
               deleteLabel={danger === "cancel" ? "İptal" : "Sil"}
               deleteColor={danger === "cancel" ? colors.warning : colors.danger}
               testID={`detail-inv-${iid}`}
@@ -1006,12 +1012,14 @@ export function ContactDetailScreen() {
                         />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <PrimaryButton
-                          title="Sil"
-                          onPress={() => removeChequePayment(p)}
-                          color={colors.danger}
-                          testID={`pay-cheque-delete-${chequeId || idOf(p) || idx}`}
-                        />
+                        {(canDeleteCheque || canDeleteBank) ? (
+                          <PrimaryButton
+                            title="Sil"
+                            onPress={() => removeChequePayment(p)}
+                            color={colors.danger}
+                            testID={`pay-cheque-delete-${chequeId || idOf(p) || idx}`}
+                          />
+                        ) : null}
                       </View>
                     </>
                   ) : canBank && !locked ? (
@@ -1020,7 +1028,9 @@ export function ContactDetailScreen() {
                         <PrimaryButton title="Düzenle" onPress={() => openPaymentEdit(p)} color={colors.secondary} testID={`pay-edit-btn-${idOf(p)}`} />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <PrimaryButton title="Sil" onPress={() => removePayment(p)} color={colors.danger} testID={`pay-delete-btn-${idOf(p)}`} />
+                        {canDeleteBank ? (
+                          <PrimaryButton title="Sil" onPress={() => removePayment(p)} color={colors.danger} testID={`pay-delete-btn-${idOf(p)}`} />
+                        ) : null}
                       </View>
                     </>
                   ) : null}
@@ -1115,7 +1125,7 @@ export function ContactDetailScreen() {
         !orders.length ? <Muted>Sipariş yok.</Muted> : orders.map((o: any, idx: number) => {
           const oid = idOf(o) || String(idx);
           const editable = canOrder && canStaffEditOrder(o);
-          const deletable = canOrder && canStaffDeleteOrder(o);
+          const deletable = canDeleteOrder && canStaffDeleteOrder(o);
           return (
             <View key={oid} style={{ gap: 4 }}>
               <ListRow

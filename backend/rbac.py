@@ -94,12 +94,21 @@ MODULE_HELP = {
     "/settings": "Firma ayarları, kullanıcı/rol, entegrasyonlar (yalnızca yöneticiler).",
     "/trash": "Silinen kayıtlar; 30 gün içinde geri alma.",
 }
-LEVELS = ("none", "view", "edit")
+LEVELS = ("none", "view", "edit", "delete")
+LEVEL_RANK = {"none": 0, "view": 1, "edit": 2, "delete": 3}
 LEVEL_META = [
     {"key": "none", "label": "Yok", "help": "Menüde görünmez; API erişimi engellenir."},
     {"key": "view", "label": "Görüntüle", "help": "Liste ve detay okunur; oluşturma/düzenleme/silme kapalı."},
-    {"key": "edit", "label": "Düzenle", "help": "Tam işlem: ekleme, güncelleme, silme ve onaylar."},
+    {"key": "edit", "label": "Düzenle", "help": "Ekleme ve güncelleme; silme kapalı (web + mobil)."},
+    {"key": "delete", "label": "Sil", "help": "Tam işlem: ekleme, güncelleme, silme ve onaylar (web + mobil)."},
 ]
+
+
+def level_allows(have: Optional[str], need: str) -> bool:
+    """Permission hierarchy: none < view < edit < delete."""
+    return LEVEL_RANK.get(have or "none", 0) >= LEVEL_RANK.get(need, 0)
+
+
 FEATURES = [
     ("view_prices", "Fiyat ve tutarları görebilir", "Kapalıysa tüm API yanıtlarında fiyat/tutar/bakiye alanları maskelenir (0 gösterilir); ürün, sipariş, fatura, kârlılık tutarları gizlenir."),
     ("header_barcode", "Üst bar: Hızlı barkod tarama", "Web üst çubuğundaki Barkod Oku kısayolu. Kapalıysa buton gizlenir."),
@@ -133,7 +142,7 @@ def _all(level: str) -> Dict[str, str]:
     return {m: level for m, _ in MODULES}
 
 DEFAULT_ROLES = [
-    {"code": "admin", "name": "Yönetici", "is_system": True, "permissions": _all("edit")},
+    {"code": "admin", "name": "Yönetici", "is_system": True, "permissions": _all("delete")},
     {"code": "accountant", "name": "Muhasebe", "is_system": True, "permissions": {
         **_all("view"),
         "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit",
@@ -254,13 +263,30 @@ def backfill_permissions(perms: Optional[Dict[str, str]]) -> Dict[str, str]:
 
 async def ensure_roles(company_id: str):
     if await _db.roles.count_documents({"company_id": company_id}) == 0:
-        await _db.roles.insert_many([{"_id": f"role_{company_id}_{r['code']}", "company_id": company_id, **r, "created_at": _now()} for r in DEFAULT_ROLES])
+        await _db.roles.insert_many([
+            {
+                "_id": f"role_{company_id}_{r['code']}",
+                "company_id": company_id,
+                **r,
+                "permissions": {k: ("delete" if v == "edit" else v) for k, v in (r.get("permissions") or {}).items()},
+                "perm_levels_v2": True,
+                "created_at": _now(),
+            }
+            for r in DEFAULT_ROLES
+        ])
         return
     existing = {r["code"]: r for r in await _db.roles.find({"company_id": company_id}).to_list(100)}
     for rdef in DEFAULT_ROLES:
         cur = existing.get(rdef["code"])
         if not cur:
-            await _db.roles.insert_one({"_id": f"role_{company_id}_{rdef['code']}", "company_id": company_id, **rdef, "created_at": _now()})
+            perms = {k: ("delete" if v == "edit" else v) for k, v in (rdef.get("permissions") or {}).items()}
+            await _db.roles.insert_one({
+                "_id": f"role_{company_id}_{rdef['code']}",
+                "company_id": company_id,
+                **{**rdef, "permissions": perms},
+                "perm_levels_v2": True,
+                "created_at": _now(),
+            })
             continue
         upd: Dict[str, Any] = {}
         if cur.get("is_system") and cur.get("name") != rdef["name"]:
@@ -268,16 +294,23 @@ async def ensure_roles(company_id: str):
         raw = dict(cur.get("permissions") or {})
         missing = [m for m, _ in MODULES if m not in raw]
         if cur.get("code") == "admin":
-            filled = _all("edit")
+            filled = _all("delete")
         else:
             filled = backfill_permissions(raw)
             # New catalog keys on system roles: prefer DEFAULT_ROLES over inheritance heuristics
             if cur.get("is_system") and missing:
                 for m in missing:
                     if m in rdef["permissions"]:
-                        filled[m] = rdef["permissions"][m]
+                        # Seeded catalog still uses "edit" for full access modules — store as delete
+                        lvl = rdef["permissions"][m]
+                        filled[m] = "delete" if lvl == "edit" else lvl
         if cur.get("is_system"):
             filled = apply_forced_system_permissions(rdef.get("code"), filled)
+        # Legacy: "edit" included delete. One-time promote to "delete" so Sil is the full-access level;
+        # afterwards admins can set Düzenle to revoke silme without losing ekleme/güncelleme.
+        if not cur.get("perm_levels_v2"):
+            filled = {k: ("delete" if v == "edit" else v) for k, v in filled.items()}
+            upd["perm_levels_v2"] = True
         if filled != raw:
             upd["permissions"] = filled
         if upd:
@@ -294,8 +327,8 @@ async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, An
         if r.get("is_system"):
             r["permissions"] = apply_forced_system_permissions(r.get("code"), r["permissions"])
         if r.get("code") == "admin":
-            r["permissions"] = _all("edit")
-    return r or {"code": "admin", "name": "Yönetici", "permissions": _all("edit")}
+            r["permissions"] = _all("delete")
+    return r or {"code": "admin", "name": "Yönetici", "permissions": _all("delete")}
 
 
 def module_for_path(path: str) -> Optional[str]:
@@ -306,25 +339,32 @@ def module_for_path(path: str) -> Optional[str]:
     return best[1] if best else None
 
 
-def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str]) -> bool:
-    """POST/PUT/DELETE: genelde edit; atölye tablet işlemlerinde view de yeterli."""
+def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], method: str = "POST") -> bool:
+    """POST/PUT/PATCH: edit veya delete; DELETE (ve toplu silme): yalnızca delete. Atölye tablet işlemlerinde view de yeterli."""
     if not module:
         return True
-    if perms.get(module, "none") == "edit":
+    method_u = str(method or "").upper()
+    destructive = method_u == "DELETE" or "bulk-delete" in path or path.rstrip("/").endswith("/delete")
+    need = "delete" if destructive else "edit"
+    if level_allows(perms.get(module, "none"), need):
         return True
     # Sipariş ekranından kargolama: /orders edit yeterli (ayrı /cargo yetkisi şart değil)
     if module == "/cargo" and (
         path.startswith("/api/cargo/create-shipment")
         or path.startswith("/api/cargo/auto-ship")
     ):
-        return perms.get("/orders", "none") == "edit"
+        return need == "edit" and level_allows(perms.get("/orders", "none"), "edit")
     # Atölye ekranı (PIN + iş emri başlat/duraklat/bitir): modülü görebilen kullanıcı işletebilsin.
     # Özel "Atölye" rolü çoğu zaman view ile açılır; edit şartı operatör girişini 403 yapıyordu.
     if module == "/atolye" and path.startswith("/api/production/work-orders"):
-        if perms.get("/atolye", "none") in ("view", "edit"):
+        if need == "delete":
+            return level_allows(perms.get("/atolye", "none"), "delete") or level_allows(
+                perms.get("/production", "none"), "delete"
+            )
+        if level_allows(perms.get("/atolye", "none"), "view"):
             return True
         # Üretim edit yetkisi olanlar da atölye iş emirlerini işletebilir
-        return perms.get("/production", "none") == "edit"
+        return level_allows(perms.get("/production", "none"), "edit")
     return False
 
 
@@ -389,7 +429,7 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
         if user and user.get("role") != "admin" and module:
             role = await role_for(user)
             perms = role.get("permissions", {})
-            if not mutation_allowed(module, path, perms):
+            if not mutation_allowed(module, path, perms, request.method):
                 from fastapi.responses import JSONResponse
                 return JSONResponse({"detail": f"Bu işlem için yetkiniz yok ({role.get('name')} rolü: {module})."}, status_code=403)
         response = await call_next(request)
@@ -464,7 +504,19 @@ async def create_role(req: Dict[str, Any]):
     if await _db.roles.find_one({"company_id": company_id, "code": code}):
         raise HTTPException(status_code=400, detail="Bu rol kodu zaten var.")
     perms = {k: (req.get("permissions") or {}).get(k, "none") for k, _ in MODULES}
-    doc = {"_id": f"role_{company_id}_{code}", "company_id": company_id, "code": code, "name": name, "is_system": False, "permissions": perms, "features": {k: bool((req.get("features") or {}).get(k, True)) for k, _, _ in FEATURES}, "created_at": _now()}
+    # Normalize invalid levels; accept delete/edit/view/none
+    perms = {k: (v if v in LEVELS else "none") for k, v in perms.items()}
+    doc = {
+        "_id": f"role_{company_id}_{code}",
+        "company_id": company_id,
+        "code": code,
+        "name": name,
+        "is_system": False,
+        "permissions": perms,
+        "features": {k: bool((req.get("features") or {}).get(k, True)) for k, _, _ in FEATURES},
+        "perm_levels_v2": True,
+        "created_at": _now(),
+    }
     await _db.roles.insert_one(doc)
     return _clean(doc)
 
@@ -481,6 +533,7 @@ async def update_role(role_id: str, req: Dict[str, Any]):
         if r["code"] == "admin":
             raise HTTPException(status_code=400, detail="Yönetici rolünün yetkileri değiştirilemez.")
         upd["permissions"] = {k: (req["permissions"].get(k) if req["permissions"].get(k) in LEVELS else r["permissions"].get(k, "none")) for k, _ in MODULES}
+        upd["perm_levels_v2"] = True
     if "features" in req:
         if r["code"] == "admin":
             raise HTTPException(status_code=400, detail="Yönetici rolünün yetkileri değiştirilemez.")

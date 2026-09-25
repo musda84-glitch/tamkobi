@@ -50,7 +50,7 @@ type AuthContextValue = AuthState & {
   switchCompany: (companyId: string) => Promise<void>;
   setServer: (url: string) => Promise<void>;
   reload: () => Promise<void>;
-  can: (path: string, level?: "view" | "edit") => boolean;
+  can: (path: string, level?: "view" | "edit" | "delete") => boolean;
   moduleOn: (path: string) => boolean;
 };
 

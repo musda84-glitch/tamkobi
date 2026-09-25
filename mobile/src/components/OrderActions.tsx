@@ -134,6 +134,7 @@ export function OrderActions({
   const [contactFlag, setContactFlag] = useState<{ is_e_invoice_user?: boolean } | null>(null);
   const canEdit = can("/orders", "edit");
   const canMutate = canEdit || can("/saha", "edit");
+  const canDelete = can("/orders", "delete") || can("/saha", "delete");
   const marketplace = isMarketplaceChannel(order.channel);
   const oid = idOf(order);
   const num = order.order_number || oid;
@@ -761,7 +762,7 @@ export function OrderActions({
   };
 
   const showApprove = canEdit && (marketplace ? canShowMarketplaceApprove(order) : canApproveOrder(order));
-  const showDelete = canMutate && canStaffDeleteOrder(order);
+  const showDelete = canDelete && canStaffDeleteOrder(order);
   const canInvoice = can("/invoices", "edit") || canEdit;
   const showEBelge = canInvoice && canIssueOrderEBelge(order);
   const showInvoiced = isOrderFullyInvoiced(order);
@@ -770,6 +771,7 @@ export function OrderActions({
 
   const { kind, items: moreItems } = orderMoreMenuItems(order, {
     eBelgeItems: showEBelge ? eBelgeMenuItems(showEFatura) : [],
+    canDelete: showDelete,
   });
   const primary = mobilePrimaryAction(order);
   const printTone = formPrinted ? "violet" : "slate";

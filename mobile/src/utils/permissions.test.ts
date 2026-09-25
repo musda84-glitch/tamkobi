@@ -36,6 +36,17 @@ describe("permissions", () => {
     expect(visibleModules(user, null).map((m) => m.key)).not.toContain("stock");
   });
 
+  it("requires delete level for silme; delete implies edit", () => {
+    const editor = { role: "sales", permissions: { "/invoices": "edit" } };
+    const deleter = { role: "sales", permissions: { "/invoices": "delete" } };
+    expect(can(editor, "/invoices", "edit")).toBe(true);
+    expect(can(editor, "/invoices", "delete")).toBe(false);
+    expect(can(deleter, "/invoices", "view")).toBe(true);
+    expect(can(deleter, "/invoices", "edit")).toBe(true);
+    expect(can(deleter, "/invoices", "delete")).toBe(true);
+    expect(can({ role: "admin" }, "/invoices", "delete")).toBe(true);
+  });
+
   it("hides license-disabled modules", () => {
     const user = { role: "admin" };
     expect(moduleOn({ modules: { "/saha": false } }, "/saha")).toBe(false);

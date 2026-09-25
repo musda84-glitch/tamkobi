@@ -175,6 +175,7 @@ export function orderMoreMenuItems(ord, opts = {}) {
   else if (kind === "panel_draft") items = panelDraftMoreItems();
   else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
   else items = defaultMoreItems(ord, opts);
-  if (canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
+  const allowDelete = opts.canDelete !== false;
+  if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
   return { kind, items: [...items, ...orderDownloadMoreItems()] };
 }

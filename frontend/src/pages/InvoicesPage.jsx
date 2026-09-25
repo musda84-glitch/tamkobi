@@ -107,7 +107,8 @@ const purchaseCostText = (p) => {
 };
 
 export default function InvoicesPage({ initialType = "all", lockType = false }) {
-  const { activeCompany, addonOn } = useAuth();
+  const { activeCompany, addonOn, can } = useAuth();
+  const canDeleteInv = can("/invoices", "delete");
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [invoices, setInvoices] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -800,7 +801,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         {canCancelInvoice(inv) ? (
                           <button type="button" onClick={() => handleCancelInvoice(inv)} className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition" title="Faturayı iptal et" data-testid={`cancel-inv-btn-${inv.invoice_number}`}><XCircle className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
-                        {canDeleteInvoice(inv) ? (
+                        {canDeleteInv && canDeleteInvoice(inv) ? (
                           <button type="button" onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : "Kağıt faturayı sil"} data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
                         <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
@@ -871,7 +872,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         )}
       </div>
 
-      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={handleDeleteInvoice} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} onCopy={invoiceCopy.handleCopyMode} />
+      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={canDeleteInv ? handleDeleteInvoice : undefined} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} onCopy={invoiceCopy.handleCopyMode} />
       {invoiceCopy.modal}
       {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && printInv.e_type === "expense_slip" && (

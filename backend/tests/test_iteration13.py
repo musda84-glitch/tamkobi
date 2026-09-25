@@ -53,7 +53,7 @@ class TestRoles:
         assert r.status_code == 200, r.text
         d = r.json()
         assert len(d["modules"]) == 19
-        assert d["levels"] == ["none", "view", "edit"]
+        assert d["levels"] == ["none", "view", "edit", "delete"]
         codes = [x["code"] for x in d["roles"]]
         for c in ("admin", "accountant", "sales", "warehouse", "production", "advisor"):
             assert c in codes
