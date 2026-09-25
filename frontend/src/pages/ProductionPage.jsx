@@ -489,7 +489,10 @@ export default function ProductionPage() {
               <div className="flex justify-between items-start gap-2">
                 <div className="min-w-0">
                   <div className="font-mono text-[10px] text-slate-400">{r.code}</div>
-                  <div className="font-bold text-slate-900 truncate">{r.name}</div>
+                  <div className="font-bold text-slate-900 truncate flex items-center gap-1.5 flex-wrap">
+                    <span className="truncate">{r.name}</span>
+                    {r.one_time ? <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200" data-testid={`recipe-one-time-badge-${r.code}`}>Tek seferlik</span> : null}
+                  </div>
                   <div className="text-slate-500 flex items-center gap-1"><Package className="w-3 h-3" /> {r.finished_product_name} • {r.target_quantity} {r.unit}</div>
                   {(r.contact_name || r.job_file_name) ? (
                     <div className="text-[11px] text-indigo-700 mt-0.5 space-y-0.5" data-testid={`recipe-customer-job-${r.code}`}>
