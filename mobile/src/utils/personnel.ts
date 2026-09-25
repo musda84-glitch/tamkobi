@@ -325,6 +325,7 @@ export const REQUEST_KIND_TR: Record<string, string> = {
   yevmiye_adjustment: "Geç giriş ücreti",
   location_exit: "Konum dışı",
   geo_confirm: "Teyitli giriş",
+  overtime_confirm: "Mesai onayı",
 };
 
 export function requestKindLabel(kind?: string | null): string {
@@ -370,6 +371,9 @@ export function pendingRequestDecision(
   if (it.kind === "geo_confirm") {
     return { path: `/personnel/attendance/${id}/geo-confirm-decision`, body: { decision: approved ? "approve" : "reject" } };
   }
+  if (it.kind === "overtime_confirm") {
+    return { path: `/personnel/attendance/${id}/overtime-confirm-decision`, body: { decision: approved ? "yes" : "no" } };
+  }
   return null;
 }
 
@@ -384,6 +388,9 @@ export function pendingRequestDecisionMessage(it: PendingRequest, approved: Requ
   }
   if (it.kind === "dispute") {
     return approved ? "İtiraz düzeltildi olarak kapatıldı." : "İtiraz reddedildi.";
+  }
+  if (it.kind === "overtime_confirm") {
+    return approved ? "Fazla mesai yazıldı." : "Fazla mesai yazılmadı.";
   }
   const label = requestKindLabel(it.kind);
   return approved ? `${label} onaylandı.` : `${label} reddedildi.`;
@@ -414,6 +421,90 @@ export function requestDecisionActions(kind?: string | null): { key: string; tit
     { key: "approve", title: "Onayla", decision: true, color: "primary" },
     { key: "reject", title: "Reddet", decision: false, color: "danger" },
   ];
+}
+
+export type RequestActionTone = "primary" | "secondary" | "danger" | "warning";
+
+export type RequestAction = {
+  key: string;
+  title: string;
+  decision: RequestDecision;
+  color: RequestActionTone;
+};
+
+export type SettledRequest = { item: PendingRequest; decision: RequestDecision };
+
+export function requestKey(it: Pick<PendingRequest, "id" | "kind">): string {
+  return `${it.kind || "req"}-${it.id || ""}`;
+}
+
+export function decisionsEqual(a?: RequestDecision | null, b?: RequestDecision | null): boolean {
+  return a === b;
+}
+
+const ACTION_TONE_HEX: Record<RequestActionTone | "approved" | "rejected" | "muted", string> = {
+  primary: "#059669",
+  secondary: "#0F172A",
+  danger: "#E11D48",
+  warning: "#F59E0B",
+  approved: "#047857",
+  rejected: "#9F1239",
+  muted: "#94A3B8",
+};
+
+export function requestActionDoneTitle(btn: Pick<RequestAction, "title" | "decision">): string {
+  if (btn.title === "Onayla") return "Onaylandı";
+  if (btn.title === "Ücret kes") return "Kesildi";
+  if (btn.title === "Ücret kesme") return "Kesilmedi";
+  if (btn.title === "Kesinti olmasın") return "Kesinti yok";
+  if (btn.title === "Kesinti olsun") return "Kesildi";
+  if (btn.title === "Haberim var") return "Kaydedildi";
+  if (btn.decision === false) return "Reddedildi";
+  return btn.title;
+}
+
+export function requestActionLook(
+  btn: RequestAction,
+  settled?: RequestDecision | null,
+): { title: string; color: string; icon: "checkmark-circle" | "close-circle" | null; muted: boolean } {
+  if (settled == null) {
+    return { title: btn.title, color: ACTION_TONE_HEX[btn.color], icon: null, muted: false };
+  }
+  if (decisionsEqual(btn.decision, settled)) {
+    if (settled === false && btn.color === "danger") {
+      return { title: requestActionDoneTitle(btn), color: ACTION_TONE_HEX.rejected, icon: "close-circle", muted: false };
+    }
+    return { title: requestActionDoneTitle(btn), color: ACTION_TONE_HEX.approved, icon: "checkmark-circle", muted: false };
+  }
+  return { title: btn.title, color: ACTION_TONE_HEX.muted, icon: null, muted: true };
+}
+
+export function upsertSettledRequest(rows: SettledRequest[], item: PendingRequest, decision: RequestDecision): SettledRequest[] {
+  const key = requestKey(item);
+  return [...rows.filter((row) => requestKey(row.item) !== key), { item, decision }];
+}
+
+export function dropSettledRequest(rows: SettledRequest[], item: PendingRequest): SettledRequest[] {
+  const key = requestKey(item);
+  return rows.filter((row) => requestKey(row.item) !== key);
+}
+
+export function mergeSettledRequests(
+  pending: PendingRequest[] | null | undefined,
+  settled: SettledRequest[] | null | undefined,
+): { item: PendingRequest; decision: RequestDecision | null }[] {
+  const live = pending || [];
+  const done = settled || [];
+  const liveKeys = new Set(live.map(requestKey));
+  const settledByKey = new Map(done.map((row) => [requestKey(row.item), row]));
+  const rows = live.map((item) => ({
+    item,
+    decision: settledByKey.get(requestKey(item))?.decision ?? null,
+  }));
+  for (const row of done) {
+    if (!liveKeys.has(requestKey(row.item))) rows.push({ item: row.item, decision: row.decision });
+  }
+  return rows;
 }
 
 export function requestsForEmployee(items: PendingRequest[] | null | undefined, empId: string): PendingRequest[] {

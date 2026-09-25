@@ -8,13 +8,17 @@ import { goHref } from "../nav";
 import { colors } from "../theme";
 import { idOf } from "../utils/money";
 import {
+  dropSettledRequest,
+  mergeSettledRequests,
   pendingRequestDecision,
   pendingRequestDecisionMessage,
-  requestDecisionActions,
   requestKindLabel,
+  upsertSettledRequest,
   type PendingRequest,
   type RequestDecision,
+  type SettledRequest,
 } from "../utils/personnel";
+import { RequestDecisionButtons } from "./RequestDecisionButtons";
 import { Card, Muted, Row } from "./kit";
 
 function Chip({
@@ -73,6 +77,7 @@ export function ManagerApprovalsPanel({
   onChanged?: () => void;
 }) {
   const [staff, setStaff] = useState<PendingRequest[]>([]);
+  const [settledReqs, setSettledReqs] = useState<SettledRequest[]>([]);
   const [cash, setCash] = useState<CashApproval[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +107,7 @@ export function ManagerApprovalsPanel({
       return;
     }
     const key = `${it.kind}-${it.id}`;
+    setSettledReqs((cur) => upsertSettledRequest(cur, it, approved));
     setBusyId(key);
     try {
       await post(client, spec.path, spec.body);
@@ -109,6 +115,7 @@ export function ManagerApprovalsPanel({
       await load();
       onChanged?.();
     } catch (err) {
+      setSettledReqs((cur) => dropSettledRequest(cur, it));
       setError(apiErrorMessage(err, "İşlem başarısız."));
     } finally {
       setBusyId(null);
@@ -131,6 +138,7 @@ export function ManagerApprovalsPanel({
     }
   };
 
+  const staffRows = mergeSettledRequests(staff, settledReqs);
   const count = staff.length + cash.length;
 
   return (
@@ -148,11 +156,11 @@ export function ManagerApprovalsPanel({
       </Row>
       {error ? <Muted>{error}</Muted> : null}
       {message ? <Muted>{message}</Muted> : null}
-      {!count ? (
+      {!count && !settledReqs.length ? (
         <Muted testID="home-approvals-empty">Bekleyen onay yok.</Muted>
       ) : (
         <View style={{ gap: 10, marginTop: 4 }}>
-          {staff.map((it) => {
+          {staffRows.map(({ item: it, decision }) => {
             const key = `${it.kind}-${it.id}`;
             const busy = busyId === key;
             return (
@@ -161,34 +169,17 @@ export function ManagerApprovalsPanel({
                   <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13, flex: 1, minWidth: 0 }} numberOfLines={1}>
                     {it.employee_name || "Personel"} · {requestKindLabel(it.kind)}
                   </Text>
-                  {it.kind === "dispute" ? (
-                    <>
-                      {requestDecisionActions(it.kind).map((btn) => (
-                        <Chip
-                          key={btn.key}
-                          title={busy ? "…" : btn.title}
-                          color={btn.color === "danger" ? colors.danger : colors.primary}
-                          testID={`home-approval-${btn.key}-${it.kind}-${it.id}`}
-                          onPress={() => decideStaff(it, btn.decision)}
-                          disabled={busy}
-                        />
-                      ))}
+                  <RequestDecisionButtons
+                    item={it}
+                    settled={decision}
+                    busy={busy}
+                    testIDFor={(btn) => `home-approval-${btn.key}-${it.kind}-${it.id}`}
+                    onDecide={(next) => decideStaff(it, next)}
+                  >
+                    {it.kind === "dispute" ? (
                       <Chip title="Puantajda aç" color={colors.secondary} testID={`home-approval-view-${it.id}`} onPress={() => goHref("/personnel")} />
-                    </>
-                  ) : (
-                    <>
-                      {requestDecisionActions(it.kind).map((btn) => (
-                        <Chip
-                          key={btn.key}
-                          title={busy ? "…" : btn.title}
-                          color={btn.color === "danger" ? colors.danger : btn.color === "warning" ? colors.warning : btn.color === "secondary" ? colors.secondary : colors.primary}
-                          testID={`home-approval-${btn.key}-${it.kind}-${it.id}`}
-                          onPress={() => decideStaff(it, btn.decision)}
-                          disabled={busy}
-                        />
-                      ))}
-                    </>
-                  )}
+                    ) : null}
+                  </RequestDecisionButtons>
                 </View>
                 <Muted>{it.title || "Talep"}{it.detail ? ` · ${it.detail}` : ""}</Muted>
               </View>

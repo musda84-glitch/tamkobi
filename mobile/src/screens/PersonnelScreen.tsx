@@ -12,6 +12,7 @@ import { LocationSignalDot } from "../components/LocationSignal";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
 import { TimeField } from "../components/TimeField";
+import { RequestDecisionButtons } from "../components/RequestDecisionButtons";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
 import { confirmAction } from "../components/chips";
@@ -43,7 +44,6 @@ import {
   employeeCompRows,
   employeeCompGroups,
   employeeCompRowCaption,
-  requestDecisionActions,
   unpaidPayrollTotal,
   employeePayMoves,
   EMPLOYEE_CARD_PAY_ACTIONS,
@@ -125,9 +125,12 @@ import {
   type LocationMove,
   type MovesSheetTab,
   type PayMovesPeriod,
+  dropSettledRequest,
+  mergeSettledRequests,
   pendingRequestDecision,
   pendingRequestDecisionMessage,
   requestKindLabel,
+  upsertSettledRequest,
   requestsForEmployee,
   requestsDetailsToggleLabel,
   requestsDetailsToggleIcon,
@@ -162,6 +165,8 @@ import {
   type Payroll,
   type PendingRequest,
   type ProjectWithTasks,
+  type RequestDecision,
+  type SettledRequest,
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
@@ -360,6 +365,7 @@ export function PersonnelScreen() {
   const [ledgerNote, setLedgerNote] = useState("");
   const [yevmiyeEditId, setYevmiyeEditId] = useState("");
   const [pendingReqs, setPendingReqs] = useState<PendingRequest[]>([]);
+  const [settledReqs, setSettledReqs] = useState<SettledRequest[]>([]);
   const [cards, setCards] = useState<Record<string, EmployeeCard>>({});
   const [photoEmp, setPhotoEmp] = useState<Employee | null>(null);
   const [bonuses, setBonuses] = useState<EmployeeBonus[]>([]);
@@ -1177,19 +1183,21 @@ export function PersonnelScreen() {
     }
   };
 
-  const decideRequest = async (it: PendingRequest, approved: boolean | "ack" | "deduct") => {
+  const decideRequest = async (it: PendingRequest, approved: RequestDecision) => {
     const spec = pendingRequestDecision(it, approved);
     if (!spec) {
       setTab("attendance");
       setMessage("İtirazı puantaj kaydından inceleyin.");
       return;
     }
+    setSettledReqs((cur) => upsertSettledRequest(cur, it, approved));
     setBusy(true);
     try {
       await post(client, spec.path, spec.body);
       setMessage(pendingRequestDecisionMessage(it, approved));
       await load();
     } catch (err) {
+      setSettledReqs((cur) => dropSettledRequest(cur, it));
       setError(apiErrorMessage(err, "İşlem başarısız."));
     } finally {
       setBusy(false);
@@ -1333,28 +1341,25 @@ export function PersonnelScreen() {
         </Row>
       ) : null}
 
-      {pendingReqs.length ? (
+      {pendingReqs.length || settledReqs.length ? (
         <Card testID="personnel-requests-inbox">
           <Text style={{ fontWeight: "800", color: colors.text }}>Personel talepleri ({pendingReqs.length})</Text>
-          {pendingReqs.slice(0, 8).map((it) => (
+          {mergeSettledRequests(pendingReqs, settledReqs).slice(0, 8).map(({ item: it, decision }) => (
             <View key={`${it.kind}-${it.id}`} style={{ paddingTop: 8, gap: 4, borderTopWidth: 1, borderTopColor: colors.border }} testID={`personnel-request-${it.kind}-${it.id}`}>
               <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
               {it.detail ? <Muted>{it.detail}</Muted> : null}
               {canEdit ? (
-                <Row style={{ flexWrap: "wrap" }}>
-                  {requestDecisionActions(it.kind).map((btn) => (
-                    <PrimaryButton
-                      key={btn.key}
-                      title={btn.title}
-                      color={btn.color === "danger" ? colors.danger : btn.color === "warning" ? colors.warning : btn.color === "secondary" ? colors.secondary : colors.primary}
-                      testID={`${btn.key}-req-${it.id}`}
-                      onPress={() => decideRequest(it, btn.decision)}
-                    />
-                  ))}
+                <RequestDecisionButtons
+                  item={it}
+                  settled={decision}
+                  busy={busy}
+                  testIDFor={(btn) => `${btn.key}-req-${it.id}`}
+                  onDecide={(next) => decideRequest(it, next)}
+                >
                   {it.kind === "dispute" ? (
                     <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`view-req-${it.id}`} onPress={() => setTab("attendance")} />
                   ) : null}
-                </Row>
+                </RequestDecisionButtons>
               ) : it.kind === "dispute" ? (
                 <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`view-req-${it.id}`} onPress={() => setTab("attendance")} />
               ) : null}
@@ -1624,7 +1629,11 @@ export function PersonnelScreen() {
                   </View>
                 ) : null}
                 {(() => {
-                  const empReqs = requestsForEmployee(pendingReqs, eid);
+                  const empRows = mergeSettledRequests(
+                    requestsForEmployee(pendingReqs, eid),
+                    settledReqs.filter((row) => String(row.item.employee_id || "") === eid),
+                  );
+                  const empReqs = empRows.map((row) => row.item);
                   const reqOpen = !!requestsOpen[eid];
                   return (
                     <View testID={`emp-card-requests-${eid}`} style={{ paddingVertical: 4, paddingHorizontal: 6, borderRadius: 8, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A", gap: 4 }}>
@@ -1634,7 +1643,7 @@ export function PersonnelScreen() {
                         accessibilityLabel={requestsDetailsToggleLabel(reqOpen)}
                         style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 28 }}
                       >
-                        <Text style={{ fontWeight: "800", color: "#92400E", fontSize: 12 }}>Talepler ({empReqs.length})</Text>
+                        <Text style={{ fontWeight: "800", color: "#92400E", fontSize: 12 }}>Talepler ({requestsForEmployee(pendingReqs, eid).length})</Text>
                         <Text numberOfLines={1} style={{ flex: 1, fontSize: 11, color: colors.muted }}>{requestsDetailsSummary(empReqs)}</Text>
                         <View
                           testID={`emp-card-requests-toggle-icon-${eid}`}
@@ -1651,25 +1660,22 @@ export function PersonnelScreen() {
                         </View>
                       </Pressable>
                       {reqOpen ? (
-                        empReqs.length ? (
-                          empReqs.slice(0, 3).map((it) => (
+                        empRows.length ? (
+                          empRows.slice(0, 3).map(({ item: it, decision }) => (
                             <View key={`${it.kind}-${it.id}`} style={{ gap: 4 }}>
                               <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
                               {canEdit ? (
-                                <Row style={{ flexWrap: "wrap" }}>
-                                  {requestDecisionActions(it.kind).map((btn) => (
-                                    <PrimaryButton
-                                      key={btn.key}
-                                      title={btn.title}
-                                      color={btn.color === "danger" ? colors.danger : btn.color === "warning" ? colors.warning : btn.color === "secondary" ? colors.secondary : colors.primary}
-                                      testID={`card-${btn.key}-${it.kind}-${it.id}`}
-                                      onPress={() => decideRequest(it, btn.decision)}
-                                    />
-                                  ))}
+                                <RequestDecisionButtons
+                                  item={it}
+                                  settled={decision}
+                                  busy={busy}
+                                  testIDFor={(btn) => `card-${btn.key}-${it.kind}-${it.id}`}
+                                  onDecide={(next) => decideRequest(it, next)}
+                                >
                                   {it.kind === "dispute" ? (
                                     <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`card-view-dispute-${it.id}`} onPress={() => setTab("attendance")} />
                                   ) : null}
-                                </Row>
+                                </RequestDecisionButtons>
                               ) : null}
                             </View>
                           ))
