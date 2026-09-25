@@ -320,6 +320,21 @@ export const InvoiceContextMenu = (props) => {
           Kesildi: <span className="font-semibold text-slate-700">{E_TYPE_LABELS[inv.e_type] || inv.e_type}</span> — belge türü artık değiştirilemez.
         </div>
       ) : null}
+      {copyable && (
+        <div className="border-b border-slate-100 pb-1" data-testid="ctx-copy-section">
+          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-indigo-700">KOPYALA</div>
+          {INVOICE_COPY_MODES.map((m) => (
+            <Item
+              key={m.key}
+              icon={Copy}
+              color="text-indigo-600"
+              label={m.label}
+              onClick={() => onCopy(inv, m.key)}
+              testId={`ctx-copy-${m.key}`}
+            />
+          ))}
+        </div>
+      )}
       {issued && inv.e_type !== "paper" && inv.e_type !== "expense_slip" && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-edoc-downloads">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
@@ -341,21 +356,6 @@ export const InvoiceContextMenu = (props) => {
       <Item icon={Eye} label="Görüntüle" onClick={() => onPreview(inv)} testId="ctx-preview" />
       <Item icon={Printer} label={inv.e_type === "expense_slip" ? "Gider Pusulası Yazdır" : "Şablonlu Yazdır"} onClick={() => onPrint(inv)} testId="ctx-print" />
       <Item icon={MessageSquare} label="SMS / E-posta Gönder" onClick={() => onNotify(inv)} testId="ctx-notify" />
-      {copyable && (
-        <div className="border-t border-slate-100 mt-1 pt-1" data-testid="ctx-copy-section">
-          <div className="px-3 pt-1 pb-0.5 text-[10px] font-bold text-indigo-700">KOPYALA</div>
-          {INVOICE_COPY_MODES.map((m) => (
-            <Item
-              key={m.key}
-              icon={Copy}
-              color="text-indigo-600"
-              label={m.label}
-              onClick={() => onCopy(inv, m.key)}
-              testId={`ctx-copy-${m.key}`}
-            />
-          ))}
-        </div>
-      )}
       {onDispatch && inv.invoice_type === "sales" && (
         <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />
       )}

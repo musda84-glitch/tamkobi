@@ -9,6 +9,6 @@ export const INVOICE_COPY_MODES = [
 export function canCopyInvoice(inv) {
   if (!inv) return false;
   if (inv.status === "cancelled") return false;
-  if (!(inv.items || []).length) return false;
+  // Liste/özet satırlarında items gelmeyebilir; sunucu kopyada kalemleri yükler.
   return true;
 }
