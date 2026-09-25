@@ -24,12 +24,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { API_URL, useAuth } from "../context/AuthContext";
-import { CameraScanner } from "../components/CameraScanner";
+import { CameraScanner, ScanButton } from "../components/CameraScanner";
 import { isWeighableUnit, scaleSupported } from "../utils/scaleBridge";
 import { ScalePromptModal } from "../components/ScalePromptModal";
 import { printThermalReceipt } from "../utils/thermalReceipt";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { fmtMoney } from "../utils/money";
+import { parseBarcodeWithQty, parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
 const DEFAULT_SECTIONS = [{ id: "fav", name: "Favoriler", productIds: [] }];
 
@@ -116,6 +117,17 @@ export default function QuickSalePage() {
   const { activeCompany } = useAuth();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const barcodeRef = useRef(null);
+  const pendingScanQtyRef = useRef(1);
+  const [scanQty, setScanQty] = useState("1");
+  const [scanStatus, setScanStatus] = useState("");
+  const focusBarcode = useCallback(() => {
+    window.setTimeout(() => {
+      const el = barcodeRef.current;
+      if (!el) return;
+      el.focus();
+      try { el.select?.(); } catch { /* ignore */ }
+    }, 0);
+  }, []);
 
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -182,7 +194,7 @@ export default function QuickSalePage() {
     localStorage.setItem("pos_tablet", tabletMode ? "1" : "0");
   }, [tabletMode]);
 
-  useEffect(() => { barcodeRef.current?.focus(); }, [tabletMode]);
+  useEffect(() => { focusBarcode(); }, [tabletMode, focusBarcode]);
 
   const productMap = useMemo(() => {
     const map = new Map();
@@ -326,6 +338,7 @@ export default function QuickSalePage() {
     setScalePrompt(null);
     if (!product) return;
     await addProduct(product, qty);
+    focusBarcode();
   };
 
   const confirmLot = (lot) => {
@@ -333,32 +346,51 @@ export default function QuickSalePage() {
     setCart((prev) => [...prev, makeLine(lotPicker.product, lotPicker.qty, lot)]);
     setLotPicker(null);
     setLotOptions([]);
+    focusBarcode();
   };
 
-  const pickBarcodeHit = async (product) => {
+  const pickBarcodeHit = async (product, qtyOverride = null) => {
+    const qty = qtyOverride != null ? Number(qtyOverride) : pendingScanQtyRef.current || parseScanQtyInput(scanQty);
+    pendingScanQtyRef.current = parseScanQtyInput(scanQty);
     setBarcode("");
     setBarcodeHits([]);
-    await addProduct(product);
-    barcodeRef.current?.focus();
+    await addProduct(product, qty);
+    setScanStatus(`${product.name || "Ürün"} ×${qty}`);
+    focusBarcode();
+  };
+
+  const applyScanCode = async (rawCode, qtyHint = null) => {
+    const parsed = parseBarcodeWithQty(rawCode, qtyHint != null ? qtyHint : scanQty);
+    const code = parsed.barcode;
+    const qty = parsed.quantity;
+    pendingScanQtyRef.current = qty;
+    if (!code) {
+      focusBarcode();
+      return;
+    }
+    setBarcode("");
+    setBarcodeHits([]);
+    const hits = searchProducts(code);
+    if (!hits.length) {
+      toast.error(`Ürün bulunamadı: ${code}`);
+      setScanStatus(`Bulunamadı: ${code}`);
+      focusBarcode();
+      return;
+    }
+    if (hits.length === 1) {
+      await pickBarcodeHit(hits[0], qty);
+      return;
+    }
+    setBarcode(code);
+    setBarcodeHits(hits);
+    setScanStatus(`${hits.length} ürün — listeden seçin (×${qty})`);
+    toast.message(`${hits.length} ürün bulundu — listeden seçin`);
+    focusBarcode();
   };
 
   const onBarcodeSubmit = async (e) => {
     e?.preventDefault?.();
-    const code = barcode.trim();
-    if (!code) return;
-    const hits = searchProducts(code);
-    if (!hits.length) {
-      setBarcode("");
-      setBarcodeHits([]);
-      toast.error(`Ürün bulunamadı: ${code}`);
-      return;
-    }
-    if (hits.length === 1) {
-      await pickBarcodeHit(hits[0]);
-      return;
-    }
-    setBarcodeHits(hits);
-    toast.message(`${hits.length} ürün bulundu — listeden seçin`);
+    await applyScanCode(barcode, scanQty);
   };
 
   const bumpQty = (lineId, delta) => {
@@ -392,7 +424,7 @@ export default function QuickSalePage() {
     clearCart();
     setActiveCartTab("active");
     toast.success(`${label} beklemeye alındı`);
-    barcodeRef.current?.focus();
+    focusBarcode();
   };
 
   const resumeHeldCart = (holdId) => {
@@ -518,7 +550,7 @@ export default function QuickSalePage() {
       clearCart();
       setActiveCartTab("active");
       await loadProducts();
-      barcodeRef.current?.focus();
+      focusBarcode();
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Satış tamamlanamadı");
     } finally {
@@ -578,7 +610,7 @@ export default function QuickSalePage() {
             <ShoppingCart className="w-7 h-7 text-emerald-600" />
             Hızlı Satış
           </h1>
-          <p className="text-sm text-slate-500 mt-1">Barkod veya stok adı, bekleyen sepet, iade ve termal fiş</p>
+          <p className="text-sm text-slate-500 mt-1">Barkod veya stok adı · adet çarpan / 5*barkod · bekleyen sepet, iade ve termal fiş</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => openEditor()} className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold text-slate-700 hover:bg-slate-50 ${btnSize}`} data-testid="pos-edit-sections">
@@ -598,10 +630,11 @@ export default function QuickSalePage() {
             ref={barcodeRef}
             value={barcode}
             onChange={(e) => { setBarcode(e.target.value); setBarcodeHits([]); }}
-            placeholder="Barkod, SKU veya stok adı + Enter"
+            placeholder={`Barkod / SKU / ad · 5*barkod · Enter → +${parseScanQtyInput(scanQty)}`}
             className={`w-full pl-9 pr-3 border border-slate-200 rounded-lg ${btnSize}`}
             data-testid="pos-barcode-input"
             autoComplete="off"
+            autoFocus
           />
           {((barcodeHits.length > 0) || (barcode.trim().length >= 2 && barcodeSuggestions.length > 0)) && (
             <div className="absolute z-20 left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-y-auto" data-testid="pos-barcode-hits">
@@ -623,12 +656,40 @@ export default function QuickSalePage() {
             </div>
           )}
         </div>
+        <label className="shrink-0 flex flex-col justify-center">
+          <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500 leading-none mb-0.5">Adet</span>
+          <input
+            value={scanQtyShown(scanQty)}
+            onChange={(e) => setScanQty(e.target.value.replace(/\D/g, ""))}
+            onFocus={() => setScanQty(scanQtyOnFocus())}
+            onBlur={() => setScanQty(scanQtyOnBlur(scanQty))}
+            inputMode="numeric"
+            aria-label="Adet çarpan"
+            title="Adet çarpan — her okutmada bu kadar ekler (veya 5*barkod yazın)"
+            className={`w-14 text-center font-black border border-slate-200 rounded-lg ${btnSize}`}
+            data-testid="pos-scan-qty"
+          />
+        </label>
+        <ScanButton
+          continuous
+          qtyEnabled
+          qty={scanQty}
+          onQtyChange={setScanQty}
+          statusText={scanStatus}
+          label="Seri"
+          title="Seri kamera okuma — adet çarpan"
+          className={`!rounded-lg shrink-0 ${btnSize}`}
+          onScan={async (code) => {
+            await applyScanCode(code, scanQty);
+          }}
+        />
         <button type="button" onClick={() => setShowScanner(true)} className={`px-3 rounded-lg border border-slate-200 hover:bg-slate-50 ${btnSize}`}>Kamera</button>
         <div className={`flex items-center gap-1 border border-slate-200 rounded-lg px-2 ${btnSize}`}>
           <Scale className="w-4 h-4 text-slate-500" />
           <input value={manualKg} onChange={(e) => setManualKg(e.target.value)} placeholder={scaleSupported() ? "kg / tartı" : "kg"} className="w-24 outline-none bg-transparent" data-testid="pos-manual-kg" />
         </div>
-        <button type="submit" className={`px-4 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 ${btnSize}`}>Ekle</button>
+        <button type="submit" className={`px-4 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 ${btnSize}`}>Ekle (+{parseScanQtyInput(scanQty)})</button>
+        {scanStatus ? <span className="text-[11px] text-emerald-700 font-semibold w-full sm:w-auto" data-testid="pos-scan-status">{scanStatus}</span> : null}
       </form>
 
       <div className={`grid grid-cols-1 xl:grid-cols-5 gap-4 ${tabletMode ? "flex-1 min-h-0 mt-3" : ""}`}>
@@ -772,21 +833,15 @@ export default function QuickSalePage() {
 
       {showScanner && (
         <CameraScanner
+          qtyEnabled
+          qty={scanQty}
+          onQtyChange={setScanQty}
+          statusText={scanStatus}
           onScan={async (code) => {
             setShowScanner(false);
-            const hits = searchProducts(code);
-            if (!hits.length) {
-              toast.error(`Ürün bulunamadı: ${code}`);
-              return;
-            }
-            if (hits.length === 1) {
-              await addProduct(hits[0]);
-              return;
-            }
-            setBarcode(code);
-            setBarcodeHits(hits);
+            await applyScanCode(code, scanQty);
           }}
-          onClose={() => setShowScanner(false)}
+          onClose={() => { setShowScanner(false); focusBarcode(); }}
         />
       )}
 
