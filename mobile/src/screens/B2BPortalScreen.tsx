@@ -308,6 +308,22 @@ export function B2BPortalScreen() {
     AsyncStorage.setItem(heldStorageKey(b2bToken), JSON.stringify(heldCarts));
   }, [b2bToken, heldCarts]);
 
+  /** Sepetteki ürünleri ERP / mobil Siparişler listesinde göstermek için sunucuya yaz. */
+  useEffect(() => {
+    if (!b2bToken || !data) return undefined;
+    const items = Object.values(cart || {})
+      .filter((row) => (Number(row?.qty) || 0) > 0 && row?.productId)
+      .map((row) => ({ product_id: row.productId, quantity: row.qty, note: row.note || "" }));
+    const t = setTimeout(() => {
+      put({ ...client, token: null }, `/public/b2b/${b2bToken}/active-cart`, {
+        items,
+        note,
+        customer_order_number: customerOrderNo.trim(),
+      }).catch(() => { /* çevrimdışı / eski API */ });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [b2bToken, cart, note, customerOrderNo, data, client]);
+
   const settings = data?.settings || {};
   const showPrices = settings.show_prices !== false;
   const showStock = settings.show_stock !== false;

@@ -72,7 +72,10 @@ export function OrdersScreen() {
       {!filtered.length ? <Empty icon="cart-outline" title={orderListEmptyTitle(filter)} /> : filtered.map((o) => {
         const invTone = orderInvoiceBadgeTone(o);
         const invLabel = orderInvoiceBadgeLabel(o);
-        const held = !!(o as { is_held_cart?: boolean }).is_held_cart || o.order_status === "held_cart";
+        const held = !!(o as { is_held_cart?: boolean }).is_held_cart
+          || !!(o as { is_active_cart?: boolean }).is_active_cart
+          || o.order_status === "held_cart"
+          || o.order_status === "active_cart";
         return (
         <View key={idOf(o)} style={{ marginBottom: 8, opacity: held ? 0.72 : 1 }}>
           <ListRow

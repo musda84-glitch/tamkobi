@@ -95,4 +95,19 @@ describe("b2bCart", () => {
     expect(merged[0].is_held_cart).toBe(true);
     expect(merged[1].order_number).toBe("B2B-1");
   });
+
+  it("mergePortalOrderLists shows server active cart when local cart empty", () => {
+    const merged = mergePortalOrderLists({
+      serverOrders: [
+        { id: "ba1", order_number: "BA-1", order_status: "active_cart", is_active_cart: true, held_label: "Aktif sepet", items: [], grand_total: 5 },
+        { id: "o1", order_number: "B2B-1", order_status: "pending", items: [], grand_total: 20 },
+      ],
+      heldLocal: [],
+      products: [],
+      activeCart: {},
+    });
+    expect(merged[0].order_number).toBe("Aktif sepet");
+    expect(merged[0].is_active_cart).toBe(true);
+    expect(merged[1].order_number).toBe("B2B-1");
+  });
 });

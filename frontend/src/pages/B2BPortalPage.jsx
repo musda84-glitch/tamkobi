@@ -69,6 +69,22 @@ export default function B2BPortalPage() {
   useEffect(() => { localStorage.setItem(`b2b_cart_${token}`, JSON.stringify(cart)); }, [cart, token]);
   useEffect(() => { localStorage.setItem(heldStorageKey(token), JSON.stringify(heldCarts)); }, [heldCarts, token]);
 
+  /** Sepetteki ürünleri panel/mobil Siparişler listesinde göstermek için sunucuya yaz. */
+  useEffect(() => {
+    if (!token || !data) return undefined;
+    const items = Object.values(cart || {})
+      .filter((row) => (Number(row?.qty) || 0) > 0 && row?.productId)
+      .map((row) => ({ product_id: row.productId, quantity: row.qty, note: row.note || "" }));
+    const t = setTimeout(() => {
+      axios.put(`${API_URL}/public/b2b/${token}/active-cart`, {
+        items,
+        note,
+        customer_order_number: customerOrderNo.trim(),
+      }).catch(() => { /* çevrimdışı / eski API — yerel sepet kalır */ });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [cart, note, customerOrderNo, token, data]);
+
   const settings = data?.settings || {};
   const showPrices = settings.show_prices !== false;
   const showStock = settings.show_stock !== false;
