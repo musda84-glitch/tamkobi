@@ -1,6 +1,7 @@
 import React from "react";
 import { X } from "lucide-react";
 import { hoursFromTimeRange } from "../utils/overtimeRange";
+import { TimeInput } from "./TimeInput";
 
 const inputCls = "w-full bg-slate-50 border rounded-lg p-2";
 
@@ -41,9 +42,7 @@ export function AssignOvertimeModal({ value, onChange, onClose, onSave, testIdPr
           </div>
           <div>
             <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Başlangıç saati</label>
-            <input
-              type="time"
-              step="60"
+            <TimeInput
               value={value.start || ""}
               onChange={(e) => setRange(e.target.value, value.end)}
               className={inputCls}
@@ -52,9 +51,7 @@ export function AssignOvertimeModal({ value, onChange, onClose, onSave, testIdPr
           </div>
           <div>
             <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Bitiş saati</label>
-            <input
-              type="time"
-              step="60"
+            <TimeInput
               value={value.end || ""}
               onChange={(e) => setRange(value.start, e.target.value)}
               className={inputCls}
