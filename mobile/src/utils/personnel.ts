@@ -261,10 +261,18 @@ export type EmployeeCard = {
   payrolls?: Payroll[];
   bonuses?: EmployeeBonus[];
   balance?: EmployeeBalance;
-  overtime?: { hours?: number; amount?: number };
+  overtime?: {
+    hours?: number;
+    amount?: number;
+    weekday_hours?: number;
+    holiday_hours?: number;
+    weekday_rate?: number;
+    holiday_rate?: number;
+    method?: string;
+  };
   workplace?: Workplace | null;
   leave_balance?: { remaining?: number; annual?: number };
-  attendance?: { days_present?: number; total_hours?: number; overtime_hours?: number };
+  attendance?: { month?: string; days_present?: number; total_hours?: number; overtime_hours?: number };
   performance?: {
     overall?: number;
     check_in?: { pct?: number; ok?: number; expected?: number };
@@ -1480,6 +1488,166 @@ export function overtimeDue(balance?: EmployeeBalance | null): number {
     return Number(balance.overtime_due) || 0;
   }
   return Number(balance?.overtime_pay) || 0;
+}
+
+export type CalculatedOvertimeStatus = "calculated" | "approved" | "paid";
+
+export type CalculatedOvertime = {
+  hours: number;
+  amount: number;
+  weekdayHours: number;
+  holidayHours: number;
+  weekdayRate: number;
+  holidayRate: number;
+  method?: string;
+  period: string;
+  bonusId?: string;
+  status: CalculatedOvertimeStatus;
+  note?: string;
+};
+
+export type OvertimePreviewRow = {
+  employee_id?: string;
+  overtime_hours?: number;
+  weekday_hours?: number;
+  holiday_hours?: number;
+  amount?: number;
+  weekday_rate?: number;
+  holiday_rate?: number;
+  method?: string;
+  period?: string;
+};
+
+function overtimeHoursFromNote(note?: string | null): number {
+  const m = String(note || "").match(/(\d+(?:[.,]\d+)?)\s*sa/);
+  if (!m) return 0;
+  return num(m[1]);
+}
+
+export function periodOvertimeBonus(bonuses?: EmployeeBonus[] | null, period = ""): EmployeeBonus | null {
+  const ym = String(period || "").slice(0, 7);
+  const rows = (bonuses || []).filter((b) => String(b.type || "") === "overtime" && String(b.status || "") !== "rejected");
+  if (!rows.length) return null;
+  if (ym) {
+    const same = rows.find((b) => String(b.period || "").startsWith(ym));
+    if (same) return same;
+  }
+  return rows[0];
+}
+
+export function calculatedOvertimeFromCard(card?: EmployeeCard | null, period = ""): CalculatedOvertime {
+  const ym = String(period || card?.attendance?.month || "").slice(0, 7);
+  const ot = card?.overtime || {};
+  const calcHours = Number(ot.hours ?? card?.attendance?.overtime_hours ?? card?.balance?.overtime_hours) || 0;
+  const calcAmount = Number(ot.amount ?? card?.balance?.overtime_due ?? card?.balance?.overtime_pay) || 0;
+  const bonus = periodOvertimeBonus(card?.bonuses, ym);
+  const bonusHours = overtimeHoursFromNote(bonus?.note);
+  const paid = String(bonus?.status || "") === "paid";
+  const approved = !!bonus && !paid;
+  return {
+    hours: bonusHours || calcHours,
+    amount: bonus ? Number(bonus.amount) || 0 : calcAmount,
+    weekdayHours: Number(ot.weekday_hours) || 0,
+    holidayHours: Number(ot.holiday_hours) || 0,
+    weekdayRate: Number(ot.weekday_rate) || 0,
+    holidayRate: Number(ot.holiday_rate) || 0,
+    method: ot.method,
+    period: ym,
+    bonusId: idOf(bonus) || undefined,
+    status: paid ? "paid" : approved ? "approved" : "calculated",
+    note: bonus?.note,
+  };
+}
+
+export function mergeOvertimePreview(
+  card: EmployeeCard | null | undefined,
+  row?: OvertimePreviewRow | null,
+  period = "",
+): EmployeeCard {
+  const next: EmployeeCard = { ...(card || {}) };
+  if (!row) return next;
+  next.overtime = {
+    hours: Number(row.overtime_hours) || 0,
+    amount: Number(row.amount) || 0,
+    weekday_hours: Number(row.weekday_hours) || 0,
+    holiday_hours: Number(row.holiday_hours) || 0,
+    weekday_rate: Number(row.weekday_rate) || 0,
+    holiday_rate: Number(row.holiday_rate) || 0,
+    method: row.method,
+  };
+  next.attendance = { ...(next.attendance || {}), month: period || row.period || next.attendance?.month };
+  return next;
+}
+
+export function overtimeStatusLabel(status?: CalculatedOvertimeStatus | null): string {
+  if (status === "paid") return "Ödendi";
+  if (status === "approved") return "Onaylandı";
+  return "Hesaplandı";
+}
+
+export function overtimeCanApprove(ot?: CalculatedOvertime | null): boolean {
+  return !!ot && ot.status === "calculated" && ot.amount > 0;
+}
+
+export function overtimeCanEdit(ot?: CalculatedOvertime | null): boolean {
+  return !ot || ot.status !== "paid";
+}
+
+export function overtimeSummaryLine(ot?: CalculatedOvertime | null): string {
+  if (!ot) return "Bu dönemde hesaplanan fazla mesai yok.";
+  const bits: string[] = [];
+  if (ot.period) bits.push(ot.period);
+  if (ot.hours > 0) bits.push(`${ot.hours} sa`);
+  if (ot.weekdayHours > 0 || ot.holidayHours > 0) {
+    bits.push(`HF ${ot.weekdayHours || 0} / tatil ${ot.holidayHours || 0}`);
+  }
+  if (ot.weekdayRate > 0) bits.push(`${ot.weekdayRate} ₺/sa`);
+  return bits.join(" · ") || "Bu dönemde hesaplanan fazla mesai yok.";
+}
+
+export function overtimeAmountFromHours(hours: number, rate: number): number {
+  if (!(hours > 0) || !(rate > 0)) return 0;
+  return Math.round(hours * rate * 100) / 100;
+}
+
+export function validateOvertimeEdit(hours: string, amount: string): string | null {
+  const h = num(hours);
+  const a = num(amount);
+  if (!(a > 0) && !(h > 0)) return "Mesai saati veya tutar girin.";
+  if (!(a > 0)) return "Tutar 0'dan büyük olmalı.";
+  if (h < 0) return "Mesai saati negatif olamaz.";
+  return null;
+}
+
+export function overtimeApprovePayload(employeeId: string, ot: CalculatedOvertime, period = "") {
+  const ym = String(period || ot.period || "").slice(0, 7);
+  const hours = ot.hours > 0 ? `${ot.hours} sa` : "";
+  return {
+    employee_id: employeeId,
+    type: "overtime" as const,
+    amount: Math.round((Number(ot.amount) || 0) * 100) / 100,
+    period: ym,
+    note: `Hesaplanan fazla mesai${hours ? ` · ${hours}` : ""}`.trim(),
+  };
+}
+
+export function overtimeEditPayload(
+  employeeId: string,
+  hours: string,
+  amount: string,
+  period: string,
+  note: string,
+) {
+  const h = num(hours);
+  const hoursBit = h > 0 ? `${h} sa` : "";
+  const custom = String(note || "").trim();
+  return {
+    employee_id: employeeId,
+    type: "overtime" as const,
+    amount: Math.round(num(amount) * 100) / 100,
+    period: String(period || "").slice(0, 7),
+    note: custom || `Düzenlenen fazla mesai${hoursBit ? ` · ${hoursBit}` : ""}`.trim(),
+  };
 }
 
 /** Kart bakiyesine dönem mesai tutarını yaz (ödenen fazla mesai düşülür). */
