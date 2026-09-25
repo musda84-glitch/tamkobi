@@ -621,12 +621,51 @@ async def put_company_privacy(company_id: str, req: Dict[str, Any], request: Req
     return {"status": "success", "message": "Yönetim paneli erişimine izin verildi." if allow else "Yönetim panelinden hesaba giriş kapatıldı.", **saas_extras.privacy_view(c)}
 
 B2B_DEFAULTS = {"enabled": True, "login_method": "both", "allow_ai_cart": True, "default_discount": 0.0, "show_stock": True, "show_prices": True, "allow_orders": True, "show_statement": True, "show_installments": True, "min_order_amount": 0.0, "welcome_note": ""}
+# Cari kartından özelleştirilebilir portal özellikleri (şirket varsayılanını ezer).
+CONTACT_B2B_SETTING_KEYS = (
+    "allow_orders", "show_prices", "show_stock", "show_statement",
+    "show_installments", "allow_ai_cart", "min_order_amount", "welcome_note",
+)
+
+
+def resolve_b2b_settings(company: Optional[dict] = None, contact: Optional[dict] = None) -> Dict[str, Any]:
+    """Şirket varsayılanı + cari özel ayarları birleştir."""
+    company = company or {}
+    contact = contact or {}
+    base = {**B2B_DEFAULTS, **(company.get("b2b_settings") or {})}
+    overrides = contact.get("b2b_portal_settings") or {}
+    for k in CONTACT_B2B_SETTING_KEYS:
+        if k in overrides and overrides[k] is not None:
+            base[k] = overrides[k]
+    return base
+
+
+def contact_b2b_portal_view(contact: dict, company: Optional[dict] = None) -> Dict[str, Any]:
+    """Cari B2B portal sekmesi için erişim + özellikler."""
+    company = company or {}
+    resolved = resolve_b2b_settings(company, contact)
+    raw = {k: (contact.get("b2b_portal_settings") or {}).get(k) for k in CONTACT_B2B_SETTING_KEYS}
+    return {
+        "contact_id": contact.get("_id") or contact.get("id"),
+        "b2b_enabled": bool(contact.get("b2b_enabled")),
+        "b2b_token": contact.get("b2b_token"),
+        "b2b_discount": float(contact.get("b2b_discount") or 0),
+        "b2b_login_email": contact.get("b2b_login_email") or contact.get("email") or "",
+        "has_password": bool(contact.get("b2b_password_hash")),
+        "b2b_last_login": contact.get("b2b_last_login"),
+        "settings": {k: resolved[k] for k in CONTACT_B2B_SETTING_KEYS},
+        "overrides": raw,
+        "company_defaults": {k: {**B2B_DEFAULTS, **(company.get("b2b_settings") or {})}.get(k) for k in CONTACT_B2B_SETTING_KEYS},
+        "company_enabled": bool({**B2B_DEFAULTS, **(company.get("b2b_settings") or {})}.get("enabled", True)),
+        "login_method": {**B2B_DEFAULTS, **(company.get("b2b_settings") or {})}.get("login_method") or "both",
+    }
+
 
 @api_router.get("/companies/{company_id}/b2b-settings")
 async def get_b2b_settings(company_id: str):
     c = await db.companies.find_one({"_id": company_id}) or {}
     settings = {**B2B_DEFAULTS, **(c.get("b2b_settings") or {})}
-    customers = [{"id": x["_id"], "name": x.get("name"), "b2b_enabled": x.get("b2b_enabled", False), "b2b_discount": x.get("b2b_discount", 0), "b2b_token": x.get("b2b_token"), "email": x.get("email"), "phone": x.get("phone"), "tax_number_or_id": x.get("tax_number_or_id"), "b2b_login_email": x.get("b2b_login_email"), "has_password": bool(x.get("b2b_password_hash")), "b2b_last_login": x.get("b2b_last_login")} for x in await db.contacts.find({"company_id": company_id, "type": {"$in": ["customer", "both"]}}).sort("name", 1).to_list(2000)]
+    customers = [{"id": x["_id"], "name": x.get("name"), "b2b_enabled": x.get("b2b_enabled", False), "b2b_discount": x.get("b2b_discount", 0), "b2b_token": x.get("b2b_token"), "email": x.get("email"), "phone": x.get("phone"), "tax_number_or_id": x.get("tax_number_or_id"), "b2b_login_email": x.get("b2b_login_email"), "has_password": bool(x.get("b2b_password_hash")), "b2b_last_login": x.get("b2b_last_login"), "b2b_portal_settings": x.get("b2b_portal_settings") or {}} for x in await db.contacts.find({"company_id": company_id, "type": {"$in": ["customer", "both"]}}).sort("name", 1).to_list(2000)]
     return {"settings": settings, "customers": customers, "active_count": sum(1 for x in customers if x["b2b_enabled"])}
 
 @api_router.put("/companies/{company_id}/b2b-settings")
@@ -3112,9 +3151,73 @@ async def contact_b2b_access(contact_id: str, req: Dict[str, Any]):
         upd["b2b_password_hash"] = hash_password(str(req["password"]))
     if req.get("login_email"):
         upd["b2b_login_email"] = str(req["login_email"]).strip().lower()
+    if isinstance(req.get("settings"), dict):
+        cur = dict(c.get("b2b_portal_settings") or {})
+        for k in CONTACT_B2B_SETTING_KEYS:
+            if k in req["settings"]:
+                cur[k] = req["settings"][k]
+        upd["b2b_portal_settings"] = cur
     await db.contacts.update_one({"_id": contact_id}, {"$set": upd})
     base = (req.get("base_url") or "").rstrip("/")
-    return {**{k: v for k, v in upd.items() if k != "b2b_password_hash"}, "has_password": bool(upd.get("b2b_password_hash") or c.get("b2b_password_hash")), "link": f"{base}/portal/{token}", "login_url": f"{base}/b2b/giris"}
+    refreshed = await db.contacts.find_one({"_id": contact_id}) or {**c, **upd}
+    company = await db.companies.find_one({"_id": refreshed.get("company_id")}) or {}
+    view = contact_b2b_portal_view(refreshed, company)
+    return {
+        **{k: v for k, v in upd.items() if k != "b2b_password_hash"},
+        "has_password": bool(upd.get("b2b_password_hash") or c.get("b2b_password_hash")),
+        "link": f"{base}/portal/{token}",
+        "login_url": f"{base}/b2b/giris",
+        "portal": view,
+    }
+
+
+@api_router.get("/contacts/{contact_id}/b2b-portal")
+async def get_contact_b2b_portal(contact_id: str):
+    c = await db.contacts.find_one({"_id": contact_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    company = await db.companies.find_one({"_id": c.get("company_id")}) or {}
+    return contact_b2b_portal_view(c, company)
+
+
+@api_router.put("/contacts/{contact_id}/b2b-portal")
+async def put_contact_b2b_portal(contact_id: str, req: Dict[str, Any]):
+    """Cari kartından B2B portal erişimi + özellik ayarları."""
+    c = await db.contacts.find_one({"_id": contact_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    token = c.get("b2b_token") or uuid.uuid4().hex
+    upd: Dict[str, Any] = {"b2b_token": token}
+    if "enabled" in req:
+        upd["b2b_enabled"] = bool(req.get("enabled"))
+    if "discount" in req:
+        upd["b2b_discount"] = float(req.get("discount") or 0)
+    if req.get("password"):
+        if len(str(req["password"])) < 6:
+            raise HTTPException(status_code=400, detail="B2B şifresi en az 6 karakter olmalı.")
+        upd["b2b_password_hash"] = hash_password(str(req["password"]))
+    if "login_email" in req:
+        upd["b2b_login_email"] = str(req.get("login_email") or "").strip().lower()
+    if req.get("regenerate"):
+        upd["b2b_token"] = token = uuid.uuid4().hex
+    if isinstance(req.get("settings"), dict):
+        cur = dict(c.get("b2b_portal_settings") or {})
+        for k in CONTACT_B2B_SETTING_KEYS:
+            if k in req["settings"]:
+                cur[k] = req["settings"][k]
+        upd["b2b_portal_settings"] = cur
+    await db.contacts.update_one({"_id": contact_id}, {"$set": upd})
+    refreshed = await db.contacts.find_one({"_id": contact_id}) or {**c, **upd}
+    company = await db.companies.find_one({"_id": refreshed.get("company_id")}) or {}
+    base = (req.get("base_url") or "").rstrip("/")
+    view = contact_b2b_portal_view(refreshed, company)
+    return {
+        "status": "success",
+        "message": "Cari B2B portal ayarları kaydedildi.",
+        "portal": view,
+        "link": f"{base}/portal/{token}" if base else f"/portal/{token}",
+        "login_url": f"{base}/b2b/giris" if base else "/b2b/giris",
+    }
 
 
 async def _b2b_find_contact(ident: str) -> Optional[dict]:
@@ -3145,7 +3248,7 @@ async def b2b_login(req: Dict[str, Any], request: Request):
         applog.log_auth("b2b_login_failed", ident, email=ident, ip=applog.client_ip(request), user_email=ident)
         raise HTTPException(status_code=401, detail="Bilgiler hatalı ya da B2B erişiminiz tanımlı değil. Tedarikçinizle iletişime geçin.")
     company = await db.companies.find_one({"_id": c["company_id"]}) or {}
-    bs = {**B2B_DEFAULTS, **(company.get("b2b_settings") or {})}
+    bs = resolve_b2b_settings(company, c)
     if not bs.get("enabled", True):
         raise HTTPException(status_code=403, detail="B2B portalı şu an kapalı.")
     if bs.get("login_method") == "link":
@@ -3637,7 +3740,7 @@ async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
 @api_router.post("/public/b2b/{token}/ai-cart")
 async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
     c = await _b2b_contact(token)
-    b2b_st = {**B2B_DEFAULTS, **((await db.companies.find_one({"_id": c["company_id"]}, {"b2b_settings": 1}) or {}).get("b2b_settings") or {})}
+    b2b_st = resolve_b2b_settings(await db.companies.find_one({"_id": c["company_id"]}, {"b2b_settings": 1}) or {}, c)
     if b2b_st.get("allow_ai_cart") is False:
         raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
     import addons as _addons
@@ -3854,7 +3957,7 @@ async def _notify_new_task_assignees(project: Dict[str, Any], previous_tasks: Li
 async def b2b_portal(token: str):
     c = await _b2b_contact(token)
     company = await db.companies.find_one({"_id": c["company_id"]}) or {}
-    bs = {**B2B_DEFAULTS, **(company.get("b2b_settings") or {})}
+    bs = resolve_b2b_settings(company, c)
     if not bs.get("enabled", True):
         raise HTTPException(status_code=404, detail="B2B portalı şu an kapalı.")
     disc = float(c.get("b2b_discount", 0) or bs.get("default_discount", 0) or 0)
@@ -3966,7 +4069,7 @@ async def b2b_upsert_active_cart(token: str, req: Dict[str, Any]):
         await _clear_b2b_active_cart(c["company_id"], c["_id"])
         return {"status": "success", "order": None, "message": "Aktif sepet temizlendi."}
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
-    _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
+    _bs = resolve_b2b_settings(_co, c)
     if not _bs.get("allow_orders", True):
         raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
     subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
@@ -4062,7 +4165,7 @@ async def b2b_hold_cart(token: str, req: Dict[str, Any]):
     if not items:
         raise HTTPException(status_code=400, detail="Beklemeye alınacak ürün yok.")
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
-    _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
+    _bs = resolve_b2b_settings(_co, c)
     if not _bs.get("allow_orders", True):
         raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
     subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
@@ -4145,7 +4248,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
     subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
     total = subtotal
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
-    _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
+    _bs = resolve_b2b_settings(_co, c)
     if not _bs.get("allow_orders", True):
         raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
     if float(_bs.get("min_order_amount", 0) or 0) > grand_total:
@@ -4182,7 +4285,7 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
     subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
     total = subtotal
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
-    _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
+    _bs = resolve_b2b_settings(_co, c)
     if o.get("order_status") not in ("held_cart", "active_cart") and float(_bs.get("min_order_amount", 0) or 0) > grand_total:
         raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
     update: Dict[str, Any] = {
