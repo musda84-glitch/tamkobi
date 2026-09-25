@@ -106,6 +106,7 @@ export const MOBILE_MODULES: MobileModule[] = [
   { key: "home", path: "/", label: "Özet", tab: true },
   { key: "saha", path: "/saha", label: "Saha", tab: true },
   { key: "stock", path: "/stock", label: "Stok", tab: true },
+  { key: "sayim", path: "/sayim", label: "Stok Sayımı" },
   { key: "mesai", path: "/mesai", label: "Mesaim", tab: true },
   { key: "personelim", path: "/personelim", label: "Benim Sayfam", tab: true },
   { key: "personnel", path: "/personnel", label: "Personel & Bordro" },

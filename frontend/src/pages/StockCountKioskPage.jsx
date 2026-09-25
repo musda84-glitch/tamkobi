@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { CameraScanner } from "../components/CameraScanner";
+import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
 import {
   ClipboardList, Plus, Scan, CheckCircle2, Minus, Maximize2, Minimize2,
@@ -19,13 +20,15 @@ export default function StockCountKioskPage() {
   const [counts, setCounts] = useState([]);
   const [active, setActive] = useState(null);
   const [barcode, setBarcode] = useState("");
+  const [scanQty, setScanQty] = useState("1");
   const [last, setLast] = useState(null);
   const [busy, setBusy] = useState(false);
   const [kiosk, setKiosk] = useState(true);
-  const [cam, setCam] = useState(false);
+  const [cam, setCam] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [newForm, setNewForm] = useState({ name: "", warehouse_id: "" });
   const inputRef = useRef(null);
+  const qty = parseScanQtyInput(scanQty);
 
   const loadList = useCallback(async () => {
     try {
@@ -67,16 +70,19 @@ export default function StockCountKioskPage() {
   const scanCode = async (code) => {
     const c = String(code || "").trim();
     if (!c || !active?.id || active.status !== "open") return;
+    const addQty = parseScanQtyInput(scanQty);
     try {
-      const r = await axios.post(`${API_URL}/warehouses/stock-counts/${active.id}/scan`, { barcode: c, quantity: 1 });
+      const r = await axios.post(`${API_URL}/warehouses/stock-counts/${active.id}/scan`, { barcode: c, quantity: addQty });
       setLast(r.data.item);
       setBarcode("");
       const fresh = await axios.get(`${API_URL}/warehouses/stock-counts/${active.id}`);
       setActive(fresh.data);
       toast.success(r.data.message);
+      if (navigator.vibrate) navigator.vibrate(40);
     } catch (err) {
       toast.error(err.response?.data?.detail || `Barkod eşleşmedi: ${c}`);
       setBarcode("");
+      if (navigator.vibrate) navigator.vibrate([40, 40, 80]);
     }
     setTimeout(() => inputRef.current?.focus(), 50);
   };
@@ -183,9 +189,29 @@ export default function StockCountKioskPage() {
                   data-testid="kiosk-scan-input"
                 />
               </div>
+              <div className="flex gap-2 items-stretch">
+                <label className="shrink-0 w-24 bg-white border-2 border-slate-200 rounded-2xl px-2 py-2 flex flex-col items-center justify-center">
+                  <span className="text-[10px] font-bold uppercase text-slate-500">Adet</span>
+                  <input
+                    value={scanQtyShown(scanQty)}
+                    onChange={(e) => setScanQty(e.target.value.replace(/[^\d]/g, ""))}
+                    onFocus={() => setScanQty(scanQtyOnFocus())}
+                    onBlur={() => setScanQty(scanQtyOnBlur(scanQty))}
+                    inputMode="numeric"
+                    aria-label="Adet çarpan"
+                    className="w-full text-center text-2xl font-black text-slate-900 bg-transparent outline-none"
+                    data-testid="kiosk-scan-qty"
+                  />
+                </label>
+                <button type="submit" className="flex-1 py-4 bg-violet-600 text-white rounded-2xl font-bold text-base" data-testid="kiosk-scan-btn">Okut (+{qty})</button>
+              </div>
               <div className="grid grid-cols-2 gap-2">
-                <button type="submit" className="py-4 bg-violet-600 text-white rounded-2xl font-bold text-base" data-testid="kiosk-scan-btn">Okut (+1)</button>
-                <button type="button" onClick={() => setCam(true)} className="py-4 bg-slate-900 text-white rounded-2xl font-bold text-base inline-flex items-center justify-center gap-2" data-testid="kiosk-camera-btn"><Camera className="w-5 h-5" /> Kamera</button>
+                <button type="button" onClick={() => setCam("serial")} className="py-4 bg-indigo-600 text-white rounded-2xl font-bold text-base inline-flex items-center justify-center gap-2" data-testid="kiosk-serial-btn">
+                  <Camera className="w-5 h-5" /> Seri okut
+                </button>
+                <button type="button" onClick={() => setCam("once")} className="py-4 bg-slate-900 text-white rounded-2xl font-bold text-base inline-flex items-center justify-center gap-2" data-testid="kiosk-camera-btn">
+                  <Camera className="w-5 h-5" /> Kamera
+                </button>
               </div>
             </form>
           )}
@@ -236,18 +262,30 @@ export default function StockCountKioskPage() {
     </div>
   );
 
+  const scanner = cam && (
+    <CameraScanner
+      continuous={cam === "serial"}
+      qtyEnabled
+      qty={scanQty}
+      onQtyChange={setScanQty}
+      title={cam === "serial" ? "Sayım — seri okuma" : "Sayım — kamera"}
+      onScan={scanCode}
+      onClose={() => { setCam(null); setTimeout(() => inputRef.current?.focus(), 80); }}
+    />
+  );
+
   if (kiosk) {
     return (
       <div className="fixed inset-0 z-[80] bg-slate-100 overflow-y-auto p-4 sm:p-6" data-testid="stock-count-kiosk-fullscreen">
         {body}
-        {cam && <CameraScanner continuous title="Sayım — kamera" onScan={scanCode} onClose={() => { setCam(false); setTimeout(() => inputRef.current?.focus(), 80); }} />}
+        {scanner}
       </div>
     );
   }
   return (
     <div className="space-y-4">
       {body}
-      {cam && <CameraScanner continuous title="Sayım — kamera" onScan={scanCode} onClose={() => { setCam(false); setTimeout(() => inputRef.current?.focus(), 80); }} />}
+      {scanner}
     </div>
   );
 }

@@ -54,6 +54,8 @@ function RootStack() {
         <Stack.Screen name="orders/[id]" options={{ title: "Sipariş" }} />
         <Stack.Screen name="stock/new" options={{ title: "Yeni stok kartı" }} />
         <Stack.Screen name="stock/[id]" options={{ title: "Stok kartı" }} />
+        <Stack.Screen name="sayim/index" options={{ title: "Stok Sayımı" }} />
+        <Stack.Screen name="sayim/[id]" options={{ title: "Sayım oturumu" }} />
         <Stack.Screen name="pay/index" options={{ title: "Tahsilat & Ödeme Yap" }} />
         <Stack.Screen name="banking/index" options={{ title: "Kasa & Banka" }} />
         <Stack.Screen name="banking/new" options={{ title: "Yeni hesap" }} />
