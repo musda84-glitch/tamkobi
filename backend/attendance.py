@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api")
 _db = None
 _current_user = None
 
-DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "days": {}, "late_tolerance_minutes": 10, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul",
+DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "days": {}, "late_tolerance_minutes": 10, "exit_tolerance_minutes": 0, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul",
                     "overtime_method": "legal", "overtime_multiplier": 1.5, "holiday_multiplier": 2.0, "monthly_hours_divisor": 225, "notify_missing_checkin": True, "notify_late_checkin": True}
 # Personel kartı: konum izleme (iş yeri + dış görev ayrı).
 DEFAULT_LOCATION_MODE = {"enabled": True, "continuous": False, "interval_minutes": 15, "exit_tolerance_hours": 0}
@@ -653,6 +653,7 @@ def overtime_confirm_should_notify(
     end_hm: Optional[str] = None,
     now_hm: Optional[str] = None,
     tolerance_hours: int = 0,
+    tolerance_minutes: Optional[int] = None,
     existing: Optional[dict] = None,
     rec: Optional[dict] = None,
 ) -> bool:
@@ -676,7 +677,10 @@ def overtime_confirm_should_notify(
     if status in ("pending", "approved", "rejected", "yes", "no"):
         return False
     past_m = minutes_past_hm(end_hm, now_hm)
-    need_m = max(0, int(tolerance_hours or 0)) * 60
+    if tolerance_minutes is not None:
+        need_m = max(0, int(tolerance_minutes or 0))
+    else:
+        need_m = max(0, int(tolerance_hours or 0)) * 60
     return past_m >= need_m and past_m > 0
 
 
@@ -685,16 +689,21 @@ def build_overtime_confirm_request(
     end_hm: str,
     now_hm: str,
     tolerance_hours: int = 0,
+    tolerance_minutes: Optional[int] = None,
     hours: Optional[float] = None,
     now: Optional[str] = None,
 ) -> dict:
     stamp = now or _now()
     ot_h = hours if hours is not None else potential_overtime_hours(end_hm, now_hm)
+    tol_m = tolerance_minutes
+    if tol_m is None:
+        tol_m = max(0, int(tolerance_hours or 0)) * 60
     return {
         "status": "pending",
         "schedule_end": str(end_hm)[:5],
         "proposed_out": str(now_hm)[:5],
         "hours": round(float(ot_h or 0), 2),
+        "tolerance_minutes": max(0, int(tol_m or 0)),
         "tolerance_hours": max(0, int(tolerance_hours or 0)),
         "requested_at": stamp,
         "decided_at": None,
@@ -1113,6 +1122,7 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
     out["intraday_leave_minutes"] = leave_m
     if ci and not out["is_off_day"]:
         out["late_minutes"] = max(0, _hm(ci) - start_m - int(schedule.get("late_tolerance_minutes") or 0))
+    exit_tol = int(schedule.get("exit_tolerance_minutes") or 0)
     if not (ci and co):
         return out
     a, b = _hm(ci), _hm(co)
@@ -1122,7 +1132,7 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
         else:
             # Aynı gün mesaisinde çıkış < giriş → gece vardiyası değil, bozuk kayıt
             out["time_order_invalid"] = True
-            out["early_leave_minutes"] = max(0, expected_end_m - b) if not out["is_off_day"] else 0
+            out["early_leave_minutes"] = max(0, expected_end_m - b - exit_tol) if not out["is_off_day"] else 0
             return out
     worked = max(0, b - a - win["break_minutes"] - leave_m)
     if out["is_off_day"]:
@@ -1133,8 +1143,8 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
         ot = (b - end_m) if b - end_m > tol else 0
         if schedule.get("count_early_as_overtime") and a < start_m:
             ot += start_m - a
-        # Erken çıkış: atanan fazla mesai dahil beklenen çıkışa göre
-        out["early_leave_minutes"] = max(0, expected_end_m - b)
+        # Erken çıkış: atanan fazla mesai dahil beklenen çıkışa göre (çıkış toleransı düşülür)
+        out["early_leave_minutes"] = max(0, expected_end_m - b - exit_tol)
         ot = min(ot, worked)
     out["hours"] = round(worked / 60, 2)
     out["overtime_hours"] = round(ot / 60, 2)
@@ -1895,7 +1905,7 @@ async def put_work_schedule(company_id: str, req: Dict[str, Any]):
         s[k] = v
     if _hm(s["end"]) <= _hm(s["start"]):
         raise HTTPException(status_code=400, detail="Mesai bitişi başlangıçtan sonra olmalı.")
-    for k in ("break_minutes", "late_tolerance_minutes", "overtime_tolerance_minutes"):
+    for k in ("break_minutes", "late_tolerance_minutes", "exit_tolerance_minutes", "overtime_tolerance_minutes"):
         s[k] = max(0, int(req.get(k) if req.get(k) is not None else s[k]))
     wd = req.get("work_days")
     if isinstance(wd, list) and wd:
@@ -2543,11 +2553,12 @@ async def maybe_open_overtime_confirm(
     end_hm = day_end_hm(schedule, day, plan)
     clock = now_s or now_hm(schedule)
     existing = rec.get("overtime_confirm_request") if isinstance(rec.get("overtime_confirm_request"), dict) else None
+    exit_tol_m = int(schedule.get("exit_tolerance_minutes") or 0)
     if not overtime_confirm_should_notify(
         location_active=True,
         end_hm=end_hm,
         now_hm=clock,
-        tolerance_hours=int((mode or {}).get("exit_tolerance_hours") or 0),
+        tolerance_minutes=exit_tol_m,
         existing=existing,
         rec=rec,
     ):
@@ -2558,7 +2569,7 @@ async def maybe_open_overtime_confirm(
     req = build_overtime_confirm_request(
         end_hm=end_hm,
         now_hm=clock,
-        tolerance_hours=int((mode or {}).get("exit_tolerance_hours") or 0),
+        tolerance_minutes=exit_tol_m,
     )
     now = _now()
     await _db.attendance.update_one(
@@ -2573,7 +2584,7 @@ async def maybe_open_overtime_confirm(
         f"Mesaide mi?: {emp.get('full_name')}",
         f"{emp.get('full_name')} mesai bitişi ({end_hm}) sonrası konum verisi alınıyor"
         + (f" · ~{hours:g} sa potansiyel fazla mesai" if hours else "")
-        + (f" · tolerans {int((mode or {}).get('exit_tolerance_hours') or 0)} sa" if (mode or {}).get("exit_tolerance_hours") else "")
+        + (f" · çıkış toleransı {exit_tol_m} dk" if exit_tol_m else "")
         + ". Evet → artı mesai yaz · Hayır → yazma.",
         link="/personnel?tab=attendance",
         dedupe_key=f"otconfirm:{emp.get('_id')}:{day}",

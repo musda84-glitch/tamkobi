@@ -40,23 +40,23 @@ def test_overtime_confirm_after_exit_tolerance_with_location():
     rec = {"check_in": "09:00", "check_out": "18:00", "auto_checkout": True}
     assert overtime_confirm_should_notify(
         location_active=True, end_hm="18:00", now_hm="18:30",
-        tolerance_hours=0, existing=None, rec=rec,
+        tolerance_minutes=0, existing=None, rec=rec,
     ) is True
     assert overtime_confirm_should_notify(
         location_active=True, end_hm="18:00", now_hm="18:30",
-        tolerance_hours=1, existing=None, rec=rec,
+        tolerance_minutes=60, existing=None, rec=rec,
     ) is False
     assert overtime_confirm_should_notify(
         location_active=True, end_hm="18:00", now_hm="19:00",
-        tolerance_hours=1, existing=None, rec=rec,
+        tolerance_minutes=60, existing=None, rec=rec,
     ) is True
     assert overtime_confirm_should_notify(
         location_active=False, end_hm="18:00", now_hm="19:00",
-        tolerance_hours=0, existing=None, rec=rec,
+        tolerance_minutes=0, existing=None, rec=rec,
     ) is False
     assert overtime_confirm_should_notify(
         location_active=True, end_hm="18:00", now_hm="19:00",
-        tolerance_hours=0, existing={"status": "pending"}, rec=rec,
+        tolerance_minutes=0, existing={"status": "pending"}, rec=rec,
     ) is False
 
 
@@ -64,17 +64,17 @@ def test_overtime_confirm_skips_manual_late_checkout():
     rec = {"check_in": "09:00", "check_out": "20:00"}  # manuel geç çıkış
     assert overtime_confirm_should_notify(
         location_active=True, end_hm="18:00", now_hm="20:30",
-        tolerance_hours=0, existing=None, rec=rec,
+        tolerance_minutes=0, existing=None, rec=rec,
     ) is False
 
 
 def test_build_and_parse_overtime_confirm():
-    req = build_overtime_confirm_request(end_hm="18:00", now_hm="19:30", tolerance_hours=1)
+    req = build_overtime_confirm_request(end_hm="18:00", now_hm="19:30", tolerance_minutes=15)
     assert req["status"] == "pending"
     assert req["schedule_end"] == "18:00"
     assert req["proposed_out"] == "19:30"
     assert req["hours"] == 1.5
-    assert req["tolerance_hours"] == 1
+    assert req["tolerance_minutes"] == 15
     assert parse_overtime_confirm_decision({"decision": "evet"}) == "yes"
     assert parse_overtime_confirm_decision({"decision": "hayır"}) == "no"
     assert parse_overtime_confirm_decision({"decision": "yes"}) == "yes"
@@ -84,6 +84,15 @@ def test_build_and_parse_overtime_confirm():
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_exit_tolerance_reduces_early_leave():
+    from attendance import compute_day
+    sch = {**SCH, "late_tolerance_minutes": 10, "exit_tolerance_minutes": 15, "overtime_tolerance_minutes": 15, "break_minutes": 60}
+    out = compute_day({"date": "2026-09-14", "check_in": "09:00", "check_out": "17:50"}, sch)
+    assert out["early_leave_minutes"] == 0  # 10 dk erken, 15 dk tolerans
+    out2 = compute_day({"date": "2026-09-14", "check_in": "09:00", "check_out": "17:30"}, sch)
+    assert out2["early_leave_minutes"] == 15  # 30 - 15
 
 
 def test_overtime_confirm_messages():
