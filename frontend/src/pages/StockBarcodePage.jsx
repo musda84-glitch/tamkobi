@@ -17,6 +17,7 @@ import { ScanButton } from "../components/CameraScanner";
 import { SearchSelect } from "../components/SearchSelect";
 import { barcodeSaleLine, barcodeSalePayload, findRetailContact, pickCashAccount, RETAIL_CONTACT_NAME, RETAIL_CONTACT_TAX } from "../utils/barcodeSale";
 import { bulkProgressPercent, BULK_FLAG_TIMEOUT_MS, formatElapsed, runBulkFlagChunks } from "../utils/stockBulkFlags";
+import { parseBarcodeWithQty, parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
 import {
   Package,
@@ -88,7 +89,17 @@ export default function StockBarcodePage() {
   const [scanContacts, setScanContacts] = useState([]);
   const [scanContactId, setScanContactId] = useState("");
   const [scanQty, setScanQty] = useState(1);
+  const [scanMult, setScanMult] = useState("1");
   const [scanSelling, setScanSelling] = useState(false);
+  const scannerInputRef = useRef(null);
+  const focusScannerInput = useCallback(() => {
+    window.setTimeout(() => {
+      const el = scannerInputRef.current;
+      if (!el) return;
+      el.focus();
+      try { el.select?.(); } catch { /* ignore */ }
+    }, 0);
+  }, []);
   const [detailProduct, setDetailProduct] = useState(null);
   const [produceProduct, setProduceProduct] = useState(null);
   const [movesProduct, setMovesProduct] = useState(null);
@@ -427,19 +438,28 @@ export default function StockBarcodePage() {
   }, [showScannerModal, loadScanContacts]);
 
   const handleScanBarcode = async (barcode) => {
-    if (!barcode) return;
+    const parsed = parseBarcodeWithQty(barcode, scanMult);
+    const code = parsed.barcode;
+    const qty = parsed.quantity;
+    if (!code) {
+      focusScannerInput();
+      return;
+    }
+    setScannedBarcode(code);
+    setScanQty(qty);
     try {
-      const res = await axios.get(`${API_URL}/products/barcode/${encodeURIComponent(barcode)}?company_id=${companyId}`);
+      const res = await axios.get(`${API_URL}/products/barcode/${encodeURIComponent(code)}?company_id=${companyId}`);
       const data = {
         ...res.data,
         matched_variant: res.data.matched_variant || res.data.matched_variant || null,
       };
       setScanResultProduct(data);
-      setScanQty(1);
-      toast.success(`Ürün Bulundu: ${data.name}`);
+      toast.success(`Ürün Bulundu: ${data.name} ×${qty}`);
     } catch (err) {
       toast.error("Barkod ile eşleşen ürün bulunamadı.");
       setScanResultProduct(null);
+    } finally {
+      focusScannerInput();
     }
   };
 
@@ -513,11 +533,13 @@ export default function StockBarcodePage() {
       );
       setScanResultProduct(null);
       setScannedBarcode("");
-      setScanQty(1);
+      setScanQty(parseScanQtyInput(scanMult));
       loadProducts();
+      focusScannerInput();
     } catch (err) {
       const detail = err.response?.data?.detail;
       toast.error(typeof detail === "string" ? detail : err.message || "Satış kaydedilemedi.");
+      focusScannerInput();
     } finally {
       setScanSelling(false);
     }
@@ -1008,29 +1030,53 @@ export default function StockBarcodePage() {
 
               <p className="text-slate-500">
                 {scanSaleMode === "retail"
-                  ? "Barkodu okutun; peşin perakende satış faturası oluşturulur (stok düşer)."
-                  : "Barkodu okutun; seçilen cariye satış faturası işlenir (stok + bakiye)."}
+                  ? "Barkodu okutun; peşin perakende satış faturası oluşturulur (stok düşer). Seri okumada adet çarpan veya 5*barkod kullanın."
+                  : "Barkodu okutun; seçilen cariye satış faturası işlenir (stok + bakiye). Seri okumada adet çarpan veya 5*barkod kullanın."}
               </p>
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2 items-end">
                 <input
+                  ref={scannerInputRef}
                   type="text"
-                  placeholder="Barkod numarası girin veya okutun..."
+                  placeholder={`Barkod veya 5*barkod… Enter → ×${parseScanQtyInput(scanMult)}`}
                   value={scannedBarcode}
                   onChange={(e) => setScannedBarcode(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleScanBarcode(scannedBarcode)}
-                  className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono text-slate-900 text-sm font-bold"
+                  className="flex-1 min-w-[12rem] bg-slate-50 border border-slate-200 rounded-lg p-2 font-mono text-slate-900 text-sm font-bold"
                   data-testid="scanner-input"
                   autoFocus
                 />
+                <label className="shrink-0 flex flex-col">
+                  <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500 mb-0.5">Adet</span>
+                  <input
+                    value={scanQtyShown(scanMult)}
+                    onChange={(e) => setScanMult(e.target.value.replace(/\D/g, ""))}
+                    onFocus={() => setScanMult(scanQtyOnFocus())}
+                    onBlur={() => setScanMult(scanQtyOnBlur(scanMult))}
+                    inputMode="numeric"
+                    aria-label="Adet çarpan"
+                    title="Adet çarpan — her okutmada bu kadar (veya 5*barkod)"
+                    className="w-14 text-center font-black border border-slate-200 rounded-lg p-2"
+                    data-testid="scanner-mult-input"
+                  />
+                </label>
                 <button
+                  type="button"
                   onClick={() => handleScanBarcode(scannedBarcode)}
                   className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700"
                   data-testid="scanner-search-btn"
                 >
                   Sorgula
                 </button>
-                <ScanButton onScan={(code) => { setScannedBarcode(code); handleScanBarcode(code); }} title="Kamera ile Barkod Okut" label="Kamera" />
+                <ScanButton
+                  continuous
+                  qtyEnabled
+                  qty={scanMult}
+                  onQtyChange={setScanMult}
+                  onScan={(code) => { setScannedBarcode(code); handleScanBarcode(code); }}
+                  title="Seri kamera okuma — adet çarpan"
+                  label="Seri"
+                />
               </div>
 
               {scanResultProduct && (
