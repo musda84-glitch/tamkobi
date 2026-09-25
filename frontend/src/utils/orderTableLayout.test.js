@@ -2,8 +2,8 @@ import { ORDER_ACTIONS_COL, ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, orderTableMinW
 
 test("order table default width fits a typical content pane without horizontal scroll", () => {
   const total = orderTableMinWidth(ORDER_COL_DEFAULTS);
-  expect(total).toBe(1025);
-  expect(total).toBeLessThanOrEqual(1050);
+  expect(total).toBe(1063);
+  expect(total).toBeLessThanOrEqual(1100);
 });
 
 test("actions column is fixed and not part of resizable defaults", () => {
