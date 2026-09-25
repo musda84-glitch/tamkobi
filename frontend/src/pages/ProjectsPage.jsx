@@ -125,8 +125,8 @@ const QuoteActions = ({
         </button>
       ) : ph("min-w-[7.5rem]", <><FileText className="w-3 h-3" /> Faturaya</>)}
       {!q.invoice_id ? (
-        <button type="button" onClick={onReject} className={`${pad} min-w-[2.75rem] justify-center border rounded-lg text-rose-600 font-semibold inline-flex items-center`} data-testid={`reject-quote-${q.quote_number}`}>Red</button>
-      ) : ph("min-w-[2.75rem]", "Red")}
+        <button type="button" onClick={onReject} className={`${pad} min-w-[4.5rem] justify-center border rounded-lg text-rose-600 font-semibold inline-flex items-center whitespace-nowrap`} data-testid={`reject-quote-${q.quote_number}`}>İptal Et</button>
+      ) : ph("min-w-[4.5rem]", "İptal Et")}
       <button type="button" onClick={onDelete} className={`${iconPad} text-slate-300 hover:text-rose-600 rounded-lg`} title="Sil" data-testid={`delete-quote-${q.quote_number}`}><Trash2 className="w-4 h-4" /></button>
     </div>
   );
