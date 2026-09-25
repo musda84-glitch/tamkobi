@@ -16,7 +16,7 @@ export const ORDER_COL_LIMITS = {
 
 export const ORDER_SELECT_COL = 40;
 /** Fixed actions rail — not user-resizable (keeps the card edge clean). */
-export const ORDER_ACTIONS_COL = 210;
+export const ORDER_ACTIONS_COL = 248;
 
 export const orderTableMinWidth = (widths = ORDER_COL_DEFAULTS) =>
   ORDER_SELECT_COL + ORDER_ACTIONS_COL + Object.values(widths).reduce((sum, n) => sum + Number(n || 0), 0);

@@ -1,4 +1,4 @@
-import { buildProduceFromOrderPayload, orderLineCanProduce, resolveOrderLineProduct } from "./orderProduce";
+import { buildProduceFromOrderPayload, orderLineCanProduce, producibleLinesForOrder, resolveOrderLineProduct } from "./orderProduce";
 
 describe("orderProduce", () => {
   const catalog = [
@@ -29,5 +29,22 @@ describe("orderProduce", () => {
     expect(payload._planNotes).toContain("SIP-9");
     expect(payload._planNotes).toContain("Ahmet");
     expect(buildProduceFromOrderPayload({}, { quantity: 1 }, catalog[1])).toBeNull();
+  });
+
+  it("lists producible lines for order action", () => {
+    const lines = producibleLinesForOrder(
+      {
+        order_number: "S1",
+        items: [
+          { product_id: "p1", quantity: 2, product_name: "Duvar Rafı" },
+          { product_id: "p2", quantity: 1, product_name: "Levha" },
+          { product_id: "p3", quantity: 1, product_name: "Montaj" },
+        ],
+      },
+      catalog,
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0].label).toContain("Duvar Rafı");
+    expect(lines[0].product._planQty).toBe(2);
   });
 });

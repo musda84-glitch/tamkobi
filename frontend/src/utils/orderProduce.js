@@ -30,3 +30,22 @@ export function buildProduceFromOrderPayload(ord, item, product) {
     _planNotes: `Sipariş ${ord?.order_number || ""}${ord?.customer_name ? ` · ${ord.customer_name}` : ""}`.trim(),
   };
 }
+
+/** Siparişte üretilebilir kalemler (aksiyon butonu / seçici). */
+export function producibleLinesForOrder(ord, catalog = []) {
+  const items = Array.isArray(ord?.items) ? ord.items : [];
+  const out = [];
+  items.forEach((it, idx) => {
+    const p = resolveOrderLineProduct(it, catalog);
+    if (!orderLineCanProduce(p)) return;
+    const payload = buildProduceFromOrderPayload(ord, it, p);
+    if (!payload) return;
+    out.push({
+      idx,
+      item: it,
+      product: payload,
+      label: `${Number(it.quantity) || 1}× ${it.product_name || it.name || p.name || "Ürün"}`,
+    });
+  });
+  return out;
+}
