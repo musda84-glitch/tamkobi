@@ -7,7 +7,7 @@ test("order table default width fits a typical content pane without horizontal s
 });
 
 test("actions column is fixed and not part of resizable defaults", () => {
-  expect(ORDER_ACTIONS_COL).toBe(210);
+  expect(ORDER_ACTIONS_COL).toBe(248);
   expect(ORDER_COL_DEFAULTS.actions).toBeUndefined();
   expect(ORDER_COL_LIMITS.min.actions).toBeUndefined();
   expect(ORDER_COL_LIMITS.max.actions).toBeUndefined();
