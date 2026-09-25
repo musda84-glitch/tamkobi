@@ -1,7 +1,7 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { get, post } from "../api/client";
+import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { useBadges } from "../auth/BadgeContext";
 import { ActionTiles, type ActionTile } from "../components/ActionTiles";
@@ -14,7 +14,7 @@ import { colors } from "../theme";
 import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow, visibleHomeTasks } from "../utils/dashboard";
 import { fmtMoney, idOf } from "../utils/money";
-import { latestNotifications, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
+import { latestNotifications, notificationDeletePath, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
 import { hasSelfPersonnelRecord, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile } from "../utils/permissions";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
 
@@ -98,6 +98,19 @@ export function HomeScreen() {
     goHref(notificationRoute(n) || "/notifications");
   }, [client, refreshBadges]);
 
+  const deleteNotification = useCallback(async (n: Notification) => {
+    const path = notificationDeletePath(n);
+    if (!path) return;
+    const id = idOf(n);
+    setNotes((prev) => prev.filter((x) => idOf(x) !== id));
+    try {
+      await del(client, path);
+      refreshBadges();
+    } catch {
+      /* liste bir sonraki yenilemede toparlanır */
+    }
+  }, [client, refreshBadges]);
+
   const profitRow = netProfitRow(stats);
 
   return (
@@ -137,6 +150,7 @@ export function HomeScreen() {
               unread={unreadCount(notes)}
               onOpenAll={() => goHref(notifications.href)}
               onOpenItem={openNotification}
+              onDeleteItem={(n) => { void deleteNotification(n); }}
             />
           </View>
         ) : null}

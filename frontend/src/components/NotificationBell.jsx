@@ -1,12 +1,13 @@
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import axios from "axios";
-import { Bell, CheckCircle2, Volume2, XCircle } from "lucide-react";
+import { Bell, CheckCircle2, Trash2, Volume2, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { localizeNotificationText } from "../utils/notificationText";
 import { notifySoundPlan, playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
+import { notificationCanDelete, notificationDeletePath, swipeDeleteOutcome, NOTIFY_SWIPE_W } from "../utils/notificationSwipe";
 
 export const NotificationBell = ({ companyId }) => {
   const [items, setItems] = useState([]);
@@ -51,6 +52,17 @@ export const NotificationBell = ({ companyId }) => {
     else if (n.ref_type === "quote") navigate("/projects");
     if (n.ref_type === "support") navigate("/support");
   };
+  const deleteItem = async (n) => {
+    const path = notificationDeletePath(n);
+    if (!path) return;
+    const id = String(n.id || n._id || "");
+    setItems((prev) => prev.filter((x) => String(x.id || x._id || "") !== id));
+    try {
+      await axios.delete(`${API_URL}${path}`);
+    } catch {
+      load();
+    }
+  };
   return (
     <div className="relative" ref={ref}>
       <button onClick={() => setOpen(!open)} className="relative p-2 text-slate-600 hover:bg-slate-100 rounded-lg" title="Bildirimler" data-testid="notification-bell">
@@ -77,10 +89,12 @@ export const NotificationBell = ({ companyId }) => {
           <div className="max-h-96 overflow-y-auto divide-y divide-slate-100">
             {items.length === 0 && <div className="p-6 text-center text-xs text-slate-400">Bildirim yok.</div>}
             {items.map((n) => (
-              <button key={n.id} onClick={() => openItem(n)} className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 flex gap-2 ${n.is_read ? "opacity-60" : ""}`} data-testid={`notification-item-${n.id}`}>
-                {n.title?.includes("ONAYLANDI") ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />}
-                <span className="min-w-0"><span className="block text-xs font-bold text-slate-900 truncate">{n.title}</span><span className="block text-[11px] text-slate-600">{localizeNotificationText(n.message)}</span><span className="block text-[10px] text-slate-400 mt-0.5">{new Date(n.created_at).toLocaleString("tr-TR")}</span></span>
-              </button>
+              <SwipeNoteRow
+                key={n.id || n._id}
+                note={n}
+                onOpen={() => openItem(n)}
+                onDelete={() => deleteItem(n)}
+              />
             ))}
           </div>
         </div>
@@ -88,3 +102,57 @@ export const NotificationBell = ({ companyId }) => {
     </div>
   );
 };
+
+function SwipeNoteRow({ note, onOpen, onDelete }) {
+  const canDelete = notificationCanDelete(note);
+  const startX = React.useRef(0);
+  const origin = React.useRef(0);
+  const [x, setX] = React.useState(0);
+  const content = (
+    <button
+      type="button"
+      onClick={canDelete ? undefined : onOpen}
+      className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 flex gap-2 bg-white ${note.is_read ? "opacity-60" : ""}`}
+      data-testid={`notification-item-${note.id || note._id}`}
+    >
+      {note.title?.includes("ONAYLANDI") ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />}
+      <span className="min-w-0"><span className="block text-xs font-bold text-slate-900 truncate">{note.title}</span><span className="block text-[11px] text-slate-600">{localizeNotificationText(note.message)}</span><span className="block text-[10px] text-slate-400 mt-0.5">{new Date(note.created_at).toLocaleString("tr-TR")}</span></span>
+    </button>
+  );
+  if (!canDelete) return content;
+  return (
+    <div
+      className="relative overflow-hidden"
+      data-testid={`notification-swipe-${note.id || note._id}`}
+      onPointerDown={(e) => {
+        origin.current = e.clientX;
+        startX.current = x;
+      }}
+      onPointerMove={(e) => {
+        if (e.buttons === 0) return;
+        const dx = e.clientX - origin.current;
+        setX(Math.min(0, Math.max(-NOTIFY_SWIPE_W, startX.current + dx)));
+      }}
+      onPointerUp={(e) => {
+        const dx = e.clientX - origin.current;
+        const outcome = swipeDeleteOutcome(startX.current, dx);
+        if (outcome === "press") onOpen();
+        setX(outcome === "open" ? -NOTIFY_SWIPE_W : 0);
+      }}
+      onPointerCancel={() => setX(startX.current < -NOTIFY_SWIPE_W / 2 ? -NOTIFY_SWIPE_W : 0)}
+    >
+      <button
+        type="button"
+        onClick={onDelete}
+        className="absolute right-0 top-0 bottom-0 w-[72px] bg-rose-600 text-white text-[11px] font-bold flex flex-col items-center justify-center"
+        data-testid={`notification-del-${note.id || note._id}`}
+      >
+        <Trash2 className="w-4 h-4" />
+        Sil
+      </button>
+      <div style={{ transform: `translateX(${x}px)` }} className="bg-white relative">
+        {content}
+      </div>
+    </div>
+  );
+}

@@ -5,6 +5,7 @@ from notify import (
     is_expo_push_token,
     is_targeted_note,
     merge_push_tokens,
+    notification_can_delete,
     notification_doc,
     notification_visible,
     pick_unread_for_push,
@@ -118,6 +119,18 @@ def test_broadcast_notes_also_use_company_push_tokens():
     ]
     assert collect_dispatch_tokens(user_tok, company_tok, targeted=True) == ["ExponentPushToken[admin]"]
     assert merge_push_tokens([], ["ExpoPushToken[x]"]) == ["ExpoPushToken[x]"]
+
+
+def test_only_read_visible_notes_can_be_deleted():
+    unread = {"type": "bank_sync", "is_read": False}
+    read = {"type": "bank_sync", "is_read": True}
+    hidden = {"type": "task_assigned", "is_read": True, "user_id": "usr_x", "roles": []}
+    admin = {"role": "admin", "id": "usr_admin"}
+    staff = {"role": "warehouse", "id": "usr_wh"}
+    assert not notification_can_delete(unread, admin)
+    assert notification_can_delete(read, admin)
+    assert not notification_can_delete(hidden, staff)
+    assert not notification_can_delete(None, admin)
 
 
 def test_unread_panel_notes_are_queued_for_phone():

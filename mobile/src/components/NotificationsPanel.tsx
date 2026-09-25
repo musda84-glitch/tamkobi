@@ -1,17 +1,19 @@
 import { Ionicons } from "@expo/vector-icons";
-import React from "react";
+import React, { useState } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import { colors } from "../theme";
 import type { Notification } from "../types";
 import { idOf } from "../utils/money";
 import {
   notificationAge,
+  notificationCanDelete,
   notificationLook,
   notificationText,
   notificationTitle,
   type NotificationLook,
 } from "../utils/notifications";
 import { QUICK_TONE_COLORS } from "../utils/quickMenu";
+import { SwipeRevealRow } from "./SwipeRevealRow";
 
 /**
  * Hızlı menüde dört kutucukluk yeri kaplayan geniş bildirim kartı:
@@ -22,13 +24,16 @@ export function NotificationsPanel({
   unread,
   onOpenAll,
   onOpenItem,
+  onDeleteItem,
 }: {
   items: Notification[];
   unread: number;
   onOpenAll: () => void;
   onOpenItem: (n: Notification) => void;
+  onDeleteItem?: (n: Notification) => void;
 }) {
   const tone = QUICK_TONE_COLORS.rose;
+  const [openKey, setOpenKey] = useState<string | null>(null);
   return (
     <View
       testID="home-notifications-panel"
@@ -85,20 +90,39 @@ export function NotificationsPanel({
           <Text style={{ color: colors.muted, fontSize: 12 }}>Yeni bildirim yok.</Text>
         </View>
       ) : (
-        items.map((n) => <NotificationRow key={idOf(n) || n.created_at} item={n} onPress={() => onOpenItem(n)} />)
+        items.map((n) => {
+          const key = idOf(n) || n.created_at || notificationTitle(n);
+          const row = <NotificationRow item={n} onPress={() => onOpenItem(n)} />;
+          if (!onDeleteItem || !notificationCanDelete(n)) {
+            return <React.Fragment key={key}>{row}</React.Fragment>;
+          }
+          return (
+            <SwipeRevealRow
+              key={key}
+              rowKey={key}
+              openKey={openKey}
+              onOpen={setOpenKey}
+              onPress={() => onOpenItem(n)}
+              onDelete={() => onDeleteItem(n)}
+              testID={`home-notification-${idOf(n)}`}
+            >
+              <NotificationRow item={n} bare />
+            </SwipeRevealRow>
+          );
+        })
       )}
     </View>
   );
 }
 
-function NotificationRow({ item, onPress }: { item: Notification; onPress: () => void }) {
+function NotificationRow({ item, onPress, bare }: { item: Notification; onPress?: () => void; bare?: boolean }) {
   const look: NotificationLook = notificationLook(item);
   const lookTone = QUICK_TONE_COLORS[look.tone];
   const body = notificationText(item);
   const age = notificationAge(item.created_at);
   return (
     <Pressable
-      testID={`home-notification-${idOf(item)}`}
+      testID={bare ? undefined : `home-notification-${idOf(item)}`}
       onPress={onPress}
       style={({ pressed }) => ({
         backgroundColor: colors.surface,
