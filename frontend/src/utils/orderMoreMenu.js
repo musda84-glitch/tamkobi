@@ -49,8 +49,9 @@ export function orderHasEInvoiceIssued(ord) {
   return false;
 }
 
-/** Menü kimliği: panel_einvoice | integration_einvoice | panel_draft | panel_invoiced | default */
+/** Menü kimliği: panel_einvoice | integration_einvoice | panel_draft | panel_invoiced | held_cart | default */
 export function orderMoreMenuKind(ord) {
+  if (ord?.is_held_cart || ord?.order_status === "held_cart") return "held_cart";
   if (isPanelOrder(ord) && orderHasEInvoiceIssued(ord)) return "panel_einvoice";
   if (isIntegrationOrder(ord) && orderHasEInvoiceIssued(ord)) return "integration_einvoice";
   // Panel: kağıt / taslak fatura — henüz GİB e-belgesi yok
@@ -170,12 +171,13 @@ export function orderDeleteMoreItem() {
 export function orderMoreMenuItems(ord, opts = {}) {
   const kind = orderMoreMenuKind(ord);
   let items;
-  if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
+  if (kind === "held_cart") items = [];
+  else if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
   else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems();
   else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
   else items = defaultMoreItems(ord, opts);
   const allowDelete = opts.canDelete !== false;
-  if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
+  if (allowDelete && (kind === "held_cart" || canDeleteFromMoreMenu(ord))) items = [...items, orderDeleteMoreItem()];
   return { kind, items: [...items, ...orderDownloadMoreItems()] };
 }

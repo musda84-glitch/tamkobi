@@ -9,7 +9,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
 import { B2BAiCart } from "../components/B2BAiCart";
 import { ScanButton } from "../components/CameraScanner";
-import { addCartLine, cartHasItems, discardHeldCart, heldCartsAsOrders, heldStorageKey, holdActiveCart, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
+import { addCartLine, cartHasItems, discardHeldCart, heldCartTabs, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
 import { applyB2BScan, matchesB2BQuery, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bSearch";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
@@ -158,21 +158,78 @@ export default function B2BPortalPage() {
     }
   };
 
-  const holdCart = () => {
+  const holdCart = async () => {
     if (!cartHasItems(cart)) {
       toast.error("Beklemeye alınacak ürün yok.");
       return;
     }
-    const r = holdActiveCart(heldCarts, cart, { note, customerOrderNo });
-    setHeldCarts(r.held);
-    setCart(r.cart);
-    setNote("");
-    setCustomerOrderNo("");
-    const label = r.held[r.held.length - 1]?.label || "Bekleyen sepet";
-    toast.success(`${label} beklemeye alındı. Yeni sepete devam edebilirsiniz.`);
+    const payload = {
+      items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: l.note || "" })),
+      note,
+      customer_order_number: customerOrderNo.trim(),
+    };
+    setBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/public/b2b/${token}/held-carts`, payload);
+      setCart({});
+      setNote("");
+      setCustomerOrderNo("");
+      setSheet(false);
+      toast.success(r.data.message || "Bekleyen sepet kaydedildi.");
+      await load();
+      setTab("orders");
+    } catch (e) {
+      // API yoksa / çevrimdışı: yerel bekleyen sepet (eski davranış)
+      const r = holdActiveCart(heldCarts, cart, { note, customerOrderNo });
+      setHeldCarts(r.held);
+      setCart(r.cart);
+      setNote("");
+      setCustomerOrderNo("");
+      const label = r.held[r.held.length - 1]?.label || "Bekleyen sepet";
+      toast.success(`${label} beklemeye alındı (yerel).`);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const loadHeld = (holdId) => {
+  const cartFromOrderItems = (items) => {
+    const next = {};
+    (items || []).forEach((it) => {
+      const pid = it.product_id || it.id;
+      if (!pid) return;
+      const noteText = it.note || "";
+      const key = lineKey(pid, noteText);
+      next[key] = { productId: pid, qty: Number(it.quantity) || 0, note: noteText };
+    });
+    return next;
+  };
+
+  const loadHeld = async (holdId) => {
+    const serverOrd = (data?.orders || []).find((o) => String(o.id || o._id) === String(holdId) && (o.is_held_cart || o.order_status === "held_cart"));
+    if (serverOrd) {
+      setBusy(true);
+      try {
+        if (cartHasItems(cart)) {
+          await axios.post(`${API_URL}/public/b2b/${token}/held-carts`, {
+            items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: l.note || "" })),
+            note,
+            customer_order_number: customerOrderNo.trim(),
+          });
+        }
+        setCart(cartFromOrderItems(serverOrd.items));
+        setNote(serverOrd.notes || "");
+        setCustomerOrderNo(serverOrd.customer_order_number || "");
+        await axios.delete(`${API_URL}/public/b2b/${token}/held-carts/${serverOrd.id || serverOrd._id}`);
+        await load();
+        toast.message("Bekleyen sepet yüklendi.");
+        setTab("catalog");
+      } catch (e) {
+        toast.error(e.response?.data?.detail || "Bekleyen sepet yüklenemedi.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const r = resumeHeldCart(heldCarts, cart, holdId, { note, customerOrderNo });
     setHeldCarts(r.held);
     setCart(r.cart);
@@ -183,18 +240,33 @@ export default function B2BPortalPage() {
     toast.message("Bekleyen sepet yüklendi.");
   };
 
-  const removeHeld = (holdId) => {
+  const removeHeld = async (holdId) => {
     if (!window.confirm("Bu bekleyen sepet silinsin mi?")) return;
+    const serverOrd = (data?.orders || []).find((o) => String(o.id || o._id) === String(holdId) && (o.is_held_cart || o.order_status === "held_cart"));
+    if (serverOrd) {
+      try {
+        await axios.delete(`${API_URL}/public/b2b/${token}/held-carts/${serverOrd.id || serverOrd._id}`);
+        toast.success("Bekleyen sepet silindi.");
+        await load();
+      } catch (e) {
+        toast.error(e.response?.data?.detail || "Silinemedi.");
+      }
+      return;
+    }
     setHeldCarts((prev) => discardHeldCart(prev, holdId));
     toast.success("Bekleyen sepet silindi.");
   };
 
-  const heldRows = heldCartsAsOrders(heldCarts, data.products || [], {
+  const portalOrderRows = mergePortalOrderLists({
+    serverOrders: data?.orders || [],
+    heldLocal: heldCarts,
+    products: data?.products || [],
     activeCart: cart,
     activeNote: note,
     activeCustomerOrderNo: customerOrderNo,
     priceGross: b2bGross,
   });
+  const heldTabs = heldCartTabs(heldCarts, data?.orders || []);
 
   const cartBodyProps = {
     lines,
@@ -210,7 +282,7 @@ export default function B2BPortalPage() {
     onHold: holdCart,
   };
   const tabCols = Math.min(4, Math.max(2, tabs.length));
-  const ordersTabCount = (data?.orders?.length || 0) + heldRows.length;
+  const ordersTabCount = portalOrderRows.length;
 
   return (
     <div className="min-h-screen bg-slate-100 pb-24 lg:pb-6" data-testid="b2b-portal">
@@ -422,9 +494,9 @@ export default function B2BPortalPage() {
                 <div className="font-bold text-slate-900 flex items-center gap-2">
                   <ShoppingCart className="w-4 h-4" /> Sepet ({lines.length})
                 </div>
-                {heldCarts.length > 0 && (
+                {heldTabs.length > 0 && (
                   <div className="flex flex-wrap gap-1.5" data-testid="b2b-held-tabs">
-                    {heldCarts.map((h) => (
+                    {heldTabs.map((h) => (
                       <div key={h.id} className="inline-flex items-center gap-1">
                         <button
                           type="button"
@@ -447,7 +519,7 @@ export default function B2BPortalPage() {
         )}
 
         {tab === "orders" && (
-          <OrdersList orders={data.orders} heldRows={heldRows} token={token} products={data.products} company={data.company} onChanged={load} />
+          <OrdersList orders={portalOrderRows} heldRows={[]} token={token} products={data.products} company={data.company} onChanged={load} />
         )}
         {tab === "statement" && settings.show_statement !== false && (
           <StatementList invoices={data.invoices} company={data.company} balance={data.contact.balance} />
@@ -478,10 +550,10 @@ export default function B2BPortalPage() {
       </div>
 
       {tab === "catalog" && allowOrders && (
-        <MobileCartBar lines={lines} total={cartTotal} open={sheet} setOpen={setSheet} heldCount={heldCarts.length}>
-          {heldCarts.length > 0 && (
+        <MobileCartBar lines={lines} total={cartTotal} open={sheet} setOpen={setSheet} heldCount={heldTabs.length}>
+          {heldTabs.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pb-2" data-testid="b2b-held-tabs-mobile">
-              {heldCarts.map((h) => (
+              {heldTabs.map((h) => (
                 <button key={h.id} type="button" onClick={() => loadHeld(h.id)} className="px-2 py-1 rounded-lg text-[10px] font-bold border bg-amber-50 text-amber-900 border-amber-200" data-testid={`b2b-held-tab-mobile-${h.id}`}>
                   {h.label}
                 </button>

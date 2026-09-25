@@ -234,3 +234,63 @@ export function heldCartsAsOrders(held, products, opts = {}) {
   });
   return rows;
 }
+
+/** Panel / portal: sunucudaki held_cart siparişini salt-önizleme satırına çevir. */
+export function asPortalHeldOrder(o) {
+  if (!o) return o;
+  const held = o.is_held_cart || o.order_status === "held_cart" || o.source === "b2b_held_cart";
+  if (!held) return o;
+  const seq = Number(o.held_seq) || 1;
+  return {
+    ...o,
+    is_held_cart: true,
+    view_only: true,
+    held_seq: seq,
+    held_label: o.held_label || `Bekleyen sepet #${seq}`,
+    order_number: o.held_label || o.order_number || `Bekleyen sepet #${seq}`,
+    order_status: "held_cart",
+  };
+}
+
+/** Aktif sepet (yerel) + sunucu bekleyen sepetler + yerel yedek + gerçek siparişler. */
+export function mergePortalOrderLists({ serverOrders = [], heldLocal = [], products = [], activeCart, activeNote, activeCustomerOrderNo, priceGross } = {}) {
+  const activeRows = heldCartsAsOrders([], products, {
+    activeCart,
+    activeNote,
+    activeCustomerOrderNo,
+    priceGross,
+  });
+  const serverHeld = (serverOrders || [])
+    .filter((o) => o?.is_held_cart || o?.order_status === "held_cart" || o?.source === "b2b_held_cart")
+    .map(asPortalHeldOrder);
+  const serverHeldIds = new Set(serverHeld.map((o) => String(o.id || o._id || "")));
+  const localHeld = heldCartsAsOrders(heldLocal, products, { priceGross }).filter(
+    (r) => !r.is_active_cart && !serverHeldIds.has(String(r.id || "")),
+  );
+  const real = (serverOrders || []).filter(
+    (o) => !(o?.is_held_cart || o?.order_status === "held_cart" || o?.source === "b2b_held_cart"),
+  );
+  return [...activeRows, ...serverHeld, ...localHeld, ...real];
+}
+
+/** Sepet sekmeleri: yerel + sunucu bekleyenler. */
+export function heldCartTabs(heldLocal = [], serverOrders = []) {
+  const local = (heldLocal || []).map((h) => ({
+    id: h.id,
+    label: h.label || `Bekleyen sepet #${h.seq || 1}`,
+    seq: h.seq,
+    server: false,
+  }));
+  const localIds = new Set(local.map((h) => String(h.id)));
+  const server = (serverOrders || [])
+    .filter((o) => o?.is_held_cart || o?.order_status === "held_cart")
+    .map((o) => ({
+      id: o.id || o._id,
+      label: o.held_label || `Bekleyen sepet #${o.held_seq || 1}`,
+      seq: o.held_seq,
+      server: true,
+      order: o,
+    }))
+    .filter((h) => h.id && !localIds.has(String(h.id)));
+  return [...local, ...server];
+}

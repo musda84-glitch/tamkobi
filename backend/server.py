@@ -3869,6 +3869,7 @@ async def b2b_portal(token: str):
     shipments = {sh["order_id"]: sh for sh in await db.cargo_shipments.find({"order_id": {"$in": [o["id"] for o in orders]}}).sort("created_at", 1).to_list(500)}
     pidx = {p["id"]: p for p in products}
     for o in orders:
+        _decorate_b2b_held_order(o)
         o["tracking"] = _b2b_tracking(o, shipments.get(o["id"]))
         for it in o.get("items") or []:
             p = pidx.get(it.get("product_id")) or {}
@@ -3878,6 +3879,10 @@ async def b2b_portal(token: str):
                 it["barcode"] = p.get("barcode") or ""
             if not it.get("sku"):
                 it["sku"] = p.get("sku") or ""
+    # Bekleyen sepetler listenin üstünde
+    held_first = [o for o in orders if o.get("is_held_cart")]
+    rest = [o for o in orders if not o.get("is_held_cart")]
+    orders = held_first + rest
     invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
     import addons as _addons
@@ -3906,6 +3911,98 @@ async def b2b_change_password(token: str, req: Dict[str, Any]):
         {"$set": {"b2b_password_hash": hash_password(new_pw), "b2b_password_changed_at": datetime.now(timezone.utc).isoformat()}},
     )
     return {"status": "success", "message": "Şifreniz güncellendi."}
+
+def _decorate_b2b_held_order(o: Dict[str, Any]) -> Dict[str, Any]:
+    """Portal / panel: bekleyen sepet satırlarını silik ve salt-önizleme olarak işaretle."""
+    if not o:
+        return o
+    if o.get("order_status") == "held_cart" or o.get("is_held_cart") or o.get("source") == "b2b_held_cart":
+        seq = int(o.get("held_seq") or 1)
+        o["is_held_cart"] = True
+        o["view_only"] = True
+        o["held_seq"] = seq
+        o["held_label"] = o.get("held_label") or f"Bekleyen sepet #{seq}"
+        o["order_status"] = "held_cart"
+    return o
+
+
+@api_router.post("/public/b2b/{token}/held-carts")
+async def b2b_hold_cart(token: str, req: Dict[str, Any]):
+    """Aktif sepeti bekleyen sipariş olarak kaydet — panel Siparişler ve mobilde görünür."""
+    c = await _b2b_contact(token)
+    items = await _b2b_build_items(c, req.get("items", []))
+    if not items:
+        raise HTTPException(status_code=400, detail="Beklemeye alınacak ürün yok.")
+    _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
+    _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
+    if not _bs.get("allow_orders", True):
+        raise HTTPException(status_code=400, detail="Portaldan sipariş alımı kapalı.")
+    subtotal, vat_total, discount_total, grand_total = order_document_totals([_as_item_dict(i) for i in items])
+    total = subtotal
+    held_n = await db.orders.count_documents({
+        "company_id": c["company_id"],
+        "contact_id": c["_id"],
+        "order_status": "held_cart",
+    })
+    seq = held_n + 1
+    cust_no = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
+    order = Order(
+        company_id=c["company_id"],
+        order_number=await _next_order_number(c["company_id"], "BH"),
+        customer_order_number=cust_no,
+        channel="b2b",
+        customer_name=c.get("name"),
+        customer_email=c.get("email"),
+        customer_phone=c.get("phone"),
+        shipping_address=req.get("shipping_address") or c.get("address") or "-",
+        city=req.get("city") or c.get("city") or "-",
+        items=items,
+        total_amount=total,
+        subtotal=subtotal,
+        vat_total=vat_total,
+        discount_total=discount_total,
+        grand_total=grand_total,
+        order_status="held_cart",
+    )
+    doc = order.to_mongo()
+    doc["contact_id"] = c["_id"]
+    doc["notes"] = req.get("note", "")
+    doc["source"] = "b2b_held_cart"
+    doc["is_held_cart"] = True
+    doc["held_seq"] = seq
+    doc["held_label"] = f"Bekleyen sepet #{seq}"
+    doc["subtotal"] = subtotal
+    doc["vat_total"] = vat_total
+    doc["discount_total"] = discount_total
+    doc["grand_total"] = grand_total
+    doc["total_amount"] = total
+    await db.orders.insert_one(doc)
+    await _notify_company(
+        c["company_id"],
+        "b2b_held_cart",
+        f"Bekleyen sepet {doc['order_number']}",
+        f"{c.get('name')} portaldan {len(items)} kalemlik sepeti beklemeye aldı ({grand_total:,.2f} ₺).",
+        doc["_id"],
+    )
+    return {
+        "status": "success",
+        "order": clean_doc(_decorate_b2b_held_order(doc)),
+        "message": f"{doc['held_label']} kaydedildi.",
+    }
+
+
+@api_router.delete("/public/b2b/{token}/held-carts/{order_id}")
+async def b2b_delete_held_cart(token: str, order_id: str):
+    c, o = await _b2b_owned_order(token, order_id)
+    if o.get("order_status") != "held_cart" and not o.get("is_held_cart"):
+        raise HTTPException(status_code=400, detail="Yalnızca bekleyen sepetler silinebilir.")
+    await trash.soft_delete(
+        "orders", o, "order",
+        f"{o.get('held_label') or o.get('order_number')} · {o.get('customer_name')}",
+        note=f"B2B bekleyen sepet · {float(o.get('total_amount') or 0):,.2f} ₺",
+    )
+    return {"status": "success", "message": f"{o.get('held_label') or o.get('order_number')} silindi."}
+
 
 @api_router.post("/public/b2b/{token}/orders")
 async def b2b_create_order(token: str, req: Dict[str, Any]):
@@ -3944,7 +4041,7 @@ async def b2b_create_order(token: str, req: Dict[str, Any]):
 @api_router.put("/public/b2b/{token}/orders/{order_id}")
 async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
     c, o = await _b2b_owned_order(token, order_id)
-    if o.get("order_status") not in ("pending", "new"):
+    if o.get("order_status") not in ("pending", "new", "held_cart"):
         raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler düzenlenebilir.")
     if o.get("is_invoiced"):
         raise HTTPException(status_code=400, detail="Faturalanmış sipariş düzenlenemez.")
@@ -3955,7 +4052,7 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
     total = subtotal
     _co = await db.companies.find_one({"_id": c["company_id"]}) or {}
     _bs = {**B2B_DEFAULTS, **(_co.get("b2b_settings") or {})}
-    if float(_bs.get("min_order_amount", 0) or 0) > grand_total:
+    if o.get("order_status") != "held_cart" and float(_bs.get("min_order_amount", 0) or 0) > grand_total:
         raise HTTPException(status_code=400, detail=f"Minimum sipariş tutarı {float(_bs['min_order_amount']):,.2f} ₺.")
     update: Dict[str, Any] = {
         "items": [it.model_dump() for it in items],
@@ -3972,14 +4069,15 @@ async def b2b_edit_order(token: str, order_id: str, req: Dict[str, Any]):
         update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
     await db.orders.update_one({"_id": order_id}, {"$set": update})
     updated = await db.orders.find_one({"_id": order_id})
-    await _sync_draft_invoice_items(updated, update.get("items") or [])
-    await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) olacak şekilde düzenledi.", order_id)
-    return {"status": "success", "order": clean_doc(updated), "message": f"{updated.get('order_number')} güncellendi."}
+    if updated.get("order_status") != "held_cart":
+        await _sync_draft_invoice_items(updated, update.get("items") or [])
+        await _notify_company(c["company_id"], "b2b_order_edit", f"B2B sipariş güncellendi {updated.get('order_number')}", f"{c.get('name')} beklemedeki siparişi {len(items)} kalem, {grand_total:,.2f} ₺ (KDV dahil) olacak şekilde düzenledi.", order_id)
+    return {"status": "success", "order": clean_doc(_decorate_b2b_held_order(updated)), "message": f"{updated.get('held_label') or updated.get('order_number')} güncellendi."}
 
 @api_router.delete("/public/b2b/{token}/orders/{order_id}")
 async def b2b_delete_order(token: str, order_id: str):
     c, o = await _b2b_owned_order(token, order_id)
-    if o.get("order_status") not in ("pending", "new"):
+    if o.get("order_status") not in ("pending", "new", "held_cart"):
         raise HTTPException(status_code=400, detail="Yalnızca beklemedeki siparişler silinebilir.")
     if o.get("is_invoiced"):
         raise HTTPException(status_code=400, detail="Faturalanmış sipariş silinemez.")
@@ -3987,9 +4085,10 @@ async def b2b_delete_order(token: str, order_id: str):
         inv = await db.invoices.find_one({"_id": o["invoice_id"]})
         if inv and inv.get("status") == "draft" and not o.get("is_invoiced"):
             await _soft_delete_invoice_doc(inv, note="B2B sipariş silindi — taslak fatura silindi")
-    await trash.soft_delete("orders", o, "order", f"{o.get('order_number')} · {o.get('customer_name')}", note=f"B2B portal · {float(o.get('total_amount') or 0):,.2f} ₺")
-    await _notify_company(c["company_id"], "b2b_order_delete", f"B2B sipariş silindi {o.get('order_number')}", f"{c.get('name')} beklemedeki siparişi iptal edip sildi.", order_id)
-    return {"status": "success", "message": f"{o.get('order_number')} silindi."}
+    label = o.get("held_label") or o.get("order_number")
+    await trash.soft_delete("orders", o, "order", f"{label} · {o.get('customer_name')}", note=f"B2B portal · {float(o.get('total_amount') or 0):,.2f} ₺")
+    await _notify_company(c["company_id"], "b2b_order_delete", f"B2B sipariş silindi {label}", f"{c.get('name')} beklemedeki siparişi iptal edip sildi.", order_id)
+    return {"status": "success", "message": f"{label} silindi."}
 
 @api_router.post("/public/b2b/{token}/orders/{order_id}/cancel-request")
 async def b2b_cancel_request(token: str, order_id: str, req: Dict[str, Any] = None):
@@ -11513,7 +11612,13 @@ async def list_orders(company_id: Optional[str] = "comp_nexus_main_01", status: 
     if status and status != "all":
         query["order_status"] = status
     orders = await db.orders.find(query).sort("order_date", -1).to_list(500)
-    return clean_docs(orders)
+    docs = clean_docs(orders)
+    for o in docs:
+        _decorate_b2b_held_order(o)
+    # Bekleyen sepetler üstte
+    held = [o for o in docs if o.get("is_held_cart")]
+    rest = [o for o in docs if not o.get("is_held_cart")]
+    return held + rest
 
 @api_router.post("/orders")
 async def create_order(order: Order):

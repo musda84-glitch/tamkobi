@@ -72,11 +72,12 @@ export function OrdersScreen() {
       {!filtered.length ? <Empty icon="cart-outline" title={orderListEmptyTitle(filter)} /> : filtered.map((o) => {
         const invTone = orderInvoiceBadgeTone(o);
         const invLabel = orderInvoiceBadgeLabel(o);
+        const held = !!(o as { is_held_cart?: boolean }).is_held_cart || o.order_status === "held_cart";
         return (
-        <View key={idOf(o)} style={{ marginBottom: 8 }}>
+        <View key={idOf(o)} style={{ marginBottom: 8, opacity: held ? 0.72 : 1 }}>
           <ListRow
             testID={`order-row-${idOf(o)}`}
-            title={orderNumberLabel(o)}
+            title={held ? String((o as { held_label?: string }).held_label || o.order_number) : orderNumberLabel(o)}
             subtitle={[o.customer_name, o.marketplace_status ? marketplaceStatusTr(o.marketplace_status) : null, statusTr(o.order_status), fmtDate(o.order_date)].filter(Boolean).join(" · ")}
             leading={<ChannelLogo channel={o.channel} testID={`order-channel-${idOf(o)}`} />}
             right={fmtMoney(o.grand_total || o.total_amount)}
@@ -87,7 +88,7 @@ export function OrdersScreen() {
               <Badge label={invLabel} tone={invTone === "green" ? "green" : "amber"} />
             </Row>
           ) : null}
-          <OrderActions order={o} compact onMessage={setMessage} onError={setError} onChanged={load} />
+          {!held ? <OrderActions order={o} compact onMessage={setMessage} onError={setError} onChanged={load} /> : null}
         </View>
       );})}
     </Screen>

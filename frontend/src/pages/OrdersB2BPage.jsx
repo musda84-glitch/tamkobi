@@ -139,6 +139,7 @@ function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side =
 /** Mobil kartta tek birincil kısayol (menünün ilk eylemi). */
 function mobilePrimaryAction(ord) {
   const kind = orderMoreMenuKind(ord);
+  if (kind === "held_cart") return { id: "delete", label: "Sil", className: "bg-rose-600 text-white" };
   if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır", className: "bg-emerald-600 text-white" };
   if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura", className: "bg-rose-500 text-white" };
   if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv", className: "bg-sky-600 text-white" };
@@ -902,7 +903,7 @@ export default function OrdersB2BPage() {
             return (
               <div
                 key={ord.id || ord._id || ord.order_number}
-                className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs"
+                className={`bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs ${ord.is_held_cart || ord.order_status === "held_cart" ? "opacity-70 bg-slate-50" : ""}`}
                 data-testid={`order-card-mobile-${ord.order_number}`}
               >
                 <div className="flex justify-between gap-2 items-start">
@@ -931,7 +932,7 @@ export default function OrdersB2BPage() {
                       {primary.label}
                     </button>
                   )}
-                  {!ord.cargo_tracking_number ? (
+                  {!ord.cargo_tracking_number && !(ord.is_held_cart || ord.order_status === "held_cart") ? (
                     <button
                       type="button"
                       onClick={() => setShipOrder(ord)}
@@ -992,10 +993,13 @@ export default function OrdersB2BPage() {
               <tbody className="divide-y divide-slate-100">
                 {visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-empty">Filtreye uyan sipariş yok.</td></tr>}
                 {visibleOrders.map((ord) => (
-                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""}`} data-testid={`order-row-${ord.order_number}`}>
+                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""} ${ord.is_held_cart || ord.order_status === "held_cart" ? "opacity-70 bg-slate-50/90" : ""}`} data-testid={`order-row-${ord.order_number}`}>
                     <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(ord.id)} onChange={() => toggleSel(ord.id)} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
                     <td className="px-4 py-3 font-medium overflow-hidden" data-testid={`order-no-cell-${ord.order_number}`}>
-                      <div className="font-bold text-slate-900 font-mono">{ord.order_number}</div>
+                      <div className="font-bold text-slate-900 font-mono">{ord.held_label || ord.order_number}</div>
+                      {ord.held_label && ord.order_number && ord.held_label !== ord.order_number ? (
+                        <div className="text-[10px] text-slate-400 font-mono">{ord.order_number}</div>
+                      ) : null}
                       {ord.customer_order_number ? <div className="text-[10px] text-slate-500 font-mono" data-testid={`order-customer-no-${ord.order_number}`}>Müşteri no: {ord.customer_order_number}</div> : null}
                       <div className="mt-1 flex flex-wrap items-center gap-1">
                         <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">

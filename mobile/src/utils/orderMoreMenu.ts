@@ -2,7 +2,7 @@
 
 export type OrderMoreIcon = string;
 
-export type OrderMoreKind = "panel_einvoice" | "integration_einvoice" | "panel_draft" | "panel_invoiced" | "default";
+export type OrderMoreKind = "panel_einvoice" | "integration_einvoice" | "panel_draft" | "panel_invoiced" | "held_cart" | "default";
 
 export type OrderMoreItem = {
   id: string;
@@ -25,6 +25,7 @@ export type OrderMoreOrder = {
   dispatch_number?: string | null;
   form_printed_at?: string | null;
   cargo_tracking_number?: string | null;
+  is_held_cart?: boolean;
 };
 
 const PANEL_CHANNELS = new Set(["b2b", "manual", "saha", ""]);
@@ -50,6 +51,7 @@ export function orderHasEInvoiceIssued(ord?: OrderMoreOrder | null): boolean {
 }
 
 export function orderMoreMenuKind(ord?: OrderMoreOrder | null): OrderMoreKind {
+  if (ord?.is_held_cart || ord?.order_status === "held_cart") return "held_cart";
   if (isPanelOrder(ord) && orderHasEInvoiceIssued(ord)) return "panel_einvoice";
   if (isIntegrationOrder(ord) && orderHasEInvoiceIssued(ord)) return "integration_einvoice";
   if (isPanelOrder(ord) && ord?.is_invoiced) return "panel_invoiced";
@@ -182,19 +184,21 @@ export function orderMoreMenuItems(
 ): { kind: OrderMoreKind; items: OrderMoreItem[] } {
   const kind = orderMoreMenuKind(ord);
   let items: OrderMoreItem[];
-  if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
+  if (kind === "held_cart") items = [];
+  else if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
   else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems();
   else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
   else items = defaultMoreItems(ord, opts);
   const allowDelete = opts.canDelete !== false;
-  if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
+  if (allowDelete && (kind === "held_cart" || canDeleteFromMoreMenu(ord))) items = [...items, orderDeleteMoreItem()];
   return { kind, items };
 }
 
 /** Web mobil karttaki tek birincil kısayol. */
 export function mobilePrimaryAction(ord?: OrderMoreOrder | null): { id: string; label: string } | null {
   const kind = orderMoreMenuKind(ord);
+  if (kind === "held_cart") return { id: "delete", label: "Sil" };
   if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır" };
   if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura" };
   if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv" };

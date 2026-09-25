@@ -35,8 +35,8 @@ export const ORDER_FILTER_DEFAULTS = {
   to: "",
   sort: "date_desc",
 };
-const STATUS = [["all", "Tüm Durumlar"], ["incoming", "Yeni gelen"], ["pending", "Onay Bekliyor"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["dispatched", "Sevk edilmiş"], ["shipped", "Kargoda"], ["delivered", "Teslim Edildi"], ["returned", "İade"], ["cancelled", "İptal"]];
-const INCOMING_STATUSES = new Set(["pending", "new", "approved"]);
+const STATUS = [["all", "Tüm Durumlar"], ["incoming", "Yeni gelen"], ["pending", "Onay Bekliyor"], ["held_cart", "Bekleyen sepet"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["dispatched", "Sevk edilmiş"], ["shipped", "Kargoda"], ["delivered", "Teslim Edildi"], ["returned", "İade"], ["cancelled", "İptal"]];
+const INCOMING_STATUSES = new Set(["pending", "new", "approved", "held_cart"]);
 const DISPATCHED_STATUSES = new Set(["shipped", "delivered", "completed"]);
 const CLOSED_STATUSES = new Set(["cancelled", "returned", "partially_returned"]);
 
