@@ -52,7 +52,7 @@ export function dutyFromCurrent({ tasks, current, workplace } = {}) {
     location_url: matched?.location_url || wp?.location_url,
     due_date: matched?.due_date || wp?.due_date,
     done: matched?.done ?? current?.done ?? false,
-    photos: matched?.photos,
+    photos: matched?.photos || current?.photos || wp?.photos || [],
     workflow: matched?.workflow,
     park_name: matched?.park_name,
   };

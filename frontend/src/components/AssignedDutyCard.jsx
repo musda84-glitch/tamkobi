@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { CheckCircle2, Circle, Factory, ImagePlus, MapPin, Navigation } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { compressImageFile } from "../utils/compressImage";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { workMapsLink } from "../utils/mapsLink";
 import {
   DUTY_ATOLYE_ACTION,
@@ -27,6 +27,7 @@ import {
   dutySubtitle,
   dutyWorkflow,
   dutyWorkflowProgress,
+  photoFaded,
   photoVisibility,
   photoVisibilityLabel,
 } from "../utils/assignedDuty";
@@ -138,20 +139,23 @@ export function AssignedDutyCard({
         <div className="space-y-2" data-testid={`${tid}-photos`}>
           <div className="text-[10px] font-bold uppercase text-slate-400 flex items-center gap-1"><MapPin className="w-3 h-3" /> {dutyPhotosHint(duty)}</div>
           <div className="flex flex-wrap gap-2">
-            {photos.map((p) => {
+            {photos.map((p, i) => {
               const vis = photoVisibility(p);
+              const url = p.url || p;
               return (
-                <div key={p.url} className="w-16" data-testid={`${tid}-photo-${p.url}`}>
-                  <a href={resolveImageUrl(p.url)} target="_blank" rel="noreferrer" className="block">
-                    <img src={resolveImageUrl(p.url)} alt="" className="w-16 h-16 object-cover rounded-lg border bg-white" />
-                  </a>
+                <div key={typeof url === "string" ? url : i} className="w-16" data-testid={`${tid}-photo-${i}`}>
+                  <HoverImageThumb
+                    src={typeof url === "string" ? url : url?.url}
+                    className={`w-16 h-16 rounded-lg object-cover border bg-white ${photoFaded(p) ? "opacity-40" : ""}`}
+                    testId={`${tid}-photo-thumb-${i}`}
+                  />
                   <div className={`text-[9px] font-bold leading-tight mt-0.5 ${vis === "show" ? "text-emerald-700" : vis === "hide" ? "text-rose-600" : "text-slate-500"}`}>{photoVisibilityLabel(p)}</div>
                   {canReview ? (
                     <div className="flex gap-1 mt-0.5">
-                      <button type="button" disabled={!!visBusy} onClick={() => setVisibility(p, true)} className={`text-[8px] font-bold ${vis === "show" ? "text-emerald-700" : "text-slate-400"}`} data-testid={`${tid}-photo-show`}>
+                      <button type="button" disabled={!!visBusy} onClick={() => setVisibility(p, true)} className={`text-[8px] font-bold ${vis === "show" ? "text-emerald-700" : "text-slate-400"}`} data-testid={`${tid}-photo-show-${i}`}>
                         {visBusy === `${p.url}:show` ? "…" : DUTY_PHOTO_SHOW}
                       </button>
-                      <button type="button" disabled={!!visBusy} onClick={() => setVisibility(p, false)} className={`text-[8px] font-bold ${vis === "hide" ? "text-rose-600" : "text-slate-400"}`} data-testid={`${tid}-photo-hide`}>
+                      <button type="button" disabled={!!visBusy} onClick={() => setVisibility(p, false)} className={`text-[8px] font-bold ${vis === "hide" ? "text-rose-600" : "text-slate-400"}`} data-testid={`${tid}-photo-hide-${i}`}>
                         {visBusy === `${p.url}:hide` ? "…" : DUTY_PHOTO_HIDE}
                       </button>
                     </div>
@@ -159,7 +163,7 @@ export function AssignedDutyCard({
                 </div>
               );
             })}
-            {!photos.length && reviewPhotos ? <div className="text-[10px] text-slate-400">Henüz iş fotoğrafı yok.</div> : null}
+            {!photos.length && reviewPhotos ? <div className="text-[10px] text-slate-400" data-testid={`${tid}-photos-empty`}>Henüz iş fotoğrafı yok.</div> : null}
           </div>
         </div>
       )}
