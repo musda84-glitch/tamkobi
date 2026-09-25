@@ -616,6 +616,8 @@ class Recipe(BaseDocument):
     contact_id: Optional[str] = None
     contact_name: Optional[str] = None
     job_file_name: Optional[str] = None
+    # Tek seferlik: bağlı üretim emri tamamlanınca reçete silinir
+    one_time: bool = False
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class ProductionOrder(BaseDocument):
