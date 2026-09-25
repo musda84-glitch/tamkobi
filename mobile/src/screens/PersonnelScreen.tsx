@@ -70,6 +70,16 @@ import {
   bonusPayPayload,
   enrichEmployeeBalance,
   overtimeDue,
+  calculatedOvertimeFromCard,
+  mergeOvertimePreview,
+  overtimeAmountFromHours,
+  overtimeApprovePayload,
+  overtimeCanApprove,
+  overtimeCanEdit,
+  overtimeEditPayload,
+  overtimeStatusLabel,
+  overtimeSummaryLine,
+  validateOvertimeEdit,
   personnelExpensePayload,
   assignEmployeeToTasks,
   employeeDutyBoard,
@@ -140,6 +150,7 @@ import {
   type EmployeeBonus,
   type EmployeeCard,
   type EmployeePayMove,
+  type OvertimePreviewRow,
   type LedgerSide,
   type LeaveRequest,
   type Payroll,
@@ -306,6 +317,11 @@ export function PersonnelScreen() {
   const [leaveForm, setLeaveForm] = useState({ employee_id: "", type: "annual", start_date: "", end_date: "", reason: "" });
   const [movesEmp, setMovesEmp] = useState<Employee | null>(null);
   const [moves, setMoves] = useState<EmployeePayMove[]>([]);
+  const [movesCard, setMovesCard] = useState<EmployeeCard | null>(null);
+  const [otEditOpen, setOtEditOpen] = useState(false);
+  const [otEditHours, setOtEditHours] = useState("");
+  const [otEditAmount, setOtEditAmount] = useState("");
+  const [otEditNote, setOtEditNote] = useState("");
   const [movesBusy, setMovesBusy] = useState(false);
   const [otEmp, setOtEmp] = useState<Employee | null>(null);
   const [otHours, setOtHours] = useState("");
@@ -932,11 +948,19 @@ export function PersonnelScreen() {
     }
   };
 
+  const closeMoves = () => {
+    setMovesEmp(null);
+    setMoves([]);
+    setMovesCard(null);
+    setLocMoves([]);
+    setMovesTab("pay");
+    setOtEditOpen(false);
+  };
+
   const payUnpaidMove = (row: EmployeePayMove) => {
     const emp = movesEmp;
     if (!emp) return;
-    setMovesEmp(null);
-    setMoves([]);
+    closeMoves();
     if (row.kind === "payroll") {
       const item = payrolls.find((p) => idOf(p) === row.id);
       if (item) setPayItem(item);
@@ -977,9 +1001,42 @@ export function PersonnelScreen() {
     }
   };
 
+  const applyMovesCard = (card: EmployeeCard) => {
+    setMovesCard(card);
+    setMoves(employeePayMoves(card));
+  };
+
+  const loadMovesOvertime = async (emp: Employee, card: EmployeeCard, periodYm: string) => {
+    const cardMonth = String(card.attendance?.month || "").slice(0, 7);
+    if (!periodYm || periodYm === cardMonth) {
+      applyMovesCard(card);
+      return card;
+    }
+    try {
+      const res = await get<{ rows?: OvertimePreviewRow[] }>(client, "/personnel/overtime-preview", {
+        company_id: companyId,
+        period: periodYm,
+      });
+      const row = (res?.rows || []).find((r) => r.employee_id === idOf(emp));
+      const next = mergeOvertimePreview(card, row, periodYm);
+      applyMovesCard(next);
+      return next;
+    } catch {
+      applyMovesCard(card);
+      return card;
+    }
+  };
+
+  const refreshMovesPay = async (emp: Employee, periodYm = movesMonth) => {
+    const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
+    await loadMovesOvertime(emp, card, periodYm);
+    return card;
+  };
+
   const openMoves = async (emp: Employee) => {
     setMovesEmp(emp);
     setMoves([]);
+    setMovesCard(null);
     setLocMoves([]);
     setMovesTab("pay");
     setMovesPeriod("30d");
@@ -988,14 +1045,63 @@ export function PersonnelScreen() {
     setMovesBusy(true);
     try {
       const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
-      setMoves(employeePayMoves(card));
+      applyMovesCard(card);
       setError(null);
       void loadLocMoves(emp, "30d", ym);
     } catch (err) {
       setError(apiErrorMessage(err, "Ödeme hareketleri yüklenemedi."));
-      setMovesEmp(null);
+      closeMoves();
     } finally {
       setMovesBusy(false);
+    }
+  };
+
+  const approveMovesOvertime = async () => {
+    const emp = movesEmp;
+    const ot = calculatedOvertimeFromCard(movesCard, movesMonth);
+    if (!emp || !overtimeCanApprove(ot)) return;
+    setBusy(true);
+    try {
+      await post(client, "/personnel/bonuses", overtimeApprovePayload(idOf(emp), ot, movesMonth));
+      setMessage(`${emp.full_name} için hesaplanan fazla mesai onaylandı.`);
+      setError(null);
+      await refreshMovesPay(emp);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fazla mesai onaylanamadı."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openMovesOvertimeEdit = () => {
+    const ot = calculatedOvertimeFromCard(movesCard, movesMonth);
+    setOtEditHours(ot.hours > 0 ? String(ot.hours) : "");
+    setOtEditAmount(ot.amount > 0 ? String(ot.amount) : "");
+    setOtEditNote(ot.note || "");
+    setOtEditOpen(true);
+  };
+
+  const saveMovesOvertimeEdit = async () => {
+    const emp = movesEmp;
+    if (!emp) return;
+    const invalid = validateOvertimeEdit(otEditHours, otEditAmount);
+    if (invalid) { setError(invalid); return; }
+    const ot = calculatedOvertimeFromCard(movesCard, movesMonth);
+    const payload = overtimeEditPayload(idOf(emp), otEditHours, otEditAmount, movesMonth, otEditNote);
+    setBusy(true);
+    try {
+      if (ot.bonusId && ot.status !== "paid") await put(client, `/personnel/bonuses/${ot.bonusId}`, payload);
+      else await post(client, "/personnel/bonuses", payload);
+      setOtEditOpen(false);
+      setMessage(`${emp.full_name} için fazla mesai bilgisi güncellendi.`);
+      setError(null);
+      await refreshMovesPay(emp);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fazla mesai düzenlenemedi."));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1900,7 +2006,7 @@ export function PersonnelScreen() {
         visible={!!movesEmp}
         title={movesTab === "location" ? "Konum hareketleri" : "Ödeme hareketleri"}
         subtitle={movesEmp?.full_name}
-        onClose={() => { setMovesEmp(null); setMoves([]); setLocMoves([]); setMovesTab("pay"); }}
+        onClose={closeMoves}
         testID="emp-pay-moves-sheet"
         header={(
           <View testID="emp-pay-moves-period" style={{ gap: 8 }}>
@@ -1925,6 +2031,7 @@ export function PersonnelScreen() {
                   onPress={() => {
                     setMovesPeriod(key);
                     if (movesEmp && movesTab === "location") void loadLocMoves(movesEmp, key, movesMonth);
+                    if (movesEmp && movesCard && key === "month") void loadMovesOvertime(movesEmp, movesCard, movesMonth);
                   }}
                   style={{
                     paddingHorizontal: 10,
@@ -1950,6 +2057,7 @@ export function PersonnelScreen() {
                 onChangeText={(value) => {
                   setMovesMonth(value);
                   if (movesEmp && movesTab === "location") void loadLocMoves(movesEmp, "month", value);
+                  if (movesEmp && movesCard) void loadMovesOvertime(movesEmp, movesCard, value);
                 }}
                 placeholder="YYYY-AA"
               />
@@ -2004,6 +2112,85 @@ export function PersonnelScreen() {
           </>
         ) : (
           <>
+        {(() => {
+          const ot = calculatedOvertimeFromCard(movesCard, movesMonth);
+          const canApprove = canEdit && overtimeCanApprove(ot);
+          const canChange = canEdit && overtimeCanEdit(ot);
+          return (
+            <View
+              testID="emp-pay-overtime-box"
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                backgroundColor: colors.indigo50,
+                borderWidth: 1,
+                borderColor: "#C7D2FE",
+                gap: 8,
+                marginBottom: 4,
+              }}
+            >
+              <Row style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontWeight: "800", color: colors.text }}>Hesaplanan fazla mesai</Text>
+                  <Muted testID="emp-pay-overtime-line">{overtimeSummaryLine(ot)}</Muted>
+                </View>
+                <Text
+                  testID="emp-pay-overtime-status"
+                  style={{ fontSize: 11, fontWeight: "800", color: ot.status === "paid" ? colors.primaryHover : ot.status === "approved" ? colors.indigo : colors.muted }}
+                >
+                  {overtimeStatusLabel(ot.status)}
+                </Text>
+              </Row>
+              <Text testID="emp-pay-overtime-amount" style={{ fontWeight: "800", fontSize: 18, color: colors.indigo }}>
+                {fmtMoney(ot.amount)}
+              </Text>
+              {canApprove || canChange ? (
+                <Row style={{ gap: 8 }}>
+                  {canApprove ? (
+                    <Pressable
+                      testID="emp-pay-overtime-approve"
+                      accessibilityRole="button"
+                      accessibilityLabel="Onayla"
+                      onPress={() => { void approveMovesOvertime(); }}
+                      disabled={busy}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        alignItems: "center",
+                        backgroundColor: colors.emerald50,
+                        borderWidth: 1,
+                        borderColor: "#6EE7B7",
+                      }}
+                    >
+                      <Text style={{ fontWeight: "800", fontSize: 13, color: colors.primaryHover }}>Onayla</Text>
+                    </Pressable>
+                  ) : null}
+                  {canChange ? (
+                    <Pressable
+                      testID="emp-pay-overtime-edit"
+                      accessibilityRole="button"
+                      accessibilityLabel="Düzenle"
+                      onPress={openMovesOvertimeEdit}
+                      disabled={busy}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 10,
+                        alignItems: "center",
+                        backgroundColor: colors.surface,
+                        borderWidth: 1,
+                        borderColor: "#C7D2FE",
+                      }}
+                    >
+                      <Text style={{ fontWeight: "800", fontSize: 13, color: colors.indigo }}>Düzenle</Text>
+                    </Pressable>
+                  ) : null}
+                </Row>
+              ) : null}
+            </View>
+          );
+        })()}
         {movesBusy ? <Muted>Yükleniyor…</Muted> : null}
         {!movesBusy && !filterPayMoves(moves, movesPeriod, new Date(), movesMonth).length ? <Muted>Bu dönemde ödeme hareketi yok.</Muted> : null}
         {filterPayMoves(moves, movesPeriod, new Date(), movesMonth).map((row) => (
@@ -2016,8 +2203,7 @@ export function PersonnelScreen() {
               style={{ flex: 1, minWidth: 0 }}
               onPress={row.editable && movesEmp ? () => {
                 const emp = movesEmp;
-                setMovesEmp(null);
-                setMoves([]);
+                closeMoves();
                 openYevmiyeDays(emp, {
                   id: row.id,
                   type: row.type,
@@ -2077,6 +2263,53 @@ export function PersonnelScreen() {
         ))}
           </>
         )}
+      </B2BSheet>
+
+      <B2BSheet
+        visible={otEditOpen}
+        title="Fazla mesai düzenle"
+        subtitle={movesEmp ? `${movesEmp.full_name} · ${movesMonth}` : undefined}
+        onClose={() => setOtEditOpen(false)}
+        testID="emp-pay-overtime-edit-sheet"
+      >
+        <Muted>Hesap yanlışsa saat veya tutarı düzeltin. Onaylanan tutar personel alacağına yazılır.</Muted>
+        <Field
+          label="Saat"
+          testID="emp-pay-overtime-hours"
+          value={otEditHours}
+          onChangeText={(value) => {
+            setOtEditHours(value);
+            const hours = Number(String(value).replace(",", "."));
+            const rate = calculatedOvertimeFromCard(movesCard, movesMonth).weekdayRate;
+            if (rate > 0 && Number.isFinite(hours) && hours > 0) {
+              setOtEditAmount(String(overtimeAmountFromHours(hours, rate)));
+            }
+          }}
+          keyboardType="decimal-pad"
+          placeholder="Örn: 2,5"
+        />
+        <Field
+          label="Tutar (₺)"
+          testID="emp-pay-overtime-edit-amount"
+          value={otEditAmount}
+          onChangeText={setOtEditAmount}
+          keyboardType="decimal-pad"
+          placeholder="Fazla mesai ücreti"
+        />
+        <Field
+          label="Not"
+          testID="emp-pay-overtime-edit-note"
+          value={otEditNote}
+          onChangeText={setOtEditNote}
+          placeholder="Düzenleme notu"
+        />
+        <PrimaryButton
+          title="Kaydet"
+          testID="emp-pay-overtime-edit-save"
+          color={colors.indigo}
+          loading={busy}
+          onPress={saveMovesOvertimeEdit}
+        />
       </B2BSheet>
 
       <B2BSheet

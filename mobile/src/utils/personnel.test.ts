@@ -22,6 +22,16 @@ import {
   enrichEmployeeBalance,
   bonusDue,
   overtimeDue,
+  calculatedOvertimeFromCard,
+  mergeOvertimePreview,
+  overtimeAmountFromHours,
+  overtimeApprovePayload,
+  overtimeCanApprove,
+  overtimeCanEdit,
+  overtimeEditPayload,
+  overtimeStatusLabel,
+  overtimeSummaryLine,
+  validateOvertimeEdit,
   bonusPayPayload,
   allowanceDue,
   personnelExpensePayload,
@@ -417,6 +427,49 @@ describe("payroll helpers", () => {
     })).toEqual({ days: 7, amount: 10500 });
     expect(bonusDue({ bonus_pending: 2500 })).toBe(2500);
     expect(overtimeDue({ overtime_pay: 1800, overtime_due: 600 })).toBe(600);
+    expect(calculatedOvertimeFromCard({
+      overtime: { hours: 3.5, amount: 1750, weekday_hours: 3.5, holiday_hours: 0, weekday_rate: 500 },
+      attendance: { month: "2026-09" },
+    }).status).toBe("calculated");
+    expect(calculatedOvertimeFromCard({
+      overtime: { hours: 3.5, amount: 1750 },
+      attendance: { month: "2026-09" },
+      bonuses: [{ id: "b1", type: "overtime", status: "pending", period: "2026-09", amount: 1600, note: "Düzenlenen fazla mesai · 3 sa" }],
+    })).toMatchObject({ status: "approved", amount: 1600, hours: 3, bonusId: "b1" });
+    expect(calculatedOvertimeFromCard({
+      overtime: { hours: 2, amount: 800 },
+      bonuses: [{ _id: "p1", type: "overtime", status: "paid", period: "2026-09", amount: 800, note: "Hesaplanan fazla mesai · 2 sa" }],
+    }, "2026-09")).toMatchObject({ status: "paid", amount: 800, hours: 2 });
+    expect(overtimeCanApprove({ status: "calculated", amount: 1750, hours: 3.5, weekdayHours: 0, holidayHours: 0, weekdayRate: 0, holidayRate: 0, period: "2026-09" })).toBe(true);
+    expect(overtimeCanApprove({ status: "approved", amount: 1750, hours: 3.5, weekdayHours: 0, holidayHours: 0, weekdayRate: 0, holidayRate: 0, period: "2026-09" })).toBe(false);
+    expect(overtimeCanEdit({ status: "paid", amount: 800, hours: 2, weekdayHours: 0, holidayHours: 0, weekdayRate: 0, holidayRate: 0, period: "2026-09" })).toBe(false);
+    expect(overtimeStatusLabel("calculated")).toBe("Hesaplandı");
+    expect(overtimeSummaryLine({
+      hours: 3.5, amount: 1750, weekdayHours: 3.5, holidayHours: 0, weekdayRate: 500, holidayRate: 0, period: "2026-09", status: "calculated",
+    })).toBe("2026-09 · 3.5 sa · HF 3.5 / tatil 0 · 500 ₺/sa");
+    expect(overtimeAmountFromHours(2.5, 400)).toBe(1000);
+    expect(validateOvertimeEdit("", "")).toMatch(/saati veya tutar/);
+    expect(validateOvertimeEdit("2", "0")).toMatch(/Tutar/);
+    expect(validateOvertimeEdit("2", "800")).toBeNull();
+    expect(overtimeApprovePayload("e1", {
+      hours: 3.5, amount: 1750, weekdayHours: 0, holidayHours: 0, weekdayRate: 0, holidayRate: 0, period: "2026-09", status: "calculated",
+    })).toEqual({
+      employee_id: "e1",
+      type: "overtime",
+      amount: 1750,
+      period: "2026-09",
+      note: "Hesaplanan fazla mesai · 3.5 sa",
+    });
+    expect(overtimeEditPayload("e1", "2,5", "900", "2026-09", "")).toEqual({
+      employee_id: "e1",
+      type: "overtime",
+      amount: 900,
+      period: "2026-09",
+      note: "Düzenlenen fazla mesai · 2.5 sa",
+    });
+    expect(mergeOvertimePreview({ overtime: { hours: 1, amount: 100 } }, {
+      overtime_hours: 4, amount: 2000, weekday_hours: 4, holiday_hours: 0, weekday_rate: 500, period: "2026-08",
+    }, "2026-08").overtime).toMatchObject({ hours: 4, amount: 2000, weekday_rate: 500 });
     expect(enrichEmployeeBalance({
       overtime: { hours: 3, amount: 1800 },
       bonuses: [{ type: "overtime", status: "paid", period: "2026-09", amount: 600 }],
