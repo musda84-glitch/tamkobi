@@ -2,17 +2,23 @@ from datetime import datetime, timedelta, timezone
 
 from password_reset import (
     ERP_FORGOT_MSG,
+    ERP_FORGOT_SMS_MSG,
     MAIL_FAIL_PUBLIC_DETAIL,
+    SMS_FAIL_PUBLIC_DETAIL,
     finalize_forgot_mail_result,
+    finalize_forgot_sms_result,
+    forgot_channel,
     generic_forgot_response,
     login_next,
     mask_email,
+    mask_phone,
     normalize_email,
     password_error,
     redirect_after_reset,
     reset_link,
     reset_path,
     reset_row_error,
+    sms_reset_message,
 )
 
 
@@ -74,3 +80,21 @@ def test_finalize_forgot_never_exposes_reset_link():
     assert "reset_token" not in sent
     assert sent["mail_status"] == "sent"
     assert "gönderildi" in sent["detail"]
+
+
+def test_forgot_sms_channel_helpers():
+    assert forgot_channel("SMS") == "sms"
+    assert forgot_channel(None) == "email"
+    assert mask_phone("05551234567") == "•••4567"
+    sms_out = generic_forgot_response("sms")
+    assert sms_out["message"] == ERP_FORGOT_SMS_MSG
+    assert sms_out["channel"] == "sms"
+    assert "baglantiniz" in sms_reset_message(name="Ayşe", link="https://a/sifre/t")
+    failed = finalize_forgot_sms_result(
+        {"status": "ok", "reset_token": "x", "reset_url": "y"},
+        sms_status="failed",
+        sms_detail="netgsm err",
+    )
+    assert "reset_token" not in failed
+    assert failed["detail"] == SMS_FAIL_PUBLIC_DETAIL
+    assert failed["sms_status"] == "failed"

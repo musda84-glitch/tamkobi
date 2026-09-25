@@ -104,9 +104,11 @@ import gib_credits
 import order_pick
 import trade
 import platform_mail
+import platform_sms
 import gib_credits
 import order_pick
 import platform_mail
+import platform_sms
 import applog
 import mail_tracking
 import stock_moves
@@ -2381,14 +2383,38 @@ async def change_password(req: ChangePasswordRequest, request: Request):
 
 @api_router.post("/auth/forgot-password")
 async def erp_forgot_password(req: Dict[str, Any], request: Request):
-    email = password_reset.normalize_email(req.get("email") or "")
+    channel = password_reset.forgot_channel(req.get("channel") or "email")
     next_kind = password_reset.login_next(req.get("next") or "")
-    out = password_reset.generic_forgot_response()
-    if not email or "@" not in email:
-        return out
-    user = await db.users.find_one({"email": email})
-    if not user or user.get("is_active") is False or not user.get("password_hash"):
-        return out
+    out = password_reset.generic_forgot_response(channel)
+    email = password_reset.normalize_email(req.get("email") or "")
+    phone_raw = str(req.get("phone") or "").strip()
+
+    user = None
+    if channel == "sms":
+        phone = comm_service.normalize_phone(phone_raw)
+        if not phone:
+            return out
+        # Son 10 hane ile kayıtlı telefonu eşle (05xx / +90 / 5xx biçimleri).
+        phone_rx = {"$regex": f"{phone}\\D*$"}
+        candidates = await db.users.find({
+            "phone": phone_rx,
+            "is_active": {"$ne": False},
+            "password_hash": {"$exists": True, "$nin": [None, ""]},
+        }).to_list(20)
+        for u in candidates:
+            if comm_service.normalize_phone(u.get("phone") or "") == phone:
+                user = u
+                break
+        if not user:
+            return out
+        email = password_reset.normalize_email(user.get("email") or "") or email
+    else:
+        if not email or "@" not in email:
+            return out
+        user = await db.users.find_one({"email": email})
+        if not user or user.get("is_active") is False or not user.get("password_hash"):
+            return out
+
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     await db.password_resets.update_many(
@@ -2400,6 +2426,8 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
         "_id": token,
         "user_id": user["_id"],
         "email": email,
+        "phone": user.get("phone") or phone_raw or "",
+        "channel": channel,
         "company_id": company_id,
         "next": next_kind,
         "expires_at": (now + timedelta(hours=1)).isoformat(),
@@ -2408,6 +2436,35 @@ async def erp_forgot_password(req: Dict[str, Any], request: Request):
     })
     base = await _public_base_url(request, req.get("base_url") or "")
     link = password_reset.reset_link(base, token, next_kind)
+
+    if channel == "sms":
+        sms_status, sms_detail = "skipped", "Platform SMS yapılandırılmamış."
+        try:
+            import platform_sms as _platform_sms
+            phone = comm_service.normalize_phone(user.get("phone") or phone_raw)
+            brand = "TamKobi"
+            if company_id:
+                company = await db.companies.find_one({"_id": company_id}) or {}
+                brand = company.get("name") or brand
+            msg = password_reset.sms_reset_message(name=user.get("name"), link=link, brand=brand)
+            await _platform_sms.send_platform_sms(
+                phone=phone, message=msg, context="erp_reset", ref_id=token,
+                company_id=company_id or "platform", contact_name=user.get("name"),
+            )
+            sms_status, sms_detail = "sent", f"{password_reset.mask_phone(phone)} numarasına gönderildi."
+        except HTTPException as e:
+            sms_status = "failed" if getattr(e, "status_code", None) in (424, 502, 400) else "skipped"
+            sms_detail = str(e.detail)[:140]
+        except Exception as e:
+            sms_status, sms_detail = "failed", str(e)[:140]
+        if sms_status != "sent":
+            await db.password_resets.update_one(
+                {"_id": token},
+                {"$set": {"used_at": now.isoformat(), "revoked": True, "sms_failed": True, "sms_error": sms_detail[:200]}},
+            )
+            logger.warning("forgot-password sms %s user=%s: %s", sms_status, email or phone_raw, sms_detail)
+        return password_reset.finalize_forgot_sms_result(out, sms_status=sms_status, sms_detail=sms_detail)
+
     mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
     try:
         if not company_id:
@@ -14135,6 +14192,7 @@ company_reset.init(db)
 import storage_manager
 storage_manager.init(db, get_current_user, saas.require_super_admin)
 platform_mail.init(db)
+platform_sms.init(db)
 addons.init(db)
 support_tickets.init(db, get_current_user)
 staff_messages.init(db, get_current_user)
@@ -14250,6 +14308,7 @@ app.include_router(saas_docs.router)
 app.include_router(trade.router)
 app.include_router(order_pick.router)
 app.include_router(platform_mail.router)
+app.include_router(platform_sms.router)
 app.include_router(demo.router)
 app.include_router(data_export.router)
 app.include_router(legal_docs.router)

@@ -170,6 +170,7 @@ def normalize_maintenance(raw: Optional[dict]) -> dict:
         "support_email": (str(raw.get("support_email") or "").strip() or None),
         "support_phone": (str(raw.get("support_phone") or "").strip() or None),
         "notify_popup": bool(raw.get("notify_popup", True)),
+        "notify_sms": bool(raw.get("notify_sms", False)),
         "audience": audience,
         "company_ids": company_ids if audience == AUDIENCE_SELECTED else [],
         "updated_at": raw.get("updated_at"),
@@ -235,11 +236,34 @@ async def system_get_maintenance(_: dict = Depends(saas.require_super_admin)):
     }
 
 
+async def _send_announce_sms(doc: dict, *, context: str = "announcement") -> Optional[dict]:
+    """Yayınlanan duyuru/bakım için platform SMS fan-out (opsiyonel)."""
+    if not doc or not doc.get("notify_sms"):
+        return None
+    if doc.get("status") == STATUS_DRAFT:
+        return None
+    try:
+        import platform_sms
+    except Exception:
+        return {"status": "skipped", "detail": "platform_sms yok"}
+    title = (doc.get("title") or "TamKobi").strip()
+    body = (doc.get("body") or "").strip().replace("\n", " ")
+    msg = f"TamKobi: {title}" + (f" — {body}" if body else "")
+    msg = msg[:400]
+    cids = doc.get("company_ids") if doc.get("audience") == AUDIENCE_SELECTED else None
+    try:
+        return await platform_sms.notify_companies_sms(
+            msg, cids, context=context, ref_id=doc.get("_id") or doc.get("id"),
+        )
+    except Exception as e:
+        return {"status": "failed", "detail": str(e)[:160]}
+
+
 @router.put("/system/maintenance")
 async def system_put_maintenance(req: Dict[str, Any], admin: dict = Depends(saas.require_super_admin)):
     cur = await get_maintenance()
     patch = {**cur}
-    for key in ("enabled", "notify_popup"):
+    for key in ("enabled", "notify_popup", "notify_sms"):
         if key in req:
             patch[key] = bool(req.get(key))
     for key in ("title", "body", "starts_at", "ends_at", "support_email", "support_phone"):
@@ -270,21 +294,30 @@ async def system_put_maintenance(req: Dict[str, Any], admin: dict = Depends(saas
         {"$set": {"maintenance": patch, "updated_at": _now_iso()}},
         upsert=True,
     )
+    sms_result = None
     if patch.get("enabled") and patch.get("notify_popup") and (patch.get("starts_at") or maintenance_active(patch)):
         await _upsert_maintenance_announcement(patch, admin)
+        if patch.get("notify_sms"):
+            sms_result = await _send_announce_sms(
+                {**patch, "_id": "announce_maintenance", "status": STATUS_PUBLISHED, "notify_sms": True},
+                context="maintenance",
+            )
     elif not patch.get("enabled"):
         await _db.platform_announcements.update_one(
             {"_id": "announce_maintenance"},
             {"$set": {"active": False, "updated_at": _now_iso()}},
         )
     now = _now()
-    return {
+    out = {
         **patch,
         "active": maintenance_active(patch, now=now),
         "upcoming": maintenance_upcoming(patch, now=now),
         "server_time": now.isoformat(),
         "message": "Bakım / güncelleme ayarı kaydedildi.",
     }
+    if sms_result is not None:
+        out["sms"] = sms_result
+    return out
 
 
 async def _upsert_maintenance_announcement(m: dict, admin: dict):
@@ -361,6 +394,7 @@ def _announce_fields_from_req(req: Dict[str, Any], *, partial: bool = False, exi
     active = bool(req.get("active")) if "active" in req else bool(base.get("active", True))
     kind = ((req.get("kind") if "kind" in req else base.get("kind")) or "info")
     kind = str(kind).strip() or "info"
+    notify_sms = bool(req.get("notify_sms")) if "notify_sms" in req else bool(base.get("notify_sms", False))
 
     return {
         "title": title,
@@ -372,6 +406,7 @@ def _announce_fields_from_req(req: Dict[str, Any], *, partial: bool = False, exi
         "company_ids": cids if audience == AUDIENCE_SELECTED else [],
         "starts_at": starts_at,
         "ends_at": ends_at,
+        "notify_sms": notify_sms,
     }
 
 
@@ -401,12 +436,20 @@ async def system_create_announcement(req: Dict[str, Any], admin: dict = Depends(
         "created_by": admin.get("email") or admin.get("_id"),
     }
     await _db.platform_announcements.insert_one(doc)
+    sms_result = None
+    if doc["status"] == STATUS_PUBLISHED and doc.get("notify_sms"):
+        sms_result = await _send_announce_sms(doc, context="announcement")
     msg = (
         "Taslak kaydedildi. Önizleyip yayınlayabilirsiniz."
         if doc["status"] == STATUS_DRAFT
         else "Duyuru yayınlandı; hedef şirketlerde pop-up görünecek."
     )
-    return {"status": "success", "announcement": _clean(doc), "message": msg}
+    out = {"status": "success", "announcement": _clean(doc), "message": msg}
+    if sms_result is not None:
+        out["sms"] = sms_result
+        if sms_result.get("sent"):
+            out["message"] = f"{msg} SMS: {sms_result.get('sent')} alıcı."
+    return out
 
 
 @router.put("/system/announcements/{announce_id}")
@@ -437,6 +480,8 @@ async def system_publish_announcement(
         aud = normalize_audience(req.get("audience") if "audience" in req else cur.get("audience"), cids)
         patch["audience"] = aud
         patch["company_ids"] = cids if aud == AUDIENCE_SELECTED else []
+    if "notify_sms" in req:
+        patch["notify_sms"] = bool(req.get("notify_sms"))
     await _db.platform_announcements.update_one({"_id": announce_id}, {"$set": patch})
     doc = await _db.platform_announcements.find_one({"_id": announce_id})
     aud = (doc or {}).get("audience") or AUDIENCE_ALL
@@ -445,7 +490,15 @@ async def system_publish_announcement(
         msg = f"Duyuru yayınlandı (yalnızca {n} seçili şirket)."
     else:
         msg = "Duyuru tüm şirketlere yayınlandı."
-    return {"status": "success", "announcement": _clean(doc), "message": msg}
+    sms_result = None
+    if (doc or {}).get("notify_sms"):
+        sms_result = await _send_announce_sms(doc, context="announcement")
+        if sms_result and sms_result.get("sent"):
+            msg = f"{msg} SMS: {sms_result.get('sent')} alıcı."
+    out = {"status": "success", "announcement": _clean(doc), "message": msg}
+    if sms_result is not None:
+        out["sms"] = sms_result
+    return out
 
 
 @router.post("/system/announcements/{announce_id}/retarget")
@@ -470,13 +523,21 @@ async def system_retarget_announcement(
     if req.get("publish"):
         patch["status"] = STATUS_PUBLISHED
         patch["active"] = True
+    if "notify_sms" in req:
+        patch["notify_sms"] = bool(req.get("notify_sms"))
     await _db.platform_announcements.update_one({"_id": announce_id}, {"$set": patch})
     doc = await _db.platform_announcements.find_one({"_id": announce_id})
     if aud == AUDIENCE_ALL:
         msg = "Hedef tüm şirketlere genişletildi."
     else:
         msg = f"Hedef güncellendi ({len(cids)} şirket)."
-    return {"status": "success", "announcement": _clean(doc), "message": msg}
+    sms_result = None
+    if req.get("notify_sms") and (doc or {}).get("status") == STATUS_PUBLISHED:
+        sms_result = await _send_announce_sms({**(doc or {}), "notify_sms": True}, context="announcement")
+    out = {"status": "success", "announcement": _clean(doc), "message": msg}
+    if sms_result is not None:
+        out["sms"] = sms_result
+    return out
 
 
 @router.delete("/system/announcements/{announce_id}")
