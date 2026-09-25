@@ -63,5 +63,8 @@ export function orderStatusBadgeClass(status) {
   if (["pending", "new", "on_hold", "draft"].includes(s)) {
     return "bg-amber-50 text-amber-800 border-amber-200";
   }
+  if (["held_cart", "active_cart"].includes(s)) {
+    return "bg-slate-100 text-slate-600 border-slate-200";
+  }
   return "bg-slate-100 text-slate-600 border-slate-200";
 }

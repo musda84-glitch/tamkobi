@@ -14,7 +14,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
-import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, discardHeldCart, formatCartSheetMeta, formatOrderItemLabel, heldCartsAsOrders, heldStorageKey, holdActiveCart, parseHeldCarts, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart, type HeldCart } from "../utils/b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, discardHeldCart, formatCartSheetMeta, formatOrderItemLabel, heldCartTabs, heldCartsAsOrders, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart, type HeldCart } from "../utils/b2bCart";
 import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
 import { applyB2BScan, canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bCatalog";
 import {
@@ -343,15 +343,19 @@ export function B2BPortalScreen() {
   const flash = b2bFlashChrome(flashOn);
   const heldRows = useMemo(
     () =>
-      heldCartsAsOrders(heldCarts, products, {
+      mergePortalOrderLists({
+        serverOrders: (data?.orders || []) as Array<Record<string, unknown>>,
+        heldLocal: heldCarts,
+        products: products as Array<Record<string, unknown>>,
         activeCart: cart,
         activeNote: note,
         activeCustomerOrderNo: customerOrderNo,
         priceGross: (p) => b2bGross(p as B2BProduct),
       }),
-    [heldCarts, products, cart, note, customerOrderNo]
+    [heldCarts, products, cart, note, customerOrderNo, data?.orders]
   );
-  const ordersTabCount = (data?.orders?.length || 0) + heldRows.length;
+  const heldTabs = useMemo(() => heldCartTabs(heldCarts, (data?.orders || []) as Array<Record<string, unknown>>), [heldCarts, data?.orders]);
+  const ordersTabCount = heldRows.length;
 
   const addProduct = (p: B2BProduct) => {
     if (!canAddProduct(p, showStock, allowOrders)) return;
@@ -453,22 +457,82 @@ export function B2BPortalScreen() {
     }
   };
 
-  const holdCart = () => {
-    if (!cartHasItems(cart)) {
+  const holdCart = async () => {
+    if (!cartHasItems(cart) || !b2bToken) {
       setError("Beklemeye alınacak ürün yok.");
       return;
     }
-    const r = holdActiveCart(heldCarts, cart, { note, customerOrderNo });
-    setHeldCarts(r.held);
-    setCart(r.cart);
-    setNote("");
-    setCustomerOrderNo("");
-    const label = r.held[r.held.length - 1]?.label || "Bekleyen sepet";
-    setMessage(`${label} beklemeye alındı.`);
-    setError(null);
+    setBusy(true);
+    try {
+      const res = await post<{ message?: string }>(
+        { ...client, token: null },
+        `/public/b2b/${b2bToken}/held-carts`,
+        {
+          items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: l.note || "" })),
+          note,
+          customer_order_number: customerOrderNo.trim(),
+        }
+      );
+      setCart({});
+      setNote("");
+      setCustomerOrderNo("");
+      setMessage(res.message || "Bekleyen sepet kaydedildi.");
+      setError(null);
+      await load();
+      setTab("orders");
+    } catch (err) {
+      const r = holdActiveCart(heldCarts, cart, { note, customerOrderNo });
+      setHeldCarts(r.held);
+      setCart(r.cart);
+      setNote("");
+      setCustomerOrderNo("");
+      const label = r.held[r.held.length - 1]?.label || "Bekleyen sepet";
+      setMessage(`${label} beklemeye alındı (yerel).`);
+      setError(null);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const loadHeld = (holdId: string) => {
+  const cartFromOrderItems = (items: Order["items"] | undefined): B2BCart => {
+    const next: B2BCart = {};
+    (items || []).forEach((it) => {
+      const pid = String(it.product_id || "");
+      if (!pid) return;
+      const noteText = String(it.note || "");
+      next[lineKey(pid, noteText)] = { productId: pid, qty: Number(it.quantity) || 0, note: noteText };
+    });
+    return next;
+  };
+
+  const loadHeld = async (holdId: string) => {
+    const serverOrd = (data?.orders || []).find(
+      (o) => String(o.id || o._id) === String(holdId) && (o.is_held_cart || o.order_status === "held_cart")
+    );
+    if (serverOrd && b2bToken) {
+      setBusy(true);
+      try {
+        if (cartHasItems(cart)) {
+          await post({ ...client, token: null }, `/public/b2b/${b2bToken}/held-carts`, {
+            items: lines.map((l) => ({ product_id: l.p.id, quantity: l.qty, note: l.note || "" })),
+            note,
+            customer_order_number: customerOrderNo.trim(),
+          });
+        }
+        setCart(cartFromOrderItems(serverOrd.items));
+        setNote(serverOrd.notes || "");
+        setCustomerOrderNo(serverOrd.customer_order_number || "");
+        await del({ ...client, token: null }, `/public/b2b/${b2bToken}/held-carts/${serverOrd.id || serverOrd._id}`);
+        await load();
+        setMessage("Bekleyen sepet yüklendi.");
+        setTab("catalog");
+      } catch (err) {
+        setError(apiErrorMessage(err, "Bekleyen sepet yüklenemedi."));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const r = resumeHeldCart(heldCarts, cart, holdId, { note, customerOrderNo });
     setHeldCarts(r.held);
     setCart(r.cart);
@@ -480,7 +544,20 @@ export function B2BPortalScreen() {
   };
 
   const removeHeld = (holdId: string) => {
-    confirmAction("Bekleyen sepet", "Bu bekleyen sepet silinsin mi?", () => {
+    const serverOrd = (data?.orders || []).find(
+      (o) => String(o.id || o._id) === String(holdId) && (o.is_held_cart || o.order_status === "held_cart")
+    );
+    confirmAction("Bekleyen sepet", "Bu bekleyen sepet silinsin mi?", async () => {
+      if (serverOrd && b2bToken) {
+        try {
+          await del({ ...client, token: null }, `/public/b2b/${b2bToken}/held-carts/${serverOrd.id || serverOrd._id}`);
+          setMessage("Bekleyen sepet silindi.");
+          await load();
+        } catch (err) {
+          setError(apiErrorMessage(err, "Silinemedi."));
+        }
+        return;
+      }
       setHeldCarts((prev) => discardHeldCart(prev, holdId));
       setMessage("Bekleyen sepet silindi.");
     }, "Sil");
@@ -722,28 +799,41 @@ export function B2BPortalScreen() {
 
         {tab === "orders" ? (
           <View testID="b2b-orders">
-            {!heldRows.length && !data?.orders?.length ? <Empty icon="cart-outline" title="Henüz sipariş yok" /> : null}
-            {heldRows.map((o) => (
-              <Card key={o.id} testID={`b2b-held-row-${o.id}`} style={{ opacity: 0.62 }}>
-                <Row style={{ justifyContent: "space-between" }}>
-                  <Text style={{ fontWeight: "800", color: colors.muted }}>{o.order_number}</Text>
-                  <Badge
-                    label={o.is_active_cart ? "Aktif sepet" : (o.held_seq ? `Bekleyen sepet #${o.held_seq}` : "Bekleyen sepet")}
-                    tone={o.is_active_cart ? "indigo" : "amber"}
-                  />
-                </Row>
-                <Muted>{fmtDate(o.order_date)}{o.customer_order_number ? ` · Sizin no ${o.customer_order_number}` : ""}</Muted>
-                <Muted>{(o.items || []).map((it) => formatOrderItemLabel(it as { quantity?: number; product_name?: string; name?: string; note?: string })).join(", ")}</Muted>
-                <Text style={{ fontWeight: "800", color: colors.muted }}>{fmtMoney(b2bOrderGross(o as unknown as Order))}</Text>
-                <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-                  <Pressable testID={`b2b-held-preview-${o.id}`} onPress={() => setPreview(o as unknown as Order)}>
-                    <Text style={{ color: colors.indigo, fontWeight: "800" }}>Önizle</Text>
-                  </Pressable>
-                </Row>
-              </Card>
-            ))}
-            {(data?.orders || []).map((o) => {
+            {!heldRows.length ? <Empty icon="cart-outline" title="Henüz sipariş yok" /> : null}
+            {heldRows.map((raw) => {
+              const o = raw as unknown as Order & { is_held_cart?: boolean; is_active_cart?: boolean; held_seq?: number; view_only?: boolean };
               const oid = String(o.id || o._id || o.order_number);
+              if (o.is_held_cart || o.order_status === "held_cart" || o.is_active_cart) {
+                return (
+                  <Card key={oid} testID={`b2b-held-row-${oid}`} style={{ opacity: 0.62 }}>
+                    <Row style={{ justifyContent: "space-between" }}>
+                      <Text style={{ fontWeight: "800", color: colors.muted }}>{o.order_number}</Text>
+                      <Badge
+                        label={o.is_active_cart ? "Aktif sepet" : (o.held_seq ? `Bekleyen sepet #${o.held_seq}` : "Bekleyen sepet")}
+                        tone={o.is_active_cart ? "indigo" : "amber"}
+                      />
+                    </Row>
+                    <Muted>{fmtDate(o.order_date)}{o.customer_order_number ? ` · Sizin no ${o.customer_order_number}` : ""}</Muted>
+                    <Muted>{(o.items || []).map((it) => formatOrderItemLabel(it as { quantity?: number; product_name?: string; name?: string; note?: string })).join(", ")}</Muted>
+                    <Text style={{ fontWeight: "800", color: colors.muted }}>{fmtMoney(b2bOrderGross(o as unknown as Order))}</Text>
+                    <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                      <Pressable testID={`b2b-held-preview-${oid}`} onPress={() => setPreview(o as unknown as Order)}>
+                        <Text style={{ color: colors.indigo, fontWeight: "800" }}>Önizle</Text>
+                      </Pressable>
+                      {!o.is_active_cart ? (
+                        <>
+                          <Pressable testID={`b2b-held-load-${oid}`} onPress={() => loadHeld(oid)}>
+                            <Text style={{ color: colors.text, fontWeight: "800" }}>Yükle</Text>
+                          </Pressable>
+                          <Pressable testID={`b2b-held-discard-${oid}`} onPress={() => removeHeld(oid)}>
+                            <Text style={{ color: colors.danger, fontWeight: "800" }}>Sil</Text>
+                          </Pressable>
+                        </>
+                      ) : null}
+                    </Row>
+                  </Card>
+                );
+              }
               const extra = cancelBadge(o);
               return (
                 <Card key={oid} testID={`b2b-order-${o.order_number}`}>
@@ -828,9 +918,9 @@ export function B2BPortalScreen() {
       </View>
 
       <B2BSheet visible={cartOpen} title={`Sepet · ${count} kalem`} onClose={() => setCartOpen(false)} testID="b2b-cart">
-        {heldCarts.length ? (
+        {heldTabs.length ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }} testID="b2b-held-tabs">
-            {heldCarts.map((h) => (
+            {heldTabs.map((h) => (
               <Row key={h.id} style={{ gap: 4, alignItems: "center" }}>
                 <Pressable
                   testID={`b2b-held-tab-${h.id}`}

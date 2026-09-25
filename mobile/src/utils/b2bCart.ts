@@ -325,6 +325,82 @@ export function heldCartsAsOrders(
   return rows;
 }
 
+export function asPortalHeldOrder<T extends Record<string, unknown>>(o: T | null | undefined): T | null | undefined {
+  if (!o) return o;
+  const held = o.is_held_cart || o.order_status === "held_cart" || o.source === "b2b_held_cart";
+  if (!held) return o;
+  const seq = Number(o.held_seq) || 1;
+  const label = String(o.held_label || `Bekleyen sepet #${seq}`);
+  return {
+    ...o,
+    is_held_cart: true,
+    view_only: true,
+    held_seq: seq,
+    held_label: label,
+    order_number: label,
+    order_status: "held_cart",
+  } as T;
+}
+
+export function mergePortalOrderLists(opts: {
+  serverOrders?: Array<Record<string, unknown>>;
+  heldLocal?: HeldCart[];
+  products?: Array<Record<string, unknown>>;
+  activeCart?: B2BCart | null;
+  activeNote?: string;
+  activeCustomerOrderNo?: string;
+  priceGross?: (p: Record<string, unknown>) => number;
+}): Array<Record<string, unknown>> {
+  const {
+    serverOrders = [],
+    heldLocal = [],
+    products = [],
+    activeCart = null,
+    activeNote = "",
+    activeCustomerOrderNo = "",
+    priceGross,
+  } = opts;
+  const activeRows = heldCartsAsOrders([], products, {
+    activeCart,
+    activeNote,
+    activeCustomerOrderNo,
+    priceGross,
+  }) as unknown as Array<Record<string, unknown>>;
+  const serverHeld = (serverOrders || [])
+    .filter((o) => o?.is_held_cart || o?.order_status === "held_cart" || o?.source === "b2b_held_cart")
+    .map((o) => asPortalHeldOrder(o)!)
+    .filter(Boolean);
+  const serverHeldIds = new Set(serverHeld.map((o) => String(o.id || o._id || "")));
+  const localHeld = (heldCartsAsOrders(heldLocal, products, { priceGross }) as unknown as Array<Record<string, unknown>>).filter(
+    (r) => !r.is_active_cart && !serverHeldIds.has(String(r.id || "")),
+  );
+  const real = (serverOrders || []).filter(
+    (o) => !(o?.is_held_cart || o?.order_status === "held_cart" || o?.source === "b2b_held_cart"),
+  );
+  return [...activeRows, ...serverHeld, ...localHeld, ...real];
+}
+
+export function heldCartTabs(heldLocal: HeldCart[] = [], serverOrders: Array<Record<string, unknown>> = []) {
+  const local = (heldLocal || []).map((h) => ({
+    id: h.id,
+    label: h.label || `Bekleyen sepet #${h.seq || 1}`,
+    seq: h.seq,
+    server: false as const,
+  }));
+  const localIds = new Set(local.map((h) => String(h.id)));
+  const server = (serverOrders || [])
+    .filter((o) => o?.is_held_cart || o?.order_status === "held_cart")
+    .map((o) => ({
+      id: String(o.id || o._id || ""),
+      label: String(o.held_label || `Bekleyen sepet #${o.held_seq || 1}`),
+      seq: Number(o.held_seq) || 1,
+      server: true as const,
+      order: o,
+    }))
+    .filter((h) => h.id && !localIds.has(String(h.id)));
+  return [...local, ...server];
+}
+
 /** Sepete eklenince banner açık gridan yeşile geçer; çerçeve düz çizgi. */
 export function b2bFlashChrome(added: boolean) {
   return {
