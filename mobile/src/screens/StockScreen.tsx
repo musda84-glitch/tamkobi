@@ -17,6 +17,7 @@ import { cacheIsFresh, peekCachedRows, readCachedRows, writeCachedRows } from ".
 import { listRowText } from "../utils/listRow";
 import { LIST_INITIAL_ROWS, nextRowLimit, visibleRows } from "../utils/listPaging";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
+import { nextStickyFilterHidden } from "../utils/listSticky";
 import { asList, filterProducts, lastPurchaseLabel, lastSaleLabel, productCategoryGroups, productImage, slimListProducts, stockBadge, stockQtyLabel, stockRightLabel, stockRowSubtitle, type ProductCategory } from "../utils/productDisplay";
 import { moveChange, parseStockMoves, type StockMove } from "../utils/stockMoves";
 
@@ -36,6 +37,7 @@ export function StockScreen() {
   const [moves, setMoves] = useState<StockMove[]>([]);
   const [movesBusy, setMovesBusy] = useState(false);
   const [shown, setShown] = useState(LIST_INITIAL_ROWS);
+  const [hideCategory, setHideCategory] = useState(false);
 
   const applyRows = useCallback((raw: unknown) => {
     try {
@@ -149,6 +151,7 @@ export function StockScreen() {
     <Screen
       onRefresh={() => load(true)}
       refreshing={refreshing}
+      onScrollY={(y) => setHideCategory((cur) => nextStickyFilterHidden(cur, y))}
       stickyTop={(
         <>
           <ActionTiles
@@ -160,13 +163,15 @@ export function StockScreen() {
             ]}
             columns={canEdit ? 4 : 3}
           />
-          <GroupedSelect
-            label="Kategori"
-            testID="stock-category"
-            value={cat}
-            onChange={(v) => { setCat(v || "all"); setHit(null); }}
-            groups={catGroups}
-          />
+          {hideCategory ? null : (
+            <GroupedSelect
+              label="Kategori"
+              testID="stock-category"
+              value={cat}
+              onChange={(v) => { setCat(v || "all"); setHit(null); }}
+              groups={catGroups}
+            />
+          )}
           <Field label="Ara" testID="stock-search" value={q} onChangeText={(v) => { setQ(v); setHit(null); }} placeholder="Ad, SKU, barkod" />
         </>
       )}

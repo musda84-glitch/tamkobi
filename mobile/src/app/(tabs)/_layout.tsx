@@ -2,6 +2,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { useBadges } from "@/auth/BadgeContext";
 import { AccountMenu } from "@/components/AccountMenu";
 import { HomeHeaderTitle } from "@/components/HomeHeaderTitle";
+import { HeaderBack } from "@/components/StackHeader";
 import { colors } from "@/theme";
 import { typeface } from "@/theme/softFont";
 import { resolveMediaUrl } from "@/utils/media";
@@ -23,7 +24,7 @@ export default function TabsLayout() {
   const homeBadge = unread > 99 ? "99+" : unread > 0 ? unread : undefined;
   return (
     <Tabs
-      screenOptions={{
+      screenOptions={({ route }) => ({
         headerTitleStyle: { color: colors.text, ...typeface("800") },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.muted,
@@ -32,7 +33,9 @@ export default function TabsLayout() {
         headerTintColor: colors.text,
         tabBarLabelStyle: { fontSize: 10, ...typeface("700") },
         headerRight: () => <AccountMenu />,
-      }}
+        headerBackVisible: false,
+        headerLeft: route.name === "index" ? undefined : () => <HeaderBack fallback="/" />,
+      })}
     >
       <Tabs.Screen
         name="index"

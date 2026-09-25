@@ -26,7 +26,7 @@ import { MonthField } from "./MonthField";
 import { ProductThumb } from "./ProductThumb";
 import { TimeField } from "./TimeField";
 
-export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshing, padded = true, stickyCompact = false }: {
+export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshing, padded = true, stickyCompact = false, onScrollY }: {
   children: React.ReactNode;
   stickyTop?: React.ReactNode;
   stickyBottom?: React.ReactNode;
@@ -34,6 +34,7 @@ export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshin
   refreshing?: boolean;
   padded?: boolean;
   stickyCompact?: boolean;
+  onScrollY?: (y: number) => void;
 }) {
   const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll();
   const bottom = contentBottomPad(SCREEN_BASE_PAD, keyboardHeight, Platform.OS);
@@ -57,6 +58,10 @@ export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshin
         style={styles.flex}
         contentContainerStyle={[styles.content, padded && styles.padded, { paddingBottom: bottom }]}
         {...scrollProps}
+        onScroll={(e) => {
+          scrollProps.onScroll(e);
+          onScrollY?.(e.nativeEvent.contentOffset.y);
+        }}
         refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} /> : undefined}
       >
         {children}
