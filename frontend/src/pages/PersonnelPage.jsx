@@ -9,6 +9,7 @@ import { compressImageFile } from "../utils/compressImage";
 import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/PersonnelExtras";
 import { AttendancePanel } from "../components/AttendancePanel";
 import { EmployeeCardModal } from "../components/EmployeeCardModal";
+import { EmployeeMovesModal } from "../components/EmployeeMovesModal";
 import { EmployeeAssignTaskModal } from "../components/EmployeeAssignTaskModal";
 import { AssignOvertimeModal } from "../components/AssignOvertimeModal";
 import { QuickPayModal } from "../components/QuickPayModal";
@@ -16,7 +17,8 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
 import { cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint, locationCellCaption, locationControllerLabel, locationTrackingEnabled, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
-import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, fmtCardMoney, remainingLeaveDays } from "../utils/personnelCard";
+import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePresenceChip, fmtCardMoney, remainingLeaveDays } from "../utils/personnelCard";
+import { punchLabelClass } from "../utils/punchLabels";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
@@ -50,6 +52,7 @@ import {
   ChevronUp,
   MapPin,
   Users,
+  Receipt,
 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
@@ -63,6 +66,8 @@ export default function PersonnelPage() {
   const { activeCompany } = useAuth();
   const [employees, setEmployees] = useState([]);
   const [attToday, setAttToday] = useState({});
+  const [attWork, setAttWork] = useState({});
+  const [movesEmp, setMovesEmp] = useState(null);
   const [locBusyId, setLocBusyId] = useState(null);
   const [punchConfirm, setPunchConfirm] = useState(null);
   const [punchBusyId, setPunchBusyId] = useState(null);
@@ -184,10 +189,15 @@ export default function PersonnelPage() {
       setPayrolls(payRes.data);
       setBankAccounts(bankRes.data);
       const todayMap = {};
+      const workMap = {};
       for (const s of attRes.data?.summary || []) {
-        if (s.employee_id) todayMap[s.employee_id] = s.today || null;
+        if (s.employee_id) {
+          todayMap[s.employee_id] = s.today || null;
+          workMap[s.employee_id] = s.workplace || null;
+        }
       }
       setAttToday(todayMap);
+      setAttWork(workMap);
       if (bankRes.data.length > 0) setSelectedBankId(bankRes.data[0].id || bankRes.data[0]._id);
     } catch (err) {
       toast.error("Personel verileri yüklenemedi.");
@@ -674,7 +684,7 @@ export default function PersonnelPage() {
                   ) : null}
                   </div>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center flex-wrap justify-end gap-1 shrink-0">
                   {empReqs.length > 0 && (
                     <span className="relative mr-0.5" title={`${empReqs.length} bekleyen talep`}>
                       <Bell className="w-3.5 h-3.5 text-amber-600" />
@@ -704,6 +714,25 @@ export default function PersonnelPage() {
                   <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">
                     Aktif
                   </span>
+                  {(() => {
+                    const presence = employeePresenceChip({
+                      status: emp.status,
+                      workplace: emp.workplace || attWork[empKey],
+                      location_last_inside: emp.location_last_inside,
+                      location_last_ok: emp.location_last_ok,
+                      location_inside_at: emp.location_inside_at,
+                      today: attToday[empKey],
+                    });
+                    return presence ? (
+                      <span
+                        data-testid={`emp-presence-${empKey}`}
+                        className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                        style={{ color: presence.color, backgroundColor: presence.bg }}
+                      >
+                        {presence.label}
+                      </span>
+                    ) : null;
+                  })()}
                 </div>
               </div>
 
@@ -778,7 +807,7 @@ export default function PersonnelPage() {
                     </div>
                     {punchConfirm?.id === empKey ? (
                       <div className="flex flex-col gap-1 px-1 pt-1" data-testid={`employee-card-punch-confirm-${empKey}`}>
-                        <label className="text-[10px] font-bold text-slate-500">
+                        <label className={`text-[10px] font-bold ${punchLabelClass(punchConfirm.action === "check_out" ? "Çıkış saati" : "Giriş saati")}`}>
                           {punchConfirm.action === "check_out" ? "Çıkış saati" : "Giriş saati"}
                           <input
                             type="time"
@@ -880,6 +909,14 @@ export default function PersonnelPage() {
               </div>
             ) : null}
             <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={() => setMovesEmp(emp)}
+              className="w-full flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200"
+              data-testid={`emp-card-moves-btn-${empKey}`}
+            >
+              <Receipt className="w-3.5 h-3.5" /> Hareketler
+            </button>
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 type="button"
@@ -1359,6 +1396,13 @@ export default function PersonnelPage() {
         </div>
       )}
       {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={companyId} accounts={bankAccounts} onClose={() => setCardEmp(null)} onChanged={loadPersonnelData} />}
+      {movesEmp ? (
+        <EmployeeMovesModal
+          employee={movesEmp}
+          onClose={() => setMovesEmp(null)}
+          onChanged={loadPersonnelData}
+        />
+      ) : null}
       {quickPay && <QuickPayModal
         payroll={quickPay.p}
         type={quickPay.type}
