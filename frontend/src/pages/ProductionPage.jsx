@@ -461,7 +461,31 @@ export default function ProductionPage() {
                     ) : (
                       <>{o.planned_quantity} / <span className="text-emerald-700">{o.completed_quantity || 0}</span></>
                     )}
-                    {(() => { const s = o.steps_summary; if (!s?.total) return null; return <div className="text-[10px] font-normal text-slate-500" data-testid={`po-steps-${o.order_code}`}>Adım {s.done}/{s.total}{s.current_step_name ? ` • ${s.current_step_name}${s.current_operator ? " (" + s.current_operator + ")" : ""}` : ""}</div>; })()}
+                    {(() => {
+                      const s = o.steps_summary;
+                      if (!s?.total) return null;
+                      const steps = Array.isArray(s.steps) ? s.steps : [];
+                      return (
+                        <div className="mt-0.5 text-right" data-testid={`po-steps-${o.order_code}`}>
+                          <div className="text-[10px] font-normal text-slate-500">
+                            Adım {s.done}/{s.total}{s.current_step_name ? ` • ${s.current_step_name}${s.current_operator ? ` (${s.current_operator})` : ""}` : ""}
+                          </div>
+                          {steps.length > 0 && (
+                            <ul className="mt-0.5 space-y-0.5" data-testid={`po-steps-list-${o.order_code}`}>
+                              {steps.map((st) => (
+                                <li
+                                  key={`${st.no}-${st.name}`}
+                                  className={`text-[10px] font-medium leading-tight ${st.done ? "text-emerald-600" : st.current ? "text-amber-700" : "text-slate-400"}`}
+                                  data-testid={`po-step-${o.order_code}-${st.no}`}
+                                >
+                                  {st.no}. {st.name}{st.done ? " ✓" : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {o.over_produced && <div className="text-[10px] font-semibold text-amber-700">Plan üstü üretim</div>}
                   </td>
                   <td className="px-4 py-2 text-slate-500">{o.planned_date || o.start_date}{o.end_date && <div className="text-[10px] text-emerald-600">Bitti: {o.end_date}</div>}</td>
