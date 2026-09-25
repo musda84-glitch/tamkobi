@@ -70,6 +70,11 @@ describe("issued invoice menu actions", () => {
     expect(canIssueExpenseSlip(paid)).toBe(true);
   });
 
+  test("paper invoices are not cancelled — they are deleted", () => {
+    expect(canCancelInvoice({ ...issued, e_type: "paper" })).toBe(false);
+    expect(canCancelInvoice({ ...issued, e_type: "e_archive" })).toBe(true);
+  });
+
   test("unpaid issued sales invoice offers cancel and expense slip", () => {
     expect(canCancelInvoice(issued)).toBe(true);
     expect(canIssueExpenseSlip(issued)).toBe(true);

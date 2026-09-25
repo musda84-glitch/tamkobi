@@ -420,7 +420,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   };
 
   const cancelInvoice = async (inv) => {
-    if (!window.confirm(`${inv.invoice_number} numaralı fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; kayıt listede kalır.`)) return;
+    if (!window.confirm(`${inv.invoice_number} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`)) return;
     try {
       const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/cancel`, {});
       toast.success(r.data.message || "Fatura iptal edildi.");

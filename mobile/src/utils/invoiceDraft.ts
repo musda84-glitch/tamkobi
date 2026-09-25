@@ -437,12 +437,16 @@ export function canDeleteInvoice(inv?: Invoice | null): boolean {
   return true;
 }
 
-/** Onaylı faturalar iptal edilebilir (silinmez). Ödemeli olanlarda düğme görünür; sunucu tahsilatı ister. */
+/** Onaylı e-Fatura / e-Arşiv iptal edilebilir (silinmez). Kağıt silinir. Ödemeli olsa da izin verilir. */
 export function canCancelInvoice(inv?: Invoice | null): boolean {
   if (!inv) return false;
   if (inv.status === "cancelled" || inv.status === "draft") return false;
   if (inv.invoice_type === "dispatch") return false;
-  return true;
+  if (inv.e_type === "paper" || inv.e_type === "expense_slip" || inv.e_type === "e_dispatch") return false;
+  if (inv.e_type === "e_invoice" || inv.e_type === "e_archive" || inv.e_type === "e_export") return true;
+  // Gelen GİB alış (e_type boş olabilir)
+  if (inv.invoice_type === "purchase" && (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id)) return true;
+  return false;
 }
 
 /** Liste kaydırması: kağıt/taslak silinir, e-belge iptal edilir. */
