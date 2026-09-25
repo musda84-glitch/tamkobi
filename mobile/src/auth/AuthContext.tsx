@@ -264,6 +264,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearB2bSession();
     await saveSessionKind(null);
     await saveSessionCache(null);
+    try {
+      const { haltLocationBackground } = await import("../utils/locationBackgroundSync");
+      await haltLocationBackground();
+    } catch {
+      /* konum görevi yoksa çıkışı engellemesin */
+    }
     setPriceDecimals(2);
     setState((s) => ({ ...s, ...loggedOut }));
   }, [state.baseUrl, state.token]);

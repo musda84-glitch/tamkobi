@@ -1,6 +1,8 @@
+import "@/locationTask";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import { BadgeProvider } from "@/auth/BadgeContext";
 import { ConfirmHost } from "@/components/ConfirmDialog";
+import { LocationBgBridge } from "@/components/LocationBgBridge";
 import { PushBridge } from "@/components/PushBridge";
 import { colors } from "@/theme";
 import { typeface } from "@/theme/softFont";
@@ -103,6 +105,7 @@ export default function RootLayout() {
       <BadgeProvider>
         <StatusBar style="auto" />
         <PushBridge />
+        <LocationBgBridge />
         <ConfirmHost />
         <RootStack />
       </BadgeProvider>

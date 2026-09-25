@@ -14,7 +14,9 @@
         "NSCameraUsageDescription": "Barkod okutmak, keşif / proje / teklif / stok fotoğrafı çekmek ve saha siparişinde ürün bulmak için kamera gerekir.",
         "NSPhotoLibraryUsageDescription": "Keşif, proje, teklif ve stok kartı fotoğraflarını yüklemek için galeri erişimi gerekir.",
         "NSLocationWhenInUseUsageDescription": "Mesai girişi firma konumuna yakınken kaydedilir.",
-        "UIBackgroundModes": ["remote-notification"]
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Uygulama kapalıyken veya arka plandayken de mesai konumunuz kaydedilir.",
+        "NSLocationAlwaysUsageDescription": "Uygulama kapalıyken de mesai konumunuz kaydedilir.",
+        "UIBackgroundModes": ["remote-notification", "location"]
       }
     },
     "android": {
@@ -30,6 +32,9 @@
         "CAMERA",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE"
@@ -58,7 +63,11 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Mesai girişi için konumunuz kullanılır."
+          "locationWhenInUsePermission": "Mesai girişi için konumunuz kullanılır.",
+          "locationAlwaysAndWhenInUsePermission": "Uygulama kapalıyken veya arka plandayken de mesai konumunuz kaydedilir.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [
@@ -77,6 +86,7 @@
           "enableBackgroundRemoteNotifications": true
         }
       ],
+      "expo-task-manager",
       "expo-secure-store",
       "expo-font",
       "expo-image",
