@@ -2018,10 +2018,14 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
                     )
             except Exception:
                 pass
-    if inside:
-        await _db.employees.update_one({"_id": emp["_id"]}, {"$set": {"location_inside_at": _now()}})
-        if rec.get("id") or rec.get("_id"):
-            await _db.attendance.update_one({"_id": rec.get("id") or rec.get("_id")}, {"$set": {"location_inside_at": _now()}})
+    if loc:
+        now_iso = _now()
+        patch = {"location_last_inside": bool(inside)}
+        if inside:
+            patch["location_inside_at"] = now_iso
+        await _db.employees.update_one({"_id": emp["_id"]}, {"$set": patch})
+        if inside and (rec.get("id") or rec.get("_id")):
+            await _db.attendance.update_one({"_id": rec.get("id") or rec.get("_id")}, {"$set": {"location_inside_at": now_iso}})
     opened = None
     if rec.get("check_in") and not rec.get("check_out") and loc and active_lt.get("enabled"):
         opened = await maybe_open_location_exit(emp, rec, workplace, loc, active_lt, lat, lng)
