@@ -80,6 +80,9 @@ import {
   employeePresenceChip,
   pendingRequestDecision,
   pendingRequestDecisionMessage,
+  requestActionLook,
+  requestKey,
+  mergeSettledRequests,
   requestKindLabel,
   requestsForEmployee,
   requestsDetailsToggleLabel,
@@ -240,6 +243,27 @@ describe("employee draft", () => {
     expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, true)).toBe("Ücret kesildi.");
     expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, false)).toBe("Ücret kesilmedi.");
     expect(requestDecisionActions("yevmiye_adjustment").map((a) => a.title)).toEqual(["Ücret kes", "Ücret kesme"]);
+    expect(requestKindLabel("overtime_confirm")).toBe("Mesai onayı");
+    expect(pendingRequestDecision({ id: "ot1", kind: "overtime_confirm" }, true)).toEqual({
+      path: "/personnel/attendance/ot1/overtime-confirm-decision", body: { decision: "yes" },
+    });
+    expect(pendingRequestDecision({ id: "ot1", kind: "overtime_confirm" }, false)?.body).toEqual({ decision: "no" });
+    expect(pendingRequestDecisionMessage({ kind: "overtime_confirm" }, true)).toBe("Fazla mesai yazıldı.");
+    expect(pendingRequestDecisionMessage({ kind: "overtime_confirm" }, false)).toBe("Fazla mesai yazılmadı.");
+    const approve = requestDecisionActions("leave")[0];
+    const reject = requestDecisionActions("leave")[1];
+    expect(requestActionLook(approve, null)).toMatchObject({ title: "Onayla", icon: null, muted: false, color: "#059669" });
+    expect(requestActionLook(approve, true)).toMatchObject({ title: "Onaylandı", icon: "checkmark-circle", color: "#047857", muted: false });
+    expect(requestActionLook(approve, false)).toMatchObject({ title: "Onayla", icon: null, muted: true, color: "#94A3B8" });
+    expect(requestActionLook(reject, false)).toMatchObject({ title: "Reddedildi", icon: "close-circle", color: "#9F1239", muted: false });
+    expect(requestKey({ kind: "leave", id: "abc" })).toBe("leave-abc");
+    expect(mergeSettledRequests(
+      [{ id: "1", kind: "leave" }],
+      [{ item: { id: "1", kind: "leave" }, decision: true }, { item: { id: "2", kind: "advance" }, decision: false }],
+    )).toEqual([
+      { item: { id: "1", kind: "leave" }, decision: true },
+      { item: { id: "2", kind: "advance" }, decision: false },
+    ]);
     expect(requestsForEmployee([{ id: "1", employee_id: "e1", kind: "leave" }, { id: "2", employee_id: "e2" }], "e1")).toHaveLength(1);
     expect(requestsDetailsToggleLabel(false)).toBe("Büyüt");
     expect(requestsDetailsToggleLabel(true)).toBe("Gizle");
