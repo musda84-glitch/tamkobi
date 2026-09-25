@@ -12140,7 +12140,7 @@ async def update_recipe(recipe_id: str, req: Dict[str, Any]):
     r = await db.recipes.find_one({"_id": recipe_id})
     if not r:
         raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
-    allowed = {k: v for k, v in req.items() if k in {"name", "code", "finished_product_id", "finished_product_name", "target_quantity", "unit", "materials", "steps", "labor_cost", "overhead_cost", "notes", "is_active", "contact_id", "contact_name", "job_file_name"}}
+    allowed = {k: v for k, v in req.items() if k in {"name", "code", "finished_product_id", "finished_product_name", "target_quantity", "unit", "materials", "steps", "labor_cost", "overhead_cost", "notes", "is_active", "contact_id", "contact_name", "job_file_name", "one_time"}}
     merged = {**r, **allowed}
     await _fill_material_costs(merged.get("materials", []))
     merged.update(_recipe_costs(merged))
@@ -13059,8 +13059,26 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
         po_set["over_produced"] = True
         po_set["over_produced_qty"] = round(new_done - planned, 3)
     await db.production_orders.update_one({"_id": order_id}, {"$set": po_set})
+    recipe_deleted = False
+    if finished and recipe and recipe.get("one_time"):
+        try:
+            await trash.soft_delete(
+                "recipes",
+                recipe,
+                "recipe",
+                f"{recipe.get('name') or recipe.get('finished_product_name') or recipe.get('_id')} (tek seferlik)",
+                note="Üretim tamamlandı — tek seferlik reçete silindi",
+            )
+            if not await db.recipes.count_documents({"finished_product_id": recipe.get("finished_product_id")}):
+                await db.products.update_one({"_id": recipe.get("finished_product_id")}, {"$set": {"has_recipe": False}})
+            recipe_deleted = True
+        except Exception:
+            recipe_deleted = False
     over_note = f" (plan {planned:g}, fazla {new_done - planned:g})" if new_done > planned + 1e-9 else ""
-    return {"status": "success", "finished": finished, "consumed": consumed, "message": f"{qty:g} {recipe.get('unit', 'Adet') if recipe else 'Adet'} '{p_order.get('finished_product_name')}' üretildi; hammaddeler düşüldü, mamul stoğa eklendi{over_note}." + ("" if finished else f" Kalan: {planned - new_done:g}")}
+    msg = f"{qty:g} {recipe.get('unit', 'Adet') if recipe else 'Adet'} '{p_order.get('finished_product_name')}' üretildi; hammaddeler düşüldü, mamul stoğa eklendi{over_note}." + ("" if finished else f" Kalan: {planned - new_done:g}")
+    if recipe_deleted:
+        msg += " Tek seferlik reçete silindi."
+    return {"status": "success", "finished": finished, "consumed": consumed, "recipe_deleted": recipe_deleted, "message": msg}
 
 # ----------------- PERSONEL & BORDRO -----------------
 @api_router.get("/personnel/role-options")

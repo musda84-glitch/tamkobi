@@ -26,6 +26,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
     contact_id: recipe?.contact_id || "",
     contact_name: recipe?.contact_name || "",
     job_file_name: recipe?.job_file_name || "",
+    one_time: !!recipe?.one_time,
   });
   const [steps, setSteps] = useState(recipe?.steps?.length ? recipe.steps.map((x) => ({ ...x })) : []);
   const updStep = (i, patch) => setSteps(steps.map((x, idx) => idx === i ? { ...x, ...patch } : x));
@@ -73,6 +74,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
       target_quantity: Number(f.target_quantity),
       labor_cost: Number(f.labor_cost),
       overhead_cost: Number(f.overhead_cost),
+      one_time: !!f.one_time,
       materials: valid.map((m) => ({ ...m, quantity: Number(m.quantity), cost_per_unit: Number(m.cost_per_unit), wastage_percent: Number(m.wastage_percent || 0) })),
     };
     try {
@@ -91,6 +93,21 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
           <div><label className="block font-semibold mb-1">Reçete Adı</label><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Standart üretim" className={cls} data-testid="recipe-name" /></div>
           <div className="col-span-2"><label className="block font-semibold mb-1">Müşteri (Cari)</label><SearchSelect value={f.contact_id} options={contacts} placeholder="Cari ara…" getLabel={(c) => c.name} getSub={(c) => [c.phone, c.tax_number_or_id].filter(Boolean).join(" · ")} onChange={pickContact} testId="recipe-contact" /></div>
           <div className="col-span-2"><label className="block font-semibold mb-1">İş dosyası adı</label><input value={f.job_file_name} onChange={(e) => setF({ ...f, job_file_name: e.target.value })} placeholder="Örn. AHM-2026-014 / Villa mutfak" className={cls} data-testid="recipe-job-file" /></div>
+          <div className="col-span-2 sm:col-span-4">
+            <label className="flex items-start gap-2 cursor-pointer select-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 hover:bg-slate-100/80" data-testid="recipe-one-time-wrap">
+              <input
+                type="checkbox"
+                checked={!!f.one_time}
+                onChange={(e) => setF({ ...f, one_time: e.target.checked })}
+                className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                data-testid="recipe-one-time"
+              />
+              <span>
+                <span className="block font-semibold text-slate-800">Tek seferlik reçete</span>
+                <span className="block text-[11px] text-slate-500 font-normal mt-0.5">İşaretlenirse bu reçeteyle üretim tamamlandığında reçete otomatik silinir.</span>
+              </span>
+            </label>
+          </div>
         </div>
         <div>
           <div className="flex items-center justify-between mb-1"><span className="font-bold text-slate-800">Hammaddeler / Bileşenler</span><button onClick={() => setMats([...mats, { product_id: "", product_name: "", quantity: 1, unit: "Adet", cost_per_unit: 0, wastage_percent: 0 }])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="recipe-add-material"><Plus className="w-3.5 h-3.5" /> Hammadde Ekle</button></div>
