@@ -83,6 +83,13 @@ export const AttendancePanel = ({ companyId }) => {
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
   };
+  const decideOvertimeConfirm = async (id, decision) => {
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/overtime-confirm-decision`, { decision }, { withCredentials: true });
+      toast.success(r.data.message || (decision === "yes" ? "Fazla mesai yazıldı." : "Fazla mesai yazılmadı."));
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
+  };
   const decideGeoConfirm = async (id, decision) => {
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/geo-confirm-decision`, { decision }, { withCredentials: true });
@@ -218,6 +225,14 @@ export const AttendancePanel = ({ companyId }) => {
               <button type="button" onClick={() => decideLocationExit(r.id, "approve", false)} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-locexit-ok-${r.id}`}>Kesinti olmasın</button>
               <button type="button" onClick={() => decideLocationExit(r.id, "approve", true)} className="px-1.5 py-0.5 rounded bg-amber-500 text-white font-bold" data-testid={`att-locexit-deduct-${r.id}`}>Kesinti olsun</button>
               <button type="button" onClick={() => decideLocationExit(r.id, "reject", false)} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-locexit-no-${r.id}`}>Reddet</button>
+            </span>
+          )}
+          {r.overtime_confirm_request?.status === "pending" && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] flex-wrap" data-testid={`att-otconfirm-pending-${r.id}`}>
+              <Timer className="w-3 h-3 text-indigo-700" />
+              <span className="font-semibold text-indigo-800">Mesaide mi?{r.overtime_confirm_request.schedule_end ? ` · bitiş ${r.overtime_confirm_request.schedule_end}` : ""}{r.overtime_confirm_request.hours ? ` · ~${r.overtime_confirm_request.hours} sa` : ""}</span>
+              <button type="button" onClick={() => decideOvertimeConfirm(r.id, "yes")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-otconfirm-yes-${r.id}`}>Evet</button>
+              <button type="button" onClick={() => decideOvertimeConfirm(r.id, "no")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-otconfirm-no-${r.id}`}>Hayır</button>
             </span>
           )}
           {r.geo_confirm_request?.status === "pending" && (

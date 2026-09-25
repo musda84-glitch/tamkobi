@@ -587,6 +587,19 @@ export default function PersonnelPage() {
     }
   };
 
+  const decideOvertimeConfirm = async (id, decision) => {
+    setBusyReqId(id);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/overtime-confirm-decision`, { decision });
+      toast.success(r.data?.message || (decision === "yes" ? "Fazla mesai yazıldı." : "Fazla mesai yazılmadı."));
+      await afterRequestDecision();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyReqId(null);
+    }
+  };
+
   const decideAdvance = async (id, status) => {
     setBusyReqId(id);
     try {
@@ -856,6 +869,7 @@ export default function PersonnelPage() {
               onDecideAdvance={decideAdvance}
               onDecideYevmiye={decideYevmiye}
               onDecideLocationExit={decideLocationExit}
+              onDecideOvertimeConfirm={decideOvertimeConfirm}
               onDecideGeoConfirm={decideGeoConfirm}
               onDecideDispute={decideDispute}
               onViewDispute={() => setTab("attendance")}

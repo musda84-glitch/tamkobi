@@ -34,6 +34,8 @@ TYPE_ROLES: Dict[str, tuple[str, ...]] = {
     "location_unavailable": ("admin", "manager", "accountant"),
     "geo_confirm_request": ("admin", "manager", "accountant"),
     "geo_confirm_decision": (),
+    "overtime_confirm": ("admin", "manager", "accountant"),
+    "overtime_confirm_decision": (),
     "project_photo_pending": ("admin", "manager"),
     "role_assigned": ("admin", "manager"),
     "task_assigned": (),
