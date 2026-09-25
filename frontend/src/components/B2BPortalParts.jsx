@@ -111,7 +111,7 @@ export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
   );
 };
 
-export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy, suffix = "", customerOrderNo, setCustomerOrderNo, consent, setConsent, hrefExtra = "" }) => (
+export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy, suffix = "", customerOrderNo, setCustomerOrderNo, consent, setConsent, hrefExtra = "", onHold }) => (
   <>
     {lines.length === 0 && <div className="text-xs text-slate-400 py-6 text-center">Sepetiniz boş.</div>}
     <div className="divide-y text-xs max-h-60 sm:max-h-72 overflow-y-auto">{lines.map((l, i) => (
@@ -134,21 +134,34 @@ export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy,
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Sipariş notu (teslimat, adres…)" className="w-full border rounded-xl p-2.5 text-sm sm:text-xs" data-testid={`b2b-note${suffix}`} />
       {setCustomerOrderNo && <input value={customerOrderNo || ""} onChange={(e) => setCustomerOrderNo(e.target.value)} placeholder="Sizin sipariş numaranız (isteğe bağlı)" maxLength={80} className="w-full border rounded-xl p-2.5 text-sm sm:text-xs font-mono" data-testid={`b2b-customer-order-no${suffix}`} />}
       {setConsent && <LegalConsent value={consent} onChange={setConsent} hrefExtra={hrefExtra} prefix={`b2b${suffix}-`} className="bg-slate-50 border border-slate-200 rounded-xl p-2.5" />}
-      <button onClick={submit} disabled={busy} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold disabled:opacity-50" data-testid={`b2b-submit-order${suffix}`}>{busy ? "Gönderiliyor…" : "Siparişi Gönder"}</button>
+      <div className="flex flex-col gap-2">
+        {onHold && (
+          <button type="button" onClick={onHold} disabled={busy} className="w-full py-2.5 border border-amber-300 bg-amber-50 text-amber-900 rounded-xl font-bold disabled:opacity-50" data-testid={`b2b-hold-cart${suffix}`}>
+            Beklemeye Al
+          </button>
+        )}
+        <button onClick={submit} disabled={busy} className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold disabled:opacity-50" data-testid={`b2b-submit-order${suffix}`}>{busy ? "Gönderiliyor…" : "Siparişi Gönder"}</button>
+      </div>
     </>}
   </>
 );
 
 /* Mobil: alt sabit sepet çubuğu + açılır alt panel */
-export const MobileCartBar = ({ lines, total, open, setOpen, children }) => {
-  if (lines.length === 0) return null;
+export const MobileCartBar = ({ lines, total, open, setOpen, children, heldCount = 0 }) => {
+  if (lines.length === 0 && !heldCount) return null;
   const count = lines.reduce((s, l) => s + l.qty, 0);
   return (
     <>
       <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 p-3 pointer-events-none">
         <button onClick={() => setOpen(true)} className="pointer-events-auto w-full flex items-center justify-between bg-slate-900 text-white rounded-2xl px-4 py-3 shadow-2xl" data-testid="b2b-mobile-cart-bar">
-          <span className="flex items-center gap-2 font-bold text-sm"><span className="relative"><ShoppingCart className="w-5 h-5" /><span className="absolute -top-2 -right-2 bg-emerald-500 text-[10px] rounded-full w-4.5 h-4.5 min-w-[18px] px-1 flex items-center justify-center">{count}</span></span> Sepet</span>
-          <span className="font-black">{fmt(total)} <span className="text-xs font-semibold text-emerald-300 ml-1">Siparişe geç →</span></span>
+          <span className="flex items-center gap-2 font-bold text-sm">
+            <span className="relative">
+              <ShoppingCart className="w-5 h-5" />
+              <span className="absolute -top-2 -right-2 bg-emerald-500 text-[10px] rounded-full w-4.5 h-4.5 min-w-[18px] px-1 flex items-center justify-center">{count || heldCount}</span>
+            </span>
+            {count ? "Sepet" : "Bekleyen sepetler"}
+          </span>
+          <span className="font-black">{count ? <>{fmt(total)} <span className="text-xs font-semibold text-emerald-300 ml-1">Siparişe geç →</span></> : <span className="text-xs font-semibold text-amber-300">Görüntüle →</span>}</span>
         </button>
       </div>
       {open && (
@@ -189,7 +202,13 @@ const approvedStatus = (s) => ["approved", "preparing"].includes(s);
 
 const OrderStatusBadge = ({ o }) => (
   <div className="flex flex-col items-start gap-1">
-    <span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{statusTr(o.order_status)}</span>
+    {o.is_held_cart ? (
+      <span className={`px-1.5 py-0.5 rounded font-semibold ${o.is_active_cart ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`} data-testid={`b2b-held-badge-${o.id}`}>
+        {o.is_active_cart ? "Aktif sepet" : (o.held_seq ? `Bekleyen sepet #${o.held_seq}` : "Bekleyen sepet")}
+      </span>
+    ) : (
+      <span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{statusTr(o.order_status)}</span>
+    )}
     {o.cancel_request?.status === "pending" && <span className="bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded font-semibold" data-testid={`b2b-cancel-pending-${o.order_number}`}>İptal talebi iletildi</span>}
     {o.cancel_request?.status === "rejected" && <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">İptal talebi reddedildi</span>}
   </div>
@@ -198,13 +217,13 @@ const OrderStatusBadge = ({ o }) => (
 const OrderActions = ({ o, onPreview, onEdit, onDelete, onCancel, busy }) => (
   <div className="flex flex-wrap gap-1.5" data-testid={`b2b-order-actions-${o.order_number}`}>
     {onPreview && <PreviewOrderBtn onClick={() => onPreview(o)} orderNumber={o.order_number} />}
-    {onEdit && pendingStatus(o.order_status) && (
+    {!o.view_only && onEdit && pendingStatus(o.order_status) && (
       <>
         <button type="button" onClick={() => onEdit(o)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-semibold disabled:opacity-50" data-testid={`b2b-order-edit-${o.order_number}`}><Pencil className="w-3 h-3" /> Düzenle</button>
         <button type="button" onClick={() => onDelete(o)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-rose-200 text-rose-700 text-[11px] font-semibold hover:bg-rose-50 disabled:opacity-50" data-testid={`b2b-order-delete-${o.order_number}`}><Trash2 className="w-3 h-3" /> Sil</button>
       </>
     )}
-    {onCancel && approvedStatus(o.order_status) && o.cancel_request?.status !== "pending" && (
+    {!o.view_only && onCancel && approvedStatus(o.order_status) && o.cancel_request?.status !== "pending" && (
       <button type="button" onClick={() => onCancel(o)} disabled={busy} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-amber-200 text-amber-800 text-[11px] font-semibold hover:bg-amber-50 disabled:opacity-50" data-testid={`b2b-order-cancel-${o.order_number}`}><Ban className="w-3 h-3" /> İptal talebi</button>
     )}
   </div>
@@ -293,13 +312,15 @@ const CancelRequestModal = ({ order, token, onClose, onDone }) => {
   );
 };
 
-export const OrdersList = ({ orders, token, products, company, onChanged }) => {
+export const OrdersList = ({ orders, heldRows = [], token, products, company, onChanged }) => {
   const [edit, setEdit] = useState(null);
   const [cancel, setCancel] = useState(null);
   const [preview, setPreview] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const canMutate = Boolean(token);
+  const rows = [...(heldRows || []), ...(orders || [])];
   const remove = async (o) => {
+    if (o.view_only || o.is_held_cart) return;
     if (!window.confirm(`${o.order_number} silinsin mi? Beklemedeki sipariş çöp kutusuna taşınır.`)) return;
     setBusyId(o.id);
     try {
@@ -308,19 +329,56 @@ export const OrdersList = ({ orders, token, products, company, onChanged }) => {
       onChanged?.();
     } catch (e) { toast.error(e.response?.data?.detail || "Silinemedi."); } finally { setBusyId(null); }
   };
+  const rowClass = (o) => (o.is_held_cart ? "opacity-60 bg-slate-50/80" : "");
   return (
     <div className="bg-white rounded-2xl border overflow-hidden" data-testid="b2b-orders">
-      {orders.length === 0 && <div className="p-8 text-center text-slate-400 text-xs">Henüz sipariş yok.</div>}
-      <div className="md:hidden divide-y">{orders.map((o) => (
-        <div key={o.id} className="p-3 text-xs space-y-2" data-testid={`b2b-order-${o.order_number}`}>
-          <div className="flex items-center justify-between gap-2"><span className="font-mono font-bold">{o.order_number}</span><OrderStatusBadge o={o} /></div>
+      {rows.length === 0 && <div className="p-8 text-center text-slate-400 text-xs">Henüz sipariş yok.</div>}
+      <div className="md:hidden divide-y">{rows.map((o) => (
+        <div key={o.id} className={`p-3 text-xs space-y-2 ${rowClass(o)}`} data-testid={o.is_held_cart ? `b2b-held-row-${o.id}` : `b2b-order-${o.order_number}`}>
+          <div className="flex items-center justify-between gap-2"><span className={`font-mono font-bold ${o.is_held_cart ? "text-slate-500" : ""}`}>{o.order_number}</span><OrderStatusBadge o={o} /></div>
           {o.customer_order_number ? <div className="text-slate-500">Sizin no: <span className="font-mono font-semibold">{o.customer_order_number}</span></div> : null}
           <div className="text-slate-500">{(o.order_date || "").slice(0, 10)} · {(o.items || []).map((i) => formatOrderItemLabel(i)).join(", ")}</div>
           <div className="flex items-center justify-between gap-2"><span className="font-bold text-sm">{fmt(b2bOrderGross(o))}</span></div>
-          <TrackingCard t={o.tracking} orderNumber={o.order_number} />
-          <OrderActions o={o} onPreview={setPreview} onEdit={canMutate ? setEdit : undefined} onDelete={canMutate ? remove : undefined} onCancel={canMutate ? setCancel : undefined} busy={busyId === o.id} />
+          {!o.is_held_cart && <TrackingCard t={o.tracking} orderNumber={o.order_number} />}
+          <OrderActions
+            o={o}
+            onPreview={setPreview}
+            onEdit={!o.view_only && canMutate ? setEdit : undefined}
+            onDelete={!o.view_only && canMutate ? remove : undefined}
+            onCancel={!o.view_only && canMutate ? setCancel : undefined}
+            busy={busyId === o.id}
+          />
         </div>))}</div>
-      {orders.length > 0 && <table className="hidden md:table w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b"><tr><Th>Sipariş</Th><Th>Sizin no</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Kargo</Th><Th>İşlem</Th></tr></thead><tbody className="divide-y">{orders.map((o) => <tr key={o.id} data-testid={`b2b-order-row-${o.order_number}`}><td className="p-3 font-mono font-bold">{o.order_number}</td><td className="p-3 font-mono text-slate-600">{o.customer_order_number || "—"}</td><td className="p-3 text-slate-500">{(o.order_date || "").slice(0, 10)}</td><td className="p-3">{(o.items || []).map((i) => formatOrderItemLabel(i)).join(", ")}</td><td className="p-3 text-right font-bold">{fmt(b2bOrderGross(o))}</td><td className="p-3"><OrderStatusBadge o={o} /></td><td className="p-3 min-w-[220px]"><TrackingCard t={o.tracking} orderNumber={o.order_number} /></td><td className="p-3"><OrderActions o={o} onPreview={setPreview} onEdit={canMutate ? setEdit : undefined} onDelete={canMutate ? remove : undefined} onCancel={canMutate ? setCancel : undefined} busy={busyId === o.id} /></td></tr>)}</tbody></table>}
+      {rows.length > 0 && (
+        <table className="hidden md:table w-full text-xs">
+          <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b">
+            <tr><Th>Sipariş</Th><Th>Sizin no</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Kargo</Th><Th>İşlem</Th></tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows.map((o) => (
+              <tr key={o.id} className={rowClass(o)} data-testid={o.is_held_cart ? `b2b-held-row-${o.id}` : `b2b-order-row-${o.order_number}`}>
+                <td className={`p-3 font-mono font-bold ${o.is_held_cart ? "text-slate-500" : ""}`}>{o.order_number}</td>
+                <td className="p-3 font-mono text-slate-600">{o.customer_order_number || "—"}</td>
+                <td className="p-3 text-slate-500">{(o.order_date || "").slice(0, 10)}</td>
+                <td className="p-3">{(o.items || []).map((i) => formatOrderItemLabel(i)).join(", ")}</td>
+                <td className="p-3 text-right font-bold">{fmt(b2bOrderGross(o))}</td>
+                <td className="p-3"><OrderStatusBadge o={o} /></td>
+                <td className="p-3 min-w-[220px]">{o.is_held_cart ? <span className="text-slate-400 text-[11px]">—</span> : <TrackingCard t={o.tracking} orderNumber={o.order_number} />}</td>
+                <td className="p-3">
+                  <OrderActions
+                    o={o}
+                    onPreview={setPreview}
+                    onEdit={!o.view_only && canMutate ? setEdit : undefined}
+                    onDelete={!o.view_only && canMutate ? remove : undefined}
+                    onCancel={!o.view_only && canMutate ? setCancel : undefined}
+                    busy={busyId === o.id}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       {preview && <B2BOrderPreview order={preview} products={products} company={company} onClose={() => setPreview(null)} />}
       {edit && <EditOrderModal order={edit} products={products} token={token} onClose={() => setEdit(null)} onDone={onChanged} />}
       {cancel && <CancelRequestModal order={cancel} token={token} onClose={() => setCancel(null)} onDone={onChanged} />}

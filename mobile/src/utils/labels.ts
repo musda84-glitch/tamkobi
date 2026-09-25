@@ -31,6 +31,8 @@ export const STATUS_TR: Record<string, string> = {
   done: "Yapıldı",
   advance: "Avans",
   bonus: "Prim",
+  held_cart: "Bekleyen sepet",
+  active_cart: "Aktif sepet",
 };
 
 /** Pazaryeri ham durumları (Trendyol PascalCase) → Türkçe. */
