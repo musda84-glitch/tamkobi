@@ -153,3 +153,89 @@ class TestCompanyIsolation:
         assert attached.json().get("parent_company_id") == a_id
         assert attached.json().get("license_id") == a_id
         assert attached.json().get("parent_company_name") == a["name"]
+
+    def test_separate_login_sibling_stays_isolated(self):
+        """New legal company with admin_email/password gets its own login; creator keeps only parent."""
+        admin = _admin()
+        parent, parent_email, parent_pass = _create_customer(admin, "plan_starter", "seplog")
+        parent_id = parent["id"]
+
+        r = admin.put(f"{API}/system/companies/{parent_id}/license", json={"company_limit": 3}, timeout=20)
+        assert r.status_code == 200, r.text
+
+        sa, _ = _login(parent_email, parent_pass)
+        me0 = sa.get(f"{API}/auth/me", timeout=20)
+        assert me0.status_code == 200, me0.text
+        assert _ids(me0.json().get("companies")) == {parent_id}
+
+        sib_email = f"sib_{uuid.uuid4().hex[:8]}@iso.test"
+        sib_pass = "sib-pass1"
+        added = sa.post(
+            f"{API}/license/companies",
+            json={
+                "company_id": parent_id,
+                "name": f"ISO separate {uuid.uuid4().hex[:6]}",
+                "tax_number": "222",
+                "city": "Izmir",
+                "admin_name": "Kardes Yonetici",
+                "admin_email": sib_email,
+                "admin_password": sib_pass,
+                "separate_login": True,
+            },
+            timeout=20,
+        )
+        assert added.status_code == 200, added.text
+        body = added.json()
+        sib_id = body["id"]
+        assert body.get("separate_login") is True
+        assert body.get("admin_email") == sib_email
+        assert sib_id != parent_id
+        assert body.get("parent_company_id") == parent_id
+        assert body.get("license_id") == parent_id
+
+        # Creator must NOT gain access / must not be switched onto the new company
+        me1 = sa.get(f"{API}/auth/me", timeout=20)
+        assert me1.status_code == 200, me1.text
+        assert _ids(me1.json().get("companies")) == {parent_id}
+        assert me1.json().get("user", {}).get("active_company_id") == parent_id
+
+        sw = sa.post(f"{API}/auth/switch-company", json={"company_id": sib_id}, timeout=20)
+        assert sw.status_code == 403, sw.text
+
+        leaked = sa.get(f"{API}/contacts", params={"company_id": sib_id}, timeout=20)
+        assert leaked.status_code == 403, leaked.text
+
+        # New admin logs in only to the sibling company
+        sb, _ = _login(sib_email, sib_pass)
+        me_sib = sb.get(f"{API}/auth/me", timeout=20)
+        assert me_sib.status_code == 200, me_sib.text
+        assert _ids(me_sib.json().get("companies")) == {sib_id}
+        assert me_sib.json().get("user", {}).get("active_company_id") == sib_id
+
+        sw_back = sb.post(f"{API}/auth/switch-company", json={"company_id": parent_id}, timeout=20)
+        assert sw_back.status_code == 403, sw_back.text
+
+        parent_leak = sb.get(f"{API}/contacts", params={"company_id": parent_id}, timeout=20)
+        assert parent_leak.status_code == 403, parent_leak.text
+
+        # Missing credentials when separate_login forced
+        bad = sa.post(
+            f"{API}/license/companies",
+            json={"company_id": parent_id, "name": "No creds", "separate_login": True},
+            timeout=20,
+        )
+        assert bad.status_code == 400, bad.text
+
+        # Duplicate email rejected
+        dup = sa.post(
+            f"{API}/license/companies",
+            json={
+                "company_id": parent_id,
+                "name": "Dup email co",
+                "admin_email": sib_email,
+                "admin_password": "another1",
+                "separate_login": True,
+            },
+            timeout=20,
+        )
+        assert dup.status_code == 400, dup.text

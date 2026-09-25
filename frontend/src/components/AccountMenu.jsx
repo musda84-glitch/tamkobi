@@ -12,7 +12,7 @@ export const AccountMenu = () => {
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ name: "", tax_number: "", city: "" });
+  const [form, setForm] = useState({ name: "", tax_number: "", city: "", admin_email: "", admin_password: "" });
   const [credits, setCredits] = useState(null);
   const box = useRef(null);
   const cid = activeCompany?.id || activeCompany?._id;
@@ -29,14 +29,25 @@ export const AccountMenu = () => {
   const create = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) return;
+    if (!form.admin_email || (form.admin_password || "").length < 6) {
+      toast.error("Yeni şirket için e-posta ve en az 6 karakter şifre girin.");
+      return;
+    }
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/license/companies`, { ...form, company_id: cid });
-      toast.success(`${r.data.name} hesabınıza eklendi.`);
-      setForm({ name: "", tax_number: "", city: "" });
+      const r = await axios.post(`${API_URL}/license/companies`, {
+        name: form.name,
+        tax_number: form.tax_number,
+        city: form.city,
+        admin_email: form.admin_email,
+        admin_password: form.admin_password,
+        separate_login: true,
+        company_id: cid,
+      });
+      toast.success(r.data.message || `${r.data.name} oluşturuldu. Giriş: ${r.data.admin_email}`);
+      setForm({ name: "", tax_number: "", city: "", admin_email: "", admin_password: "" });
       setAdding(false);
       if (reloadSession) await reloadSession();
-      await switchCompany(r.data.id);
       setOpen(false);
       navigate("/hesap?tab=sirketler");
     } catch (err) {
@@ -88,6 +99,9 @@ export const AccountMenu = () => {
               <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ünvan" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white" data-testid="account-new-co-name" />
               <input value={form.tax_number} onChange={(e) => setForm({ ...form, tax_number: e.target.value })} placeholder="VKN" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white" data-testid="account-new-co-tax" />
               <input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Şehir" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white" data-testid="account-new-co-city" />
+              <input type="email" required value={form.admin_email} onChange={(e) => setForm({ ...form, admin_email: e.target.value })} placeholder="Giriş e-postası" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white" data-testid="account-new-co-email" autoComplete="off" />
+              <input type="password" required minLength={6} value={form.admin_password} onChange={(e) => setForm({ ...form, admin_password: e.target.value })} placeholder="Şifre (min 6)" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white" data-testid="account-new-co-password" autoComplete="new-password" />
+              <p className="text-[10px] text-slate-400">Bu şirket ayrı giriş ile açılır; veriler izole tutulur.</p>
               <div className="flex gap-1.5">
                 <button type="submit" disabled={busy} className="flex-1 py-1.5 bg-emerald-600 text-white rounded-lg font-bold disabled:opacity-60 inline-flex items-center justify-center gap-1" data-testid="account-new-co-submit">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Aç</button>
                 <button type="button" onClick={() => setAdding(false)} className="px-2 py-1.5 text-slate-400">Vazgeç</button>

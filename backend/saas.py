@@ -532,7 +532,12 @@ async def check_storage_limit(company_id: str, extra_bytes: int = 0):
 
 
 async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], attach_user: Optional[dict] = None) -> dict:
-    """Open another isolated legal entity under the same subscription/license."""
+    """Open another isolated legal entity under the same subscription/license.
+
+    When admin_email + admin_password are provided, the new company gets its own
+    login (dedicated admin user) and is not auto-attached to the caller's account.
+    Without credentials, legacy behavior attaches parent company admins (shared login).
+    """
     parent = await _db.companies.find_one({"_id": parent_company_id})
     if not parent:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
@@ -540,22 +545,49 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
     name = (req.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Şirket ünvanı gerekli.")
+    admin_email = (req.get("admin_email") or "").strip().lower()
+    admin_password = str(req.get("admin_password") or "")
+    admin_name = (req.get("admin_name") or name).strip()
+    separate_login = bool(admin_email or admin_password or req.get("separate_login"))
+    if separate_login:
+        if "@" not in admin_email:
+            raise HTTPException(status_code=400, detail="Yeni şirket için giriş e-postası gerekli.")
+        if len(admin_password) < 6:
+            raise HTTPException(status_code=400, detail="Yönetici şifresi en az 6 karakter olmalı.")
+        if await _db.users.find_one({"email": admin_email}):
+            raise HTTPException(status_code=400, detail="Bu e-posta ile kullanıcı zaten var. Farklı bir giriş e-postası kullanın.")
     lid = await license_id_of(parent_company_id)
     cid = f"comp_{uuid.uuid4().hex[:8]}"
     await _db.companies.insert_one({
         "_id": cid, "name": name, "tax_number": req.get("tax_number") or "", "tax_office": req.get("tax_office") or "",
         "address": req.get("address") or "", "city": req.get("city") or "", "phone": req.get("phone") or "",
-        "email": req.get("email") or parent.get("email") or "", "currency": parent.get("currency") or "TRY",
+        "email": admin_email or req.get("email") or parent.get("email") or "", "currency": parent.get("currency") or "TRY",
         "license_id": lid, "parent_company_id": parent_company_id, "created_at": _now(),
         "allow_platform_access": False,
     })
     await rbac.ensure_roles(cid)
-    admins = await _db.users.find({"company_ids": parent_company_id, "role": "admin", "is_super_admin": {"$ne": True}}).to_list(50)
-    ids = {u["_id"] for u in admins}
-    if attach_user and (attach_user.get("_id") or attach_user.get("id")):
-        ids.add(attach_user.get("_id") or attach_user.get("id"))
-    for uid in ids:
-        await _db.users.update_one({"_id": uid}, {"$addToSet": {"company_ids": cid}})
+    if separate_login:
+        uid = f"usr_{uuid.uuid4().hex[:8]}"
+        await _db.users.insert_one({
+            "_id": uid,
+            "email": admin_email,
+            "password_hash": hash_password(admin_password),
+            "name": admin_name,
+            "role": "admin",
+            "company_ids": [cid],
+            "active_company_id": cid,
+            "is_active": True,
+            "preferences": {},
+            "user_number": await user_numbers.next_user_number(_db),
+            "created_at": _now(),
+        })
+    else:
+        admins = await _db.users.find({"company_ids": parent_company_id, "role": "admin", "is_super_admin": {"$ne": True}}).to_list(50)
+        ids = {u["_id"] for u in admins}
+        if attach_user and (attach_user.get("_id") or attach_user.get("id")):
+            ids.add(attach_user.get("_id") or attach_user.get("id"))
+        for uid in ids:
+            await _db.users.update_one({"_id": uid}, {"$addToSet": {"company_ids": cid}})
     invalidate(lid)
     import demo as demo_pack
     await demo_pack.seed_for_new_company(cid)
@@ -564,7 +596,10 @@ async def add_licensed_company(parent_company_id: str, req: Dict[str, Any], atta
         await storage_manager.ensure_account_folders(cid)
     except Exception:
         pass
-    return await _db.companies.find_one({"_id": cid})
+    doc = await _db.companies.find_one({"_id": cid})
+    if separate_login:
+        doc = {**doc, "admin_email": admin_email, "separate_login": True}
+    return doc
 
 
 async def start_trial(company_id: str, plan_id: str = "plan_pro", days: int = 14, module_overrides: Optional[dict] = None, extra: Optional[dict] = None):
@@ -1268,10 +1303,26 @@ async def create_license_company(req: Dict[str, Any], request: Request):
         raise HTTPException(status_code=403, detail="Bu lisans altında şirket açma yetkiniz yok.")
     if user and user.get("role") not in (None, "admin") and not user.get("is_super_admin"):
         raise HTTPException(status_code=403, detail="Yeni şirket yalnızca şirket yöneticisi açabilir.")
-    doc = await add_licensed_company(parent, req, attach_user=user)
-    if user and (user.get("_id") or user.get("id")):
+    separate = bool((req.get("admin_email") or "").strip() or (req.get("admin_password") or "") or req.get("separate_login"))
+    doc = await add_licensed_company(parent, req, attach_user=None if separate else user)
+    # Shared-login (legacy): switch creator onto the new company. Separate login: stay put.
+    if not separate and user and (user.get("_id") or user.get("id")):
         await _db.users.update_one({"_id": user.get("_id") or user.get("id")}, {"$set": {"active_company_id": doc["_id"]}})
-    return {"id": doc["_id"], "name": doc.get("name"), "license_id": doc.get("license_id"), "parent_company_id": doc.get("parent_company_id"), "license": await effective(doc["_id"])}
+    out = {
+        "id": doc["_id"],
+        "name": doc.get("name"),
+        "license_id": doc.get("license_id"),
+        "parent_company_id": doc.get("parent_company_id"),
+        "license": await effective(doc["_id"]),
+        "separate_login": bool(doc.get("separate_login")),
+    }
+    if doc.get("admin_email"):
+        out["admin_email"] = doc["admin_email"]
+        out["message"] = (
+            f"{doc.get('name')} oluşturuldu. Giriş: {doc['admin_email']} — "
+            "cari, fatura ve stok bu şirkete özeldir; mevcut hesabınızdan ayrı giriş yapın."
+        )
+    return out
 
 
 @router.post("/license/upgrade-request")
