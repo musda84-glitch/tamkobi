@@ -1,4 +1,4 @@
-import { orderStatusBadgeClass, statusTr } from "./labels";
+import { orderStatusBadgeClass, statusTr, marketplaceStatusTr } from "./labels";
 
 describe("orderStatusBadgeClass", () => {
   it("colors pending amber and completed emerald", () => {
@@ -12,5 +12,12 @@ describe("orderStatusBadgeClass", () => {
   it("statusTr still maps labels", () => {
     expect(statusTr("pending")).toBe("Beklemede");
     expect(statusTr("shipped")).toBe("Kargolandı");
+  });
+
+  it("marketplaceStatusTr maps Trendyol English statuses to Turkish", () => {
+    expect(marketplaceStatusTr("Delivered")).toBe("Teslim Edildi");
+    expect(marketplaceStatusTr("Cancelled")).toBe("İptal");
+    expect(marketplaceStatusTr("Shipped")).toBe("Kargolandı");
+    expect(marketplaceStatusTr("ReadyToShip")).toBe("Kargoya Hazır");
   });
 });

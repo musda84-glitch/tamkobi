@@ -4,7 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { RotateCcw, XCircle, MessageCircleQuestion, Send, PackageCheck, Loader2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { channelTr } from "../utils/labels";
+import { channelTr, marketplaceStatusTr } from "../utils/labels";
 import { formatTrAmount } from "../utils/money";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -48,7 +48,7 @@ export const CancelledPanel = ({ orders }) => {
         <div key={o.id} className="px-4 py-2.5 flex flex-wrap items-center gap-3" data-testid={`cancelled-${o.order_number}`}>
           <span className="font-bold">{o.order_number}</span><span className="text-[10px] font-semibold bg-slate-100 px-1.5 py-0.5 rounded">{channelTr(o.channel)}</span><span className="text-slate-600">{o.customer_name}</span>
           <span className="text-slate-500">{(o.items || []).map((i) => `${i.quantity}× ${i.product_name}`).join(", ")}</span>
-          <span className="ml-auto font-bold">{fmt(o.total_amount)} ₺</span><span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${o.order_status === "returned" ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{o.order_status === "returned" ? "İADE" : "İPTAL"}{o.marketplace_status ? ` · ${o.marketplace_status}` : ""}</span>
+          <span className="ml-auto font-bold">{fmt(o.total_amount)} ₺</span><span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${o.order_status === "returned" ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{o.order_status === "returned" ? "İADE" : "İPTAL"}{o.marketplace_status ? ` · ${marketplaceStatusTr(o.marketplace_status)}` : ""}</span>
           {o.is_invoiced && <span className="text-[10px] text-rose-700 font-semibold">Faturalı — iade faturası gerekir</span>}
         </div>))}</div>
     </div>

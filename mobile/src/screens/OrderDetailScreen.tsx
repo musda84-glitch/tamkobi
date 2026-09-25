@@ -10,7 +10,7 @@ import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { Badge, Card, ErrorBanner, H1, ListRow, Muted, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { Order, Product } from "../types";
-import { channelTr, orderNumberLabel, statusTr } from "../utils/labels";
+import { channelTr, orderNumberLabel, statusTr, marketplaceStatusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { canStaffEditOrder, cartFromOrderItems, orderUpdatePayload, removeOrderLine } from "../utils/orderEdit";
 import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
@@ -102,7 +102,7 @@ export function OrderDetailScreen() {
           if (!invLabel || !invTone) return null;
           return <Badge label={invLabel} tone={invTone === "green" ? "green" : "amber"} />;
         })()}
-        {order.marketplace_status ? <Badge label={order.marketplace_status} tone="slate" /> : null}
+        {order.marketplace_status ? <Badge label={marketplaceStatusTr(order.marketplace_status)} tone="slate" /> : null}
         {order.cargo_carrier_name || order.cargo_carrier ? <Badge label={String(order.cargo_carrier_name || order.cargo_carrier)} tone="teal" /> : null}
         {order.cargo_tracking_number ? <Badge label={order.cargo_tracking_number} tone="green" /> : null}
         <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(order.grand_total || order.total_amount)}</Text>
