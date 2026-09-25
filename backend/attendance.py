@@ -1509,6 +1509,105 @@ def summarize(rows: list) -> dict:
             "unconfirmed": sum(1 for r in rows if not r.get("employee_confirmed"))}
 
 
+STATUS_LABELS = {
+    "present": "Çalıştı",
+    "absent": "Devamsız",
+    "leave": "İzinli",
+    "off": "Tatil",
+    "empty": "Kayıt yok",
+}
+
+
+def leave_covers_date(leaves: list, date: str) -> Optional[dict]:
+    for lv in leaves or []:
+        if not lv:
+            continue
+        if lv.get("status") and lv.get("status") != "approved":
+            continue
+        a = _ymd(lv.get("start_date"))
+        b = _ymd(lv.get("end_date") or lv.get("start_date"))
+        if a and b and a <= date <= b:
+            return lv
+    return None
+
+
+def leave_year_balance(emp: Optional[dict] = None) -> dict:
+    emp = emp or {}
+    annual = max(0, int(emp.get("annual_leave_days") or 14))
+    used = max(0, float(emp.get("used_leave_days") or 0))
+    carry = max(0, float(emp.get("leave_carry_days") or 0))
+    year = int(emp.get("leave_year") or local_now().year)
+    return {
+        "year": year,
+        "annual": annual,
+        "used": used,
+        "carry": carry,
+        "remaining": max(0.0, annual + carry - used),
+    }
+
+
+def build_employee_month_days(
+    month: str,
+    records: list,
+    leaves: list,
+    schedule: Optional[dict] = None,
+    hire_date=None,
+    end_date=None,
+) -> list:
+    """Ayın her günü için giriş/çıkış/mesai/izin satırları (takvim + tablo)."""
+    month = (month or "")[:7]
+    try:
+        start, last = month_bounds(month)
+    except Exception:
+        return []
+    by_date = {str(r.get("date") or "")[:10]: r for r in (records or []) if r.get("date")}
+    work_days = set(int(d) for d in ((schedule or {}).get("work_days") if schedule else None) or DEFAULT_SCHEDULE["work_days"])
+    hire = _ymd(hire_date)
+    term = _ymd(end_date)
+    out = []
+    d = start
+    while d <= last:
+        date = d.isoformat()
+        rec = by_date.get(date)
+        lv = leave_covers_date(leaves, date)
+        weekday = d.weekday()  # 0=Mon
+        is_off = weekday not in work_days or bool((rec or {}).get("is_off_day"))
+        if hire and date < hire:
+            is_off = True
+        if term and date > term:
+            is_off = True
+        status = "empty"
+        if rec and rec.get("status") == "present":
+            status = "present"
+        elif rec and rec.get("status") == "absent":
+            status = "absent"
+        elif (rec and rec.get("status") == "leave") or lv:
+            status = "leave"
+        elif is_off:
+            status = "off"
+        assigned = float((rec or {}).get("assigned_overtime_hours") or 0)
+        computed = float((rec or {}).get("overtime_hours") or 0)
+        out.append({
+            "date": date,
+            "weekday": weekday,
+            "weekday_label": DAY_LABELS[weekday],
+            "status": status,
+            "status_label": STATUS_LABELS.get(status, status),
+            "check_in": (rec or {}).get("check_in"),
+            "check_out": (rec or {}).get("check_out"),
+            "hours": float((rec or {}).get("hours") or 0),
+            "overtime_hours": round(assigned if assigned > 0 else computed, 2),
+            "late_minutes": int((rec or {}).get("late_minutes") or 0),
+            "leave_type": (lv or {}).get("type") if lv else (rec or {}).get("status") if (rec or {}).get("status") == "leave" else None,
+            "leave_label": LEAVE_TYPES.get((lv or {}).get("type"), (lv or {}).get("type")) if lv else None,
+            "note": (rec or {}).get("note") or (lv or {}).get("reason"),
+            "attendance_id": (rec or {}).get("_id") or (rec or {}).get("id"),
+            "is_off_day": is_off,
+        })
+        d += timedelta(days=1)
+    return out
+
+
 def _ymd(v) -> Optional[str]:
     s = str(v or "").strip()[:10]
     if len(s) != 10:
@@ -3420,6 +3519,102 @@ async def copy_week(req: Dict[str, Any]):
     return {"status": "success", "copied": n, "message": f"{n} vardiya {dst[0]} haftasına kopyalandı."}
 
 
+# ---------- Personel kartı: aylık puantaj + yıllık izin dönem arşivi ----------
+
+
+@router.get("/personnel/employees/{emp_id}/puantaj")
+async def employee_puantaj(emp_id: str, month: Optional[str] = None):
+    """Personel kartı Puantaj sekmesi: ay günleri (giriş/çıkış/mesai/izin) + özet + izin yılı."""
+    emp = await _db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    company = await _db.companies.find_one({"_id": emp.get("company_id")}) or {}
+    schedule = merge_schedule(company, emp)
+    month = (month or _today(schedule))[:7]
+    if len(month) != 7 or month[4] != "-":
+        raise HTTPException(status_code=400, detail="Ay YYYY-AA formatında olmalı.")
+    rows = await _db.attendance.find({"employee_id": emp_id, "date": {"$regex": f"^{month}"}}).to_list(100)
+    leaves = await _db.leave_requests.find({
+        "employee_id": emp_id,
+        "status": "approved",
+        "start_date": {"$lte": f"{month}-31"},
+        "end_date": {"$gte": f"{month}-01"},
+    }).to_list(200)
+    days = build_employee_month_days(month, rows, leaves, schedule, emp.get("start_date"), emp.get("end_date"))
+    bal = leave_year_balance(emp)
+    archives = await _db.leave_year_archives.find({"employee_id": emp_id}).sort("year", -1).to_list(20)
+    return {
+        "employee_id": emp_id,
+        "employee_name": emp.get("full_name"),
+        "month": month,
+        "summary": summarize(rows),
+        "days": days,
+        "day_labels": DAY_LABELS,
+        "schedule": {"start": schedule.get("start"), "end": schedule.get("end"), "work_days": schedule.get("work_days")},
+        "leave_year": bal,
+        "leave_archives": [_clean(a) for a in archives],
+    }
+
+
+@router.get("/personnel/employees/{emp_id}/leave-years")
+async def list_leave_years(emp_id: str):
+    emp = await _db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    archives = await _db.leave_year_archives.find({"employee_id": emp_id}).sort("year", -1).to_list(50)
+    return {"current": leave_year_balance(emp), "archives": [_clean(a) for a in archives]}
+
+
+@router.post("/personnel/employees/{emp_id}/leave-years/rollover")
+async def rollover_leave_year(emp_id: str, req: Dict[str, Any] = None):
+    """Yıllık izin dönemini kapat: arşivle, kalan günü (opsiyonel) devret, yeni yıla geç."""
+    req = req or {}
+    emp = await _db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    bal = leave_year_balance(emp)
+    year = int(req.get("year") or bal["year"])
+    if await _db.leave_year_archives.find_one({"employee_id": emp_id, "year": year}):
+        raise HTTPException(status_code=400, detail=f"{year} yılı zaten arşivlenmiş.")
+    carry_flag = req.get("carry_remaining", True)
+    if isinstance(carry_flag, str):
+        carry_flag = carry_flag.strip().lower() not in ("0", "false", "hayir", "no")
+    carry_days = float(bal["remaining"]) if carry_flag else 0.0
+    now = _now()
+    archive = {
+        "_id": str(uuid.uuid4()),
+        "employee_id": emp_id,
+        "company_id": emp.get("company_id"),
+        "year": year,
+        "annual": bal["annual"],
+        "used": bal["used"],
+        "remaining": bal["remaining"],
+        "carry_over": carry_days,
+        "note": (req.get("note") or "").strip()[:300] or None,
+        "archived_at": now,
+        "created_at": now,
+    }
+    await _db.leave_year_archives.insert_one(archive)
+    new_year = year + 1
+    await _db.employees.update_one(
+        {"_id": emp_id},
+        {"$set": {
+            "leave_year": new_year,
+            "used_leave_days": 0,
+            "leave_carry_days": carry_days,
+            "updated_at": now,
+        }},
+    )
+    emp2 = await _db.employees.find_one({"_id": emp_id})
+    return {
+        "status": "success",
+        "message": f"{year} izin yılı arşivlendi; {new_year} dönemi açıldı"
+        + (f" ({carry_days:g} gün devredildi)." if carry_days else "."),
+        "archive": _clean(archive),
+        "current": leave_year_balance(emp2),
+    }
+
+
 # ---------- Personel self-servis izin talebi ----------
 
 
@@ -3430,11 +3625,10 @@ async def my_leaves(request: Request):
     if not emp:
         return {"employee": None, "leaves": [], "balance": None}
     leaves = await _db.leave_requests.find({"employee_id": emp["_id"]}).sort("created_at", -1).to_list(100)
-    annual = emp.get("annual_leave_days", 14)
-    used = emp.get("used_leave_days", 0)
+    bal = leave_year_balance(emp)
     pending_days = sum(l.get("days", 0) for l in leaves if l.get("status") == "pending" and l.get("type") == "annual")
     return {"employee": {"id": emp["_id"], "full_name": emp["full_name"]}, "leaves": [_clean(l) for l in leaves], "types": LEAVE_TYPES,
-            "balance": {"annual": annual, "used": used, "remaining": annual - used, "pending_days": pending_days}}
+            "balance": {**bal, "pending_days": pending_days}}
 
 
 def parse_advance_self(req: Dict[str, Any]) -> Dict[str, Any]:
