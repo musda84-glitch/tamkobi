@@ -5,6 +5,8 @@ import {
   finalProjectStageKey,
   slugStageKey,
   stageToneClass,
+  stageToneLabel,
+  PROJECT_STAGE_TONES,
 } from "./projectStages";
 
 describe("projectStages", () => {
@@ -31,6 +33,15 @@ describe("projectStages", () => {
     const map = projectStageMap(DEFAULT_PROJECT_STAGES);
     expect(map.planning[0]).toBe("Planlama");
     expect(map.completed[1]).toBe(stageToneClass("emerald"));
+  });
+
+  test("tone labels are Turkish", () => {
+    expect(stageToneLabel("slate")).toBe("Gri");
+    expect(stageToneLabel("blue")).toBe("Mavi");
+    expect(stageToneLabel("emerald")).toBe("Yeşil");
+    expect(PROJECT_STAGE_TONES.map(stageToneLabel)).toEqual([
+      "Gri", "Mavi", "Turuncu", "Yeşil", "Pembe", "Mor", "Lacivert",
+    ]);
   });
 
   test("forces a final stage when missing", () => {
