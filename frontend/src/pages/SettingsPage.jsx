@@ -196,12 +196,71 @@ const EInvoiceSettings = ({ companyId }) => {
 
 const PrintSettings = ({ companyId }) => {
   const [editing, setEditing] = useState(null);
+  const [templates, setTemplates] = useState(null);
+  const load = useCallback(() => {
+    axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTemplates(r.data || {})).catch(() => setTemplates({}));
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const f = () => load();
+    window.addEventListener("print-template-saved", f);
+    return () => window.removeEventListener("print-template-saved", f);
+  }, [load]);
+  const baseCards = [["invoice", "Fatura"], ["order", "Sipariş Formu"], ["quote", "Teklif"], ["dispatch", "İrsaliye"]];
+  const categories = Object.entries(templates || {})
+    .filter(([, v]) => v && v.is_category)
+    .map(([key, v]) => ({ key, label: v.label || v.title_override || key, base: v.base_type || "invoice" }))
+    .sort((a, b) => a.label.localeCompare(b.label, "tr"));
+  const baseLabel = Object.fromEntries(baseCards);
+  const removeCategory = async (key) => {
+    if (!window.confirm("Bu form kategorisi silinsin mi?")) return;
+    try {
+      await axios.delete(`${API_URL}/companies/${companyId}/print-templates/${encodeURIComponent(key)}`);
+      toast.success("Form kategorisi silindi.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Silinemedi.");
+    }
+  };
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3" data-testid="print-settings">
-      {[["invoice", "Fatura"], ["order", "Sipariş Formu"], ["quote", "Teklif"], ["dispatch", "İrsaliye"]].map(([k, l]) => (
-        <button key={k} onClick={() => setEditing(k)} className="bg-white border border-slate-200 rounded-2xl p-5 text-left hover:border-emerald-500 hover:shadow-md transition" data-testid={`print-tpl-${k}`}><Printer className="w-5 h-5 text-slate-400 mb-2" /><div className="text-sm font-bold text-slate-900">{l}</div><div className="text-xs text-slate-500">Başlık, renk, notlar, logo/imza alanları</div></button>
-      ))}
-      {editing && <PrintTemplateEditor companyId={companyId} docType={editing} onClose={() => setEditing(null)} onSaved={() => toast.success("Form şablonu kaydedildi.")} />}
+    <div className="space-y-3" data-testid="print-settings">
+      <p className="text-xs text-slate-500">Varsayılan formlarda <b>Başlık</b> yazıp kaydederseniz, o başlıkla bağlantılı yeni bir form kategorisi oluşur (aynı belge türüne bağlı).</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {baseCards.map(([k, l]) => (
+          <button key={k} onClick={() => setEditing(k)} className="bg-white border border-slate-200 rounded-2xl p-5 text-left hover:border-emerald-500 hover:shadow-md transition" data-testid={`print-tpl-${k}`}>
+            <Printer className="w-5 h-5 text-slate-400 mb-2" />
+            <div className="text-sm font-bold text-slate-900">{l}</div>
+            <div className="text-xs text-slate-500">Başlık, renk, notlar, logo/imza alanları</div>
+          </button>
+        ))}
+        {categories.map((c) => (
+          <div key={c.key} className="bg-white border border-emerald-200 rounded-2xl p-5 text-left relative group" data-testid={`print-tpl-cat-${c.key}`}>
+            <button type="button" onClick={() => setEditing(c.key)} className="w-full text-left" data-testid={`print-tpl-${c.key}`}>
+              <Printer className="w-5 h-5 text-emerald-600 mb-2" />
+              <div className="text-sm font-bold text-slate-900">{c.label}</div>
+              <div className="text-xs text-slate-500">{baseLabel[c.base] || c.base} · özel form kategorisi</div>
+            </button>
+            <button type="button" onClick={() => removeCategory(c.key)} className="absolute top-3 right-3 p-1.5 text-slate-300 hover:text-rose-600 rounded-lg" title="Kategoriyi sil" data-testid={`print-tpl-del-${c.key}`}>
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+      {editing && (
+        <PrintTemplateEditor
+          companyId={companyId}
+          docType={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(r) => {
+            if (r?.created_category || r?.is_category) {
+              toast.success(r.created_category ? `“${r.label || r.title_override}” form kategorisi oluşturuldu.` : "Form kategorisi kaydedildi.");
+            } else {
+              toast.success("Form şablonu kaydedildi.");
+            }
+            load();
+          }}
+        />
+      )}
     </div>
   );
 };

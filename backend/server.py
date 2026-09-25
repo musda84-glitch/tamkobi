@@ -1126,24 +1126,63 @@ async def _einvoice_inbox_auto_loop(interval_s: int = 600):
             logger.exception("e-fatura otomatik gelen kutu döngüsü")
         await _a.sleep(interval_s)
 
-DEFAULT_PRINT_TEMPLATE = {"show_logo": True, "primary_color": "#059669", "header_note": "", "footer_note": "Bizi tercih ettiğiniz için teşekkür ederiz.", "show_bank_info": True,
-                          "show_tax_info": True, "show_signature": True, "show_barcode": True, "show_images": True, "font_size": "sm", "paper": "A4", "title_override": "", "layout": "classic", "hide_line_prices": False, "hide_vat": False, "hide_all_prices": False, "show_item_notes": True, "show_order_notes": True, "show_qty_total": False}
+from print_templates import (  # noqa: E402
+    BASE_PRINT_DOC_TYPES,
+    DEFAULT_PRINT_TEMPLATE,
+    build_print_templates_response,
+    is_base_doc_type,
+    is_category_key,
+    list_form_categories,
+    prepare_save as prepare_print_template_save,
+)
+
 
 @api_router.get("/companies/{company_id}/print-templates")
 async def get_print_templates(company_id: str):
     c = await db.companies.find_one({"_id": company_id})
     if not c:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
-    templates = c.get("print_templates", {})
-    return {doc: {**DEFAULT_PRINT_TEMPLATE, **templates.get(doc, {})} for doc in ("invoice", "order", "quote", "dispatch")}
+    return build_print_templates_response(c.get("print_templates", {}))
+
 
 @api_router.put("/companies/{company_id}/print-templates/{doc_type}")
 async def save_print_template(company_id: str, doc_type: str, req: Dict[str, Any]):
-    if doc_type not in ("invoice", "order", "quote", "dispatch"):
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    existing = c.get("print_templates") or {}
+    try:
+        sets, result = prepare_print_template_save(doc_type, req or {}, existing)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Geçersiz belge türü.")
-    allowed = {k: v for k, v in req.items() if k in DEFAULT_PRINT_TEMPLATE}
-    await db.companies.update_one({"_id": company_id}, {"$set": {f"print_templates.{doc_type}": allowed}})
-    return {**DEFAULT_PRINT_TEMPLATE, **allowed}
+    if not sets and not is_base_doc_type(doc_type) and not is_category_key(doc_type, existing.get(doc_type)):
+        raise HTTPException(status_code=400, detail="Geçersiz belge türü.")
+    update: Dict[str, Any] = {f"print_templates.{k}": v for k, v in sets.items()}
+    unset_key = result.pop("delete_old_key", None)
+    ops: Dict[str, Any] = {"$set": update}
+    if unset_key and unset_key not in sets:
+        ops["$unset"] = {f"print_templates.{unset_key}": ""}
+    await db.companies.update_one({"_id": company_id}, ops)
+    # Attach categories list for clients that refresh the Form & Yazdırma grid
+    refreshed = build_print_templates_response({**existing, **sets})
+    if unset_key:
+        refreshed.pop(unset_key, None)
+    result["categories"] = list_form_categories(refreshed)
+    return result
+
+
+@api_router.delete("/companies/{company_id}/print-templates/{doc_type}")
+async def delete_print_template_category(company_id: str, doc_type: str):
+    if is_base_doc_type(doc_type):
+        raise HTTPException(status_code=400, detail="Varsayılan formlar silinemez.")
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    raw = (c.get("print_templates") or {}).get(doc_type)
+    if not isinstance(raw, dict) or not (raw.get("is_category") or is_category_key(doc_type, raw)):
+        raise HTTPException(status_code=404, detail="Form kategorisi bulunamadı.")
+    await db.companies.update_one({"_id": company_id}, {"$unset": {f"print_templates.{doc_type}": ""}})
+    return {"status": "success", "deleted": doc_type}
 
 def _sniff_upload_content_type(filename: str, content_type: Optional[str]) -> str:
     """Mobile browsers often send empty or application/octet-stream; infer from extension."""
