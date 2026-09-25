@@ -12632,6 +12632,34 @@ async def production_order_kpis(company_id: Optional[str] = "comp_nexus_main_01"
         "missing_notifications": missing_n,
     }
 
+def _production_steps_summary(ws: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Üretim emri listesi için adım özeti + satır satır durum."""
+    done = sum(1 for w in ws if w.get("status") == "done")
+    cur = next((w for w in ws if w.get("status") in ("in_progress", "paused")), None)
+    if not cur:
+        cur = next((w for w in ws if w.get("status") == "ready"), None)
+    steps = []
+    for w in ws:
+        st = str(w.get("status") or "")
+        is_done = st == "done"
+        is_current = bool(cur) and w is cur
+        steps.append({
+            "no": int(w.get("step_no") or 0),
+            "name": w.get("step_name") or f"Adım {w.get('step_no') or ''}",
+            "status": st,
+            "done": is_done,
+            "current": is_current,
+            "operator_name": w.get("operator_name") or None,
+        })
+    return {
+        "done": done,
+        "total": len(ws),
+        "current_step_name": (cur or {}).get("step_name"),
+        "current_operator": (cur or {}).get("operator_name"),
+        "steps": steps,
+    }
+
+
 @api_router.get("/production/orders")
 async def list_production_orders(
     company_id: Optional[str] = "comp_nexus_main_01",
@@ -12659,14 +12687,7 @@ async def list_production_orders(
             by.setdefault(w.get("order_id"), []).append(w)
         for r in rows:
             ws = sorted(by.get(r["_id"], []), key=lambda x: x.get("step_no") or 0)
-            done = sum(1 for w in ws if w.get("status") == "done")
-            cur = next((w for w in ws if w.get("status") in ("in_progress", "paused", "ready")), None)
-            r["steps_summary"] = {
-                "done": done,
-                "total": len(ws),
-                "current_step_name": (cur or {}).get("step_name"),
-                "current_operator": (cur or {}).get("operator_name"),
-            }
+            r["steps_summary"] = _production_steps_summary(ws)
     return clean_docs(rows)
 
 @api_router.post("/production/orders")
