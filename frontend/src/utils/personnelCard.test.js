@@ -14,7 +14,9 @@ import {
   locationMovesPeriodHint,
   overtimeMoveCanDelete,
   overtimeMoveCanEdit,
+  overtimeMoveDetail,
   overtimeMoveLine,
+  overtimeMoveSourceLabel,
   overtimeMovesPeriodHint,
   payMovesPeriodHint,
   remainingLeaveDays,
@@ -69,7 +71,13 @@ describe("personnelCard", () => {
       start: "18:00",
       end: "20:30",
       kind: "assigned",
-    })).toBe("20.09.2026 · 2.5 sa · 18:00–20:30 · Atanan");
+      source: "manager",
+      source_label: "Yönetici atadı",
+    })).toBe("20.09.2026 · 2.5 sa · 18:00–20:30 · Yönetici atadı");
+    expect(overtimeMoveSourceLabel({ source: "location", source_label: "Konumdan tespit edildi" })).toBe("Konumdan tespit edildi");
+    expect(overtimeMoveSourceLabel({ kind: "computed", source: "punch" })).toBe("Puantajdan hesaplandı");
+    expect(overtimeMoveDetail({ check_in: "12:38", check_out: "10:26" })).toBe("Puantaj 12:38 → 10:26");
+    expect(overtimeMoveDetail({ kind: "assigned" })).toBe("");
     expect(overtimeMovesPeriodHint(2, 5, "30d")).toBe("2 / 5 mesai kaydı");
     expect(overtimeMoveCanEdit({ can_edit: true }, true)).toBe(true);
     expect(overtimeMoveCanDelete({ can_delete: true, assigned_hours: 2 }, true)).toBe(true);

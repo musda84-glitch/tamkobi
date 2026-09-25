@@ -287,16 +287,31 @@ export function overtimeMovesPeriodHint(shown, total, period) {
 }
 
 export function overtimeMoveKindLabel(kind) {
-  if (kind === "assigned") return "Atanan";
-  if (kind === "computed") return "Hesaplanan";
+  if (kind === "assigned") return "Yönetici atadı";
+  if (kind === "computed") return "Puantajdan hesaplandı";
   return "Mesai";
+}
+
+export function overtimeMoveSourceLabel(row) {
+  if (row?.source_label) return String(row.source_label);
+  if (row?.source === "manager" || row?.kind === "assigned") return "Yönetici atadı";
+  if (row?.source === "location") return "Konumdan tespit edildi";
+  if (row?.source === "punch" || row?.kind === "computed") return "Puantajdan hesaplandı";
+  return overtimeMoveKindLabel(row?.kind);
 }
 
 export function overtimeMoveLine(row) {
   const hours = Number(row?.hours) || 0;
   const range = row?.start && row?.end ? `${row.start}–${row.end}` : "";
-  const bits = [formatTrDate(row?.date), `${hours} sa`, range, overtimeMoveKindLabel(row?.kind)].filter(Boolean);
+  const bits = [formatTrDate(row?.date), `${hours} sa`, range, overtimeMoveSourceLabel(row)].filter(Boolean);
   return bits.join(" · ");
+}
+
+export function overtimeMoveDetail(row) {
+  if (row?.check_in || row?.check_out) {
+    return `Puantaj ${row.check_in || "—"} → ${row.check_out || "—"}`;
+  }
+  return "";
 }
 
 export function overtimeMoveCanEdit(row, canEdit = true) {
