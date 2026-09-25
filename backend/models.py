@@ -593,6 +593,8 @@ class RecipeItem(BaseModel):
     unit: str
     cost_per_unit: float = 0.0
     wastage_percent: float = 0.0
+    cost_includes_vat: bool = False  # True = girilen birim maliyet KDV dahil
+    vat_rate: float = 20.0
 
 class Recipe(BaseDocument):
     company_id: str

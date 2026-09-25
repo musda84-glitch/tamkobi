@@ -24,10 +24,10 @@ import IsnetPortalPanel from "../components/IsnetPortalPanel";
 import { FxRatesPanel } from "../components/FxRatesPanel";
 import { BrowserExtensionPanel } from "../components/BrowserExtensionPanel";
 import { DEFAULT_PROJECT_STAGES, normalizeProjectStages, PROJECT_STAGE_TONES, stageToneClass, stageToneLabel, slugStageKey } from "../utils/projectStages";
-import { normalizeWorkParks, normalizeOfficeTaskTypes } from "../utils/workParks";
+import { normalizeWorkParks, normalizeOfficeTaskTypes, normalizeWorkshopZones } from "../utils/workParks";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
+const TABS = [["company", "Şirket Bilgileri", Building2], ["plan", "Paketim & Modüller", ShieldCheck], ["print", "Form & Yazdırma", Printer], ["einvoice", "E-Fatura Bağlantısı", FileCheck2], ["sms", "SMS Operatörü", MessageSquare], ["mail", "E-posta Hesabı", Mail], ["bank", "Banka Bağlantıları", Landmark], ["fx", "Döviz Kurları", Coins], ["channels", "E-Ticaret & Kargo", ShoppingCart], ["whatsapp", "WhatsApp Business", MessageSquare], ["extension", "Tarayıcı Eklentisi", Puzzle], ["units", "Birimler & Kategoriler", Ruler], ["project_stages", "Proje Aşamaları", Briefcase], ["work_parks", "Parkur & İç görev", Briefcase], ["workshop_zones", "Atölye Bölge", Briefcase], ["users", "Kullanıcılar & Roller", Users], ["migration", "Veri Aktarımı", Upload], ["storage", "Depolama", HardDrive], ["summary", "Sabah Özeti", Upload], ["modules", "Menü & Hızlı Menü", ListOrdered]];
 
 const CompanyForm = ({ companyId }) => {
   const [c, setC] = useState(null);
@@ -584,6 +584,45 @@ const WorkParksSettings = ({ companyId }) => {
   );
 };
 
+const WorkshopZonesSettings = ({ companyId }) => {
+  const [zones, setZones] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    axios.get(`${API_URL}/companies/${companyId}/workshop-zones`)
+      .then((r) => setZones(normalizeWorkshopZones(r.data?.zones)))
+      .catch(() => setZones([]));
+  }, [companyId]);
+  useEffect(() => { load(); }, [load]);
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await axios.put(`${API_URL}/companies/${companyId}/workshop-zones`, { zones: normalizeWorkshopZones(zones) });
+      setZones(normalizeWorkshopZones(r.data.zones));
+      toast.success(r.data.message || "Atölye bölgeleri kaydedildi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Kaydedilemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-6" data-testid="workshop-zones-settings">
+      <NamedListEditor
+        title="Atölye Bölgeleri"
+        hint="Reçete üretim adımlarında «Bölüm» olarak seçilir. Örn: Kesim, Montaj, Kalite Kontrol, Paketleme."
+        emptyText="Henüz bölge yok. Aşağıdan ekleyip kaydedin."
+        placeholder="Örn: Kesim"
+        items={zones}
+        setItems={setZones}
+        onSave={save}
+        busy={busy}
+        testId="workshop-zones-card"
+        rowPrefix="workshop-zone"
+      />
+    </div>
+  );
+};
+
 export const B2BSettings = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [q, setQ] = useState("");
@@ -690,6 +729,7 @@ export default function SettingsPage({ embedded = false }) {
           {tab === "units" && <UnitsCategories companyId={companyId} />}
           {tab === "project_stages" && <ProjectStagesSettings companyId={companyId} />}
           {tab === "work_parks" && <WorkParksSettings companyId={companyId} />}
+          {tab === "workshop_zones" && <WorkshopZonesSettings companyId={companyId} />}
           {tab === "users" && <UsersRolesPanel companyId={companyId} />}
           {tab === "migration" && <MigrationPanel companyId={companyId} />}
           {tab === "storage" && <MyStoragePanel />}

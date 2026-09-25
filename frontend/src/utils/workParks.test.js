@@ -1,4 +1,4 @@
-import { findWorkPark, findOfficeTaskType, officeTaskPayload, parkSelectGroups, officeTaskTypeSelectGroups, stationNamesFromParks, validateOfficeTaskAssign, normalizeWorkParks, normalizeOfficeTaskTypes } from "./workParks";
+import { findWorkPark, findOfficeTaskType, officeTaskPayload, parkSelectGroups, officeTaskTypeSelectGroups, stationNamesFromParks, validateOfficeTaskAssign, normalizeWorkParks, normalizeOfficeTaskTypes, normalizeWorkshopZones, zoneNamesFromList } from "./workParks";
 
 describe("work parks vs office task types", () => {
   it("normalizes parks and office types separately", () => {
@@ -26,5 +26,10 @@ describe("work parks vs office task types", () => {
   it("station names come from parks only", () => {
     expect(stationNamesFromParks([{ id: "a", name: "CNC" }], ["X"])).toEqual(["CNC"]);
     expect(stationNamesFromParks([], ["X", "Y"])).toEqual(["X", "Y"]);
+  });
+
+  it("workshop zones normalize independently", () => {
+    expect(normalizeWorkshopZones(["Kesim", { id: "z1", name: "Paket" }]).map((z) => z.name)).toEqual(["Kesim", "Paket"]);
+    expect(zoneNamesFromList([], ["QC"])).toEqual(["QC"]);
   });
 });

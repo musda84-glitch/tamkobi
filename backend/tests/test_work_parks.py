@@ -4,15 +4,18 @@ from work_parks import (
     find_office_task,
     find_office_task_type,
     find_park,
+    find_workshop_zone,
     is_assignment_done,
     mark_office_task_done,
     mark_project_task_done,
     normalize_office_task_types,
     normalize_work_parks,
+    normalize_workshop_zones,
     office_assignment_view,
     office_task_row,
     office_task_types_for_company,
     station_names_from_parks,
+    zone_names_from_list,
 )
 
 
@@ -23,6 +26,16 @@ def test_normalize_work_parks():
     assert parks[1] == {"id": "p2", "name": "Kaynak atölyesi"}
     assert find_park(parks, "p2")["name"] == "Kaynak atölyesi"
     assert find_park(parks, "missing") is None
+
+
+def test_normalize_workshop_zones():
+    assert normalize_workshop_zones(None) == []
+    zones = normalize_workshop_zones(["Kesim", {"id": "z2", "name": "Montaj"}, "  "])
+    assert zones[0]["name"] == "Kesim"
+    assert zones[1] == {"id": "z2", "name": "Montaj"}
+    assert find_workshop_zone(zones, "z2")["name"] == "Montaj"
+    assert zone_names_from_list(zones) == ["Kesim", "Montaj"]
+    assert zone_names_from_list([], ["Paketleme", "QC"]) == ["Paketleme", "QC"]
 
 
 def test_office_task_types_separate_from_parks():
