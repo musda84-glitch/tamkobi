@@ -64,6 +64,7 @@ import {
   referenceDailyWage,
   hasEmployeeDetails,
   employeeStatusLabel,
+  employeePresenceChip,
   pendingRequestDecision,
   pendingRequestDecisionMessage,
   requestKindLabel,
@@ -178,6 +179,11 @@ describe("employee draft", () => {
   it("labels requests and sums period bonuses", () => {
     expect(employeeStatusLabel("terminated")).toBe("İşten çıktı");
     expect(employeeStatusLabel("active")).toBe("Aktif");
+    expect(employeePresenceChip({ location_last_inside: true, workplace: { kind: "task" } })?.label).toBe("Görev yerinde");
+    expect(employeePresenceChip({ location_last_inside: true, workplace: { kind: "company" } })?.label).toBe("İşte");
+    expect(employeePresenceChip({ location_last_inside: false })?.label).toBe("Dışarda");
+    expect(employeePresenceChip({ status: "terminated", location_last_inside: true })).toBeNull();
+    expect(employeePresenceChip({ today: { check_in: "08:30", location_inside_at: "2026-09-25T05:30:00Z" } })?.key).toBe("work");
     expect(requestKindLabel("early_leave")).toBe("Erken çıkış");
     expect(requestKindLabel("geo_confirm")).toBe("Teyitli giriş");
     expect(pendingRequestDecision({ id: "g1", kind: "geo_confirm" }, true)).toEqual({

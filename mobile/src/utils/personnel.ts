@@ -34,6 +34,8 @@ export type Employee = {
   location_tracking?: LocationTracking | null;
   location_last_ok?: boolean | null;
   location_last_at?: string | null;
+  location_last_inside?: boolean | null;
+  location_inside_at?: string | null;
 };
 
 export type LocMode = {
@@ -432,6 +434,66 @@ export function employeeStatusLabel(status?: string | null): string {
   if (status === "terminated") return "İşten çıktı";
   if (status === "passive" || status === "inactive") return "Pasif";
   return "Aktif";
+}
+
+export type EmployeePresenceKind = "duty" | "work" | "out";
+
+export type EmployeePresenceChip = {
+  key: EmployeePresenceKind;
+  label: string;
+  color: string;
+  bg: string;
+};
+
+type PresenceToday = {
+  check_in?: string;
+  check_out?: string;
+  location_inside_at?: string;
+  location_left_at?: string;
+  location_exit_request?: { status?: string } | null;
+  geo_check_in?: unknown;
+};
+
+function presenceInside(opts: {
+  location_last_inside?: boolean | null;
+  location_last_ok?: boolean | null;
+  location_inside_at?: string | null;
+  today?: PresenceToday | null;
+}): boolean | null {
+  if (opts.location_last_inside === true) return true;
+  if (opts.location_last_inside === false) return false;
+  const today = opts.today;
+  if (today?.check_out) return false;
+  if (today?.location_exit_request?.status === "pending") return false;
+  if (today?.location_left_at) return false;
+  if (opts.location_last_ok === false) return null;
+  if (today?.check_in && (opts.location_inside_at || today.location_inside_at || today.geo_check_in)) return true;
+  return null;
+}
+
+/** Aktif yanındaki anlık yer: görev yerinde / işte / dışarda. */
+export function employeePresenceChip(opts?: {
+  status?: string | null;
+  workplace?: Workplace | null;
+  location_last_inside?: boolean | null;
+  location_last_ok?: boolean | null;
+  location_inside_at?: string | null;
+  today?: PresenceToday | null;
+} | null): EmployeePresenceChip | null {
+  if (!opts) return null;
+  const status = String(opts.status || "active");
+  if (status === "terminated" || status === "passive" || status === "inactive") return null;
+  const inside = presenceInside(opts);
+  if (inside === true) {
+    if (opts.workplace?.kind === "task") {
+      return { key: "duty", label: "Görev yerinde", color: "#3730A3", bg: "#EEF2FF" };
+    }
+    return { key: "work", label: "İşte", color: "#047857", bg: "#D1FAE5" };
+  }
+  if (inside === false) {
+    return { key: "out", label: "Dışarda", color: "#C2410C", bg: "#FFEDD5" };
+  }
+  return null;
 }
 
 export function openEmployeeTasks(card?: EmployeeCard | null) {
@@ -910,6 +972,10 @@ export type AttendanceToday = {
   status?: string;
   late_minutes?: number;
   assigned_overtime_hours?: number;
+  location_inside_at?: string;
+  location_left_at?: string;
+  location_exit_request?: { status?: string } | null;
+  geo_check_in?: unknown;
   manager_time_edit?: {
     pending_employee?: boolean;
     field?: string;
