@@ -8,9 +8,9 @@ from conftest import API, TEST_COMPANY_ID
 CID = TEST_COMPANY_ID
 
 
-def test_stock_count_api_maps_to_stock_module():
-    assert module_for_path("/api/warehouses/stock-counts") == "/stock"
-    assert module_for_path("/api/warehouses/stock-counts/abc/scan") == "/stock"
+def test_stock_count_api_maps_to_sayim_module():
+    assert module_for_path("/api/warehouses/stock-counts") == "/sayim"
+    assert module_for_path("/api/warehouses/stock-counts/abc/scan") == "/sayim"
     assert module_for_path("/api/warehouses") == "/warehouses"
     assert module_for_path("/api/warehouses/transfers") == "/warehouses"
 
@@ -43,11 +43,15 @@ def test_kiosk_session_starts_empty_then_scan(client):
     assert item["counted"] == 1
     assert item["product_name"]
 
+    multi = client.post(f"{API}/warehouses/stock-counts/{cid}/scan", json={"barcode": code, "quantity": 3}, timeout=20)
+    assert multi.status_code == 200, multi.text
+    assert multi.json()["item"]["counted"] == 4
+
     sku = prod.get("sku")
     if sku and sku != code:
         scan2 = client.post(f"{API}/warehouses/stock-counts/{cid}/scan", json={"barcode": sku, "quantity": 1}, timeout=20)
         assert scan2.status_code == 200, scan2.text
-        assert scan2.json()["item"]["counted"] == 2
+        assert scan2.json()["item"]["counted"] == 5
 
     client.delete(f"{API}/warehouses/stock-counts/{cid}", timeout=20)
 

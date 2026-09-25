@@ -6,16 +6,19 @@ import { ClipboardList, Plus, Scan, CheckCircle2, Trash2, Loader2, AlertTriangle
 import { Link } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
 import { ScanButton } from "./CameraScanner";
+import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
 export const StockCountPanel = ({ companyId, warehouses }) => {
   const [counts, setCounts] = useState([]);
   const [active, setActive] = useState(null);
   const [barcode, setBarcode] = useState("");
+  const [scanQty, setScanQty] = useState("1");
   const [newForm, setNewForm] = useState({ name: "", warehouse_id: "", preload_all: true });
   const [showNew, setShowNew] = useState(false);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("all");
   const inputRef = useRef(null);
+  const qty = parseScanQtyInput(scanQty);
 
   const load = useCallback(async () => { try { const r = await axios.get(`${API_URL}/warehouses/stock-counts?company_id=${companyId}`); setCounts(r.data); } catch { toast.error("Sayımlar yüklenemedi."); } }, [companyId]);
   useEffect(() => { load(); }, [load]);
@@ -31,7 +34,7 @@ export const StockCountPanel = ({ companyId, warehouses }) => {
   const scanCode = async (code) => {
     const c = String(code || "").trim();
     if (!c) return;
-    try { const r = await axios.post(`${API_URL}/warehouses/stock-counts/${active.id}/scan`, { barcode: c, quantity: 1 }); toast.success(r.data.message); setBarcode(""); open(active.id); }
+    try { const r = await axios.post(`${API_URL}/warehouses/stock-counts/${active.id}/scan`, { barcode: c, quantity: parseScanQtyInput(scanQty) }); toast.success(r.data.message); setBarcode(""); open(active.id); }
     catch (err) { toast.error(err.response?.data?.detail || `Barkod eşleşmedi: ${c}`); setBarcode(""); }
   };
   const scan = async (e) => { e?.preventDefault(); await scanCode(barcode); inputRef.current?.focus(); };
@@ -99,10 +102,22 @@ export const StockCountPanel = ({ companyId, warehouses }) => {
                 )}
               </div>
               {active.status === "open" && (
-                <form onSubmit={scan} className="flex gap-2">
-                  <div className="relative flex-1"><Scan className="w-4 h-4 absolute left-3 top-2.5 text-violet-500" /><input ref={inputRef} value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder="Barkod okutun veya yazın, Enter → +1" className="w-full pl-9 bg-violet-50/50 border border-violet-200 rounded-xl p-2 font-mono text-sm font-bold" autoFocus data-testid="stock-count-scan-input" /></div>
-                  <button type="submit" className="px-4 py-2 bg-violet-600 text-white rounded-xl text-xs font-semibold" data-testid="stock-count-scan-btn">Okut</button>
-                  <ScanButton onScan={scanCode} continuous title="Sayım: Kamera ile Okut" label="Kamera" />
+                <form onSubmit={scan} className="flex flex-wrap gap-2">
+                  <div className="relative flex-1 min-w-[12rem]"><Scan className="w-4 h-4 absolute left-3 top-2.5 text-violet-500" /><input ref={inputRef} value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder={`Barkod okutun veya yazın, Enter → +${qty}`} className="w-full pl-9 bg-violet-50/50 border border-violet-200 rounded-xl p-2 font-mono text-sm font-bold" autoFocus data-testid="stock-count-scan-input" /></div>
+                  <input
+                    value={scanQtyShown(scanQty)}
+                    onChange={(e) => setScanQty(e.target.value.replace(/[^\d]/g, ""))}
+                    onFocus={() => setScanQty(scanQtyOnFocus())}
+                    onBlur={() => setScanQty(scanQtyOnBlur(scanQty))}
+                    inputMode="numeric"
+                    aria-label="Adet çarpan"
+                    title="Adet çarpan"
+                    className="w-16 text-center font-black border border-slate-200 rounded-xl p-2"
+                    data-testid="stock-count-scan-qty"
+                  />
+                  <button type="submit" className="px-4 py-2 bg-violet-600 text-white rounded-xl text-xs font-semibold" data-testid="stock-count-scan-btn">Okut (+{qty})</button>
+                  <ScanButton onScan={scanCode} continuous qtyEnabled qty={scanQty} onQtyChange={setScanQty} title="Sayım: Seri kamera okuma" label="Seri" />
+                  <ScanButton onScan={scanCode} qtyEnabled qty={scanQty} onQtyChange={setScanQty} title="Sayım: Tek kamera okuma" label="Kamera" />
                 </form>
               )}
               <div className="flex gap-1 text-[11px]">{[["all", "Tümü"], ["scanned", "Sayılan"], ["pending", "Sayılmayan"], ["diff", "Farklı"]].map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className={`px-2.5 py-1 rounded-lg font-semibold ${filter === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`count-filter-${k}`}>{l}</button>)}</div>

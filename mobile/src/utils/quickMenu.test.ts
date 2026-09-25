@@ -165,6 +165,7 @@ describe("resolveMobilePath", () => {
     expect(resolveMobilePath("/invoices")).toBe("/invoices");
     expect(resolveMobilePath("/edoc-inbox")).toBe("/edoc-inbox");
     expect(resolveMobilePath("/stock")).toBe("/stok");
+    expect(resolveMobilePath("/sayim")).toBe("/sayim");
     expect(resolveMobilePath("/personnel")).toBe("/personnel");
     expect(resolveMobilePath("/sevk")).toBe("/sevk");
     expect(resolveMobilePath("/atolye")).toBe("/atolye");

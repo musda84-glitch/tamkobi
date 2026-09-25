@@ -155,9 +155,10 @@ export function StockScreen() {
             items={[
               ...(canEdit ? [{ key: "new", label: "Yeni kart", icon: "add-circle" as const, tone: "emerald" as const, testID: "stock-new", onPress: () => go("StockNew") }] : []),
               { key: "scan", label: "Barkod okut", icon: "barcode", tone: "indigo", testID: "stock-scan", onPress: () => setScan(true) },
+              { key: "sayim", label: "Sayım", icon: "clipboard", tone: "violet", testID: "stock-sayim", onPress: () => go("StockCount") },
               { key: "refresh", label: "Yenile", icon: "refresh", tone: "slate", testID: "stock-refresh", onPress: () => load(true) },
             ]}
-            columns={3}
+            columns={canEdit ? 4 : 3}
           />
           <GroupedSelect
             label="Kategori"
