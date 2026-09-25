@@ -13,6 +13,8 @@ import {
   unreadFromBadges,
   unreadCount,
   visibleNotifications,
+  notificationCanDelete,
+  notificationDeletePath,
 } from "./notifications";
 
 const at = (iso: string) => ({ created_at: iso });
@@ -37,6 +39,17 @@ describe("unreadCount", () => {
   it("counts only unread rows", () => {
     expect(unreadCount([{ is_read: true }, {}, { is_read: false }])).toBe(2);
     expect(unreadCount(undefined)).toBe(0);
+  });
+});
+
+describe("notificationCanDelete", () => {
+  it("allows swipe-delete only for read rows with an id", () => {
+    expect(notificationCanDelete({ id: "n1", is_read: true })).toBe(true);
+    expect(notificationCanDelete({ _id: "n2", is_read: true })).toBe(true);
+    expect(notificationCanDelete({ id: "n1", is_read: false })).toBe(false);
+    expect(notificationCanDelete({ is_read: true })).toBe(false);
+    expect(notificationDeletePath({ id: "n1", is_read: true })).toBe("/notifications/n1");
+    expect(notificationDeletePath({ id: "n1", is_read: false })).toBeNull();
   });
 });
 

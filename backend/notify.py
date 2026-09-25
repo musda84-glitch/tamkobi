@@ -99,6 +99,15 @@ def filter_notifications(rows: Iterable[Dict[str, Any]], user: Optional[Dict[str
     return [n for n in rows if notification_visible(n, user)]
 
 
+def notification_can_delete(note: Optional[Dict[str, Any]], user: Optional[Dict[str, Any]] = None) -> bool:
+    """Yalnız okunmuş ve kullanıcının görebileceği bildirim silinir."""
+    if not note:
+        return False
+    if not note.get("is_read"):
+        return False
+    return notification_visible(note, user)
+
+
 def notification_doc(
     company_id: str,
     ntype: str,

@@ -1511,6 +1511,23 @@ async def read_notification(notif_id: str):
     await db.notifications.update_one({"_id": notif_id}, {"$set": {"is_read": True}})
     return {"status": "success"}
 
+@api_router.delete("/notifications/{notif_id}")
+async def delete_notification(notif_id: str, request: Request):
+    rec = await db.notifications.find_one({"_id": notif_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Bildirim bulunamadı.")
+    try:
+        user = await get_current_user(request)
+    except Exception:
+        user = None
+    import notify as _notify
+    if not _notify.notification_can_delete(rec, user):
+        if not rec.get("is_read"):
+            raise HTTPException(status_code=400, detail="Yalnız okunan bildirimler silinebilir.")
+        raise HTTPException(status_code=403, detail="Bu bildirimi silemezsiniz.")
+    await db.notifications.delete_one({"_id": notif_id})
+    return {"status": "success", "message": "Bildirim silindi."}
+
 @api_router.post("/notifications/push-token")
 async def register_push_token(req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
     import notify as _notify

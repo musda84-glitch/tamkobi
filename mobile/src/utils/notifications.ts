@@ -71,6 +71,17 @@ export function unreadCount(rows: Notification[] | null | undefined): number {
   return (rows || []).filter((n) => !n.is_read).length;
 }
 
+/** Okunmuş bildirim sola kaydırılarak silinebilir. */
+export function notificationCanDelete(n?: Notification | null): boolean {
+  return !!n?.is_read && !!(n.id || n._id);
+}
+
+export function notificationDeletePath(n?: Notification | null): string | null {
+  const id = String(n?.id || n?._id || "").trim();
+  if (!id || !notificationCanDelete(n)) return null;
+  return `/notifications/${id}`;
+}
+
 export function matchesTileType(type: string | undefined, prefixes: string[]): boolean {
   const t = String(type || "");
   return prefixes.some((p) => t === p || t.startsWith(`${p}_`) || t.startsWith(p));
