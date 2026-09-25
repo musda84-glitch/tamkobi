@@ -1,4 +1,4 @@
-import { channelLogoUrl, channelTr, contactTypeTr, eTypeTr, invoiceTypeTr, isMarketplaceChannel, leaveTr, orderNumberLabel, paymentMethodTr, productTypeTr, statusTr, tradeKindTr, trUpper } from "./labels";
+import { channelLogoUrl, channelTr, contactTypeTr, eTypeTr, invoiceTypeTr, isMarketplaceChannel, leaveTr, orderNumberLabel, paymentMethodTr, productTypeTr, punchLabelColor, punchLabelTone, statusTr, tradeKindTr, trUpper } from "./labels";
 
 describe("labels", () => {
   it("uppercases Turkish i/ı for form labels", () => {
@@ -7,6 +7,12 @@ describe("labels", () => {
     expect(trUpper("indir")).toBe("İNDİR");
     expect(trUpper("PDF indir")).toBe("PDF İNDİR");
     expect("Miktar".toUpperCase()).toBe("MIKTAR");
+    expect(punchLabelTone("Çıkış saati düzelt")).toBe("out");
+    expect(punchLabelTone("Giriş saati")).toBe("in");
+    expect(punchLabelTone("GİRİŞ")).toBe("in");
+    expect(punchLabelTone("Planlanan saat")).toBeNull();
+    expect(punchLabelColor("Çıkış")).toBe("#BE123C");
+    expect(punchLabelColor("Giriş")).toBe("#047857");
   });
 
   it("maps known statuses", () => {
