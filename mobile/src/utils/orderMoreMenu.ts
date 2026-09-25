@@ -26,6 +26,7 @@ export type OrderMoreOrder = {
   form_printed_at?: string | null;
   cargo_tracking_number?: string | null;
   is_held_cart?: boolean;
+  is_active_cart?: boolean;
 };
 
 const PANEL_CHANNELS = new Set(["b2b", "manual", "saha", ""]);
@@ -184,14 +185,17 @@ export function orderMoreMenuItems(
 ): { kind: OrderMoreKind; items: OrderMoreItem[] } {
   const kind = orderMoreMenuKind(ord);
   let items: OrderMoreItem[];
-  if (kind === "held_cart") items = [];
-  else if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
+  if (kind === "held_cart") {
+    const allowDelete = opts.canDelete !== false;
+    return { kind, items: allowDelete ? [orderDeleteMoreItem()] : [] };
+  }
+  if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
   else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems();
   else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
   else items = defaultMoreItems(ord, opts);
   const allowDelete = opts.canDelete !== false;
-  if (allowDelete && (kind === "held_cart" || canDeleteFromMoreMenu(ord))) items = [...items, orderDeleteMoreItem()];
+  if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
   return { kind, items };
 }
 

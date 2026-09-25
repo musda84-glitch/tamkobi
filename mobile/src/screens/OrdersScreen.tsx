@@ -86,12 +86,12 @@ export function OrdersScreen() {
             right={fmtMoney(o.grand_total || o.total_amount)}
             onPress={() => go("OrderDetail", { id: idOf(o) })}
           />
-          {invLabel && invTone ? (
+          {invLabel && invTone && !held ? (
             <Row style={{ paddingHorizontal: 4, paddingBottom: 2 }}>
               <Badge label={invLabel} tone={invTone === "green" ? "green" : "amber"} />
             </Row>
           ) : null}
-          {!held ? <OrderActions order={o} compact onMessage={setMessage} onError={setError} onChanged={load} /> : null}
+          <OrderActions order={o} compact onMessage={setMessage} onError={setError} onChanged={load} />
         </View>
       );})}
     </Screen>

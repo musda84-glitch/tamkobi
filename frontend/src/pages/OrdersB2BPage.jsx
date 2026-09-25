@@ -912,7 +912,7 @@ export default function OrdersB2BPage() {
               >
                 <div className="flex justify-between gap-2 items-start">
                   <div className="min-w-0">
-                    <div className="font-mono font-bold text-slate-900 truncate">{ord.order_number}</div>
+                    <div className="font-mono font-bold text-slate-900 truncate">{ord.held_label || ord.order_number}</div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-1">
                       <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">{channelTr(ord.channel)}</span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${orderStatusBadgeClass(ord.order_status)}`}>{statusTr(ord.order_status)}</span>
@@ -926,45 +926,80 @@ export default function OrdersB2BPage() {
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-slate-100" data-testid={`order-actions-mobile-${ord.order_number}`}>
-                  {primary && (
-                    <button
-                      type="button"
-                      onClick={() => handleOrderMoreAction(primary.id, ord)}
-                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold ${primary.className}`}
-                      data-testid={`order-primary-mobile-${ord.order_number}`}
-                    >
-                      {primary.label}
-                    </button>
+                  {isB2BCartOrder(ord) ? (
+                    <>
+                      {canDeleteOrder ? (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!window.confirm(`${ord.held_label || ord.order_number} silinsin mi?`)) return;
+                            try {
+                              await axios.delete(`${API_URL}/orders/${ord.id || ord._id}`);
+                              toast.success("Sepet silindi.");
+                              loadData();
+                            } catch (err) {
+                              toast.error(err.response?.data?.detail || "Silinemedi.");
+                            }
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-rose-600 text-white"
+                          data-testid={`order-delete-mobile-${ord.order_number}`}
+                        >
+                          Sil
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setPrintOrder(ord)}
+                        className={printOrderButtonClass(ord)}
+                        title={printOrderTitle(ord)}
+                        data-testid={`print-order-mobile-${ord.order_number}`}
+                      >
+                        <Printer className="w-4 h-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {primary && (
+                        <button
+                          type="button"
+                          onClick={() => handleOrderMoreAction(primary.id, ord)}
+                          className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold ${primary.className}`}
+                          data-testid={`order-primary-mobile-${ord.order_number}`}
+                        >
+                          {primary.label}
+                        </button>
+                      )}
+                      {!ord.cargo_tracking_number ? (
+                        <button
+                          type="button"
+                          onClick={() => setShipOrder(ord)}
+                          className={cargoActionButtonClass(ord)}
+                          title={cargoActionTitle(ord)}
+                          data-testid={`create-cargo-mobile-${ord.order_number}`}
+                        >
+                          <Truck className="w-4 h-4" />
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setPrintOrder(ord)}
+                        className={printOrderButtonClass(ord)}
+                        title={printOrderTitle(ord)}
+                        data-testid={`print-order-mobile-${ord.order_number}`}
+                      >
+                        <Printer className="w-4 h-4" />
+                      </button>
+                      <OrderMoreMenuButton
+                        ord={ord}
+                        contacts={contacts}
+                        onAction={handleOrderMoreAction}
+                        align="end"
+                        side="top"
+                        testSuffix="-mobile"
+                        canDelete={canDeleteOrder}
+                      />
+                    </>
                   )}
-                  {!ord.cargo_tracking_number && !(isB2BCartOrder(ord)) ? (
-                    <button
-                      type="button"
-                      onClick={() => setShipOrder(ord)}
-                      className={cargoActionButtonClass(ord)}
-                      title={cargoActionTitle(ord)}
-                      data-testid={`create-cargo-mobile-${ord.order_number}`}
-                    >
-                      <Truck className="w-4 h-4" />
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => setPrintOrder(ord)}
-                    className={printOrderButtonClass(ord)}
-                    title={printOrderTitle(ord)}
-                    data-testid={`print-order-mobile-${ord.order_number}`}
-                  >
-                    <Printer className="w-4 h-4" />
-                  </button>
-                  <OrderMoreMenuButton
-                    ord={ord}
-                    contacts={contacts}
-                    onAction={handleOrderMoreAction}
-                    align="end"
-                    side="top"
-                    testSuffix="-mobile"
-                    canDelete={canDeleteOrder}
-                  />
                 </div>
               </div>
             );
@@ -1069,6 +1104,42 @@ export default function OrdersB2BPage() {
                     </td>
                     <td className={`px-3 py-3 text-center overflow-hidden sticky right-0 z-[1] ${selected.includes(ord.id) ? "bg-emerald-50" : "bg-white group-hover/row:bg-slate-50"}`} style={{ width: ORDER_ACTIONS_COL }}>
                       <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>
+                        {isB2BCartOrder(ord) ? (
+                          <>
+                            {canDeleteOrder ? (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!window.confirm(`${ord.held_label || ord.order_number} silinsin mi?`)) return;
+                                  try {
+                                    await axios.delete(`${API_URL}/orders/${ord.id || ord._id}`);
+                                    toast.success("Sepet silindi.");
+                                    loadData();
+                                  } catch (err) {
+                                    toast.error(err.response?.data?.detail || "Silinemedi.");
+                                  }
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                                title="Sepeti sil"
+                                data-testid={`order-delete-${ord.order_number}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => setPrintOrder(ord)}
+                              className={printOrderButtonClass(ord)}
+                              title={printOrderTitle(ord)}
+                              aria-label={printOrderTitle(ord)}
+                              data-testid={`print-order-btn-${ord.order_number}`}
+                              data-printed={ord.form_printed_at ? "1" : "0"}
+                            >
+                              <Printer className="w-4 h-4" />
+                            </button>
+                          </>
+                        ) : (
+                          <>
                         {!ord.is_invoiced && !ord.invoice_id && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {!ord.is_invoiced ? (
                           ord.invoice_id ? (
@@ -1164,6 +1235,8 @@ export default function OrdersB2BPage() {
                           onAction={handleOrderMoreAction}
                           canDelete={canDeleteOrder}
                         />
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

@@ -768,15 +768,26 @@ export function OrderActions({
   const showInvoiced = isOrderFullyInvoiced(order);
   const showEFatura = canShowEFaturaOption(contactFlag);
   const formPrinted = !!order.form_printed_at;
+  const isCartOrder = !!(order as { is_held_cart?: boolean; is_active_cart?: boolean }).is_held_cart
+    || !!(order as { is_active_cart?: boolean }).is_active_cart
+    || order.order_status === "held_cart"
+    || order.order_status === "active_cart";
 
   const { kind, items: moreItems } = orderMoreMenuItems(order, {
     eBelgeItems: showEBelge ? eBelgeMenuItems(showEFatura) : [],
     canDelete: showDelete,
   });
-  const primary = mobilePrimaryAction(order);
+  const primary = isCartOrder ? null : mobilePrimaryAction(order);
   const printTone = formPrinted ? "violet" : "slate";
 
-  const toolbar: ActionDef[] = [
+  const toolbar: ActionDef[] = isCartOrder
+    ? [
+        ...(showDelete
+          ? [{ key: "delete", label: "Sil", icon: "trash" as const, tone: "rose" as const, busyKey: "delete", testID: `order-delete-${oid}`, onPress: remove }]
+          : []),
+        { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm },
+      ]
+    : [
     ...(showDelete
       ? [{ key: "delete", label: "Sil", icon: "trash" as const, tone: "rose" as const, busyKey: "delete", testID: `order-delete-${oid}`, onPress: remove }]
       : []),
