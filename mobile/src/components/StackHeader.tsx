@@ -42,6 +42,13 @@ export function HeaderTitle({
   );
 }
 
+export function headerBackOptions(fallback?: Href) {
+  return {
+    headerBackVisible: false as const,
+    headerLeft: () => <HeaderBack fallback={fallback} />,
+  };
+}
+
 export function iconHeaderOptions(opts: {
   title: string;
   icon: keyof typeof Ionicons.glyphMap;
@@ -52,9 +59,10 @@ export function iconHeaderOptions(opts: {
 }) {
   return {
     title: opts.title,
-    headerBackVisible: false,
     headerTitleAlign: "left" as const,
-    headerLeft: opts.back === false ? undefined : () => <HeaderBack fallback={opts.fallback} />,
+    ...(opts.back === false
+      ? { headerBackVisible: false as const, headerLeft: undefined }
+      : headerBackOptions(opts.fallback)),
     headerTitle: () => (
       <HeaderTitle title={opts.title} icon={opts.icon} color={opts.color} testID={opts.testID} />
     ),

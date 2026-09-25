@@ -18,6 +18,7 @@ import { LocationPicker, type LocationValue } from "../components/LocationPicker
 import { ProductPickRow } from "../components/ProductPickRow";
 import { ProductThumb } from "../components/ProductThumb";
 import { QuoteActions } from "../components/QuoteActions";
+import { headerBackOptions } from "../components/StackHeader";
 import { colors } from "../theme";
 import type { Contact, Invoice, Product } from "../types";
 import { invoiceListSubtitle } from "../utils/invoiceDraft";
@@ -773,6 +774,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         <Stack.Screen
           options={{
             title: "Teklif",
+            ...headerBackOptions("/quotes"),
             headerTitle: () => (
               <View testID="quote-header-title" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <Ionicons name="create" size={22} color={colors.warning} />
