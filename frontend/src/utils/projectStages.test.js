@@ -5,6 +5,8 @@ import {
   finalProjectStageKey,
   slugStageKey,
   stageToneClass,
+  stageToneLabel,
+  PROJECT_STAGE_TONES,
 } from "./projectStages";
 
 describe("projectStages", () => {
@@ -34,12 +36,11 @@ describe("projectStages", () => {
   });
 
   test("tone labels are Turkish", () => {
-    const { stageToneLabel, PROJECT_STAGE_TONES } = require("./projectStages");
     expect(stageToneLabel("slate")).toBe("Gri");
     expect(stageToneLabel("blue")).toBe("Mavi");
     expect(stageToneLabel("emerald")).toBe("Yeşil");
     expect(PROJECT_STAGE_TONES.map(stageToneLabel)).toEqual([
-      "Gri", "Mavi", "Amber", "Yeşil", "Gül", "Mor", "İndigo",
+      "Gri", "Mavi", "Turuncu", "Yeşil", "Pembe", "Mor", "Lacivert",
     ]);
   });
 
