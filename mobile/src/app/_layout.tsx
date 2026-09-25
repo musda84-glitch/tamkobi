@@ -4,11 +4,13 @@ import { BadgeProvider } from "@/auth/BadgeContext";
 import { ConfirmHost } from "@/components/ConfirmDialog";
 import { LocationBgBridge } from "@/components/LocationBgBridge";
 import { PushBridge } from "@/components/PushBridge";
+import { HeaderBack } from "@/components/StackHeader";
 import { colors } from "@/theme";
 import { typeface } from "@/theme/softFont";
 import { enableSoftFonts, SOFT_FONT_FACES } from "@/theme/softFontRuntime";
+import { stackHeaderFallback } from "@/utils/stackHeader";
 import { useFonts } from "expo-font";
-import { Stack } from "expo-router";
+import { type Href, Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, View } from "react-native";
 
@@ -25,12 +27,16 @@ function RootStack() {
   const onB2b = !signedIn && !!b2bToken;
   return (
     <Stack
-      screenOptions={{
+      screenOptions={({ route }) => ({
         headerTitleStyle: { color: colors.text, ...typeface("800") },
         headerBackTitle: "Geri",
         headerTintColor: colors.primary,
         headerStyle: { backgroundColor: colors.surface },
-      }}
+        headerBackVisible: false,
+        headerLeft: () => (
+          <HeaderBack fallback={stackHeaderFallback(route.name) as Href} />
+        ),
+      })}
     >
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
