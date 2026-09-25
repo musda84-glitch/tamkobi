@@ -48,6 +48,8 @@ export const LAYOUTS = [
 
 export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, onPrinted }) => {
   const [tpl, setTpl] = useState(null);
+  const [tplKey, setTplKey] = useState(docType);
+  const [formOptions, setFormOptions] = useState([]);
   const [prodById, setProdById] = useState({});
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -84,7 +86,23 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, 
     });
     return () => { loaders.forEach((img) => { img.src = ""; }); };
   }, [items, prodById]);
-  useEffect(() => { const f = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])).catch(() => setTpl({})); f(); window.addEventListener("print-template-saved", f); return () => window.removeEventListener("print-template-saved", f); }, [docType, companyId]);
+  useEffect(() => {
+    const load = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => {
+      const all = r.data || {};
+      const cats = Object.entries(all)
+        .filter(([, v]) => v && v.is_category && v.base_type === docType)
+        .map(([key, v]) => ({ key, label: v.label || v.title_override || key }));
+      setFormOptions([{ key: docType, label: TITLES[docType] || "Varsayılan" }, ...cats]);
+      setTplKey((prev) => {
+        const next = (prev && (prev === docType || cats.some((c) => c.key === prev))) ? prev : docType;
+        setTpl(all[next] || all[docType] || {});
+        return next;
+      });
+    }).catch(() => setTpl({}));
+    load();
+    window.addEventListener("print-template-saved", load);
+    return () => window.removeEventListener("print-template-saved", load);
+  }, [docType, companyId]);
   useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [docType, doc.installment_plan, doc.id]);
   useEffect(() => {
     if (!compactForm) return undefined;
@@ -110,7 +128,18 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, 
   }, [compactForm, companyId, doc.contact_id, doc.contact_name, doc.customer_name, doc.contact_balance]);
   if (!tpl) return null;
   const layout = tpl.layout || "classic";
-  const pickLayout = async (l) => { const next = { ...tpl, layout: l }; setTpl(next); try { await axios.put(`${API_URL}/companies/${companyId}/print-templates/${docType}`, next); } catch { /* keep local */ } };
+  const pickLayout = async (l) => {
+    const next = { ...tpl, layout: l };
+    setTpl(next);
+    try { await axios.put(`${API_URL}/companies/${companyId}/print-templates/${encodeURIComponent(tplKey)}`, next); } catch { /* keep local */ }
+  };
+  const pickForm = async (key) => {
+    setTplKey(key);
+    try {
+      const r = await axios.get(`${API_URL}/companies/${companyId}/print-templates`);
+      setTpl(r.data?.[key] || r.data?.[docType] || {});
+    } catch { /* keep */ }
+  };
   const number = docType === "quote" ? doc.quote_number : docType === "order" ? doc.order_number : (doc.invoice_number || doc.quote_number || "");
   const customer = doc.contact_name || doc.customer_name || "";
   const total = doc.grand_total ?? doc.total_amount ?? 0;
@@ -136,6 +165,16 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, 
         <div className="flex items-center justify-between px-5 py-3 border-b no-print print:hidden">
           <span className="text-xs font-bold text-slate-700">Yazdırma Önizleme — {TITLES[docType]}</span>
           <div className="flex items-center gap-2">
+            {formOptions.length > 1 ? (
+              <select
+                value={tplKey}
+                onChange={(e) => pickForm(e.target.value)}
+                className="border rounded-lg px-2 py-1.5 text-xs font-semibold bg-white"
+                data-testid="print-form-category-select"
+              >
+                {formOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+              </select>
+            ) : null}
             <button onClick={() => setPickerOpen(!pickerOpen)} className={`flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50 ${pickerOpen ? "bg-slate-100" : ""}`} data-testid="print-layout-toggle-btn"><LayoutTemplate className="w-3.5 h-3.5" /> Şablon: {LAYOUTS.find((l) => l[0] === layout)?.[1]}</button>
             {onEditTemplate && <button onClick={onEditTemplate} className="flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50" data-testid="print-edit-template-btn"><Settings2 className="w-3.5 h-3.5" /> Form Düzenle</button>}
             <button
@@ -386,24 +425,46 @@ export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, 
 
 export const PrintTemplateEditor = ({ companyId, docType, onClose, onSaved }) => {
   const [tpl, setTpl] = useState(null);
-  useEffect(() => { axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => setTpl(r.data[docType])); }, [companyId, docType]);
+  useEffect(() => {
+    axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => {
+      setTpl(r.data?.[docType] || { title_override: "", primary_color: "#059669", header_note: "", footer_note: "", font_size: "sm", layout: "classic", paper: "A4" });
+    });
+  }, [companyId, docType]);
   if (!tpl) return null;
   const set = (k, v) => setTpl({ ...tpl, [k]: v });
-  const save = async () => { const r = await axios.put(`${API_URL}/companies/${companyId}/print-templates/${docType}`, tpl); window.dispatchEvent(new Event("print-template-saved")); onSaved?.(r.data); onClose(); };
+  const isCategory = !!tpl.is_category || (docType && docType.includes("__"));
+  const baseType = tpl.base_type || (isCategory ? docType.split("__")[0] : docType);
+  const heading = isCategory
+    ? (tpl.label || tpl.title_override || "Özel form")
+    : (TITLES[docType] || docType);
+  const save = async () => {
+    const r = await axios.put(`${API_URL}/companies/${companyId}/print-templates/${encodeURIComponent(docType)}`, tpl);
+    window.dispatchEvent(new Event("print-template-saved"));
+    onSaved?.(r.data);
+    onClose();
+  };
   return (
     <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-3 text-xs shadow-2xl" data-testid="print-template-editor">
-        <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">Form Düzenle — {TITLES[docType]}</h3><button onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+        <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">Form Düzenle — {heading}</h3><button onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+        {!isCategory && (
+          <p className="text-[10px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5" data-testid="tpl-category-hint">
+            Başlık yazıp kaydederseniz, bu belge türüne bağlı yeni bir form kategorisi oluşur. Varsayılan form başlığı boş kalır.
+          </p>
+        )}
         <div className="grid grid-cols-2 gap-2">
-          <div><label className="block font-semibold mb-1">Başlık (boş = varsayılan)</label><input value={tpl.title_override} onChange={(e) => set("title_override", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="tpl-title-input" /></div>
-          <div><label className="block font-semibold mb-1">Ana Renk</label><input type="color" value={tpl.primary_color} onChange={(e) => set("primary_color", e.target.value)} className="w-full h-9 bg-slate-50 border rounded-lg" data-testid="tpl-color-input" /></div>
+          <div><label className="block font-semibold mb-1">Başlık (boş = varsayılan)</label><input value={tpl.title_override || ""} onChange={(e) => set("title_override", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="tpl-title-input" placeholder={isCategory ? "Kategori adı" : "Örn. PROFORMA"} /></div>
+          <div><label className="block font-semibold mb-1">Ana Renk</label><input type="color" value={tpl.primary_color || "#059669"} onChange={(e) => set("primary_color", e.target.value)} className="w-full h-9 bg-slate-50 border rounded-lg" data-testid="tpl-color-input" /></div>
         </div>
-        <div><label className="block font-semibold mb-1">Üst Not</label><input value={tpl.header_note} onChange={(e) => set("header_note", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2" /></div>
-        <div><label className="block font-semibold mb-1">Alt Not</label><textarea value={tpl.footer_note} onChange={(e) => set("footer_note", e.target.value)} rows={2} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="tpl-footer-input" /></div>
+        <div><label className="block font-semibold mb-1">Üst Not</label><input value={tpl.header_note || ""} onChange={(e) => set("header_note", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2" /></div>
+        <div><label className="block font-semibold mb-1">Alt Not</label><textarea value={tpl.footer_note || ""} onChange={(e) => set("footer_note", e.target.value)} rows={2} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="tpl-footer-input" /></div>
         <div className="grid grid-cols-2 gap-2">
-          <div><label className="block font-semibold mb-1">Yazı Boyutu</label><select value={tpl.font_size} onChange={(e) => set("font_size", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2"><option value="xs">Küçük</option><option value="sm">Normal</option><option value="base">Büyük</option></select></div>
+          <div><label className="block font-semibold mb-1">Yazı Boyutu</label><select value={tpl.font_size || "sm"} onChange={(e) => set("font_size", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2"><option value="xs">Küçük</option><option value="sm">Normal</option><option value="base">Büyük</option></select></div>
           <div><label className="block font-semibold mb-1">Şablon</label><select value={tpl.layout || "classic"} onChange={(e) => set("layout", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="tpl-layout-select">{LAYOUTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
-          <div><label className="block font-semibold mb-1">Kağıt</label><select value={tpl.paper} onChange={(e) => set("paper", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2"><option>A4</option><option>A5</option></select></div>
+          <div><label className="block font-semibold mb-1">Kağıt</label><select value={tpl.paper || "A4"} onChange={(e) => set("paper", e.target.value)} className="w-full bg-slate-50 border rounded-lg p-2"><option>A4</option><option>A5</option></select></div>
+          {isCategory ? (
+            <div><label className="block font-semibold mb-1">Bağlı tür</label><div className="w-full bg-slate-50 border rounded-lg p-2 font-semibold text-slate-600" data-testid="tpl-base-type">{TITLES[baseType] || baseType}</div></div>
+          ) : null}
         </div>
         <div className="grid grid-cols-2 gap-1.5">{[["show_logo", "Logo göster"], ["show_tax_info", "Vergi bilgileri"], ["show_bank_info", "Banka / IBAN"], ["show_signature", "Kaşe / İmza alanı"], ["show_barcode", "Barkod / SKU"], ["show_images", "Ürün resimleri"]].map(([k, l]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5 cursor-pointer"><input type="checkbox" checked={!!tpl[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`tpl-${k}`} /><span className="font-semibold">{l}</span></label>)}</div>
         <div><div className="font-semibold mb-1 text-slate-500 uppercase text-[10px]">Fiyat & Not Görünümü</div><div className="grid grid-cols-2 gap-1.5">{[["hide_line_prices", "Satır fiyatlarını gizle", false], ["hide_vat", "KDV'yi gizle", false], ["hide_all_prices", "Tüm fiyatları gizle (sevk/çeki listesi)", false], ["show_item_notes", "Ürün açıklaması altında satır notu", true], ["show_order_notes", "Sipariş notlarını göster", true], ["show_qty_total", "Miktarların toplamını göster", false]].map(([k, l, def]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5 cursor-pointer"><input type="checkbox" checked={tpl[k] === undefined ? def : !!tpl[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`tpl-${k}`} /><span className="font-semibold">{l}</span></label>)}</div></div>
