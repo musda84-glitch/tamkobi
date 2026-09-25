@@ -773,7 +773,7 @@ export function OrderActions({
     || order.order_status === "held_cart"
     || order.order_status === "active_cart";
 
-  const { kind, items: moreItems } = orderMoreMenuItems(order, {
+  const { items: moreItems } = orderMoreMenuItems(order, {
     eBelgeItems: showEBelge ? eBelgeMenuItems(showEFatura) : [],
     canDelete: showDelete,
   });
