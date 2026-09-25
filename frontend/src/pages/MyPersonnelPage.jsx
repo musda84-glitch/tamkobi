@@ -361,7 +361,15 @@ export default function MyPersonnelPage() {
                   showAtolye
                   approveBusy={taskBusyId === t.id}
                   onApprove={() => completeTask(t)}
-                  onChanged={() => load()}
+                  onChanged={(next) => {
+                    if (next?.id) {
+                      setData((prev) => prev ? {
+                        ...prev,
+                        tasks: (prev.tasks || []).map((row) => (row.id === next.id ? { ...row, ...next } : row)),
+                      } : prev);
+                    }
+                    load();
+                  }}
                 />
               ))}
             </div>

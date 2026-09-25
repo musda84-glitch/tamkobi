@@ -41,6 +41,7 @@ export type AssignedDuty = {
 export const DUTY_MAPS_ACTION = "Görev yerine git";
 export const DUTY_SITE_ACTION = DUTY_MAPS_ACTION;
 export const DUTY_ATOLYE_ACTION = "Atölyeye git";
+export const DUTY_PHOTO_ACTION = "Resim yükle";
 export const DUTY_COMPLETE_ACTION = "Görev tamamlandı";
 export const DUTY_COMPLETE_BUSY = "Tamamlanıyor…";
 export const DUTY_COMPLETE_APPROVED = "Onaylı";

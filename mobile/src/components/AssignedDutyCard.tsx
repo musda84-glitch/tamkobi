@@ -8,6 +8,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import {
   DUTY_ATOLYE_ACTION,
+  DUTY_PHOTO_ACTION,
   DUTY_COMPLETE_CONFIRM,
   dutyCompleteTitle,
   DUTY_PHOTO_HIDE,
@@ -219,22 +220,24 @@ export function AssignedDutyCard({
             })}
             {!photos.length && reviewPhotos ? <Muted>Henüz iş fotoğrafı yok.</Muted> : null}
           </View>
-          {dutyCanUploadPhotos(duty, reviewPhotos) ? (
-            <PrimaryButton
-              title={busy ? "Yükleniyor…" : "İş fotoğrafı yükle"}
-              onPress={pickPhoto}
-              disabled={busy}
-              color={colors.indigo}
-              testID={`${tid}-photo`}
-            />
-          ) : null}
         </View>
       ) : null}
-      {showWorkshop || onApprove || duty.done ? (
-        <Row>
+      {showWorkshop || onApprove || duty.done || dutyCanUploadPhotos(duty, reviewPhotos) ? (
+        <Row style={{ flexWrap: "wrap" }}>
           {showWorkshop && !duty.done ? (
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, minWidth: 110 }}>
               <PrimaryButton title={DUTY_ATOLYE_ACTION} onPress={onAtolye} color={colors.indigo} testID={`${tid}-atolye`} />
+            </View>
+          ) : null}
+          {dutyCanUploadPhotos(duty, reviewPhotos) ? (
+            <View style={{ flex: 1, minWidth: 110 }}>
+              <PrimaryButton
+                title={busy ? "Yükleniyor…" : DUTY_PHOTO_ACTION}
+                onPress={pickPhoto}
+                disabled={busy}
+                color="#7C3AED"
+                testID={`${tid}-photo`}
+              />
             </View>
           ) : null}
           {duty.done ? (
@@ -255,7 +258,7 @@ export function AssignedDutyCard({
               <Text style={{ color: "#fff", fontWeight: "800", fontSize: 15 }}>{dutyCompleteTitle({ done: true })}</Text>
             </View>
           ) : onApprove ? (
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, minWidth: 110 }}>
               <PrimaryButton
                 title={dutyCompleteTitle({ busy: approveBusy })}
                 onPress={confirmApprove}

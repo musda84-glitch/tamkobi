@@ -8,6 +8,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { workMapsLink } from "../utils/mapsLink";
 import {
   DUTY_ATOLYE_ACTION,
+  DUTY_PHOTO_ACTION,
   DUTY_COMPLETE_CONFIRM,
   dutyCompleteTitle,
   DUTY_PHOTO_HIDE,
@@ -159,21 +160,21 @@ export function AssignedDutyCard({
               );
             })}
             {!photos.length && reviewPhotos ? <div className="text-[10px] text-slate-400">Henüz iş fotoğrafı yok.</div> : null}
-            {dutyCanUploadPhotos(duty, reviewPhotos) && (
-              <label className={`w-14 h-14 rounded-lg border-2 border-dashed flex items-center justify-center cursor-pointer ${busy ? "opacity-50" : "border-indigo-300 text-indigo-700 bg-white"}`} data-testid={`${tid}-photo`}>
-                {busy ? "…" : <ImagePlus className="w-5 h-5" />}
-                <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" capture="environment" className="hidden" disabled={busy} onChange={uploadPhoto} />
-              </label>
-            )}
           </div>
         </div>
       )}
-      {(showWorkshop || onApprove || duty?.done) && (
+      {(showWorkshop || onApprove || duty?.done || dutyCanUploadPhotos(duty, reviewPhotos)) && (
         <div className="flex flex-wrap gap-2">
           {showWorkshop && !duty?.done && (
             <a href="/atolye" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold" data-testid={`${tid}-atolye`}>
               <Factory className="w-3.5 h-3.5" /> {DUTY_ATOLYE_ACTION}
             </a>
+          )}
+          {dutyCanUploadPhotos(duty, reviewPhotos) && (
+            <label className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-bold cursor-pointer ${busy ? "opacity-50" : ""}`} data-testid={`${tid}-photo`}>
+              <ImagePlus className="w-3.5 h-3.5" /> {busy ? "Yükleniyor…" : DUTY_PHOTO_ACTION}
+              <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" capture="environment" className="hidden" disabled={busy} onChange={uploadPhoto} />
+            </label>
           )}
           {duty?.done ? (
             <span className="inline-flex items-center justify-center gap-1.5 w-full py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold" data-testid={`${tid}-approved`}>
