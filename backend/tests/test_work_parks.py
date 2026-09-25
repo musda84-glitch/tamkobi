@@ -2,13 +2,16 @@ from work_parks import (
     append_office_task_photo,
     clear_duty_if_task,
     find_office_task,
+    find_office_task_type,
     find_park,
     is_assignment_done,
     mark_office_task_done,
     mark_project_task_done,
+    normalize_office_task_types,
     normalize_work_parks,
     office_assignment_view,
     office_task_row,
+    office_task_types_for_company,
     station_names_from_parks,
 )
 
@@ -22,6 +25,15 @@ def test_normalize_work_parks():
     assert find_park(parks, "missing") is None
 
 
+def test_office_task_types_separate_from_parks():
+    types = normalize_office_task_types(["Ambar sayım", {"id": "t1", "name": "CNC bakım"}])
+    assert find_office_task_type(types, "t1")["name"] == "CNC bakım"
+    company = {"work_parks": [{"id": "p1", "name": "OEMAK"}], "office_task_types": []}
+    assert office_task_types_for_company(company)[0]["name"] == "OEMAK"
+    company2 = {"work_parks": [{"id": "p1", "name": "OEMAK"}], "office_task_types": [{"id": "t9", "name": "İç iş"}]}
+    assert office_task_types_for_company(company2)[0]["id"] == "t9"
+
+
 def test_station_names_from_parks():
     assert station_names_from_parks([{"name": "Genel"}, "OEMAK", {"name": "OMAKSAN"}, "oemak"]) == ["Genel", "OEMAK", "OMAKSAN"]
     assert station_names_from_parks([], ["Montaj Hattı 1", "QC"]) == ["Montaj Hattı 1", "QC"]
@@ -29,23 +41,22 @@ def test_station_names_from_parks():
 
 
 def test_office_task_row():
-    park = {"id": "makina", "name": "Makina parkuru"}
-    row = office_task_row({"_id": "e1", "full_name": "Ali"}, park, "", "ot_1")
-    assert row == {
-        "id": "ot_1",
-        "kind": "office",
-        "title": "Makina parkuru",
-        "park_id": "makina",
-        "park_name": "Makina parkuru",
-        "done": False,
-        "assignee_id": "e1",
-        "assignee_name": "Ali",
-    }
-    named = office_task_row({"id": "e1", "full_name": "Ali"}, park, "Torna", "ot_2")
+    task_type = {"id": "makina", "name": "Makina parkuru"}
+    row = office_task_row({"_id": "e1", "full_name": "Ali"}, task_type, "", "ot_1")
+    assert row["id"] == "ot_1"
+    assert row["kind"] == "office"
+    assert row["title"] == "Makina parkuru"
+    assert row["task_type_id"] == "makina"
+    assert row["task_type_name"] == "Makina parkuru"
+    assert row["park_id"] == "makina"
+    assert row["park_name"] == "Makina parkuru"
+    assert row["assignee_id"] == "e1"
+    named = office_task_row({"id": "e1", "full_name": "Ali"}, task_type, "Torna", "ot_2")
     assert named["title"] == "Torna"
     view = office_assignment_view(named)
     assert view["kind"] == "office"
     assert view["project_name"] == "Makina parkuru"
+    assert view["task_type_name"] == "Makina parkuru"
     assert view["photos"] == []
     with_photo = {**named, "photos": [{"url": "/api/files/ot.jpg", "task_id": "ot_2"}]}
     assert [p["url"] for p in office_assignment_view(with_photo)["photos"]] == ["/api/files/ot.jpg"]

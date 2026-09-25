@@ -165,7 +165,7 @@ import {
 } from "../utils/personnel";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
-import { findWorkPark, officeTaskPayload, parkSelectGroups, validateOfficeTaskAssign, type WorkPark } from "../utils/workParks";
+import { findOfficeTaskType, officeTaskPayload, officeTaskTypeSelectGroups, validateOfficeTaskAssign, type OfficeTaskType } from "../utils/workParks";
 import { fmtDmy } from "../utils/calendar";
 import { fieldWorkplaceFromProjects, workplaceHint, workplaceShort, type Workplace } from "../utils/workplace";
 import { dutyFromCurrent, pendingDutyPhotoCount, type AssignedDuty } from "../utils/assignedDuty";
@@ -343,8 +343,8 @@ export function PersonnelScreen() {
   const [taskDays, setTaskDays] = useState("");
   const [taskKind, setTaskKind] = useState<"field" | "office">("field");
   const [taskShowCompleted, setTaskShowCompleted] = useState(false);
-  const [workParks, setWorkParks] = useState<WorkPark[]>([]);
-  const [taskParkId, setTaskParkId] = useState("");
+  const [officeTypes, setOfficeTypes] = useState<OfficeTaskType[]>([]);
+  const [taskTypeId, setTaskTypeId] = useState("");
   const [extraEmp, setExtraEmp] = useState<Employee | null>(null);
   const [extraKind, setExtraKind] = useState<"bonus" | "overtime">("bonus");
   const [extraAmount, setExtraAmount] = useState("");
@@ -582,18 +582,18 @@ export function PersonnelScreen() {
     setTaskId("");
     setTaskTitle("");
     setTaskDays("");
-    setTaskParkId("");
+    setTaskTypeId("");
     setTaskShowCompleted(false);
     setBusy(true);
     try {
-      const [rows, parksRes] = await Promise.all([
+      const [rows, typesRes] = await Promise.all([
         get<ProjectWithTasks[]>(client, "/projects", { company_id: companyId, light: 1 }),
-        get<{ parks?: WorkPark[] }>(client, `/companies/${companyId}/work-parks`).catch(() => ({ parks: [] })),
+        get<{ types?: OfficeTaskType[] }>(client, `/companies/${companyId}/office-task-types`).catch(() => ({ types: [] })),
       ]);
       setProjects(rows || []);
-      const parks = parksRes?.parks || [];
-      setWorkParks(parks);
-      setTaskParkId(parks[0]?.id || "");
+      const types = typesRes?.types || [];
+      setOfficeTypes(types);
+      setTaskTypeId(types[0]?.id || "");
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Projeler yüklenemedi."));
@@ -848,16 +848,16 @@ export function PersonnelScreen() {
   const saveTaskAssign = async () => {
     if (!taskEmp) return;
     if (taskKind === "office") {
-      const invalid = validateOfficeTaskAssign(taskParkId);
+      const invalid = validateOfficeTaskAssign(taskTypeId);
       if (invalid) { setError(invalid); return; }
-      const park = findWorkPark(workParks, taskParkId);
+      const taskType = findOfficeTaskType(officeTypes, taskTypeId);
       setBusy(true);
       try {
-        await post(client, `/personnel/employees/${idOf(taskEmp)}/office-tasks`, officeTaskPayload(park, taskTitle));
+        await post(client, `/personnel/employees/${idOf(taskEmp)}/office-tasks`, officeTaskPayload(taskType, taskTitle));
         setTaskEmp(null);
         setTaskDays("");
-        setTaskParkId("");
-        setMessage(`${taskEmp.full_name} · ${park?.name || "iç görev"}`);
+        setTaskTypeId("");
+        setMessage(`${taskEmp.full_name} · ${taskType?.name || "iç görev"}`);
         await load();
       } catch (err) {
         setError(apiErrorMessage(err, "Görev ataması kaydedilemedi."));
@@ -2842,7 +2842,7 @@ export function PersonnelScreen() {
         visible={!!taskEmp}
         title="Görev ata"
         subtitle={taskEmp ? `${taskEmp.full_name} · atama bu personele · yapacağı işi seçin` : undefined}
-        onClose={() => { setTaskEmp(null); setTaskDays(""); setTaskId(""); setTaskTitle(""); setTaskKind("field"); setTaskParkId(""); }}
+        onClose={() => { setTaskEmp(null); setTaskDays(""); setTaskId(""); setTaskTitle(""); setTaskKind("field"); setTaskTypeId(""); }}
         testID="task-assign-sheet"
       >
         {taskEmp && openEmployeeTasks(cards[idOf(taskEmp)]).length ? (
@@ -2901,29 +2901,29 @@ export function PersonnelScreen() {
             )}
           </>
         ) : (
-          <Muted testID="task-assign-office-hint">İç görev ofiste / parkurda yapılır; konum kontrolü ücreti etkilemez.</Muted>
+          <Muted testID="task-assign-office-hint">İç görev iş merkezinde yapılır; konum kontrolü ücreti etkilemez. Parkur listesinden bağımsızdır.</Muted>
         )}
         {taskKind === "office" ? (
-          workParks.length ? (
+          officeTypes.length ? (
             <>
               <GroupedSelect
-                label="Parkur"
+                label="İç görev"
                 testID="task-park-select"
-                value={taskParkId}
-                onChange={setTaskParkId}
-                groups={parkSelectGroups(workParks)}
-                emptyLabel="Parkur seçin"
+                value={taskTypeId}
+                onChange={setTaskTypeId}
+                groups={officeTaskTypeSelectGroups(officeTypes)}
+                emptyLabel="İç görev seçin"
               />
               <Field
                 label="Yapacağı iş (opsiyonel)"
                 testID="task-title-input"
                 value={taskTitle}
                 onChangeText={setTaskTitle}
-                placeholder="Boş bırakılırsa parkur adı yazılır"
+                placeholder="Boş bırakılırsa görev adı yazılır"
               />
             </>
           ) : (
-            <Muted testID="task-no-parks-hint">Henüz parkur yok. Firma Ayarları → İç görev parkurları’ndan ekleyin (ör. Makina parkuru).</Muted>
+            <Muted testID="task-no-parks-hint">Henüz iç görev yok. Firma Ayarları → Parkur & İç görev’den ekleyin.</Muted>
           )
         ) : (
           <>

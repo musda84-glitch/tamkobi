@@ -1,4 +1,4 @@
-"""İç görev parkurları (makina parkuru, atölye…)."""
+"""Parkurlar (atölye istasyonları) ve iç görev türleri (personel atama)."""
 
 from __future__ import annotations
 
@@ -7,9 +7,19 @@ import uuid
 from typing import Any, Optional
 
 
-def _slug(name: str, used: set) -> str:
-    raw = re.sub(r"[^a-z0-9]+", "_", name.lower().replace("ı", "i").replace("ş", "s").replace("ç", "c").replace("ğ", "g").replace("ü", "u").replace("ö", "o")).strip("_")
-    key = raw or "park"
+def _slug(name: str, used: set, prefix: str = "item") -> str:
+    raw = re.sub(
+        r"[^a-z0-9]+",
+        "_",
+        name.lower()
+        .replace("ı", "i")
+        .replace("ş", "s")
+        .replace("ç", "c")
+        .replace("ğ", "g")
+        .replace("ü", "u")
+        .replace("ö", "o"),
+    ).strip("_")
+    key = raw or prefix
     n = 2
     out = key
     while out in used:
@@ -19,7 +29,8 @@ def _slug(name: str, used: set) -> str:
     return out
 
 
-def normalize_work_parks(raw: Any) -> list:
+def normalize_named_list(raw: Any, *, limit: int = 40, prefix: str = "item") -> list:
+    """[{id, name}, ...] — parkur veya iç görev kataloğu."""
     rows = raw if isinstance(raw, list) else []
     used: set = set()
     out = []
@@ -34,17 +45,34 @@ def normalize_work_parks(raw: Any) -> list:
             continue
         if not name:
             continue
-        key = pid if pid and pid not in used else _slug(name, used)
+        key = pid if pid and pid not in used else _slug(name, used, prefix=prefix)
         if pid:
             used.add(key)
         out.append({"id": key[:40], "name": name[:80]})
-        if len(out) >= 40:
+        if len(out) >= limit:
             break
     return out
 
 
+def normalize_work_parks(raw: Any) -> list:
+    return normalize_named_list(raw, prefix="park")
+
+
+def normalize_office_task_types(raw: Any) -> list:
+    return normalize_named_list(raw, prefix="ot")
+
+
+def office_task_types_for_company(company: Optional[dict] = None) -> list:
+    """İç görev listesi; yoksa eski tek listeden (work_parks) türet."""
+    company = company or {}
+    types = normalize_office_task_types(company.get("office_task_types"))
+    if types:
+        return types
+    return normalize_work_parks(company.get("work_parks"))
+
+
 def station_names_from_parks(raw: Any, fallback: Optional[list] = None) -> list:
-    """Atölye istasyon filtresi: önce şirket parkur adları, yoksa iş emri istasyonları."""
+    """Atölye istasyon filtresi: şirket parkur adları, yoksa iş emri istasyonları."""
     names: list = []
     seen: set = set()
     for p in normalize_work_parks(raw):
@@ -67,22 +95,43 @@ def station_names_from_parks(raw: Any, fallback: Optional[list] = None) -> list:
     return extra
 
 
-def find_park(parks: list, park_id: Optional[str]) -> Optional[dict]:
-    pid = str(park_id or "")
-    for p in parks or []:
+def find_named(items: list, item_id: Optional[str]) -> Optional[dict]:
+    pid = str(item_id or "")
+    for p in items or []:
         if str(p.get("id") or "") == pid:
             return p
     return None
 
 
-def office_task_row(emp: dict, park: dict, title: str = "", new_id: Optional[str] = None) -> dict:
-    name = (title or "").strip() or park.get("name") or "İç görev"
+def find_park(parks: list, park_id: Optional[str]) -> Optional[dict]:
+    return find_named(parks, park_id)
+
+
+def find_office_task_type(types: list, type_id: Optional[str]) -> Optional[dict]:
+    return find_named(types, type_id)
+
+
+def office_task_row(
+    emp: dict,
+    task_type: dict,
+    title: str = "",
+    new_id: Optional[str] = None,
+    park: Optional[dict] = None,
+) -> dict:
+    """İç görev satırı. task_type zorunlu; park isteğe bağlı (atölye bağlantısı)."""
+    type_name = (task_type or {}).get("name") or "İç görev"
+    name = (title or "").strip() or type_name
+    park = park or {}
+    type_id = (task_type or {}).get("id")
     return {
         "id": new_id or f"ot_{uuid.uuid4().hex[:10]}",
         "kind": "office",
         "title": name,
-        "park_id": park.get("id"),
-        "park_name": park.get("name") or name,
+        "task_type_id": type_id,
+        "task_type_name": type_name,
+        # Eski istemciler / puantaj: park_* alanları tip bilgisini de taşır
+        "park_id": park.get("id") or type_id,
+        "park_name": park.get("name") or type_name,
         "done": False,
         "assignee_id": emp.get("_id") or emp.get("id"),
         "assignee_name": emp.get("full_name") or "Personel",
@@ -135,16 +184,18 @@ def clear_duty_if_task(duty: Any, task_id: str) -> Any:
 
 
 def office_assignment_view(task: dict) -> dict:
-    park_name = task.get("park_name") or ""
+    type_name = task.get("task_type_name") or task.get("park_name") or ""
     photos = [p for p in (task.get("photos") or []) if isinstance(p, dict) and p.get("url")]
     return {
         "id": task.get("id"),
-        "title": task.get("title") or park_name or "İç görev",
+        "title": task.get("title") or type_name or "İç görev",
         "done": bool(task.get("done") or task.get("status") in ("done", "completed")),
         "kind": "office",
+        "task_type_id": task.get("task_type_id") or task.get("park_id"),
+        "task_type_name": type_name,
         "park_id": task.get("park_id"),
-        "park_name": park_name,
-        "project_name": park_name,
+        "park_name": task.get("park_name") or type_name,
+        "project_name": type_name,
         "project_number": "",
         "duration_days": None,
         "due_date": task.get("due_date"),
