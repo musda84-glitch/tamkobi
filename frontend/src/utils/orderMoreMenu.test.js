@@ -36,6 +36,8 @@ describe("orderMoreMenu", () => {
     expect(labels).toContain("E-Fatura XML'i İndir");
     expect(labels).toContain("Kargola");
     expect(labels).not.toContain("Navlungo Siparişi Oluştur");
+    expect(labels).toContain("Pazaryeri Kargo Firmasını Değiştir");
+    expect(labels).not.toContain("Paketli Siparişin Kargo Firmasını Değiştir");
     expect(labels).toContain("Siparişi Excel İndir");
     expect(labels).toContain("Siparişi PDF İndir");
   });

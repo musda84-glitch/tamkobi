@@ -74,6 +74,8 @@ describe("orderMoreMenu web variants", () => {
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Kargola");
     expect(orderMoreMenuItems(ord).items.map((i) => i.id)).toContain("kargola");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Navlungo Siparişi Oluştur");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Pazaryeri Kargo Firmasını Değiştir");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Paketli Siparişin Kargo Firmasını Değiştir");
   });
 
   it("default menu keeps E-Belge + edit / irsaliye / iade", () => {
