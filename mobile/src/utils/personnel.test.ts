@@ -39,6 +39,7 @@ import {
   allowanceDue,
   personnelExpensePayload,
   assignEmployeeToTasks,
+  assignedTaskAfterAssign,
   overtimePayload,
   projectSelectGroups,
   closedProjectCount,
@@ -735,6 +736,12 @@ describe("project task assign", () => {
     expect(assigned.error).toBeNull();
     expect(assigned.tasks[0].assignee_id).toBe("e1");
     expect(assigned.tasks[0].assignee_name).toBe("Ali");
+    const shared = assignEmployeeToTasks(assigned.tasks, { id: "e2", full_name: "Ayşe" }, { taskId: "t1", newId: "t_copy" });
+    expect(shared.tasks).toHaveLength(2);
+    expect(shared.tasks[0]).toMatchObject({ id: "t1", assignee_id: "e1", assignee_name: "Ali" });
+    expect(shared.tasks[1]).toMatchObject({ id: "t_copy", title: "Montaj", assignee_id: "e2", assignee_name: "Ayşe", done: false });
+    expect(assignedTaskAfterAssign(shared.tasks, "e2", "t1")?.id).toBe("t_copy");
+    expect(assignedTaskAfterAssign(assigned.tasks, "e1", "t1")?.id).toBe("t1");
     expect(assignEmployeeToTasks(tasks, { id: "e1" }, { taskId: "missing" }).error).toBe("Görev bulunamadı.");
 
     const created = assignEmployeeToTasks(tasks, { id: "e1", full_name: "Ali" }, { title: "Keşif", newId: "t_new" });
@@ -782,6 +789,6 @@ describe("project task assign", () => {
     ]);
     expect(groups).toHaveLength(1);
     expect(groups[0].label).toBe("Yapılacak işler");
-    expect(groups[0].options.map((o) => o.label)).toEqual(["Montaj"]);
+    expect(groups[0].options.map((o) => o.label)).toEqual(["Montaj · Ali"]);
   });
 });

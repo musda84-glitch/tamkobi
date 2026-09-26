@@ -1919,6 +1919,9 @@ async def update_project(project_id: str, req: Dict[str, Any]):
         allowed["radius_m"] = _normalize_radius_m(allowed.get("radius_m"), 300) or 300
     if "stage_photos" in allowed:
         allowed["stage_photos"] = project_photos.sanitize_stage_photos(allowed["stage_photos"])
+    if isinstance(allowed.get("tasks"), list) and not req.get("replace_assignees"):
+        import work_parks as wp
+        allowed["tasks"] = wp.preserve_other_assignees(prev.get("tasks") or [], allowed["tasks"])
     await db.projects.update_one({"_id": project_id}, {"$set": allowed})
     p = await db.projects.find_one({"_id": project_id})
     if not p:

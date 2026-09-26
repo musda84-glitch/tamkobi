@@ -5,6 +5,7 @@ import { CheckCircle2, Circle, ClipboardList, Loader2, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import {
+  assignedTaskAfterAssign,
   dueDateFromDays,
   empIdOf,
   isClosedProject,
@@ -77,6 +78,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
     id: t.id || `t_${i}`,
     title: t.title || t.name || "",
     done: !!(t.done || t.status === "done" || t.status === "completed"),
+    assignee_id: t.assignee_id || "",
     assignee_name: t.assignee_name || "",
   })).filter((t) => t.title && !t.done);
   const days = kind === "field" ? parseTaskDays(form.duration_days) : null;
@@ -127,9 +129,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
     setBusy(true);
     try {
       await axios.put(`${API_URL}/projects/${project.id || project._id}`, { tasks: next.tasks });
-      const assigned = form.task_id
-        ? next.tasks.find((t) => t.id === form.task_id)
-        : next.tasks[next.tasks.length - 1];
+      const assigned = assignedTaskAfterAssign(next.tasks, empId, form.task_id);
       const work = (assigned?.title || form.title || "iş").trim();
       try {
         await axios.post(`${API_URL}/personnel/employees/${empId}/active-duty`, {
@@ -313,7 +313,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                     <option value="">{form.project_id ? "Yapılacak iş seçin" : "Önce proje seçin"}</option>
                     {projectTasks.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.title}
+                        {t.assignee_name ? `${t.title} · ${t.assignee_name}` : t.title}
                       </option>
                     ))}
                   </select>
@@ -332,7 +332,15 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
                 ) : (
                   <p className="text-[11px] text-slate-500" data-testid="emp-task-who">
                     {employee.full_name} bu işe atanacak
-                    {projectTasks.find((t) => t.id === form.task_id)?.title ? ` · ${projectTasks.find((t) => t.id === form.task_id).title}` : ""}
+                    {(() => {
+                      const picked = projectTasks.find((t) => t.id === form.task_id);
+                      if (!picked?.title) return "";
+                      const owner = String(picked.assignee_id || "");
+                      if (owner && owner !== empId && picked.assignee_name) {
+                        return ` · ${picked.title} · ${picked.assignee_name} durur`;
+                      }
+                      return ` · ${picked.title}`;
+                    })()}
                   </p>
                 )}
                 <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-task-field-hint">

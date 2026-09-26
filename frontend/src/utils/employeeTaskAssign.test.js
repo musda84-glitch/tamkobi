@@ -2,6 +2,7 @@ import {
   dueDateFromDays,
   isClosedProject,
   isFieldTask,
+  assignedTaskAfterAssign,
   nextTasksAfterAssign,
   normalizeTaskKind,
   parseTaskDays,
@@ -15,6 +16,12 @@ describe("employee task assign", () => {
     const assigned = nextTasksAfterAssign(tasks, { id: "e1", full_name: "Ali" }, { taskId: "t1" });
     expect(assigned.error).toBeNull();
     expect(assigned.tasks[0]).toMatchObject({ assignee_id: "e1", assignee_name: "Ali", kind: "field" });
+    const shared = nextTasksAfterAssign(assigned.tasks, { id: "e2", full_name: "Ayşe" }, { taskId: "t1", newId: "t_copy" });
+    expect(shared.tasks).toHaveLength(2);
+    expect(shared.tasks[0]).toMatchObject({ id: "t1", assignee_id: "e1" });
+    expect(shared.tasks[1]).toMatchObject({ id: "t_copy", title: "Montaj", assignee_id: "e2", assignee_name: "Ayşe" });
+    expect(assignedTaskAfterAssign(shared.tasks, "e2", "t1").id).toBe("t_copy");
+    expect(assignedTaskAfterAssign(assigned.tasks, "e1", "t1").id).toBe("t1");
     expect(nextTasksAfterAssign(tasks, { id: "e1" }, { taskId: "missing" }).error).toBe("Görev bulunamadı.");
 
     const created = nextTasksAfterAssign(tasks, { id: "e1", full_name: "Ali" }, { title: "Keşif", newId: "t_new" });

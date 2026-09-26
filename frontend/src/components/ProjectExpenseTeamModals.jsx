@@ -191,7 +191,7 @@ export function ProjectTeamTasksModal({ project, companyId, onClose, onSaved }) 
       .filter((t) => t.title);
     setBusy(true);
     try {
-      await axios.put(`${API_URL}/projects/${project.id}`, { tasks: cleaned });
+      await axios.put(`${API_URL}/projects/${project.id}`, { tasks: cleaned, replace_assignees: true });
       toast.success("Personel ve görev dağılımı kaydedildi.");
       onSaved?.();
       onClose();
