@@ -62,13 +62,9 @@ export function cardPunchAttempts(today, action) {
 }
 
 export function cardPunchTimeHint(attempts, action) {
-  if (action === "check_in" || action === "check_out") {
-    return action === "check_in"
-      ? "Giriş saati doğrudan kaydedilir; personel onayı yok."
-      : "Çıkış saati doğrudan kaydedilir; personel onayı yok.";
-  }
-  if (Number(attempts) >= 2) return "3. deneme: personel onayı atlanır.";
-  return "Onaylayınca değişiklik personelin teyidine düşer.";
+  if (action === "check_out") return "Çıkış saati doğrudan kaydedilir; personel onayı yok.";
+  if (action === "check_in") return "Giriş saati doğrudan kaydedilir; personel onayı yok.";
+  return "Saat doğrudan kaydedilir; personel onayı yok.";
 }
 
 export function cardPunchRequiresTime(time) {

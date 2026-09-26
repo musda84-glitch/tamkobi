@@ -88,7 +88,9 @@ def test_manager_check_out_skips_employee_approval():
     assert first["attempts"] == 1
     assert first["auto_confirm"] is True
     assert first["edit"]["pending_employee"] is False
+    assert first["edit"]["auto_confirmed"] is True
     assert first["field"] == "check_out"
+    assert "Çıkış saati kaydedildi" in manager_time_edit_result_message(first)
     assert "onayı gerekmez" in manager_time_edit_result_message(first)
     assert manager_time_edit_skips_employee(3) is True
 
