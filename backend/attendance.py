@@ -390,8 +390,8 @@ def apply_manager_time_edit_round(existing: Optional[dict], rec: Optional[dict],
     if not field:
         return {"edit": None, "rounds": rounds, "auto_confirm": False, "attempts": 0, "field": None}
     attempts = time_edit_attempts(existing, field) + 1
-    # Unutulan giriş düzeltmesi personel onayı istemez; çıkış eski 3-deneme kuralında kalır.
-    skip = field == "check_in" or manager_time_edit_skips_employee(attempts)
+    # Yönetici puantaj Giriş/Çıkış personel onayı istemez.
+    skip = field in ("check_in", "check_out") or manager_time_edit_skips_employee(attempts)
     edit = manager_time_edit_doc(existing, rec, now) or {
         "prev_check_in": (existing or {}).get("check_in"),
         "prev_check_out": (existing or {}).get("check_out"),
@@ -414,7 +414,9 @@ def manager_time_edit_result_message(round_info: Optional[dict]) -> str:
     if info.get("auto_confirm"):
         if field == "check_in":
             return "Giriş saati kaydedildi (personel onayı gerekmez)."
-        return "Saat personel onayı olmadan kaydedildi (3. deneme)."
+        if field == "check_out":
+            return "Çıkış saati kaydedildi (personel onayı gerekmez)."
+        return "Saat personel onayı olmadan kaydedildi."
     return f"Saat personel onayına gönderildi ({attempts}/3)."
 
 
@@ -1786,6 +1788,37 @@ def summarize(rows: list) -> dict:
             "overtime_hours": round(sum(r.get("overtime_hours", 0) for r in present), 2), "late_count": sum(1 for r in present if r.get("late_minutes", 0) > 0),
             "late_minutes": sum(r.get("late_minutes", 0) for r in present), "off_day_count": sum(1 for r in present if r.get("is_off_day")),
             "unconfirmed": sum(1 for r in rows if not r.get("employee_confirmed"))}
+
+
+def enrich_puantaj_day_wages(days: list, records: list, employee: dict, schedule: Optional[dict] = None) -> dict:
+    """Gün satırlarına hesaplanan ücret + f.mesai ücreti; özet toplamları döner."""
+    by_date = {str(r.get("date") or "")[:10]: r for r in (records or []) if r.get("date")}
+    rate = overtime_rate(schedule or {}, employee or {})
+    wage_total = 0.0
+    overtime_pay_total = 0.0
+    for d in days or []:
+        if d.get("status") != "present":
+            d["wage"] = None
+            d["overtime_pay"] = 0.0
+            continue
+        rec = by_date.get(d.get("date") or "")
+        wage = personnel_wage.calculated_day_wage(employee, rec, schedule)
+        d["wage"] = wage
+        wage_total += wage
+        ot_h = float(d.get("overtime_hours") or 0)
+        if ot_h > 0:
+            unit = rate["holiday_rate"] if d.get("is_off_day") else rate["weekday_rate"]
+            ot_pay = round(ot_h * unit, 2)
+        else:
+            ot_pay = 0.0
+        d["overtime_pay"] = ot_pay
+        overtime_pay_total += ot_pay
+    return {
+        "wage_total": round(wage_total, 2),
+        "overtime_pay": round(overtime_pay_total, 2),
+        "weekday_rate": rate.get("weekday_rate"),
+        "holiday_rate": rate.get("holiday_rate"),
+    }
 
 
 STATUS_LABELS = {
@@ -4210,16 +4243,25 @@ async def employee_puantaj(emp_id: str, month: Optional[str] = None):
         "end_date": {"$gte": f"{month}-01"},
     }).to_list(200)
     days = build_employee_month_days(month, rows, leaves, schedule, emp.get("start_date"), emp.get("end_date"))
+    wage_info = enrich_puantaj_day_wages(days, rows, emp, schedule)
     bal = leave_year_balance(emp)
     archives = await _db.leave_year_archives.find({"employee_id": emp_id}).sort("year", -1).to_list(20)
     return {
         "employee_id": emp_id,
         "employee_name": emp.get("full_name"),
         "month": month,
-        "summary": summarize(rows),
+        "summary": {
+            **summarize(rows),
+            "wage_total": wage_info["wage_total"],
+            "overtime_pay": wage_info["overtime_pay"],
+        },
         "days": days,
         "day_labels": DAY_LABELS,
         "schedule": {"start": schedule.get("start"), "end": schedule.get("end"), "work_days": schedule.get("work_days")},
+        "overtime_rates": {
+            "weekday_rate": wage_info["weekday_rate"],
+            "holiday_rate": wage_info["holiday_rate"],
+        },
         "leave_year": bal,
         "leave_archives": [_clean(a) for a in archives],
     }

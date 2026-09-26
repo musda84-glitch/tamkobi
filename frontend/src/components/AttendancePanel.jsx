@@ -151,7 +151,7 @@ export const AttendancePanel = ({ companyId }) => {
                     </label>
                   ) : null}
                   <div className="text-[10px] text-slate-600">{cardPunchConfirmMessage(listPunch.action, listPunch.name)}</div>
-                  {listPunch.action !== "absent" ? <div className="text-[10px] font-semibold text-amber-700" data-testid={`att-punch-hint-${s.employee_id}`}>{cardPunchTimeHint(cardPunchAttempts(s.today, listPunch.action))}</div> : null}
+                  {listPunch.action !== "absent" ? <div className="text-[10px] font-semibold text-amber-700" data-testid={`att-punch-hint-${s.employee_id}`}>{cardPunchTimeHint(cardPunchAttempts(s.today, listPunch.action), listPunch.action)}</div> : null}
                   <div className="flex items-center gap-1.5">
                     <button type="button" disabled={punchBusyId === s.employee_id} onClick={() => {
                       if (listPunch.action === "absent") { act(s.employee_id, { status: "absent" }); return; }
