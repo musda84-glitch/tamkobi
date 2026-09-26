@@ -697,11 +697,6 @@ export default function PersonnelPage() {
                   {isDailyWage(emp) ? <span className="inline-block mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`employee-yevmiye-badge-${empKey}`}>Yevmiye</span> : null}
                   <div className="text-xs text-indigo-600 font-semibold">{emp.position}</div>
                   <div className="text-[11px] text-slate-400">{emp.department}</div>
-                  {emp.workplace?.kind === "task" ? (
-                    <div className="mt-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1" data-testid={`employee-workplace-${empKey}`}>
-                      Görev · {workplaceShort(emp.workplace)}
-                    </div>
-                  ) : null}
                   </div>
                 </div>
                 <div className="flex items-center flex-wrap justify-end gap-1 shrink-0">
@@ -757,6 +752,11 @@ export default function PersonnelPage() {
                   })()}
                 </div>
               </div>
+              {emp.workplace?.kind === "task" ? (
+                <div className="w-full text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1" data-testid={`employee-workplace-${empKey}`}>
+                  Görev · {workplaceShort(emp.workplace)}
+                </div>
+              ) : null}
 
               <div className="text-xs text-slate-600 space-y-1 pt-2 border-t border-slate-100">
                 <div className="flex items-center gap-1.5">
