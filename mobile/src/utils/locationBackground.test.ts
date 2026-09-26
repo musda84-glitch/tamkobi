@@ -18,8 +18,8 @@ describe("location background tracking", () => {
     expect(locationBgDistanceM({ interval_minutes: 15 })).toBe(80);
   });
 
-  it("runs only with consent, tracking, token and not after checkout", () => {
-    expect(shouldRunLocationBackground({ consented: true, enabled: true, token: "t" })).toBe(true);
+  it("never runs background location tracking", () => {
+    expect(shouldRunLocationBackground({ consented: true, enabled: true, token: "t" })).toBe(false);
     expect(shouldRunLocationBackground({ consented: true, enabled: true, token: "t", checkedOut: true })).toBe(false);
     expect(shouldRunLocationBackground({ consented: false, enabled: true, token: "t" })).toBe(false);
     expect(shouldRunLocationBackground({ consented: true, enabled: true, token: "t", platform: "web" })).toBe(false);

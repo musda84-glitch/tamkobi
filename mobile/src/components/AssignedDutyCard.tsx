@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import React, { useState } from "react";
+import * as Location from "expo-location";
+import React, { useEffect, useState } from "react";
 import { Alert, Linking, Platform, Pressable, Text, View } from "react-native";
 import { fileUrl, post, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -34,6 +35,13 @@ import {
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import { appendUploadBlob, pickBrowserImage, resolveUploadBlob } from "../utils/formDataFile";
 import { mapsLink } from "../utils/geo";
+import {
+  dutyHasTaskSiteCoords,
+  markTaskSitePresenceReported,
+  shouldReportTaskSitePresence,
+  taskSitePresencePayload,
+  type TaskSitePresenceResult,
+} from "../utils/taskSitePresence";
 import { Badge, Card, Muted, PrimaryButton, Row } from "./kit";
 
 export function AssignedDutyCard({
@@ -45,6 +53,7 @@ export function AssignedDutyCard({
   showAtolye = false,
   onAtolye,
   reviewPhotos = false,
+  reportSitePresence = false,
   testID,
 }: {
   duty: AssignedDuty;
@@ -55,6 +64,8 @@ export function AssignedDutyCard({
   showAtolye?: boolean;
   onAtolye?: () => void;
   reviewPhotos?: boolean;
+  /** Personelin kendi görev kartında tek seferlik görev yeri varlığı. */
+  reportSitePresence?: boolean;
   testID?: string;
 }) {
   const { client } = useAuth();
@@ -63,6 +74,7 @@ export function AssignedDutyCard({
   const [busy, setBusy] = useState(false);
   const [visBusy, setVisBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [siteMsg, setSiteMsg] = useState<string | null>(null);
   const flow = dutyWorkflow(duty);
   const progress = dutyWorkflowProgress(duty);
   const photos = dutyPhotos(duty);
@@ -71,6 +83,35 @@ export function AssignedDutyCard({
   const showWorkshop = dutyShowAtolye(duty, showAtolye) && Boolean(onAtolye);
   const showSite = dutyShowSite(duty);
   const canReview = reviewPhotos && field && Boolean(duty.project_id);
+
+  useEffect(() => {
+    if (!reportSitePresence || duty.done) return;
+    const hasCoords = dutyHasTaskSiteCoords(duty);
+    if (!shouldReportTaskSitePresence({ field, taskId: duty.id, hasCoords, consented: true })) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const perm = await Location.requestForegroundPermissionsAsync();
+        if (perm.status !== "granted" || cancelled) return;
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (cancelled || !duty.id) return;
+        markTaskSitePresenceReported(duty.id);
+        const r = await post<TaskSitePresenceResult>(
+          client,
+          "/personnel/attendance/self/task-site-presence",
+          taskSitePresencePayload(duty.id, {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy_m: pos.coords.accuracy,
+          }),
+        );
+        if (!cancelled && r.message) setSiteMsg(r.message);
+      } catch {
+        /* konum izni / API — sessiz */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [client, duty.done, duty.id, duty.latitude, duty.longitude, field, reportSitePresence]);
 
   const pickPhoto = async () => {
     if (!duty.id) { setError("Görev numarası yok."); return; }
@@ -148,6 +189,7 @@ export function AssignedDutyCard({
         <Badge label={duty.done ? "Tamam" : "Açık"} tone={duty.done ? "green" : "indigo"} />
       </Row>
       {error ? <Text style={{ color: colors.danger, fontWeight: "700", fontSize: 12 }}>{error}</Text> : null}
+      {siteMsg ? <Muted testID={`${tid}-site-presence`}>{siteMsg}</Muted> : null}
       {showSite ? (
         <View style={{ gap: 4 }}>
           <PrimaryButton

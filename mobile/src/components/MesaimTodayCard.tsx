@@ -440,7 +440,7 @@ export function MesaimTodayCard({
       </Panel>
 
       <Text testID="mesai-checkout-hint" style={{ color: "#94A3B8", fontSize: 11, textAlign: "center", lineHeight: 16 }}>
-        Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Canlı konum otomatik giriş/çıkış yazmaz; izin açıksa varlık bilgisi alınır. Çıkış puantaj / beklenen mesai bitişinden işlenir.
+        Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Sürekli konum takibi yok. Dış görev talimatlarında görev yerinde bir kez varlık bildirilir. Çıkış puantaj / beklenen mesai bitişinden işlenir.
       </Text>
     </View>
   );

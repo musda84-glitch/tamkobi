@@ -773,35 +773,27 @@ export default function PersonnelPage() {
                 </div>
               </div>
               {(() => {
-                const locOn = locationTrackingEnabled(emp.location_tracking);
+                const locOn = false;
                 const punch = todayAttendanceParts(attToday[empKey]);
                 return (
                   <div
-                    className={`rounded-lg border p-0.5 ${locOn ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"}`}
+                    className="rounded-lg border p-0.5 bg-slate-50 border-slate-200"
                     data-testid={`employee-card-loc-${empKey}`}
                   >
                     <div className="grid grid-cols-3 gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => toggleCardLocation(emp, !locOn)}
-                        disabled={locBusyId === empKey}
-                        aria-label={locationControllerLabel(locOn)}
-                        className={`min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${locOn ? "bg-emerald-100" : "bg-white"}`}
+                      <div
+                        className="min-w-0 rounded-md px-1.5 py-0.5 text-left bg-white"
                         data-testid={`employee-card-loc-toggle-${empKey}`}
+                        title="Konum takibi kapalı"
                       >
                         <div className="flex items-center justify-between gap-1">
                           <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Konum</div>
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full shrink-0 ${emp.location_last_ok === true ? "bg-emerald-500" : emp.location_last_ok === false ? "bg-rose-500" : "bg-amber-400"}`}
-                            data-testid={`employee-card-loc-signal-${empKey}`}
-                            title={emp.location_last_ok === true ? "Konum alındı" : emp.location_last_ok === false ? "Konum alınamadı" : "Konum bekleniyor"}
-                          />
                         </div>
-                        <div className={`flex items-center gap-0.5 text-[11px] font-extrabold leading-tight ${locOn ? "text-emerald-800" : "text-slate-500"}`}>
+                        <div className="flex items-center gap-0.5 text-[11px] font-extrabold leading-tight text-slate-500">
                           <MapPin className="w-3 h-3 shrink-0" />
-                          {locBusyId === empKey ? "…" : locationCellCaption(locOn)}
+                          {locationCellCaption(locOn)}
                         </div>
-                      </button>
+                      </div>
                       <div className="min-w-0 col-span-2 grid grid-cols-2 gap-0.5" data-testid={`employee-card-today-${empKey}`}>
                       <button
                         type="button"

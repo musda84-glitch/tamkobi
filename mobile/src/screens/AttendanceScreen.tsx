@@ -180,36 +180,15 @@ export function AttendanceScreen() {
   }, [client, load]);
 
   useEffect(() => {
-    if (!locationConsentAccepted(data?.location_consent)) return;
-    reportLocation();
-  }, [data?.location_consent?.accepted, reportLocation]);
-
-  useEffect(() => {
-    const tracking = data?.active_location_tracking || data?.location_tracking;
-    const checkedOut = Boolean(data?.today?.check_out);
-    const consented = locationConsentAccepted(data?.location_consent);
+    // Konum takibi iptal — arka plan / aralıklı ping yok.
     void syncLocationBackground({
-      consented,
-      enabled: Boolean(tracking?.enabled),
-      continuous: Boolean(tracking?.continuous),
-      interval_minutes: Number(tracking?.interval_minutes) || 0,
-      checkedOut,
+      consented: false,
+      enabled: false,
+      continuous: false,
+      interval_minutes: 0,
+      checkedOut: true,
     });
-    if (!consented || !tracking?.enabled || checkedOut) return;
-    let cancelled = false;
-    const ping = async () => {
-      if (cancelled) return;
-      await reportLocation();
-    };
-    ping();
-    const mins = Number(tracking.interval_minutes);
-    const ms = tracking.continuous || mins === 0 ? 60_000 : Math.max(1, mins) * 60_000;
-    const t = setInterval(ping, ms);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, [client, data?.today?.check_out, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
+  }, [client]);
 
   const act = async (action: "check_in", time?: string) => {
     setBusy(action);
@@ -220,7 +199,7 @@ export function AttendanceScreen() {
       const geoMode = selfAttendanceGeoMode(action, {
         hasTarget: Boolean(data?.location || data?.workplace?.kind === "task"),
         requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
-        trackingEnabled: Boolean(data?.active_location_tracking?.enabled ?? data?.location_tracking?.enabled),
+        trackingEnabled: false,
       });
       if (geoMode === "required" || geoMode === "attach") {
         try {
@@ -395,8 +374,10 @@ export function AttendanceScreen() {
 
   return (
     <Screen onRefresh={load}>
-      <H1>Mesaim</H1>
-      <Muted>{data?.employee?.full_name || "Personel kartı bağlı değilse giriş yapılamaz."}</Muted>
+      <Row style={{ alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+        <H1>Mesaim</H1>
+        <Muted testID="mesai-employee-name">{data?.employee?.full_name || "Personel kartı bağlı değilse giriş yapılamaz."}</Muted>
+      </Row>
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
       {data?.employee && !consentOk ? (
@@ -412,9 +393,6 @@ export function AttendanceScreen() {
         <Card testID="mesai-consent-lock">
           <Muted>KVKK (K) ve konum paylaşımı (KK) sözleşmelerini kabul edince giriş / çıkış paneli açılır.</Muted>
         </Card>
-      ) : null}
-      {consentOk && (data?.active_location_tracking || data?.location_tracking)?.enabled && !data?.today?.check_out ? (
-        <Muted testID="mesai-loc-bg-hint">Konum takibi uygulama kapalıyken veya arka plandayken de çalışır.</Muted>
       ) : null}
       {(consentOk || !data?.employee) ? (
         <MesaimTodayCard

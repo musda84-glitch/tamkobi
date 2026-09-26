@@ -154,15 +154,10 @@ export const WorkScheduleSettings = ({ companyId, onSaved }) => {
 /* Personel: ücretler + kişiye özel mesai (Personel Kartı ve Puantaj'dan ortak kullanılır) */
 export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, onClose }) => {
   const ws = employee.work_schedule || {};
-  const lt0 = { ...DEFAULT_LOC_TRACK, ...(employee.location_tracking || {}) };
   const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0 });
   const [s, setS] = useState({ start: ws.start || "", end: ws.end || "", break_minutes: ws.break_minutes ?? null, late_tolerance_minutes: ws.late_tolerance_minutes ?? null, exit_tolerance_minutes: ws.exit_tolerance_minutes ?? null, overtime_tolerance_minutes: ws.overtime_tolerance_minutes ?? null, work_days: ws.work_days || [], days: ws.days || {} });
-  const [locCompany, setLocCompany] = useState(() => initLocMode(lt0));
-  const [locField, setLocField] = useState(() => initLocMode(lt0.field || lt0));
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setS({ ...s, [k]: v });
-  const setCompanyLt = (k, v) => setLocCompany((prev) => patchLocMode(prev, k, v));
-  const setFieldLt = (k, v) => setLocField((prev) => patchLocMode(prev, k, v));
   const grossForRate = Number(pay.payroll_salary) || Number(pay.salary) * 1.4 || 0;
   const legalRate = companySchedule ? (grossForRate / (companySchedule.monthly_hours_divisor || 225)) * (companySchedule.overtime_multiplier || 1.5) : 0;
   const save = async (mode) => {
@@ -171,8 +166,6 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
       const schedule = Object.fromEntries(Object.entries(s).filter(([k, v]) => v !== null && v !== "" && !(Array.isArray(v) && !v.length) && !(k === "days" && !Object.keys(v || {}).length)));
       const daily = pay.pay_type === "daily";
       const dailyWage = daily ? Number(pay.daily_wage) || 0 : 0;
-      const companyMode = serializeLocMode(locCompany);
-      const fieldMode = serializeLocMode(locField);
       const body = {
         payroll_salary: pay.payroll_salary === "" ? null : Number(pay.payroll_salary),
         pay_type: daily ? "daily" : "monthly",
@@ -184,7 +177,7 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         overtime_method: pay.overtime_method || null,
         overtime_hourly_rate: pay.overtime_hourly_rate === "" ? null : Number(pay.overtime_hourly_rate),
         work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule,
-        location_tracking: { ...companyMode, field: fieldMode },
+        location_tracking: { enabled: false, continuous: false, interval_minutes: 0, exit_tolerance_hours: 0, field: { enabled: false, continuous: false, interval_minutes: 0, exit_tolerance_hours: 0 } },
       };
       await axios.put(`${API_URL}/personnel/employees/${employee.id || employee._id || employee.employee_id}`, body);
       toast.success(mode === "clear" ? "Personel firma mesai saatlerine döndü." : "Ücret ve mesai bilgileri kaydedildi."); onSaved?.(); onClose?.();
@@ -223,21 +216,9 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         <ScheduleFields s={s} set={set} allowEmpty />
         <DaySchedule s={s} onChange={setS} fallback={companySchedule} />
       </div>
-      <div className="border border-slate-200 rounded-xl p-3 space-y-3" data-testid="emp-location-tracking">
-        <div className="font-bold text-slate-800 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-emerald-600" /> Konum İzleme</div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="rounded-lg border border-slate-100 bg-slate-50/60 p-2.5 space-y-1.5" data-testid="emp-loc-company-block">
-            <div className="text-[11px] font-bold text-slate-700">İş yeri / firma</div>
-            <p className="text-[10px] text-slate-500">Girişte firma konumu kontrolü</p>
-            <LocModeFields mode={locCompany} onChange={setCompanyLt} prefix="company" />
-          </div>
-          <div className="rounded-lg border border-indigo-100 bg-indigo-50/40 p-2.5 space-y-1.5" data-testid="emp-loc-field-block">
-            <div className="text-[11px] font-bold text-indigo-800">Dış görev</div>
-            <p className="text-[10px] text-indigo-700/80">Açık proje görevinde görev yeri kontrolü</p>
-            <LocModeFields mode={locField} onChange={setFieldLt} prefix="field" />
-          </div>
-        </div>
-        <p className="text-[10px] text-slate-500">Çıkış yalnız butonla, her yerden. Konum açıksa çıkışta konum alınır; otomatik giriş-çıkış yok. Çıkış yanlışlıkla basılmasın diye çift tıklama / onay ister. Aralık 0 = sürekli izle.</p>
+      <div className="border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs text-slate-500" data-testid="emp-location-tracking">
+        <div className="font-bold text-slate-800 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-400" /> Konum İzleme</div>
+        <p>Sürekli konum takibi kapalı. Giriş yalnızca iş yeri / görev yeri konumunda yapılır.</p>
       </div>
       <div className="flex justify-between pt-1"><button type="button" onClick={() => save("clear")} disabled={busy} className="px-3 py-1.5 border rounded-lg text-slate-600" data-testid="emp-ws-clear">Firma saatlerine dön</button><button type="button" onClick={() => save("save")} disabled={busy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="emp-ws-save">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Kaydet</button></div>
     </div>

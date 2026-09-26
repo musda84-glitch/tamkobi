@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { CheckCircle2, Circle, Factory, ImagePlus, MapPin, Navigation } from "lucide-react";
@@ -31,6 +31,21 @@ import {
   photoVisibility,
   photoVisibilityLabel,
 } from "../utils/assignedDuty";
+import {
+  dutyHasTaskSiteCoords,
+  markTaskSitePresenceReported,
+  shouldReportTaskSitePresence,
+  taskSitePresencePayload,
+} from "../utils/taskSitePresence";
+
+const getPos = () => new Promise((res, rej) => {
+  if (!navigator.geolocation) return rej(new Error("Konum desteklenmiyor."));
+  navigator.geolocation.getCurrentPosition(
+    (p) => res(p.coords),
+    (e) => rej(e),
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+  );
+});
 
 export function AssignedDutyCard({
   duty,
@@ -40,12 +55,14 @@ export function AssignedDutyCard({
   approveBusy = false,
   showAtolye = false,
   reviewPhotos = false,
+  reportSitePresence = false,
   testId,
 }) {
   const tid = testId || `duty-${duty?.id || index}`;
   const [openFlow, setOpenFlow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [visBusy, setVisBusy] = useState(null);
+  const [siteMsg, setSiteMsg] = useState(null);
   const flow = dutyWorkflow(duty);
   const progress = dutyWorkflowProgress(duty);
   const photos = dutyPhotos(duty);
@@ -54,6 +71,33 @@ export function AssignedDutyCard({
   const showWorkshop = dutyShowAtolye(duty, showAtolye);
   const showSite = dutyShowSite(duty);
   const canReview = reviewPhotos && field && Boolean(duty?.project_id);
+
+  useEffect(() => {
+    if (!reportSitePresence || duty?.done) return undefined;
+    const hasCoords = dutyHasTaskSiteCoords(duty);
+    if (!shouldReportTaskSitePresence({ field, taskId: duty?.id, hasCoords, consented: true })) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const coords = await getPos();
+        if (cancelled || !duty?.id) return;
+        markTaskSitePresenceReported(duty.id);
+        const r = await axios.post(
+          `${API_URL}/personnel/attendance/self/task-site-presence`,
+          taskSitePresencePayload(duty.id, {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            accuracy_m: coords.accuracy,
+          }),
+          { withCredentials: true },
+        );
+        if (!cancelled && r.data?.message) setSiteMsg(r.data.message);
+      } catch {
+        /* konum / API — sessiz */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [duty?.done, duty?.id, duty?.latitude, duty?.longitude, field, reportSitePresence]);
 
   const uploadPhoto = async (event) => {
     const raw = event.target.files?.[0];
@@ -103,6 +147,7 @@ export function AssignedDutyCard({
         </div>
         <span className={`shrink-0 px-2 py-1 rounded-lg text-[10px] font-bold ${duty?.done ? "bg-emerald-50 text-emerald-700" : "bg-indigo-50 text-indigo-700"}`}>{duty?.done ? "Tamam" : "Açık"}</span>
       </div>
+      {siteMsg ? <div className="text-[11px] font-semibold text-emerald-700" data-testid={`${tid}-site-presence`}>{siteMsg}</div> : null}
       {showSite && (
         <div className="space-y-1">
           {mapHref ? (

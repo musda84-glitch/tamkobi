@@ -359,6 +359,7 @@ export default function MyPersonnelPage() {
                   index={i}
                   testId={`my-pers-task-${i}`}
                   showAtolye
+                  reportSitePresence
                   approveBusy={taskBusyId === t.id}
                   onApprove={() => completeTask(t)}
                   onChanged={(next) => {
