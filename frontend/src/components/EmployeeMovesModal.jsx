@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, EyeOff, MapPin, Pencil, Receipt, Trash2, Wallet, X } from "lucide-react";
+import { Clock, EyeOff, MapPin, Pencil, Receipt, Trash2, Wallet, X, CalendarDays } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { empIdOf } from "../utils/personnelIds";
 import { AssignOvertimeModal } from "./AssignOvertimeModal";
+import { EmployeePuantajPanel } from "./EmployeePuantajPanel";
 import {
   employeePayMoves,
   filterPayMoves,
@@ -33,6 +34,7 @@ const TAB_TITLE = {
   pay: "Ödeme hareketleri",
   location: "Konum hareketleri",
   overtime: "Mesai hareketleri",
+  puantaj: "Personel puantajı",
 };
 
 export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChanged }) {
@@ -213,7 +215,7 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
             </button>
           </div>
           <div className="space-y-2" data-testid="emp-pay-moves-period">
-            <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1" data-testid="emp-moves-tab">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-xl bg-slate-100 p-1" data-testid="emp-moves-tab">
               <button
                 type="button"
                 onClick={() => setTab("pay")}
@@ -221,6 +223,14 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
                 data-testid="emp-moves-tab-pay"
               >
                 <Wallet className="w-3.5 h-3.5" /> Ödeme
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("puantaj")}
+                className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-extrabold ${tab === "puantaj" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                data-testid="emp-moves-tab-puantaj"
+              >
+                <CalendarDays className="w-3.5 h-3.5" /> Puantaj
               </button>
               <button
                 type="button"
@@ -239,6 +249,8 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
                 <MapPin className="w-3.5 h-3.5" /> Konum
               </button>
             </div>
+            {tab !== "puantaj" ? (
+            <>
             <div className="flex flex-wrap gap-2">
               {PERIODS.map((key) => (
                 <button
@@ -267,10 +279,18 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
             <div className="text-[11px] text-slate-500" data-testid="emp-pay-moves-count">
               {periodHint()}
             </div>
+            </>
+            ) : null}
           </div>
         </div>
         <div className="p-4 overflow-y-auto space-y-0 text-xs">
-          {tab === "location" ? (
+          {tab === "puantaj" ? (
+            <EmployeePuantajPanel
+              employeeId={empId}
+              initialMonth={month}
+              onLeaveYearChanged={onChanged}
+            />
+          ) : tab === "location" ? (
             <>
               {locBusy ? <div className="text-slate-400">Yükleniyor…</div> : null}
               {!locBusy && !locMoves.length ? <div className="text-slate-400">Bu dönemde konum hareketi yok.</div> : null}
