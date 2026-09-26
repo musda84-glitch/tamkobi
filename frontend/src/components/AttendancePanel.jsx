@@ -62,9 +62,12 @@ export const AttendancePanel = ({ companyId }) => {
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Atama kaydedilemedi."); }
   };
-  const decideEarly = async (id, decision) => {
+  const decideEarly = async (id, decision, wageDeduction = false) => {
     try {
-      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/early-leave-decision`, { decision }, { withCredentials: true });
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/early-leave-decision`, {
+        decision,
+        wage_deduction: decision === "approve" ? !!wageDeduction : false,
+      }, { withCredentials: true });
       toast.success(r.data.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
@@ -97,9 +100,12 @@ export const AttendancePanel = ({ companyId }) => {
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
   };
-  const decideIntraday = async (id, decision) => {
+  const decideIntraday = async (id, decision, wageDeduction = false) => {
     try {
-      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/intraday-leave-decision`, { decision }, { withCredentials: true });
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/intraday-leave-decision`, {
+        decision,
+        wage_deduction: decision === "approve" ? !!wageDeduction : false,
+      }, { withCredentials: true });
       toast.success(r.data.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Karar kaydedilemedi."); }
@@ -196,7 +202,8 @@ export const AttendancePanel = ({ companyId }) => {
               <DoorOpen className="w-3 h-3 text-amber-600" />
               <span className="font-semibold text-amber-700">Erken çıkış talebi{r.early_leave_request.planned_time ? ` · ${r.early_leave_request.planned_time}` : ""}</span>
               <span className="text-slate-500 max-w-[180px] truncate" title={r.early_leave_request.reason}>{r.early_leave_request.reason}</span>
-              <button type="button" onClick={() => decideEarly(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-early-approve-${r.id}`}>Onayla</button>
+              <button type="button" onClick={() => decideEarly(r.id, "approve", false)} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-early-approve-${r.id}`}>Ücret düşme</button>
+              <button type="button" onClick={() => decideEarly(r.id, "approve", true)} className="px-1.5 py-0.5 rounded bg-amber-500 text-white font-bold" data-testid={`att-early-deduct-${r.id}`}>Ücret düş</button>
               <button type="button" onClick={() => decideEarly(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-early-reject-${r.id}`}>Reddet</button>
             </span>
           )}
@@ -249,7 +256,8 @@ export const AttendancePanel = ({ companyId }) => {
               <ArrowLeftRight className="w-3 h-3 text-sky-600" />
               <span className="font-semibold text-sky-700">Gün içi izin{r.intraday_leave_request.out_time ? ` · ${r.intraday_leave_request.out_time}–${r.intraday_leave_request.return_time}` : ""}</span>
               <span className="text-slate-500 max-w-[180px] truncate" title={r.intraday_leave_request.reason}>{r.intraday_leave_request.reason}</span>
-              <button type="button" onClick={() => decideIntraday(r.id, "approve")} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-intraday-approve-${r.id}`}>Onayla</button>
+              <button type="button" onClick={() => decideIntraday(r.id, "approve", false)} className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-bold" data-testid={`att-intraday-approve-${r.id}`}>Ücret düşme</button>
+              <button type="button" onClick={() => decideIntraday(r.id, "approve", true)} className="px-1.5 py-0.5 rounded bg-amber-500 text-white font-bold" data-testid={`att-intraday-deduct-${r.id}`}>Ücret düş</button>
               <button type="button" onClick={() => decideIntraday(r.id, "reject")} className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-bold" data-testid={`att-intraday-reject-${r.id}`}>Reddet</button>
             </span>
           )}

@@ -241,6 +241,20 @@ describe("employee draft", () => {
     expect(requestDecisionActions("dispute").map((a) => a.title)).toEqual(["Düzeltildi", "Reddet"]);
     expect(pendingRequestDecisionMessage({ kind: "dispute" }, true)).toBe("İtiraz düzeltildi olarak kapatıldı.");
     expect(pendingRequestDecisionMessage({ kind: "early_leave" }, false)).toBe("Erken çıkış reddedildi.");
+    expect(pendingRequestDecisionMessage({ kind: "early_leave" }, true)).toBe("Erken çıkış onaylandı · ücretten düşülmeyecek.");
+    expect(pendingRequestDecisionMessage({ kind: "early_leave" }, "deduct")).toBe("Erken çıkış onaylandı · ücretten düşülecek.");
+    expect(pendingRequestDecision({ id: "e1", kind: "early_leave" }, true)?.body).toEqual({
+      decision: "approve", wage_deduction: "false",
+    });
+    expect(pendingRequestDecision({ id: "e1", kind: "early_leave" }, "deduct")?.body).toEqual({
+      decision: "approve", wage_deduction: "true",
+    });
+    expect(pendingRequestDecision({ id: "i1", kind: "intraday_leave" }, "deduct")?.body).toEqual({
+      decision: "approve", wage_deduction: "true",
+    });
+    expect(requestDecisionActions("early_leave").map((a) => a.title)).toEqual(["Ücret düşme", "Ücret düş", "Reddet"]);
+    expect(requestDecisionActions("intraday_leave").map((a) => a.title)).toEqual(["Ücret düşme", "Ücret düş", "Reddet"]);
+    expect(pendingRequestDecisionMessage({ kind: "intraday_leave" }, true)).toBe("Gün içi izin onaylandı · ücretten düşülmeyecek.");
     expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, true)).toBe("Ücret kesildi.");
     expect(pendingRequestDecisionMessage({ kind: "yevmiye_adjustment" }, false)).toBe("Ücret kesilmedi.");
     expect(requestDecisionActions("yevmiye_adjustment").map((a) => a.title)).toEqual(["Ücret kes", "Ücret kesme"]);

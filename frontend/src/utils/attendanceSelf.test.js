@@ -1,8 +1,8 @@
 import { attendanceCalendarDate, attendanceCalendarMonth, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
 
 describe("selfAttendanceGeoMode", () => {
-  test("never blocks the punch — GPS is attached when a target or tracking exists", () => {
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("attach");
+  test("requires GPS for check-in when a workplace/task target exists", () => {
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("required");
     expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: true })).toBe("attach");
     expect(selfAttendanceGeoMode("check_in", { hasTarget: false })).toBe("none");
   });
@@ -26,21 +26,20 @@ describe("selfAttendanceGeoMode", () => {
     expect(checkInBlockedHint({ outside: true })).toMatch(/Giriş yapılamaz/);
   });
 
-  test("attaches checkout geo when tracking is on and never requires it", () => {
-    expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true })).toBe("attach");
+  test("disables checkout geo — Mesaim has no checkout button", () => {
+    expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true })).toBe("none");
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: false })).toBe("none");
-    expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true })).not.toBe("required");
   });
 });
 
 describe("selfCheckoutUnlocked", () => {
-  test("stays open after check-in even before schedule end", () => {
-    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00" })).toBe(true);
+  test("Mesaim checkout is always locked — hours come from puantaj", () => {
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00" })).toBe(false);
     expect(selfCheckoutUnlocked({ checkedIn: false, nowHm: "19:00", scheduleEnd: "18:00" })).toBe(false);
     expect(selfCheckoutUnlocked({ checkedIn: true, checkedOut: true })).toBe(false);
     expect(earlyLeaveApproved({ early_leave_request: { status: "approved" } })).toBe(true);
     expect(shouldWatchCheckoutUnlock({ earlyPending: true, checkedIn: true })).toBe(true);
-    expect(shouldWatchCheckoutUnlock({ checkedIn: true, checkoutUnlocked: true })).toBe(false);
+    expect(shouldWatchCheckoutUnlock({ checkedIn: true, checkoutUnlocked: false })).toBe(false);
   });
 });
 

@@ -243,13 +243,15 @@ function AttendanceRecCard({
         <Row>
           {early ? (
             <>
-              <PrimaryButton title="Erken çıkış onayla" color={colors.primary} testID={`att-early-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "early_leave" }, true)} />
+              <PrimaryButton title="Ücret düşme" color={colors.primary} testID={`att-early-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "early_leave" }, true)} />
+              <PrimaryButton title="Ücret düş" color={colors.warning} testID={`att-early-deduct-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "early_leave" }, "deduct")} />
               <PrimaryButton title="Reddet" color={colors.danger} testID={`att-early-no-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "early_leave" }, false)} />
             </>
           ) : null}
           {intra ? (
             <>
-              <PrimaryButton title="Gün içi onayla" color={colors.primary} testID={`att-intra-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "intraday_leave" }, true)} />
+              <PrimaryButton title="Ücret düşme" color={colors.primary} testID={`att-intra-ok-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "intraday_leave" }, true)} />
+              <PrimaryButton title="Ücret düş" color={colors.warning} testID={`att-intra-deduct-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "intraday_leave" }, "deduct")} />
               <PrimaryButton title="Reddet" color={colors.danger} testID={`att-intra-no-${idOf(r)}`} onPress={() => onDecide({ id: idOf(r), kind: "intraday_leave" }, false)} />
             </>
           ) : null}

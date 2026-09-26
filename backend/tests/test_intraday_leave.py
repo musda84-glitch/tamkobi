@@ -40,6 +40,24 @@ def test_approved_subtracts_gap():
     assert out["overtime_hours"] == 0
 
 
+def test_approved_without_wage_deduction_keeps_hours():
+    req = _req("approved")
+    req["intraday_leave_request"]["wage_deduction"] = False
+    rec = {"date": "2026-09-07", "check_in": "09:00", "check_out": "18:00", **req}
+    out = compute_day(rec, {**DEFAULT_SCHEDULE})
+    assert out["intraday_leave_minutes"] == 0
+    assert out["hours"] == 8.0
+
+
+def test_approved_with_wage_deduction_subtracts():
+    req = _req("approved")
+    req["intraday_leave_request"]["wage_deduction"] = True
+    rec = {"date": "2026-09-07", "check_in": "09:00", "check_out": "18:00", **req}
+    out = compute_day(rec, {**DEFAULT_SCHEDULE})
+    assert out["intraday_leave_minutes"] == 90
+    assert out["hours"] == 6.5
+
+
 def test_approved_flag_without_status():
     rec = {
         "date": "2026-09-07",

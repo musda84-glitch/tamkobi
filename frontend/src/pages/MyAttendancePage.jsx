@@ -2,12 +2,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDays, Timer, Moon, ShieldCheck, MessageSquareWarning, DoorOpen, ArrowLeftRight } from "lucide-react";
+import { Clock, LogIn, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDays, Timer, Moon, ShieldCheck, MessageSquareWarning, DoorOpen, ArrowLeftRight } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
-import { CHECKOUT_ARM_MS, resolveCheckoutClick } from "../utils/checkoutArm";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHasCoords, workplaceHint } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnelWage";
@@ -74,7 +73,6 @@ export default function MyAttendancePage() {
   const [intraReason, setIntraReason] = useState("");
   const [intraOut, setIntraOut] = useState("");
   const [intraReturn, setIntraReturn] = useState("");
-  const [outArmed, setOutArmed] = useState(false);
   const [punchEdit, setPunchEdit] = useState(null);
   const [punchEditTime, setPunchEditTime] = useState("");
   const [consentBusy, setConsentBusy] = useState(false);
@@ -139,11 +137,6 @@ export default function MyAttendancePage() {
     return () => clearInterval(id);
   }, [data?.today?.check_out, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
   useEffect(() => {
-    if (!outArmed) return undefined;
-    const t = setTimeout(() => setOutArmed(false), CHECKOUT_ARM_MS);
-    return () => clearTimeout(t);
-  }, [outArmed]);
-  useEffect(() => {
     const t = data?.today;
     if (!shouldWatchCheckoutUnlock({
       earlyPending: t?.early_leave_request?.status === "pending",
@@ -162,7 +155,7 @@ export default function MyAttendancePage() {
       const geoMode = selfAttendanceGeoMode(action, {
         hasTarget: Boolean(data?.location || data?.workplace?.kind === "task"),
         requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
-        trackingEnabled: action === "check_out" ? !!activeLt?.enabled : activeLt?.enabled !== false,
+        trackingEnabled: activeLt?.enabled !== false,
       });
       if (geoMode === "required" || geoMode === "attach") {
         try {
@@ -175,7 +168,6 @@ export default function MyAttendancePage() {
       }
       const r = await axios.post(`${API_URL}/personnel/attendance/self`, { action, ...(time ? { time } : {}), ...coords }, { withCredentials: true });
       toast.success(r.data.message, { duration: 6000 });
-      if (action === "check_out") setOutArmed(false);
       setPunchEdit(null);
       load();
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "İşlem başarısız."); } finally { setBusy(null); }
@@ -204,31 +196,6 @@ export default function MyAttendancePage() {
       return;
     }
     act("check_in");
-  };
-  const onCheckoutClick = () => {
-    const t = data?.today;
-    if (mesaimPunchOpensEditor({ action: "check_out", checkOut: t?.check_out })) {
-      setPunchEdit("check_out");
-      setPunchEditTime(t.check_out);
-      return;
-    }
-    if (!t?.check_in) {
-      toast.error("Önce giriş yapın.");
-      return;
-    }
-    const canCheckout = !busy && (data?.checkout_unlocked != null
-      ? Boolean(data.checkout_unlocked)
-      : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: data?.now, scheduleStart: data?.schedule?.start, scheduleEnd: data?.schedule?.end, expectedEnd: t?.expected_end, checkIn: t?.check_in, earlyApproved: earlyLeaveApproved(t) }));
-    const next = resolveCheckoutClick({ armed: outArmed, canCheckout });
-    if (next === "arm") {
-      setOutArmed(true);
-      toast.message("Çıkışı onaylamak için tekrar tıklayın.", { duration: CHECKOUT_ARM_MS });
-      return;
-    }
-    if (next === "fire") {
-      setOutArmed(false);
-      act("check_out");
-    }
   };
   const confirm = async (r) => { try { await axios.post(`${API_URL}/personnel/attendance/${r.id}/confirm`, {}, { withCredentials: true }); toast.success("Kayıt onaylandı."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } };
   const rejectTimeEdit = async (r) => { try { const res = await axios.post(`${API_URL}/personnel/attendance/${r.id}/time-edit-decision`, { decision: "reject" }, { withCredentials: true }); toast.success(res.data?.message || "Saat düzeltmesi reddedildi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Reddedilemedi."); } };
@@ -292,12 +259,14 @@ export default function MyAttendancePage() {
   const liveSignal = signal || data.location_signal;
   const workDays = sch ? sch.work_days.map((d) => data.day_labels[d]).join(", ") : "";
   const earlyOk = earlyLeaveApproved(t);
-  const checkoutOn = data?.checkout_unlocked != null
-    ? Boolean(data.checkout_unlocked) && !t?.check_out
-    : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: data?.now, scheduleStart: sch?.start, scheduleEnd: sch?.end, expectedEnd: t?.expected_end, checkIn: t?.check_in, earlyApproved: earlyOk });
   const geoPlace = data.workplace || data.location;
   const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo: sch?.require_geo });
   const geoInLabel = mesaimGeoInLabel({ workplace: geoPlace, requireGeo: sch?.require_geo });
+  const outLine = t?.check_out
+    ? `Çıkış ${t.check_out}`
+    : !t?.check_in
+      ? "önce giriş yapın"
+      : "puantaj / beklenen mesai bitişinden";
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-5" data-testid="my-attendance-page">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
@@ -349,8 +318,8 @@ export default function MyAttendancePage() {
           ) : null}
           {punchEdit ? (
             <div className="rounded-2xl bg-white/10 border border-white/15 p-3 space-y-2" data-testid="my-att-punch-edit">
-              <label className={`block text-[10px] font-bold ${punchLabelClass(punchEdit === "check_out" ? "Çıkış saati" : "Giriş saati", "text-slate-300")}`}>
-                {punchEdit === "check_out" ? "Çıkış saati" : "Giriş saati"}
+              <label className={`block text-[10px] font-bold ${punchLabelClass("Giriş saati", "text-slate-300")}`}>
+                Giriş saati
                 <input
                   type="time"
                   autoFocus
@@ -360,47 +329,44 @@ export default function MyAttendancePage() {
                   data-testid="my-att-punch-edit-time"
                 />
               </label>
-              <div className="text-[11px] text-amber-100 font-semibold">{mesaimPunchEditHint(punchEdit)}</div>
+              <div className="text-[11px] text-amber-100 font-semibold">{mesaimPunchEditHint("check_in")}</div>
               <div className="flex flex-col gap-2">
                 <button
                   type="button"
                   onClick={() => {
                     const hm = resolveNowHm(data?.now);
                     setPunchEditTime(hm);
-                    act(punchEdit, hm);
+                    act("check_in", hm);
                   }}
                   disabled={!!busy}
-                  className={`w-full px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 ${punchEdit === "check_out" ? "bg-rose-500 hover:bg-rose-400" : "bg-indigo-500/90 hover:bg-indigo-500"}`}
+                  className="w-full px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 bg-indigo-500/90 hover:bg-indigo-500"
                   data-testid="my-att-punch-edit-now"
                 >
-                  {mesaimPunchNowLabel(punchEdit)}
+                  {mesaimPunchNowLabel("check_in")}
                 </button>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => { if (!/^\d{1,2}:\d{2}$/.test(String(punchEditTime || "").trim())) { toast.error("Saat seçin."); return; } act(punchEdit, String(punchEditTime).trim().slice(0, 5)); }} disabled={!!busy} className={`flex-1 px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 ${punchEdit === "check_out" ? "bg-rose-500" : "bg-emerald-500"}`} data-testid="my-att-punch-edit-yes">{busy === punchEdit ? "…" : "Onayla"}</button>
+                  <button type="button" onClick={() => { if (!/^\d{1,2}:\d{2}$/.test(String(punchEditTime || "").trim())) { toast.error("Saat seçin."); return; } act("check_in", String(punchEditTime).trim().slice(0, 5)); }} disabled={!!busy} className="flex-1 px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 bg-emerald-500" data-testid="my-att-punch-edit-yes">{busy === punchEdit ? "…" : "Onayla"}</button>
                   <button type="button" onClick={() => setPunchEdit(null)} className="px-3 py-2 rounded-lg font-bold bg-white/10" data-testid="my-att-punch-edit-no">Vazgeç</button>
                 </div>
               </div>
             </div>
           ) : (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button onClick={onCheckInClick} disabled={!!busy || checkInBlocked} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
               {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">Giriş Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{checkInBlocked ? "iş yerinde değilsiniz" : (t?.check_in ? `Giriş ${t.check_in}` : "henüz giriş yok")}</span>
             </button>
-            <button
-              type="button"
-              onClick={onCheckoutClick}
-              disabled={!!busy}
-              className={`flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition ${outArmed ? "bg-amber-500 hover:bg-amber-400 ring-2 ring-amber-200 ring-offset-2 ring-offset-slate-900" : "bg-rose-500 hover:bg-rose-400"}`}
-              data-testid="my-att-checkout"
-              aria-pressed={outArmed}
-              title={outArmed ? "Onaylamak için tekrar tıklayın" : t?.check_out ? "Saati düzeltmek için tıklayın" : checkoutOn ? "Çıkış için iki kez tıklayın" : "Çıkış için önce giriş yapın"}
-            >
-              {busy === "check_out" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogOut className="w-8 h-8" />}
-              <span className="text-lg sm:text-base">{outArmed ? "Tekrar tıklayın" : (earlyOk && !t?.check_out ? "Çıkış (onaylı erken)" : "Çıkış Yap")}</span>
-              <span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-out">
-                {t?.check_out ? `Çıkış ${t.check_out}` : !t?.check_in ? "önce giriş yapın" : (outArmed ? "onay için tekrar tıklayın" : "çift tıklayın · saat ve konum basınca veya konumla yazılır")}
-              </span>
-            </button>
+            <div className="rounded-2xl bg-white/10 border border-white/10 px-4 py-5 flex flex-col justify-center gap-1" data-testid="my-att-checkout-info">
+              <div className="text-sm font-extrabold text-rose-200">Çıkış</div>
+              <div className="text-xs font-mono text-slate-200" data-testid="my-att-today-out">{outLine}</div>
+              <div className="text-[11px] text-slate-400 leading-snug">
+                Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır
+                {t?.assigned_overtime_hours
+                  ? ` (atanan +${t.assigned_overtime_hours} sa · beklenen ${t.expected_end || sch.end})`
+                  : t?.expected_end
+                    ? ` (beklenen ${t.expected_end})`
+                    : ""}.
+              </div>
+            </div>
           </div>
           )}
           {checkInHint ? (
@@ -441,7 +407,7 @@ export default function MyAttendancePage() {
                   );
                 }
                 if (elr.status === "approved" || t.early_leave_approved) {
-                  return <div className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1.5" data-testid="my-att-early-approved"><DoorOpen className="w-3.5 h-3.5" /> Erken çıkış onaylandı — çıkış ve konumlu çıkış açık. Saat ve konum basınca kaydedilir{elr.planned_time ? ` (plan ${elr.planned_time} yazılmaz)` : ""}</div>;
+                  return <div className="text-xs font-semibold text-emerald-300 inline-flex items-center gap-1.5" data-testid="my-att-early-approved"><DoorOpen className="w-3.5 h-3.5" /> Erken çıkış onaylandı — yönetici puantajdan çıkış yazar{elr.planned_time ? ` (plan ${elr.planned_time})` : ""}{elr.wage_deduction === false ? " · ücretten düşülmez" : elr.wage_deduction ? " · ücretten düşülür" : ""}</div>;
                 }
                 if (elr.status === "rejected") {
                   return <div className="text-xs text-rose-200" data-testid="my-att-early-rejected">Erken çıkış talebi reddedildi{elr.decision_note ? `: ${elr.decision_note}` : ""}. Yeniden talep edebilirsiniz.</div>;
@@ -510,7 +476,7 @@ export default function MyAttendancePage() {
           </div>
 
           {habitLabel(data.habit, data.habit_label) ? <div className="text-[11px] text-emerald-200" data-testid="my-att-habit">{habitLabel(data.habit, data.habit_label)}</div> : null}
-          <div className="text-[11px] text-slate-400 text-center sm:text-left">Giriş yalnızca iş yeri veya görev yerinde yapılır. Konumda değilseniz giriş yapılamaz. Konum açıksa <b className="text-emerald-200">otomatik de yazılır</b>. Çıkış butonu her zaman açıktır (çift tıklama). Yönetici saati düzeltirse <b className="text-amber-200">personel onayı</b> gerekir. Mesai bitişinden ({sch.end}) sonraki süre otomatik fazla mesai yazılır. Gün içinde çıkıp dönecekseniz gün içi izin kullanın.</div>
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Canlı konum otomatik giriş/çıkış yazmaz; izin açıksa varlık bilgisi alınır. Çıkış puantaj / beklenen mesai bitişinden ({sch.end}) işlenir. Yönetici saati düzeltirse <b className="text-amber-200">personel onayı</b> gerekir. Gün içinde çıkıp dönecekseniz gün içi izin kullanın.</div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">

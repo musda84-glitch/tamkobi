@@ -7,7 +7,7 @@ import { TimeField } from "../components/TimeField";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
@@ -91,8 +91,7 @@ export function AttendanceScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [earlyOpen, setEarlyOpen] = useState(false);
-  const [outConfirm, setOutConfirm] = useState(false);
-  const [punchEdit, setPunchEdit] = useState<"check_in" | "check_out" | null>(null);
+  const [punchEdit, setPunchEdit] = useState<"check_in" | null>(null);
   const [punchEditTime, setPunchEditTime] = useState("");
   const [earlyReason, setEarlyReason] = useState("");
   const [earlyTime, setEarlyTime] = useState("");
@@ -212,15 +211,15 @@ export function AttendanceScreen() {
     };
   }, [client, data?.today?.check_out, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
 
-  const act = async (action: "check_in" | "check_out", time?: string) => {
+  const act = async (action: "check_in", time?: string) => {
     setBusy(action);
     setError(null);
     try {
       let extra: { latitude?: number; longitude?: number; accuracy_m?: number; time?: string } = {};
       if (time) extra.time = time;
       const geoMode = selfAttendanceGeoMode(action, {
-        hasTarget: Boolean(data?.location),
-        requireGeo: data?.schedule?.require_geo !== false,
+        hasTarget: Boolean(data?.location || data?.workplace?.kind === "task"),
+        requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
         trackingEnabled: Boolean(data?.active_location_tracking?.enabled ?? data?.location_tracking?.enabled),
       });
       if (geoMode === "required" || geoMode === "attach") {
@@ -234,7 +233,6 @@ export function AttendanceScreen() {
       }
       const r = await post<{ message?: string }>(client, "/personnel/attendance/self", { action, ...extra });
       setMessage(r.message || "Kaydedildi.");
-      if (action === "check_out") setOutConfirm(false);
       setPunchEdit(null);
       await load();
     } catch (err) {
@@ -390,21 +388,8 @@ export function AttendanceScreen() {
     locationMissing: locMissing && outside !== false,
   });
   const checkInHint = checkInBlocked ? checkInBlockedHint({ outside, locationMissing: locMissing && outside !== false }) : "";
-  const checkedOut = Boolean(today?.check_out);
   const geoPendingHint = geoConfirmHint(today);
   const earlyOk = earlyLeaveApproved(today);
-  const checkoutOn = data?.checkout_unlocked != null
-    ? Boolean(data.checkout_unlocked) && !checkedOut
-    : selfCheckoutUnlocked({
-      checkedIn,
-      checkedOut,
-      nowHm: data?.now,
-      scheduleStart: data?.schedule?.start,
-      scheduleEnd: data?.schedule?.end,
-      expectedEnd: today?.expected_end,
-      checkIn: today?.check_in,
-      earlyApproved: earlyOk,
-    });
   const consentOk = locationConsentAccepted(data?.location_consent);
   const liveSignal = signal || data?.location_signal;
 
@@ -445,9 +430,7 @@ export function AttendanceScreen() {
           liveSignal={liveSignal}
           showSignal={consentOk}
           today={today}
-          checkoutOn={checkoutOn}
           earlyOk={earlyOk}
-          outConfirm={outConfirm}
           busy={busy}
           earlyOpen={earlyOpen}
           earlyReason={earlyReason}
@@ -478,17 +461,6 @@ export function AttendanceScreen() {
             }
             act("check_in");
           }}
-          onCheckOutAsk={() => {
-            if (mesaimPunchOpensEditor({ action: "check_out", checkOut: today?.check_out })) {
-              setPunchEdit("check_out");
-              setPunchEditTime(today?.check_out || "");
-              return;
-            }
-            if (!today?.check_in) { setError("Önce giriş yapın."); return; }
-            setOutConfirm(true);
-          }}
-          onCheckOutConfirm={() => act("check_out")}
-          onCheckOutCancel={() => setOutConfirm(false)}
           onEarlyOpen={() => setEarlyOpen(true)}
           onEarlyClose={() => setEarlyOpen(false)}
           onEarlySubmit={requestEarly}

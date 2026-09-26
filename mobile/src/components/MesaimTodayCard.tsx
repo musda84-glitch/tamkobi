@@ -6,7 +6,6 @@ import { Card, Field, Muted, PrimaryButton } from "./kit";
 import { TimeField } from "./TimeField";
 import { colors, radius, typeface } from "../theme";
 import {
-  checkoutConfirmMessage,
   habitLabel,
   mesaimInSubtitle,
   mesaimLongDate,
@@ -126,9 +125,7 @@ export function MesaimTodayCard({
   liveSignal,
   showSignal,
   today,
-  checkoutOn,
   earlyOk,
-  outConfirm,
   busy,
   earlyOpen,
   earlyReason,
@@ -146,9 +143,6 @@ export function MesaimTodayCard({
   onPunchEditConfirm,
   onPunchEditCancel,
   onCheckIn,
-  onCheckOutAsk,
-  onCheckOutConfirm,
-  onCheckOutCancel,
   onEarlyOpen,
   onEarlyClose,
   onEarlySubmit,
@@ -187,11 +181,10 @@ export function MesaimTodayCard({
     yevmiye_full_amount?: number;
     yevmiye_adjustment_request?: { status?: string; full_amount?: number; proposed_amount?: number; final_amount?: number } | null;
     expected_end?: string;
+    assigned_overtime_hours?: number;
     geo_confirm_request?: GeoConfirmRequest | null;
   } | null;
-  checkoutOn?: boolean;
   earlyOk?: boolean;
-  outConfirm?: boolean;
   busy?: string | null;
   earlyOpen?: boolean;
   earlyReason: string;
@@ -203,15 +196,12 @@ export function MesaimTodayCard({
   geoPendingHint?: string;
   checkInBlocked?: boolean;
   checkInBlockedHint?: string;
-  punchEdit?: "check_in" | "check_out" | null;
+  punchEdit?: "check_in" | null;
   punchEditTime?: string;
   onPunchEditTime?: (v: string) => void;
   onPunchEditConfirm?: (time?: string) => void;
   onPunchEditCancel?: () => void;
   onCheckIn: () => void;
-  onCheckOutAsk: () => void;
-  onCheckOutConfirm: () => void;
-  onCheckOutCancel: () => void;
   onEarlyOpen: () => void;
   onEarlyClose: () => void;
   onEarlySubmit: () => void;
@@ -237,6 +227,7 @@ export function MesaimTodayCard({
   const geoPlace = workplace || location;
   const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo });
   const geoInLabel = mesaimGeoInLabel({ workplace: geoPlace, requireGeo });
+  const outLine = mesaimOutSubtitle({ checkIn: today?.check_in, checkOut: today?.check_out });
   const inBlocked = Boolean(checkInBlocked) && !checkedIn;
 
   return (
@@ -283,12 +274,12 @@ export function MesaimTodayCard({
         <View testID="mesai-punch-edit" style={{ gap: 8 }}>
           <TimeField
             key={punchEdit}
-            label={punchEdit === "check_out" ? "Çıkış saati" : "Giriş saati"}
+            label="Giriş saati"
             testID="mesai-punch-edit-time"
             value={punchEditTime || ""}
             autoOpen
-            nowLabel={mesaimPunchNowLabel(punchEdit)}
-            nowKind={punchEdit}
+            nowLabel={mesaimPunchNowLabel("check_in")}
+            nowKind="check_in"
             nowValue={now}
             onNow={(hm) => {
               onPunchEditTime?.(hm);
@@ -296,68 +287,62 @@ export function MesaimTodayCard({
             }}
             onChangeText={(v) => onPunchEditTime?.(v)}
           />
-          <Text style={{ color: "#FDE68A", fontSize: 12, fontWeight: "600" }}>{mesaimPunchEditHint(punchEdit)}</Text>
+          <Text style={{ color: "#FDE68A", fontSize: 12, fontWeight: "600" }}>{mesaimPunchEditHint("check_in")}</Text>
           <PrimaryButton
-            title={mesaimPunchNowLabel(punchEdit)}
+            title={mesaimPunchNowLabel("check_in")}
             onPress={() => {
               const hm = resolveNowHm(now);
               onPunchEditTime?.(hm);
               onPunchEditConfirm?.(hm);
             }}
-            color={punchEdit === "check_out" ? ROSE : colors.indigo}
+            color={colors.indigo}
             testID="mesai-punch-edit-now"
           />
           <View style={{ flexDirection: "row", gap: 8 }}>
             <PrimaryButton
               title={busy === punchEdit ? "Gönderiliyor…" : "Onayla"}
               onPress={() => onPunchEditConfirm?.()}
-              color={punchEdit === "check_out" ? ROSE : EMERALD}
+              color={EMERALD}
               testID="mesai-punch-edit-yes"
             />
             <PrimaryButton title="Vazgeç" onPress={() => onPunchEditCancel?.()} color={colors.secondary} testID="mesai-punch-edit-no" />
           </View>
         </View>
       ) : (
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        <PunchTile
-          testID="mesai-in"
-          icon="log-in-outline"
-          title={busy === "check_in" ? "Kaydediliyor…" : "Giriş Yap"}
-          subtitle={inBlocked ? "iş yerinde değilsiniz" : mesaimInSubtitle(today?.check_in)}
-          color={EMERALD}
-          disabled={busy === "check_in" || inBlocked}
-          onPress={onCheckIn}
-        />
-        {outConfirm && (checkedIn || checkoutOn) ? (
-          <View testID="mesai-out-confirm" style={{ flex: 1, gap: 8, justifyContent: "center" }}>
-            <Text testID="mesai-out-confirm-text" style={{ color: "#FDE68A", fontSize: 11, fontWeight: "600" }}>
-              {checkoutConfirmMessage(today?.check_in)}
-            </Text>
-            <PunchTile
-              testID="mesai-out-confirm-yes"
-              icon="log-out-outline"
-              title={busy === "check_out" ? "Kaydediliyor…" : "Çıkışı onayla"}
-              subtitle={mesaimOutSubtitle({ checkIn: today?.check_in, checkOut: today?.check_out, confirming: true })}
-              color={AMBER}
-              disabled={busy === "check_out"}
-              onPress={onCheckOutConfirm}
-            />
-            <Pressable testID="mesai-out-cancel" onPress={onCheckOutCancel} style={{ alignItems: "center", paddingVertical: 4 }}>
-              <Text style={{ color: "#E2E8F0", fontWeight: "700", fontSize: 12 }}>Vazgeç</Text>
-            </Pressable>
-          </View>
-        ) : (
+        <View style={{ gap: 10 }}>
           <PunchTile
-            testID="mesai-out"
-            icon="log-out-outline"
-            title={busy === "check_out" ? "Kaydediliyor…" : (earlyOk && !checkedOut ? "Çıkış (onaylı erken)" : "Çıkış Yap")}
-            subtitle={mesaimOutSubtitle({ checkIn: today?.check_in, checkOut: today?.check_out })}
-            color={earlyOk && !checkedOut ? ROSE : ROSE}
-            disabled={busy === "check_out"}
-            onPress={onCheckOutAsk}
+            testID="mesai-in"
+            icon="log-in-outline"
+            title={busy === "check_in" ? "Kaydediliyor…" : "Giriş Yap"}
+            subtitle={inBlocked ? "iş yerinde değilsiniz" : mesaimInSubtitle(today?.check_in)}
+            color={EMERALD}
+            disabled={busy === "check_in" || inBlocked}
+            onPress={onCheckIn}
           />
-        )}
-      </View>
+          <View
+            testID="mesai-out-info"
+            style={{
+              backgroundColor: "rgba(255,255,255,0.08)",
+              borderRadius: radius.lg,
+              paddingVertical: 14,
+              paddingHorizontal: 12,
+              gap: 4,
+            }}
+          >
+            <Text style={{ color: "#FECDD3", fontSize: 13, fontWeight: "800" }}>Çıkış</Text>
+            <Text style={{ color: "#E2E8F0", fontSize: 12, fontWeight: "600" }} testID="mesai-today-out">
+              {outLine}
+            </Text>
+            <Text style={{ color: "#94A3B8", fontSize: 11, lineHeight: 15 }}>
+              Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır
+              {today?.assigned_overtime_hours
+                ? ` (atanan +${today.assigned_overtime_hours} sa · beklenen ${today.expected_end || schedule?.end || "—"})`
+                : today?.expected_end
+                  ? ` (beklenen ${today.expected_end})`
+                  : ""}.
+            </Text>
+          </View>
+        </View>
       )}
 
       {inBlocked && checkInBlockedHint ? (
@@ -372,9 +357,16 @@ export function MesaimTodayCard({
         </View>
       ) : null}
 
-      {(today?.hours || today?.late_minutes || yevLine || today?.intraday_leave_minutes) ? (
+      {(today?.hours || today?.late_minutes || yevLine || today?.intraday_leave_minutes || today?.assigned_overtime_hours) ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
           {today?.hours ? <Chip label={`Bugün ${today.hours} sa çalışıldı`} /> : null}
+          {today?.assigned_overtime_hours ? (
+            <Chip
+              label={`Atanan +${today.assigned_overtime_hours} sa · çıkış ${today.expected_end || schedule?.end || "—"}`}
+              tone="violet"
+              testID="mesai-assigned-ot"
+            />
+          ) : null}
           {today?.late_minutes ? <Chip label={`${today.late_minutes} dk geç`} tone="rose" /> : null}
           {today?.intraday_leave_minutes ? <Chip label={`${today.intraday_leave_minutes} dk gün içi izin düşüldü`} tone="sky" testID="mesai-intraday-mins" /> : null}
           {yevLine ? <Chip label={yevLine} tone="amber" testID="mesai-yevmiye" /> : null}
@@ -396,7 +388,7 @@ export function MesaimTodayCard({
             </View>
           ) : earlyOk && !checkedOut ? (
             <Text testID="mesai-early-approved" style={{ color: "#6EE7B7", fontSize: 12, fontWeight: "700" }}>
-              Erken çıkış onaylandı — çıkış butonu açık. Saat ve konum çıkışa basınca kaydedilir{early?.planned_time ? ` (plan ${early.planned_time})` : ""}.
+              Erken çıkış onaylandı — yönetici puantajdan çıkış yazar{early?.planned_time ? ` (plan ${early.planned_time})` : ""}.
             </Text>
           ) : earlyOpen ? (
             <Card testID="mesai-early-form" style={{ gap: 8, margin: 0 }}>
@@ -448,7 +440,7 @@ export function MesaimTodayCard({
       </Panel>
 
       <Text testID="mesai-checkout-hint" style={{ color: "#94A3B8", fontSize: 11, textAlign: "center", lineHeight: 16 }}>
-        Giriş yalnızca iş yeri veya görev yerinde yapılır. Konumda değilseniz giriş yapılamaz. Çıkış her zaman açık.
+        Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Canlı konum otomatik giriş/çıkış yazmaz; izin açıksa varlık bilgisi alınır. Çıkış puantaj / beklenen mesai bitişinden işlenir.
       </Text>
     </View>
   );

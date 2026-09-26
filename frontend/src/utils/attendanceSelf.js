@@ -15,8 +15,8 @@ export function hmReachedEnd(now, end, start) {
   return now >= end;
 }
 
-export function selfCheckoutUnlocked({ checkedIn, checkedOut } = {}) {
-  return Boolean(checkedIn && !checkedOut);
+export function selfCheckoutUnlocked() {
+  return false;
 }
 
 export function habitLabel(habit, fallback) {
@@ -65,15 +65,16 @@ export function shouldReloadAttendanceDay(todayDate, now, timeZone = ATTENDANCE_
   return attendanceCalendarDate(now, timeZone) !== String(todayDate).slice(0, 10);
 }
 
-export function shouldWatchCheckoutUnlock({ earlyPending, checkedIn, checkedOut, checkoutUnlocked } = {}) {
+export function shouldWatchCheckoutUnlock({ earlyPending, checkedOut } = {}) {
   if (checkedOut) return false;
-  if (earlyPending) return true;
-  return Boolean(checkedIn && !checkoutUnlocked);
+  return Boolean(earlyPending);
 }
 
-/** Çıkış butonu konum yüzünden kapanmaz. Giriş, hedef varken uzaktaysa ayrıca kapanır. */
+/** Giriş: iş/görev yeri hedefi varsa konum zorunlu. Çıkış Mesaim'de yok. */
 export function selfAttendanceGeoMode(action, opts = {}) {
-  if (opts.hasTarget || opts.trackingEnabled) return "attach";
+  if (action === "check_out") return "none";
+  if (opts.hasTarget) return "required";
+  if (opts.trackingEnabled) return "attach";
   return "none";
 }
 
