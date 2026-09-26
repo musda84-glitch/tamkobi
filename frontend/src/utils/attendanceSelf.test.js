@@ -1,17 +1,16 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, checkInAlreadyDone, checkInBlockedHint, checkInOffsiteBlocked, checkInOnceHint, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
 
 describe("selfAttendanceGeoMode", () => {
-  test("requires GPS for check-in when a workplace/task target exists", () => {
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("required");
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: true })).toBe("attach");
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: false })).toBe("none");
+  test("pulls GPS on check-in press; required when workplace/task target exists", () => {
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true })).toBe("required");
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: false })).toBe("attach");
   });
 
   test("describes pending manager-confirmed punches", () => {
     expect(geoConfirmPending({ geo_confirm_request: { status: "pending" } })).toBe(true);
     expect(geoConfirmHint({ geo_confirm_request: { status: "pending", action: "check_in", reason: "offsite", proposed_time: "09:10" } })).toMatch(/Giriş 09:10/);
     expect(geoConfirmHint({ geo_confirm_request: { status: "pending", action: "check_out", reason: "time_edit", proposed_time: "18:00" } })).toMatch(/saat düzeltme/);
-    expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(true);
+    expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(false);
     expect(mesaimPunchEditHint("check_in")).toMatch(/yönetici/);
     expect(mesaimPunchNowLabel("check_in")).toBe("Şimdiki saat ile giriş");
     expect(mesaimPunchNowLabel("check_out")).toBe("Şimdiki saat ile çıkış");
@@ -19,10 +18,9 @@ describe("selfAttendanceGeoMode", () => {
     expect(resolveNowHm("", new Date(2026, 8, 24, 9, 5))).toBe("09:05");
   });
 
-  test("blocks check-in away from the workplace or task site", () => {
-    expect(checkInOffsiteBlocked({ hasTarget: true, outside: true })).toBe(true);
-    expect(checkInOffsiteBlocked({ hasTarget: true, outside: false })).toBe(false);
-    expect(checkInOffsiteBlocked({ checkedIn: true, hasTarget: true, outside: true })).toBe(false);
+  test("does not pre-block the check-in button from stale location", () => {
+    expect(checkInOffsiteBlocked({ hasTarget: true, outside: true })).toBe(false);
+    expect(checkInOffsiteBlocked({ hasTarget: true, locationMissing: true })).toBe(false);
     expect(checkInBlockedHint({ outside: true })).toMatch(/Giriş yapılamaz/);
   });
 
@@ -61,5 +59,13 @@ describe("habitLabel and managerTimeEditHint", () => {
     expect(habitLabel(null, "Alışkanlık: hazır")).toBe("Alışkanlık: hazır");
     expect(managerTimeEditHint({ pending_employee: true, prev_check_out: "18:10", check_out: "17:45", attempt: 1 })).toMatch(/1\/3/);
     expect(managerTimeEditHint({ pending_employee: false, check_out: "17:45" })).toBe("");
+  });
+});
+
+describe("check-in once per day", () => {
+  test("marks done and hints after first punch", () => {
+    expect(checkInAlreadyDone("09:13")).toBe(true);
+    expect(checkInAlreadyDone(null)).toBe(false);
+    expect(checkInOnceHint("09:13")).toMatch(/Günde bir kez/);
   });
 });

@@ -9,7 +9,15 @@ import { LocationConsentCard } from "./LocationConsentCard";
 import { LocationSignal } from "./LocationSignal";
 import { locationConsentAccepted, locationUnavailablePayload } from "../utils/locationConsent";
 
-export const getPos = () => new Promise((res, rej) => { if (!navigator.geolocation) return rej(new Error("Bu cihaz konum desteklemiyor.")); navigator.geolocation.getCurrentPosition((p) => res(p.coords), (e) => rej(new Error(e.code === 1 ? "Konum izni verilmedi. Tarayıcı ayarlarından konum iznini açın." : "Konum alınamadı.")), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }); });
+/** Girişe basınca taze konum; önbellek kullanma. */
+export const getPos = () => new Promise((res, rej) => {
+  if (!navigator.geolocation) return rej(new Error("Bu cihaz konum desteklemiyor."));
+  navigator.geolocation.getCurrentPosition(
+    (p) => res(p.coords),
+    (e) => rej(new Error(e.code === 1 ? "Konum izni verilmedi. Tarayıcı ayarlarından konum iznini açın." : e.code === 3 ? "Konum zaman aşımı. Tekrar deneyin." : "Konum alınamadı.")),
+    { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+  );
+});
 
 export const GeoAttendanceCard = ({ companyId, onChanged }) => {
   const { user } = useAuth();
