@@ -7,14 +7,14 @@ import { TimeField } from "../components/TimeField";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { locationConsentAccepted, locationConsentPayload, locationUnavailablePayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
 import { syncLocationBackground } from "../utils/locationBackgroundSync";
-import { type Workplace } from "../utils/workplace";
+import { workplaceHasCoords, type Workplace } from "../utils/workplace";
 
 type LocationTracking = {
   enabled?: boolean;
@@ -74,6 +74,7 @@ type AttendancePayload = {
   habit_label?: string | null;
   location_consent?: LocationConsent | null;
   location_signal?: LocationSignal | null;
+  location_last_inside?: boolean | null;
 };
 
 async function coords() {
@@ -105,6 +106,8 @@ export function AttendanceScreen() {
   const [disputeOut, setDisputeOut] = useState("");
   const [consentBusy, setConsentBusy] = useState(false);
   const [signal, setSignal] = useState<LocationSignal | null>(null);
+  const [liveOutside, setLiveOutside] = useState<boolean | null>(null);
+  const [locMissing, setLocMissing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -143,6 +146,8 @@ export function AttendanceScreen() {
     try {
       c = await coords();
     } catch (err) {
+      setLocMissing(true);
+      setLiveOutside(null);
       try {
         const r = await post<{ location_signal?: LocationSignal; message?: string }>(
           client,
@@ -157,11 +162,13 @@ export function AttendanceScreen() {
       return false;
     }
     try {
-      const r = await post<{ location_signal?: LocationSignal; punched?: string; message?: string }>(client, "/personnel/attendance/self/location", {
+      const r = await post<{ location_signal?: LocationSignal; punched?: string; message?: string; outside?: boolean }>(client, "/personnel/attendance/self/location", {
         latitude: c.latitude,
         longitude: c.longitude,
         accuracy_m: c.accuracy_m ?? undefined,
       });
+      setLocMissing(false);
+      if (typeof r.outside === "boolean") setLiveOutside(r.outside);
       if (r.location_signal) setSignal(r.location_signal);
       if (r.punched) {
         if (r.message) setMessage(r.message);
@@ -368,6 +375,21 @@ export function AttendanceScreen() {
 
   const today = data?.today;
   const checkedIn = Boolean(today?.check_in);
+  const outside = liveOutside != null
+    ? liveOutside
+    : data?.location_last_inside === false
+      ? true
+      : data?.location_last_inside === true
+        ? false
+        : null;
+  const hasGeoTarget = workplaceHasCoords(data?.workplace) || workplaceHasCoords(data?.location);
+  const checkInBlocked = checkInOffsiteBlocked({
+    checkedIn,
+    hasTarget: hasGeoTarget,
+    outside,
+    locationMissing: locMissing && outside !== false,
+  });
+  const checkInHint = checkInBlocked ? checkInBlockedHint({ outside, locationMissing: locMissing && outside !== false }) : "";
   const checkedOut = Boolean(today?.check_out);
   const geoPendingHint = geoConfirmHint(today);
   const earlyOk = earlyLeaveApproved(today);
@@ -435,6 +457,8 @@ export function AttendanceScreen() {
           intraOut={intraOut}
           intraReturn={intraReturn}
           geoPendingHint={geoPendingHint}
+          checkInBlocked={checkInBlocked}
+          checkInBlockedHint={checkInHint}
           punchEdit={punchEdit}
           punchEditTime={punchEditTime}
           onPunchEditTime={setPunchEditTime}
@@ -446,6 +470,7 @@ export function AttendanceScreen() {
           }}
           onPunchEditCancel={() => setPunchEdit(null)}
           onCheckIn={() => {
+            if (checkInBlocked) { setError(checkInHint); return; }
             if (mesaimPunchOpensEditor({ action: "check_in", checkIn: today?.check_in })) {
               setPunchEdit("check_in");
               setPunchEditTime(today?.check_in || "");

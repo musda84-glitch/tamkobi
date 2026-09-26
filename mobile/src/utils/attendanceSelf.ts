@@ -1,7 +1,7 @@
 export type SelfAttendanceAction = "check_in" | "check_out";
 export type SelfAttendanceGeoMode = "required" | "attach" | "none";
 
-/** Giriş/çıkış butonu konum yüzünden kapanmaz. GPS varsa eklenir; yoksa veya uzaktaysa yönetici teyidi. */
+/** Çıkış butonu konum yüzünden kapanmaz. Giriş, hedef varken uzaktaysa ayrıca kapanır. */
 export function selfAttendanceGeoMode(
   action: SelfAttendanceAction,
   opts?: { hasTarget?: boolean; trackingEnabled?: boolean; requireGeo?: boolean },
@@ -18,6 +18,24 @@ export type GeoConfirmRequest = {
   place?: string;
   distance_m?: number | null;
 };
+
+/** Konumlu hedef varken uzakta veya konumsuz giriş yazılmaz; yönetici talebi açılmaz. */
+export function checkInOffsiteBlocked(opts?: {
+  checkedIn?: boolean;
+  hasTarget?: boolean;
+  outside?: boolean | null;
+  locationMissing?: boolean;
+} | null): boolean {
+  if (opts?.checkedIn || !opts?.hasTarget) return false;
+  if (opts.outside === true) return true;
+  return Boolean(opts.locationMissing);
+}
+
+export function checkInBlockedHint(opts?: { outside?: boolean | null; locationMissing?: boolean } | null): string {
+  if (opts?.outside === true) return "İş yeri veya görev yerinde değilsiniz. Giriş yapılamaz.";
+  if (opts?.locationMissing) return "Konum alınamadı. İş yeri veya görev yerinde giriş yapın.";
+  return "";
+}
 
 export function geoConfirmPending(rec?: { geo_confirm_request?: GeoConfirmRequest | null } | null): boolean {
   return rec?.geo_confirm_request?.status === "pending";

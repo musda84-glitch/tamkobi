@@ -1381,6 +1381,25 @@ def geo_confirm_needs_manager(verdict: Optional[str]) -> bool:
     return verdict in ("offsite", "location_off")
 
 
+def check_in_geo_block_detail(verdict: Optional[dict]) -> Optional[str]:
+    """Konumlu giriş açıkken iş/görev yerinde değilse kayıt yazılmaz, yönetici talebi açılmaz."""
+    row = verdict if isinstance(verdict, dict) else {}
+    kind = row.get("verdict")
+    if kind not in ("offsite", "location_off"):
+        return None
+    place = str(row.get("place") or "iş yeri")
+    if kind == "location_off":
+        return f"Konum alınamadı. {place} içinde giriş yapın."
+    dist = row.get("distance_m")
+    dist_bit = ""
+    try:
+        if dist is not None:
+            dist_bit = f" ({int(dist)} m)"
+    except (TypeError, ValueError):
+        dist_bit = ""
+    return f"{place} içinde değilsiniz{dist_bit}. Giriş yapılamaz."
+
+
 def geo_confirm_reason_tr(reason: Optional[str]) -> str:
     if reason == "location_off":
         return "konum kapalı"
@@ -2070,7 +2089,8 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
             "habit": attendance_habit(enriched),
             "habit_label": habit_label(attendance_habit(enriched)),
             "location_consent": location_consent.normalize_location_consent(emp.get("location_consent")),
-            "location_signal": location_consent.location_signal_view(emp)}
+            "location_signal": location_consent.location_signal_view(emp),
+            "location_last_inside": emp.get("location_last_inside") if emp.get("location_last_inside") in (True, False) else None}
 
 
 @router.post("/personnel/attendance/self")
@@ -2144,7 +2164,11 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             raise HTTPException(status_code=400, detail=f"Bekleyen yönetici teyitli {geo_confirm_action_tr(action).lower()} talebiniz var.")
         if action == "check_out" and pending.get("action") == "check_in":
             raise HTTPException(status_code=400, detail="Önce bekleyen yönetici teyitli giriş talebinizin onaylanması gerekir.")
-    if geo_confirm_needs_manager(verdict.get("verdict")):
+    if action == "check_in":
+        block = check_in_geo_block_detail(verdict)
+        if block:
+            raise HTTPException(status_code=400, detail=block)
+    if action == "check_out" and geo_confirm_needs_manager(verdict.get("verdict")):
         return await open_geo_confirm_request(
             emp, user, existing, date, action, clock, verdict, lat, lng, acc, workplace,
             overnight=overnight,
@@ -2258,7 +2282,7 @@ async def open_geo_confirm_request(
     reason: Optional[str] = None,
     overnight: bool = False,
 ) -> dict:
-    """Konum kapalı / iş yerinde değil / kayıtlı saat düzeltmesi yönetici teyidine düşer."""
+    """Çıkışta konum kapalı veya iş yerinde değil; kayıtlı saat düzeltmesi yönetici teyidine düşer."""
     reason = reason or verdict.get("verdict") or "location_off"
     gcr = build_geo_confirm_request(
         action=action,
