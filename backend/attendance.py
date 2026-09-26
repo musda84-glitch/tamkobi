@@ -1449,7 +1449,7 @@ def geo_confirm_needs_manager(verdict: Optional[str]) -> bool:
 
 
 def check_in_geo_block_detail(verdict: Optional[dict]) -> Optional[str]:
-    """İş/görev yeri hedefi varken uzakta veya konumsuz giriş yazılmaz."""
+    """İş/görev yeri hedefi varken uzakta veya konumsuz giriş yazılmaz; yönetici talebi açılmaz."""
     row = verdict if isinstance(verdict, dict) else {}
     kind = row.get("verdict")
     if kind not in ("offsite", "location_off"):
@@ -2156,7 +2156,8 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
             "habit": attendance_habit(enriched),
             "habit_label": habit_label(attendance_habit(enriched)),
             "location_consent": location_consent.normalize_location_consent(emp.get("location_consent")),
-            "location_signal": location_consent.location_signal_view(emp)}
+            "location_signal": location_consent.location_signal_view(emp),
+            "location_last_inside": emp.get("location_last_inside") if emp.get("location_last_inside") in (True, False) else None}
 
 
 @router.post("/personnel/attendance/self")
@@ -2301,7 +2302,7 @@ async def open_geo_confirm_request(
     reason: Optional[str] = None,
     overnight: bool = False,
 ) -> dict:
-    """Konum kapalı / iş yerinde değil / kayıtlı saat düzeltmesi yönetici teyidine düşer."""
+    """Çıkışta konum kapalı veya iş yerinde değil; kayıtlı saat düzeltmesi yönetici teyidine düşer."""
     reason = reason or verdict.get("verdict") or "location_off"
     gcr = build_geo_confirm_request(
         action=action,

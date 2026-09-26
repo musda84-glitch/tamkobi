@@ -172,9 +172,8 @@ export function orderMoreMenuItems(ord, opts = {}) {
   const kind = orderMoreMenuKind(ord);
   let items;
   if (kind === "held_cart") {
-    // Aktif / bekleyen sepet: yalnızca Sil (Yazdır satır butonu olarak ayrıca var)
-    const allowDelete = opts.canDelete !== false;
-    return { kind, items: allowDelete ? [orderDeleteMoreItem()] : [] };
+    // Aktif / bekleyen sepet: satırda Yazdır + Eksik ürünleri üretime al; menü boş
+    return { kind, items: [] };
   }
   if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
   else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();

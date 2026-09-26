@@ -6,9 +6,9 @@ import { Clock, LogIn, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDay
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
-import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHint } from "../utils/workplace";
+import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHasCoords, workplaceHint } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnelWage";
 import { fmtDmy } from "../utils/dateFormat";
 import { LocationConsentCard } from "../components/LocationConsentCard";
@@ -77,6 +77,8 @@ export default function MyAttendancePage() {
   const [punchEditTime, setPunchEditTime] = useState("");
   const [consentBusy, setConsentBusy] = useState(false);
   const [signal, setSignal] = useState(null);
+  const [liveOutside, setLiveOutside] = useState(null);
+  const [locMissing, setLocMissing] = useState(false);
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => { setData(r.data); setSignal(r.data.location_signal || null); }).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -91,6 +93,8 @@ export default function MyAttendancePage() {
     try {
       coords = await getPos();
     } catch (err) {
+      setLocMissing(true);
+      setLiveOutside(null);
       try {
         const r = await axios.post(`${API_URL}/personnel/attendance/self/location-unavailable`, locationUnavailablePayload(reason || err?.message || "Konum alınamadı"), { withCredentials: true });
         if (r.data.location_signal) setSignal(r.data.location_signal);
@@ -104,6 +108,8 @@ export default function MyAttendancePage() {
       const r = await axios.post(`${API_URL}/personnel/attendance/self/location`, {
         latitude: coords.latitude, longitude: coords.longitude, accuracy_m: coords.accuracy,
       }, { withCredentials: true });
+      setLocMissing(false);
+      if (typeof r.data.outside === "boolean") setLiveOutside(r.data.outside);
       if (r.data.location_signal) setSignal(r.data.location_signal);
       if (r.data.punched) {
         if (r.data.message) toast.success(r.data.message);
@@ -166,8 +172,24 @@ export default function MyAttendancePage() {
       load();
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "İşlem başarısız."); } finally { setBusy(null); }
   };
+  const outside = liveOutside != null
+    ? liveOutside
+    : data?.location_last_inside === false
+      ? true
+      : data?.location_last_inside === true
+        ? false
+        : null;
+  const hasGeoTarget = workplaceHasCoords(data?.workplace) || workplaceHasCoords(data?.location);
+  const checkInBlocked = checkInOffsiteBlocked({
+    checkedIn: Boolean(data?.today?.check_in),
+    hasTarget: hasGeoTarget,
+    outside,
+    locationMissing: locMissing && outside !== false,
+  });
+  const checkInHint = checkInBlocked ? checkInBlockedHint({ outside, locationMissing: locMissing && outside !== false }) : "";
   const onCheckInClick = () => {
     const t = data?.today;
+    if (checkInBlocked) { toast.error(checkInHint); return; }
     if (mesaimPunchOpensEditor({ action: "check_in", checkIn: t?.check_in })) {
       setPunchEdit("check_in");
       setPunchEditTime(t.check_in);
@@ -330,8 +352,8 @@ export default function MyAttendancePage() {
             </div>
           ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <button onClick={onCheckInClick} disabled={!!busy} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
-              {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">Giriş Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{t?.check_in ? `Giriş ${t.check_in}` : "henüz giriş yok"}</span>
+            <button onClick={onCheckInClick} disabled={!!busy || checkInBlocked} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
+              {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">Giriş Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{checkInBlocked ? "iş yerinde değilsiniz" : (t?.check_in ? `Giriş ${t.check_in}` : "henüz giriş yok")}</span>
             </button>
             <div className="rounded-2xl bg-white/10 border border-white/10 px-4 py-5 flex flex-col justify-center gap-1" data-testid="my-att-checkout-info">
               <div className="text-sm font-extrabold text-rose-200">Çıkış</div>
@@ -347,6 +369,9 @@ export default function MyAttendancePage() {
             </div>
           </div>
           )}
+          {checkInHint ? (
+            <div className="rounded-xl bg-rose-500/20 border border-rose-300/30 px-3 py-2 text-xs text-rose-100 font-semibold" data-testid="my-att-checkin-offsite">{checkInHint}</div>
+          ) : null}
           {geoConfirmHint(t) ? (
             <div className="rounded-xl bg-amber-500/20 border border-amber-300/30 px-3 py-2 text-xs text-amber-100 font-semibold" data-testid="my-att-geo-confirm-pending">{geoConfirmHint(t)}</div>
           ) : null}

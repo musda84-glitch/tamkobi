@@ -1,4 +1,4 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
 
 describe("selfAttendanceGeoMode", () => {
   test("requires GPS for check-in when a workplace/task target exists", () => {
@@ -17,6 +17,13 @@ describe("selfAttendanceGeoMode", () => {
     expect(mesaimPunchNowLabel("check_out")).toBe("Şimdiki saat ile çıkış");
     expect(resolveNowHm("16:43:09")).toBe("16:43");
     expect(resolveNowHm("", new Date(2026, 8, 24, 9, 5))).toBe("09:05");
+  });
+
+  test("blocks check-in away from the workplace or task site", () => {
+    expect(checkInOffsiteBlocked({ hasTarget: true, outside: true })).toBe(true);
+    expect(checkInOffsiteBlocked({ hasTarget: true, outside: false })).toBe(false);
+    expect(checkInOffsiteBlocked({ checkedIn: true, hasTarget: true, outside: true })).toBe(false);
+    expect(checkInBlockedHint({ outside: true })).toMatch(/Giriş yapılamaz/);
   });
 
   test("disables checkout geo — Mesaim has no checkout button", () => {

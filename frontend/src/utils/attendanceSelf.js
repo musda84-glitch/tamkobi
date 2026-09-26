@@ -78,6 +78,19 @@ export function selfAttendanceGeoMode(action, opts = {}) {
   return "none";
 }
 
+/** Konumlu hedef varken uzakta veya konumsuz giriş yazılmaz; yönetici talebi açılmaz. */
+export function checkInOffsiteBlocked({ checkedIn, hasTarget, outside, locationMissing } = {}) {
+  if (checkedIn || !hasTarget) return false;
+  if (outside === true) return true;
+  return Boolean(locationMissing);
+}
+
+export function checkInBlockedHint({ outside, locationMissing } = {}) {
+  if (outside === true) return "İş yeri veya görev yerinde değilsiniz. Giriş yapılamaz.";
+  if (locationMissing) return "Konum alınamadı. İş yeri veya görev yerinde giriş yapın.";
+  return "";
+}
+
 export function geoConfirmPending(rec) {
   return rec?.geo_confirm_request?.status === "pending";
 }

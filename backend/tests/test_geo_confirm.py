@@ -1,4 +1,5 @@
 from attendance import (
+    check_in_geo_block_detail,
     classify_self_punch_geo,
     decision_status_tr,
     geo_confirm_action_tr,
@@ -33,6 +34,17 @@ def test_classify_location_off_and_offsite():
     near = classify_self_punch_geo(LOC, 41.0005, 29.0005)
     assert near["verdict"] == "onsite"
     assert not geo_confirm_needs_manager(near["verdict"])
+
+
+def test_check_in_offsite_blocks_without_manager_request():
+    far = classify_self_punch_geo(LOC, 39.9, 32.8)
+    detail = check_in_geo_block_detail(far)
+    assert detail and "Giriş yapılamaz" in detail
+    assert str(far["distance_m"]) in detail
+    missing = check_in_geo_block_detail(classify_self_punch_geo(LOC, None, None))
+    assert missing and "Konum alınamadı" in missing
+    assert check_in_geo_block_detail(classify_self_punch_geo(LOC, 41.0005, 29.0005)) is None
+    assert check_in_geo_block_detail({"verdict": "skip"}) is None
 
 
 def test_geo_confirm_labels():

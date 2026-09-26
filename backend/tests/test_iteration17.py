@@ -220,14 +220,17 @@ class TestSelfService:
         r = c.post(f"{API}/personnel/attendance/self", json={"action": "check_in"})
         assert r.status_code == 400, r.text
         detail = (r.json().get("detail") or "").lower()
-        assert "konum" in detail or "giriş" in detail
+        detail = (r.json().get("detail") or "").lower()
+        assert "giriş" in detail
+        assert "yönetici" not in detail
 
     def test_self_checkin_far_location(self, c):
         r = c.post(f"{API}/personnel/attendance/self",
                    json={"action": "check_in", "latitude": 39.9, "longitude": 32.8})
         assert r.status_code == 400, r.text
-        detail = (r.json().get("detail") or "").lower()
-        assert "içinde" in detail or "giriş" in detail or "konum" in detail
+        detail = r.json().get("detail") or ""
+        assert "Giriş yapılamaz" in detail
+        assert "yönetici" not in detail.lower()
 
     def test_self_checkin_and_checkout(self, c, company_loc):
         assert company_loc, "company location missing"

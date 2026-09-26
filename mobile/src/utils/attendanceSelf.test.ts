@@ -1,4 +1,4 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimInSubtitle, mesaimLongDate, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimInSubtitle, mesaimLongDate, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -39,6 +39,18 @@ describe("selfAttendanceGeoMode", () => {
   it("disables checkout geo — Mesaim has no checkout button", () => {
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true, hasTarget: true })).toBe("none");
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: false })).toBe("none");
+  });
+});
+
+describe("checkInOffsiteBlocked", () => {
+  it("closes check-in away from the workplace or task site", () => {
+    expect(checkInOffsiteBlocked({ hasTarget: true, outside: true })).toBe(true);
+    expect(checkInOffsiteBlocked({ hasTarget: true, locationMissing: true })).toBe(true);
+    expect(checkInOffsiteBlocked({ hasTarget: true, outside: false })).toBe(false);
+    expect(checkInOffsiteBlocked({ hasTarget: false, outside: true })).toBe(false);
+    expect(checkInOffsiteBlocked({ checkedIn: true, hasTarget: true, outside: true })).toBe(false);
+    expect(checkInBlockedHint({ outside: true })).toMatch(/Giriş yapılamaz/);
+    expect(checkInBlockedHint({ locationMissing: true })).toMatch(/Konum alınamadı/);
   });
 });
 
