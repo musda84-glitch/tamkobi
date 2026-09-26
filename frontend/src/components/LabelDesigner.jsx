@@ -8,15 +8,14 @@ import { API_URL } from "../context/AuthContext";
 import { Barcode } from "./BarcodeLabelPrint";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
-import { formatTrAmount, moneySuffix } from "../utils/money";
 import { productLabelImageUrl } from "../utils/productImages";
+import { LABEL_DESIGN_FIELDS, labelFieldValue } from "../utils/labelDesignFields";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
 const BUILTIN_SIZES = [[40, 20], [50, 30], [60, 40], [100, 30], [100, 50]];
-const FIELDS = [["name", "Ürün Adı"], ["price", "Fiyat"], ["sku", "SKU / Stok Kodu"], ["barcode_text", "Barkod No"], ["variant", "Varyant"], ["category", "Kategori"], ["company", "Firma Adı"], ["text", "Serbest Metin"]];
+const FIELDS = LABEL_DESIGN_FIELDS;
 const ELEMENT_TYPES = [["barcode", "Barkod", BarcodeIcon], ["qr", "QR Kod", QrCode], ["field", "Metin Alanı", Type], ["logo", "Firma Logosu", ImageIcon], ["image", "Ürün Görseli", ImageIcon], ["line", "Çizgi", Minus], ["box", "Kutu", Square]];
-const fmt = (n) => formatTrAmount((Number(n) || 0));
 const uid = () => Math.random().toString(36).slice(2, 8);
 const DEFAULT_TPL = (w = 100, h = 30) => {
   const compact = h <= 22;
@@ -77,13 +76,7 @@ const printLabelJobs = (tpl, jobs, page, sourceId) => {
   win.document.close();
 };
 
-const valueOf = (el, p, company) => {
-  if (!p) return el.field === "text" ? el.text || "Metin" : `{${el.field}}`;
-  const vat = Number(p.vat_rate ?? 20);
-  const base = Number(p.sale_price || 0);
-  const price = el.vat === "excl" ? (p.price_includes_vat ? base / (1 + vat / 100) : base) : (p.price_includes_vat ? base : base * (1 + vat / 100));
-  return { name: p.name, price: `${el.prefix || ""}${fmt(price)} ${el.currency || moneySuffix(p.currency)}${el.vat === "excl" ? " +KDV" : ""}`, sku: p.sku, barcode_text: p.barcode, variant: p.variant_name || (p.variants?.length ? `${p.variants.length} varyant` : ""), category: p.category, company: company?.name, text: el.text || "" }[el.field] ?? "";
-};
+const valueOf = (el, p, company) => labelFieldValue(el, p, company);
 
 const Element = ({ el, p, company, scale, selected, onSelect, onMove }) => {
   const st = { position: "absolute", left: el.x * PX * scale, top: el.y * PX * scale, width: el.w * PX * scale, height: el.h * PX * scale, transform: el.rotate ? `rotate(${el.rotate}deg)` : undefined, outline: selected ? "1.5px solid #6366f1" : undefined, cursor: "move", overflow: "hidden", boxSizing: "border-box" };

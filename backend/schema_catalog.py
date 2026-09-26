@@ -170,7 +170,7 @@ COLLECTIONS = {
     "products": {
         "scope": SCOPE_TENANT,
         "description": "Stok ve hizmet kartları, varyantlar, B2B görünürlük.",
-        "keys": ("_id", "company_id", "name", "sku", "barcode", "type", "sale_price", "purchase_price", "stock_quantity", "warehouse_id", "variants", "label_template_id", "label_image_url"),
+        "keys": ("_id", "company_id", "name", "sku", "barcode", "type", "sale_price", "purchase_price", "stock_quantity", "warehouse_id", "variants", "label_template_id", "label_image_url", "label_text_1", "label_text_2", "label_text_3"),
         "refs": ("companies._id", "warehouses._id", "label_templates._id"),
     },
     "product_categories": {
