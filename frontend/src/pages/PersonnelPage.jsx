@@ -794,35 +794,26 @@ export default function PersonnelPage() {
                           {locationCellCaption(locOn)}
                         </div>
                       </div>
-                      <div className="min-w-0 col-span-2 grid grid-cols-2 gap-0.5" data-testid={`employee-card-today-${empKey}`}>
+                      <div className="min-w-0 col-span-2" data-testid={`employee-card-today-${empKey}`}>
                       <button
                         type="button"
                         onClick={() => setPunchConfirm({ id: empKey, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", attToday[empKey]) })}
                         disabled={punchBusyId === empKey}
-                        className={`min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "bg-emerald-100" : "bg-white"}`}
+                        className={`w-full min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "bg-emerald-100" : "bg-white"}`}
                         data-testid={`employee-card-today-in-${empKey}`}
+                        title="Unutulan giriş kaydı"
                       >
                         <div className="text-[9px] font-bold uppercase tracking-wide text-emerald-700">Giriş</div>
                         <div className="text-[12px] font-black text-emerald-800 leading-tight">
                           {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
                         </div>
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setPunchConfirm({ id: empKey, action: "check_out", name: emp.full_name || "", time: cardPunchDraftTime("check_out", attToday[empKey]) })}
-                        disabled={punchBusyId === empKey}
-                        className={`min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_out" ? "bg-rose-100" : "bg-white"}`}
-                        data-testid={`employee-card-today-out-${empKey}`}
-                      >
-                        <div className="text-[9px] font-bold uppercase tracking-wide text-rose-700">Çıkış</div>
-                        <div className="text-[12px] font-black text-rose-700 leading-tight">{punch.checkOut}</div>
-                      </button>
                       </div>
                     </div>
-                    {punchConfirm?.id === empKey ? (
+                    {punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? (
                       <div className="flex flex-col gap-1 px-1 pt-1" data-testid={`employee-card-punch-confirm-${empKey}`}>
-                        <label className={`text-[10px] font-bold ${punchLabelClass(punchConfirm.action === "check_out" ? "Çıkış saati" : "Giriş saati")}`}>
-                          {punchConfirm.action === "check_out" ? "Çıkış saati" : "Giriş saati"}
+                        <label className={`text-[10px] font-bold ${punchLabelClass("Giriş saati")}`}>
+                          Giriş saati
                           <input
                             type="time"
                             autoFocus
@@ -833,16 +824,16 @@ export default function PersonnelPage() {
                           />
                         </label>
                         <span className="min-w-0 text-[10px] text-slate-600">{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</span>
-                        <span className="text-[10px] font-semibold text-amber-700" data-testid={`employee-card-punch-hint-${empKey}`}>{cardPunchTimeHint(cardPunchAttempts(attToday[empKey], punchConfirm.action))}</span>
+                        <span className="text-[10px] font-semibold text-amber-700" data-testid={`employee-card-punch-hint-${empKey}`}>{cardPunchTimeHint(cardPunchAttempts(attToday[empKey], punchConfirm.action), punchConfirm.action)}</span>
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
                             onClick={() => cardPunch(emp, punchConfirm.action, punchConfirm.time)}
                             disabled={punchBusyId === empKey}
-                            className={`shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold text-white disabled:opacity-50 ${punchConfirm.action === "check_out" ? "bg-rose-600" : "bg-emerald-600"}`}
+                            className="shrink-0 px-2 py-0.5 rounded-md text-[10px] font-bold text-white disabled:opacity-50 bg-emerald-600"
                             data-testid={`employee-card-punch-yes-${empKey}`}
                           >
-                            {punchBusyId === empKey ? "…" : "Onayla"}
+                            {punchBusyId === empKey ? "…" : "Kaydet"}
                           </button>
                           <button
                             type="button"

@@ -453,7 +453,7 @@ describe("payroll helpers", () => {
       checkIn: "01:37", checkOut: "10:26", late: 0, empty: false,
     });
     expect(todayAttendanceParts(null).empty).toBe(true);
-    expect(cardPunchConfirmMessage("check_in", "Davut")).toBe("Davut için giriş saati personel onayına gönderilsin mi?");
+    expect(cardPunchConfirmMessage("check_in", "Davut")).toBe("Davut için unutulan giriş saati kaydedilsin mi? Personel onayı gerekmez.");
     expect(cardPunchConfirmMessage("check_out")).toMatch(/çıkış saati/);
     expect(cardPunchConfirmMessage("absent", "Davut")).toMatch(/devamsız/);
     expect(cardPunchConfirmMessage("absent", "Davut")).toMatch(/Giriş\/çıkış silinir/);
@@ -463,6 +463,7 @@ describe("payroll helpers", () => {
     expect(cardPunchRequiresTime("09:13")).toBeNull();
     expect(cardPunchPayload("check_in", "09:13")).toEqual({ action: "check_in", check_in: "09:13" });
     expect(cardPunchAttempts({ manager_time_edit_rounds: { check_in: { attempts: 2 } } }, "check_in")).toBe(2);
+    expect(cardPunchTimeHint(0, "check_in")).toMatch(/onayı yok/);
     expect(cardPunchTimeHint(0)).toMatch(/teyidine/);
     expect(cardPunchTimeHint(2)).toMatch(/3\. deneme/);
     expect(advanceFormToggleIcon(true)).toBe("eye-off-outline");
