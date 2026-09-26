@@ -2087,6 +2087,23 @@ export function assignEmployeeToTasks(
   if (opts.taskId) {
     const idx = existing.findIndex((t) => t.id === opts.taskId);
     if (idx < 0) return { tasks: existing, error: "Görev bulunamadı." };
+    const current = existing[idx];
+    const owner = String(current.assignee_id || "");
+    if (owner && owner !== empId) {
+      return {
+        tasks: [...existing, withTaskAssign({
+          id: opts.newId || newTaskId(),
+          title: current.title,
+          done: false,
+          assignee_id: empId,
+          assignee_name: empName,
+          due_date: current.due_date,
+          duration_days: current.duration_days,
+          kind: current.kind,
+        }, opts)],
+        error: null,
+      };
+    }
     return {
       tasks: existing.map((t, i) => (i === idx ? withTaskAssign({ ...t, assignee_id: empId, assignee_name: empName }, opts) : t)),
       error: null,
@@ -2104,6 +2121,24 @@ export function assignEmployeeToTasks(
     }, opts)],
     error: null,
   };
+}
+
+/** Atama sonrası bu personelin satırı: kopya açıldıysa yeni id, değilse seçilen görev. */
+export function assignedTaskAfterAssign(
+  tasks: ProjectTask[] | undefined,
+  employeeId: string,
+  taskId?: string,
+): ProjectTask | undefined {
+  const rows = tasks || [];
+  const empId = String(employeeId || "");
+  if (taskId) {
+    const kept = rows.find((t) => t.id === taskId && String(t.assignee_id || "") === empId);
+    if (kept) return kept;
+  }
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (String(rows[i].assignee_id || "") === empId) return rows[i];
+  }
+  return rows[rows.length - 1];
 }
 
 export function validateTaskAssign(projectId: string, taskId: string, title: string): string | null {
@@ -2147,7 +2182,7 @@ export function taskSelectGroups(tasks?: ProjectTask[] | null) {
     label: "Yapılacak işler",
     options: open.map((t) => ({
       value: t.id || "",
-      label: String(t.title || ""),
+      label: t.assignee_name ? `${t.title} · ${t.assignee_name}` : String(t.title || ""),
     })),
   }];
 }

@@ -8,6 +8,7 @@ from work_parks import (
     is_assignment_done,
     mark_office_task_done,
     mark_project_task_done,
+    preserve_other_assignees,
     normalize_office_task_types,
     normalize_work_parks,
     normalize_workshop_zones,
@@ -104,3 +105,26 @@ def test_mark_project_task_done_and_clear_duty():
     duty = {"task_id": "t1", "kind": "field"}
     assert clear_duty_if_task(duty, "t1") is None
     assert clear_duty_if_task(duty, "t9") == duty
+
+
+def test_preserve_other_assignees_keeps_first_person():
+    previous = [
+        {"id": "t1", "title": "Montaj", "assignee_id": "e1", "assignee_name": "Ali", "photos": [{"url": "/a.jpg"}]},
+        {"id": "t2", "title": "Keşif", "assignee_id": "e2", "assignee_name": "Veli"},
+    ]
+    incoming = [
+        {"id": "t1", "title": "Montaj", "assignee_id": "e3", "assignee_name": "Ayşe"},
+        {"id": "t2", "title": "Keşif", "assignee_id": "e2", "assignee_name": "Veli"},
+    ]
+    merged = preserve_other_assignees(previous, incoming)
+    assert merged[0]["assignee_id"] == "e1"
+    assert merged[0]["photos"][0]["url"] == "/a.jpg"
+    assert merged[1]["assignee_id"] == "e3"
+    assert merged[1]["id"] != "t1"
+    assert merged[2]["id"] == "t2"
+    claimed = preserve_other_assignees(
+        [{"id": "t9", "title": "Boş", "assignee_id": None}],
+        [{"id": "t9", "title": "Boş", "assignee_id": "e1", "assignee_name": "Ali"}],
+    )
+    assert len(claimed) == 1
+    assert claimed[0]["assignee_id"] == "e1"

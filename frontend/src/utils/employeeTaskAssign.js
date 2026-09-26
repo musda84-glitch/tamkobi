@@ -66,6 +66,21 @@ export function nextTasksAfterAssign(tasks, employee, { taskId, title, newId, du
   if (taskId) {
     const idx = existing.findIndex((t) => t.id === taskId);
     if (idx < 0) return { error: "Görev bulunamadı." };
+    const current = existing[idx];
+    const owner = String(current.assignee_id || "");
+    if (owner && owner !== empId) {
+      return {
+        tasks: [...existing, stamp({
+          id: newId || `t_${Date.now()}`,
+          title: current.title,
+          done: false,
+          due_date: current.due_date,
+          duration_days: current.duration_days,
+          kind: current.kind,
+        })],
+        error: null,
+      };
+    }
     return {
       tasks: existing.map((t, i) => (i === idx ? stamp(t) : t)),
       error: null,
@@ -81,6 +96,20 @@ export function nextTasksAfterAssign(tasks, employee, { taskId, title, newId, du
     })],
     error: null,
   };
+}
+
+/** Atama sonrası bu personelin satırı: kopya açıldıysa yeni id, değilse seçilen görev. */
+export function assignedTaskAfterAssign(tasks, employeeId, taskId) {
+  const rows = tasks || [];
+  const empId = String(employeeId || "");
+  if (taskId) {
+    const kept = rows.find((t) => t.id === taskId && String(t.assignee_id || "") === empId);
+    if (kept) return kept;
+  }
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (String(rows[i].assignee_id || "") === empId) return rows[i];
+  }
+  return rows[rows.length - 1];
 }
 
 export function validateEmployeeTaskAssign(projectId, taskId, title) {

@@ -388,7 +388,7 @@ export function ProjectTeamSheet({
     const cleaned = cleanProjectTasks(tasks);
     setBusy(true);
     try {
-      await put(client, `/projects/${id}`, { tasks: cleaned });
+      await put(client, `/projects/${id}`, { tasks: cleaned, replace_assignees: true });
       onSaved(id, cleaned);
     } catch (err) {
       onError(apiErrorMessage(err, "Görevler kaydedilemedi."));

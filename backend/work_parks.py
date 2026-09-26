@@ -191,6 +191,31 @@ def mark_office_task_done(tasks: Any, task_id: str) -> tuple[list, Optional[dict
     return out, found
 
 
+def preserve_other_assignees(previous: Any, incoming: Any) -> list:
+    """Aynı iş ikinci kişiye verilince ilk personelin satırı durur; yeni kişiye kopya açılır."""
+    prev_by_id: dict = {}
+    for t in previous or []:
+        if not isinstance(t, dict):
+            continue
+        tid = str(t.get("id") or t.get("_id") or "")
+        if tid:
+            prev_by_id[tid] = t
+    out: list = []
+    for t in incoming or []:
+        if not isinstance(t, dict):
+            continue
+        tid = str(t.get("id") or t.get("_id") or "")
+        old = prev_by_id.get(tid) if tid else None
+        old_aid = str((old or {}).get("assignee_id") or "")
+        new_aid = str(t.get("assignee_id") or "")
+        if old and old_aid and new_aid and old_aid != new_aid:
+            out.append(old)
+            out.append({**t, "id": f"t_{uuid.uuid4().hex[:10]}"})
+        else:
+            out.append(t)
+    return out
+
+
 def mark_project_task_done(tasks: Any, task_id: str, emp_id: str) -> tuple[list, Optional[dict]]:
     tid = str(task_id or "")
     eid = str(emp_id or "")

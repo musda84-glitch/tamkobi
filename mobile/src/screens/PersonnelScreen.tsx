@@ -85,6 +85,7 @@ import {
   validateOvertimeEdit,
   personnelExpensePayload,
   assignEmployeeToTasks,
+  assignedTaskAfterAssign,
   employeeDutyBoard,
   employeeStatusLabel,
   employeePresenceChip,
@@ -887,9 +888,7 @@ export function PersonnelScreen() {
     setBusy(true);
     try {
       await put(client, `/projects/${taskProjectId}`, { tasks: next.tasks });
-      const assigned = taskId
-        ? next.tasks.find((t) => t.id === taskId)
-        : next.tasks[next.tasks.length - 1];
+      const assigned = assignedTaskAfterAssign(next.tasks, idOf(taskEmp), taskId);
       const work = (assigned?.title || taskTitle || "iş").trim();
       try {
         await post(client, `/personnel/employees/${idOf(taskEmp)}/active-duty`, {
@@ -2978,7 +2977,12 @@ export function PersonnelScreen() {
             {taskEmp.full_name} bu işe atanacak
             {(() => {
               const t = (projects.find((p) => idOf(p) === taskProjectId)?.tasks || []).find((x) => (x.id || "") === taskId);
-              return t?.title ? ` · ${t.title}` : "";
+              if (!t?.title) return "";
+              const owner = String(t.assignee_id || "");
+              if (owner && owner !== idOf(taskEmp) && t.assignee_name) {
+                return ` · ${t.title} · ${t.assignee_name} durur`;
+              }
+              return ` · ${t.title}`;
             })()}
           </Muted>
         ) : null}
