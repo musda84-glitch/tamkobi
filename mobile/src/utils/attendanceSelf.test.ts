@@ -30,16 +30,15 @@ describe("intraday leave request", () => {
 });
 
 describe("selfAttendanceGeoMode", () => {
-  it("never blocks the punch — GPS is attached when a target or tracking exists", () => {
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("attach");
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: false })).toBe("attach");
+  it("requires GPS for check-in when a workplace/task target exists", () => {
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("required");
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: false })).toBe("required");
     expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: true })).toBe("attach");
     expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: false })).toBe("none");
   });
-  it("attaches checkout geo when tracking is on and never requires it", () => {
-    expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true, hasTarget: true })).toBe("attach");
+  it("disables checkout geo — Mesaim has no checkout button", () => {
+    expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true, hasTarget: true })).toBe("none");
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: false })).toBe("none");
-    expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true })).not.toBe("required");
   });
 });
 
@@ -68,7 +67,7 @@ describe("mesaim card copy", () => {
     expect(mesaimInSubtitle(null)).toBe("henüz giriş yok");
     expect(mesaimOutSubtitle({ checkOut: "10:26" })).toBe("Çıkış 10:26");
     expect(mesaimOutSubtitle({ checkIn: null })).toBe("önce giriş yapın");
-    expect(mesaimOutSubtitle({ checkIn: "01:37", confirming: true })).toBe("onay için tekrar basın");
+    expect(mesaimOutSubtitle({ checkIn: "01:37", confirming: true })).toMatch(/puantaj/);
     expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(true);
     expect(mesaimPunchOpensEditor({ action: "check_out", checkOut: "01:20" })).toBe(true);
     expect(mesaimPunchOpensEditor({ action: "check_in" })).toBe(false);
@@ -79,23 +78,23 @@ describe("mesaim card copy", () => {
 });
 
 describe("checkoutConfirmMessage", () => {
-  it("warns that checkout cannot be undone and mentions check-in when known", () => {
+  it("points to puantaj instead of self-checkout", () => {
     expect(checkoutConfirmMessage("12:25")).toContain("giriş 12:25");
-    expect(checkoutConfirmMessage("12:25")).toMatch(/geri alınamaz/);
-    expect(checkoutConfirmMessage("")).toMatch(/Yanlışlıkla bastıysanız vazgeçin/);
-    expect(checkoutConfirmMessage(null)).not.toContain("giriş");
+    expect(checkoutConfirmMessage("12:25")).toMatch(/puantaj/i);
+    expect(checkoutConfirmMessage("")).toMatch(/puantaj/i);
+    expect(checkoutConfirmMessage(null)).toMatch(/puantaj/i);
   });
 });
 
 describe("selfCheckoutUnlocked", () => {
-  it("stays open after check-in even before schedule end", () => {
-    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00" })).toBe(true);
-    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00", earlyApproved: true })).toBe(true);
+  it("is always false — checkout is from puantaj", () => {
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00" })).toBe(false);
+    expect(selfCheckoutUnlocked({ checkedIn: true, nowHm: "16:00", scheduleEnd: "18:00", earlyApproved: true })).toBe(false);
     expect(selfCheckoutUnlocked({ checkedIn: false, nowHm: "19:00", scheduleEnd: "18:00" })).toBe(false);
     expect(selfCheckoutUnlocked({ checkedIn: true, checkedOut: true, earlyApproved: true })).toBe(false);
     expect(earlyLeaveApproved({ early_leave_request: { status: "approved" } })).toBe(true);
     expect(earlyLeaveApproved({ early_leave_request: { status: "pending" } })).toBe(false);
-    expect(selfCheckoutLockedHint({ checkedIn: true })).toMatch(/açık/);
+    expect(selfCheckoutLockedHint({ checkedIn: true })).toMatch(/puantaj/i);
     expect(habitLabel({ typical_in: "08:50", typical_out: "18:05", sample_days: 6 })).toMatch(/08:50/);
     expect(managerTimeEditHint({ pending_employee: true, prev_check_out: "18:10", check_out: "17:45", attempt: 1 })).toMatch(/1\/3/);
     expect(managerTimeEditHint({ pending_employee: false })).toBe("");
@@ -103,9 +102,9 @@ describe("selfCheckoutUnlocked", () => {
 });
 
 describe("shouldWatchCheckoutUnlock", () => {
-  it("polls while early leave is pending or checkout is still locked", () => {
+  it("polls only while early leave is pending", () => {
     expect(shouldWatchCheckoutUnlock({ earlyPending: true, checkedIn: true })).toBe(true);
-    expect(shouldWatchCheckoutUnlock({ checkedIn: true, checkoutUnlocked: false })).toBe(true);
+    expect(shouldWatchCheckoutUnlock({ checkedIn: true, checkoutUnlocked: false })).toBe(false);
     expect(shouldWatchCheckoutUnlock({ checkedIn: true, checkoutUnlocked: true })).toBe(false);
     expect(shouldWatchCheckoutUnlock({ checkedOut: true, earlyPending: true })).toBe(false);
   });

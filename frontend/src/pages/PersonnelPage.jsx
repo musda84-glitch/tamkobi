@@ -510,10 +510,13 @@ export default function PersonnelPage() {
     }
   };
 
-  const decideEarly = async (id, decision) => {
+  const decideEarly = async (id, decision, wageDeduction = false) => {
     setBusyReqId(id);
     try {
-      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/early-leave-decision`, { decision });
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/early-leave-decision`, {
+        decision,
+        wage_deduction: decision === "approve" ? !!wageDeduction : false,
+      });
       toast.success(r.data?.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
       await afterRequestDecision();
     } catch (err) {
@@ -523,10 +526,13 @@ export default function PersonnelPage() {
     }
   };
 
-  const decideIntraday = async (id, decision) => {
+  const decideIntraday = async (id, decision, wageDeduction = false) => {
     setBusyReqId(id);
     try {
-      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/intraday-leave-decision`, { decision });
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/intraday-leave-decision`, {
+        decision,
+        wage_deduction: decision === "approve" ? !!wageDeduction : false,
+      });
       toast.success(r.data?.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
       await afterRequestDecision();
     } catch (err) {

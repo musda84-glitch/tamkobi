@@ -2,9 +2,9 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { MapPin, LogIn, LogOut, Loader2, Crosshair, Smartphone } from "lucide-react";
+import { MapPin, LogIn, Loader2, Crosshair, Smartphone } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, earlyLeaveApproved, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { LocationConsentCard } from "./LocationConsentCard";
 import { LocationSignal } from "./LocationSignal";
 import { locationConsentAccepted, locationUnavailablePayload } from "../utils/locationConsent";
@@ -75,19 +75,12 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
     setBusy(action);
     try {
       let body = { company_id: companyId, action };
-      const geoMode = selfAttendanceGeoMode(action, {
-        hasTarget: Boolean(st?.location || st?.workplace?.kind === "task"),
-        requireGeo: true,
-        trackingEnabled: true,
-      });
-      if (geoMode === "required" || geoMode === "attach") {
-        try {
-          const c = await getPos();
-          body = { ...body, latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
-        } catch (geoErr) {
-          await reportLocation(geoErr?.message);
-          if (geoMode === "required") throw geoErr;
-        }
+      try {
+        const c = await getPos();
+        body = { ...body, latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
+      } catch (geoErr) {
+        await reportLocation(geoErr?.message);
+        throw geoErr;
       }
       const r = await axios.post(`${API_URL}/personnel/attendance/geo`, body, { withCredentials: true });
       toast.success(r.data.message); load(); onChanged?.();
@@ -99,7 +92,7 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
       const c = await getPos();
       if (!window.confirm(`Firma konumu bu noktaya sabitlensin mi? (±${Math.round(c.accuracy)} m hassasiyet, 300 m yarıçap)`)) return;
       await axios.put(`${API_URL}/companies/${companyId}/location`, { latitude: c.latitude, longitude: c.longitude, radius_m: 300 });
-      toast.success("Firma konumu kaydedildi. Personel artık 300 m içinden giriş yapabilir; çıkış her konumdan yapılabilir."); load();
+      toast.success("Firma konumu kaydedildi. Personel iş yeri / görev yeri toleransı içinde giriş yapabilir."); load();
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "Konum kaydedilemedi."); } finally { setBusy(null); }
   };
   const acceptConsent = async ({ accept_kvkk, accept_share }) => {
@@ -117,12 +110,8 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
 
   const t = st?.today;
   const isAdmin = user?.role === "admin";
-  const earlyOk = earlyLeaveApproved(t);
   const consentOk = !st?.employee || locationConsentAccepted(st?.location_consent);
   const liveSignal = signal || st?.location_signal;
-  const checkoutOn = st?.checkout_unlocked != null
-    ? Boolean(st.checkout_unlocked) && !t?.check_out
-    : selfCheckoutUnlocked({ checkedIn: !!t?.check_in, checkedOut: !!t?.check_out, nowHm: st?.now, scheduleStart: st?.schedule?.start, scheduleEnd: st?.schedule?.end, expectedEnd: t?.expected_end, checkIn: t?.check_in, earlyApproved: earlyOk });
   return (
     <div className="space-y-3" data-testid="geo-attendance-wrap">
     {st?.employee && (
@@ -136,7 +125,7 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
     )}
     <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center gap-4 shadow-lg" data-testid="geo-attendance-card">
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 font-bold text-sm"><Smartphone className="w-4 h-4 text-emerald-400" /> Konumla Giriş / Çıkış <span className="text-[10px] font-semibold bg-white/10 px-2 py-0.5 rounded-full">girişte 300 m</span></div>
+        <div className="flex items-center gap-2 font-bold text-sm"><Smartphone className="w-4 h-4 text-emerald-400" /> Konumlu Giriş <span className="text-[10px] font-semibold bg-white/10 px-2 py-0.5 rounded-full">iş / görev yeri</span></div>
         <div className="text-xs text-slate-300 mt-1">
           {st?.company_location || st?.location ? <span className="inline-flex items-center gap-1"><MapPin className="w-3 h-3 text-emerald-400" /> Firma konumu tanımlı · yarıçap {(st.company_location || st.location).radius_m} m</span> : <span className="text-amber-300">Firma konumu henüz tanımlı değil.</span>}
           {st?.employee ? <span className="ml-2">· {st.employee.full_name}</span> : <span className="ml-2 text-amber-300">· Kullanıcınız bir personel kartına bağlı değil</span>}
@@ -148,7 +137,6 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
       </div>
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => act("check_in")} disabled={!!busy || !st?.employee || !consentOk || !!t?.check_in} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 rounded-xl text-xs font-bold" data-testid="geo-checkin-btn">{busy === "check_in" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />} Giriş Yap</button>
-        <button onClick={() => act("check_out")} disabled={!!busy || !st?.employee || !consentOk || !checkoutOn} className="flex items-center gap-1.5 px-4 py-2 bg-rose-500 hover:bg-rose-400 disabled:opacity-40 rounded-xl text-xs font-bold" data-testid="geo-checkout-btn">{busy === "check_out" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />} {earlyOk && t && !t.check_out ? "Çıkış (onaylı erken)" : "Çıkış Yap"}</button>
         {isAdmin && <button onClick={pin} disabled={!!busy} className="flex items-center gap-1.5 px-3 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-semibold" title="Bulunduğunuz noktayı firma konumu olarak kaydet" data-testid="geo-pin-btn">{busy === "pin" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crosshair className="w-4 h-4" />} {st?.location ? "Firma Konumunu Güncelle" : "Firma Konumunu Sabitle"}</button>}
       </div>
     </div>

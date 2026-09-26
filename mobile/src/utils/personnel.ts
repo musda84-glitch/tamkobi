@@ -334,6 +334,12 @@ export function requestKindLabel(kind?: string | null): string {
 
 export type RequestDecision = boolean | "ack" | "deduct";
 
+export function leaveWageDecisionBody(approved: RequestDecision): { decision: string; wage_deduction: string } {
+  if (approved === "deduct") return { decision: "approve", wage_deduction: "true" };
+  if (approved) return { decision: "approve", wage_deduction: "false" };
+  return { decision: "reject", wage_deduction: "false" };
+}
+
 export function locationExitDecisionBody(approved: RequestDecision): { decision: string; wage_deduction: string } {
   if (approved === "ack") return { decision: "ack", wage_deduction: "false" };
   if (approved === "deduct") return { decision: "approve", wage_deduction: "true" };
@@ -354,10 +360,10 @@ export function pendingRequestDecision(
     return { path: `/personnel/bonuses/${id}/decide`, body: { status: approved ? "approved" : "rejected" } };
   }
   if (it.kind === "early_leave") {
-    return { path: `/personnel/attendance/${id}/early-leave-decision`, body: { decision: approved ? "approve" : "reject" } };
+    return { path: `/personnel/attendance/${id}/early-leave-decision`, body: leaveWageDecisionBody(approved) };
   }
   if (it.kind === "intraday_leave") {
-    return { path: `/personnel/attendance/${id}/intraday-leave-decision`, body: { decision: approved ? "approve" : "reject" } };
+    return { path: `/personnel/attendance/${id}/intraday-leave-decision`, body: leaveWageDecisionBody(approved) };
   }
   if (it.kind === "yevmiye_adjustment") {
     return { path: `/personnel/attendance/${id}/yevmiye-decision`, body: { decision: approved ? "approve" : "reject" } };
@@ -382,6 +388,14 @@ export function pendingRequestDecisionMessage(it: PendingRequest, approved: Requ
     if (approved === "ack") return "Konum dışı çıkış: haberim var. Kesinti yok.";
     if (approved === "deduct") return "Konum dışı çıkış: ücretten kesinti uygulandı.";
     return approved ? "Konum dışı çıkış onaylandı (kesinti yok)." : "Konum dışı çıkış reddedildi.";
+  }
+  if (it.kind === "early_leave") {
+    if (approved === "deduct") return "Erken çıkış onaylandı · ücretten düşülecek.";
+    return approved ? "Erken çıkış onaylandı · ücretten düşülmeyecek." : "Erken çıkış reddedildi.";
+  }
+  if (it.kind === "intraday_leave") {
+    if (approved === "deduct") return "Gün içi izin onaylandı · ücretten düşülecek.";
+    return approved ? "Gün içi izin onaylandı · ücretten düşülmeyecek." : "Gün içi izin reddedildi.";
   }
   if (it.kind === "yevmiye_adjustment") {
     return approved ? "Ücret kesildi." : "Ücret kesilmedi.";
@@ -408,6 +422,13 @@ export function requestDecisionActions(kind?: string | null): { key: string; tit
       { key: "ack", title: "Haberim var", decision: "ack", color: "secondary" },
       { key: "approve", title: "Kesinti olmasın", decision: true, color: "primary" },
       { key: "deduct", title: "Kesinti olsun", decision: "deduct", color: "warning" },
+      { key: "reject", title: "Reddet", decision: false, color: "danger" },
+    ];
+  }
+  if (kind === "early_leave" || kind === "intraday_leave") {
+    return [
+      { key: "approve", title: "Ücret düşme", decision: true, color: "primary" },
+      { key: "deduct", title: "Ücret düş", decision: "deduct", color: "warning" },
       { key: "reject", title: "Reddet", decision: false, color: "danger" },
     ];
   }
@@ -456,6 +477,8 @@ export function requestActionDoneTitle(btn: Pick<RequestAction, "title" | "decis
   if (btn.title === "Onayla") return "Onaylandı";
   if (btn.title === "Ücret kes") return "Kesildi";
   if (btn.title === "Ücret kesme") return "Kesilmedi";
+  if (btn.title === "Ücret düş") return "Ücret düşüldü";
+  if (btn.title === "Ücret düşme") return "Ücret düşülmedi";
   if (btn.title === "Kesinti olmasın") return "Kesinti yok";
   if (btn.title === "Kesinti olsun") return "Kesildi";
   if (btn.title === "Haberim var") return "Kaydedildi";

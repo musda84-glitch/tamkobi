@@ -218,31 +218,16 @@ class TestSelfService:
 
     def test_self_checkin_requires_geo(self, c):
         r = c.post(f"{API}/personnel/attendance/self", json={"action": "check_in"})
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert d.get("status") == "pending"
-        assert "yönetici onayına" in (d.get("message") or "").lower() or "teyit" in (d.get("message") or "").lower()
-        rec = d.get("record") or {}
-        gcr = rec.get("geo_confirm_request") or {}
-        assert gcr.get("status") == "pending"
-        assert gcr.get("reason") == "location_off"
-        assert not rec.get("check_in")
-        dec = c.post(f"{API}/personnel/attendance/{rec['id']}/geo-confirm-decision", json={"decision": "reject"})
-        assert dec.status_code == 200, dec.text
+        assert r.status_code == 400, r.text
+        detail = (r.json().get("detail") or "").lower()
+        assert "konum" in detail or "giriş" in detail
 
     def test_self_checkin_far_location(self, c):
         r = c.post(f"{API}/personnel/attendance/self",
                    json={"action": "check_in", "latitude": 39.9, "longitude": 32.8})
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert d.get("status") == "pending"
-        rec = d.get("record") or {}
-        gcr = rec.get("geo_confirm_request") or {}
-        assert gcr.get("status") == "pending"
-        assert gcr.get("reason") == "offsite"
-        assert not rec.get("check_in")
-        dec = c.post(f"{API}/personnel/attendance/{rec['id']}/geo-confirm-decision", json={"decision": "reject"})
-        assert dec.status_code == 200, dec.text
+        assert r.status_code == 400, r.text
+        detail = (r.json().get("detail") or "").lower()
+        assert "içinde" in detail or "giriş" in detail or "konum" in detail
 
     def test_self_checkin_and_checkout(self, c, company_loc):
         assert company_loc, "company location missing"
@@ -261,12 +246,10 @@ class TestSelfService:
         # duplicate check-in
         r2 = c.post(f"{API}/personnel/attendance/self", json={"action": "check_in", **payload})
         assert r2.status_code == 400 and "giriş yapılmış" in r2.json()["detail"]
-        # check out
+        # check out — Mesaim'den kapalı; puantajdan işlenir
         r3 = c.post(f"{API}/personnel/attendance/self", json={"action": "check_out", **payload})
-        assert r3.status_code == 200, r3.text
-        assert "Çıkış" in r3.json()["message"]
-        assert "sa çalışıldı" in r3.json()["message"] or "erken çıkış" in r3.json()["message"] or "fazla mesai" in r3.json()["message"]
-        assert r3.json()["record"]["geo_check_out"]
+        assert r3.status_code == 400, r3.text
+        assert "puantaj" in (r3.json().get("detail") or "").lower() or "çıkış" in (r3.json().get("detail") or "").lower()
 
     def test_confirm_and_dispute(self, c, emp):
         att = c.get(f"{API}/personnel/attendance?company_id={COMP}&month=2026-09").json()["records"]

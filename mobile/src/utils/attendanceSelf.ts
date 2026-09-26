@@ -1,12 +1,14 @@
 export type SelfAttendanceAction = "check_in" | "check_out";
 export type SelfAttendanceGeoMode = "required" | "attach" | "none";
 
-/** Giriş/çıkış butonu konum yüzünden kapanmaz. GPS varsa eklenir; yoksa veya uzaktaysa yönetici teyidi. */
+/** Giriş: iş/görev yeri hedefi varsa konum zorunlu. Çıkış Mesaim'de yok. */
 export function selfAttendanceGeoMode(
   action: SelfAttendanceAction,
   opts?: { hasTarget?: boolean; trackingEnabled?: boolean; requireGeo?: boolean },
 ): SelfAttendanceGeoMode {
-  if (opts?.hasTarget || opts?.trackingEnabled) return "attach";
+  if (action === "check_out") return "none";
+  if (opts?.hasTarget) return "required";
+  if (opts?.trackingEnabled) return "attach";
   return "none";
 }
 
@@ -74,8 +76,7 @@ export function mesaimInSubtitle(checkIn?: string | null): string {
 export function mesaimOutSubtitle(opts?: { checkIn?: string | null; checkOut?: string | null; confirming?: boolean } | null): string {
   if (opts?.checkOut) return `Çıkış ${opts.checkOut}`;
   if (!opts?.checkIn) return "önce giriş yapın";
-  if (opts.confirming) return "onay için tekrar basın";
-  return "saat ve konum basınca yazılır";
+  return "puantaj / beklenen mesai bitişinden";
 }
 
 export function geoConfirmHint(rec?: { geo_confirm_request?: GeoConfirmRequest | null } | null): string {
@@ -96,12 +97,12 @@ export function validateEarlyLeave(reason: string, plannedTime?: string): string
   return null;
 }
 
-/** Mesaim çıkış butonu: yanlışlıkla basılmasın diye ikinci adım metni. */
+/** @deprecated Mesaim'de çıkış butonu yok. */
 export function checkoutConfirmMessage(checkIn?: string | null): string {
   const giris = String(checkIn || "").trim();
   return giris
-    ? `Bugünkü mesai kapatılacak (giriş ${giris}). Yanlışlıkla bastıysanız vazgeçin; çıkış geri alınamaz.`
-    : "Bugünkü mesai kapatılacak. Yanlışlıkla bastıysanız vazgeçin; çıkış geri alınamaz.";
+    ? `Çıkış Mesaim'den yapılamaz (giriş ${giris}). Puantajdan işlenir.`
+    : "Çıkış Mesaim'den yapılamaz. Puantajdan işlenir.";
 }
 
 export function hmToMinutes(value?: string | null): number | null {
@@ -121,7 +122,7 @@ export function hmReachedEnd(now: number, end: number, start?: number | null): b
   return now >= end;
 }
 
-export function selfCheckoutUnlocked(opts: {
+export function selfCheckoutUnlocked(_opts?: {
   checkedIn?: boolean;
   checkedOut?: boolean;
   nowHm?: string;
@@ -132,12 +133,12 @@ export function selfCheckoutUnlocked(opts: {
   earlyApproved?: boolean;
   offDay?: boolean;
 }): boolean {
-  return Boolean(opts.checkedIn && !opts.checkedOut);
+  return false;
 }
 
 export function selfCheckoutLockedHint(opts: { checkedIn?: boolean; earlyPending?: boolean }): string {
-  if (!opts.checkedIn) return "Çıkış için önce giriş yapın. Konum açıksa iş yerine yaklaşınca giriş otomatik yazılır.";
-  return "Çıkış butonu açık. Konumla da çıkış yazılabilir; yönetici saati düzeltirse personel onayı gerekir.";
+  if (!opts.checkedIn) return "Önce iş yeri veya görev yerinde giriş yapın. Çıkış Mesaim'den yapılamaz.";
+  return "Çıkış Mesaim'den yapılamaz; personel puantajından (atanan fazla mesai dahil) işlenir.";
 }
 
 export type AttendanceHabit = {
@@ -207,8 +208,7 @@ export function shouldWatchCheckoutUnlock(opts: {
   checkoutUnlocked?: boolean;
 }): boolean {
   if (opts.checkedOut) return false;
-  if (opts.earlyPending) return true;
-  return Boolean(opts.checkedIn && !opts.checkoutUnlocked);
+  return Boolean(opts.earlyPending);
 }
 
 export function earlyLeavePayload(reason: string, plannedTime?: string) {

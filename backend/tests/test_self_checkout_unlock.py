@@ -1,13 +1,13 @@
 from attendance import early_leave_is_approved, hm_reached_end, self_checkout_unlocked
 
 
-def test_self_checkout_open_after_check_in_even_before_end():
+def test_self_checkout_mesaim_disabled_even_after_check_in():
     rec = {"check_in": "09:00", "date": "2026-09-23"}
     sched = {"start": "09:00", "end": "18:00", "work_days": [0, 1, 2, 3, 4]}
-    assert self_checkout_unlocked(rec, sched, "16:00") is True
+    assert self_checkout_unlocked(rec, sched, "16:00") is False
     rec["early_leave_request"] = {"status": "approved"}
     assert early_leave_is_approved(rec) is True
-    assert self_checkout_unlocked(rec, sched, "16:00") is True
+    assert self_checkout_unlocked(rec, sched, "16:00") is False
 
 
 def test_self_checkout_closes_after_out():
@@ -16,7 +16,7 @@ def test_self_checkout_closes_after_out():
     assert self_checkout_unlocked(rec, sched, "18:05") is False
 
 
-def test_pending_planned_time_does_not_block_button():
+def test_pending_planned_time_does_not_open_button():
     rec = {
         "check_in": "09:00",
         "date": "2026-09-23",
@@ -24,7 +24,7 @@ def test_pending_planned_time_does_not_block_button():
     }
     sched = {"start": "09:00", "end": "18:00", "work_days": [0, 1, 2, 3, 4]}
     assert early_leave_is_approved(rec) is False
-    assert self_checkout_unlocked(rec, sched, "16:05") is True
+    assert self_checkout_unlocked(rec, sched, "16:05") is False
 
 
 def test_wrapped_expected_end_helper_still_works():

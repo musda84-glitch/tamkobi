@@ -237,9 +237,8 @@ def hm_reached_end(now_m: int, end_m: int, start_m: Optional[int] = None) -> boo
 
 
 def self_checkout_unlocked(rec: Optional[dict] = None, schedule: Optional[dict] = None, now_s: Optional[str] = None) -> bool:
-    """Giriş varsa çıkış butonu her zaman açık. Yönetici saati düzeltebilir; personel onayı gerekir."""
-    rec = rec or {}
-    return bool(rec.get("check_in") and not rec.get("check_out"))
+    """Mesaim'de çıkış butonu yok; çıkış yönetici puantajı / beklenen saat (fazla mesai dahil) ile yazılır."""
+    return False
 
 
 def _median_minutes(values: list) -> Optional[int]:
@@ -449,8 +448,8 @@ def checkout_distance_blocks() -> bool:
 
 
 def location_ping_checks_out() -> bool:
-    """Konum ping giriş/çıkışı otomatik basabilir."""
-    return True
+    """Canlı konum otomatik giriş/çıkış basmaz; yalnızca varlık / iş yeri bilgisi güncellenir."""
+    return False
 
 
 def location_mode_for(lt: Optional[dict], workplace: Optional[dict] = None) -> dict:
@@ -559,6 +558,40 @@ def parse_location_exit_decision(req: Optional[dict] = None) -> dict:
     return {"decision": status, "wage_deduction": bool(deduct)}
 
 
+def parse_leave_wage_decision(req: Optional[dict] = None) -> dict:
+    """Erken çıkış / gün içi izin: approve|reject + ücretten düş (wage_deduction)."""
+    raw = req if isinstance(req, dict) else {}
+    decision = str(raw.get("decision") or "").strip().lower()
+    aliases = {
+        "approve": "approve",
+        "approved": "approve",
+        "reject": "reject",
+        "rejected": "reject",
+        "deduct": "approve",
+        "kesinti": "approve",
+    }
+    if decision not in aliases:
+        raise ValueError("decision: approve, reject veya deduct olmalı.")
+    status = aliases[decision]
+    deduct_raw = raw.get("wage_deduction", raw.get("deduct", raw.get("kesinti")))
+    if status != "approve":
+        deduct = False
+    elif deduct_raw is None:
+        deduct = decision in ("deduct", "kesinti")
+    else:
+        deduct = _truthy_flag(deduct_raw)
+    return {"decision": status, "wage_deduction": bool(deduct)}
+
+
+def leave_wage_decision_message(kind: str, approved: bool, wage_deduction: bool = False) -> str:
+    label = "Erken çıkış" if kind == "early_leave" else "Gün içi izin"
+    if not approved:
+        return f"{label} talebi reddedildi."
+    if wage_deduction:
+        return f"{label} onaylandı · ücretten düşülecek."
+    return f"{label} onaylandı · ücretten düşülmeyecek."
+
+
 def location_exit_decision_message(decision: str, wage_deduction: bool = False, amount: float = 0) -> str:
     if decision == "ack":
         return "Konum dışı çıkış: haberim var." + (" Kesinti yok." if not wage_deduction else "")
@@ -586,6 +619,23 @@ def day_end_hm(schedule: Optional[dict], date: Optional[str] = None, plan: Optio
     if wd not in (sch.get("work_days") or DEFAULT_SCHEDULE["work_days"]) and not plan:
         return None
     return str(day_window(sch, wd)["end"])[:5]
+
+
+def expected_checkout_hm(
+    rec: Optional[dict] = None,
+    schedule: Optional[dict] = None,
+    date: Optional[str] = None,
+    plan: Optional[dict] = None,
+) -> Optional[str]:
+    """Beklenen çıkış: mesai bitişi + atanan fazla mesai (puantaj / otomatik kapanış)."""
+    day = date or (rec or {}).get("date")
+    base = day_end_hm(schedule, day, plan)
+    if not base:
+        return None
+    assigned = assigned_overtime_hours(rec)
+    if assigned > 0:
+        return _add_minutes(base, int(round(assigned * 60)))
+    return base
 
 
 def minutes_past_hm(end_hm: Optional[str], now_hm: Optional[str]) -> int:
@@ -1054,11 +1104,14 @@ def assigned_overtime_hours(rec: Optional[dict]) -> float:
 
 
 def approved_intraday_gap_minutes(rec: Optional[dict]) -> int:
-    """Onaylı gün içi izin (çıkış–dönüş) dakikası; check_in/out penceresine sıkıştırılır."""
+    """Onaylı gün içi izin (çıkış–dönüş) dakikası; check_in/out penceresine sıkıştırılır.
+    Yönetici ücretten düşmeyecek dediyse (wage_deduction=False) süre düşülmez."""
     if not isinstance(rec, dict):
         return 0
     req = rec.get("intraday_leave_request") or {}
     if not (rec.get("intraday_leave_approved") or req.get("status") == "approved"):
+        return 0
+    if req.get("wage_deduction") is False:
         return 0
     out_t = (req.get("out_time") or "").strip()[:5]
     ret_t = (req.get("return_time") or "").strip()[:5]
@@ -1083,6 +1136,18 @@ def approved_intraday_gap_minutes(rec: Optional[dict]) -> int:
         except Exception:
             return max(0, b - a)
     return max(0, b - a)
+
+
+def early_leave_wage_minutes(rec: Optional[dict], early_minutes: int) -> int:
+    """Onaylı erken çıkışta ücretten düşülmeyecekse erken dakika 0."""
+    mins = max(0, int(early_minutes or 0))
+    if mins <= 0 or not isinstance(rec, dict):
+        return mins
+    elr = rec.get("early_leave_request") or {}
+    approved = bool(rec.get("early_leave_approved") or elr.get("status") == "approved")
+    if approved and elr.get("wage_deduction") is False:
+        return 0
+    return mins
 
 
 def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
@@ -1132,7 +1197,9 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
         else:
             # Aynı gün mesaisinde çıkış < giriş → gece vardiyası değil, bozuk kayıt
             out["time_order_invalid"] = True
-            out["early_leave_minutes"] = max(0, expected_end_m - b - exit_tol) if not out["is_off_day"] else 0
+            out["early_leave_minutes"] = early_leave_wage_minutes(
+                rec, max(0, expected_end_m - b - exit_tol) if not out["is_off_day"] else 0
+            )
             return out
     worked = max(0, b - a - win["break_minutes"] - leave_m)
     if out["is_off_day"]:
@@ -1144,7 +1211,7 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
         if schedule.get("count_early_as_overtime") and a < start_m:
             ot += start_m - a
         # Erken çıkış: atanan fazla mesai dahil beklenen çıkışa göre (çıkış toleransı düşülür)
-        out["early_leave_minutes"] = max(0, expected_end_m - b - exit_tol)
+        out["early_leave_minutes"] = early_leave_wage_minutes(rec, max(0, expected_end_m - b - exit_tol))
         ot = min(ot, worked)
     out["hours"] = round(worked / 60, 2)
     out["overtime_hours"] = round(ot / 60, 2)
@@ -1379,6 +1446,25 @@ def classify_self_punch_geo(loc: Optional[dict], lat: Optional[float], lng: Opti
 
 def geo_confirm_needs_manager(verdict: Optional[str]) -> bool:
     return verdict in ("offsite", "location_off")
+
+
+def check_in_geo_block_detail(verdict: Optional[dict]) -> Optional[str]:
+    """İş/görev yeri hedefi varken uzakta veya konumsuz giriş yazılmaz."""
+    row = verdict if isinstance(verdict, dict) else {}
+    kind = row.get("verdict")
+    if kind not in ("offsite", "location_off"):
+        return None
+    place = str(row.get("place") or "iş yeri")
+    if kind == "location_off":
+        return f"Konum alınamadı. {place} içinde giriş yapın."
+    dist = row.get("distance_m")
+    dist_bit = ""
+    try:
+        if dist is not None:
+            dist_bit = f" ({int(dist)} m)"
+    except (TypeError, ValueError):
+        dist_bit = ""
+    return f"{place} içinde değilsiniz{dist_bit}. Giriş yapılamaz."
 
 
 def geo_confirm_reason_tr(reason: Optional[str]) -> str:
@@ -2079,6 +2165,11 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     action = req.get("action")
     if action not in ("check_in", "check_out"):
         raise HTTPException(status_code=400, detail="action check_in veya check_out olmalı.")
+    if action == "check_out":
+        raise HTTPException(
+            status_code=400,
+            detail="Çıkış Mesaim'den yapılamaz. Çıkış saati personel puantajından (atanan fazla mesai dahil) işlenir.",
+        )
     emp = await employee_for_user(user)
     if not emp:
         raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
@@ -2101,11 +2192,9 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     if verdict["verdict"] == "onsite" and lat is not None and lng is not None:
         geo = {
             "latitude": lat, "longitude": lng, "distance_m": verdict["distance_m"],
-            "accuracy_m": acc or 0, "at": _now(), "enforced": bool(enforce_geo and action == "check_in"),
+            "accuracy_m": acc or 0, "at": _now(), "enforced": bool(enforce_geo),
             "workplace_kind": (loc or {}).get("kind"),
         }
-    elif action == "check_out" and verdict["verdict"] == "skip" and lat is not None and lng is not None:
-        geo = {"latitude": lat, "longitude": lng, "distance_m": None, "accuracy_m": acc or 0, "at": _now(), "enforced": False}
     today = _today(schedule)
     now_s = now_hm(schedule)
     clock = self_punch_clock(req, action, now_s)
@@ -2113,14 +2202,10 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     if not (req or {}).get("date"):
         date = await punch_date_for_action(emp, schedule, action, clock, today)
     existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
-    overnight = date != today and action == "check_out"
     correcting = self_punch_is_correction(existing, action)
     explicit_clock = bool((req or {}).get("time") or (req or {}).get(action))
-    if action == "check_out" and not existing.get("check_in") and not existing.get("check_out"):
-        raise HTTPException(status_code=400, detail="Önce giriş yapmalısınız.")
     if correcting and not explicit_clock:
-        label = "giriş" if action == "check_in" else "çıkış"
-        raise HTTPException(status_code=400, detail=f"Bugün {existing[action]} saatinde {label} yapılmış. Düzeltmek için yeni saat gönderin.")
+        raise HTTPException(status_code=400, detail=f"Bugün {existing[action]} saatinde giriş yapılmış. Düzeltmek için yeni saat gönderin.")
     if correcting:
         prev = str(existing.get(action) or "")[:5]
         if clock == prev:
@@ -2130,28 +2215,15 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             raise HTTPException(status_code=400, detail=order_err)
         return await open_geo_confirm_request(
             emp, user, existing, date, action, clock, verdict, lat, lng, acc, workplace,
-            reason="time_edit", overnight=overnight,
+            reason="time_edit", overnight=False,
         )
-    if action == "check_out" and not self_checkout_unlocked(existing, schedule, now_s):
-        raise HTTPException(status_code=400, detail="Çıkış için önce giriş yapın.")
-    if action == "check_out" and existing.get("check_in") and not overnight:
-        order_err = same_shift_order_error(action, clock, existing, schedule)
-        if order_err:
-            raise HTTPException(status_code=400, detail=order_err + " Cihaz saatini kontrol edin.")
     pending = existing.get("geo_confirm_request") or {}
-    if pending.get("status") == "pending":
-        if pending.get("action") == action:
-            raise HTTPException(status_code=400, detail=f"Bekleyen yönetici teyitli {geo_confirm_action_tr(action).lower()} talebiniz var.")
-        if action == "check_out" and pending.get("action") == "check_in":
-            raise HTTPException(status_code=400, detail="Önce bekleyen yönetici teyitli giriş talebinizin onaylanması gerekir.")
-    if geo_confirm_needs_manager(verdict.get("verdict")):
-        return await open_geo_confirm_request(
-            emp, user, existing, date, action, clock, verdict, lat, lng, acc, workplace,
-            overnight=overnight,
-        )
+    if pending.get("status") == "pending" and pending.get("action") == action:
+        raise HTTPException(status_code=400, detail=f"Bekleyen yönetici teyitli {geo_confirm_action_tr(action).lower()} talebiniz var.")
+    block = check_in_geo_block_detail(verdict)
+    if block:
+        raise HTTPException(status_code=400, detail=block)
     patch = {"status": "present", action: clock}
-    if overnight:
-        patch["overnight_checkout"] = True
     rec = await apply_day(emp, date, patch, source="self", confirmed=True)
     extra = {}
     if workplace:
@@ -2169,27 +2241,12 @@ async def self_attendance(req: Dict[str, Any], request: Request):
         await mark_employee_location_signal(emp["_id"], True)
     if extra:
         await _db.attendance.update_one({"_id": rec["id"]}, {"$set": extra})
-    msg = f"{'Giriş' if action == 'check_in' else 'Çıkış'} {now_s} olarak kaydedildi."
-    if action == "check_in" and rec.get("late_minutes"):
+    msg = f"Giriş {clock} olarak kaydedildi."
+    if rec.get("late_minutes"):
         msg += f" Mesai başlangıcına göre {rec['late_minutes']} dk geç."
         if schedule.get("notify_late_checkin", True):
             await notify_managers(emp["company_id"], "attendance_late", f"Geç giriş: {emp['full_name']}",
-                                  f"{emp['full_name']} bugün {now_s} saatinde giriş yaptı — mesai başlangıcına göre {rec['late_minutes']} dk geç.", dedupe_key=f"late:{emp['_id']}:{today}")
-    if action == "check_out":
-        if rec.get("assigned_overtime_hours"):
-            msg += f" Atanan fazla mesai {rec['assigned_overtime_hours']} sa (beklenen çıkış {rec.get('expected_end') or schedule.get('end')})."
-        if rec.get("overtime_hours"):
-            msg += f" Bugün {rec['hours']} sa çalışıldı, {rec['overtime_hours']} sa fazla mesai yazıldı."
-        elif rec.get("early_leave_minutes"):
-            end_label = rec.get("expected_end") or schedule.get("end")
-            if rec.get("early_leave_approved") or (rec.get("early_leave_request") or {}).get("status") == "approved":
-                await _db.attendance.update_one({"_id": rec["id"]}, {"$set": {"early_leave_approved": True}})
-                rec["early_leave_approved"] = True
-                msg += f" Onaylı erken çıkış: beklenen ({end_label}) saatinden {rec['early_leave_minutes']} dk önce."
-            else:
-                msg += f" Beklenen çıkış ({end_label}) saatinden {rec['early_leave_minutes']} dk erken çıkış."
-        else:
-            msg += f" Bugün {rec['hours']} sa çalışıldı."
+                                  f"{emp['full_name']} bugün {clock} saatinde giriş yaptı — mesai başlangıcına göre {rec['late_minutes']} dk geç.", dedupe_key=f"late:{emp['_id']}:{today}")
     if geo and geo.get("distance_m") is not None:
         place = workplace_place_label(workplace if workplace and workplace.get("kind") == "task" else (loc or workplace))
         kind = (workplace or loc or {}).get("kind")
@@ -2201,35 +2258,21 @@ async def self_attendance(req: Dict[str, Any], request: Request):
         msg += f" (dış görev: {workplace_place_label(workplace)})"
     yev = None
     try:
-        if action == "check_in":
-            yev = await accrue_task_yevmiye(emp, rec, workplace, schedule)
-            if yev:
-                rec["yevmiye_bonus_id"] = yev.get("_id") or yev.get("id")
-                rec["yevmiye_full_amount"] = yev.get("amount")
-                msg += f" Yevmiye eklendi: {yev.get('amount')} ₺ (kart ücreti)."
-            if rec.get("yevmiye_bonus_id") and personnel_wage.yevmiye_adjustment_needed(rec.get("late_minutes") or 0, 0):
-                yev = await sync_yevmiye_adjustment(emp, rec, schedule) or yev
-        elif action == "check_out":
-            yev = await sync_yevmiye_adjustment(emp, rec, schedule)
+        yev = await accrue_task_yevmiye(emp, rec, workplace, schedule)
+        if yev:
+            rec["yevmiye_bonus_id"] = yev.get("_id") or yev.get("id")
+            rec["yevmiye_full_amount"] = yev.get("amount")
+            msg += f" Yevmiye eklendi: {yev.get('amount')} ₺ (kart ücreti)."
+        if rec.get("yevmiye_bonus_id") and personnel_wage.yevmiye_adjustment_needed(rec.get("late_minutes") or 0, 0):
+            yev = await sync_yevmiye_adjustment(emp, rec, schedule) or yev
         adj = (rec.get("yevmiye_adjustment_request") or {})
         if adj.get("status") == "pending":
             msg += f" Geç/erken için yevmiye {adj.get('proposed_amount')} ₺ önerildi — yönetici onayı bekleniyor."
     except Exception:
         yev = None
-    if action == "check_out" and geo and geo.get("latitude") is not None and workplace and workplace.get("kind") == "task":
-        try:
-            opened = await maybe_open_location_exit(
-                emp, rec, workplace, loc or workplace, active_lt,
-                float(geo["latitude"]), float(geo["longitude"]),
-            )
-            if opened:
-                rec["location_exit_request"] = opened
-                msg += " Konum dışı çıkış yöneticiye iletildi."
-        except Exception:
-            pass
     try:
         month_rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{today[:7]}"}}).to_list(40)
-        note = habit_deviation(attendance_habit(month_rows), rec.get("check_in") if action == "check_in" else None, rec.get("check_out") if action == "check_out" else None)
+        note = habit_deviation(attendance_habit(month_rows), rec.get("check_in"), None)
         if note:
             await notify_managers(
                 emp["company_id"], "attendance_habit",
@@ -2509,9 +2552,9 @@ async def maybe_auto_checkout(
     plan: Optional[dict] = None,
     now_s: Optional[str] = None,
 ) -> Optional[dict]:
-    """Mesai bitiş saatinde çıkış yoksa otomatik çıkış yazar (check_out = mesai bitişi)."""
+    """Beklenen çıkışta (mesai + atanan fazla mesai) çıkış yoksa otomatik yazar."""
     day = date or rec.get("date") or _today(schedule)
-    end_hm = day_end_hm(schedule, day, plan)
+    end_hm = expected_checkout_hm(rec, schedule, day, plan)
     clock = now_s or now_hm(schedule)
     if not should_auto_checkout(rec, end_hm=end_hm, now_hm=clock):
         return None
@@ -2544,13 +2587,13 @@ async def maybe_open_overtime_confirm(
     plan: Optional[dict] = None,
     now_s: Optional[str] = None,
 ) -> Optional[dict]:
-    """Konum verisi mesai bitişinden sonra da geliyorsa, çıkış toleransı dolunca yöneticiye 'mesaide mi?' talebi."""
+    """Konum verisi beklenen çıkıştan sonra da geliyorsa, tolerans dolunca yöneticiye 'mesaide mi?' talebi."""
     if not rec or not location_active:
         return None
     if not (mode or {}).get("enabled"):
         return None
     day = date or rec.get("date") or _today(schedule)
-    end_hm = day_end_hm(schedule, day, plan)
+    end_hm = expected_checkout_hm(rec, schedule, day, plan)
     clock = now_s or now_hm(schedule)
     existing = rec.get("overtime_confirm_request") if isinstance(rec.get("overtime_confirm_request"), dict) else None
     exit_tol_m = int(schedule.get("exit_tolerance_minutes") or 0)
@@ -3339,21 +3382,42 @@ async def decide_early_leave(att_id: str, req: Dict[str, Any], request: Request)
     elr = rec.get("early_leave_request") or {}
     if elr.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bekleyen erken çıkış talebi yok.")
-    decision = (req.get("decision") or "").strip().lower()
-    if decision not in ("approve", "reject", "approved", "rejected"):
-        raise HTTPException(status_code=400, detail="decision: approve veya reject olmalı.")
-    approved = decision in ("approve", "approved")
+    try:
+        parsed = parse_leave_wage_decision(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    approved = parsed["decision"] == "approve"
+    deduct = bool(parsed["wage_deduction"])
     elr = {
         **elr,
         "status": "approved" if approved else "rejected",
+        "wage_deduction": deduct if approved else False,
         "decided_at": _now(),
         "decided_by": str(user.get("_id") or user.get("id") or ""),
         "decision_note": (req.get("note") or "")[:300],
     }
-    await _db.attendance.update_one(
-        {"_id": att_id},
-        {"$set": {"early_leave_request": elr, "early_leave_approved": approved, "updated_at": _now()}},
-    )
+    emp = await _db.employees.find_one({"_id": rec.get("employee_id")})
+    company = await _db.companies.find_one({"_id": rec.get("company_id")}) or {}
+    if emp:
+        schedule = merge_schedule(company, emp)
+        saved = await apply_day(
+            emp,
+            rec["date"],
+            {"early_leave_request": elr, "early_leave_approved": approved},
+            source=rec.get("source") or "self",
+        )
+        try:
+            await sync_yevmiye_adjustment(emp, saved, schedule)
+            saved = _clean(await _db.attendance.find_one({"_id": att_id})) or saved
+        except Exception:
+            pass
+    else:
+        await _db.attendance.update_one(
+            {"_id": att_id},
+            {"$set": {"early_leave_request": elr, "early_leave_approved": approved, "updated_at": _now()}},
+        )
+        saved = _clean(await _db.attendance.find_one({"_id": att_id}))
+    msg = leave_wage_decision_message("early_leave", approved, deduct)
     import notify as _notify
     await _notify.insert_notification(_db, {
         "_id": str(uuid.uuid4()),
@@ -3361,13 +3425,12 @@ async def decide_early_leave(att_id: str, req: Dict[str, Any], request: Request)
         "user_id": rec.get("employee_id"),
         "type": "early_leave_decision",
         "title": "Erken çıkış " + ("onaylandı" if approved else "reddedildi"),
-        "message": f"{rec.get('employee_name')} — {decision_status_tr(elr.get('status'))}. {elr.get('decision_note') or ''}".strip(),
+        "message": f"{rec.get('employee_name')} — {msg}",
         "link": "/mesai",
         "is_read": False,
         "created_at": _now(),
     })
-    return {"status": "success", "record": _clean(await _db.attendance.find_one({"_id": att_id})),
-            "message": "Erken çıkış onaylandı. Personel çıkış butonuyla gerçek saat ve konumu kaydedecek." if approved else "Erken çıkış talebi reddedildi."}
+    return {"status": "success", "record": saved, "message": msg, "wage_deduction": deduct if approved else False}
 
 
 def _req_hhmm(v: Any, label: str) -> str:
@@ -3469,13 +3532,16 @@ async def decide_intraday_leave(att_id: str, req: Dict[str, Any], request: Reque
     ilr = rec.get("intraday_leave_request") or {}
     if ilr.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bekleyen gün içi izin talebi yok.")
-    decision = (req.get("decision") or "").strip().lower()
-    if decision not in ("approve", "reject", "approved", "rejected"):
-        raise HTTPException(status_code=400, detail="decision: approve veya reject olmalı.")
-    approved = decision in ("approve", "approved")
+    try:
+        parsed = parse_leave_wage_decision(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    approved = parsed["decision"] == "approve"
+    deduct = bool(parsed["wage_deduction"])
     ilr = {
         **ilr,
         "status": "approved" if approved else "rejected",
+        "wage_deduction": deduct if approved else False,
         "decided_at": _now(),
         "decided_by": str(user.get("_id") or user.get("id") or ""),
         "decision_note": (req.get("note") or "")[:300],
@@ -3494,6 +3560,7 @@ async def decide_intraday_leave(att_id: str, req: Dict[str, Any], request: Reque
             {"$set": {"intraday_leave_request": ilr, "intraday_leave_approved": approved, "updated_at": _now()}},
         )
         saved = _clean(await _db.attendance.find_one({"_id": att_id}))
+    msg = leave_wage_decision_message("intraday_leave", approved, deduct)
     import notify as _notify
     await _notify.insert_notification(_db, {
         "_id": str(uuid.uuid4()),
@@ -3501,7 +3568,7 @@ async def decide_intraday_leave(att_id: str, req: Dict[str, Any], request: Reque
         "user_id": rec.get("employee_id"),
         "type": "intraday_leave_decision",
         "title": "Gün içi izin " + ("onaylandı" if approved else "reddedildi"),
-        "message": f"{rec.get('employee_name')} — {ilr.get('out_time')}–{ilr.get('return_time')} · {decision_status_tr(ilr.get('status'))}. {ilr.get('decision_note') or ''}".strip(),
+        "message": f"{rec.get('employee_name')} — {ilr.get('out_time')}–{ilr.get('return_time')} · {msg}",
         "link": "/mesai",
         "is_read": False,
         "created_at": _now(),
@@ -3509,7 +3576,8 @@ async def decide_intraday_leave(att_id: str, req: Dict[str, Any], request: Reque
     return {
         "status": "success",
         "record": saved,
-        "message": "Gün içi izin talebi onaylandı." if approved else "Gün içi izin talebi reddedildi.",
+        "message": msg,
+        "wage_deduction": deduct if approved else False,
     }
 
 

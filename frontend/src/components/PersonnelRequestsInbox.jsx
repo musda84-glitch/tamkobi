@@ -95,8 +95,11 @@ export function EmployeeRequestChips({
               )}
               {it.kind === "early_leave" && (
                 <>
-                  <button type="button" disabled={busy} onClick={() => onDecideEarly?.(it.id, "approve")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-early-${it.id}`}>
-                    <Check className="w-2.5 h-2.5" /> Onayla
+                  <button type="button" disabled={busy} onClick={() => onDecideEarly?.(it.id, "approve", false)} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-early-${it.id}`}>
+                    Ücret düşme
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideEarly?.(it.id, "approve", true)} className={`${chipBtn} bg-amber-500 text-white hover:bg-amber-600`} data-testid={`card-deduct-early-${it.id}`}>
+                    Ücret düş
                   </button>
                   <button type="button" disabled={busy} onClick={() => onDecideEarly?.(it.id, "reject")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-early-${it.id}`}>
                     <X className="w-2.5 h-2.5" /> Reddet
@@ -105,8 +108,11 @@ export function EmployeeRequestChips({
               )}
               {it.kind === "intraday_leave" && (
                 <>
-                  <button type="button" disabled={busy} onClick={() => onDecideIntraday?.(it.id, "approve")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-intraday-${it.id}`}>
-                    <Check className="w-2.5 h-2.5" /> Onayla
+                  <button type="button" disabled={busy} onClick={() => onDecideIntraday?.(it.id, "approve", false)} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-intraday-${it.id}`}>
+                    Ücret düşme
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideIntraday?.(it.id, "approve", true)} className={`${chipBtn} bg-amber-500 text-white hover:bg-amber-600`} data-testid={`card-deduct-intraday-${it.id}`}>
+                    Ücret düş
                   </button>
                   <button type="button" disabled={busy} onClick={() => onDecideIntraday?.(it.id, "reject")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-intraday-${it.id}`}>
                     <X className="w-2.5 h-2.5" /> Reddet
@@ -249,10 +255,13 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     }
   };
 
-  const decideEarly = async (id, decision) => {
+  const decideEarly = async (id, decision, wageDeduction = false) => {
     setBusyId(id);
     try {
-      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/early-leave-decision`, { decision });
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/early-leave-decision`, {
+        decision,
+        wage_deduction: decision === "approve" ? !!wageDeduction : false,
+      });
       toast.success(r.data?.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
       await load();
       onChanged?.();
@@ -305,10 +314,13 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     }
   };
 
-  const decideIntraday = async (id, decision) => {
+  const decideIntraday = async (id, decision, wageDeduction = false) => {
     setBusyId(id);
     try {
-      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/intraday-leave-decision`, { decision });
+      const r = await axios.post(`${API_URL}/personnel/attendance/${id}/intraday-leave-decision`, {
+        decision,
+        wage_deduction: decision === "approve" ? !!wageDeduction : false,
+      });
       toast.success(r.data?.message || (decision === "approve" ? "Onaylandı" : "Reddedildi"));
       await load();
       onChanged?.();
@@ -416,8 +428,11 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                   )}
                   {it.kind === "early_leave" && (
                     <>
-                      <button type="button" disabled={busy} onClick={() => decideEarly(it.id, "approve")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-early-${it.id}`}>
-                        <Check className="w-3 h-3" /> Onayla
+                      <button type="button" disabled={busy} onClick={() => decideEarly(it.id, "approve", false)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-early-${it.id}`}>
+                        Ücret düşme
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideEarly(it.id, "approve", true)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500 text-white text-[10px] font-bold hover:bg-amber-600 disabled:opacity-50" data-testid={`inbox-deduct-early-${it.id}`}>
+                        Ücret düş
                       </button>
                       <button type="button" disabled={busy} onClick={() => decideEarly(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-early-${it.id}`}>
                         <X className="w-3 h-3" /> Reddet
@@ -426,8 +441,11 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                   )}
                   {it.kind === "intraday_leave" && (
                     <>
-                      <button type="button" disabled={busy} onClick={() => decideIntraday(it.id, "approve")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-intraday-${it.id}`}>
-                        <Check className="w-3 h-3" /> Onayla
+                      <button type="button" disabled={busy} onClick={() => decideIntraday(it.id, "approve", false)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-intraday-${it.id}`}>
+                        Ücret düşme
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideIntraday(it.id, "approve", true)} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500 text-white text-[10px] font-bold hover:bg-amber-600 disabled:opacity-50" data-testid={`inbox-deduct-intraday-${it.id}`}>
+                        Ücret düş
                       </button>
                       <button type="button" disabled={busy} onClick={() => decideIntraday(it.id, "reject")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-intraday-${it.id}`}>
                         <X className="w-3 h-3" /> Reddet
