@@ -155,7 +155,17 @@ export const WorkScheduleSettings = ({ companyId, onSaved }) => {
 export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, onClose }) => {
   const ws = employee.work_schedule || {};
   const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0 });
-  const [s, setS] = useState({ start: ws.start || "", end: ws.end || "", break_minutes: ws.break_minutes ?? null, late_tolerance_minutes: ws.late_tolerance_minutes ?? null, exit_tolerance_minutes: ws.exit_tolerance_minutes ?? null, overtime_tolerance_minutes: ws.overtime_tolerance_minutes ?? null, work_days: ws.work_days || [], days: ws.days || {} });
+  const [s, setS] = useState({
+    start: ws.start || "",
+    end: ws.end || "",
+    break_minutes: ws.break_minutes ?? null,
+    late_tolerance_minutes: ws.late_tolerance_minutes ?? null,
+    exit_tolerance_minutes: ws.exit_tolerance_minutes ?? null,
+    overtime_tolerance_minutes: ws.overtime_tolerance_minutes ?? null,
+    // Tabloda görünen günler kayda da yazılsın (boşsa firma günleri).
+    work_days: (ws.work_days && ws.work_days.length) ? ws.work_days : (companySchedule?.work_days || []),
+    days: ws.days || {},
+  });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setS({ ...s, [k]: v });
   const grossForRate = Number(pay.payroll_salary) || Number(pay.salary) * 1.4 || 0;
@@ -164,6 +174,10 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
     setBusy(true);
     try {
       const schedule = Object.fromEntries(Object.entries(s).filter(([k, v]) => v !== null && v !== "" && !(Array.isArray(v) && !v.length) && !(k === "days" && !Object.keys(v || {}).length)));
+      // Gün tablosu işaretleri her zaman kişiye özel work_days olarak gitsin.
+      if (mode !== "clear" && Array.isArray(s.work_days) && s.work_days.length) {
+        schedule.work_days = [...s.work_days].sort((a, b) => a - b);
+      }
       const daily = pay.pay_type === "daily";
       const dailyWage = daily ? Number(pay.daily_wage) || 0 : 0;
       const body = {
@@ -177,7 +191,6 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         overtime_method: pay.overtime_method || null,
         overtime_hourly_rate: pay.overtime_hourly_rate === "" ? null : Number(pay.overtime_hourly_rate),
         work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule,
-        location_tracking: { enabled: false, continuous: false, interval_minutes: 0, exit_tolerance_hours: 0, field: { enabled: false, continuous: false, interval_minutes: 0, exit_tolerance_hours: 0 } },
       };
       await axios.put(`${API_URL}/personnel/employees/${employee.id || employee._id || employee.employee_id}`, body);
       toast.success(mode === "clear" ? "Personel firma mesai saatlerine döndü." : "Ücret ve mesai bilgileri kaydedildi."); onSaved?.(); onClose?.();

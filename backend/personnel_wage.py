@@ -86,14 +86,17 @@ def _hhmm_minutes(value: Any) -> int:
         return 0
 
 
-def scheduled_work_minutes(schedule: dict | None) -> int:
+def scheduled_work_minutes(schedule: dict | None, window: dict | None = None) -> int:
+    """Planlanan günlük çalışma dakikası; window varsa (gün bazlı mesai) onu kullanır."""
     s = schedule or {}
-    start = _hhmm_minutes(s.get("start") or "09:00")
-    end = _hhmm_minutes(s.get("end") or "18:00")
+    win = window if isinstance(window, dict) else {}
+    start = _hhmm_minutes(win.get("start") or s.get("start") or "09:00")
+    end = _hhmm_minutes(win.get("end") or s.get("end") or "18:00")
     if end <= start:
         end += 24 * 60
+    brk_src = win.get("break_minutes") if win.get("break_minutes") is not None else s.get("break_minutes")
     try:
-        brk = int(s.get("break_minutes") or 0)
+        brk = int(brk_src or 0)
     except (TypeError, ValueError):
         brk = 0
     return max(1, end - start - max(0, brk))
@@ -147,7 +150,8 @@ def calculated_day_wage(emp: dict | None, rec: dict | None = None, schedule: dic
         except (TypeError, ValueError):
             pass
     if yevmiye_adjustment_needed(late, early):
-        return yevmiye_adjusted_amount(full, late, early, scheduled_work_minutes(schedule))
+        snap = rec.get("schedule_snapshot") if isinstance(rec.get("schedule_snapshot"), dict) else None
+        return yevmiye_adjusted_amount(full, late, early, scheduled_work_minutes(schedule, snap))
     return round(full, 2)
 
 
