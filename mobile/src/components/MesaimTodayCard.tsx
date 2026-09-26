@@ -138,6 +138,8 @@ export function MesaimTodayCard({
   intraOut,
   intraReturn,
   geoPendingHint,
+  checkInBlocked,
+  checkInBlockedHint,
   punchEdit,
   punchEditTime,
   onPunchEditTime,
@@ -199,6 +201,8 @@ export function MesaimTodayCard({
   intraOut: string;
   intraReturn: string;
   geoPendingHint?: string;
+  checkInBlocked?: boolean;
+  checkInBlockedHint?: string;
   punchEdit?: "check_in" | "check_out" | null;
   punchEditTime?: string;
   onPunchEditTime?: (v: string) => void;
@@ -233,6 +237,7 @@ export function MesaimTodayCard({
   const geoPlace = workplace || location;
   const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo });
   const geoInLabel = mesaimGeoInLabel({ workplace: geoPlace, requireGeo });
+  const inBlocked = Boolean(checkInBlocked) && !checkedIn;
 
   return (
     <View
@@ -318,9 +323,9 @@ export function MesaimTodayCard({
           testID="mesai-in"
           icon="log-in-outline"
           title={busy === "check_in" ? "Kaydediliyor…" : "Giriş Yap"}
-          subtitle={mesaimInSubtitle(today?.check_in)}
+          subtitle={inBlocked ? "iş yerinde değilsiniz" : mesaimInSubtitle(today?.check_in)}
           color={EMERALD}
-          disabled={busy === "check_in"}
+          disabled={busy === "check_in" || inBlocked}
           onPress={onCheckIn}
         />
         {outConfirm && (checkedIn || checkoutOn) ? (
@@ -354,6 +359,12 @@ export function MesaimTodayCard({
         )}
       </View>
       )}
+
+      {inBlocked && checkInBlockedHint ? (
+        <View testID="mesai-checkin-offsite" style={{ backgroundColor: "rgba(244,63,94,0.22)", borderRadius: 12, padding: 10 }}>
+          <Text style={{ color: "#FECDD3", fontSize: 12, fontWeight: "700" }}>{checkInBlockedHint}</Text>
+        </View>
+      ) : null}
 
       {geoPendingHint ? (
         <View testID="mesai-geo-confirm-pending" style={{ backgroundColor: "rgba(245,158,11,0.2)", borderRadius: 12, padding: 10 }}>
@@ -437,7 +448,7 @@ export function MesaimTodayCard({
       </Panel>
 
       <Text testID="mesai-checkout-hint" style={{ color: "#94A3B8", fontSize: 11, textAlign: "center", lineHeight: 16 }}>
-        Giriş iş yeri / görev yakınından; konum açıksa otomatik de yazılır. Çıkış her zaman açık. Konum kapalı veya iş yerinde değilken yönetici teyidi gerekir.
+        Giriş yalnızca iş yeri veya görev yerinde yapılır. Konumda değilseniz giriş yapılamaz. Çıkış her zaman açık.
       </Text>
     </View>
   );
