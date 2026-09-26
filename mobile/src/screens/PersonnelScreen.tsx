@@ -8,6 +8,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
+import { EmployeePuantajPanel } from "../components/EmployeePuantajPanel";
 import { LocationSignalDot } from "../components/LocationSignal";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { OvertimeAssignFields } from "../components/OvertimeAssignFields";
@@ -17,6 +18,7 @@ import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Sc
 import { TabStrip } from "../components/TabStrip";
 import { confirmAction } from "../components/chips";
 import { colors } from "../theme";
+import { movesSheetTitle } from "../utils/puantajMonth";
 import { PUNCH_IN_COLOR, PUNCH_OUT_COLOR } from "../utils/labels";
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import {
@@ -2041,7 +2043,7 @@ export function PersonnelScreen() {
 
       <B2BSheet
         visible={!!movesEmp}
-        title={movesTab === "location" ? "Konum hareketleri" : "Ödeme hareketleri"}
+        title={movesSheetTitle(movesTab)}
         subtitle={movesEmp?.full_name}
         onClose={closeMoves}
         testID="emp-pay-moves-sheet"
@@ -2050,16 +2052,19 @@ export function PersonnelScreen() {
             <TabStrip
               testID="emp-moves-tab"
               value={movesTab}
-              columns={2}
+              columns={3}
               onChange={(key) => {
                 setMovesTab(key);
                 if (key === "location" && movesEmp) void loadLocMoves(movesEmp, movesPeriod, movesMonth);
               }}
               items={[
                 { key: "pay", label: "Ödeme", icon: "cash" },
+                { key: "puantaj", label: "Puantaj", icon: "calendar" },
                 { key: "location", label: "Konum", icon: "location" },
               ]}
             />
+            {movesTab !== "puantaj" ? (
+              <>
             <Row style={{ flexWrap: "wrap", gap: 8 }}>
               {(["30d", "month", "all"] as PayMovesPeriod[]).map((key) => (
                 <Pressable
@@ -2104,10 +2109,19 @@ export function PersonnelScreen() {
                 ? locationMovesPeriodHint(locMoves.length, locMoves.length, "all")
                 : payMovesPeriodHint(filterPayMoves(moves, movesPeriod, new Date(), movesMonth).length, moves.length, movesPeriod)}
             </Muted>
+              </>
+            ) : null}
           </View>
         )}
       >
-        {movesTab === "location" ? (
+        {movesTab === "puantaj" ? (
+          <EmployeePuantajPanel
+            key={`${movesEmp ? idOf(movesEmp) : "x"}-${movesMonth}`}
+            employeeId={movesEmp ? idOf(movesEmp) : null}
+            initialMonth={movesMonth}
+            onLeaveYearChanged={() => { void load(); }}
+          />
+        ) : movesTab === "location" ? (
           <>
             {locMovesBusy ? <Muted>Yükleniyor…</Muted> : null}
             {!locMovesBusy && !locMoves.length ? <Muted>Bu dönemde konum hareketi yok.</Muted> : null}

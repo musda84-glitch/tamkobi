@@ -971,7 +971,7 @@ export function payMovesPeriodHint(shown: number, total: number, period: PayMove
 }
 
 export type LocationMoveKind = "enter" | "leave" | "lost";
-export type MovesSheetTab = "pay" | "location";
+export type MovesSheetTab = "pay" | "location" | "puantaj";
 
 export type LocationMove = {
   id?: string;
