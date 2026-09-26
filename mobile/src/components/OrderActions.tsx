@@ -287,6 +287,25 @@ export function OrderActions({
     });
   };
 
+  const produceMissing = () => {
+    confirmAction(
+      "Eksik ürünleri üretime al",
+      `${order.held_label || order.order_number || "Sepet"} için eksik kalemler üretime alınsın mı?`,
+      async () => {
+        setBusy("produce");
+        try {
+          const r = await post<{ message?: string }>(client, `/order-picks/${oid}/to-production`, {});
+          onMessage?.(r.message || "Eksik ürünler üretime alındı.");
+          onChanged?.();
+        } catch (err) {
+          onError?.(apiErrorMessage(err, "Eksik ürünler üretime alınamadı."));
+        } finally {
+          setBusy(null);
+        }
+      },
+    );
+  };
+
   const createDraftInvoice = () => {
     confirmAction(
       "Taslak fatura",
@@ -782,9 +801,7 @@ export function OrderActions({
 
   const toolbar: ActionDef[] = isCartOrder
     ? [
-        ...(showDelete
-          ? [{ key: "delete", label: "Sil", icon: "trash" as const, tone: "rose" as const, busyKey: "delete", testID: `order-delete-${oid}`, onPress: remove }]
-          : []),
+        { key: "produce", label: "Eksik ürünleri üretime al", icon: "construct", tone: "orange", busyKey: "produce", testID: `order-produce-missing-${num}`, onPress: produceMissing },
         { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm },
       ]
     : [

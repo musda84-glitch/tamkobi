@@ -201,7 +201,7 @@ function isB2BCartOrder(ord) {
 
 function mobilePrimaryAction(ord) {
   const kind = orderMoreMenuKind(ord);
-  if (kind === "held_cart") return { id: "delete", label: "Sil", className: "bg-rose-600 text-white" };
+  if (kind === "held_cart") return null;
   if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır", className: "bg-emerald-600 text-white" };
   if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura", className: "bg-rose-500 text-white" };
   if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv", className: "bg-sky-600 text-white" };
@@ -1027,25 +1027,24 @@ export default function OrdersB2BPage() {
                 <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-slate-100" data-testid={`order-actions-mobile-${ord.order_number}`}>
                   {isB2BCartOrder(ord) ? (
                     <>
-                      {canDeleteOrder ? (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (!window.confirm(`${ord.held_label || ord.order_number} silinsin mi?`)) return;
-                            try {
-                              await axios.delete(`${API_URL}/orders/${ord.id || ord._id}`);
-                              toast.success("Sepet silindi.");
-                              loadData();
-                            } catch (err) {
-                              toast.error(err.response?.data?.detail || "Silinemedi.");
-                            }
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-rose-600 text-white"
-                          data-testid={`order-delete-mobile-${ord.order_number}`}
-                        >
-                          Sil
-                        </button>
-                      ) : null}
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!window.confirm(`${ord.held_label || ord.order_number} için eksik kalemler üretime alınsın mı?`)) return;
+                          try {
+                            const r = await axios.post(`${API_URL}/order-picks/${ord.id || ord._id}/to-production`, {});
+                            toast.success(r.data.message || "Eksik ürünler üretime alındı.");
+                            loadData();
+                          } catch (err) {
+                            toast.error(err.response?.data?.detail || "Eksik ürünler üretime alınamadı.");
+                          }
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-amber-900 bg-amber-50 border border-amber-200"
+                        title="Eksik ürünleri üretime al"
+                        data-testid={`order-produce-missing-mobile-${ord.order_number}`}
+                      >
+                        <span className="inline-flex items-center gap-1"><Factory className="w-3.5 h-3.5" /> Üretime al</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => setPrintOrder(ord)}
@@ -1222,26 +1221,25 @@ export default function OrdersB2BPage() {
                       <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>
                         {isB2BCartOrder(ord) ? (
                           <>
-                            {canDeleteOrder ? (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  if (!window.confirm(`${ord.held_label || ord.order_number} silinsin mi?`)) return;
-                                  try {
-                                    await axios.delete(`${API_URL}/orders/${ord.id || ord._id}`);
-                                    toast.success("Sepet silindi.");
-                                    loadData();
-                                  } catch (err) {
-                                    toast.error(err.response?.data?.detail || "Silinemedi.");
-                                  }
-                                }}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
-                                title="Sepeti sil"
-                                data-testid={`order-delete-${ord.order_number}`}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            ) : null}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!window.confirm(`${ord.held_label || ord.order_number} için eksik kalemler üretime alınsın mı?`)) return;
+                                try {
+                                  const r = await axios.post(`${API_URL}/order-picks/${ord.id || ord._id}/to-production`, {});
+                                  toast.success(r.data.message || "Eksik ürünler üretime alındı.");
+                                  loadData();
+                                } catch (err) {
+                                  toast.error(err.response?.data?.detail || "Eksik ürünler üretime alınamadı.");
+                                }
+                              }}
+                              className="p-1.5 rounded-lg text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100"
+                              title="Eksik ürünleri üretime al"
+                              aria-label="Eksik ürünleri üretime al"
+                              data-testid={`order-produce-missing-${ord.order_number}`}
+                            >
+                              <Factory className="w-4 h-4" />
+                            </button>
                             <button
                               type="button"
                               onClick={() => setPrintOrder(ord)}
