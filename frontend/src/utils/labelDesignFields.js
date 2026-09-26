@@ -1,6 +1,12 @@
 import { formatTrAmount, moneySuffix } from "./money";
 
-/** Etiket şablonunda seçilebilir ürün veri alanları (sıra: ek alanlar 1–3). */
+/** Stok kartı Etiketler listesinden ilk 3 değer → etiket şablonu alanları. */
+export function productTagSlots(product) {
+  const tags = Array.isArray(product?.tags) ? product.tags : [];
+  return [0, 1, 2].map((i) => String(tags[i] ?? "").trim());
+}
+
+/** Etiket şablonunda seçilebilir ürün veri alanları. */
 export const LABEL_DESIGN_FIELDS = [
   ["name", "Ürün Adı"],
   ["price", "Fiyat"],
@@ -9,9 +15,9 @@ export const LABEL_DESIGN_FIELDS = [
   ["variant", "Varyant"],
   ["category", "Kategori"],
   ["company", "Firma Adı"],
-  ["label_1", "Etiket Alanı 1"],
-  ["label_2", "Etiket Alanı 2"],
-  ["label_3", "Etiket Alanı 3"],
+  ["label_1", "Etiket 1 (1. etiket)"],
+  ["label_2", "Etiket 2 (2. etiket)"],
+  ["label_3", "Etiket 3 (3. etiket)"],
   ["text", "Serbest Metin"],
 ];
 
@@ -22,6 +28,7 @@ export function labelFieldValue(el, product, company) {
   const price = el?.vat === "excl"
     ? (product.price_includes_vat ? base / (1 + vat / 100) : base)
     : (product.price_includes_vat ? base : base * (1 + vat / 100));
+  const [tag1, tag2, tag3] = productTagSlots(product);
   const map = {
     name: product.name,
     price: `${el?.prefix || ""}${formatTrAmount(price)} ${el?.currency || moneySuffix(product.currency)}${el?.vat === "excl" ? " +KDV" : ""}`,
@@ -30,20 +37,10 @@ export function labelFieldValue(el, product, company) {
     variant: product.variant_name || (product.variants?.length ? `${product.variants.length} varyant` : ""),
     category: product.category,
     company: company?.name,
-    label_1: product.label_text_1 || "",
-    label_2: product.label_text_2 || "",
-    label_3: product.label_text_3 || "",
+    label_1: tag1,
+    label_2: tag2,
+    label_3: tag3,
     text: el?.text || "",
   };
   return map[el?.field] ?? "";
-}
-
-/** Stok kartı kaydı için etiket alanlarını temizle. */
-export function normalizeLabelTexts(raw = {}) {
-  const out = {};
-  for (const key of ["label_text_1", "label_text_2", "label_text_3"]) {
-    const t = String(raw[key] ?? "").trim().slice(0, 120);
-    out[key] = t || null;
-  }
-  return out;
 }
