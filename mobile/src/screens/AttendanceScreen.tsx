@@ -4,7 +4,7 @@ import { Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
-import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { Card, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
 import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
@@ -374,10 +374,18 @@ export function AttendanceScreen() {
 
   return (
     <Screen onRefresh={load}>
-      <Row style={{ alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-        <H1>Mesaim</H1>
-        <Muted testID="mesai-employee-name">{data?.employee?.full_name || "Personel kartı bağlı değilse giriş yapılamaz."}</Muted>
-      </Row>
+      <Text
+        testID="mesai-employee-name"
+        style={{
+          textAlign: "center",
+          fontSize: 22,
+          fontWeight: "800",
+          color: colors.text,
+          width: "100%",
+        }}
+      >
+        {data?.employee?.full_name || "Personel kartı bağlı değilse giriş yapılamaz."}
+      </Text>
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
       {data?.employee && !consentOk ? (
