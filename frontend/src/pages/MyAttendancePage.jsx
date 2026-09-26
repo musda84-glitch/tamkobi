@@ -239,6 +239,10 @@ export default function MyAttendancePage() {
 
   if (!data) return <div className="p-8 text-sm text-slate-400">Yükleniyor…</div>;
   const s = data.summary, t = data.today, sch = data.schedule;
+  const todayWin = data.today_window || {};
+  const mesaiStart = todayWin.start || t?.scheduled_start || sch?.start;
+  const mesaiEnd = todayWin.end || t?.scheduled_end || t?.expected_end || sch?.end;
+  const mesaiBreak = todayWin.break_minutes ?? sch?.break_minutes;
   const consentOk = locationConsentAccepted(data.location_consent);
   const liveSignal = signal || data.location_signal;
   const workDays = sch ? sch.work_days.map((d) => data.day_labels[d]).join(", ") : "";
@@ -251,6 +255,7 @@ export default function MyAttendancePage() {
     : !t?.check_in
       ? "önce giriş yapın"
       : "puantaj / beklenen mesai bitişinden";
+  const habitText = habitLabel(data.habit, data.habit_label);
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-5" data-testid="my-attendance-page">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
@@ -278,10 +283,10 @@ export default function MyAttendancePage() {
             <div className="text-center sm:text-left">
               <div className="text-5xl sm:text-4xl font-black font-mono tracking-tight" data-testid="my-att-clock">{data.now}</div>
               <div className="mt-2"><LocationSignal signal={liveSignal} className="text-white/90" testId="my-att-signal" /></div>
-              <div className="text-xs text-slate-300 mt-1">{new Date(data.today_date + "T00:00:00").toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" })}{sch.work_days.includes((new Date(data.today_date + "T00:00:00").getDay() + 6) % 7) ? "" : " · tatil günü (çalışma = fazla mesai)"}</div>
+              <div className="text-xs text-slate-300 mt-1">{new Date(data.today_date + "T00:00:00").toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" })}{(todayWin.is_work_day ?? sch.work_days.includes((new Date(data.today_date + "T00:00:00").getDay() + 6) % 7)) ? "" : " · tatil günü (çalışma = fazla mesai)"}</div>
             </div>
             <div className="text-[11px] text-slate-300 flex flex-wrap justify-center sm:justify-end gap-x-4 gap-y-1">
-              <span className="inline-flex items-center gap-1"><Timer className="w-3.5 h-3.5 text-emerald-400" /> Mesai {sch.start}–{sch.end} · mola {sch.break_minutes} dk</span>
+              <span className="inline-flex items-center gap-1" data-testid="my-att-today-window"><Timer className="w-3.5 h-3.5 text-emerald-400" /> Bugün {mesaiStart}–{mesaiEnd} · mola {mesaiBreak} dk</span>
               <span className="inline-flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-emerald-400" /> {workDays}</span>
               <span className={`inline-flex items-center gap-1 ${data.workplace?.kind === "task" ? "text-indigo-200" : ""}`} data-testid="my-att-workplace">
                 <MapPin className={`w-3.5 h-3.5 ${data.workplace?.kind === "task" ? "text-indigo-300" : "text-emerald-400"}`} />
@@ -340,14 +345,22 @@ export default function MyAttendancePage() {
               <div className="text-[11px] text-slate-400 leading-snug">
                 Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır
                 {t?.assigned_overtime_hours
-                  ? ` (atanan +${t.assigned_overtime_hours} sa · beklenen ${t.expected_end || sch.end})`
+                  ? ` (atanan +${t.assigned_overtime_hours} sa · beklenen ${t.expected_end || mesaiEnd})`
                   : t?.expected_end
                     ? ` (beklenen ${t.expected_end})`
-                    : ""}.
+                    : mesaiEnd
+                      ? ` (beklenen ${mesaiEnd})`
+                      : ""}.
               </div>
             </div>
           </div>
           )}
+          {t?.early_arrival_minutes > 0 ? (
+            <div className="text-[11px] text-sky-200 font-semibold" data-testid="my-att-early-arrival">
+              Erken giriş {t.check_in} kaydedildi · çalışma saati {mesaiStart} başlangıcından sayılır ({t.early_arrival_minutes} dk erken)
+            </div>
+          ) : null}
+          {habitText ? <div className="text-[11px] text-emerald-200" data-testid="my-att-habit">{habitText}</div> : null}
           {checkInHint ? (
             <div className="rounded-xl bg-rose-500/20 border border-rose-300/30 px-3 py-2 text-xs text-rose-100 font-semibold" data-testid="my-att-checkin-offsite">{checkInHint}</div>
           ) : null}
@@ -358,7 +371,7 @@ export default function MyAttendancePage() {
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs">
               {t?.time_order_invalid ? <span className="px-2.5 py-1 rounded-lg bg-rose-500/40 text-rose-100 font-bold" data-testid="my-att-time-order-invalid">Çıkış girişten önce — süre hesaplanmadı (kayıt düzeltilmeli)</span> : null}
               {t?.hours ? <span className="px-2.5 py-1 rounded-lg bg-white/10">Bugün <b>{t.hours} sa</b> çalışıldı</span> : null}
-              {t?.assigned_overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-violet-500/30 text-violet-100 font-bold" data-testid="my-att-assigned-ot">Atanan +{t.assigned_overtime_hours} sa · beklenen çıkış {t.expected_end || sch.end}</span> : null}
+              {t?.assigned_overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-violet-500/30 text-violet-100 font-bold" data-testid="my-att-assigned-ot">Atanan +{t.assigned_overtime_hours} sa · beklenen çıkış {t.expected_end || mesaiEnd}</span> : null}
               {t?.overtime_hours ? <span className="px-2.5 py-1 rounded-lg bg-indigo-500/30 text-indigo-200 font-bold">+{t.overtime_hours} sa fazla mesai</span> : null}
               {t?.late_minutes ? <span className="px-2.5 py-1 rounded-lg bg-rose-500/30 text-rose-200 font-bold">{t.late_minutes} dk geç</span> : null}
               {t?.intraday_leave_minutes ? <span className="px-2.5 py-1 rounded-lg bg-sky-500/30 text-sky-100 font-bold" data-testid="my-att-intraday-mins">{t.intraday_leave_minutes} dk gün içi izin düşüldü</span> : null}
@@ -454,8 +467,7 @@ export default function MyAttendancePage() {
             })()}
           </div>
 
-          {habitLabel(data.habit, data.habit_label) ? <div className="text-[11px] text-emerald-200" data-testid="my-att-habit">{habitLabel(data.habit, data.habit_label)}</div> : null}
-          <div className="text-[11px] text-slate-400 text-center sm:text-left">Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Canlı konum otomatik giriş/çıkış yazmaz; izin açıksa varlık bilgisi alınır. Çıkış puantaj / beklenen mesai bitişinden ({sch.end}) işlenir. Yönetici saati düzeltirse kayıt doğrudan uygulanır; personel onayı gerekmez. Gün içinde çıkıp dönecekseniz gün içi izin kullanın.</div>
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Canlı konum otomatik giriş/çıkış yazmaz; izin açıksa varlık bilgisi alınır. Çıkış puantaj / beklenen mesai bitişinden ({mesaiEnd}) işlenir. Erken giriş kaydı tutulur; çalışma saati kişiye özel mesai başlangıcından sayılır. Yönetici saati düzeltirse kayıt doğrudan uygulanır. Gün içinde çıkıp dönecekseniz gün içi izin kullanın.</div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">
