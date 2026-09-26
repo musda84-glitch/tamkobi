@@ -77,7 +77,7 @@ describe("mesaim card copy", () => {
     expect(mesaimOutSubtitle({ checkIn: null })).toBe("önce giriş yapın");
     expect(mesaimOutSubtitle({ checkIn: "01:37", confirming: true })).toMatch(/puantaj/);
     expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(false);
-    expect(mesaimPunchOpensEditor({ action: "check_out", checkOut: "01:20" })).toBe(true);
+    expect(mesaimPunchOpensEditor({ action: "check_out", checkOut: "01:20" })).toBe(false);
     expect(mesaimPunchOpensEditor({ action: "check_in" })).toBe(false);
     expect(mesaimPunchEditHint("check_out")).toMatch(/yönetici/);
     expect(mesaimPunchNowLabel("check_in")).toBe("Şimdiki saat ile giriş");

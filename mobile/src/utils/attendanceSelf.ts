@@ -57,14 +57,12 @@ export function geoConfirmReasonTr(reason?: string | null): string {
   return (reason || "").trim() || "konum doğrulanamadı";
 }
 
-/** Mesaim'den ikinci giriş / saat düzeltme yok — günde bir giriş. */
-export function mesaimPunchOpensEditor(opts: {
-  action: "check_in" | "check_out";
+export function mesaimPunchOpensEditor(_opts?: {
+  action?: "check_in" | "check_out";
   checkIn?: string | null;
   checkOut?: string | null;
 }): boolean {
-  if (opts.action === "check_in") return false;
-  return Boolean(opts.checkOut);
+  return false;
 }
 
 export function mesaimPunchEditHint(action: "check_in" | "check_out"): string {
