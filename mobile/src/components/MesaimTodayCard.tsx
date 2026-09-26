@@ -7,6 +7,8 @@ import { TimeField } from "./TimeField";
 import { colors, radius, typeface } from "../theme";
 import {
   habitLabel,
+  mesaimDateHolidaySuffix,
+  mesaimEarlyArrivalLine,
   mesaimInSubtitle,
   mesaimLongDate,
   mesaimOutSubtitle,
@@ -14,8 +16,10 @@ import {
   mesaimPunchNowLabel,
   mesaimScheduleLine,
   mesaimWorkDaysLine,
+  resolveMesaimTodayHours,
   type AttendanceHabit,
   type GeoConfirmRequest,
+  type MesaimTodayWindow,
 } from "../utils/attendanceSelf";
 import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
@@ -119,6 +123,7 @@ export function MesaimTodayCard({
   location,
   requireGeo,
   schedule,
+  todayWindow,
   dayLabels,
   habit,
   habitFallback,
@@ -163,6 +168,7 @@ export function MesaimTodayCard({
   location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
   requireGeo?: boolean;
   schedule?: { start?: string; end?: string; break_minutes?: number; work_days?: number[] } | null;
+  todayWindow?: MesaimTodayWindow | null;
   dayLabels?: string[] | null;
   habit?: AttendanceHabit | null;
   habitFallback?: string | null;
@@ -173,6 +179,7 @@ export function MesaimTodayCard({
     check_out?: string;
     hours?: number;
     late_minutes?: number;
+    early_arrival_minutes?: number;
     early_leave_approved?: boolean;
     early_leave_request?: { status?: string; reason?: string; planned_time?: string; decision_note?: string } | null;
     intraday_leave_approved?: boolean;
@@ -181,6 +188,8 @@ export function MesaimTodayCard({
     yevmiye_full_amount?: number;
     yevmiye_adjustment_request?: { status?: string; full_amount?: number; proposed_amount?: number; final_amount?: number } | null;
     expected_end?: string;
+    scheduled_start?: string;
+    scheduled_end?: string;
     assigned_overtime_hours?: number;
     geo_confirm_request?: GeoConfirmRequest | null;
   } | null;
@@ -220,9 +229,27 @@ export function MesaimTodayCard({
   const checkedOut = Boolean(today?.check_out);
   const early = today?.early_leave_request;
   const intra = today?.intraday_leave_request;
-  const scheduleLine = mesaimScheduleLine(schedule);
+  const hours = resolveMesaimTodayHours({ todayWindow, today, schedule });
+  const scheduleLine = mesaimScheduleLine(
+    hours.start && hours.end
+      ? { start: hours.start, end: hours.end, break_minutes: hours.breakMinutes ?? undefined }
+      : schedule,
+    { label: "Bugün" },
+  );
   const workDays = mesaimWorkDaysLine(schedule?.work_days, dayLabels);
   const dateLine = mesaimLongDate(todayDate);
+  const holidaySuffix = mesaimDateHolidaySuffix({
+    todayDate,
+    isWorkDay: todayWindow?.is_work_day,
+    workDays: schedule?.work_days,
+  });
+  const earlyArrivalLine = mesaimEarlyArrivalLine({
+    checkIn: today?.check_in,
+    earlyMinutes: today?.early_arrival_minutes,
+    mesaiStart: hours.start,
+  });
+  const habitText = habitLabel(habit, habitFallback);
+  const mesaiEnd = hours.end || today?.expected_end || schedule?.end || "";
   const yevLine = yevmiyeStatusLine(today);
   const geoPlace = workplace || location;
   const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo });
@@ -245,9 +272,13 @@ export function MesaimTodayCard({
           {now || "--:--"}
         </Text>
         {showSignal ? <LocationSignalDot signal={liveSignal} testID="mesai-signal" onDark /> : null}
-        {dateLine ? <Text style={{ color: DARK_META, fontSize: 12 }}>{dateLine}</Text> : null}
+        {dateLine ? (
+          <Text style={{ color: DARK_META, fontSize: 12 }}>
+            {dateLine}{holidaySuffix}
+          </Text>
+        ) : null}
         {scheduleLine ? (
-          <Text style={{ color: DARK_META, fontSize: 11, fontWeight: "600" }} testID="mesai-schedule">
+          <Text style={{ color: DARK_META, fontSize: 11, fontWeight: "600" }} testID="mesai-today-window">
             {scheduleLine}{workDays ? ` · ${workDays}` : ""}
           </Text>
         ) : null}
@@ -336,14 +367,26 @@ export function MesaimTodayCard({
             <Text style={{ color: "#94A3B8", fontSize: 11, lineHeight: 15 }}>
               Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır
               {today?.assigned_overtime_hours
-                ? ` (atanan +${today.assigned_overtime_hours} sa · beklenen ${today.expected_end || schedule?.end || "—"})`
+                ? ` (atanan +${today.assigned_overtime_hours} sa · beklenen ${today.expected_end || mesaiEnd || "—"})`
                 : today?.expected_end
                   ? ` (beklenen ${today.expected_end})`
-                  : ""}.
+                  : mesaiEnd
+                    ? ` (beklenen ${mesaiEnd})`
+                    : ""}.
             </Text>
           </View>
         </View>
       )}
+
+      {earlyArrivalLine ? (
+        <Text testID="mesai-early-arrival" style={{ color: "#BAE6FD", fontSize: 11, fontWeight: "700", textAlign: "center" }}>
+          {earlyArrivalLine}
+        </Text>
+      ) : null}
+
+      {habitText ? (
+        <Text testID="mesai-habit" style={{ color: "#A7F3D0", fontSize: 11, textAlign: "center" }}>{habitText}</Text>
+      ) : null}
 
       {inDone && checkInBlockedHint ? (
         <View testID="mesai-checkin-once" style={{ backgroundColor: "rgba(16,185,129,0.18)", borderRadius: 12, padding: 10 }}>
@@ -362,7 +405,7 @@ export function MesaimTodayCard({
           {today?.hours ? <Chip label={`Bugün ${today.hours} sa çalışıldı`} /> : null}
           {today?.assigned_overtime_hours ? (
             <Chip
-              label={`Atanan +${today.assigned_overtime_hours} sa · çıkış ${today.expected_end || schedule?.end || "—"}`}
+              label={`Atanan +${today.assigned_overtime_hours} sa · çıkış ${today.expected_end || mesaiEnd || "—"}`}
               tone="violet"
               testID="mesai-assigned-ot"
             />
@@ -371,10 +414,6 @@ export function MesaimTodayCard({
           {today?.intraday_leave_minutes ? <Chip label={`${today.intraday_leave_minutes} dk gün içi izin düşüldü`} tone="sky" testID="mesai-intraday-mins" /> : null}
           {yevLine ? <Chip label={yevLine} tone="amber" testID="mesai-yevmiye" /> : null}
         </View>
-      ) : null}
-
-      {habitLabel(habit, habitFallback) ? (
-        <Text testID="mesai-habit" style={{ color: "#A7F3D0", fontSize: 11, textAlign: "center" }}>{habitLabel(habit, habitFallback)}</Text>
       ) : null}
 
       {!checkedOut ? (
@@ -440,7 +479,7 @@ export function MesaimTodayCard({
       </Panel>
 
       <Text testID="mesai-checkout-hint" style={{ color: "#94A3B8", fontSize: 11, textAlign: "center", lineHeight: 16 }}>
-        Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Sürekli konum takibi yok. Dış görev talimatlarında görev yerinde bir kez varlık bildirilir. Çıkış puantaj / beklenen mesai bitişinden işlenir.
+        Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Sürekli konum takibi yok. Dış görev talimatlarında görev yerinde bir kez varlık bildirilir. Çıkış puantaj / beklenen mesai bitişinden{mesaiEnd ? ` (${mesaiEnd})` : ""} işlenir. Erken giriş kaydı tutulur; çalışma saati kişiye özel mesai başlangıcından sayılır.
       </Text>
     </View>
   );

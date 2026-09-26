@@ -32,6 +32,7 @@ type AttendancePayload = {
     check_out?: string;
     hours?: number;
     late_minutes?: number;
+    early_arrival_minutes?: number;
     early_leave_approved?: boolean;
     early_leave_request?: { status?: string; reason?: string; planned_time?: string; decision_note?: string } | null;
     intraday_leave_approved?: boolean;
@@ -40,11 +41,22 @@ type AttendancePayload = {
     yevmiye_full_amount?: number;
     yevmiye_adjustment_request?: { status?: string; full_amount?: number; proposed_amount?: number; final_amount?: number } | null;
     expected_end?: string;
+    scheduled_start?: string;
+    scheduled_end?: string;
+    assigned_overtime_hours?: number;
     geo_confirm_request?: { status?: string; action?: string; reason?: string; proposed_time?: string; place?: string; distance_m?: number | null } | null;
   } | null;
   location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
   workplace?: Workplace | null;
   schedule?: { require_geo?: boolean; start?: string; end?: string; break_minutes?: number; work_days?: number[]; location_tracking?: LocationTracking };
+  today_window?: {
+    start?: string;
+    end?: string;
+    break_minutes?: number;
+    is_work_day?: boolean;
+    weekday?: number;
+    weekday_label?: string;
+  } | null;
   day_labels?: string[];
   location_tracking?: LocationTracking;
   active_location_tracking?: LocationTracking;
@@ -370,6 +382,7 @@ export function AttendanceScreen() {
           location={data?.location}
           requireGeo={data?.schedule?.require_geo}
           schedule={data?.schedule}
+          todayWindow={data?.today_window}
           dayLabels={data?.day_labels}
           habit={data?.habit}
           habitFallback={data?.habit_label}

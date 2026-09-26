@@ -1,4 +1,4 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimInSubtitle, mesaimLongDate, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimInSubtitle, mesaimLongDate, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, resolveMesaimTodayHours, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -91,6 +91,20 @@ describe("checkoutConfirmMessage", () => {
     expect(checkoutConfirmMessage("12:25")).toMatch(/puantaj/i);
     expect(checkoutConfirmMessage("")).toMatch(/puantaj/i);
     expect(checkoutConfirmMessage(null)).toMatch(/puantaj/i);
+  });
+});
+
+describe("mesaim today window helpers", () => {
+  it("resolves Bugün hours from today_window and early arrival copy", () => {
+    expect(resolveMesaimTodayHours({
+      todayWindow: { start: "08:00", end: "17:00", break_minutes: 45 },
+      schedule: { start: "09:00", end: "18:00", break_minutes: 60 },
+    })).toEqual({ start: "08:00", end: "17:00", breakMinutes: 45 });
+    expect(mesaimScheduleLine({ start: "08:00", end: "17:00", break_minutes: 45 }, { label: "Bugün" })).toBe("Bugün 08:00–17:00 · mola 45 dk");
+    expect(mesaimEarlyArrivalLine({ checkIn: "07:40", earlyMinutes: 20, mesaiStart: "08:00" })).toMatch(/07:40/);
+    expect(mesaimEarlyArrivalLine({ checkIn: "08:00", earlyMinutes: 0, mesaiStart: "08:00" })).toBe("");
+    expect(mesaimDateHolidaySuffix({ todayDate: "2026-09-26", isWorkDay: false })).toMatch(/tatil/);
+    expect(mesaimDateHolidaySuffix({ todayDate: "2026-09-26", isWorkDay: true })).toBe("");
   });
 });
 
