@@ -12,13 +12,14 @@ describe("employeeCardStatus", () => {
       checkIn: "01:37", checkOut: "10:26", late: 0, empty: false,
     });
     expect(todayAttendanceParts(null).empty).toBe(true);
-    expect(cardPunchConfirmMessage("check_in", "Davut")).toBe("Davut için giriş saati personel onayına gönderilsin mi?");
+    expect(cardPunchConfirmMessage("check_in", "Davut")).toBe("Davut için unutulan giriş saati kaydedilsin mi? Personel onayı gerekmez.");
     expect(cardPunchConfirmMessage("check_out")).toMatch(/çıkış saati/);
     expect(cardPunchConfirmMessage("absent", "Davut")).toMatch(/devamsız/);
     expect(cardPunchDraftTime("check_in", { check_in: "09:13" })).toBe("09:13");
     expect(cardPunchRequiresTime("09:13")).toBeNull();
     expect(cardPunchPayload("check_out", "18:05")).toEqual({ action: "check_out", check_out: "18:05" });
     expect(cardPunchAttempts({ manager_time_edit_rounds: { check_out: { attempts: 2 } } }, "check_out")).toBe(2);
+    expect(cardPunchTimeHint(0, "check_in")).toMatch(/onayı yok/);
     expect(cardPunchTimeHint(2)).toMatch(/3\. deneme/);
   });
 });

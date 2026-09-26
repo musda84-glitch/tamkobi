@@ -1502,7 +1502,7 @@ export function PersonnelScreen() {
                             testID={`emp-card-today-in-${eid}`}
                             disabled={!canEdit || punchBusy === eid}
                             accessibilityRole="button"
-                            accessibilityLabel="Giriş kaydı"
+                            accessibilityLabel="Unutulan giriş kaydı"
                             onPress={() => setPunchConfirm({ id: eid, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", today) })}
                             style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: punchConfirm?.id === eid && punchConfirm.action === "check_in" ? "#D1FAE5" : "#fff" }}
                           >
@@ -1511,35 +1511,24 @@ export function PersonnelScreen() {
                               {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
                             </Text>
                           </Pressable>
-                          <Pressable
-                            testID={`emp-card-today-out-${eid}`}
-                            disabled={!canEdit || punchBusy === eid}
-                            accessibilityRole="button"
-                            accessibilityLabel="Çıkış kaydı"
-                            onPress={() => setPunchConfirm({ id: eid, action: "check_out", name: emp.full_name || "", time: cardPunchDraftTime("check_out", today) })}
-                            style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: punchConfirm?.id === eid && punchConfirm.action === "check_out" ? "#FEE2E2" : "#fff" }}
-                          >
-                            <Text style={{ fontSize: 9, fontWeight: "800", color: PUNCH_OUT_COLOR, letterSpacing: 0.3 }}>ÇIKIŞ</Text>
-                            <Text style={{ fontWeight: "800", fontSize: 12, color: PUNCH_OUT_COLOR }}>{punch.checkOut}</Text>
-                          </Pressable>
                         </View>
                       </Row>
-                      {punchConfirm?.id === eid && punchConfirm.action !== "absent" ? (
+                      {punchConfirm?.id === eid && punchConfirm.action === "check_in" ? (
                         <View testID={`emp-card-punch-confirm-${eid}`} style={{ paddingTop: 4, gap: 6 }}>
                           <TimeField
                             key={`${eid}-${punchConfirm.action}`}
-                            label={punchConfirm.action === "check_out" ? "Çıkış saati" : "Giriş saati"}
+                            label="Giriş saati"
                             testID={`emp-card-punch-time-${eid}`}
                             value={punchConfirm.time}
                             autoOpen
                             onChangeText={(time) => setPunchConfirm((cur) => (cur ? { ...cur, time } : cur))}
                           />
                           <Text style={{ fontSize: 11, color: colors.text }}>{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</Text>
-                          <Text testID={`emp-card-punch-hint-${eid}`} style={{ fontSize: 11, color: "#B45309" }}>{cardPunchTimeHint(cardPunchAttempts(today, punchConfirm.action))}</Text>
+                          <Text testID={`emp-card-punch-hint-${eid}`} style={{ fontSize: 11, color: "#B45309" }}>{cardPunchTimeHint(cardPunchAttempts(today, punchConfirm.action), punchConfirm.action)}</Text>
                           <Row style={{ gap: 6 }}>
                             <PrimaryButton
-                              title={punchBusy === eid ? "Kaydediliyor…" : "Onayla"}
-                              color={punchConfirm.action === "check_out" ? colors.danger : colors.primary}
+                              title={punchBusy === eid ? "Kaydediliyor…" : "Kaydet"}
+                              color={colors.primary}
                               testID={`emp-card-punch-yes-${eid}`}
                               onPress={() => {
                                 const invalid = cardPunchRequiresTime(punchConfirm.time);

@@ -41,7 +41,7 @@ export function cardPunchConfirmMessage(action, name) {
   const who = String(name || "").trim();
   const prefix = who ? `${who} için ` : "";
   if (action === "absent") return `${prefix}bugün devamsız işaretlensin mi? Giriş/çıkış silinir.`;
-  if (action === "check_in") return `${prefix}giriş saati personel onayına gönderilsin mi?`;
+  if (action === "check_in") return `${prefix}unutulan giriş saati kaydedilsin mi? Personel onayı gerekmez.`;
   return `${prefix}çıkış saati personel onayına gönderilsin mi?`;
 }
 
@@ -61,7 +61,8 @@ export function cardPunchAttempts(today, action) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-export function cardPunchTimeHint(attempts) {
+export function cardPunchTimeHint(attempts, action) {
+  if (action === "check_in") return "Giriş saati doğrudan kaydedilir; personel onayı yok.";
   if (Number(attempts) >= 2) return "3. deneme: personel onayı atlanır.";
   return "Onaylayınca değişiklik personelin teyidine düşer.";
 }
