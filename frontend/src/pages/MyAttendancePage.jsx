@@ -6,7 +6,7 @@ import { Clock, LogIn, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDay
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHasCoords, workplaceHint } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnelWage";
@@ -77,8 +77,6 @@ export default function MyAttendancePage() {
   const [punchEditTime, setPunchEditTime] = useState("");
   const [consentBusy, setConsentBusy] = useState(false);
   const [signal, setSignal] = useState(null);
-  const [liveOutside, setLiveOutside] = useState(null);
-  const [locMissing, setLocMissing] = useState(false);
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => { setData(r.data); setSignal(r.data.location_signal || null); }).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -88,38 +86,15 @@ export default function MyAttendancePage() {
     return () => clearInterval(id);
   }, [data?.today_date, load]);
 
-  const reportLocation = useCallback(async (reason) => {
-    let coords;
+  const reportLocationUnavailable = useCallback(async (reason) => {
     try {
-      coords = await getPos();
-    } catch (err) {
-      setLocMissing(true);
-      setLiveOutside(null);
-      try {
-        const r = await axios.post(`${API_URL}/personnel/attendance/self/location-unavailable`, locationUnavailablePayload(reason || err?.message || "Konum alınamadı"), { withCredentials: true });
-        if (r.data.location_signal) setSignal(r.data.location_signal);
-        if (r.data.message) toast.message(r.data.message);
-      } catch {
-        /* yönetici bildirimi gönderilemedi */
-      }
-      return false;
-    }
-    try {
-      const r = await axios.post(`${API_URL}/personnel/attendance/self/location`, {
-        latitude: coords.latitude, longitude: coords.longitude, accuracy_m: coords.accuracy,
-      }, { withCredentials: true });
-      setLocMissing(false);
-      if (typeof r.data.outside === "boolean") setLiveOutside(r.data.outside);
+      const r = await axios.post(`${API_URL}/personnel/attendance/self/location-unavailable`, locationUnavailablePayload(reason || "Konum alınamadı"), { withCredentials: true });
       if (r.data.location_signal) setSignal(r.data.location_signal);
-      if (r.data.punched) {
-        if (r.data.message) toast.success(r.data.message);
-        load();
-      }
-      return true;
+      if (r.data.message) toast.message(r.data.message);
     } catch {
-      return false;
+      /* yönetici bildirimi gönderilemedi */
     }
-  }, [load]);
+  }, []);
 
   useEffect(() => {
     const t = data?.today;
@@ -136,17 +111,18 @@ export default function MyAttendancePage() {
     setBusy(action);
     try {
       let coords = {};
+      const hasTarget = workplaceHasCoords(data?.workplace) || workplaceHasCoords(data?.location);
       const geoMode = selfAttendanceGeoMode(action, {
-        hasTarget: Boolean(data?.location || data?.workplace?.kind === "task"),
+        hasTarget,
         requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
-        trackingEnabled: false,
       });
       if (geoMode === "required" || geoMode === "attach") {
+        toast.message("Konum alınıyor…");
         try {
           const c = await getPos();
           coords = { latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy };
         } catch (geoErr) {
-          await reportLocation(geoErr?.message || (geoMode === "required" ? "Konum izni verilmedi." : "Konum alınamadı"));
+          await reportLocationUnavailable(geoErr?.message || (geoMode === "required" ? "Konum izni verilmedi." : "Konum alınamadı"));
           if (geoMode === "required") throw geoErr;
         }
       }
@@ -156,29 +132,10 @@ export default function MyAttendancePage() {
       load();
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "İşlem başarısız."); } finally { setBusy(null); }
   };
-  const outside = liveOutside != null
-    ? liveOutside
-    : data?.location_last_inside === false
-      ? true
-      : data?.location_last_inside === true
-        ? false
-        : null;
-  const hasGeoTarget = workplaceHasCoords(data?.workplace) || workplaceHasCoords(data?.location);
-  const checkInBlocked = checkInOffsiteBlocked({
-    checkedIn: Boolean(data?.today?.check_in),
-    hasTarget: hasGeoTarget,
-    outside,
-    locationMissing: locMissing && outside !== false,
-  });
-  const checkInHint = checkInBlocked ? checkInBlockedHint({ outside, locationMissing: locMissing && outside !== false }) : "";
+  const checkedIn = checkInAlreadyDone(data?.today?.check_in);
+  const checkInOnceMsg = checkInOnceHint(data?.today?.check_in);
   const onCheckInClick = () => {
-    const t = data?.today;
-    if (checkInBlocked) { toast.error(checkInHint); return; }
-    if (mesaimPunchOpensEditor({ action: "check_in", checkIn: t?.check_in })) {
-      setPunchEdit("check_in");
-      setPunchEditTime(t.check_in);
-      return;
-    }
+    if (checkedIn) { toast.message(checkInOnceMsg); return; }
     act("check_in");
   };
   const confirm = async (r) => { try { await axios.post(`${API_URL}/personnel/attendance/${r.id}/confirm`, {}, { withCredentials: true }); toast.success("Kayıt onaylandı."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } };
@@ -336,8 +293,8 @@ export default function MyAttendancePage() {
             </div>
           ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <button onClick={onCheckInClick} disabled={!!busy || checkInBlocked} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
-              {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">Giriş Yap</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{checkInBlocked ? "iş yerinde değilsiniz" : (t?.check_in ? `Giriş ${t.check_in}` : "henüz giriş yok")}</span>
+            <button onClick={onCheckInClick} disabled={!!busy || checkedIn} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
+              {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">{checkedIn ? "Giriş yapıldı" : "Giriş Yap"}</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{t?.check_in ? `Giriş ${t.check_in}` : "basınca konum alınır"}</span>
             </button>
             <div className="rounded-2xl bg-white/10 border border-white/10 px-4 py-5 flex flex-col justify-center gap-1" data-testid="my-att-checkout-info">
               <div className="text-sm font-extrabold text-rose-200">Çıkış</div>
@@ -361,8 +318,8 @@ export default function MyAttendancePage() {
             </div>
           ) : null}
           {habitText ? <div className="text-[11px] text-emerald-200" data-testid="my-att-habit">{habitText}</div> : null}
-          {checkInHint ? (
-            <div className="rounded-xl bg-rose-500/20 border border-rose-300/30 px-3 py-2 text-xs text-rose-100 font-semibold" data-testid="my-att-checkin-offsite">{checkInHint}</div>
+          {checkedIn && checkInOnceMsg ? (
+            <div className="rounded-xl bg-emerald-500/15 border border-emerald-300/20 px-3 py-2 text-xs text-emerald-100 font-semibold" data-testid="my-att-checkin-once">{checkInOnceMsg}</div>
           ) : null}
           {geoConfirmHint(t) ? (
             <div className="rounded-xl bg-amber-500/20 border border-amber-300/30 px-3 py-2 text-xs text-amber-100 font-semibold" data-testid="my-att-geo-confirm-pending">{geoConfirmHint(t)}</div>
@@ -467,7 +424,7 @@ export default function MyAttendancePage() {
             })()}
           </div>
 
-          <div className="text-[11px] text-slate-400 text-center sm:text-left">Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Canlı konum otomatik giriş/çıkış yazmaz; izin açıksa varlık bilgisi alınır. Çıkış puantaj / beklenen mesai bitişinden ({mesaiEnd}) işlenir. Erken giriş kaydı tutulur; çalışma saati kişiye özel mesai başlangıcından sayılır. Yönetici saati düzeltirse kayıt doğrudan uygulanır. Gün içinde çıkıp dönecekseniz gün içi izin kullanın.</div>
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Giriş butonuna basınca konum alınır; iş/görev yeri toleransı sunucuda kontrol edilir. Günde bir kez giriş. Canlı konum otomatik giriş yazmaz. Çıkış puantaj / beklenen mesai bitişinden ({mesaiEnd}) işlenir. Gün içinde çıkıp dönecekseniz gün içi izin kullanın.</div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">

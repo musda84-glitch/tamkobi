@@ -228,7 +228,7 @@ export function MesaimTodayCard({
   const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo });
   const geoInLabel = mesaimGeoInLabel({ workplace: geoPlace, requireGeo });
   const outLine = mesaimOutSubtitle({ checkIn: today?.check_in, checkOut: today?.check_out });
-  const inBlocked = Boolean(checkInBlocked) && !checkedIn;
+  const inDone = Boolean(checkedIn);
 
   return (
     <View
@@ -313,10 +313,10 @@ export function MesaimTodayCard({
           <PunchTile
             testID="mesai-in"
             icon="log-in-outline"
-            title={busy === "check_in" ? "Kaydediliyor…" : "Giriş Yap"}
-            subtitle={inBlocked ? "iş yerinde değilsiniz" : mesaimInSubtitle(today?.check_in)}
+            title={busy === "check_in" ? "Konum alınıyor…" : inDone ? "Giriş yapıldı" : "Giriş Yap"}
+            subtitle={inDone ? mesaimInSubtitle(today?.check_in) : "basınca konum alınır"}
             color={EMERALD}
-            disabled={busy === "check_in" || inBlocked}
+            disabled={busy === "check_in" || inDone}
             onPress={onCheckIn}
           />
           <View
@@ -345,9 +345,9 @@ export function MesaimTodayCard({
         </View>
       )}
 
-      {inBlocked && checkInBlockedHint ? (
-        <View testID="mesai-checkin-offsite" style={{ backgroundColor: "rgba(244,63,94,0.22)", borderRadius: 12, padding: 10 }}>
-          <Text style={{ color: "#FECDD3", fontSize: 12, fontWeight: "700" }}>{checkInBlockedHint}</Text>
+      {inDone && checkInBlockedHint ? (
+        <View testID="mesai-checkin-once" style={{ backgroundColor: "rgba(16,185,129,0.18)", borderRadius: 12, padding: 10 }}>
+          <Text style={{ color: "#A7F3D0", fontSize: 12, fontWeight: "700" }}>{checkInBlockedHint}</Text>
         </View>
       ) : null}
 

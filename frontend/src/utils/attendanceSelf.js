@@ -70,25 +70,34 @@ export function shouldWatchCheckoutUnlock({ earlyPending, checkedOut } = {}) {
   return Boolean(earlyPending);
 }
 
-/** Giriş: iş/görev yeri hedefi varsa konum zorunlu. Çıkış Mesaim'de yok. */
+/** Giriş: basınca konum çekilir (hedef varsa zorunlu). Çıkış Mesaim'de yok. */
 export function selfAttendanceGeoMode(action, opts = {}) {
   if (action === "check_out") return "none";
   if (opts.hasTarget) return "required";
-  if (opts.trackingEnabled) return "attach";
-  return "none";
+  // Hedef yoksa da girişte konum dene — sunucu/alışkanlık için eklenir.
+  return "attach";
 }
 
-/** Konumlu hedef varken uzakta veya konumsuz giriş yazılmaz; yönetici talebi açılmaz. */
-export function checkInOffsiteBlocked({ checkedIn, hasTarget, outside, locationMissing } = {}) {
-  if (checkedIn || !hasTarget) return false;
-  if (outside === true) return true;
-  return Boolean(locationMissing);
+/** Önceden konum durumuna göre butonu kilitleme; yalnızca günün girişi yapılmışsa pasif. */
+export function checkInOffsiteBlocked() {
+  return false;
 }
 
 export function checkInBlockedHint({ outside, locationMissing } = {}) {
   if (outside === true) return "İş yeri veya görev yerinde değilsiniz. Giriş yapılamaz.";
   if (locationMissing) return "Konum alınamadı. İş yeri veya görev yerinde giriş yapın.";
   return "";
+}
+
+/** Günde bir giriş: kayıt varsa buton pasif. */
+export function checkInAlreadyDone(checkIn) {
+  return Boolean(checkIn);
+}
+
+export function checkInOnceHint(checkIn) {
+  const t = String(checkIn || "").trim().slice(0, 5);
+  if (!t) return "";
+  return `Bugün ${t} saatinde giriş yapılmış. Günde bir kez giriş yapılır.`;
 }
 
 export function geoConfirmPending(rec) {
@@ -102,8 +111,10 @@ export function geoConfirmReasonTr(reason) {
   return String(reason || "").trim() || "konum doğrulanamadı";
 }
 
+/** Mesaim'den ikinci giriş / saat düzeltme yok — günde bir giriş. */
 export function mesaimPunchOpensEditor({ action, checkIn, checkOut } = {}) {
-  return action === "check_in" ? Boolean(checkIn) : Boolean(checkOut);
+  if (action === "check_in") return false;
+  return Boolean(checkOut);
 }
 
 export function mesaimPunchEditHint(action) {

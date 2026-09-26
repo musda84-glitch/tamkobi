@@ -1,15 +1,14 @@
 export type SelfAttendanceAction = "check_in" | "check_out";
 export type SelfAttendanceGeoMode = "required" | "attach" | "none";
 
-/** Giriş: iş/görev yeri hedefi varsa konum zorunlu. Çıkış Mesaim'de yok. */
+/** Giriş: basınca konum çekilir (hedef varsa zorunlu). Çıkış Mesaim'de yok. */
 export function selfAttendanceGeoMode(
   action: SelfAttendanceAction,
   opts?: { hasTarget?: boolean; trackingEnabled?: boolean; requireGeo?: boolean },
 ): SelfAttendanceGeoMode {
   if (action === "check_out") return "none";
   if (opts?.hasTarget) return "required";
-  if (opts?.trackingEnabled) return "attach";
-  return "none";
+  return "attach";
 }
 
 export type GeoConfirmRequest = {
@@ -21,22 +20,30 @@ export type GeoConfirmRequest = {
   distance_m?: number | null;
 };
 
-/** Konumlu hedef varken uzakta veya konumsuz giriş yazılmaz; yönetici talebi açılmaz. */
-export function checkInOffsiteBlocked(opts?: {
+/** Önceden konum durumuna göre butonu kilitleme; yalnızca günün girişi yapılmışsa pasif. */
+export function checkInOffsiteBlocked(_opts?: {
   checkedIn?: boolean;
   hasTarget?: boolean;
   outside?: boolean | null;
   locationMissing?: boolean;
 } | null): boolean {
-  if (opts?.checkedIn || !opts?.hasTarget) return false;
-  if (opts.outside === true) return true;
-  return Boolean(opts.locationMissing);
+  return false;
 }
 
 export function checkInBlockedHint(opts?: { outside?: boolean | null; locationMissing?: boolean } | null): string {
   if (opts?.outside === true) return "İş yeri veya görev yerinde değilsiniz. Giriş yapılamaz.";
   if (opts?.locationMissing) return "Konum alınamadı. İş yeri veya görev yerinde giriş yapın.";
   return "";
+}
+
+export function checkInAlreadyDone(checkIn?: string | null): boolean {
+  return Boolean(checkIn);
+}
+
+export function checkInOnceHint(checkIn?: string | null): string {
+  const t = String(checkIn || "").trim().slice(0, 5);
+  if (!t) return "";
+  return `Bugün ${t} saatinde giriş yapılmış. Günde bir kez giriş yapılır.`;
 }
 
 export function geoConfirmPending(rec?: { geo_confirm_request?: GeoConfirmRequest | null } | null): boolean {
@@ -50,12 +57,14 @@ export function geoConfirmReasonTr(reason?: string | null): string {
   return (reason || "").trim() || "konum doğrulanamadı";
 }
 
+/** Mesaim'den ikinci giriş / saat düzeltme yok — günde bir giriş. */
 export function mesaimPunchOpensEditor(opts: {
   action: "check_in" | "check_out";
   checkIn?: string | null;
   checkOut?: string | null;
 }): boolean {
-  return opts.action === "check_in" ? Boolean(opts.checkIn) : Boolean(opts.checkOut);
+  if (opts.action === "check_in") return false;
+  return Boolean(opts.checkOut);
 }
 
 export function mesaimPunchEditHint(action: "check_in" | "check_out"): string {

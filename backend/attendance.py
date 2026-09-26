@@ -2312,10 +2312,16 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     if not (req or {}).get("date"):
         date = await punch_date_for_action(emp, schedule, action, clock, today)
     existing = await _db.attendance.find_one({"employee_id": emp["_id"], "date": date}) or {}
+    # Mesaim: günde bir giriş — ikinci giriş / self saat düzeltme yok.
+    if action == "check_in" and existing.get("check_in"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bugün {existing['check_in']} saatinde giriş yapılmış. Günde bir kez giriş yapılır.",
+        )
     correcting = self_punch_is_correction(existing, action)
     explicit_clock = bool((req or {}).get("time") or (req or {}).get(action))
     if correcting and not explicit_clock:
-        raise HTTPException(status_code=400, detail=f"Bugün {existing[action]} saatinde giriş yapılmış. Düzeltmek için yeni saat gönderin.")
+        raise HTTPException(status_code=400, detail=f"Bugün {existing[action]} saatinde kayıt var. Düzeltmek için yeni saat gönderin.")
     if correcting:
         prev = str(existing.get(action) or "")[:5]
         if clock == prev:

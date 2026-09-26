@@ -30,11 +30,10 @@ describe("intraday leave request", () => {
 });
 
 describe("selfAttendanceGeoMode", () => {
-  it("requires GPS for check-in when a workplace/task target exists", () => {
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true, trackingEnabled: true })).toBe("required");
+  it("pulls GPS on check-in press; required when workplace/task target exists", () => {
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: true })).toBe("required");
     expect(selfAttendanceGeoMode("check_in", { hasTarget: true, requireGeo: false })).toBe("required");
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: true })).toBe("attach");
-    expect(selfAttendanceGeoMode("check_in", { hasTarget: false, trackingEnabled: false })).toBe("none");
+    expect(selfAttendanceGeoMode("check_in", { hasTarget: false })).toBe("attach");
   });
   it("disables checkout geo — Mesaim has no checkout button", () => {
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true, hasTarget: true })).toBe("none");
@@ -43,12 +42,9 @@ describe("selfAttendanceGeoMode", () => {
 });
 
 describe("checkInOffsiteBlocked", () => {
-  it("closes check-in away from the workplace or task site", () => {
-    expect(checkInOffsiteBlocked({ hasTarget: true, outside: true })).toBe(true);
-    expect(checkInOffsiteBlocked({ hasTarget: true, locationMissing: true })).toBe(true);
-    expect(checkInOffsiteBlocked({ hasTarget: true, outside: false })).toBe(false);
-    expect(checkInOffsiteBlocked({ hasTarget: false, outside: true })).toBe(false);
-    expect(checkInOffsiteBlocked({ checkedIn: true, hasTarget: true, outside: true })).toBe(false);
+  it("does not pre-block the button from stale location", () => {
+    expect(checkInOffsiteBlocked({ hasTarget: true, outside: true })).toBe(false);
+    expect(checkInOffsiteBlocked({ hasTarget: true, locationMissing: true })).toBe(false);
     expect(checkInBlockedHint({ outside: true })).toMatch(/Giriş yapılamaz/);
     expect(checkInBlockedHint({ locationMissing: true })).toMatch(/Konum alınamadı/);
   });
@@ -80,7 +76,7 @@ describe("mesaim card copy", () => {
     expect(mesaimOutSubtitle({ checkOut: "10:26" })).toBe("Çıkış 10:26");
     expect(mesaimOutSubtitle({ checkIn: null })).toBe("önce giriş yapın");
     expect(mesaimOutSubtitle({ checkIn: "01:37", confirming: true })).toMatch(/puantaj/);
-    expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(true);
+    expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(false);
     expect(mesaimPunchOpensEditor({ action: "check_out", checkOut: "01:20" })).toBe(true);
     expect(mesaimPunchOpensEditor({ action: "check_in" })).toBe(false);
     expect(mesaimPunchEditHint("check_out")).toMatch(/yönetici/);

@@ -7,7 +7,7 @@ import { TimeField } from "../components/TimeField";
 import { Card, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, mesaimPunchOpensEditor, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
@@ -80,7 +80,7 @@ type AttendancePayload = {
 async function coords() {
   const perm = await Location.requestForegroundPermissionsAsync();
   if (perm.status !== "granted") throw new Error("Konum izni verilmedi.");
-  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
   return { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy_m: pos.coords.accuracy };
 }
 
@@ -105,8 +105,6 @@ export function AttendanceScreen() {
   const [disputeOut, setDisputeOut] = useState("");
   const [consentBusy, setConsentBusy] = useState(false);
   const [signal, setSignal] = useState<LocationSignal | null>(null);
-  const [liveOutside, setLiveOutside] = useState<boolean | null>(null);
-  const [locMissing, setLocMissing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -140,44 +138,19 @@ export function AttendanceScreen() {
     return () => clearInterval(t);
   }, [client, load, data?.today?.check_in, data?.today?.check_out, data?.today?.early_leave_request?.status, data?.checkout_unlocked]);
 
-  const reportLocation = useCallback(async (reason?: string) => {
-    let c: { latitude: number; longitude: number; accuracy_m?: number | null };
+  const reportLocationUnavailable = useCallback(async (reason?: string) => {
     try {
-      c = await coords();
-    } catch (err) {
-      setLocMissing(true);
-      setLiveOutside(null);
-      try {
-        const r = await post<{ location_signal?: LocationSignal; message?: string }>(
-          client,
-          "/personnel/attendance/self/location-unavailable",
-          locationUnavailablePayload(reason || apiErrorMessage(err, "Konum alınamadı")),
-        );
-        if (r.location_signal) setSignal(r.location_signal);
-        if (r.message) setMessage(r.message);
-      } catch {
-        /* bildirim gönderilemedi */
-      }
-      return false;
-    }
-    try {
-      const r = await post<{ location_signal?: LocationSignal; punched?: string; message?: string; outside?: boolean }>(client, "/personnel/attendance/self/location", {
-        latitude: c.latitude,
-        longitude: c.longitude,
-        accuracy_m: c.accuracy_m ?? undefined,
-      });
-      setLocMissing(false);
-      if (typeof r.outside === "boolean") setLiveOutside(r.outside);
+      const r = await post<{ location_signal?: LocationSignal; message?: string }>(
+        client,
+        "/personnel/attendance/self/location-unavailable",
+        locationUnavailablePayload(reason || "Konum alınamadı"),
+      );
       if (r.location_signal) setSignal(r.location_signal);
-      if (r.punched) {
-        if (r.message) setMessage(r.message);
-        await load();
-      }
-      return true;
+      if (r.message) setMessage(r.message);
     } catch {
-      return false;
+      /* bildirim gönderilemedi */
     }
-  }, [client, load]);
+  }, [client]);
 
   useEffect(() => {
     // Konum takibi iptal — arka plan / aralıklı ping yok.
@@ -196,17 +169,18 @@ export function AttendanceScreen() {
     try {
       let extra: { latitude?: number; longitude?: number; accuracy_m?: number; time?: string } = {};
       if (time) extra.time = time;
+      const hasTarget = workplaceHasCoords(data?.workplace) || workplaceHasCoords(data?.location);
       const geoMode = selfAttendanceGeoMode(action, {
-        hasTarget: Boolean(data?.location || data?.workplace?.kind === "task"),
+        hasTarget,
         requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
-        trackingEnabled: false,
       });
       if (geoMode === "required" || geoMode === "attach") {
+        setMessage("Konum alınıyor…");
         try {
           const c = await coords();
           extra = { ...extra, latitude: c.latitude, longitude: c.longitude, accuracy_m: c.accuracy_m ?? undefined };
         } catch (err) {
-          await reportLocation(apiErrorMessage(err, geoMode === "required" ? "Konum izni verilmedi." : "Konum alınamadı"));
+          await reportLocationUnavailable(apiErrorMessage(err, geoMode === "required" ? "Konum izni verilmedi." : "Konum alınamadı"));
           if (geoMode === "required") throw err;
         }
       }
@@ -351,22 +325,8 @@ export function AttendanceScreen() {
   };
 
   const today = data?.today;
-  const checkedIn = Boolean(today?.check_in);
-  const outside = liveOutside != null
-    ? liveOutside
-    : data?.location_last_inside === false
-      ? true
-      : data?.location_last_inside === true
-        ? false
-        : null;
-  const hasGeoTarget = workplaceHasCoords(data?.workplace) || workplaceHasCoords(data?.location);
-  const checkInBlocked = checkInOffsiteBlocked({
-    checkedIn,
-    hasTarget: hasGeoTarget,
-    outside,
-    locationMissing: locMissing && outside !== false,
-  });
-  const checkInHint = checkInBlocked ? checkInBlockedHint({ outside, locationMissing: locMissing && outside !== false }) : "";
+  const checkedIn = checkInAlreadyDone(today?.check_in);
+  const checkInOnceMsg = checkInOnceHint(today?.check_in);
   const geoPendingHint = geoConfirmHint(today);
   const earlyOk = earlyLeaveApproved(today);
   const consentOk = locationConsentAccepted(data?.location_consent);
@@ -426,8 +386,8 @@ export function AttendanceScreen() {
           intraOut={intraOut}
           intraReturn={intraReturn}
           geoPendingHint={geoPendingHint}
-          checkInBlocked={checkInBlocked}
-          checkInBlockedHint={checkInHint}
+          checkInBlocked={checkedIn}
+          checkInBlockedHint={checkInOnceMsg}
           punchEdit={punchEdit}
           punchEditTime={punchEditTime}
           onPunchEditTime={setPunchEditTime}
@@ -439,12 +399,7 @@ export function AttendanceScreen() {
           }}
           onPunchEditCancel={() => setPunchEdit(null)}
           onCheckIn={() => {
-            if (checkInBlocked) { setError(checkInHint); return; }
-            if (mesaimPunchOpensEditor({ action: "check_in", checkIn: today?.check_in })) {
-              setPunchEdit("check_in");
-              setPunchEditTime(today?.check_in || "");
-              return;
-            }
+            if (checkedIn) { setMessage(checkInOnceMsg); return; }
             act("check_in");
           }}
           onEarlyOpen={() => setEarlyOpen(true)}
