@@ -12,8 +12,6 @@ import {
   mesaimInSubtitle,
   mesaimLongDate,
   mesaimOutSubtitle,
-  mesaimPunchEditHint,
-  mesaimPunchNowLabel,
   mesaimScheduleLine,
   mesaimWorkDaysLine,
   resolveMesaimTodayHours,
@@ -24,7 +22,6 @@ import {
 import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHint, type Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
 import type { LocationSignal } from "../utils/locationConsent";
-import { resolveNowHm } from "../utils/clock";
 
 const DARK = "#0F172A";
 const DARK_META = "#CBD5E1";
@@ -142,11 +139,6 @@ export function MesaimTodayCard({
   geoPendingHint,
   checkInBlocked,
   checkInBlockedHint,
-  punchEdit,
-  punchEditTime,
-  onPunchEditTime,
-  onPunchEditConfirm,
-  onPunchEditCancel,
   onCheckIn,
   onEarlyOpen,
   onEarlyClose,
@@ -205,11 +197,6 @@ export function MesaimTodayCard({
   geoPendingHint?: string;
   checkInBlocked?: boolean;
   checkInBlockedHint?: string;
-  punchEdit?: "check_in" | null;
-  punchEditTime?: string;
-  onPunchEditTime?: (v: string) => void;
-  onPunchEditConfirm?: (time?: string) => void;
-  onPunchEditCancel?: () => void;
   onCheckIn: () => void;
   onEarlyOpen: () => void;
   onEarlyClose: () => void;
@@ -301,51 +288,12 @@ export function MesaimTodayCard({
         </View>
       </View>
 
-      {punchEdit ? (
-        <View testID="mesai-punch-edit" style={{ gap: 8 }}>
-          <TimeField
-            key={punchEdit}
-            label="Giriş saati"
-            testID="mesai-punch-edit-time"
-            value={punchEditTime || ""}
-            autoOpen
-            nowLabel={mesaimPunchNowLabel("check_in")}
-            nowKind="check_in"
-            nowValue={now}
-            onNow={(hm) => {
-              onPunchEditTime?.(hm);
-              onPunchEditConfirm?.(hm);
-            }}
-            onChangeText={(v) => onPunchEditTime?.(v)}
-          />
-          <Text style={{ color: "#FDE68A", fontSize: 12, fontWeight: "600" }}>{mesaimPunchEditHint("check_in")}</Text>
-          <PrimaryButton
-            title={mesaimPunchNowLabel("check_in")}
-            onPress={() => {
-              const hm = resolveNowHm(now);
-              onPunchEditTime?.(hm);
-              onPunchEditConfirm?.(hm);
-            }}
-            color={colors.indigo}
-            testID="mesai-punch-edit-now"
-          />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <PrimaryButton
-              title={busy === punchEdit ? "Gönderiliyor…" : "Onayla"}
-              onPress={() => onPunchEditConfirm?.()}
-              color={EMERALD}
-              testID="mesai-punch-edit-yes"
-            />
-            <PrimaryButton title="Vazgeç" onPress={() => onPunchEditCancel?.()} color={colors.secondary} testID="mesai-punch-edit-no" />
-          </View>
-        </View>
-      ) : (
-        <View style={{ gap: 10 }}>
+      <View style={{ gap: 10 }}>
           <PunchTile
             testID="mesai-in"
             icon="log-in-outline"
             title={busy === "check_in" ? "Konum alınıyor…" : inDone ? "Giriş yapıldı" : "Giriş Yap"}
-            subtitle={inDone ? mesaimInSubtitle(today?.check_in) : "basınca konum alınır"}
+            subtitle={inDone ? mesaimInSubtitle(today?.check_in) : "basınca o anki saat yazılır"}
             color={EMERALD}
             disabled={busy === "check_in" || inDone}
             onPress={onCheckIn}
@@ -376,7 +324,6 @@ export function MesaimTodayCard({
             </Text>
           </View>
         </View>
-      )}
 
       {earlyArrivalLine ? (
         <Text testID="mesai-early-arrival" style={{ color: "#BAE6FD", fontSize: 11, fontWeight: "700", textAlign: "center" }}>

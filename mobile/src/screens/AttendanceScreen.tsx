@@ -8,6 +8,7 @@ import { Card, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen } from "../
 import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
 import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { resolveNowHm } from "../utils/clock";
 import { fmtDmy } from "../utils/calendar";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
@@ -103,8 +104,6 @@ export function AttendanceScreen() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [earlyOpen, setEarlyOpen] = useState(false);
-  const [punchEdit, setPunchEdit] = useState<"check_in" | null>(null);
-  const [punchEditTime, setPunchEditTime] = useState("");
   const [earlyReason, setEarlyReason] = useState("");
   const [earlyTime, setEarlyTime] = useState("");
   const [intraOpen, setIntraOpen] = useState(false);
@@ -198,7 +197,6 @@ export function AttendanceScreen() {
       }
       const r = await post<{ message?: string }>(client, "/personnel/attendance/self", { action, ...extra });
       setMessage(r.message || "Kaydedildi.");
-      setPunchEdit(null);
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "İşlem başarısız."));
@@ -401,19 +399,9 @@ export function AttendanceScreen() {
           geoPendingHint={geoPendingHint}
           checkInBlocked={checkedIn}
           checkInBlockedHint={checkInOnceMsg}
-          punchEdit={punchEdit}
-          punchEditTime={punchEditTime}
-          onPunchEditTime={setPunchEditTime}
-          onPunchEditConfirm={(time) => {
-            if (!punchEdit) return;
-            const hm = String(time || punchEditTime || "").trim().slice(0, 5);
-            if (!/^\d{1,2}:\d{2}$/.test(hm)) { setError("Saat seçin."); return; }
-            act(punchEdit, hm);
-          }}
-          onPunchEditCancel={() => setPunchEdit(null)}
           onCheckIn={() => {
             if (checkedIn) { setMessage(checkInOnceMsg); return; }
-            act("check_in");
+            act("check_in", resolveNowHm(data?.now));
           }}
           onEarlyOpen={() => setEarlyOpen(true)}
           onEarlyClose={() => setEarlyOpen(false)}

@@ -111,10 +111,9 @@ export function geoConfirmReasonTr(reason) {
   return String(reason || "").trim() || "konum doğrulanamadı";
 }
 
-/** Mesaim'den ikinci giriş / saat düzeltme yok — günde bir giriş. */
-export function mesaimPunchOpensEditor({ action, checkIn, checkOut } = {}) {
-  if (action === "check_in") return false;
-  return Boolean(checkOut);
+/** Mesaim girişte saat düzeltme paneli yok — basınca o anki saat yazılır. */
+export function mesaimPunchOpensEditor(_opts = {}) {
+  return false;
 }
 
 export function mesaimPunchEditHint(action) {

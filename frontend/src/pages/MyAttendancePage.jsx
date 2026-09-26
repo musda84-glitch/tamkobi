@@ -6,7 +6,7 @@ import { Clock, LogIn, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDay
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHasCoords, workplaceHint } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnelWage";
@@ -14,7 +14,6 @@ import { fmtDmy } from "../utils/dateFormat";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { LocationSignal } from "../components/LocationSignal";
 import { locationConsentAccepted, locationUnavailablePayload } from "../utils/locationConsent";
-import { punchLabelClass } from "../utils/punchLabels";
 
 
 const Stat = ({ label, value, sub, tone = "slate", testId }) => (
@@ -73,8 +72,6 @@ export default function MyAttendancePage() {
   const [intraReason, setIntraReason] = useState("");
   const [intraOut, setIntraOut] = useState("");
   const [intraReturn, setIntraReturn] = useState("");
-  const [punchEdit, setPunchEdit] = useState(null);
-  const [punchEditTime, setPunchEditTime] = useState("");
   const [consentBusy, setConsentBusy] = useState(false);
   const [signal, setSignal] = useState(null);
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => { setData(r.data); setSignal(r.data.location_signal || null); }).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
@@ -128,7 +125,6 @@ export default function MyAttendancePage() {
       }
       const r = await axios.post(`${API_URL}/personnel/attendance/self`, { action, ...(time ? { time } : {}), ...coords }, { withCredentials: true });
       toast.success(r.data.message, { duration: 6000 });
-      setPunchEdit(null);
       load();
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "İşlem başarısız."); } finally { setBusy(null); }
   };
@@ -136,7 +132,7 @@ export default function MyAttendancePage() {
   const checkInOnceMsg = checkInOnceHint(data?.today?.check_in);
   const onCheckInClick = () => {
     if (checkedIn) { toast.message(checkInOnceMsg); return; }
-    act("check_in");
+    act("check_in", resolveNowHm(data?.now));
   };
   const confirm = async (r) => { try { await axios.post(`${API_URL}/personnel/attendance/${r.id}/confirm`, {}, { withCredentials: true }); toast.success("Kayıt onaylandı."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } };
   const rejectTimeEdit = async (r) => { try { const res = await axios.post(`${API_URL}/personnel/attendance/${r.id}/time-edit-decision`, { decision: "reject" }, { withCredentials: true }); toast.success(res.data?.message || "Saat düzeltmesi reddedildi."); load(); } catch (err) { toast.error(err.response?.data?.detail || "Reddedilemedi."); } };
@@ -257,44 +253,9 @@ export default function MyAttendancePage() {
               </span>
             </div>
           </div>
-          {punchEdit ? (
-            <div className="rounded-2xl bg-white/10 border border-white/15 p-3 space-y-2" data-testid="my-att-punch-edit">
-              <label className={`block text-[10px] font-bold ${punchLabelClass("Giriş saati", "text-slate-300")}`}>
-                Giriş saati
-                <input
-                  type="time"
-                  autoFocus
-                  value={punchEditTime || ""}
-                  onChange={(e) => setPunchEditTime(e.target.value)}
-                  className="mt-1 block w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white"
-                  data-testid="my-att-punch-edit-time"
-                />
-              </label>
-              <div className="text-[11px] text-amber-100 font-semibold">{mesaimPunchEditHint("check_in")}</div>
-              <div className="flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const hm = resolveNowHm(data?.now);
-                    setPunchEditTime(hm);
-                    act("check_in", hm);
-                  }}
-                  disabled={!!busy}
-                  className="w-full px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 bg-indigo-500/90 hover:bg-indigo-500"
-                  data-testid="my-att-punch-edit-now"
-                >
-                  {mesaimPunchNowLabel("check_in")}
-                </button>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => { if (!/^\d{1,2}:\d{2}$/.test(String(punchEditTime || "").trim())) { toast.error("Saat seçin."); return; } act("check_in", String(punchEditTime).trim().slice(0, 5)); }} disabled={!!busy} className="flex-1 px-3 py-2 rounded-lg font-bold text-white disabled:opacity-50 bg-emerald-500" data-testid="my-att-punch-edit-yes">{busy === punchEdit ? "…" : "Onayla"}</button>
-                  <button type="button" onClick={() => setPunchEdit(null)} className="px-3 py-2 rounded-lg font-bold bg-white/10" data-testid="my-att-punch-edit-no">Vazgeç</button>
-                </div>
-              </div>
-            </div>
-          ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button onClick={onCheckInClick} disabled={!!busy || checkedIn} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
-              {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">{checkedIn ? "Giriş yapıldı" : "Giriş Yap"}</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{t?.check_in ? `Giriş ${t.check_in}` : "basınca konum alınır"}</span>
+              {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">{checkedIn ? "Giriş yapıldı" : "Giriş Yap"}</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{t?.check_in ? `Giriş ${t.check_in}` : "basınca o anki saat yazılır"}</span>
             </button>
             <div className="rounded-2xl bg-white/10 border border-white/10 px-4 py-5 flex flex-col justify-center gap-1" data-testid="my-att-checkout-info">
               <div className="text-sm font-extrabold text-rose-200">Çıkış</div>
@@ -311,7 +272,6 @@ export default function MyAttendancePage() {
               </div>
             </div>
           </div>
-          )}
           {t?.early_arrival_minutes > 0 ? (
             <div className="text-[11px] text-sky-200 font-semibold" data-testid="my-att-early-arrival">
               Erken giriş {t.check_in} kaydedildi · çalışma saati {mesaiStart} başlangıcından sayılır ({t.early_arrival_minutes} dk erken)
