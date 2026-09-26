@@ -122,21 +122,6 @@ export default function MyAttendancePage() {
   }, [load]);
 
   useEffect(() => {
-    if (!locationConsentAccepted(data?.location_consent)) return undefined;
-    reportLocation();
-    return undefined;
-  }, [data?.location_consent?.accepted, reportLocation]);
-  useEffect(() => {
-    const tracking = data?.active_location_tracking || data?.location_tracking;
-    const checkedOut = Boolean(data?.today?.check_out);
-    if (!locationConsentAccepted(data?.location_consent) || !tracking?.enabled || checkedOut) return undefined;
-    reportLocation();
-    const mins = Number(tracking.interval_minutes);
-    const ms = tracking.continuous || mins === 0 ? 60_000 : Math.max(1, mins) * 60_000;
-    const id = setInterval(() => { reportLocation(); }, ms);
-    return () => clearInterval(id);
-  }, [data?.today?.check_out, data?.active_location_tracking, data?.location_tracking, data?.location_consent, reportLocation]);
-  useEffect(() => {
     const t = data?.today;
     if (!shouldWatchCheckoutUnlock({
       earlyPending: t?.early_leave_request?.status === "pending",
@@ -151,11 +136,10 @@ export default function MyAttendancePage() {
     setBusy(action);
     try {
       let coords = {};
-      const activeLt = data?.active_location_tracking || data?.location_tracking;
       const geoMode = selfAttendanceGeoMode(action, {
         hasTarget: Boolean(data?.location || data?.workplace?.kind === "task"),
         requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
-        trackingEnabled: activeLt?.enabled !== false,
+        trackingEnabled: false,
       });
       if (geoMode === "required" || geoMode === "attach") {
         try {
@@ -311,11 +295,6 @@ export default function MyAttendancePage() {
               </span>
             </div>
           </div>
-          {(data?.active_location_tracking || data?.location_tracking)?.enabled && !data?.today?.check_out ? (
-            <p className="text-[10px] text-slate-400" data-testid="mesai-loc-bg-hint">
-              Konum takibi bu sayfa açıkken çalışır. Telefon uygulamasında uygulama kapalıyken de devam eder.
-            </p>
-          ) : null}
           {punchEdit ? (
             <div className="rounded-2xl bg-white/10 border border-white/15 p-3 space-y-2" data-testid="my-att-punch-edit">
               <label className={`block text-[10px] font-bold ${punchLabelClass("Giriş saati", "text-slate-300")}`}>

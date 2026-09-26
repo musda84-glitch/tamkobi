@@ -213,13 +213,17 @@ def _normalize_location_mode(raw: Optional[dict] = None, fallback: Optional[dict
     return base
 
 
+def location_tracking_active() -> bool:
+    """Sürekli / arka plan konum takibi kapalı (Mesaim ping, varlık, otomatik punch)."""
+    return False
+
+
 def normalize_location_tracking(raw: Optional[dict] = None) -> dict:
-    """İş yeri + dış görev konum tercihleri. Eski düz alanlar iş yeri ayarıdır."""
-    company = _normalize_location_mode(raw if isinstance(raw, dict) else None)
-    field_raw = (raw or {}).get("field") if isinstance(raw, dict) else None
-    # Eski kayıtlarda field yoksa iş yeri ayarından türet.
-    field = _normalize_location_mode(field_raw if isinstance(field_raw, dict) else None, fallback=company)
-    return {**company, "field": field}
+    """İş yeri + dış görev konum tercihleri. Takip iptal — her zaman kapalı döner."""
+    off = dict(DEFAULT_LOCATION_MODE)
+    off["enabled"] = False
+    off["continuous"] = False
+    return {**off, "field": dict(off)}
 
 
 def early_leave_is_approved(rec: Optional[dict] = None) -> bool:
@@ -448,20 +452,18 @@ def checkout_distance_blocks() -> bool:
 
 
 def location_ping_checks_out() -> bool:
-    """Canlı konum otomatik giriş/çıkış basmaz; yalnızca varlık / iş yeri bilgisi güncellenir."""
+    """Konum takibi kapalı; ping giriş/çıkış basmaz."""
     return False
 
 
 def location_mode_for(lt: Optional[dict], workplace: Optional[dict] = None) -> dict:
-    """Etkin iş yerine göre kullanılacak konum modu (iş yeri veya dış görev)."""
+    """Etkin iş yerine göre kullanılacak konum modu — takip iptal, her zaman kapalı."""
     full = normalize_location_tracking(lt)
-    if workplace and workplace.get("kind") == "task":
-        return dict(full.get("field") or DEFAULT_LOCATION_MODE)
     return {
-        "enabled": full["enabled"],
-        "continuous": full["continuous"],
-        "interval_minutes": full["interval_minutes"],
-        "exit_tolerance_hours": full.get("exit_tolerance_hours", 0),
+        "enabled": False,
+        "continuous": False,
+        "interval_minutes": int(full.get("interval_minutes") or 0),
+        "exit_tolerance_hours": 0,
     }
 
 
@@ -1053,9 +1055,7 @@ def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
     if employee is not None:
         lt = normalize_location_tracking(employee.get("location_tracking"))
         s["location_tracking"] = lt
-        # İş yeri (firma) konum kapalıysa schedule.require_geo kapanır; dış görev ayrı alan.
-        if not lt["enabled"]:
-            s["require_geo"] = False
+        # require_geo şirket / mesai ayarından gelir; konum takibi (sürekli ping) ayrı kapalıdır.
     return s
 
 
@@ -1465,6 +1465,30 @@ def check_in_geo_block_detail(verdict: Optional[dict]) -> Optional[str]:
     except (TypeError, ValueError):
         dist_bit = ""
     return f"{place} içinde değilsiniz{dist_bit}. Giriş yapılamaz."
+
+
+def task_site_presence_recorded(rec: Optional[dict] = None, task_id: Optional[str] = None) -> bool:
+    """Bugün bu dış görev için tek seferlik varlık kaydı var mı?"""
+    tid = str(task_id or "").strip()
+    if not tid:
+        return False
+    row = (rec or {}).get("task_site_presence")
+    if not isinstance(row, dict):
+        return False
+    return str(row.get("task_id") or "").strip() == tid and bool(row.get("at"))
+
+
+def task_site_presence_message(*, onsite: bool, recorded: bool, place: str = "") -> str:
+    label = (place or "görev yeri").strip() or "görev yeri"
+    if not onsite:
+        return f"{label} içinde değilsiniz."
+    if recorded:
+        return f"{label} konumunda olduğunuz kaydedildi."
+    return f"{label} konumundasınız (daha önce bildirildi)."
+
+
+def should_record_task_site_presence(rec: Optional[dict], task_id: Optional[str], onsite: bool) -> bool:
+    return bool(onsite) and not task_site_presence_recorded(rec, task_id)
 
 
 def geo_confirm_reason_tr(reason: Optional[str]) -> str:
@@ -2140,11 +2164,9 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
     loc = geo_target(workplace)
     lt = normalize_location_tracking(emp.get("location_tracking"))
     active_lt = location_mode_for(lt, workplace)
-    # /me: etkin iş yerine göre require_geo (dış görevde field.enabled).
+    # Giriş geo: iş/görev yeri hedefi varsa zorunlu (takip açık/kapalıdan bağımsız).
     if workplace and workplace.get("kind") == "task":
-        schedule = {**schedule, "require_geo": bool(active_lt.get("enabled"))}
-    elif not active_lt.get("enabled"):
-        schedule = {**schedule, "require_geo": False}
+        schedule = {**schedule, "require_geo": True}
     now_s = now_hm(schedule)
     return {"employee": {"id": emp["_id"], "full_name": emp["full_name"], "department": emp.get("department"), "position": emp.get("position")},
             "month": month, "records": enriched, "summary": summarize(enriched), "today": _clean(today_e) if today_e else None,
@@ -2182,11 +2204,11 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     loc = geo_target(workplace)
     lt = normalize_location_tracking(emp.get("location_tracking"))
     active_lt = location_mode_for(lt, workplace)
-    # Dış görevde field.enabled; iş yerinde şirket require_geo ∧ personel iş yeri enabled.
+    # Giriş geo: hedef varsa zorunlu (konum takibi kapalı olsa da).
     if workplace and workplace.get("kind") == "task":
-        enforce_geo = bool(active_lt.get("enabled"))
+        enforce_geo = True
     else:
-        enforce_geo = bool(schedule.get("require_geo", True)) and bool(active_lt.get("enabled"))
+        enforce_geo = bool(schedule.get("require_geo", True)) and bool(loc)
     lat, lng, acc = parse_self_coords(req)
     verdict = classify_self_punch_geo(loc, lat, lng)
     geo = None
@@ -2671,13 +2693,30 @@ async def process_auto_exit_overtime(
 
 @router.post("/personnel/attendance/self/location")
 async def self_location_ping(req: Dict[str, Any], request: Request):
-    """Sürekli/aralıklı takip: konum ping. İçeri/dışarı olunca otomatik giriş-çıkış; tolerans dolunca yönetici talebi."""
+    """Konum takibi iptal: ping varlık / otomatik punch yazmaz."""
     user = await _current_user(request)
     emp = await employee_for_user(user)
     if not emp:
         raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
     if not location_consent.location_consent_accepted(emp):
         raise HTTPException(status_code=403, detail=location_consent.location_consent_denied_detail())
+    if not location_tracking_active():
+        signal = location_consent.location_signal_view(emp)
+        return {
+            "status": "disabled",
+            "outside": None,
+            "distance_m": None,
+            "opened": False,
+            "punched": None,
+            "auto_checkout": False,
+            "overtime_confirm": False,
+            "message": "Konum takibi kapalı.",
+            "record": None,
+            "request": None,
+            "workplace": None,
+            "active_location_tracking": location_mode_for(None),
+            "location_signal": signal,
+        }
     try:
         lat, lng = float(req["latitude"]), float(req["longitude"])
     except (KeyError, TypeError, ValueError):
@@ -2814,6 +2853,108 @@ async def self_location_ping(req: Dict[str, Any], request: Request):
         "request": opened,
         "workplace": workplace,
         "active_location_tracking": active_lt,
+        "location_signal": signal,
+    }
+
+
+@router.post("/personnel/attendance/self/task-site-presence")
+async def self_task_site_presence(req: Dict[str, Any], request: Request):
+    """Dış görev talimatları işlenirken tek seferlik görev yeri varlık bildirimi (sürekli takip yok)."""
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    if not location_consent.location_consent_accepted(emp):
+        raise HTTPException(status_code=403, detail=location_consent.location_consent_denied_detail())
+    task_id = str(req.get("task_id") or "").strip()
+    if not task_id:
+        raise HTTPException(status_code=400, detail="task_id gerekli.")
+    lat, lng, acc = parse_self_coords(req)
+    if lat is None or lng is None:
+        raise HTTPException(status_code=400, detail="Konum gerekli.")
+    assignments = await field_assignments_for(emp)
+    match = next((a for a in assignments if str(a.get("id") or "") == task_id and task_is_field(a)), None)
+    if not match:
+        raise HTTPException(status_code=404, detail="Dış görev bulunamadı.")
+    company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
+    workplace = workplace_payload(company.get("location"), match)
+    loc = geo_target(workplace)
+    if not loc:
+        return {
+            "status": "skip",
+            "onsite": None,
+            "recorded": False,
+            "distance_m": None,
+            "message": "Görev yerinin konumu tanımlı değil.",
+            "workplace": workplace,
+            "location_signal": location_consent.location_signal_view(emp),
+        }
+    verdict = classify_self_punch_geo(loc, lat, lng)
+    place = verdict.get("place") or workplace_place_label(workplace)
+    onsite = verdict.get("verdict") == "onsite"
+    schedule = merge_schedule(company, emp)
+    today = _today(schedule)
+    rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
+    if rec:
+        rec["id"] = rec.get("_id") or rec.get("id")
+    recorded = False
+    if should_record_task_site_presence(rec, task_id, onsite):
+        now_iso = _now()
+        presence = {
+            "task_id": task_id,
+            "at": now_iso,
+            "distance_m": verdict.get("distance_m"),
+            "accuracy_m": acc or 0,
+            "place": place,
+            "project_id": match.get("project_id"),
+            "project_name": match.get("project_name"),
+            "task_title": match.get("title"),
+        }
+        if not (rec.get("id") or rec.get("_id")):
+            # Varlık kaydı için boş/günlük satır oluştur
+            rec = await apply_day(emp, today, {"status": "present"}, source="task_site", confirmed=None)
+        att_id = rec.get("id") or rec.get("_id")
+        await _db.attendance.update_one(
+            {"_id": att_id},
+            {"$set": {
+                "task_site_presence": presence,
+                "location_inside_at": now_iso,
+                "updated_at": now_iso,
+            }},
+        )
+        rec["task_site_presence"] = presence
+        rec["location_inside_at"] = now_iso
+        await _db.employees.update_one(
+            {"_id": emp["_id"]},
+            {"$set": {"location_last_inside": True, "location_inside_at": now_iso}},
+        )
+        await save_location_move(
+            rec,
+            build_location_move(kind="enter", at=now_iso, place=place, source="task_site", ignorable=True),
+        )
+        try:
+            await notify_managers(
+                emp["company_id"],
+                "task_site_presence",
+                f"Görev yerinde: {emp.get('full_name')}",
+                f"{emp.get('full_name')} dış görev yerinde ({place}"
+                + (f" · {match.get('title')}" if match.get("title") else "")
+                + ").",
+                link="/personnel?tab=attendance",
+                dedupe_key=f"tasksite:{emp['_id']}:{today}:{task_id}",
+            )
+        except Exception:
+            pass
+        recorded = True
+    signal = await mark_employee_location_signal(emp["_id"], True)
+    return {
+        "status": "success",
+        "onsite": onsite,
+        "recorded": recorded,
+        "distance_m": verdict.get("distance_m"),
+        "message": task_site_presence_message(onsite=onsite, recorded=recorded, place=place),
+        "workplace": workplace,
+        "task_site_presence": (rec or {}).get("task_site_presence"),
         "location_signal": signal,
     }
 

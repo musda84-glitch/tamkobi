@@ -7,7 +7,7 @@ export const KVKK_TEXT =
 
 export const SHARE_TITLE = "Konum paylaşımı sözleşmesi (KK)";
 export const SHARE_TEXT =
-  "Mesai süresince, uygulama kapalıyken veya arka plandayken de konumumun alınmasına ve konum alınamadığında yöneticimin haberdar edilmesine izin veriyorum.";
+  "Giriş ve dış görev yerinde tek seferlik varlık kontrolü için konumumun alınmasına izin veriyorum.";
 
 export type LocationConsent = {
   accept_kvkk?: boolean;

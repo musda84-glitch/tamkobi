@@ -29,32 +29,33 @@ def test_checkout_is_button_only_anywhere():
     assert location_ping_checks_out() is False
 
 
-def test_normalize_defaults():
-    assert normalize_location_tracking(None) == DEFAULT_LOCATION_TRACKING
-    assert normalize_location_tracking({}) == DEFAULT_LOCATION_TRACKING
-    assert "field" in normalize_location_tracking(None)
-    assert normalize_location_tracking(None)["field"] == DEFAULT_LOCATION_MODE
+def test_normalize_defaults_force_off():
+    """Konum takibi iptal — normalize her zaman kapalı döner."""
+    off = normalize_location_tracking(None)
+    assert off["enabled"] is False
+    assert off["continuous"] is False
+    assert "field" in off
+    assert off["field"]["enabled"] is False
+    assert normalize_location_tracking({"enabled": True, "continuous": True})["enabled"] is False
 
 
 def test_normalize_clamps_interval_and_disables_continuous_when_off():
     lt = normalize_location_tracking({"enabled": False, "continuous": True, "interval_minutes": 999})
     assert lt["enabled"] is False
     assert lt["continuous"] is False
-    assert lt["interval_minutes"] == 120
-    assert "field" in lt
+    assert lt["field"]["enabled"] is False
     lt2 = normalize_location_tracking({"enabled": True, "continuous": False, "interval_minutes": 0})
-    assert lt2["interval_minutes"] == 0
-    assert lt2["continuous"] is True
+    assert lt2["enabled"] is False
+    assert lt2["continuous"] is False
 
 
 def test_normalize_zero_interval_means_continuous():
     lt = normalize_location_tracking({"enabled": True, "interval_minutes": 0})
-    assert lt["enabled"] is True
-    assert lt["continuous"] is True
-    assert lt["interval_minutes"] == 0
+    assert lt["enabled"] is False
+    assert lt["continuous"] is False
     lt2 = normalize_location_tracking({"enabled": True, "continuous": True, "interval_minutes": 10})
-    assert lt2["continuous"] is True
-    assert lt2["interval_minutes"] == 0
+    assert lt2["enabled"] is False
+    assert lt2["continuous"] is False
 
 
 def test_normalize_field_separate_from_company():
@@ -63,9 +64,7 @@ def test_normalize_field_separate_from_company():
         "field": {"enabled": True, "continuous": True, "interval_minutes": 0},
     })
     assert lt["enabled"] is False
-    assert lt["field"]["enabled"] is True
-    assert lt["field"]["continuous"] is True
-    assert lt["field"]["interval_minutes"] == 0
+    assert lt["field"]["enabled"] is False
 
 
 def test_location_mode_for_workplace():
@@ -76,8 +75,7 @@ def test_location_mode_for_workplace():
     company = location_mode_for(lt, {"kind": "company"})
     assert company["enabled"] is False
     field = location_mode_for(lt, {"kind": "task"})
-    assert field["enabled"] is True
-    assert field["interval_minutes"] == 5
+    assert field["enabled"] is False
 
 
 def test_normalize_field_exit_tolerance_hours():
@@ -85,31 +83,36 @@ def test_normalize_field_exit_tolerance_hours():
         "enabled": True, "interval_minutes": 15,
         "field": {"enabled": True, "continuous": True, "interval_minutes": 0, "exit_tolerance_hours": 3},
     })
-    assert lt["field"]["exit_tolerance_hours"] == 3
-    assert location_mode_for(lt, {"kind": "task"})["exit_tolerance_hours"] == 3
+    assert lt["field"]["enabled"] is False
+    assert location_mode_for(lt, {"kind": "task"})["exit_tolerance_hours"] == 0
     clamped = normalize_location_tracking({"field": {"exit_tolerance_hours": 99}})
-    assert clamped["field"]["exit_tolerance_hours"] == 12
+    assert clamped["field"]["enabled"] is False
 
 
-def test_merge_schedule_require_geo_follows_employee_location_tracking():
+def test_merge_schedule_require_geo_independent_of_tracking():
     company = {"work_schedule": {"require_geo": True, "start": "09:00", "end": "18:00"}}
     emp_off = {"location_tracking": {"enabled": False, "continuous": True, "interval_minutes": 10}}
     s_off = merge_schedule(company, emp_off)
-    assert s_off["require_geo"] is False
+    assert s_off["require_geo"] is True
     assert s_off["location_tracking"]["enabled"] is False
-    assert s_off["location_tracking"]["continuous"] is False
-    assert s_off["location_tracking"]["interval_minutes"] == 10
 
     emp_on = {"location_tracking": {"enabled": True, "continuous": False, "interval_minutes": 5}}
     s_on = merge_schedule(company, emp_on)
     assert s_on["require_geo"] is True
-    assert s_on["location_tracking"]["continuous"] is False
-    assert s_on["location_tracking"]["interval_minutes"] == 5
+    assert s_on["location_tracking"]["enabled"] is False
 
-    emp_cont = {"location_tracking": {"enabled": True, "continuous": False, "interval_minutes": 0}}
-    s_cont = merge_schedule(company, emp_cont)
-    assert s_cont["location_tracking"]["continuous"] is True
-    assert s_cont["location_tracking"]["interval_minutes"] == 0
+
+def test_task_site_presence_once():
+    from attendance import (
+        should_record_task_site_presence,
+        task_site_presence_message,
+        task_site_presence_recorded,
+    )
+    assert task_site_presence_recorded({}, "t1") is False
+    assert should_record_task_site_presence({}, "t1", True) is True
+    assert should_record_task_site_presence({"task_site_presence": {"task_id": "t1", "at": "x"}}, "t1", True) is False
+    assert "kaydedildi" in task_site_presence_message(onsite=True, recorded=True, place="Villa")
+    assert "değilsiniz" in task_site_presence_message(onsite=False, recorded=False, place="Villa")
 
 
 def test_location_exit_should_notify_after_tolerance():

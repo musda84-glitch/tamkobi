@@ -28,9 +28,8 @@ export function shouldRunLocationBackground(opts: {
   token?: string | null;
   platform?: string;
 }): boolean {
-  if (opts.platform === "web") return false;
-  if (!opts.consented || !opts.enabled || opts.checkedOut) return false;
-  return Boolean(String(opts.token || "").trim());
+  // Sürekli / arka plan konum takibi iptal.
+  return false;
 }
 
 export function locationBgDistanceM(cfg?: { continuous?: boolean; interval_minutes?: number } | null): number {

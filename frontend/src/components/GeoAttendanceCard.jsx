@@ -54,13 +54,6 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
   }, [load, onChanged]);
 
   useEffect(() => {
-    if (!locationConsentAccepted(st?.location_consent)) return undefined;
-    reportLocation();
-    if (st?.today?.check_out) return undefined;
-    const id = setInterval(() => { reportLocation(); }, 60_000);
-    return () => clearInterval(id);
-  }, [st?.location_consent?.accepted, st?.today?.check_out, reportLocation]);
-  useEffect(() => {
     const t = st?.today;
     if (!shouldWatchCheckoutUnlock({
       earlyPending: t?.early_leave_request?.status === "pending",

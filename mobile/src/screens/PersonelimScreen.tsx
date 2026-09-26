@@ -499,6 +499,7 @@ export function PersonelimScreen() {
                 index={i}
                 testID={`personelim-task-${t.id || i}`}
                 showAtolye
+                reportSitePresence
                 onAtolye={() => go("Atolye")}
                 approveBusy={taskBusyId === t.id}
                 onApprove={() => completeTask(t)}

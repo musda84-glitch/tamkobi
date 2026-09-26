@@ -308,6 +308,7 @@ export function AtolyeScreen() {
               duty={t}
               index={i}
               testID={`shopfloor-duty-${t.id || i}`}
+              reportSitePresence
               approveBusy={dutyBusyId === t.id}
               onApprove={() => approveDuty(t)}
               onChanged={() => load()}

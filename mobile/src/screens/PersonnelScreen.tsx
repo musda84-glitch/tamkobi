@@ -1467,7 +1467,7 @@ export function PersonnelScreen() {
                   </View>
                 </View>
                 {(() => {
-                  const locOn = locationTrackingEnabled(emp.location_tracking || cards[eid]?.employee?.location_tracking);
+                  const locOn = false;
                   const today = (attendance?.summary || []).find((s) => s.employee_id === eid)?.today || null;
                   const punch = todayAttendanceParts(today);
                   return (
@@ -1476,35 +1476,27 @@ export function PersonnelScreen() {
                       style={{
                         padding: 2,
                         borderRadius: 8,
-                        backgroundColor: locOn ? "#ECFDF5" : colors.slate50,
+                        backgroundColor: colors.slate50,
                         borderWidth: 1,
-                        borderColor: locOn ? "#A7F3D0" : colors.border,
+                        borderColor: colors.border,
                       }}
                     >
                       <Row style={{ alignItems: "stretch", gap: 3 }}>
-                        <Pressable
+                        <View
                           testID={`emp-card-loc-toggle-${eid}`}
-                          disabled={!canEdit || locBusy === eid}
-                          onPress={() => toggleCardLocation(emp, !locOn)}
-                          accessibilityLabel={locationControllerLabel(locOn)}
-                          style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: locOn ? "#D1FAE5" : "#fff" }}
+                          accessibilityLabel="Konum takibi kapalı"
+                          style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: "#fff" }}
                         >
                           <Row style={{ alignItems: "center", justifyContent: "space-between", gap: 4 }}>
                             <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>KONUM</Text>
-                            <LocationSignalDot
-                              compact
-                              hideLabel
-                              signal={{ ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok ?? null, at: emp.location_last_at ?? cards[eid]?.employee?.location_last_at ?? null }}
-                              testID={`emp-card-loc-signal-${eid}`}
-                            />
                           </Row>
                           <Row style={{ alignItems: "center", gap: 3 }}>
-                            <Ionicons name={locOn ? "location" : "location-outline"} size={12} color={locOn ? "#047857" : colors.muted} />
-                            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 11, color: locOn ? "#047857" : colors.muted, flex: 1 }}>
-                              {locBusy === eid ? "…" : locationCellCaption(locOn)}
+                            <Ionicons name="location-outline" size={12} color={colors.muted} />
+                            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 11, color: colors.muted, flex: 1 }}>
+                              {locationCellCaption(locOn)}
                             </Text>
                           </Row>
-                        </Pressable>
+                        </View>
                         <View testID={`emp-card-today-${eid}`} style={{ flex: 2, minWidth: 0, flexDirection: "row", gap: 3 }}>
                           <Pressable
                             testID={`emp-card-today-in-${eid}`}
@@ -2489,22 +2481,8 @@ export function PersonnelScreen() {
         onClose={() => setLocEmp(null)}
         testID="emp-location-sheet"
       >
-        <LocModeBlock
-          title="İş yeri / firma"
-          hint="Girişte firma konumu kontrolü"
-          prefix="company"
-          mode={locCompany}
-          onChange={(key, value) => setLocCompany((prev) => patchLocMode(prev, key, value))}
-        />
-        <LocModeBlock
-          title="Dış görev"
-          hint="Açık proje görevinde görev yeri kontrolü"
-          prefix="field"
-          mode={locField}
-          onChange={(key, value) => setLocField((prev) => patchLocMode(prev, key, value))}
-        />
-        <Muted testID="emp-location-hint">Giriş görev/iş yeri yakınından; konumla otomatik de yazılır. Çıkış butonu her zaman açık, konumla da çıkış yazılabilir. Yönetici çıkış saatini düzeltirse personel onayı gerekir. Dış görevde konum dışına çıkınca tolerans kadar saat sonra yöneticiye haber gider — Haberim var / Kesinti olmasın / Kesinti olsun / Reddet.</Muted>
-        <PrimaryButton title="Kaydet" testID="emp-location-save" color="#047857" loading={busy} onPress={saveLocSettings} />
+        <Muted testID="emp-location-hint">Sürekli konum takibi kapalı. Giriş yalnızca iş yeri / görev yeri konumunda yapılır.</Muted>
+        <PrimaryButton title="Kapat" testID="emp-location-save" color="#047857" onPress={() => setLocEmp(null)} />
       </B2BSheet>
 
       <B2BSheet
