@@ -90,10 +90,73 @@ export function mesaimWorkDaysLine(workDays?: number[] | null, labels?: string[]
   return (workDays || []).map((n) => labs[Number(n)] || "").filter(Boolean).join(", ");
 }
 
-export function mesaimScheduleLine(sch?: { start?: string; end?: string; break_minutes?: number } | null): string {
+export type MesaimTodayWindow = {
+  start?: string | null;
+  end?: string | null;
+  break_minutes?: number | null;
+  is_work_day?: boolean | null;
+  weekday?: number | null;
+  weekday_label?: string | null;
+};
+
+/** Bugünkü kişiye özel pencere + kayıtlı mesai alanlarından start/end/mola. */
+export function resolveMesaimTodayHours(opts?: {
+  todayWindow?: MesaimTodayWindow | null;
+  today?: { scheduled_start?: string | null; scheduled_end?: string | null; expected_end?: string | null } | null;
+  schedule?: { start?: string | null; end?: string | null; break_minutes?: number | null } | null;
+} | null): { start: string; end: string; breakMinutes: number | null } {
+  const win = opts?.todayWindow || {};
+  const today = opts?.today || {};
+  const sch = opts?.schedule || {};
+  const start = String(win.start || today.scheduled_start || sch.start || "").slice(0, 5);
+  const end = String(win.end || today.scheduled_end || today.expected_end || sch.end || "").slice(0, 5);
+  const brRaw = win.break_minutes ?? sch.break_minutes;
+  if (brRaw == null || brRaw === undefined) {
+    return { start, end, breakMinutes: null };
+  }
+  const breakMinutes = Number(brRaw);
+  return {
+    start,
+    end,
+    breakMinutes: Number.isFinite(breakMinutes) ? breakMinutes : null,
+  };
+}
+
+export function mesaimScheduleLine(
+  sch?: { start?: string; end?: string; break_minutes?: number } | null,
+  opts?: { label?: string } | null,
+): string {
   if (!sch?.start || !sch?.end) return "";
   const br = sch.break_minutes != null && sch.break_minutes !== undefined ? ` · mola ${sch.break_minutes} dk` : "";
-  return `Mesai ${sch.start}–${sch.end}${br}`;
+  const label = opts?.label || "Mesai";
+  return `${label} ${sch.start}–${sch.end}${br}`;
+}
+
+export function mesaimEarlyArrivalLine(opts?: {
+  checkIn?: string | null;
+  earlyMinutes?: number | null;
+  mesaiStart?: string | null;
+} | null): string {
+  const mins = Number(opts?.earlyMinutes) || 0;
+  if (mins <= 0 || !opts?.checkIn) return "";
+  const start = opts.mesaiStart ? ` ${opts.mesaiStart}` : "";
+  return `Erken giriş ${opts.checkIn} kaydedildi · çalışma saati${start} başlangıcından sayılır (${mins} dk erken)`;
+}
+
+export function mesaimDateHolidaySuffix(opts?: {
+  todayDate?: string | null;
+  isWorkDay?: boolean | null;
+  workDays?: number[] | null;
+} | null): string {
+  if (opts?.isWorkDay === false) return " · tatil günü (çalışma = fazla mesai)";
+  if (opts?.isWorkDay === true) return "";
+  const raw = String(opts?.todayDate || "").trim().slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!m || !Array.isArray(opts?.workDays)) return "";
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(d.getTime())) return "";
+  const weekday = (d.getDay() + 6) % 7;
+  return opts.workDays.includes(weekday) ? "" : " · tatil günü (çalışma = fazla mesai)";
 }
 
 export function mesaimInSubtitle(checkIn?: string | null): string {
