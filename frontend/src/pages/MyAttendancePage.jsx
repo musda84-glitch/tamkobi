@@ -455,7 +455,7 @@ export default function MyAttendancePage() {
           </div>
 
           {habitLabel(data.habit, data.habit_label) ? <div className="text-[11px] text-emerald-200" data-testid="my-att-habit">{habitLabel(data.habit, data.habit_label)}</div> : null}
-          <div className="text-[11px] text-slate-400 text-center sm:text-left">Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Canlı konum otomatik giriş/çıkış yazmaz; izin açıksa varlık bilgisi alınır. Çıkış puantaj / beklenen mesai bitişinden ({sch.end}) işlenir. Yönetici saati düzeltirse <b className="text-amber-200">personel onayı</b> gerekir. Gün içinde çıkıp dönecekseniz gün içi izin kullanın.</div>
+          <div className="text-[11px] text-slate-400 text-center sm:text-left">Giriş yalnız iş yeri veya atanmış görev yeri toleransı içinde. Canlı konum otomatik giriş/çıkış yazmaz; izin açıksa varlık bilgisi alınır. Çıkış puantaj / beklenen mesai bitişinden ({sch.end}) işlenir. Yönetici giriş/çıkış düzeltmesi personel onayı istemez. Gün içinde çıkıp dönecekseniz gün içi izin kullanın.</div>
         </div>
       )}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">

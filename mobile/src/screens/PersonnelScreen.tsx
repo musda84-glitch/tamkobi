@@ -281,7 +281,7 @@ function AttendanceRecCard({
         <View style={{ gap: 6, marginTop: 6 }} testID={`att-correct-${idOf(r)}`}>
           <TimeField label="Çıkış saati düzelt" testID={`att-correct-out-${idOf(r)}`} value={editOut} onChangeText={setEditOut} optional />
           <PrimaryButton
-            title="Saati kaydet (personel onayı gerekir)"
+            title="Saati kaydet"
             color={colors.indigo}
             testID={`att-correct-save-${idOf(r)}`}
             onPress={() => onCorrectOut(r, editOut)}
@@ -1836,7 +1836,7 @@ export function PersonnelScreen() {
                     ) : null}
                     <Text style={{ fontSize: 11, color: colors.text }}>{cardPunchConfirmMessage(listPunch.action, listPunch.name)}</Text>
                     {listPunch.action !== "absent" ? (
-                      <Text testID={`att-punch-hint-${s.employee_id}`} style={{ fontSize: 11, color: "#B45309" }}>{cardPunchTimeHint(cardPunchAttempts(s.today, listPunch.action))}</Text>
+                      <Text testID={`att-punch-hint-${s.employee_id}`} style={{ fontSize: 11, color: "#B45309" }}>{cardPunchTimeHint(cardPunchAttempts(s.today, listPunch.action), listPunch.action)}</Text>
                     ) : null}
                     <Row style={{ gap: 6 }}>
                       <PrimaryButton

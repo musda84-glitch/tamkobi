@@ -11,6 +11,7 @@ import {
   puantajStatusTone,
 } from "../utils/puantajMonth";
 import { attendanceCalendarMonth } from "../utils/attendanceSelf";
+import { formatTrAmount } from "../utils/money";
 
 const toneClass = {
   emerald: "bg-emerald-50 text-emerald-800 border-emerald-200",
@@ -98,6 +99,9 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
         <div className="rounded-xl border border-slate-200 bg-white p-2.5">
           <div className="text-[10px] uppercase font-semibold text-slate-400">Toplam / Mesai Saat</div>
           <div className="text-sm font-extrabold text-indigo-800" data-testid="emp-puantaj-hours">{summary.total_hours ?? 0} / {summary.overtime_hours ?? 0}</div>
+          <div className="text-[10px] font-bold text-violet-700 mt-0.5" data-testid="emp-puantaj-ot-pay">
+            F.mesai: {formatTrAmount(summary.overtime_pay ?? 0)} ₺
+          </div>
         </div>
       </div>
 
@@ -148,12 +152,13 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
                   <th className="px-3 py-2">Çıkış</th>
                   <th className="px-3 py-2 text-right">Saat</th>
                   <th className="px-3 py-2 text-right">Mesai</th>
+                  <th className="px-3 py-2 text-right">Ücret</th>
                   <th className="px-3 py-2">Not</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {!days.length ? (
-                  <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">Bu ay için gün satırı yok.</td></tr>
+                  <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-400">Bu ay için gün satırı yok.</td></tr>
                 ) : null}
                 {days.map((d) => (
                   <tr key={d.date} data-testid={`emp-puantaj-day-${d.date}`} className={d.status === "off" ? "bg-slate-50/60" : d.status === "absent" ? "bg-rose-50/40" : d.status === "leave" ? "bg-amber-50/40" : ""}>
@@ -165,6 +170,9 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
                     <td className="px-3 py-1.5 font-mono font-bold text-rose-700">{d.status === "present" ? (d.check_out || "—") : "—"}</td>
                     <td className="px-3 py-1.5 text-right font-semibold">{d.hours || "—"}</td>
                     <td className="px-3 py-1.5 text-right font-bold text-indigo-700">{d.overtime_hours ? `+${d.overtime_hours}` : "—"}</td>
+                    <td className="px-3 py-1.5 text-right font-bold text-emerald-800 whitespace-nowrap" data-testid={`emp-puantaj-wage-${d.date}`}>
+                      {d.status === "present" && d.wage != null ? `${formatTrAmount(d.wage)} ₺` : "—"}
+                    </td>
                     <td className="px-3 py-1.5 text-slate-500 truncate max-w-[140px]" title={d.note || d.leave_label || ""}>{d.leave_label || d.note || (d.late_minutes ? `${d.late_minutes} dk geç` : "—")}</td>
                   </tr>
                 ))}

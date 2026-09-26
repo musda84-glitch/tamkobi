@@ -120,6 +120,44 @@ def yevmiye_adjustment_needed(late_minutes: int = 0, early_minutes: int = 0) -> 
     return int(late_minutes or 0) > 0 or int(early_minutes or 0) > 0
 
 
+def calculated_day_wage(emp: dict | None, rec: dict | None = None, schedule: dict | None = None) -> float:
+    """Çalışılan gün için hesaplanan ücret (yevmiye veya aylık/26; geç/erken orantılı)."""
+    rec = rec or {}
+    base = reference_daily_wage(emp)
+    full = _num(rec.get("yevmiye_full_amount"), base) or base
+    if full <= 0:
+        return 0.0
+    adj = rec.get("yevmiye_adjustment_request") or {}
+    status = str(adj.get("status") or "").strip().lower()
+    if status == "approved":
+        try:
+            return round(float(adj.get("proposed_amount")), 2)
+        except (TypeError, ValueError):
+            pass
+    if status == "rejected":
+        try:
+            return round(float(adj.get("full_amount") or full), 2)
+        except (TypeError, ValueError):
+            return round(full, 2)
+    late = int(rec.get("late_minutes") or 0)
+    early = int(rec.get("early_leave_minutes") or 0)
+    if status == "pending" and adj.get("proposed_amount") is not None:
+        try:
+            return round(float(adj.get("proposed_amount")), 2)
+        except (TypeError, ValueError):
+            pass
+    if yevmiye_adjustment_needed(late, early):
+        return yevmiye_adjusted_amount(full, late, early, scheduled_work_minutes(schedule))
+    return round(full, 2)
+
+
+def _num(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def attendance_yevmiye_covered_days(bonuses: list | None) -> int:
     """Görev girişinden yazılmış yevmiye günleri — bordroda tekrar sayılmaz."""
     total = 0

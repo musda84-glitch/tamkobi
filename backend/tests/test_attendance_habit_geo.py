@@ -82,24 +82,15 @@ def test_manager_check_in_skips_employee_approval():
     assert same["edit"] is None
 
 
-def test_manager_check_out_third_round_skips_employee():
+def test_manager_check_out_skips_employee_approval():
     existing = {"check_in": "09:00", "check_out": "18:00"}
     first = apply_manager_time_edit_round(existing, {"check_in": "09:00", "check_out": "17:45"}, "t1", "check_out")
     assert first["attempts"] == 1
-    assert first["auto_confirm"] is False
-    assert first["edit"]["pending_employee"] is True
-    existing = {"check_in": "09:00", "check_out": "17:45", "manager_time_edit_rounds": first["rounds"]}
-    second = apply_manager_time_edit_round(existing, {"check_in": "09:00", "check_out": "17:50"}, "t2", "check_out")
-    assert second["attempts"] == 2
-    assert second["auto_confirm"] is False
-    existing = {"check_in": "09:00", "check_out": "17:50", "manager_time_edit_rounds": second["rounds"]}
-    third = apply_manager_time_edit_round(existing, {"check_in": "09:00", "check_out": "18:05"}, "t3", "check_out")
-    assert third["attempts"] == 3
-    assert third["auto_confirm"] is True
-    assert third["edit"]["pending_employee"] is False
-    assert third["edit"]["auto_confirmed"] is True
+    assert first["auto_confirm"] is True
+    assert first["edit"]["pending_employee"] is False
+    assert first["field"] == "check_out"
+    assert "onayı gerekmez" in manager_time_edit_result_message(first)
     assert manager_time_edit_skips_employee(3) is True
-    assert "onayı olmadan" in manager_time_edit_result_message(third)
 
 
 def test_time_edit_reject_restores_previous():
