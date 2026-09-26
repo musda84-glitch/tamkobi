@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { confirmGenerateBarcode } from "../utils/barcodeFormat";
 import { CURRENCIES, fmtMoney, moneySuffix } from "../utils/money";
 import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi } from "../utils/stockUnits";
+import { normalizeLabelTexts } from "../utils/labelDesignFields";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 const F = ({ label, children }) => <div><label className="block font-semibold text-slate-700 mb-1">{label}</label>{children}</div>;
@@ -27,6 +28,9 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
     desi: pkgNum(product.desi), weight: pkgNum(product.weight), length: pkgNum(product.length),
     width: pkgNum(product.width), height: pkgNum(product.height), package_count: product.package_count || 1,
     label_template_id: product.label_template_id || "",
+    label_text_1: product.label_text_1 || "",
+    label_text_2: product.label_text_2 || "",
+    label_text_3: product.label_text_3 || "",
     gtip: product.gtip || "",
     origin_country: product.origin_country || "",
     manufacturer_code: product.manufacturer_code || "",
@@ -64,6 +68,7 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
         ...f,
         unit,
         label_template_id: f.label_template_id || null,
+        ...normalizeLabelTexts(f),
         gtip: (f.gtip || "").trim() || null,
         origin_country: (f.origin_country || "").trim() || null,
         manufacturer_code: (f.manufacturer_code || "").trim() || null,
@@ -197,6 +202,21 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
           <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); const t = tagInput.trim(); if (t && !f.tags.includes(t)) set("tags", [...f.tags, t]); setTagInput(""); } }} placeholder="Etiket yaz + Enter" className="flex-1 min-w-[120px] bg-transparent outline-none" data-testid="tag-input" />
         </div>
       </F>
+      <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-3 space-y-2" data-testid="product-label-text-fields">
+        <div className="font-bold text-slate-800">Etiket tasarımı — ek alanlar</div>
+        <p className="text-[10px] text-slate-500">Barkod etiket şablonuna eklenebilir 3 serbest metin. Etiket Tasarımı’nda “Etiket Alanı 1–3” olarak seçilir.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <F label="Etiket alanı 1">
+            <input value={f.label_text_1} onChange={(e) => set("label_text_1", e.target.value)} className={inputCls} placeholder="Örn. menşei, beden…" maxLength={120} data-testid="edit-label-text-1" />
+          </F>
+          <F label="Etiket alanı 2">
+            <input value={f.label_text_2} onChange={(e) => set("label_text_2", e.target.value)} className={inputCls} placeholder="Örn. renk, sezon…" maxLength={120} data-testid="edit-label-text-2" />
+          </F>
+          <F label="Etiket alanı 3">
+            <input value={f.label_text_3} onChange={(e) => set("label_text_3", e.target.value)} className={inputCls} placeholder="Örn. özel not…" maxLength={120} data-testid="edit-label-text-3" />
+          </F>
+        </div>
+      </div>
       {!product.has_variants && <F label="Mevcut Stok (düzeltme)"><input type="number" step="0.01" value={f.stock_quantity} onChange={(e) => set("stock_quantity", e.target.value)} className={`${inputCls} font-bold`} data-testid="edit-stock-input" /></F>}
       <div className="grid grid-cols-3 gap-2">
         {[["show_in_b2b", "B2B'de göster"], ["track_stock", "Stok takibi"], ["is_active", "Aktif"], ["track_lot", "Lot / parti"], ["track_serial", "Seri no"], ["track_expiry", "SKT / üretim"]].map(([k, l]) => <label key={k} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 cursor-pointer"><input type="checkbox" checked={f[k]} onChange={(e) => set(k, e.target.checked)} data-testid={`edit-${k}-checkbox`} /><span className="font-semibold">{l}</span></label>)}

@@ -139,6 +139,9 @@ class Product(BaseDocument):
     images: List[str] = []
     label_image_url: Optional[str] = None  # Barkod etiket tasarımında kullanılan görsel
     label_template_id: Optional[str] = None  # Etiket Tasarımı şablonu (label_templates._id)
+    label_text_1: Optional[str] = None  # Etiket tasarımı serbest alan 1
+    label_text_2: Optional[str] = None  # Etiket tasarımı serbest alan 2
+    label_text_3: Optional[str] = None  # Etiket tasarımı serbest alan 3
     gtip: Optional[str] = None
     origin_country: Optional[str] = None  # Menşei (ülke kodu veya adı)
     manufacturer_code: Optional[str] = None  # Üretici kodu
