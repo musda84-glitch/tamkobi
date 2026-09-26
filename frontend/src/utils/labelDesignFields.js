@@ -6,6 +6,13 @@ export function productTagSlots(product) {
   return [0, 1, 2].map((i) => String(tags[i] ?? "").trim());
 }
 
+/** Öğe Ekle paletinden tek tıkla eklenecek stok kartı etiket alanları. */
+export const LABEL_TAG_PALETTE = [
+  ["label_1", "Etiket 1"],
+  ["label_2", "Etiket 2"],
+  ["label_3", "Etiket 3"],
+];
+
 /** Etiket şablonunda seçilebilir ürün veri alanları. */
 export const LABEL_DESIGN_FIELDS = [
   ["name", "Ürün Adı"],
@@ -15,9 +22,7 @@ export const LABEL_DESIGN_FIELDS = [
   ["variant", "Varyant"],
   ["category", "Kategori"],
   ["company", "Firma Adı"],
-  ["label_1", "Etiket 1 (1. etiket)"],
-  ["label_2", "Etiket 2 (2. etiket)"],
-  ["label_3", "Etiket 3 (3. etiket)"],
+  ...LABEL_TAG_PALETTE,
   ["text", "Serbest Metin"],
 ];
 
