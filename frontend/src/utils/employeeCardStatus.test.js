@@ -20,7 +20,7 @@ describe("employeeCardStatus", () => {
     expect(cardPunchPayload("check_out", "18:05")).toEqual({ action: "check_out", check_out: "18:05" });
     expect(cardPunchAttempts({ manager_time_edit_rounds: { check_out: { attempts: 2 } } }, "check_out")).toBe(2);
     expect(cardPunchTimeHint(0, "check_in")).toMatch(/onayı yok/);
-    expect(cardPunchTimeHint(0, "check_out")).toMatch(/onayı yok/);
-    expect(cardPunchTimeHint(2)).toMatch(/3\. deneme/);
+    expect(cardPunchTimeHint(0, "check_out")).toMatch(/Çıkış saati doğrudan/);
+    expect(cardPunchTimeHint(2)).toMatch(/onayı yok/);
   });
 });

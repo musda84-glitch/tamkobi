@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, LogIn, LogOut, CalendarX2, Timer, CheckCircle2, MapPin, MessageSquareWarning, DoorOpen, ArrowLeftRight, ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
+import { Clock, LogIn, CalendarX2, Timer, CheckCircle2, MapPin, MessageSquareWarning, DoorOpen, ArrowLeftRight, ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { WorkScheduleSettings, EmployeeScheduleModal } from "./WorkScheduleSettings";
 import { ShiftPlanner } from "./ShiftPlanner";
@@ -138,7 +138,6 @@ export const AttendancePanel = ({ companyId }) => {
             <td className="px-4 py-2"><div className="flex flex-col items-end gap-1.5">
               <div className="flex justify-end gap-1">
               <button onClick={() => setListPunch({ id: s.employee_id, action: "check_in", name: s.employee_name, time: cardPunchDraftTime("check_in", s.today) })} className={`flex items-center gap-1 px-2 py-1 rounded-lg font-semibold ${listPunch?.id === s.employee_id && listPunch.action === "check_in" ? "bg-emerald-200 text-emerald-900" : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"}`} data-testid={`att-in-${s.employee_id}`}><LogIn className="w-3 h-3" /> Giriş</button>
-              <button onClick={() => setListPunch({ id: s.employee_id, action: "check_out", name: s.employee_name, time: cardPunchDraftTime("check_out", s.today) })} className={`flex items-center gap-1 px-2 py-1 rounded-lg font-semibold ${listPunch?.id === s.employee_id && listPunch.action === "check_out" ? "bg-rose-200 text-rose-900" : "bg-rose-50 text-rose-700 hover:bg-rose-100"}`} data-testid={`att-out-${s.employee_id}`}><LogOut className="w-3 h-3" /> Çıkış</button>
               <button onClick={() => setListPunch({ id: s.employee_id, action: "absent", name: s.employee_name, time: "" })} className={`flex items-center gap-1 px-2 py-1 rounded-lg font-semibold ${listPunch?.id === s.employee_id && listPunch.action === "absent" ? "bg-rose-200 text-rose-900" : "bg-rose-50 text-rose-700 hover:bg-rose-100"}`} data-testid={`att-absent-${s.employee_id}`}><CalendarX2 className="w-3 h-3" /> Devamsız</button>
               <button onClick={() => openOt(s)} className="flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-700 rounded-lg font-semibold hover:bg-indigo-100" data-testid={`att-ot-${s.employee_id}`}><Timer className="w-3 h-3" /> F. Mesai</button>
               </div>
@@ -190,7 +189,7 @@ export const AttendancePanel = ({ companyId }) => {
             >
               <span className={`text-[10px] font-bold ${punchLabelClass("Çıkış saati düzelt")}`}>Çıkış</span>
               <input name="out" type="time" defaultValue={r.check_out || ""} className="border rounded px-1 py-0.5 text-[11px]" data-testid={`att-correct-out-${r.id}`} />
-              <button type="submit" className="px-1.5 py-0.5 rounded bg-indigo-600 text-white font-bold" data-testid={`att-correct-save-${r.id}`}>Saati düzelt</button>
+              <button type="submit" className="px-1.5 py-0.5 rounded bg-indigo-600 text-white font-bold" data-testid={`att-correct-save-${r.id}`}>Saati kaydet</button>
             </form>
           ) : null}
           {r.manager_time_edit?.pending_employee ? <span className="text-[10px] font-bold text-amber-700" data-testid={`att-time-edit-${r.id}`}>Personel onayı bekliyor</span> : null}

@@ -464,9 +464,8 @@ describe("payroll helpers", () => {
     expect(cardPunchPayload("check_in", "09:13")).toEqual({ action: "check_in", check_in: "09:13" });
     expect(cardPunchAttempts({ manager_time_edit_rounds: { check_in: { attempts: 2 } } }, "check_in")).toBe(2);
     expect(cardPunchTimeHint(0, "check_in")).toMatch(/onayı yok/);
-    expect(cardPunchTimeHint(0, "check_out")).toMatch(/onayı yok/);
-    expect(cardPunchTimeHint(0)).toMatch(/teyidine/);
-    expect(cardPunchTimeHint(2)).toMatch(/3\. deneme/);
+    expect(cardPunchTimeHint(0, "check_out")).toMatch(/Çıkış saati doğrudan/);
+    expect(cardPunchTimeHint(2)).toMatch(/onayı yok/);
     expect(advanceFormToggleIcon(true)).toBe("eye-off-outline");
     expect(advanceFormToggleLabel(false)).toBe("Göster");
     expect(employeeCompRows({ daily_wage: 1500 }, { bonus_pending: 3000 }).find((r) => r.key === "bonus")).toMatchObject({

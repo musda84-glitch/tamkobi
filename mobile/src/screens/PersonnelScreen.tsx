@@ -1821,7 +1821,6 @@ export function PersonnelScreen() {
                 <View style={{ gap: 8 }}>
                 <Row style={{ flexWrap: "wrap" }}>
                   <PrimaryButton title="Giriş" color={colors.primary} testID={`att-in-${s.employee_id}`} onPress={() => setListPunch({ id: s.employee_id || "", action: "check_in", name: s.employee_name || "", time: cardPunchDraftTime("check_in", s.today) })} />
-                  <PrimaryButton title="Çıkış" color={colors.secondary} testID={`att-out-${s.employee_id}`} onPress={() => setListPunch({ id: s.employee_id || "", action: "check_out", name: s.employee_name || "", time: cardPunchDraftTime("check_out", s.today) })} />
                   <PrimaryButton title="Devamsız" color={colors.danger} testID={`att-absent-${s.employee_id}`} onPress={() => setListPunch({ id: s.employee_id || "", action: "absent", name: s.employee_name || "", time: "" })} />
                 </Row>
                 {listPunch?.id === s.employee_id ? (

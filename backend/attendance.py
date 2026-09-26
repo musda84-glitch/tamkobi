@@ -390,8 +390,8 @@ def apply_manager_time_edit_round(existing: Optional[dict], rec: Optional[dict],
     if not field:
         return {"edit": None, "rounds": rounds, "auto_confirm": False, "attempts": 0, "field": None}
     attempts = time_edit_attempts(existing, field) + 1
-    # Yönetici puantaj Giriş/Çıkış personel onayı istemez.
-    skip = field in ("check_in", "check_out") or manager_time_edit_skips_employee(attempts)
+    # Yönetici saat düzeltmeleri personel onayı istemez (unutulan giriş/çıkış).
+    skip = True
     edit = manager_time_edit_doc(existing, rec, now) or {
         "prev_check_in": (existing or {}).get("check_in"),
         "prev_check_out": (existing or {}).get("check_out"),
@@ -409,14 +409,14 @@ def apply_manager_time_edit_round(existing: Optional[dict], rec: Optional[dict],
 
 def manager_time_edit_result_message(round_info: Optional[dict]) -> str:
     info = round_info or {}
-    attempts = int(info.get("attempts") or 0)
     field = info.get("field")
     if info.get("auto_confirm"):
-        if field == "check_in":
-            return "Giriş saati kaydedildi (personel onayı gerekmez)."
         if field == "check_out":
             return "Çıkış saati kaydedildi (personel onayı gerekmez)."
-        return "Saat personel onayı olmadan kaydedildi."
+        if field == "check_in":
+            return "Giriş saati kaydedildi (personel onayı gerekmez)."
+        return "Saat kaydedildi (personel onayı gerekmez)."
+    attempts = int(info.get("attempts") or 0)
     return f"Saat personel onayına gönderildi ({attempts}/3)."
 
 
