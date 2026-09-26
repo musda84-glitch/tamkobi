@@ -659,6 +659,10 @@ class Employee(BaseDocument):
     birth_date: Optional[str] = None
     address: Optional[str] = None
     emergency_contact: Optional[str] = None
+    marital_status: Optional[str] = None  # single | married | divorced | widowed
+    blood_type: Optional[str] = None  # 0+ | 0- | A+ | A- | B+ | B- | AB+ | AB-
+    illnesses: Optional[str] = None  # Hastalıklar / kronik durumlar
+    safety_info: Optional[str] = None  # İş güvenliği / İSG bilgileri
     notes: Optional[str] = None
     start_date: str
     end_date: Optional[str] = None  # işten ayrılma / çıkarılma

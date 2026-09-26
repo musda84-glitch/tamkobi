@@ -190,10 +190,18 @@ describe("employee draft", () => {
     expect(validateEmployee(d)).toBe("Yevmiye ücreti girin.");
     d.daily_wage = "1500";
     expect(validateEmployee(d)).toBeNull();
+    d.marital_status = "married";
+    d.blood_type = "A+";
+    d.illnesses = "astım";
+    d.safety_info = "İSG 2026";
     const body = employeePayload(d);
     expect(body.pay_type).toBe("daily");
     expect(body.daily_wage).toBe(1500);
     expect(body.salary).toBe(39000);
+    expect(body.marital_status).toBe("married");
+    expect(body.blood_type).toBe("A+");
+    expect(body.illnesses).toBe("astım");
+    expect(body.safety_info).toBe("İSG 2026");
   });
 
   it("labels requests and sums period bonuses", () => {

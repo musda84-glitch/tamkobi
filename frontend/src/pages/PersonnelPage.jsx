@@ -23,6 +23,7 @@ import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
 import { employeePayActionTitle, isDailyWage, payrollWageLine, totalMonthlyLoad, yevmiyeDaysOf } from "../utils/personnelWage";
+import { BLOOD_TYPE_OPTIONS, hasExtraEmployeeDetails, MARITAL_STATUS_OPTIONS } from "../utils/employeeDetails";
 import { workplaceShort } from "../utils/workplace";
 
 import {
@@ -118,6 +119,10 @@ export default function PersonnelPage() {
     birth_date: "",
     address: "",
     emergency_contact: "",
+    marital_status: "",
+    blood_type: "",
+    illnesses: "",
+    safety_info: "",
     notes: "",
   };
   const [newEmployee, setNewEmployee] = useState(emptyEmployee);
@@ -150,9 +155,16 @@ export default function PersonnelPage() {
       birth_date: emp.birth_date || "",
       address: emp.address || "",
       emergency_contact: emp.emergency_contact || "",
+      marital_status: emp.marital_status || "",
+      blood_type: emp.blood_type || "",
+      illnesses: emp.illnesses || "",
+      safety_info: emp.safety_info || "",
       notes: emp.notes || "",
     });
-    setShowEmpDetails(Boolean(emp.sgk_number || emp.iban || emp.meal_allowance || emp.transport_allowance || emp.address || emp.birth_date || emp.emergency_contact || emp.notes));
+    setShowEmpDetails(Boolean(
+      emp.sgk_number || emp.iban || emp.meal_allowance || emp.transport_allowance || emp.address
+      || emp.birth_date || emp.emergency_contact || emp.notes || hasExtraEmployeeDetails(emp)
+    ));
     setShowAddModal(true);
   };
   const closeEmployeeModal = () => {
@@ -296,6 +308,10 @@ export default function PersonnelPage() {
       birth_date: newEmployee.birth_date || null,
       address: String(newEmployee.address || "").trim() || null,
       emergency_contact: String(newEmployee.emergency_contact || "").trim() || null,
+      marital_status: String(newEmployee.marital_status || "").trim() || null,
+      blood_type: String(newEmployee.blood_type || "").trim() || null,
+      illnesses: String(newEmployee.illnesses || "").trim() || null,
+      safety_info: String(newEmployee.safety_info || "").trim() || null,
       notes: String(newEmployee.notes || "").trim() || null,
     };
     try {
@@ -1357,6 +1373,56 @@ export default function PersonnelPage() {
                         data-testid="employee-emergency-input"
                       />
                     </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Medeni durum</label>
+                      <select
+                        value={newEmployee.marital_status}
+                        onChange={(e) => setNewEmployee({ ...newEmployee, marital_status: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                        data-testid="employee-marital-status-input"
+                      >
+                        {MARITAL_STATUS_OPTIONS.map((o) => (
+                          <option key={o.value || "empty"} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">Kan grubu</label>
+                      <select
+                        value={newEmployee.blood_type}
+                        onChange={(e) => setNewEmployee({ ...newEmployee, blood_type: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2"
+                        data-testid="employee-blood-type-input"
+                      >
+                        {BLOOD_TYPE_OPTIONS.map((o) => (
+                          <option key={o.value || "empty"} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Hastalıkları</label>
+                    <textarea
+                      rows={2}
+                      placeholder="Kronik hastalık, alerji, ilaç vb."
+                      value={newEmployee.illnesses}
+                      onChange={(e) => setNewEmployee({ ...newEmployee, illnesses: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2 resize-none"
+                      data-testid="employee-illnesses-input"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">İş güvenliği bilgileri</label>
+                    <textarea
+                      rows={2}
+                      placeholder="İSG eğitimi, sertifika, ekipman notları vb."
+                      value={newEmployee.safety_info}
+                      onChange={(e) => setNewEmployee({ ...newEmployee, safety_info: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-2 resize-none"
+                      data-testid="employee-safety-info-input"
+                    />
                   </div>
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1">Adres</label>

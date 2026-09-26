@@ -13292,6 +13292,7 @@ async def create_employee(emp: Employee):
 
 EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "pay_type", "daily_wage", "start_date", "end_date", "status", "annual_leave_days", "used_leave_days",
                       "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "location_tracking", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
+                      "marital_status", "blood_type", "illnesses", "safety_info",
                       "meal_allowance", "transport_allowance", "sgk_number"}
 EMPLOYEE_NUMERIC = {"salary", "daily_wage", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
 MEAL_CAT = "Yemek"
@@ -13629,6 +13630,10 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
         "birth_date": emp.get("birth_date"),
         "address": emp.get("address"),
         "emergency_contact": emp.get("emergency_contact"),
+        "marital_status": emp.get("marital_status"),
+        "blood_type": emp.get("blood_type"),
+        "illnesses": emp.get("illnesses"),
+        "safety_info": emp.get("safety_info"),
         "notes": emp.get("notes"),
     }
     compensation = {

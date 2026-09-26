@@ -8,9 +8,11 @@ import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Row, Screen } from 
 import { colors } from "../theme";
 import { fmtMoney, todayIso } from "../utils/money";
 import {
+  bloodTypeSelectGroups,
   emptyEmployeeDraft,
   employeePayload,
   hasEmployeeDetails,
+  maritalStatusSelectGroups,
   positionSelectGroups,
   validateEmployee,
 } from "../utils/personnel";
@@ -131,6 +133,22 @@ export function PersonnelNewScreen() {
             <Field label="Yol ödemesi (aylık ₺)" testID="emp-transport" value={draft.transport_allowance} onChangeText={(v) => setDraft({ ...draft, transport_allowance: v })} keyboardType="decimal-pad" />
             <Field label="Doğum tarihi" testID="emp-birth" value={draft.birth_date} onChangeText={(v) => setDraft({ ...draft, birth_date: v })} placeholder="YYYY-AA-GG" />
             <Field label="Acil durum iletişim" testID="emp-emergency" value={draft.emergency_contact} onChangeText={(v) => setDraft({ ...draft, emergency_contact: v })} />
+            <GroupedSelect
+              label="Medeni durum"
+              testID="emp-marital"
+              value={draft.marital_status}
+              onChange={(v) => setDraft({ ...draft, marital_status: v })}
+              groups={maritalStatusSelectGroups(draft.marital_status)}
+            />
+            <GroupedSelect
+              label="Kan grubu"
+              testID="emp-blood"
+              value={draft.blood_type}
+              onChange={(v) => setDraft({ ...draft, blood_type: v })}
+              groups={bloodTypeSelectGroups(draft.blood_type)}
+            />
+            <Field label="Hastalıkları" testID="emp-illnesses" value={draft.illnesses} onChangeText={(v) => setDraft({ ...draft, illnesses: v })} placeholder="Kronik hastalık, alerji…" />
+            <Field label="İş güvenliği bilgileri" testID="emp-safety" value={draft.safety_info} onChangeText={(v) => setDraft({ ...draft, safety_info: v })} placeholder="İSG eğitimi, sertifika…" />
             <Field label="Adres" testID="emp-address" value={draft.address} onChangeText={(v) => setDraft({ ...draft, address: v })} />
             <Field label="Notlar" testID="emp-notes" value={draft.notes} onChangeText={(v) => setDraft({ ...draft, notes: v })} />
             <Field label="İşe başlama" testID="emp-start" value={draft.start_date} onChangeText={(v) => setDraft({ ...draft, start_date: v })} placeholder="YYYY-AA-GG" />

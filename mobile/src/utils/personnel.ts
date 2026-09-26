@@ -30,6 +30,10 @@ export type Employee = {
   birth_date?: string | null;
   address?: string | null;
   emergency_contact?: string | null;
+  marital_status?: string | null;
+  blood_type?: string | null;
+  illnesses?: string | null;
+  safety_info?: string | null;
   notes?: string | null;
   location_tracking?: LocationTracking | null;
   location_last_ok?: boolean | null;
@@ -1100,8 +1104,50 @@ export type EmployeeDraft = {
   birth_date: string;
   address: string;
   emergency_contact: string;
+  marital_status: string;
+  blood_type: string;
+  illnesses: string;
+  safety_info: string;
   notes: string;
 };
+
+export const MARITAL_STATUS_OPTIONS = [
+  { value: "", label: "—" },
+  { value: "single", label: "Bekar" },
+  { value: "married", label: "Evli" },
+  { value: "divorced", label: "Boşanmış" },
+  { value: "widowed", label: "Dul" },
+];
+
+export const BLOOD_TYPE_OPTIONS = [
+  { value: "", label: "—" },
+  { value: "0+", label: "0 Rh+" },
+  { value: "0-", label: "0 Rh-" },
+  { value: "A+", label: "A Rh+" },
+  { value: "A-", label: "A Rh-" },
+  { value: "B+", label: "B Rh+" },
+  { value: "B-", label: "B Rh-" },
+  { value: "AB+", label: "AB Rh+" },
+  { value: "AB-", label: "AB Rh-" },
+];
+
+export function maritalStatusSelectGroups(current = ""): { label: string; options: { value: string; label: string }[] }[] {
+  const opts = [...MARITAL_STATUS_OPTIONS];
+  const cur = String(current || "").trim();
+  if (cur && !opts.some((o) => o.value === cur)) {
+    opts.push({ value: cur, label: cur });
+  }
+  return [{ label: "Medeni durum", options: opts.map((o) => ({ value: o.value, label: o.label })) }];
+}
+
+export function bloodTypeSelectGroups(current = ""): { label: string; options: { value: string; label: string }[] }[] {
+  const opts = [...BLOOD_TYPE_OPTIONS];
+  const cur = String(current || "").trim();
+  if (cur && !opts.some((o) => o.value === cur)) {
+    opts.push({ value: cur, label: cur });
+  }
+  return [{ label: "Kan grubu", options: opts.map((o) => ({ value: o.value, label: o.label })) }];
+}
 
 export type LeaveRequest = {
   id?: string;
@@ -1303,6 +1349,10 @@ export function emptyEmployeeDraft(today: string): EmployeeDraft {
     birth_date: "",
     address: "",
     emergency_contact: "",
+    marital_status: "",
+    blood_type: "",
+    illnesses: "",
+    safety_info: "",
     notes: "",
   };
 }
@@ -1353,11 +1403,15 @@ export function draftFromEmployee(emp: Employee, today: string): EmployeeDraft {
     birth_date: emp.birth_date ? String(emp.birth_date).slice(0, 10) : "",
     address: emp.address || "",
     emergency_contact: emp.emergency_contact || "",
+    marital_status: emp.marital_status || "",
+    blood_type: emp.blood_type || "",
+    illnesses: emp.illnesses || "",
+    safety_info: emp.safety_info || "",
     notes: emp.notes || "",
   };
 }
 
-export function hasEmployeeDetails(d: Pick<EmployeeDraft, "sgk_number" | "iban" | "meal_allowance" | "transport_allowance" | "birth_date" | "address" | "emergency_contact" | "notes">): boolean {
+export function hasEmployeeDetails(d: Pick<EmployeeDraft, "sgk_number" | "iban" | "meal_allowance" | "transport_allowance" | "birth_date" | "address" | "emergency_contact" | "marital_status" | "blood_type" | "illnesses" | "safety_info" | "notes">): boolean {
   return Boolean(
     String(d.sgk_number || "").trim()
     || String(d.iban || "").trim()
@@ -1366,6 +1420,10 @@ export function hasEmployeeDetails(d: Pick<EmployeeDraft, "sgk_number" | "iban" 
     || String(d.birth_date || "").trim()
     || String(d.address || "").trim()
     || String(d.emergency_contact || "").trim()
+    || String(d.marital_status || "").trim()
+    || String(d.blood_type || "").trim()
+    || String(d.illnesses || "").trim()
+    || String(d.safety_info || "").trim()
     || String(d.notes || "").trim()
   );
 }
@@ -1408,6 +1466,10 @@ export function employeePayload(d: EmployeeDraft, companyId?: string) {
     birth_date: String(d.birth_date || "").trim() || null,
     address: String(d.address || "").trim() || null,
     emergency_contact: String(d.emergency_contact || "").trim() || null,
+    marital_status: String(d.marital_status || "").trim() || null,
+    blood_type: String(d.blood_type || "").trim() || null,
+    illnesses: String(d.illnesses || "").trim() || null,
+    safety_info: String(d.safety_info || "").trim() || null,
     notes: String(d.notes || "").trim() || null,
   };
   if (companyId) body.company_id = companyId;
