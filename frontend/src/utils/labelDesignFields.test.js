@@ -1,4 +1,4 @@
-import { LABEL_DESIGN_FIELDS, labelFieldValue, productTagSlots } from "./labelDesignFields";
+import { LABEL_DESIGN_FIELDS, LABEL_TAG_PALETTE, labelFieldValue, productTagSlots } from "./labelDesignFields";
 
 describe("labelDesignFields", () => {
   test("exposes three tag-based label slots for the designer", () => {
@@ -6,6 +6,7 @@ describe("labelDesignFields", () => {
     expect(keys).toEqual(expect.arrayContaining(["label_1", "label_2", "label_3"]));
     expect(keys.indexOf("label_1")).toBeLessThan(keys.indexOf("label_2"));
     expect(keys.indexOf("label_2")).toBeLessThan(keys.indexOf("label_3"));
+    expect(LABEL_TAG_PALETTE.map(([k]) => k)).toEqual(["label_1", "label_2", "label_3"]);
   });
 
   test("productTagSlots takes the first three tags", () => {

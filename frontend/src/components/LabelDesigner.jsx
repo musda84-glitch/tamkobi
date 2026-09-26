@@ -9,7 +9,7 @@ import { Barcode } from "./BarcodeLabelPrint";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
 import { productLabelImageUrl } from "../utils/productImages";
-import { LABEL_DESIGN_FIELDS, labelFieldValue } from "../utils/labelDesignFields";
+import { LABEL_DESIGN_FIELDS, LABEL_TAG_PALETTE, labelFieldValue } from "../utils/labelDesignFields";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
@@ -147,7 +147,15 @@ export const LabelDesigner = ({ companyId, products, company }) => {
   const upd = (patch) => { setTpl({ ...tpl, ...patch }); setDirty(true); };
   const updEl = (id, patch) => upd({ elements: tpl.elements.map((e) => (e.id === id ? { ...e, ...patch } : e)) });
   const move = (id, x, y) => updEl(id, { x: Math.max(0, Math.round(x * 2) / 2), y: Math.max(0, Math.round(y * 2) / 2) });
-  const addEl = (type) => { const base = { id: uid(), type, x: 2, y: 2, w: type === "line" ? 40 : 30, h: type === "line" ? 0.4 : type === "barcode" ? 14 : type === "field" ? 6 : 15 }; const el = type === "field" ? { ...base, field: "text", text: "Metin", font: 10, align: "left" } : type === "barcode" ? { ...base, showText: true } : base; upd({ elements: [...tpl.elements, el] }); setSelId(el.id); };
+  const addEl = (type, extras = {}) => {
+    const base = { id: uid(), type, x: 2, y: 2, w: type === "line" ? 40 : 30, h: type === "line" ? 0.4 : type === "barcode" ? 14 : type === "field" ? 6 : 15 };
+    const el = type === "field"
+      ? { ...base, field: "text", text: "Metin", font: 10, align: "left", ...extras }
+      : type === "barcode" ? { ...base, showText: true, ...extras } : { ...base, ...extras };
+    upd({ elements: [...tpl.elements, el] });
+    setSelId(el.id);
+  };
+  const addTagField = (field) => addEl("field", { field, text: "", font: 10, align: "left" });
   const order = (dir) => { const i = tpl.elements.findIndex((e) => e.id === selId); const j = i + dir; if (i < 0 || j < 0 || j >= tpl.elements.length) return; const arr = [...tpl.elements]; [arr[i], arr[j]] = [arr[j], arr[i]]; upd({ elements: arr }); };
   const save = async () => { try { const body = { ...tpl, company_id: companyId }; const r = tpl.id ? await axios.put(`${API_URL}/label-templates/${tpl.id}`, body) : await axios.post(`${API_URL}/label-templates`, body); setTpl(r.data); setDirty(false); toast.success("Şablon kaydedildi."); load(); } catch (e) { toast.error(e.response?.data?.detail || "Kaydedilemedi."); } };
   const create = (w, h) => { setTpl(DEFAULT_TPL(w, h)); setSelId(null); setDirty(true); };
@@ -172,6 +180,13 @@ export const LabelDesigner = ({ companyId, products, company }) => {
       {!tpl ? <div className="bg-white border rounded-2xl p-10 text-center text-slate-400 text-xs" data-testid="label-empty">Henüz şablon yok — yukarıdan bir etiket boyutu seçerek başlayın.</div> : (
         <div className="grid grid-cols-1 xl:grid-cols-[180px_1fr_300px] gap-3 text-xs">
           <div className="bg-white border rounded-2xl p-3 space-y-1" data-testid="label-palette"><div className="font-bold text-slate-900 mb-1">Öğe Ekle</div>{ELEMENT_TYPES.map(([k, l, Icon]) => <button key={k} onClick={() => addEl(k)} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-200" data-testid={`label-add-${k}`}><Icon className="w-3.5 h-3.5 text-slate-500" /> {l}</button>)}
+            <div className="font-bold text-slate-900 mt-3 mb-1">Stok etiketleri</div>
+            <p className="text-[10px] text-slate-500 mb-1 leading-snug">Stok kartındaki ilk 3 etiket.</p>
+            {LABEL_TAG_PALETTE.map(([field, label]) => (
+              <button key={field} type="button" onClick={() => addTagField(field)} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-emerald-50 border border-transparent hover:border-emerald-200" data-testid={`label-add-${field}`}>
+                <Tag className="w-3.5 h-3.5 text-emerald-600" /> {label}
+              </button>
+            ))}
             <div className="font-bold text-slate-900 mt-3 mb-1">Katmanlar</div>{tpl.elements.map((e) => <button key={e.id} onClick={() => setSelId(e.id)} className={`w-full text-left px-2 py-1 rounded-lg truncate ${selId === e.id ? "bg-indigo-50 text-indigo-700 font-semibold" : "hover:bg-slate-50"}`} data-testid={`label-layer-${e.id}`}>{ELEMENT_TYPES.find((t) => t[0] === e.type)?.[1]}{e.type === "field" ? ` · ${FIELDS.find((f) => f[0] === e.field)?.[1]}` : ""}</button>)}</div>
           <div className="bg-slate-100 border rounded-2xl p-4 overflow-auto">
             <div className="flex flex-wrap items-center gap-2 mb-3"><input value={tpl.name} onChange={(e) => upd({ name: e.target.value })} className="bg-white border rounded-lg p-1.5 font-semibold w-48" data-testid="label-name" />
