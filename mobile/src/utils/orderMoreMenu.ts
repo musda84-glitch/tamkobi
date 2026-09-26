@@ -186,8 +186,8 @@ export function orderMoreMenuItems(
   const kind = orderMoreMenuKind(ord);
   let items: OrderMoreItem[];
   if (kind === "held_cart") {
-    const allowDelete = opts.canDelete !== false;
-    return { kind, items: allowDelete ? [orderDeleteMoreItem()] : [] };
+    // Aktif / bekleyen sepet: satırda Yazdır + Eksik ürünleri üretime al; menü boş
+    return { kind, items: [] };
   }
   if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
   else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
@@ -202,7 +202,7 @@ export function orderMoreMenuItems(
 /** Web mobil karttaki tek birincil kısayol. */
 export function mobilePrimaryAction(ord?: OrderMoreOrder | null): { id: string; label: string } | null {
   const kind = orderMoreMenuKind(ord);
-  if (kind === "held_cart") return { id: "delete", label: "Sil" };
+  if (kind === "held_cart") return null;
   if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır" };
   if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura" };
   if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv" };

@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound } from "lucide-react";
+import { X, FileText, Wallet, ShoppingCart, MessageSquare, Send, Loader2, Navigation, Phone, Mail, FileSignature, Ruler, Pencil, Trash2, Lock, Eye, CalendarClock, Layers, ArrowUpRight, ArrowDownLeft, Info, ScrollText, Briefcase, Printer, MoreVertical, Link2, Camera, ImagePlus, XCircle, KeyRound, Factory } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ContactB2BPortalPanel } from "./ContactB2BPortalPanel";
 import { mapsLink } from "./ContactLocationModal";
@@ -115,6 +115,15 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["orders"] });
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+  };
+  const produceMissingContactOrder = async (o) => {
+    if (!window.confirm(`${o.held_label || o.order_number} için eksik kalemler üretime alınsın mı?`)) return;
+    try {
+      const r = await axios.post(`${API_URL}/order-picks/${o.id || o._id}/to-production`, {});
+      toast.success(r.data.message || "Eksik ürünler üretime alındı.");
+      await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["orders", "production"] });
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Eksik ürünler üretime alınamadı."); }
   };
   const openEditOrder = (o) => {
     const reason = orderEditBlockedReason(o);
@@ -673,7 +682,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                         <div className="flex justify-end gap-1">
                           {isCart ? (
                             <>
-                              {canDelete && <button type="button" onClick={() => deleteContactOrder(o)} className="inline-flex items-center gap-1 px-2 py-1 border border-rose-200 rounded-md text-[10px] font-semibold text-rose-600 hover:bg-rose-50" data-testid={`detail-order-delete-${o.order_number}`}><Trash2 className="w-3 h-3" /> Sil</button>}
+                              <button type="button" onClick={() => produceMissingContactOrder(o)} className="inline-flex items-center gap-1 px-2 py-1 border border-amber-200 rounded-md text-[10px] font-semibold text-amber-800 bg-amber-50 hover:bg-amber-100" title="Eksik ürünleri üretime al" data-testid={`detail-order-produce-${o.order_number}`}><Factory className="w-3 h-3" /> Üretime al</button>
                               <button type="button" onClick={() => setPrintDoc(o)} className="px-2 py-1 border rounded-md text-[10px] font-semibold" title="Sipariş Yazdır" data-testid={`detail-order-print-${o.order_number}`}>Yazdır</button>
                             </>
                           ) : (
