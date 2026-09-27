@@ -1,4 +1,4 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, hasOpenMesaimSession, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimExclusiveUntilCheckIn, mesaimInSubtitle, mesaimLongDate, mesaimOutInfoLines, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, resolveMesaimTodayHours, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, hasOpenMesaimSession, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimExclusiveUntilCheckIn, mesaimInSubtitle, mesaimLongDate, mesaimOutInfoLines, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimShowsDayLeaveInsteadOfIntraday, mesaimWorkDaysLine, resolveMesaimTodayHours, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -88,6 +88,9 @@ describe("mesaim card copy", () => {
     expect(mesaimLongDate("2026-09-23")).toMatch(/23/);
     expect(mesaimInSubtitle("01:37")).toBe("Giriş 01:37");
     expect(mesaimInSubtitle(null)).toBe("henüz giriş yok");
+    expect(mesaimShowsDayLeaveInsteadOfIntraday(null)).toBe(true);
+    expect(mesaimShowsDayLeaveInsteadOfIntraday("")).toBe(true);
+    expect(mesaimShowsDayLeaveInsteadOfIntraday("09:00")).toBe(false);
     expect(mesaimOutSubtitle({ checkOut: "10:26" })).toBe("Çıkış 10:26");
     expect(mesaimOutSubtitle({ checkIn: null })).toBe("önce giriş yapın");
     expect(mesaimOutSubtitle({ checkIn: "01:37", confirming: true })).toMatch(/puantaj/);

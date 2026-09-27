@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Pressable, Text, View } from "react-native";
 import { LocationSignalDot } from "./LocationSignal";
+import { DateField } from "./DateField";
 import { Card, Field, Muted, PrimaryButton } from "./kit";
 import { TimeField } from "./TimeField";
 import { colors, radius, typeface } from "../theme";
@@ -13,6 +14,7 @@ import {
   mesaimLongDate,
   mesaimOutInfoLines,
   mesaimScheduleLine,
+  mesaimShowsDayLeaveInsteadOfIntraday,
   mesaimWorkDaysLine,
   resolveMesaimTodayHours,
   type AttendanceHabit,
@@ -20,7 +22,7 @@ import {
   type MesaimTodayWindow,
 } from "../utils/attendanceSelf";
 import type { Workplace } from "../utils/workplace";
-import { yevmiyeStatusLine } from "../utils/personnel";
+import { LEAVE_TYPES, leaveDays, yevmiyeStatusLine } from "../utils/personnel";
 import type { LocationSignal } from "../utils/locationConsent";
 
 const DARK = "#0F172A";
@@ -134,6 +136,11 @@ export function MesaimTodayCard({
   intraReason,
   intraOut,
   intraReturn,
+  leaveOpen,
+  leaveType,
+  leaveStart,
+  leaveEnd,
+  leaveReason,
   geoPendingHint,
   checkInBlocked,
   checkInBlockedHint,
@@ -151,6 +158,13 @@ export function MesaimTodayCard({
   onIntraReason,
   onIntraOut,
   onIntraReturn,
+  onLeaveOpen,
+  onLeaveClose,
+  onLeaveSubmit,
+  onLeaveType,
+  onLeaveStart,
+  onLeaveEnd,
+  onLeaveReason,
 }: {
   now?: string;
   todayDate?: string;
@@ -192,6 +206,11 @@ export function MesaimTodayCard({
   intraReason: string;
   intraOut: string;
   intraReturn: string;
+  leaveOpen?: boolean;
+  leaveType: string;
+  leaveStart: string;
+  leaveEnd: string;
+  leaveReason: string;
   geoPendingHint?: string;
   checkInBlocked?: boolean;
   checkInBlockedHint?: string;
@@ -209,6 +228,13 @@ export function MesaimTodayCard({
   onIntraReason: (v: string) => void;
   onIntraOut: (v: string) => void;
   onIntraReturn: (v: string) => void;
+  onLeaveOpen: () => void;
+  onLeaveClose: () => void;
+  onLeaveSubmit: () => void;
+  onLeaveType: (v: string) => void;
+  onLeaveStart: (v: string) => void;
+  onLeaveEnd: (v: string) => void;
+  onLeaveReason: (v: string) => void;
 }) {
   const checkedIn = Boolean(today?.check_in);
   const checkedOut = Boolean(today?.check_out);
@@ -236,6 +262,8 @@ export function MesaimTodayCard({
   const habitText = habitLabel(habit, habitFallback);
   const mesaiEnd = hours.end || today?.expected_end || schedule?.end || "";
   const yevLine = yevmiyeStatusLine(today);
+  const showDayLeave = mesaimShowsDayLeaveInsteadOfIntraday(today?.check_in);
+  const leaveDayCount = leaveDays(leaveStart, leaveEnd || leaveStart);
   const outInfo = mesaimOutInfoLines({
     checkIn: today?.check_in,
     checkOut: today?.check_out,
@@ -499,8 +527,45 @@ export function MesaimTodayCard({
         </Panel>
       ) : null}
 
-      <Panel testID="mesai-intraday-leave">
-        {intra?.status === "pending" ? (
+      <Panel testID={showDayLeave ? "mesai-day-leave" : "mesai-intraday-leave"}>
+        {showDayLeave ? (
+          leaveOpen ? (
+            <Card testID="mesai-day-leave-form" style={{ gap: 8, margin: 0 }}>
+              <Muted>Giriş yapmadan günlük izin talebi oluşturabilirsiniz. Gün içi izin için önce giriş yapın.</Muted>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                {LEAVE_TYPES.map((t) => (
+                  <Pressable
+                    key={t.key}
+                    testID={`mesai-day-leave-type-${t.key}`}
+                    onPress={() => onLeaveType(t.key)}
+                    style={{
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      backgroundColor: leaveType === t.key ? SKY : "rgba(255,255,255,0.12)",
+                    }}
+                  >
+                    <Text style={{ color: leaveType === t.key ? DARK : "#E2E8F0", fontSize: 12, fontWeight: "700" }}>{t.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <DateField label="Başlangıç" testID="mesai-day-leave-start" value={leaveStart} onChangeText={onLeaveStart} />
+              <DateField label="Bitiş" testID="mesai-day-leave-end" value={leaveEnd} min={leaveStart} onChangeText={onLeaveEnd} />
+              <Field label="Açıklama" testID="mesai-day-leave-reason" value={leaveReason} onChangeText={onLeaveReason} placeholder="İsteğe bağlı" />
+              <PrimaryButton
+                title={busy === "leave" ? "Gönderiliyor…" : leaveDayCount ? `İzin talep et (${leaveDayCount} gün)` : "İzin talep et"}
+                onPress={onLeaveSubmit}
+                color={SKY}
+                testID="mesai-day-leave-submit"
+              />
+              <PrimaryButton title="Vazgeç" onPress={onLeaveClose} color={colors.secondary} testID="mesai-day-leave-close" />
+            </Card>
+          ) : (
+            <Pressable testID="mesai-day-leave-open" onPress={onLeaveOpen} style={{ backgroundColor: SKY, borderRadius: 12, paddingVertical: 10, alignItems: "center" }}>
+              <Text style={{ color: DARK, fontWeight: "800", fontSize: 14 }}>İzin talep et</Text>
+            </Pressable>
+          )
+        ) : intra?.status === "pending" ? (
           <View testID="mesai-intraday-pending" style={{ gap: 8 }}>
             <Text style={{ color: "#BAE6FD", fontSize: 12, fontWeight: "700" }}>
               Gün içi izin talebi bekliyor{intra.out_time && intra.return_time ? ` · ${intra.out_time}–${intra.return_time}` : ""}{intra.reason ? ` · ${intra.reason}` : ""}

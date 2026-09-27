@@ -214,6 +214,11 @@ export function mesaimInSubtitle(checkIn) {
   return checkIn ? `Giriş ${checkIn}` : "henüz giriş yok";
 }
 
+/** Giriş yokken gün içi izin yerine günlük izin talebi gösterilir. */
+export function mesaimShowsDayLeaveInsteadOfIntraday(checkIn) {
+  return !String(checkIn || "").trim();
+}
+
 export function mesaimOutSubtitle(opts = {}) {
   if (opts.checkOut) return `Çıkış ${opts.checkOut}`;
   if (!opts.checkIn) return "önce giriş yapın";

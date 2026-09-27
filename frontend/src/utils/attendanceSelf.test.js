@@ -1,4 +1,4 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, checkInAlreadyDone, checkInBlockedHint, checkInOffsiteBlocked, checkInOnceHint, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, hasOpenMesaimSession, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimExclusivePathAllowed, mesaimExclusiveUntilCheckIn, mesaimInSubtitle, mesaimOutInfoLines, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, resolveMesaimTodayHours, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, checkInAlreadyDone, checkInBlockedHint, checkInOffsiteBlocked, checkInOnceHint, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, hasOpenMesaimSession, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimExclusivePathAllowed, mesaimExclusiveUntilCheckIn, mesaimInSubtitle, mesaimOutInfoLines, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimShowsDayLeaveInsteadOfIntraday, resolveMesaimTodayHours, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
 
 describe("selfAttendanceGeoMode", () => {
   test("pulls GPS on check-in press; required when workplace/task target exists", () => {
@@ -96,6 +96,8 @@ describe("mesaim today card helpers", () => {
     expect(mesaimEarlyArrivalLine({ checkIn: "07:40", earlyMinutes: 20, mesaiStart: "08:00" })).toMatch(/07:40/);
     expect(mesaimDateHolidaySuffix({ isWorkDay: false })).toMatch(/tatil/);
     expect(mesaimInSubtitle("09:05")).toBe("Giriş 09:05");
+    expect(mesaimShowsDayLeaveInsteadOfIntraday(null)).toBe(true);
+    expect(mesaimShowsDayLeaveInsteadOfIntraday("09:05")).toBe(false);
     expect(mesaimOutInfoLines({
       checkIn: "02:30",
       checkOut: "03:30",
