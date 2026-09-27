@@ -1,4 +1,4 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimInSubtitle, mesaimLongDate, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, resolveMesaimTodayHours, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimInSubtitle, mesaimLongDate, mesaimOutInfoLines, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, resolveMesaimTodayHours, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -76,6 +76,25 @@ describe("mesaim card copy", () => {
     expect(mesaimOutSubtitle({ checkOut: "10:26" })).toBe("Çıkış 10:26");
     expect(mesaimOutSubtitle({ checkIn: null })).toBe("önce giriş yapın");
     expect(mesaimOutSubtitle({ checkIn: "01:37", confirming: true })).toMatch(/puantaj/);
+    expect(mesaimOutInfoLines({
+      checkIn: "02:30",
+      checkOut: "03:30",
+      scheduledEnd: "03:30",
+      expectedEnd: "03:30",
+      workplace: { kind: "task", task_title: "Montaj", project_name: "Villa", duration_days: 2 },
+    })).toEqual({
+      headline: "Çıkış 03:30",
+      baseNote: "Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır.",
+      scheduleLine: "Atanan mesai çıkış 03:30",
+      fieldDutyLine: "Dış görev: Montaj · Villa · 2 gün",
+    });
+    expect(mesaimOutInfoLines({
+      checkIn: "08:00",
+      expectedEnd: "19:00",
+      assignedOvertimeHours: 1,
+      workplace: { kind: "company" },
+    }).scheduleLine).toBe("Atanan mesai çıkış 19:00 · +1 sa fazla mesai");
+    expect(mesaimOutInfoLines({ checkIn: null }).headline).toBe("önce giriş yapın");
     expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(false);
     expect(mesaimPunchOpensEditor({ action: "check_out", checkOut: "01:20" })).toBe(false);
     expect(mesaimPunchOpensEditor({ action: "check_in" })).toBe(false);
