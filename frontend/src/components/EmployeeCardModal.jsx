@@ -25,7 +25,7 @@ import { AssignedDutyCard } from "./AssignedDutyCard";
 import { StaffMessagesPanel } from "./StaffMessagesPanel";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
-const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Ödemeler", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem Kullanıcısı", KeyRound]];
+const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Ödemeler", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem", KeyRound]];
 const LEAVE = { annual: "Yıllık", sick: "Hastalık", unpaid: "Ücretsiz", other: "Diğer" };
 const ST = { pending: ["Bekliyor", "bg-amber-100 text-amber-700"], approved: ["Onaylı", "bg-emerald-100 text-emerald-700"], rejected: ["Red", "bg-rose-100 text-rose-700"], paid: ["Ödendi", "bg-emerald-100 text-emerald-700"], unpaid: ["Ödenmedi", "bg-slate-100 text-slate-600"] };
 const TONE = { emerald: "text-emerald-700", amber: "text-amber-700", rose: "text-rose-700", slate: "text-slate-900" };
@@ -344,7 +344,20 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           {msgOpen ? <StaffMessagesPanel employeeId={id} testId="emp-card-messages" /> : null}
           </div>
         </div>
-        <div className="flex gap-1 px-5 border-b overflow-x-auto">{TABS.map(([k, l, I]) => <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`emp-tab-${k}`}><I className="w-3.5 h-3.5" /> {l}</button>)}</div>
+        <div className="flex flex-nowrap items-end gap-0.5 px-3 sm:px-5 border-b border-slate-200 overflow-x-auto shrink-0" data-testid="emp-card-tabs">
+          {TABS.map(([k, l, I]) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setTab(k)}
+              title={k === "user" ? "Sistem Kullanıcısı" : l}
+              className={`inline-flex shrink-0 items-center gap-1.5 px-2.5 sm:px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px whitespace-nowrap ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              data-testid={`emp-tab-${k}`}
+            >
+              <I className="w-3.5 h-3.5 shrink-0" /> {l}
+            </button>
+          ))}
+        </div>
         <div className="p-5 overflow-y-auto text-xs">
           {!card ? <div className="text-slate-400">Yükleniyor…</div> : (<>
             {tab === "summary" && (
