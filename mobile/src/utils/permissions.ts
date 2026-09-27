@@ -61,6 +61,13 @@ export function can(user: SessionUser, path: string, level: "view" | "edit" | "d
   return levelAllows(value, level);
 }
 
+/** Rol özellik bayrağı (Özellik Yetkileri). Anahtar yoksa veya admin ise açık. */
+export function feature(user: SessionUser, key: string): boolean {
+  if (!user || user.role === "admin") return true;
+  if (!user.features) return true;
+  return user.features[key] !== false;
+}
+
 export function moduleOn(license: License, path: string): boolean {
   if (!license?.modules) return true;
   const key = LICENSE_KEY[path] || path;

@@ -115,7 +115,7 @@ export function OrderActions({
   onChanged?: () => void;
   onDeleted?: () => void;
 }) {
-  const { client, activeCompany, companyId, can } = useAuth();
+  const { client, activeCompany, companyId, can, feature } = useAuth();
   const [busy, setBusy] = useState<string | null>(null);
   const [cargoOpen, setCargoOpen] = useState(false);
   const [cargoMode, setCargoMode] = useState<"ship" | "change">("ship");
@@ -135,6 +135,8 @@ export function OrderActions({
   const canEdit = can("/orders", "edit");
   const canMutate = canEdit || can("/saha", "edit");
   const canDelete = can("/orders", "delete") || can("/saha", "delete");
+  const showCargoLabel = feature("order_cargo_label");
+  const showMoreActions = feature("order_more_actions");
   const marketplace = isMarketplaceChannel(order.channel);
   const oid = idOf(order);
   const num = order.order_number || oid;
@@ -831,12 +833,16 @@ export function OrderActions({
         : []),
     ...(!order.cargo_tracking_number
       ? [{ key: "cargo", label: "Kargola", icon: "car" as const, tone: "violet" as const, busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: () => (showCargo ? openCargo() : openShip()) }]
-      : [{ key: "label", label: "Kargo etiketi", icon: "car" as const, tone: "teal" as const, busyKey: "label", testID: `order-label-${oid}`, onPress: printLabel }]),
+      : showCargoLabel
+        ? [{ key: "label", label: "Kargo etiketi", icon: "car" as const, tone: "teal" as const, busyKey: "label", testID: `order-label-${oid}`, onPress: printLabel }]
+        : []),
     ...(showApprove
       ? [{ key: "approve", label: approveActionLabel(order), icon: "checkmark-circle" as const, tone: "emerald" as const, busyKey: "approve", testID: `order-approve-${oid}`, onPress: approve }]
       : []),
     { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm },
-    { key: "more", label: "Diğer işlemler", icon: "ellipsis-vertical", tone: "slate", busyKey: "more", testID: `order-more-btn-${num}`, onPress: () => setMoreOpen(true) },
+    ...(showMoreActions
+      ? [{ key: "more", label: "Diğer işlemler", icon: "ellipsis-vertical" as const, tone: "slate" as const, busyKey: "more", testID: `order-more-btn-${num}`, onPress: () => setMoreOpen(true) }]
+      : []),
   ];
 
   return (

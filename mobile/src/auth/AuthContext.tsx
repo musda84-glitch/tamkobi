@@ -4,7 +4,7 @@ import { ApiHttpError, apiErrorMessage } from "../api/errors";
 import type { B2BForgotResult, B2BLoginResult, B2BPortal, Company, License, SessionKind, SessionPayload, User } from "../types";
 import { setPriceDecimals } from "../utils/money";
 import { parseB2bToken } from "../utils/b2bToken";
-import { can as canPerm, moduleOn as moduleOnPerm } from "../utils/permissions";
+import { can as canPerm, feature as featurePerm, moduleOn as moduleOnPerm } from "../utils/permissions";
 import {
   clearB2bSession,
   clearToken,
@@ -51,6 +51,7 @@ type AuthContextValue = AuthState & {
   setServer: (url: string) => Promise<void>;
   reload: () => Promise<void>;
   can: (path: string, level?: "view" | "edit" | "delete") => boolean;
+  feature: (key: string) => boolean;
   moduleOn: (path: string) => boolean;
 };
 
@@ -339,6 +340,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setServer,
       reload: bootstrap,
       can: (path, level = "view") => (state.sessionKind === "b2b" ? false : canPerm(state.user, path, level)),
+      feature: (key) => (state.sessionKind === "b2b" ? false : featurePerm(state.user, key)),
       moduleOn: (path) => (state.sessionKind === "b2b" ? false : moduleOnPerm(state.license, path)),
     }),
     [bootstrap, client, companyId, enterB2bToken, forgotB2b, forgotErp, login, loginB2b, logout, resetB2b, resetErp, setServer, state, switchCompany]

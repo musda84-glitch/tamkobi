@@ -1,10 +1,18 @@
-import { can, canOpenStockCard, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showSelfPersonnelTabs, visibleModules } from "./permissions";
+import { can, canOpenStockCard, feature, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showSelfPersonnelTabs, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
     const user = { role: "admin", permissions: { "/saha": "none" } };
     expect(can(user, "/saha", "edit")).toBe(true);
     expect(visibleModules(user, null).some((m) => m.key === "saha")).toBe(true);
+  });
+
+  it("honors role feature flags; missing key stays on", () => {
+    expect(feature({ role: "admin", features: { order_more_actions: false } }, "order_more_actions")).toBe(true);
+    expect(feature({ role: "sales", features: { order_cargo_label: false } }, "order_cargo_label")).toBe(false);
+    expect(feature({ role: "sales", features: { order_more_actions: true } }, "order_more_actions")).toBe(true);
+    expect(feature({ role: "personel", features: {} }, "order_cargo_label")).toBe(true);
+    expect(feature({ role: "sales" }, "order_more_actions")).toBe(true);
   });
 
   it("inherits missing cheque permission from banking", () => {

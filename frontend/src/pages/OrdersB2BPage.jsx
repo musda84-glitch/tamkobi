@@ -210,8 +210,10 @@ function mobilePrimaryAction(ord) {
 }
 
 export default function OrdersB2BPage() {
-  const { activeCompany, can } = useAuth();
+  const { activeCompany, can, feature } = useAuth();
   const canDeleteOrder = can("/orders", "delete");
+  const showCargoLabel = feature("order_cargo_label");
+  const showMoreActions = feature("order_more_actions");
   const navigate = useNavigate();
   const goContact = (ord) => navigate(ord.contact_id ? `/contacts?contact_id=${ord.contact_id}` : `/contacts?search=${encodeURIComponent(ord.customer_name || "")}`);
   const [activeTab, setActiveTab] = useState("orders"); // orders | b2b_portal
@@ -1077,6 +1079,19 @@ export default function OrdersB2BPage() {
                         >
                           <Truck className="w-4 h-4" />
                         </button>
+                      ) : showCargoLabel ? (
+                        <button
+                          type="button"
+                          onClick={() => { if (printThermalLabels([ord], activeCompany)) axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id] }).then(() => loadData()).catch(() => {}); }}
+                          className={ord.label_printed_at
+                            ? "p-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg shadow-sm ring-1 ring-sky-700/30"
+                            : "p-1.5 text-indigo-700 hover:bg-indigo-50 border border-dashed border-indigo-200 rounded-lg"}
+                          title={cargoActionTitle(ord)}
+                          aria-label="Kargo etiketi"
+                          data-testid={`print-label-mobile-${ord.order_number}`}
+                        >
+                          <Truck className="w-4 h-4" />
+                        </button>
                       ) : null}
                       <button
                         type="button"
@@ -1088,15 +1103,17 @@ export default function OrdersB2BPage() {
                         <Printer className="w-4 h-4" />
                       </button>
                       <OrderProduceButton ord={ord} catalog={productCatalog} onProduce={openProduceForOrder} testSuffix="-mobile" />
-                      <OrderMoreMenuButton
-                        ord={ord}
-                        contacts={contacts}
-                        onAction={handleOrderMoreAction}
-                        align="end"
-                        side="top"
-                        testSuffix="-mobile"
-                        canDelete={canDeleteOrder}
-                      />
+                      {showMoreActions ? (
+                        <OrderMoreMenuButton
+                          ord={ord}
+                          contacts={contacts}
+                          onAction={handleOrderMoreAction}
+                          align="end"
+                          side="top"
+                          testSuffix="-mobile"
+                          canDelete={canDeleteOrder}
+                        />
+                      ) : null}
                     </>
                   )}
                 </div>
@@ -1316,7 +1333,7 @@ export default function OrdersB2BPage() {
                           >
                             <Truck className="w-4 h-4" />
                           </button>
-                        ) : (
+                        ) : showCargoLabel ? (
                           <button
                             type="button"
                             onClick={() => { if (printThermalLabels([ord], activeCompany)) axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id] }).then(() => loadData()).catch(() => {}); }}
@@ -1330,7 +1347,7 @@ export default function OrdersB2BPage() {
                           >
                             <Truck className="w-4 h-4" />
                           </button>
-                        )}
+                        ) : null}
                         {["pending", "new"].includes(ord.order_status) ? <button type="button" onClick={() => approve(ord)} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Onayla" data-testid={`approve-order-btn-${ord.order_number}`}><CheckCircle className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         <button
                           type="button"
@@ -1344,12 +1361,14 @@ export default function OrdersB2BPage() {
                           <Printer className="w-4 h-4" />
                         </button>
                         <OrderProduceButton ord={ord} catalog={productCatalog} onProduce={openProduceForOrder} />
-                        <OrderMoreMenuButton
-                          ord={ord}
-                          contacts={contacts}
-                          onAction={handleOrderMoreAction}
-                          canDelete={canDeleteOrder}
-                        />
+                        {showMoreActions ? (
+                          <OrderMoreMenuButton
+                            ord={ord}
+                            contacts={contacts}
+                            onAction={handleOrderMoreAction}
+                            canDelete={canDeleteOrder}
+                          />
+                        ) : null}
                           </>
                         )}
                       </div>

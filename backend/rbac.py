@@ -115,6 +115,8 @@ FEATURES = [
     ("header_virman", "Üst bar: Hızlı virman", "Web üst çubuğundan hesaplar arası virman. Kapalıysa buton gizlenir."),
     ("header_invoice", "Üst bar: Hızlı fatura oluştur", "Web üst çubuğundaki Yeni Fatura kısayolu."),
     ("header_ai", "Üst bar: AI asistan", "Web üst çubuğundaki AI Danışman kısayolu (lisans eklentisi de gerekir)."),
+    ("order_cargo_label", "Sipariş: Kargo etiketi", "Sipariş satırındaki Kargo etiketi (yazdır) butonu. Kapalıysa web + mobil gizlenir; Kargola butonu etkilenmez."),
+    ("order_more_actions", "Sipariş: Diğer işlemler", "Sipariş satırındaki Diğer işlemler (⋯) menüsü. Kapalıysa web + mobil gizlenir."),
 ]
 MONEY_KEYS = {"sale_price", "purchase_price", "unit_price", "price", "list_price", "local_price", "local_total", "fx_rate", "total", "grand_total", "subtotal", "vat_total", "total_amount", "amount", "paid_amount", "balance", "current_balance", "revenue", "net_profit", "gross_profit",
               "commission", "commission_vat", "service_fee", "cargo_fee", "product_cost", "cost", "fees", "deductions", "net", "gross", "salary", "payroll_salary", "net_salary", "gross_salary", "second_salary", "credit_limit", "discount_total", "vat_amount", "price_diff",
