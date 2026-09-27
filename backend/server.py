@@ -12834,6 +12834,18 @@ async def list_stations(company_id: Optional[str] = "comp_nexus_main_01"):
     wo = [s for s in await db.work_orders.distinct("station", {"company_id": company_id}) if s]
     return wp.station_names_from_parks(company.get("work_parks"), wo)
 
+async def _shopfloor_require_mesaim_check_in(emp: Dict[str, Any]) -> None:
+    """Giriş yapmamış personel atölyede operatör olamaz."""
+    company = await db.companies.find_one({"_id": emp["company_id"]}) or {}
+    schedule = attendance.merge_schedule(company, emp)
+    today_s = attendance._today(schedule)
+    yest_s = attendance.previous_ymd(today_s)
+    today_rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": today_s})
+    yest_rec = await db.attendance.find_one({"employee_id": emp["_id"], "date": yest_s})
+    if not attendance.shopfloor_operator_checked_in(today_rec, yest_rec):
+        raise HTTPException(status_code=403, detail=attendance.SHOPFLOOR_REQUIRE_CHECKIN_DETAIL)
+
+
 @api_router.post("/production/work-orders/shopfloor-unlock")
 async def shopfloor_unlock(req: Dict[str, Any]):
     """Tablet atölye: operatör seçmeden önce personel şifresi / bağlı kullanıcı şifresi doğrulanır."""
@@ -12848,13 +12860,17 @@ async def shopfloor_unlock(req: Dict[str, Any]):
     pin_hash = emp.get("shopfloor_pin_hash") or ""
     user = await db.users.find_one({"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]})
     user_hash = (user or {}).get("password_hash") or ""
+    ok = False
     if pin_hash and verify_password(password, pin_hash):
-        return {"status": "success", "employee_id": emp["_id"], "operator_name": emp["full_name"]}
-    if user and user.get("is_active", True) and user_hash and verify_password(password, user_hash):
-        return {"status": "success", "employee_id": emp["_id"], "operator_name": emp["full_name"]}
-    if not pin_hash and not user_hash:
-        raise HTTPException(status_code=400, detail="Bu personel için atölye şifresi tanımlı değil. Personel kartından şifre belirleyin.")
-    raise HTTPException(status_code=401, detail="Şifre hatalı.")
+        ok = True
+    elif user and user.get("is_active", True) and user_hash and verify_password(password, user_hash):
+        ok = True
+    if not ok:
+        if not pin_hash and not user_hash:
+            raise HTTPException(status_code=400, detail="Bu personel için atölye şifresi tanımlı değil. Personel kartından şifre belirleyin.")
+        raise HTTPException(status_code=401, detail="Şifre hatalı.")
+    await _shopfloor_require_mesaim_check_in(emp)
+    return {"status": "success", "employee_id": emp["_id"], "operator_name": emp["full_name"]}
 
 @api_router.post("/production/orders/{order_id}/generate-work-orders")
 async def generate_work_orders_for_order(order_id: str):

@@ -425,6 +425,7 @@ export function AtolyeScreen() {
           >
             <Text style={{ fontWeight: "800", color: colors.text, fontSize: 16 }}>Operatör şifresi</Text>
             <Muted>{pendingEmp ? employeeLabel(pendingEmp) : ""}</Muted>
+            <Muted>Mesaim girişi yapılmamış personel operatör olamaz.</Muted>
             <Field
               label="Şifre"
               testID="shopfloor-pin-input"
