@@ -179,6 +179,8 @@ export function MesaimTodayCard({
     scheduled_start?: string;
     scheduled_end?: string;
     assigned_overtime_hours?: number;
+    assigned_overtime_start?: string;
+    assigned_overtime_end?: string;
     geo_confirm_request?: GeoConfirmRequest | null;
   } | null;
   earlyOk?: boolean;
@@ -240,6 +242,8 @@ export function MesaimTodayCard({
     scheduledEnd: hours.end || today?.scheduled_end || schedule?.end,
     expectedEnd: today?.expected_end || mesaiEnd,
     assignedOvertimeHours: today?.assigned_overtime_hours,
+    assignedOvertimeStart: today?.assigned_overtime_start,
+    assignedOvertimeEnd: today?.assigned_overtime_end,
     workplace,
   });
   const inDone = Boolean(checkedIn);
@@ -362,7 +366,6 @@ export function MesaimTodayCard({
                 <Ionicons name="log-out-outline" size={24} color="#FECDD3" />
               </View>
               <View style={{ flex: 1, gap: 2, minWidth: 0 }}>
-                <Text style={{ color: "#FECDD3", fontSize: 12, fontWeight: "800", letterSpacing: 0.4 }}>ÇIKIŞ</Text>
                 <Text
                   style={{ color: "#FFF", fontSize: 20, fontWeight: "900", letterSpacing: -0.3 }}
                   testID="mesai-today-out"

@@ -99,16 +99,23 @@ describe("mesaim card copy", () => {
       workplace: { kind: "task", task_title: "Montaj", project_name: "Villa", duration_days: 2 },
     })).toEqual({
       headline: "Çıkış 03:30",
-      baseNote: "Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır.",
-      scheduleLine: "Atanan mesai çıkış 03:30",
+      baseNote: "Çıkış Saati Yazan Saattir.",
+      scheduleLine: "Atanan fazla mesai çıkış 03:30",
       fieldDutyLine: "Dış görev: Montaj · Villa · 2 gün",
     });
     expect(mesaimOutInfoLines({
       checkIn: "08:00",
+      scheduledEnd: "18:00",
       expectedEnd: "19:00",
       assignedOvertimeHours: 1,
       workplace: { kind: "company" },
-    }).scheduleLine).toBe("Atanan mesai çıkış 19:00 · +1 sa fazla mesai");
+    }).scheduleLine).toBe("Atanan fazla mesai 18:00–19:00");
+    expect(mesaimOutInfoLines({
+      checkIn: "08:00",
+      assignedOvertimeStart: "18:00",
+      assignedOvertimeEnd: "20:30",
+      assignedOvertimeHours: 2.5,
+    }).scheduleLine).toBe("Atanan fazla mesai 18:00–20:30");
     expect(mesaimOutInfoLines({ checkIn: null }).headline).toBe("önce giriş yapın");
     expect(mesaimPunchOpensEditor({ action: "check_in", checkIn: "06:55" })).toBe(false);
     expect(mesaimPunchOpensEditor({ action: "check_out", checkOut: "01:20" })).toBe(false);

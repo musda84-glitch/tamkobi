@@ -231,6 +231,8 @@ export default function MyAttendancePage() {
     scheduledEnd: hours.end || t?.scheduled_end || sch?.end,
     expectedEnd: t?.expected_end || mesaiEnd,
     assignedOvertimeHours: t?.assigned_overtime_hours,
+    assignedOvertimeStart: t?.assigned_overtime_start,
+    assignedOvertimeEnd: t?.assigned_overtime_end,
     workplace: data.workplace,
   });
   const habitText = habitLabel(data.habit, data.habit_label);
@@ -327,7 +329,6 @@ export default function MyAttendancePage() {
                   <LogOut className="w-6 h-6 text-rose-200" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[11px] font-extrabold tracking-wide text-rose-200">ÇIKIŞ</div>
                   <div className="text-xl font-black tracking-tight truncate" data-testid="my-att-today-out">{outInfo.headline}</div>
                 </div>
               </div>

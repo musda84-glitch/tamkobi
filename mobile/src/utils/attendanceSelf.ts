@@ -195,13 +195,15 @@ export type MesaimOutInfoLines = {
   fieldDutyLine: string;
 };
 
-/** Mesaim çıkış kartı: kayıtlı saat + atanmış mesai bitiş + dış görev (varsa). */
+/** Mesaim çıkış kartı: kayıtlı saat + atanmış fazla mesai aralığı + dış görev (varsa). */
 export function mesaimOutInfoLines(opts?: {
   checkIn?: string | null;
   checkOut?: string | null;
   scheduledEnd?: string | null;
   expectedEnd?: string | null;
   assignedOvertimeHours?: number | null;
+  assignedOvertimeStart?: string | null;
+  assignedOvertimeEnd?: string | null;
   workplace?: {
     kind?: string;
     task_title?: string;
@@ -211,21 +213,27 @@ export function mesaimOutInfoLines(opts?: {
     duration_days?: number | null;
   } | null;
 } | null): MesaimOutInfoLines {
-  const checkOut = String(opts?.checkOut || "").trim();
-  const checkIn = String(opts?.checkIn || "").trim();
-  const end = String(opts?.expectedEnd || opts?.scheduledEnd || "").trim().slice(0, 5);
+  const hm = (v?: string | null) => String(v || "").trim().slice(0, 5);
+  const checkOut = hm(opts?.checkOut);
+  const checkIn = hm(opts?.checkIn);
+  const scheduledEnd = hm(opts?.scheduledEnd);
+  const expectedEnd = hm(opts?.expectedEnd) || scheduledEnd;
   const ot = Number(opts?.assignedOvertimeHours) || 0;
   const headline = checkOut
     ? `Çıkış ${checkOut}`
     : checkIn
-      ? (end ? `Beklenen çıkış ${end}` : "puantaj / beklenen mesai bitişinden")
+      ? (expectedEnd ? `Beklenen çıkış ${expectedEnd}` : "puantaj / beklenen mesai bitişinden")
       : "önce giriş yapın";
-  const baseNote = "Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır.";
+  const baseNote = "Çıkış Saati Yazan Saattir.";
+  const otStart = hm(opts?.assignedOvertimeStart) || (ot > 0 || (scheduledEnd && expectedEnd && scheduledEnd !== expectedEnd) ? scheduledEnd : "");
+  const otEnd = hm(opts?.assignedOvertimeEnd) || expectedEnd;
   let scheduleLine = "";
-  if (end || ot > 0) {
-    const bits = [end ? `Atanan mesai çıkış ${end}` : null];
-    if (ot > 0) bits.push(`+${ot} sa fazla mesai`);
-    scheduleLine = bits.filter(Boolean).join(" · ");
+  if (otStart && otEnd) {
+    scheduleLine = `Atanan fazla mesai ${otStart}–${otEnd}`;
+  } else if (otEnd) {
+    scheduleLine = `Atanan fazla mesai çıkış ${otEnd}`;
+  } else if (ot > 0) {
+    scheduleLine = `+${ot} sa fazla mesai`;
   }
   let fieldDutyLine = "";
   const wp = opts?.workplace;
