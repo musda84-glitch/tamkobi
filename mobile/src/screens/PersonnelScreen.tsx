@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import React, { useCallback, useState } from "react";
-import { Platform, Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View, Linking } from "react-native";
 import { del, get, post, put, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
@@ -16,11 +16,13 @@ import { TimeField } from "../components/TimeField";
 import { RequestDecisionButtons } from "../components/RequestDecisionButtons";
 import { Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { TabStrip } from "../components/TabStrip";
-import { confirmAction } from "../components/chips";
+import { Chip, confirmAction } from "../components/chips";
 import { colors } from "../theme";
 import { movesSheetTitle } from "../utils/puantajMonth";
 import { PUNCH_IN_COLOR, PUNCH_OUT_COLOR } from "../utils/labels";
 import { compressPickerAsset } from "../utils/compressUploadImage";
+import { smsComposerHref, smsSendFailed } from "../utils/quoteApproval";
+import { waDigits } from "../utils/contactStatement";
 import {
   appendUploadBlob,
   imageUploadRequest,
@@ -52,7 +54,8 @@ import {
   EMPLOYEE_CARD_WORK_ACTIONS,
   employeeCardActionTitle,
   employeeCardActionIcon,
-  EMPLOYEE_LOCATION_SETTINGS_TITLE,
+  EMPLOYEE_MESSAGE_TITLE,
+  employeeMessageDefaultBody,
   parseYevmiyeDays,
   parseYevmiyeWage,
   parseTaskDays,
@@ -97,13 +100,7 @@ import {
   workplaceDetailsToggleLabel,
   employeeCardChrome,
   employeeCardPayKind,
-  initLocMode,
-  patchLocMode,
-  locationTrackingPayload,
-  locationTrackingEnabled,
-  locationControllerLabel,
   locationCellCaption,
-  locationTrackingTogglePayload,
   todayAttendanceParts,
   cardPunchAttempts,
   cardPunchConfirmMessage,
@@ -111,9 +108,6 @@ import {
   cardPunchPayload,
   cardPunchRequiresTime,
   cardPunchTimeHint,
-  locModeSummary,
-  DEFAULT_LOC_MODE,
-  type LocMode,
   filterPayMoves,
   locationMoveBg,
   locationMoveCanIgnore,
@@ -378,10 +372,11 @@ export function PersonnelScreen() {
   const [expenseEmp, setExpenseEmp] = useState<Employee | null>(null);
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseNote, setExpenseNote] = useState("");
-  const [locEmp, setLocEmp] = useState<Employee | null>(null);
-  const [locBusy, setLocBusy] = useState<string | null>(null);
-  const [locCompany, setLocCompany] = useState<LocMode>(DEFAULT_LOC_MODE);
-  const [locField, setLocField] = useState<LocMode>(DEFAULT_LOC_MODE);
+  const [msgEmp, setMsgEmp] = useState<Employee | null>(null);
+  const [msgChannel, setMsgChannel] = useState<"sms" | "whatsapp">("sms");
+  const [msgPhone, setMsgPhone] = useState("");
+  const [msgBody, setMsgBody] = useState("");
+  const [msgBusy, setMsgBusy] = useState(false);
   const [dutiesEmp, setDutiesEmp] = useState<Employee | null>(null);
 
   const load = useCallback(async () => {
@@ -815,44 +810,60 @@ export function PersonnelScreen() {
     otpay: (emp: Employee) => openExtraPay(emp, "overtime"),
   };
 
-  const toggleCardLocation = async (emp: Employee, enabled: boolean) => {
-    const eid = idOf(emp);
-    const raw = emp.location_tracking || cards[eid]?.employee?.location_tracking || {};
-    setLocBusy(eid);
-    try {
-      await put(client, `/personnel/employees/${eid}`, {
-        location_tracking: locationTrackingTogglePayload(raw, enabled),
-      });
-      setMessage(`${emp.full_name}: ${locationControllerLabel(enabled)}.`);
-      await load();
-    } catch (err) {
-      setError(apiErrorMessage(err, "Konum ayarı kaydedilemedi."));
-    } finally {
-      setLocBusy(null);
-    }
+  const openEmployeeMessage = (emp: Employee) => {
+    setMsgEmp(emp);
+    setMsgPhone(String(emp.phone || "").trim());
+    setMsgBody(employeeMessageDefaultBody(emp));
+    setMsgChannel(emp.phone ? "sms" : "whatsapp");
   };
 
-  const openLocSettings = (emp: Employee) => {
-    const raw = emp.location_tracking || cards[idOf(emp)]?.employee?.location_tracking || {};
-    setLocEmp(emp);
-    setLocCompany(initLocMode(raw));
-    setLocField(initLocMode(raw.field || raw));
-  };
-
-  const saveLocSettings = async () => {
-    if (!locEmp) return;
-    setBusy(true);
+  const sendEmployeeMessage = async () => {
+    if (!msgEmp) return;
+    if (!msgBody.trim()) { setError("Mesaj boş olamaz."); return; }
+    if (!msgPhone.trim()) { setError("Telefon numarası yok."); return; }
+    setMsgBusy(true);
+    setError(null);
     try {
-      await put(client, `/personnel/employees/${idOf(locEmp)}`, {
-        location_tracking: locationTrackingPayload(locCompany, locField),
-      });
-      setMessage(`${locEmp.full_name} konum ayarları kaydedildi.`);
-      setLocEmp(null);
-      await load();
+      if (msgChannel === "sms") {
+        try {
+          const r = await post<{ status?: string; sent?: number; failed?: number; simulated?: boolean; message?: string; error?: string }>(client, "/comm/sms/send", {
+            company_id: companyId,
+            phone: msgPhone,
+            message: msgBody,
+            context: "manual",
+            ref_id: idOf(msgEmp),
+            contact_name: msgEmp.full_name,
+          });
+          if (r.simulated || smsSendFailed(r)) {
+            await Linking.openURL(smsComposerHref(msgPhone, msgBody));
+            setMessage(r.simulated
+              ? "SMS operatörü tanımlı değil; telefon SMS uygulaması açıldı."
+              : (r.error || r.message || "SMS gönderilemedi; telefon uygulaması açıldı."));
+          } else {
+            setMessage(r.message || "SMS gönderildi.");
+          }
+        } catch {
+          await Linking.openURL(smsComposerHref(msgPhone, msgBody)).catch(() => null);
+          setMessage("SMS uygulaması açıldı.");
+        }
+      } else {
+        const phone = waDigits(msgPhone);
+        if (!phone) { setError("Geçerli telefon numarası yok."); setMsgBusy(false); return; }
+        await Linking.openURL(`https://wa.me/${phone}?text=${encodeURIComponent(msgBody)}`);
+        await post(client, "/comm/whatsapp/logs", {
+          company_id: companyId,
+          phone: msgPhone,
+          message: msgBody,
+          direction: "outbound",
+          contact_name: msgEmp.full_name,
+        }).catch(() => null);
+        setMessage("WhatsApp açıldı.");
+      }
+      setMsgEmp(null);
     } catch (err) {
-      setError(apiErrorMessage(err, "Konum ayarları kaydedilemedi."));
+      setError(apiErrorMessage(err, "Mesaj gönderilemedi."));
     } finally {
-      setBusy(false);
+      setMsgBusy(false);
     }
   };
 
@@ -1736,12 +1747,12 @@ export function PersonnelScreen() {
                         onPress={() => setDutiesEmp(emp)}
                       />
                       <PayChip
-                        title={EMPLOYEE_LOCATION_SETTINGS_TITLE}
-                        icon={employeeCardActionIcon("location")}
-                        color="#047857"
+                        title={EMPLOYEE_MESSAGE_TITLE}
+                        icon={employeeCardActionIcon("message")}
+                        color="#128C7E"
                         bg="#ECFDF5"
-                        testID={`emp-card-location-btn-${eid}`}
-                        onPress={() => openLocSettings(emp)}
+                        testID={`emp-card-message-btn-${eid}`}
+                        onPress={() => openEmployeeMessage(emp)}
                       />
                       <PayChip
                         title="Masraf"
@@ -2477,14 +2488,21 @@ export function PersonnelScreen() {
       </B2BSheet>
 
       <B2BSheet
-        visible={!!locEmp}
-        title={EMPLOYEE_LOCATION_SETTINGS_TITLE}
-        subtitle={locEmp ? locEmp.full_name : undefined}
-        onClose={() => setLocEmp(null)}
-        testID="emp-location-sheet"
+        visible={!!msgEmp}
+        title={EMPLOYEE_MESSAGE_TITLE}
+        subtitle={msgEmp ? msgEmp.full_name : undefined}
+        onClose={() => setMsgEmp(null)}
+        testID="emp-message-sheet"
       >
-        <Muted testID="emp-location-hint">Sürekli konum takibi kapalı. Giriş yalnızca iş yeri / görev yeri konumunda yapılır.</Muted>
-        <PrimaryButton title="Kapat" testID="emp-location-save" color="#047857" onPress={() => setLocEmp(null)} />
+        <Muted testID="emp-message-hint">Personele SMS veya WhatsApp ile mesaj gönderin.</Muted>
+        <Row style={{ flexWrap: "wrap", gap: 6 }}>
+          <Chip label="SMS" active={msgChannel === "sms"} testID="emp-msg-tab-sms" onPress={() => setMsgChannel("sms")} />
+          <Chip label="WhatsApp" active={msgChannel === "whatsapp"} testID="emp-msg-tab-whatsapp" color="#128C7E" onPress={() => setMsgChannel("whatsapp")} />
+        </Row>
+        <Field label="Telefon" testID="emp-msg-phone" value={msgPhone} onChangeText={setMsgPhone} keyboardType="phone-pad" placeholder="05XX XXX XX XX" />
+        <Field label="Mesaj" testID="emp-msg-body" value={msgBody} onChangeText={setMsgBody} multiline placeholder="Mesajınız…" />
+        <PrimaryButton title={msgBusy ? "Gönderiliyor…" : "Gönder"} testID="emp-msg-send" color="#128C7E" loading={msgBusy} onPress={sendEmployeeMessage} />
+        <PrimaryButton title="Vazgeç" testID="emp-msg-cancel" color={colors.secondary} onPress={() => setMsgEmp(null)} />
       </B2BSheet>
 
       <B2BSheet
@@ -3042,89 +3060,6 @@ function EmpActionChip({
       testID={`emp-card-${action.key}-btn-${eid}`}
       onPress={() => handlers[action.key]?.(emp)}
     />
-  );
-}
-
-function LocModeBlock({
-  title,
-  hint,
-  prefix,
-  mode,
-  onChange,
-}: {
-  title: string;
-  hint: string;
-  prefix: string;
-  mode: LocMode;
-  onChange: (key: keyof LocMode, value: boolean | number | "") => void;
-}) {
-  return (
-    <View
-      testID={`emp-loc-mode-${prefix}`}
-      style={{ gap: 6, padding: 10, borderRadius: 12, backgroundColor: colors.slate50, borderWidth: 1, borderColor: colors.border }}
-    >
-      <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>{title}</Text>
-      <Muted>{hint} · {locModeSummary(mode)}</Muted>
-      <Row>
-        <Pressable
-          testID={`emp-loc-${prefix}-enabled`}
-          onPress={() => onChange("enabled", !mode.enabled)}
-          style={{
-            flex: 1,
-            minHeight: 36,
-            borderRadius: 10,
-            borderWidth: 1,
-            borderColor: mode.enabled ? "#6EE7B7" : colors.border,
-            backgroundColor: mode.enabled ? colors.emerald50 : colors.surface,
-            alignItems: "center",
-            justifyContent: "center",
-            flexDirection: "row",
-            gap: 6,
-          }}
-        >
-          <Ionicons name={mode.enabled ? "checkbox" : "square-outline"} size={16} color={mode.enabled ? colors.primary : colors.muted} />
-          <Text style={{ fontWeight: "700", fontSize: 12, color: mode.enabled ? colors.primaryHover : colors.muted }}>Konum açık</Text>
-        </Pressable>
-        <Pressable
-          testID={`emp-loc-${prefix}-continuous`}
-          onPress={() => mode.enabled && onChange("continuous", !mode.continuous)}
-          style={{
-            flex: 1,
-            minHeight: 36,
-            borderRadius: 10,
-            borderWidth: 1,
-            borderColor: mode.enabled && mode.continuous ? "#A5B4FC" : colors.border,
-            backgroundColor: mode.enabled && mode.continuous ? "#EEF2FF" : colors.surface,
-            opacity: mode.enabled ? 1 : 0.5,
-            alignItems: "center",
-            justifyContent: "center",
-            flexDirection: "row",
-            gap: 6,
-          }}
-        >
-          <Ionicons name={mode.continuous ? "checkbox" : "square-outline"} size={16} color={mode.continuous ? "#4338CA" : colors.muted} />
-          <Text style={{ fontWeight: "700", fontSize: 12, color: mode.continuous ? "#3730A3" : colors.muted }}>Sürekli</Text>
-        </Pressable>
-      </Row>
-      <Field
-        label="Kontrol aralığı (dk)"
-        testID={`emp-loc-${prefix}-interval`}
-        value={String(mode.interval_minutes)}
-        onChangeText={(v) => onChange("interval_minutes", v === "" ? "" : Number(v.replace(/\D/g, "").slice(0, 3)))}
-        keyboardType="number-pad"
-        placeholder="0 = sürekli"
-      />
-      {prefix === "field" ? (
-        <Field
-          label="Konum dışı çıkış toleransı (saat)"
-          testID="emp-loc-field-exit-hours"
-          value={String(mode.exit_tolerance_hours ?? 0)}
-          onChangeText={(v) => onChange("exit_tolerance_hours", v === "" ? "" : Number(v.replace(/\D/g, "").slice(0, 2)))}
-          keyboardType="number-pad"
-          placeholder="0 = yok"
-        />
-      ) : null}
-    </View>
   );
 }
 

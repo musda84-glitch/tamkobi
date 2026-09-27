@@ -2308,7 +2308,8 @@ export const EMPLOYEE_CARD_ACTION_ICONS: Record<string, string> = {
   otpay: "time-outline",
   task: "briefcase-outline",
   overtime: "add-circle-outline",
-  location: "location-outline",
+  location: "chatbubble-ellipses-outline",
+  message: "chatbubble-ellipses-outline",
   expense: "receipt-outline",
   duties: "checkbox-outline",
 };
@@ -2317,7 +2318,14 @@ export function employeeCardActionIcon(key: string): string {
   return EMPLOYEE_CARD_ACTION_ICONS[key] || "ellipse-outline";
 }
 
-export const EMPLOYEE_LOCATION_SETTINGS_TITLE = "Konum Ayarları";
+export const EMPLOYEE_MESSAGE_TITLE = "Mesaj gönder";
+/** @deprecated Konum ayarları kart butonu kaldırıldı; mesaj gönder kullanın. */
+export const EMPLOYEE_LOCATION_SETTINGS_TITLE = EMPLOYEE_MESSAGE_TITLE;
+
+export function employeeMessageDefaultBody(emp?: { full_name?: string } | null): string {
+  const name = String(emp?.full_name || "").trim() || "Personel";
+  return `Merhaba ${name},`;
+}
 
 export function allowanceDue(emp?: Employee | null, balance?: EmployeeBalance | null, kind: "meal" | "transport" = "meal"): number {
   if (kind === "meal") return Number(balance?.meal_due ?? emp?.meal_allowance ?? 0) || 0;
