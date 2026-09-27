@@ -35,7 +35,13 @@ type LocationTracking = {
 };
 
 type AttendancePayload = {
-  employee?: { full_name: string; photo_url?: string | null; id?: string } | null;
+  employee?: {
+    full_name: string;
+    photo_url?: string | null;
+    id?: string;
+    department?: string | null;
+    position?: string | null;
+  } | null;
   now?: string;
   today_date?: string;
   today?: {
@@ -395,34 +401,61 @@ export function AttendanceScreen() {
   const earlyOk = earlyLeaveApproved(today);
   const consentOk = locationConsentAccepted(data?.location_consent);
   const liveSignal = signal || data?.location_signal;
+  const empRoleLine = [data?.employee?.position, data?.employee?.department].filter(Boolean).join(" · ");
 
   return (
     <Screen onRefresh={load}>
-      <View style={{ alignItems: "center", gap: 10, width: "100%" }} testID="mesai-employee-header">
+      <View style={{ width: "100%", gap: 8 }} testID="mesai-employee-header">
         {data?.employee ? (
-          <EmployeeAvatar
-            name={data.employee.full_name}
-            photoUrl={data.employee.photo_url}
-            size={72}
-            testID="mesai-employee-photo"
-            onLongPress={photoBusy ? undefined : () => { void uploadSelfPhoto(); }}
-          />
-        ) : null}
-        <Text
-          testID="mesai-employee-name"
-          style={{
-            textAlign: "center",
-            fontSize: 22,
-            fontWeight: "800",
-            color: colors.text,
-            width: "100%",
-          }}
-        >
-          {data?.employee?.full_name || "Personel kartı bağlı değilse giriş yapılamaz."}
-        </Text>
-        {data?.employee ? (
-          <Muted testID="mesai-photo-hint">Fotoğraf için basılı tutun{photoBusy ? " · yükleniyor…" : ""}</Muted>
-        ) : null}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 14, width: "100%" }}>
+            <EmployeeAvatar
+              name={data.employee.full_name}
+              photoUrl={data.employee.photo_url}
+              size={72}
+              testID="mesai-employee-photo"
+              onLongPress={photoBusy ? undefined : () => { void uploadSelfPhoto(); }}
+            />
+            <View style={{ flex: 1, gap: 2, minWidth: 0 }}>
+              <Text
+                testID="mesai-employee-name"
+                numberOfLines={2}
+                style={{
+                  textAlign: "left",
+                  fontSize: 20,
+                  fontWeight: "800",
+                  color: colors.text,
+                }}
+              >
+                {data.employee.full_name}
+              </Text>
+              {empRoleLine ? (
+                <Text
+                  testID="mesai-employee-role"
+                  numberOfLines={2}
+                  style={{ fontSize: 13, fontWeight: "600", color: colors.muted }}
+                >
+                  {empRoleLine}
+                </Text>
+              ) : (
+                <Muted testID="mesai-employee-role-empty">Bölüm / görev tanımsız</Muted>
+              )}
+              <Muted testID="mesai-photo-hint">Fotoğraf için basılı tutun{photoBusy ? " · yükleniyor…" : ""}</Muted>
+            </View>
+          </View>
+        ) : (
+          <Text
+            testID="mesai-employee-name"
+            style={{
+              textAlign: "center",
+              fontSize: 22,
+              fontWeight: "800",
+              color: colors.text,
+              width: "100%",
+            }}
+          >
+            Personel kartı bağlı değilse giriş yapılamaz.
+          </Text>
+        )}
       </View>
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
