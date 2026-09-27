@@ -2,7 +2,7 @@
   "expo": {
     "name": "TamKobi",
     "slug": "tamkobi",
-    "version": "1.0.42",
+    "version": "1.0.43",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tamkobi",
@@ -16,12 +16,15 @@
         "NSLocationWhenInUseUsageDescription": "Mesai girişi firma konumuna yakınken kaydedilir.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Uygulama kapalıyken veya arka plandayken de mesai konumunuz kaydedilir.",
         "NSLocationAlwaysUsageDescription": "Uygulama kapalıyken de mesai konumunuz kaydedilir.",
-        "UIBackgroundModes": ["remote-notification", "location"]
+        "UIBackgroundModes": [
+          "remote-notification",
+          "location"
+        ]
       }
     },
     "android": {
       "package": "com.tamkobi.app",
-      "versionCode": 43,
+      "versionCode": 44,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#0F172A",
@@ -82,7 +85,9 @@
         {
           "color": "#059669",
           "defaultChannel": "tamkobi_chime",
-          "sounds": ["./assets/sounds/tamkobi.wav"],
+          "sounds": [
+            "./assets/sounds/tamkobi.wav"
+          ],
           "enableBackgroundRemoteNotifications": true
         }
       ],
