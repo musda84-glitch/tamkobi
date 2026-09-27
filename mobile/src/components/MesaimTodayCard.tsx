@@ -308,29 +308,90 @@ export function MesaimTodayCard({
           <View
             testID="mesai-out-info"
             style={{
-              backgroundColor: "rgba(255,255,255,0.08)",
+              backgroundColor: "rgba(244,63,94,0.14)",
+              borderWidth: 1,
+              borderColor: "rgba(254,205,211,0.22)",
               borderRadius: radius.lg,
-              paddingVertical: 14,
-              paddingHorizontal: 12,
-              gap: 4,
+              paddingVertical: 16,
+              paddingHorizontal: 14,
+              gap: 12,
             }}
           >
-            <Text style={{ color: "#FECDD3", fontSize: 13, fontWeight: "800" }}>Çıkış</Text>
-            <Text style={{ color: "#E2E8F0", fontSize: 12, fontWeight: "600" }} testID="mesai-today-out">
-              {outInfo.headline}
-            </Text>
-            <Text style={{ color: "#94A3B8", fontSize: 11, lineHeight: 15 }} testID="mesai-out-base">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+              <View
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 14,
+                  backgroundColor: "rgba(244,63,94,0.28)",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="log-out-outline" size={24} color="#FECDD3" />
+              </View>
+              <View style={{ flex: 1, gap: 2, minWidth: 0 }}>
+                <Text style={{ color: "#FECDD3", fontSize: 12, fontWeight: "800", letterSpacing: 0.4 }}>ÇIKIŞ</Text>
+                <Text
+                  style={{ color: "#FFF", fontSize: 20, fontWeight: "900", letterSpacing: -0.3 }}
+                  testID="mesai-today-out"
+                  numberOfLines={1}
+                >
+                  {outInfo.headline}
+                </Text>
+              </View>
+            </View>
+            <Text style={{ color: "rgba(226,232,240,0.78)", fontSize: 12, lineHeight: 17 }} testID="mesai-out-base">
               {outInfo.baseNote}
             </Text>
-            {outInfo.scheduleLine ? (
-              <Text style={{ color: "#C4B5FD", fontSize: 11, fontWeight: "700", lineHeight: 15 }} testID="mesai-out-schedule">
-                {outInfo.scheduleLine}
-              </Text>
-            ) : null}
-            {outInfo.fieldDutyLine ? (
-              <Text style={{ color: "#A5B4FC", fontSize: 11, fontWeight: "700", lineHeight: 15 }} testID="mesai-out-field">
-                {outInfo.fieldDutyLine}
-              </Text>
+            {(outInfo.scheduleLine || outInfo.fieldDutyLine) ? (
+              <View
+                style={{
+                  borderTopWidth: 1,
+                  borderTopColor: "rgba(255,255,255,0.10)",
+                  paddingTop: 10,
+                  gap: 8,
+                }}
+              >
+                {outInfo.scheduleLine ? (
+                  <View
+                    testID="mesai-out-schedule"
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                      backgroundColor: "rgba(15,23,42,0.35)",
+                      borderRadius: 10,
+                      paddingVertical: 8,
+                      paddingHorizontal: 10,
+                    }}
+                  >
+                    <Ionicons name="time-outline" size={16} color="#E2E8F0" />
+                    <Text style={{ color: "#F8FAFC", fontSize: 12, fontWeight: "700", flex: 1 }}>
+                      {outInfo.scheduleLine}
+                    </Text>
+                  </View>
+                ) : null}
+                {outInfo.fieldDutyLine ? (
+                  <View
+                    testID="mesai-out-field"
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                      backgroundColor: "rgba(15,23,42,0.35)",
+                      borderRadius: 10,
+                      paddingVertical: 8,
+                      paddingHorizontal: 10,
+                    }}
+                  >
+                    <Ionicons name="navigate-outline" size={16} color="#E2E8F0" />
+                    <Text style={{ color: "#F8FAFC", fontSize: 12, fontWeight: "700", flex: 1 }} numberOfLines={2}>
+                      {outInfo.fieldDutyLine}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
             ) : null}
           </View>
         </View>
