@@ -17,6 +17,8 @@ import {
   employeeCardActionTitles,
   employeeCardActionIcon,
   EMPLOYEE_LOCATION_SETTINGS_TITLE,
+  EMPLOYEE_MESSAGE_TITLE,
+  employeeMessageDefaultBody,
   employeeCardActionsByGroup,
   employeePayMoves,
   enrichEmployeeBalance,
@@ -639,8 +641,11 @@ describe("employee card actions", () => {
     const titles = employeeCardActionTitles();
     expect(titles).toEqual(["Avans", "Maaş öde", "Yemek", "Yol", "Prim öde", "Mesai öde", "Görev ata", "+ Mesai"]);
     expect(employeeCardActionIcon("advance")).toBe("cash-outline");
-    expect(employeeCardActionIcon("location")).toBe("location-outline");
-    expect(EMPLOYEE_LOCATION_SETTINGS_TITLE).toBe("Konum Ayarları");
+    expect(employeeCardActionIcon("location")).toBe("chatbubble-ellipses-outline");
+    expect(employeeCardActionIcon("message")).toBe("chatbubble-ellipses-outline");
+    expect(EMPLOYEE_MESSAGE_TITLE).toBe("Mesaj gönder");
+    expect(EMPLOYEE_LOCATION_SETTINGS_TITLE).toBe("Mesaj gönder");
+    expect(employeeMessageDefaultBody({ full_name: "Ali" })).toBe("Merhaba Ali,");
     expect(employeeCardActionIcon("expense")).toBe("receipt-outline");
     expect(employeeCardActionIcon("duties")).toBe("checkbox-outline");
     expect(employeeCardActionTitles({ pay_type: "daily" })).toEqual([
