@@ -64,6 +64,8 @@ type AttendancePayload = {
     scheduled_start?: string;
     scheduled_end?: string;
     assigned_overtime_hours?: number;
+    assigned_overtime_start?: string;
+    assigned_overtime_end?: string;
     geo_confirm_request?: { status?: string; action?: string; reason?: string; proposed_time?: string; place?: string; distance_m?: number | null } | null;
   } | null;
   location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
