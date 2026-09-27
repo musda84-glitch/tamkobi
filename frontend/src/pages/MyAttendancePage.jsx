@@ -6,7 +6,7 @@ import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Tim
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInAlreadyDone, checkInOnceHint, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimInSubtitle, mesaimLongDate, mesaimOutInfoLines, mesaimScheduleLine, resolveMesaimTodayHours, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInAlreadyDone, checkInOnceHint, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimInSubtitle, mesaimLongDate, mesaimOutInfoLines, mesaimScheduleLine, mesaimShowsDayLeaveInsteadOfIntraday, resolveMesaimTodayHours, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
 import { mesaimGeoHeaderLine, workplaceHasCoords } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnelWage";
@@ -15,6 +15,15 @@ import { LocationConsentCard } from "../components/LocationConsentCard";
 import { LocationSignal } from "../components/LocationSignal";
 import { locationConsentAccepted, locationUnavailablePayload } from "../utils/locationConsent";
 import { useMesaimGate } from "../context/MesaimGateContext";
+
+const DAY_LEAVE_TYPES = { annual: "Yıllık İzin", sick: "Hastalık", unpaid: "Ücretsiz", other: "Diğer" };
+const dayLeaveDays = (start, end) => {
+  if (!start || !end) return 0;
+  const a = new Date(`${start}T00:00:00`);
+  const b = new Date(`${end}T00:00:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b < a) return 0;
+  return Math.round((b - a) / 86400000) + 1;
+};
 
 const Stat = ({ label, value, sub, tone = "slate", testId }) => (
   <div className={`rounded-2xl border p-4 bg-white ${tone === "indigo" ? "border-indigo-200" : tone === "rose" ? "border-rose-200" : "border-slate-200"}`} data-testid={testId}>
@@ -73,6 +82,11 @@ export default function MyAttendancePage() {
   const [intraReason, setIntraReason] = useState("");
   const [intraOut, setIntraOut] = useState("");
   const [intraReturn, setIntraReturn] = useState("");
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [leaveType, setLeaveType] = useState("annual");
+  const [leaveStart, setLeaveStart] = useState("");
+  const [leaveEnd, setLeaveEnd] = useState("");
+  const [leaveReason, setLeaveReason] = useState("");
   const [consentBusy, setConsentBusy] = useState(false);
   const [signal, setSignal] = useState(null);
   const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then(async (r) => {
@@ -182,6 +196,36 @@ export default function MyAttendancePage() {
     } catch (err) { toast.error(err.response?.data?.detail || "İptal edilemedi."); }
     finally { setBusy(null); }
   };
+  const openDayLeave = () => {
+    const today = String(data?.today_date || "").slice(0, 10);
+    setLeaveStart((prev) => prev || today);
+    setLeaveEnd((prev) => prev || today);
+    setLeaveOpen(true);
+  };
+  const requestDayLeave = async (e) => {
+    e.preventDefault();
+    const start = leaveStart;
+    const end = leaveEnd || leaveStart;
+    const days = dayLeaveDays(start, end);
+    if (!days) { toast.error("Geçerli başlangıç ve bitiş tarihi seçin."); return; }
+    setBusy("leave");
+    try {
+      const r = await axios.post(`${API_URL}/personnel/leaves/self`, {
+        type: leaveType,
+        start_date: start,
+        end_date: end,
+        days,
+        reason: leaveReason.trim().slice(0, 300),
+      }, { withCredentials: true });
+      toast.success(r.data?.message || "İzin talebi gönderildi.");
+      setLeaveOpen(false);
+      setLeaveReason("");
+      setLeaveStart("");
+      setLeaveEnd("");
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "İzin talebi gönderilemedi."); }
+    finally { setBusy(null); }
+  };
   const acceptConsent = async ({ accept_kvkk, accept_share }) => {
     setConsentBusy(true);
     try {
@@ -231,6 +275,8 @@ export default function MyAttendancePage() {
     scheduledEnd: hours.end || t?.scheduled_end || sch?.end,
     expectedEnd: t?.expected_end || mesaiEnd,
     assignedOvertimeHours: t?.assigned_overtime_hours,
+    assignedOvertimeStart: t?.assigned_overtime_start,
+    assignedOvertimeEnd: t?.assigned_overtime_end,
     workplace: data.workplace,
   });
   const habitText = habitLabel(data.habit, data.habit_label);
@@ -327,7 +373,6 @@ export default function MyAttendancePage() {
                   <LogOut className="w-6 h-6 text-rose-200" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[11px] font-extrabold tracking-wide text-rose-200">ÇIKIŞ</div>
                   <div className="text-xl font-black tracking-tight truncate" data-testid="my-att-today-out">{outInfo.headline}</div>
                 </div>
               </div>
@@ -415,8 +460,24 @@ export default function MyAttendancePage() {
             </div>
           )}
 
-          <div className="rounded-xl bg-white/10 border border-white/10 p-3 space-y-2" data-testid="my-att-intraday-leave">
-            {(() => {
+          <div className="rounded-xl bg-white/10 border border-white/10 p-3 space-y-2" data-testid={mesaimShowsDayLeaveInsteadOfIntraday(t?.check_in) ? "my-att-day-leave" : "my-att-intraday-leave"}>
+            {mesaimShowsDayLeaveInsteadOfIntraday(t?.check_in) ? (
+              !leaveOpen ? (
+                <button type="button" onClick={openDayLeave} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-sky-500/90 hover:bg-sky-400 text-slate-900 font-bold text-sm" data-testid="my-att-day-leave-open">İzin talep et</button>
+              ) : (
+                <form onSubmit={requestDayLeave} className="grid grid-cols-1 sm:grid-cols-6 gap-2 text-xs" data-testid="my-att-day-leave-form">
+                  <div className="sm:col-span-6 text-[10px] text-slate-300">Giriş yapmadan günlük izin talebi oluşturabilirsiniz. Gün içi izin için önce giriş yapın.</div>
+                  <div className="sm:col-span-2"><label className="block text-[10px] text-slate-300 mb-0.5">Tür</label><select value={leaveType} onChange={(e) => setLeaveType(e.target.value)} className="w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white" data-testid="my-att-day-leave-type">{Object.entries(DAY_LEAVE_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
+                  <div className="sm:col-span-1"><label className="block text-[10px] text-slate-300 mb-0.5">Başlangıç</label><input type="date" required value={leaveStart} onChange={(e) => { setLeaveStart(e.target.value); if (!leaveEnd || leaveEnd < e.target.value) setLeaveEnd(e.target.value); }} className="w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white" data-testid="my-att-day-leave-start" /></div>
+                  <div className="sm:col-span-1"><label className="block text-[10px] text-slate-300 mb-0.5">Bitiş</label><input type="date" required min={leaveStart} value={leaveEnd} onChange={(e) => setLeaveEnd(e.target.value)} className="w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white" data-testid="my-att-day-leave-end" /></div>
+                  <div className="sm:col-span-2"><label className="block text-[10px] text-slate-300 mb-0.5">Açıklama</label><input value={leaveReason} onChange={(e) => setLeaveReason(e.target.value)} placeholder="İsteğe bağlı" className="w-full bg-slate-950/40 border border-white/10 rounded-lg p-2 text-white" data-testid="my-att-day-leave-reason" /></div>
+                  <div className="sm:col-span-6 flex items-end gap-2">
+                    <button type="button" onClick={() => setLeaveOpen(false)} className="flex-1 px-3 py-2 rounded-lg border border-white/20 font-semibold" data-testid="my-att-day-leave-dismiss">Vazgeç</button>
+                    <button type="submit" disabled={busy === "leave" || !dayLeaveDays(leaveStart, leaveEnd || leaveStart)} className="flex-1 px-3 py-2 rounded-lg bg-sky-400 text-slate-900 font-bold disabled:opacity-50" data-testid="my-att-day-leave-submit">{busy === "leave" ? <Loader2 className="w-3.5 h-3.5 animate-spin inline" /> : null} İzin talep et{dayLeaveDays(leaveStart, leaveEnd || leaveStart) ? ` (${dayLeaveDays(leaveStart, leaveEnd || leaveStart)} gün)` : ""}</button>
+                  </div>
+                </form>
+              )
+            ) : (() => {
               const ilr = t?.intraday_leave_request || {};
               const dur = intradayLeaveMinutes(intraOut, intraReturn);
               if (ilr.status === "pending") {

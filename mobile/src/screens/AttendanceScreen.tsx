@@ -14,7 +14,7 @@ import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
 import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { resolveNowHm } from "../utils/clock";
-import { fmtDmy } from "../utils/calendar";
+import { fmtDmy, normalizeYmd } from "../utils/calendar";
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import {
   appendUploadBlob,
@@ -28,6 +28,7 @@ import { idOf } from "../utils/money";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { locationConsentAccepted, locationConsentPayload, locationUnavailablePayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
 import { syncLocationBackground } from "../utils/locationBackgroundSync";
+import { selfLeavePayload, validateSelfLeave } from "../utils/personnel";
 import { mesaimGeoHeaderLine, workplaceHasCoords, type Workplace } from "../utils/workplace";
 
 type LocationTracking = {
@@ -64,6 +65,8 @@ type AttendancePayload = {
     scheduled_start?: string;
     scheduled_end?: string;
     assigned_overtime_hours?: number;
+    assigned_overtime_start?: string;
+    assigned_overtime_end?: string;
     geo_confirm_request?: { status?: string; action?: string; reason?: string; proposed_time?: string; place?: string; distance_m?: number | null } | null;
   } | null;
   location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
@@ -131,6 +134,11 @@ export function AttendanceScreen() {
   const [intraReason, setIntraReason] = useState("");
   const [intraOut, setIntraOut] = useState("");
   const [intraReturn, setIntraReturn] = useState("");
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [leaveType, setLeaveType] = useState("annual");
+  const [leaveStart, setLeaveStart] = useState("");
+  const [leaveEnd, setLeaveEnd] = useState("");
+  const [leaveReason, setLeaveReason] = useState("");
   const [disputeId, setDisputeId] = useState<string | null>(null);
   const [disputeNote, setDisputeNote] = useState("");
   const [disputeIn, setDisputeIn] = useState("");
@@ -305,6 +313,35 @@ export function AttendanceScreen() {
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "Talep iptal edilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openDayLeave = () => {
+    const today = String(data?.today_date || "").slice(0, 10);
+    setLeaveStart((prev) => prev || today);
+    setLeaveEnd((prev) => prev || today);
+    setLeaveOpen(true);
+  };
+
+  const requestDayLeave = async () => {
+    const start = normalizeYmd(leaveStart);
+    const end = normalizeYmd(leaveEnd) || start;
+    const invalid = validateSelfLeave(start, end);
+    if (invalid) { setError(invalid); return; }
+    setBusy("leave");
+    setError(null);
+    try {
+      await post(client, "/personnel/leaves/self", selfLeavePayload(leaveType, start, end, leaveReason));
+      setMessage("İzin talebi gönderildi.");
+      setLeaveOpen(false);
+      setLeaveReason("");
+      setLeaveStart("");
+      setLeaveEnd("");
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "İzin talebi gönderilemedi."));
     } finally {
       setBusy(null);
     }
@@ -516,6 +553,11 @@ export function AttendanceScreen() {
           intraReason={intraReason}
           intraOut={intraOut}
           intraReturn={intraReturn}
+          leaveOpen={leaveOpen}
+          leaveType={leaveType}
+          leaveStart={leaveStart}
+          leaveEnd={leaveEnd}
+          leaveReason={leaveReason}
           geoPendingHint={geoPendingHint}
           checkInBlocked={checkedIn}
           checkInBlockedHint={checkInOnceMsg}
@@ -536,6 +578,17 @@ export function AttendanceScreen() {
           onIntraReason={setIntraReason}
           onIntraOut={setIntraOut}
           onIntraReturn={setIntraReturn}
+          onLeaveOpen={openDayLeave}
+          onLeaveClose={() => setLeaveOpen(false)}
+          onLeaveSubmit={requestDayLeave}
+          onLeaveType={setLeaveType}
+          onLeaveStart={(d) => {
+            const next = normalizeYmd(d);
+            setLeaveStart(next);
+            if (!leaveEnd || leaveEnd < next) setLeaveEnd(next);
+          }}
+          onLeaveEnd={(d) => setLeaveEnd(normalizeYmd(d))}
+          onLeaveReason={setLeaveReason}
         />
       ) : null}
       {consentOk ? (data?.records || []).slice(0, 14).map((r) => {
