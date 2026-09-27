@@ -16,7 +16,7 @@ import { QuickPayModal } from "../components/QuickPayModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
-import { cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint, locationCellCaption, locationControllerLabel, locationTrackingEnabled, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
+import { assignedOvertimeCellCaption, cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint, locationControllerLabel, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
 import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePresenceChip, fmtCardMoney, remainingLeaveDays } from "../utils/personnelCard";
 import { punchLabelClass } from "../utils/punchLabels";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
@@ -51,7 +51,6 @@ import {
   Image as ImageIcon,
   ChevronDown,
   ChevronUp,
-  MapPin,
   Users,
   Receipt,
 } from "lucide-react";
@@ -789,8 +788,9 @@ export default function PersonnelPage() {
                 </div>
               </div>
               {(() => {
-                const locOn = false;
                 const punch = todayAttendanceParts(attToday[empKey]);
+                const otCap = assignedOvertimeCellCaption(attToday[empKey]);
+                const otOn = otCap !== "--:--";
                 return (
                   <div
                     className="rounded-lg border p-0.5 bg-slate-50 border-slate-200"
@@ -798,16 +798,13 @@ export default function PersonnelPage() {
                   >
                     <div className="grid grid-cols-3 gap-0.5">
                       <div
-                        className="min-w-0 rounded-md px-1.5 py-0.5 text-left bg-white"
-                        data-testid={`employee-card-loc-toggle-${empKey}`}
-                        title="Konum takibi kapalı"
+                        className={`min-w-0 rounded-md px-1.5 py-0.5 text-left bg-white ${otOn ? "text-indigo-700" : "text-slate-400"}`}
+                        data-testid={`employee-card-assigned-ot-${empKey}`}
+                        title={otOn ? `Atanan fazla mesai ${otCap}` : "Atanan fazla mesai yok"}
                       >
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Konum</div>
-                        </div>
-                        <div className="flex items-center gap-0.5 text-[11px] font-extrabold leading-tight text-slate-500">
-                          <MapPin className="w-3 h-3 shrink-0" />
-                          {locationCellCaption(locOn)}
+                        <div className={`text-[9px] font-bold uppercase tracking-wide ${otOn ? "text-indigo-600" : "text-slate-400"}`}>Mesai</div>
+                        <div className={`text-[12px] font-black leading-tight ${otOn ? "text-indigo-800" : "text-slate-400"}`}>
+                          {otCap}
                         </div>
                       </div>
                       <div className="min-w-0 col-span-2" data-testid={`employee-card-today-${empKey}`}>
