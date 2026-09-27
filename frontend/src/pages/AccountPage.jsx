@@ -2,11 +2,16 @@ import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
-import { Building2, CreditCard, KeyRound, Loader2, Plus, Puzzle, Settings, UserRound, Wallet } from "lucide-react";
+import { Building2, CreditCard, KeyRound, Loader2, MapPin, Plus, Puzzle, Settings, UserRound, Wallet } from "lucide-react";
 import { Link } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { MyPlanPanel } from "../components/saas/MyPlanPanel";
 import { EMBEDDED_SETTINGS_PARAM } from "../utils/settingsTabs";
+import {
+  locationConsentAccepted,
+  locationConsentRevokePath,
+  locationConsentStatusLabel,
+} from "../utils/locationConsent";
 import SettingsPage from "./SettingsPage";
 
 const TABS = [
@@ -58,6 +63,40 @@ const ROLE_LABELS = { admin: "Yönetici", accountant: "Muhasebe", sales: "Satı�
 const ProfileTab = ({ user }) => {
   const [f, setF] = useState({ current_password: "", new_password: "", new_password2: "" });
   const [busy, setBusy] = useState(false);
+  const [consent, setConsent] = useState(null);
+  const [consentBusy, setConsentBusy] = useState(false);
+  const linkedEmployee = Boolean(user?.employee_id);
+  const consentOk = locationConsentAccepted(consent);
+
+  const loadConsent = useCallback(async () => {
+    if (!linkedEmployee) {
+      setConsent(null);
+      return;
+    }
+    try {
+      const r = await axios.get(`${API_URL}/personnel/me`, { withCredentials: true });
+      setConsent(r.data?.location_consent || null);
+    } catch {
+      setConsent(null);
+    }
+  }, [linkedEmployee]);
+
+  useEffect(() => { loadConsent(); }, [loadConsent]);
+
+  const revokeConsent = async () => {
+    if (!linkedEmployee || !consentOk) return;
+    setConsentBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}${locationConsentRevokePath()}`, {}, { withCredentials: true });
+      setConsent(r.data?.location_consent || { accept_kvkk: false, accept_share: false, accepted: false });
+      toast.success(r.data?.message || "Konum sözleşmesi iptal edildi. Mesaim paneli kilitlendi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Sözleşme iptal edilemedi.");
+    } finally {
+      setConsentBusy(false);
+    }
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     if (f.new_password !== f.new_password2) { toast.error("Yeni şifreler eşleşmiyor."); return; }
@@ -97,6 +136,34 @@ const ProfileTab = ({ user }) => {
           <p className="text-[10px] text-slate-400 mt-1">Destek ve bildirimlerde bu kullanıcı ID’sini kullanabilirsiniz.</p>
         </div>
       </div>
+      {linkedEmployee ? (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3" data-testid="account-location-consent">
+          <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-emerald-600" /> Konum paylaşımı sözleşmeleri
+          </h3>
+          <p className="text-[11px] text-slate-600" data-testid="account-location-consent-status">{locationConsentStatusLabel(consent)}</p>
+          {consentOk ? (
+            <>
+              <p className="text-[11px] text-slate-500">İptal ederseniz Mesaim paneli kilitlenir; yeniden kabul etmeniz gerekir.</p>
+              <button
+                type="button"
+                onClick={revokeConsent}
+                disabled={consentBusy}
+                className="px-4 py-2 bg-rose-600 text-white rounded-xl font-bold inline-flex items-center gap-1.5 disabled:opacity-60 hover:bg-rose-700"
+                data-testid="account-location-consent-revoke"
+              >
+                {consentBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                Sözleşmeyi iptal et
+              </button>
+            </>
+          ) : (
+            <p className="text-[11px] text-slate-500">
+              Mesaim ekranından KVKK (K) ve konum (KK) sözleşmelerini kabul edebilirsiniz.{" "}
+              <Link to="/mesai" className="text-emerald-700 font-semibold hover:underline">Mesaim’e git →</Link>
+            </p>
+          )}
+        </div>
+      ) : null}
       <form onSubmit={submit} className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3" data-testid="account-change-password">
         <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2"><KeyRound className="w-4 h-4 text-amber-500" /> Şifre değiştir</h3>
         <p className="text-[11px] text-slate-500">Hesabınızın şifresini buradan güncelleyin. Mevcut şifre doğrulanır; yeni şifre en az 6 karakter olmalıdır.</p>

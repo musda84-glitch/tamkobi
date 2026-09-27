@@ -2,19 +2,19 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, LogIn, Loader2, MapPin, CheckCircle2, AlertTriangle, CalendarDays, Timer, Moon, ShieldCheck, MessageSquareWarning, DoorOpen, ArrowLeftRight } from "lucide-react";
+import { Clock, LogIn, LogOut, Loader2, MapPin, CheckCircle2, AlertTriangle, Timer, Moon, ShieldCheck, MessageSquareWarning, DoorOpen, ArrowLeftRight } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, geoConfirmHint, habitLabel, managerTimeEditHint, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInAlreadyDone, checkInOnceHint, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimInSubtitle, mesaimLongDate, mesaimOutInfoLines, mesaimScheduleLine, resolveMesaimTodayHours, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
-import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHasCoords, workplaceHint } from "../utils/workplace";
+import { mesaimGeoHeaderLine, workplaceHasCoords } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnelWage";
 import { fmtDmy } from "../utils/dateFormat";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { LocationSignal } from "../components/LocationSignal";
 import { locationConsentAccepted, locationUnavailablePayload } from "../utils/locationConsent";
-
+import { useMesaimGate } from "../context/MesaimGateContext";
 
 const Stat = ({ label, value, sub, tone = "slate", testId }) => (
   <div className={`rounded-2xl border p-4 bg-white ${tone === "indigo" ? "border-indigo-200" : tone === "rose" ? "border-rose-200" : "border-slate-200"}`} data-testid={testId}>
@@ -62,6 +62,7 @@ const RecordRow = ({ r, onConfirm, onRejectTimeEdit, onDispute }) => {
 
 export default function MyAttendancePage() {
   const { user } = useAuth();
+  const { refresh: refreshMesaimGate } = useMesaimGate();
   const [month, setMonth] = useState(() => attendanceCalendarMonth());
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -74,7 +75,11 @@ export default function MyAttendancePage() {
   const [intraReturn, setIntraReturn] = useState("");
   const [consentBusy, setConsentBusy] = useState(false);
   const [signal, setSignal] = useState(null);
-  const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then((r) => { setData(r.data); setSignal(r.data.location_signal || null); }).catch(() => toast.error("Puantaj yüklenemedi.")), [month]);
+  const load = useCallback(() => axios.get(`${API_URL}/personnel/attendance/me?month=${month}`, { withCredentials: true }).then(async (r) => {
+    setData(r.data);
+    setSignal(r.data.location_signal || null);
+    await refreshMesaimGate();
+  }).catch(() => toast.error("Puantaj yüklenemedi.")), [month, refreshMesaimGate]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     const id = setInterval(() => {
@@ -193,26 +198,62 @@ export default function MyAttendancePage() {
   if (!data) return <div className="p-8 text-sm text-slate-400">Yükleniyor…</div>;
   const s = data.summary, t = data.today, sch = data.schedule;
   const todayWin = data.today_window || {};
-  const mesaiStart = todayWin.start || t?.scheduled_start || sch?.start;
-  const mesaiEnd = todayWin.end || t?.scheduled_end || t?.expected_end || sch?.end;
-  const mesaiBreak = todayWin.break_minutes ?? sch?.break_minutes;
+  const hours = resolveMesaimTodayHours({ todayWindow: todayWin, today: t, schedule: sch });
+  const mesaiStart = hours.start;
+  const mesaiEnd = hours.end;
+  const mesaiBreak = hours.breakMinutes;
+  const scheduleLine = mesaimScheduleLine(
+    mesaiStart && mesaiEnd ? { start: mesaiStart, end: mesaiEnd, break_minutes: mesaiBreak ?? undefined } : sch,
+    { label: "Bugün" },
+  );
+  const dateLine = mesaimLongDate(data.today_date);
+  const holidaySuffix = mesaimDateHolidaySuffix({
+    todayDate: data.today_date,
+    isWorkDay: todayWin.is_work_day,
+    workDays: sch?.work_days,
+  });
+  const earlyArrivalLine = mesaimEarlyArrivalLine({
+    checkIn: t?.check_in,
+    earlyMinutes: t?.early_arrival_minutes,
+    mesaiStart,
+  });
   const consentOk = locationConsentAccepted(data.location_consent);
   const liveSignal = signal || data.location_signal;
-  const workDays = sch ? sch.work_days.map((d) => data.day_labels[d]).join(", ") : "";
-  const earlyOk = earlyLeaveApproved(t);
-  const geoPlace = data.workplace || data.location;
-  const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo: sch?.require_geo });
-  const geoInLabel = mesaimGeoInLabel({ workplace: geoPlace, requireGeo: sch?.require_geo });
-  const outLine = t?.check_out
-    ? `Çıkış ${t.check_out}`
-    : !t?.check_in
-      ? "önce giriş yapın"
-      : "puantaj / beklenen mesai bitişinden";
+  const workDayNums = sch?.work_days || [];
+  const geoHeader = mesaimGeoHeaderLine({
+    workplace: data.workplace || data.location,
+    location: data.location,
+    requireGeo: data.workplace?.kind === "task" || sch?.require_geo !== false,
+  });
+  const outInfo = mesaimOutInfoLines({
+    checkIn: t?.check_in,
+    checkOut: t?.check_out,
+    scheduledEnd: hours.end || t?.scheduled_end || sch?.end,
+    expectedEnd: t?.expected_end || mesaiEnd,
+    assignedOvertimeHours: t?.assigned_overtime_hours,
+    workplace: data.workplace,
+  });
   const habitText = habitLabel(data.habit, data.habit_label);
+  const dayLabs = data.day_labels || ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-5" data-testid="my-attendance-page">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-        <div><h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2 flex-wrap" data-testid="my-att-title"><Clock className="w-7 h-7 text-emerald-600 shrink-0" /> Personel Giriş Çıkış Kayıtları</h1><p className="text-xs sm:text-sm text-slate-500">{data.employee ? `${data.employee.full_name} · ${data.employee.department || ""} ${data.employee.position ? "· " + data.employee.position : ""}` : `${user?.name || ""} — kullanıcınız bir personel kartına bağlı değil`}</p></div>
+        <div>
+          <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-2 flex-wrap" data-testid="my-att-title">
+            <Clock className="w-7 h-7 text-emerald-600 shrink-0" /> Mesaim
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500" data-testid="my-att-header-geo">
+            {data.employee
+              ? `${data.employee.full_name}${data.employee.department || data.employee.position ? ` · ${[data.employee.position, data.employee.department].filter(Boolean).join(" · ")}` : ""}`
+              : `${user?.name || ""} — kullanıcınız bir personel kartına bağlı değil`}
+          </p>
+          {data.employee ? (
+            <p className={`mt-1 text-[11px] font-semibold inline-flex items-center gap-1 ${geoHeader.on ? "text-emerald-700" : "text-slate-500"}`} data-testid="my-att-geo-in">
+              <MapPin className="w-3.5 h-3.5" />
+              {[geoHeader.place, geoHeader.status].filter(Boolean).join(" · ")}
+            </p>
+          ) : null}
+        </div>
         <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Aylık dönem<input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-xl p-2 text-xs font-semibold text-slate-800 normal-case tracking-normal" data-testid="my-att-month" /></label>
       </div>
       {!data.employee && <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800 space-y-1" data-testid="my-att-no-employee"><p>Giriş/çıkış, <b>erken çıkış</b> ve <b>gün içi izin</b> talebi için yöneticinizin Personel → Personel Kartı → <b>Sistem Kullanıcısı</b> bölümünden hesabınızı personel kartınıza bağlaması gerekir.</p><p className="text-amber-700/80">Bağlantı sonrası bugün kartta “Gün içi izin talep et” görünür (çıkış yapılmış olsa da).</p></div>}
@@ -231,51 +272,87 @@ export default function MyAttendancePage() {
         </div>
       )}
       {data.employee && consentOk && (
-        <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 sm:p-6 shadow-lg space-y-5" data-testid="my-att-today">
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-            <div className="text-center sm:text-left">
-              <div className="text-5xl sm:text-4xl font-black font-mono tracking-tight" data-testid="my-att-clock">{data.now}</div>
-              <div className="mt-2"><LocationSignal signal={liveSignal} className="text-white/90" testId="my-att-signal" /></div>
-              <div className="text-xs text-slate-300 mt-1">{new Date(data.today_date + "T00:00:00").toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" })}{(todayWin.is_work_day ?? sch.work_days.includes((new Date(data.today_date + "T00:00:00").getDay() + 6) % 7)) ? "" : " · tatil günü (çalışma = fazla mesai)"}</div>
-            </div>
-            <div className="text-[11px] text-slate-300 flex flex-wrap justify-center sm:justify-end gap-x-4 gap-y-1">
-              <span className="inline-flex items-center gap-1" data-testid="my-att-today-window"><Timer className="w-3.5 h-3.5 text-emerald-400" /> Bugün {mesaiStart}–{mesaiEnd} · mola {mesaiBreak} dk</span>
-              <span className="inline-flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-emerald-400" /> {workDays}</span>
-              <span className={`inline-flex items-center gap-1 ${data.workplace?.kind === "task" ? "text-indigo-200" : ""}`} data-testid="my-att-workplace">
-                <MapPin className={`w-3.5 h-3.5 ${data.workplace?.kind === "task" ? "text-indigo-300" : "text-emerald-400"}`} />
-                {workplaceHint(data.workplace || data.location, sch.require_geo !== false)}
-              </span>
-              <span
-                className={`inline-flex items-center px-2 py-0.5 rounded-full font-extrabold ${geoInOn ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-200"}`}
-                data-testid="my-att-geo-in"
-              >
-                {geoInLabel}
-              </span>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <button onClick={onCheckInClick} disabled={!!busy || checkedIn} className="flex flex-col items-center justify-center gap-1.5 py-6 sm:py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition" data-testid="my-att-checkin">
-              {busy === "check_in" ? <Loader2 className="w-8 h-8 animate-spin" /> : <LogIn className="w-8 h-8" />}<span className="text-lg sm:text-base">{checkedIn ? "Giriş yapıldı" : "Giriş Yap"}</span><span className="text-xs font-mono font-normal opacity-90" data-testid="my-att-today-in">{t?.check_in ? `Giriş ${t.check_in}` : "basınca o anki saat yazılır"}</span>
-            </button>
-            <div className="rounded-2xl bg-white/10 border border-white/10 px-4 py-5 flex flex-col justify-center gap-1" data-testid="my-att-checkout-info">
-              <div className="text-sm font-extrabold text-rose-200">Çıkış</div>
-              <div className="text-xs font-mono text-slate-200" data-testid="my-att-today-out">{outLine}</div>
-              <div className="text-[11px] text-slate-400 leading-snug">
-                Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır
-                {t?.assigned_overtime_hours
-                  ? ` (atanan +${t.assigned_overtime_hours} sa · beklenen ${t.expected_end || mesaiEnd})`
-                  : t?.expected_end
-                    ? ` (beklenen ${t.expected_end})`
-                    : mesaiEnd
-                      ? ` (beklenen ${mesaiEnd})`
-                      : ""}.
+        <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-5 sm:p-6 shadow-lg space-y-4" data-testid="my-att-today">
+          <div className="rounded-xl bg-white/[0.07] border border-white/10 px-3.5 py-3 space-y-2" data-testid="my-att-today-window">
+            <div className="flex items-center gap-3">
+              <div className="text-3xl sm:text-[34px] font-black font-mono tracking-tight leading-none" data-testid="my-att-clock">{data.now || "--:--"}</div>
+              <div className="flex-1 min-w-0 space-y-0.5">
+                <LocationSignal signal={liveSignal} className="text-white/90" testId="my-att-signal" />
+                {dateLine ? (
+                  <div className="text-[11px] font-semibold text-slate-300 truncate">{dateLine}{holidaySuffix}</div>
+                ) : null}
               </div>
             </div>
+            {(scheduleLine || workDayNums.length > 0) ? (
+              <div className="border-t border-white/10 pt-2 space-y-1.5">
+                {scheduleLine ? (
+                  <div className="flex items-center gap-2 text-[13px] font-extrabold text-slate-50">
+                    <Timer className="w-3.5 h-3.5 text-sky-200 shrink-0" />
+                    <span className="min-w-0">{scheduleLine}</span>
+                  </div>
+                ) : null}
+                {workDayNums.length > 0 ? (
+                  <div className="flex flex-wrap gap-1" data-testid="my-att-work-days">
+                    {workDayNums.map((n) => {
+                      const lab = dayLabs[Number(n)] || "";
+                      if (!lab) return null;
+                      return (
+                        <span key={`wd-${n}`} className="px-1.5 py-0.5 rounded-md bg-white/10 text-[10px] font-bold text-slate-200">{lab}</span>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
-          {t?.early_arrival_minutes > 0 ? (
-            <div className="text-[11px] text-sky-200 font-semibold" data-testid="my-att-early-arrival">
-              Erken giriş {t.check_in} kaydedildi · çalışma saati {mesaiStart} başlangıcından sayılır ({t.early_arrival_minutes} dk erken)
+
+          <div className="space-y-2.5">
+            <button
+              type="button"
+              onClick={onCheckInClick}
+              disabled={!!busy || checkedIn}
+              className="w-full flex flex-col items-center justify-center gap-1 py-5 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] disabled:bg-slate-700 disabled:text-slate-300 disabled:active:scale-100 rounded-2xl font-bold transition"
+              data-testid="my-att-checkin"
+            >
+              {busy === "check_in" ? <Loader2 className="w-7 h-7 animate-spin" /> : <LogIn className="w-7 h-7" />}
+              <span className="text-base">{checkedIn ? "Giriş yapıldı" : "Giriş Yap"}</span>
+              <span className="text-[11px] font-semibold opacity-90" data-testid="my-att-today-in">
+                {checkedIn ? mesaimInSubtitle(t?.check_in) : "basınca o anki saat yazılır"}
+              </span>
+            </button>
+
+            <div className="rounded-2xl bg-rose-500/15 border border-rose-200/20 px-3.5 py-4 space-y-3" data-testid="my-att-checkout-info">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-xl bg-rose-500/30 flex items-center justify-center shrink-0">
+                  <LogOut className="w-6 h-6 text-rose-200" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-extrabold tracking-wide text-rose-200">ÇIKIŞ</div>
+                  <div className="text-xl font-black tracking-tight truncate" data-testid="my-att-today-out">{outInfo.headline}</div>
+                </div>
+              </div>
+              <p className="text-xs text-slate-300/90 leading-snug" data-testid="my-att-out-base">{outInfo.baseNote}</p>
+              {(outInfo.scheduleLine || outInfo.fieldDutyLine) ? (
+                <div className="border-t border-white/10 pt-2.5 space-y-2">
+                  {outInfo.scheduleLine ? (
+                    <div className="flex items-center gap-2 rounded-lg bg-slate-950/35 px-2.5 py-2 text-xs font-bold text-slate-100" data-testid="my-att-out-schedule">
+                      <Timer className="w-3.5 h-3.5 text-sky-200 shrink-0" />
+                      <span>{outInfo.scheduleLine}</span>
+                    </div>
+                  ) : null}
+                  {outInfo.fieldDutyLine ? (
+                    <div className="flex items-center gap-2 rounded-lg bg-indigo-500/20 px-2.5 py-2 text-xs font-bold text-indigo-100" data-testid="my-att-out-duty">
+                      <MapPin className="w-3.5 h-3.5 text-indigo-200 shrink-0" />
+                      <span>{outInfo.fieldDutyLine}</span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
+          </div>
+
+          {earlyArrivalLine ? (
+            <div className="text-[11px] text-sky-200 font-semibold" data-testid="my-att-early-arrival">{earlyArrivalLine}</div>
           ) : null}
           {habitText ? <div className="text-[11px] text-emerald-200" data-testid="my-att-habit">{habitText}</div> : null}
           {checkedIn && checkInOnceMsg ? (

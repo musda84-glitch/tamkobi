@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { useAuth, API_URL } from "../context/AuthContext";
+import { useMesaimGate } from "../context/MesaimGateContext";
 import { NotificationBell } from "./NotificationBell";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
 import { RadialQuickMenu } from "./RadialQuickMenu";
 import { isPublicPath } from "../utils/publicPath";
+import { mesaimExclusivePathAllowed } from "../utils/attendanceSelf";
 import TamKobiMark from "./TamKobiMark";
 import { AccountMenu } from "./AccountMenu";
 import { BuildStamp } from "./BuildStamp";
@@ -138,6 +140,7 @@ const SupportConnectionChip = ({ companyId, impersonation, isAdmin, onExitImpers
 
 export default function MainLayout({ children, onOpenQuickAction }) {
   const { user, activeCompany, logout, feature, license, moduleOn, addonOn, loading, menuItems: orderedMenu, moveModulePath, permPath } = useAuth();
+  const { locked: mesaimLocked, ready: mesaimReady } = useMesaimGate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -161,7 +164,9 @@ export default function MainLayout({ children, onOpenQuickAction }) {
     "/accountant": Calculator, "/installments": CalendarClock, "/atolye": MonitorPlay, "/reports": BarChart3,
     "/trash": Trash2, "/edoc-inbox": Inbox, "/sistem": ShieldCheck, "/b2b-yonetim": ShoppingCart,
   };
-  const menuItems = (orderedMenu || []).map((m) => ({ ...m, icon: ICONS[m.path] || Package }));
+  const menuItems = (orderedMenu || [])
+    .map((m) => ({ ...m, icon: ICONS[m.path] || Package }))
+    .filter((m) => !mesaimLocked || m.path === "/mesai");
   const navCounts = useNavCounts(activeCompany?.id || activeCompany?._id);
   const exitImpersonation = async () => {
     try {
@@ -178,6 +183,10 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const routeKey = (permPath || ((p) => p))(location.pathname);
   const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
   const lockedModule = !moduleOn(location.pathname);
+
+  if (mesaimReady && mesaimLocked && !mesaimExclusivePathAllowed(location.pathname) && !isPublicPath(location.pathname)) {
+    return <Navigate to="/mesai" replace />;
+  }
 
   const roleLabels = {
     admin: "Yönetici",
