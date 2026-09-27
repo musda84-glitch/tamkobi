@@ -21,7 +21,7 @@ export function fieldUsesDatePicker(testID?: string | null, placeholder?: string
   return ph.includes("YYYY-MM-DD") || /date-input$/.test(id) || /(^|-)date$/.test(id);
 }
 
-/** Mesai / saat test id, “Saat” etiketi veya Örn: 2 kutusu → saat seçici. */
+/** Saat seçici (HH:MM). Süre/adet (örn. fazla mesai saati sayısı) için false. */
 export function fieldUsesTimePicker(
   testID?: string | null,
   label?: string | null,
@@ -30,11 +30,12 @@ export function fieldUsesTimePicker(
   const id = String(testID || "");
   const lab = String(label || "").replace(/İ/g, "i").replace(/I/g, "ı").toLowerCase().trim();
   const ph = String(placeholder || "");
-  if (/(hours-input|time-input)$/.test(id)) return true;
+  // ot-hours-input / süre (saat) → sayı; clock alanları time-input veya başlangıç/bitiş.
+  if (/hours-input$/.test(id)) return false;
+  if (/time-input$/.test(id)) return true;
   if (/dispute-(note|in|out)/.test(id)) return true;
-  if (lab === "saat" || lab === "toplam saat" || lab === "başlangıç saati" || lab === "bitiş saati") return true;
+  if (lab === "başlangıç saati" || lab === "bitiş saati") return true;
   if (lab === "doğru giriş" || lab === "doğru çıkış" || lab === "düzeltme açıklaması") return true;
-  if (/^örn:\s*2([.,]\d+)?(\s*(sa|saat)?)?$/i.test(ph.trim())) return true;
   if (/\b\d{1,2}:\d{2}\b/.test(ph) && /olmalı|çıkış|giriş/i.test(ph)) return true;
   return false;
 }

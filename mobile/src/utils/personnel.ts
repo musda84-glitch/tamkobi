@@ -2023,10 +2023,10 @@ export function validateOvertime(hours: string, start?: string, end?: string): s
   if (ranged != null && ranged > 0) return null;
   const clock = hoursFromTimeRange("00:00", hours);
   if (clock != null && clock > 0) return null;
-  if (!String(hours || "").trim() && !(start || end)) return "Mesai saati veya saat aralığı girin.";
+  if (!String(hours || "").trim() && !(start || end)) return "Mesai bitiminden sonra kaç saat olacağını girin.";
   if (start || end) return "Saat aralığını başlangıç ve bitiş olarak girin.";
   const n = num(hours);
-  if (!(n > 0)) return "Mesai saati 0'dan büyük olmalı.";
+  if (!(n > 0)) return "Mesai süresi 0'dan büyük olmalı.";
   return null;
 }
 

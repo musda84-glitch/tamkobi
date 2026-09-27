@@ -603,8 +603,8 @@ describe("leave helpers", () => {
 
 describe("overtime assign", () => {
   it("requires a positive hour amount and ISO date", () => {
-    expect(validateOvertime("")).toBe("Mesai saati veya saat aralığı girin.");
-    expect(validateOvertime("0")).toBe("Mesai saati 0'dan büyük olmalı.");
+    expect(validateOvertime("")).toBe("Mesai bitiminden sonra kaç saat olacağını girin.");
+    expect(validateOvertime("0")).toBe("Mesai süresi 0'dan büyük olmalı.");
     expect(validateOvertime("2,5")).toBeNull();
     expect(validateOvertime("02:30")).toBeNull();
     expect(validateOvertime("", "18:00", "20:30")).toBeNull();
