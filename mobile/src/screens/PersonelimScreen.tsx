@@ -13,7 +13,7 @@ import { colors } from "../theme";
 import { normalizeYmd } from "../utils/calendar";
 import { leaveTr, statusTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
-import { type AssignedDuty } from "../utils/assignedDuty";
+import { type AssignedDuty, archivedAssignedDuties, openAssignedDuties } from "../utils/assignedDuty";
 import { locationConsentPayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
 import { advanceFormToggleIcon, advanceFormToggleLabel, advanceRequestPayload, leaveDays, selfLeavePayload, validateAdvance, validateSelfLeave } from "../utils/personnel";
 
@@ -125,6 +125,7 @@ export function PersonelimScreen() {
   const [advanceOpen, setAdvanceOpen] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState<string | null>(null);
   const [consentBusy, setConsentBusy] = useState(false);
+  const [showArchivedTasks, setShowArchivedTasks] = useState(false);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -152,7 +153,9 @@ export function PersonelimScreen() {
   const leave = data?.leave_balance;
   const comp = data?.compensation;
   const tasks = data?.tasks || [];
-  const openTasks = useMemo(() => tasks.filter((t) => !t.done), [tasks]);
+  const openTasks = useMemo(() => openAssignedDuties(tasks), [tasks]);
+  const archivedTasks = useMemo(() => archivedAssignedDuties(tasks), [tasks]);
+  const visibleTasks = showArchivedTasks ? archivedTasks : openTasks;
   const wos = data?.work_orders || [];
   const payrolls = data?.payrolls || [];
   const bonuses = data?.bonuses || [];
@@ -492,28 +495,54 @@ export function PersonelimScreen() {
               color={colors.secondary}
               testID="personelim-goto-atolye"
             />
-            {tasks.map((t, i) => (
-              <AssignedDutyCard
-                key={t.id || String(i)}
-                duty={t}
-                index={i}
-                testID={`personelim-task-${t.id || i}`}
-                showAtolye
-                reportSitePresence
-                onAtolye={() => go("Atolye")}
-                approveBusy={taskBusyId === t.id}
-                onApprove={() => completeTask(t)}
-                onChanged={(next) => {
-                  if (next?.id) {
-                    setData((prev) => prev ? {
-                      ...prev,
-                      tasks: (prev.tasks || []).map((row) => (row.id === next.id ? { ...row, ...next } : row)),
-                    } : prev);
-                  }
-                  void load();
-                }}
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <Muted testID="personelim-tasks-count">
+                {showArchivedTasks
+                  ? `Arşiv · ${archivedTasks.length} tamamlanan`
+                  : `${openTasks.length} açık görev`}
+              </Muted>
+              {archivedTasks.length ? (
+                <Pressable
+                  testID="personelim-tasks-archive-toggle"
+                  onPress={() => setShowArchivedTasks((v) => !v)}
+                  style={{ paddingVertical: 6, paddingHorizontal: 4 }}
+                >
+                  <Text style={{ color: colors.primary, fontWeight: "700", fontSize: 13 }}>
+                    {showArchivedTasks ? "Açık görevler" : `Arşiv (${archivedTasks.length})`}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+            {!visibleTasks.length ? (
+              <Empty
+                icon="checkbox-outline"
+                title={showArchivedTasks ? "Arşivde tamamlanan görev yok." : "Açık görev kalmadı."}
+                hint={showArchivedTasks ? undefined : archivedTasks.length ? "Tamamlananlar arşivde." : undefined}
               />
-            ))}
+            ) : (
+              visibleTasks.map((t, i) => (
+                <AssignedDutyCard
+                  key={t.id || String(i)}
+                  duty={t}
+                  index={i}
+                  testID={`personelim-task-${t.id || i}`}
+                  showAtolye
+                  reportSitePresence
+                  onAtolye={() => go("Atolye")}
+                  approveBusy={taskBusyId === t.id}
+                  onApprove={() => completeTask(t)}
+                  onChanged={(next) => {
+                    if (next?.id) {
+                      setData((prev) => prev ? {
+                        ...prev,
+                        tasks: (prev.tasks || []).map((row) => (row.id === next.id ? { ...row, ...next } : row)),
+                      } : prev);
+                    }
+                    void load();
+                  }}
+                />
+              ))
+            )}
           </>
         )
       ) : null}

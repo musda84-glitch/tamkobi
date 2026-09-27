@@ -8,6 +8,7 @@ import {
   matchAssignedDuty,
   dutyFromCurrent,
   applyDutyPhotoVisibility,
+  archivedAssignedDuties,
   dutyCanShowPhotos,
   dutyCanUploadPhotos,
   dutyHasProject,
@@ -18,6 +19,7 @@ import {
   dutyShowAtolye,
   dutyShowSite,
   dutyWorkflowProgress,
+  openAssignedDuties,
   pendingDutyPhotoCount,
   photoFaded,
   photoVisibility,
@@ -26,6 +28,16 @@ import {
 import { workMapsLink } from "./mapsLink";
 
 describe("assigned duty field extras", () => {
+  test("splits open vs archived completed duties", () => {
+    const rows = [
+      { id: "a", title: "Açık", done: false },
+      { id: "b", title: "Tamam", done: true },
+      { id: "c", title: "Açık 2" },
+    ];
+    expect(openAssignedDuties(rows).map((t) => t.id)).toEqual(["a", "c"]);
+    expect(archivedAssignedDuties(rows).map((t) => t.id)).toEqual(["b"]);
+  });
+
   test("opens maps for a project assignment and tracks workflow", () => {
     const t = {
       id: "t1",

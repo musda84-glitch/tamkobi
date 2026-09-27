@@ -71,6 +71,15 @@ export function dutySubtitle(t) {
   return [t.project_number, t.project_name || t.park_name, due].filter(Boolean).join(" · ");
 }
 
+export function openAssignedDuties(tasks) {
+  return (tasks || []).filter((t) => !t.done);
+}
+
+/** Tamamlanan (arşiv) görevler — personel listesinde varsayılan gizli. */
+export function archivedAssignedDuties(tasks) {
+  return (tasks || []).filter((t) => !!t.done);
+}
+
 export function dutyIsField(t) {
   return (t?.kind || "field") !== "office";
 }

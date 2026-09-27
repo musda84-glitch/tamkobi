@@ -131,6 +131,11 @@ export function openAssignedDuties(tasks: AssignedDuty[] | null | undefined): As
   return (tasks || []).filter((t) => !t.done);
 }
 
+/** Tamamlanan (arşiv) görevler — personel listesinde varsayılan gizli. */
+export function archivedAssignedDuties(tasks: AssignedDuty[] | null | undefined): AssignedDuty[] {
+  return (tasks || []).filter((t) => !!t.done);
+}
+
 export function dutyStatusLabel(t: AssignedDuty): string {
   return t.done ? "Tamam" : "Açık";
 }

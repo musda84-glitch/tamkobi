@@ -7,7 +7,7 @@ import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { colors, radius, spacing } from "../theme";
-import { openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
+import { archivedAssignedDuties, openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
 import { fmtDate, idOf } from "../utils/money";
 import type { Employee } from "../utils/personnel";
 import {
@@ -118,6 +118,7 @@ export function AtolyeScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [duties, setDuties] = useState<AssignedDuty[]>([]);
   const [dutyBusyId, setDutyBusyId] = useState<string | null>(null);
+  const [showArchivedDuties, setShowArchivedDuties] = useState(false);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -249,6 +250,8 @@ export function AtolyeScreen() {
 
   const finishLast = finishing && finishing.step_no === finishing.step_count && (finishing.step_count || 0) > 0;
   const openDuties = useMemo(() => openAssignedDuties(duties), [duties]);
+  const archivedDuties = useMemo(() => archivedAssignedDuties(duties), [duties]);
+  const visibleDuties = showArchivedDuties ? archivedDuties : openDuties;
 
   const approveDuty = async (t: AssignedDuty) => {
     if (!t.id) {
@@ -301,19 +304,40 @@ export function AtolyeScreen() {
       ) : null}
       {duties.length ? (
         <View testID="shopfloor-duties">
-          <Text style={{ fontWeight: "800", color: colors.text }}>Atanan Görevler ({openDuties.length} açık)</Text>
-          {duties.map((t, i) => (
-            <AssignedDutyCard
-              key={t.id || String(i)}
-              duty={t}
-              index={i}
-              testID={`shopfloor-duty-${t.id || i}`}
-              reportSitePresence
-              approveBusy={dutyBusyId === t.id}
-              onApprove={() => approveDuty(t)}
-              onChanged={() => load()}
-            />
-          ))}
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <Text style={{ fontWeight: "800", color: colors.text }}>
+              {showArchivedDuties
+                ? `Arşiv · ${archivedDuties.length} tamamlanan`
+                : `Atanan Görevler (${openDuties.length} açık)`}
+            </Text>
+            {archivedDuties.length ? (
+              <Pressable
+                testID="shopfloor-duties-archive-toggle"
+                onPress={() => setShowArchivedDuties((v) => !v)}
+                style={{ paddingVertical: 4 }}
+              >
+                <Text style={{ color: colors.primary, fontWeight: "700", fontSize: 13 }}>
+                  {showArchivedDuties ? "Açık görevler" : `Arşiv (${archivedDuties.length})`}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+          {!visibleDuties.length ? (
+            <Muted>{showArchivedDuties ? "Arşivde tamamlanan görev yok." : "Açık görev kalmadı."}</Muted>
+          ) : (
+            visibleDuties.map((t, i) => (
+              <AssignedDutyCard
+                key={t.id || String(i)}
+                duty={t}
+                index={i}
+                testID={`shopfloor-duty-${t.id || i}`}
+                reportSitePresence
+                approveBusy={dutyBusyId === t.id}
+                onApprove={() => approveDuty(t)}
+                onChanged={() => load()}
+              />
+            ))
+          )}
         </View>
       ) : null}
 
