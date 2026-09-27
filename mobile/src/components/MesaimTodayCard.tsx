@@ -261,37 +261,132 @@ export function MesaimTodayCard({
         gap: 16,
       }}
     >
-      <View style={{ alignItems: "center", gap: 6 }}>
-        <Text testID="mesai-clock" style={{ fontSize: 44, fontWeight: "900", color: "#fff", letterSpacing: -1, ...typeface("900") }}>
+      <View style={{ alignItems: "center", gap: 12 }}>
+        <Text testID="mesai-clock" style={{ fontSize: 48, fontWeight: "900", color: "#fff", letterSpacing: -1.5, ...typeface("900") }}>
           {now || "--:--"}
         </Text>
-        {showSignal ? <LocationSignalDot signal={liveSignal} testID="mesai-signal" onDark /> : null}
-        {dateLine ? (
-          <Text style={{ color: DARK_META, fontSize: 12 }}>
-            {dateLine}{holidaySuffix}
-          </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 10 }}>
+          {showSignal ? <LocationSignalDot signal={liveSignal} testID="mesai-signal" onDark compact /> : null}
+          {dateLine ? (
+            <Text style={{ color: DARK_META, fontSize: 12, fontWeight: "600" }}>
+              {dateLine}{holidaySuffix}
+            </Text>
+          ) : null}
+        </View>
+
+        {(scheduleLine || workDays) ? (
+          <View
+            testID="mesai-today-window"
+            style={{
+              alignSelf: "stretch",
+              backgroundColor: "rgba(255,255,255,0.07)",
+              borderWidth: 1,
+              borderColor: "rgba(255,255,255,0.10)",
+              borderRadius: 14,
+              paddingVertical: 12,
+              paddingHorizontal: 14,
+              gap: 10,
+            }}
+          >
+            {scheduleLine ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 11,
+                    backgroundColor: "rgba(14,165,233,0.22)",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="time-outline" size={18} color="#BAE6FD" />
+                </View>
+                <Text style={{ color: "#F8FAFC", fontSize: 14, fontWeight: "800", flex: 1 }} numberOfLines={2}>
+                  {scheduleLine}
+                </Text>
+              </View>
+            ) : null}
+            {workDays ? (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }} testID="mesai-work-days">
+                {(schedule?.work_days || []).map((n) => {
+                  const lab = (dayLabels && dayLabels[Number(n)]) || ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"][Number(n)] || "";
+                  if (!lab) return null;
+                  return (
+                    <View
+                      key={`wd-${n}`}
+                      style={{
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 8,
+                        backgroundColor: "rgba(255,255,255,0.10)",
+                      }}
+                    >
+                      <Text style={{ color: "#E2E8F0", fontSize: 11, fontWeight: "700" }}>{lab}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null}
+          </View>
         ) : null}
-        {scheduleLine ? (
-          <Text style={{ color: DARK_META, fontSize: 11, fontWeight: "600" }} testID="mesai-today-window">
-            {scheduleLine}{workDays ? ` · ${workDays}` : ""}
-          </Text>
-        ) : null}
-        <Text style={{ color: workplace?.kind === "task" ? "#C7D2FE" : "#6EE7B7", fontSize: 12, fontWeight: "600", textAlign: "center" }} testID="mesai-workplace">
-          {workplaceHint(workplace || location, requireGeo !== false)}
-        </Text>
+
         <View
-          testID="mesai-geo-in"
           style={{
-            marginTop: 2,
-            paddingHorizontal: 10,
-            paddingVertical: 4,
-            borderRadius: 999,
-            backgroundColor: geoInOn ? "rgba(16,185,129,0.22)" : "rgba(244,63,94,0.22)",
+            alignSelf: "stretch",
+            backgroundColor: workplace?.kind === "task" ? "rgba(99,102,241,0.16)" : "rgba(16,185,129,0.12)",
+            borderWidth: 1,
+            borderColor: workplace?.kind === "task" ? "rgba(199,210,254,0.22)" : "rgba(110,231,183,0.22)",
+            borderRadius: 14,
+            paddingVertical: 12,
+            paddingHorizontal: 14,
+            gap: 10,
           }}
         >
-          <Text style={{ color: geoInOn ? "#6EE7B7" : "#FECDD3", fontSize: 12, fontWeight: "800" }}>
-            {geoInLabel}
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 11,
+                backgroundColor: workplace?.kind === "task" ? "rgba(99,102,241,0.28)" : "rgba(16,185,129,0.25)",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons
+                name={workplace?.kind === "task" ? "navigate-outline" : "business-outline"}
+                size={18}
+                color={workplace?.kind === "task" ? "#C7D2FE" : "#6EE7B7"}
+              />
+            </View>
+            <Text
+              style={{
+                color: workplace?.kind === "task" ? "#C7D2FE" : "#A7F3D0",
+                fontSize: 13,
+                fontWeight: "700",
+                flex: 1,
+                lineHeight: 18,
+              }}
+              testID="mesai-workplace"
+            >
+              {workplaceHint(workplace || location, requireGeo !== false)}
+            </Text>
+          </View>
+          <View
+            testID="mesai-geo-in"
+            style={{
+              alignSelf: "flex-start",
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 999,
+              backgroundColor: geoInOn ? "rgba(16,185,129,0.28)" : "rgba(244,63,94,0.28)",
+            }}
+          >
+            <Text style={{ color: geoInOn ? "#A7F3D0" : "#FECDD3", fontSize: 12, fontWeight: "800" }}>
+              {geoInLabel}
+            </Text>
+          </View>
         </View>
       </View>
 
