@@ -1,5 +1,6 @@
 import { useAuth } from "@/auth/AuthContext";
 import { useBadges } from "@/auth/BadgeContext";
+import { useMesaimGate } from "@/auth/MesaimGateContext";
 import { AccountMenu } from "@/components/AccountMenu";
 import { HomeHeaderTitle } from "@/components/HomeHeaderTitle";
 import { MesaimHeaderTitle } from "@/components/MesaimHeaderTitle";
@@ -9,7 +10,8 @@ import { typeface } from "@/theme/softFont";
 import { resolveMediaUrl } from "@/utils/media";
 import { showFinanceSubstituteTabs, showSelfPersonnelTabs } from "@/utils/permissions";
 import { Ionicons } from "@expo/vector-icons";
-import { Tabs } from "expo-router";
+import { Tabs, useRouter } from "expo-router";
+import { useEffect } from "react";
 import { Text } from "react-native";
 
 function tabIconColor(color: unknown): string {
@@ -19,10 +21,19 @@ function tabIconColor(color: unknown): string {
 export default function TabsLayout() {
   const { can, moduleOn, user, activeCompany, license, baseUrl } = useAuth();
   const { unread } = useBadges();
+  const { locked, ready } = useMesaimGate();
+  const router = useRouter();
   const show = (path: string) => can(path) && moduleOn(path);
   const selfTabs = showSelfPersonnelTabs(user, license);
   const financeTabs = showFinanceSubstituteTabs(user);
   const homeBadge = unread > 99 ? "99+" : unread > 0 ? unread : undefined;
+  const onlyMesaim = locked && selfTabs;
+
+  useEffect(() => {
+    if (!ready || !onlyMesaim) return;
+    router.replace("/mesai");
+  }, [onlyMesaim, ready, router]);
+
   return (
     <Tabs
       screenOptions={({ route }) => ({
@@ -35,13 +46,16 @@ export default function TabsLayout() {
         tabBarLabelStyle: { fontSize: 10, ...typeface("700") },
         headerRight: () => <AccountMenu />,
         headerBackVisible: false,
-        headerLeft: route.name === "index" ? undefined : () => <HeaderBack fallback="/" />,
+        headerLeft: onlyMesaim || route.name === "index" || route.name === "mesai"
+          ? undefined
+          : () => <HeaderBack fallback="/" />,
       })}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: "Özet",
+          href: onlyMesaim ? null : undefined,
           headerTitleAlign: "left",
           headerTitle: () => (
             <HomeHeaderTitle
@@ -50,7 +64,7 @@ export default function TabsLayout() {
               logoUrl={resolveMediaUrl(baseUrl, activeCompany?.logo_url)}
             />
           ),
-          tabBarBadge: homeBadge,
+          tabBarBadge: onlyMesaim ? undefined : homeBadge,
           tabBarBadgeStyle: { backgroundColor: colors.danger, color: "#fff", fontSize: 10, fontWeight: "800" },
           tabBarIcon: ({ color, size }) => <Ionicons name="grid" color={tabIconColor(color)} size={size} />,
         }}
@@ -59,7 +73,7 @@ export default function TabsLayout() {
         name="saha"
         options={{
           title: "Saha",
-          href: show("/saha") ? undefined : null,
+          href: onlyMesaim ? null : show("/saha") ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="phone-portrait" color={tabIconColor(color)} size={size} />,
         }}
       />
@@ -67,7 +81,7 @@ export default function TabsLayout() {
         name="stok"
         options={{
           title: "Stok",
-          href: show("/stock") ? undefined : null,
+          href: onlyMesaim ? null : show("/stock") ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="barcode" color={tabIconColor(color)} size={size} />,
         }}
       />
@@ -88,7 +102,7 @@ export default function TabsLayout() {
           tabBarLabel: ({ color }) => (
             <Text style={{ color, fontSize: 9, fontWeight: "700", textAlign: "center" }}>Benim Sayfam</Text>
           ),
-          href: selfTabs && show("/personelim") ? undefined : null,
+          href: onlyMesaim ? null : selfTabs && show("/personelim") ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="person" color={tabIconColor(color)} size={size} />,
         }}
       />
@@ -99,7 +113,7 @@ export default function TabsLayout() {
           tabBarLabel: ({ color }) => (
             <Text style={{ color, fontSize: 9, fontWeight: "700", textAlign: "center" }}>Kasa & Banka</Text>
           ),
-          href: financeTabs && show("/banking") ? undefined : null,
+          href: onlyMesaim ? null : financeTabs && show("/banking") ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="wallet" color={tabIconColor(color)} size={size} />,
         }}
       />
@@ -107,7 +121,7 @@ export default function TabsLayout() {
         name="cariler"
         options={{
           title: "Cariler",
-          href: financeTabs && show("/contacts") ? undefined : null,
+          href: onlyMesaim ? null : financeTabs && show("/contacts") ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="people" color={tabIconColor(color)} size={size} />,
         }}
       />
@@ -115,6 +129,7 @@ export default function TabsLayout() {
         name="daha"
         options={{
           title: "Daha",
+          href: onlyMesaim ? null : undefined,
           tabBarIcon: ({ color, size }) => <Ionicons name="ellipsis-horizontal" color={tabIconColor(color)} size={size} />,
         }}
       />
