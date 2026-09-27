@@ -59,6 +59,16 @@ def location_consent_store(req: dict, accepted_at: str) -> dict:
     }
 
 
+def location_consent_revoke_store(revoked_at: str) -> dict:
+    """Personel Ayarlar'dan sözleşmeyi iptal eder; Mesaim yeniden kilitlenir."""
+    return {
+        "accept_kvkk": False,
+        "accept_share": False,
+        "accepted_at": None,
+        "revoked_at": revoked_at,
+    }
+
+
 def location_signal_view(emp: Optional[dict] = None) -> dict:
     row = emp or {}
     ok = row.get("location_last_ok")

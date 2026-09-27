@@ -1,6 +1,7 @@
 import {
   CONSENT_WARNING,
   locationConsentAccepted,
+  locationConsentStatusLabel,
   locationUnavailablePayload,
   normalizeLocationConsent,
   normalizeLocationSignal,
@@ -18,6 +19,11 @@ describe("locationConsent", () => {
     expect(validateLocationConsent({ accept_kvkk: true, accept_share: true })).toBeNull();
     expect(locationConsentAccepted({ accept_kvkk: true, accept_share: true, accepted: true })).toBe(true);
     expect(locationConsentAccepted({ accept_kvkk: true })).toBe(false);
+  });
+
+  it("shows settings status for accept vs revoke", () => {
+    expect(locationConsentStatusLabel({ accept_kvkk: true, accept_share: true, accepted: true })).toMatch(/kabul/);
+    expect(locationConsentStatusLabel({ accept_kvkk: false, accept_share: false })).toMatch(/kilitli/);
   });
 
   it("signal tones match last location outcome", () => {
