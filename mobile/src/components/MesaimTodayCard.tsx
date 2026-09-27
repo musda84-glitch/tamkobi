@@ -254,54 +254,55 @@ export function MesaimTodayCard({
         gap: 16,
       }}
     >
-      <View style={{ alignItems: "center", gap: 12 }}>
-        <Text testID="mesai-clock" style={{ fontSize: 48, fontWeight: "900", color: "#fff", letterSpacing: -1.5, ...typeface("900") }}>
-          {now || "--:--"}
-        </Text>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: 10 }}>
-          {showSignal ? <LocationSignalDot signal={liveSignal} testID="mesai-signal" onDark compact /> : null}
-          {dateLine ? (
-            <Text style={{ color: DARK_META, fontSize: 12, fontWeight: "600" }}>
-              {dateLine}{holidaySuffix}
-            </Text>
-          ) : null}
+      <View
+        testID="mesai-today-window"
+        style={{
+          alignSelf: "stretch",
+          backgroundColor: "rgba(255,255,255,0.07)",
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.10)",
+          borderRadius: 14,
+          paddingVertical: 12,
+          paddingHorizontal: 14,
+          gap: 8,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <Text
+            testID="mesai-clock"
+            style={{ fontSize: 34, fontWeight: "900", color: "#fff", letterSpacing: -1.2, ...typeface("900") }}
+          >
+            {now || "--:--"}
+          </Text>
+          <View style={{ flex: 1, gap: 2, minWidth: 0 }}>
+            {showSignal ? <LocationSignalDot signal={liveSignal} testID="mesai-signal" onDark compact /> : null}
+            {dateLine ? (
+              <Text style={{ color: DARK_META, fontSize: 11, fontWeight: "600" }} numberOfLines={1}>
+                {dateLine}{holidaySuffix}
+              </Text>
+            ) : null}
+          </View>
         </View>
 
         {(scheduleLine || workDays) ? (
           <View
-            testID="mesai-today-window"
             style={{
-              alignSelf: "stretch",
-              backgroundColor: "rgba(255,255,255,0.07)",
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.10)",
-              borderRadius: 14,
-              paddingVertical: 12,
-              paddingHorizontal: 14,
-              gap: 10,
+              borderTopWidth: 1,
+              borderTopColor: "rgba(255,255,255,0.08)",
+              paddingTop: 8,
+              gap: 6,
             }}
           >
             {scheduleLine ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <View
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 11,
-                    backgroundColor: "rgba(14,165,233,0.22)",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Ionicons name="time-outline" size={18} color="#BAE6FD" />
-                </View>
-                <Text style={{ color: "#F8FAFC", fontSize: 14, fontWeight: "800", flex: 1 }} numberOfLines={2}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="time-outline" size={15} color="#BAE6FD" />
+                <Text style={{ color: "#F8FAFC", fontSize: 13, fontWeight: "800", flex: 1 }} numberOfLines={2}>
                   {scheduleLine}
                 </Text>
               </View>
             ) : null}
             {workDays ? (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }} testID="mesai-work-days">
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }} testID="mesai-work-days">
                 {(schedule?.work_days || []).map((n) => {
                   const lab = (dayLabels && dayLabels[Number(n)]) || ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"][Number(n)] || "";
                   if (!lab) return null;
@@ -309,13 +310,13 @@ export function MesaimTodayCard({
                     <View
                       key={`wd-${n}`}
                       style={{
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 8,
+                        paddingHorizontal: 6,
+                        paddingVertical: 2,
+                        borderRadius: 6,
                         backgroundColor: "rgba(255,255,255,0.10)",
                       }}
                     >
-                      <Text style={{ color: "#E2E8F0", fontSize: 11, fontWeight: "700" }}>{lab}</Text>
+                      <Text style={{ color: "#E2E8F0", fontSize: 10, fontWeight: "700" }}>{lab}</Text>
                     </View>
                   );
                 })}
