@@ -1,6 +1,7 @@
 import {
   CONSENT_WARNING,
   locationConsentAccepted,
+  locationConsentStatusLabel,
   locationUnavailablePayload,
   normalizeLocationConsent,
   normalizeLocationSignal,
@@ -19,6 +20,11 @@ describe("locationConsent", () => {
     expect(locationConsentAccepted({ accept_kvkk: true, accept_share: true, accepted: true })).toBe(true);
     expect(locationConsentAccepted({ accept_kvkk: true })).toBe(false);
     expect(empty.share_text).toMatch(/tek seferlik/);
+  });
+
+  test("labels settings revoke status", () => {
+    expect(locationConsentStatusLabel({ accept_kvkk: true, accept_share: true, accepted: true })).toMatch(/kabul/);
+    expect(locationConsentStatusLabel(null)).toMatch(/kilitli/);
   });
 
   test("signal tones match last location outcome", () => {

@@ -88,6 +88,17 @@ export function locationConsentPayload(): { accept_kvkk: true; accept_share: tru
   return { accept_kvkk: true, accept_share: true };
 }
 
+/** Ayarlar: personelin sözleşmeyi kendisinin iptal etmesi. */
+export function locationConsentRevokePath(): string {
+  return "/personnel/me/location-consent/revoke";
+}
+
+export function locationConsentStatusLabel(raw?: LocationConsent | null): string {
+  return locationConsentAccepted(raw)
+    ? "KVKK (K) ve konum paylaşımı (KK) kabul edildi."
+    : "Sözleşme kapalı — Mesaim kilitli.";
+}
+
 export function normalizeLocationSignal(raw?: LocationSignal | null): LocationSignalView {
   const row = raw && typeof raw === "object" ? raw : {};
   let tone: LocationSignalView["tone"] = "amber";

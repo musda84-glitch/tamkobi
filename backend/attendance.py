@@ -3212,6 +3212,28 @@ async def accept_location_consent(req: Dict[str, Any], request: Request):
     }
 
 
+@router.post("/personnel/me/location-consent/revoke")
+async def revoke_location_consent(request: Request):
+    """Personel Ayarlar'dan KVKK / konum sözleşmesini iptal eder."""
+    user = await _current_user(request)
+    emp = await employee_for_user(user)
+    if not emp:
+        raise HTTPException(status_code=403, detail="Kullanıcınız bir personel kartına bağlı değil (Personel Kartı → Sistem Kullanıcısı).")
+    if not location_consent.location_consent_accepted(emp):
+        return {
+            "status": "success",
+            "message": "Konum sözleşmesi zaten kapalı.",
+            "location_consent": location_consent.normalize_location_consent(emp.get("location_consent")),
+        }
+    stored = location_consent.location_consent_revoke_store(_now())
+    await _db.employees.update_one({"_id": emp["_id"]}, {"$set": {"location_consent": stored}})
+    return {
+        "status": "success",
+        "message": "Konum sözleşmesi iptal edildi. Mesaim paneli kilitlendi.",
+        "location_consent": location_consent.normalize_location_consent(stored),
+    }
+
+
 async def apply_location_exit_wage_deduction(emp: dict, rec: dict, ler: dict) -> dict:
     """Kesinti evet ise günlük ücret kadar borç (borc) yazar."""
     amount = round(float(personnel_wage.reference_daily_wage(emp) or 0), 2)

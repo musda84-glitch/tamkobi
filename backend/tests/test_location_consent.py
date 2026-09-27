@@ -1,6 +1,7 @@
 from location_consent import (
     location_consent_accepted,
     location_consent_denied_detail,
+    location_consent_revoke_store,
     location_consent_store,
     location_signal_view,
     normalize_location_consent,
@@ -20,6 +21,11 @@ def test_normalize_and_validate_location_consent():
     stored = location_consent_store({"accept_kvkk": True, "accept_share": True}, "2026-09-23T10:00:00+00:00")
     assert location_consent_accepted({"location_consent": stored}) is True
     assert location_consent_accepted({"location_consent": {"accept_kvkk": True}}) is False
+    revoked = location_consent_revoke_store("2026-09-27T12:00:00+00:00")
+    assert revoked["accept_kvkk"] is False
+    assert revoked["accept_share"] is False
+    assert location_consent_accepted({"location_consent": revoked}) is False
+    assert normalize_location_consent(revoked)["accepted"] is False
 
 
 def test_location_signal_view():

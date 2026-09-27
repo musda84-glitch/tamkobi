@@ -15,6 +15,12 @@ import {
   resolveUploadBlob,
   uploadedImageUrl,
 } from "../utils/formDataFile";
+import {
+  locationConsentAccepted,
+  locationConsentRevokePath,
+  locationConsentStatusLabel,
+  type LocationConsent,
+} from "../utils/locationConsent";
 import { idOf } from "../utils/money";
 import { playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 import { getStoredPushToken, presentLocalNotification, registerDevicePush, type PushStatus } from "../utils/pushRegister";
@@ -24,6 +30,11 @@ type MeEmployee = {
   _id?: string;
   full_name?: string;
   photo_url?: string | null;
+};
+
+type MePayload = {
+  employee?: MeEmployee | null;
+  location_consent?: LocationConsent | null;
 };
 
 export function SettingsScreen() {
@@ -38,20 +49,26 @@ export function SettingsScreen() {
   const [pushStatus, setPushStatus] = useState<PushStatus>("idle");
   const [pushBusy, setPushBusy] = useState(false);
   const [me, setMe] = useState<MeEmployee | null>(null);
+  const [consent, setConsent] = useState<LocationConsent | null>(null);
+  const [consentBusy, setConsentBusy] = useState(false);
 
   const linkedEmployee = Boolean(user?.employee_id);
   const empId = String(user?.employee_id || idOf(me) || "").trim();
+  const consentOk = locationConsentAccepted(consent);
 
   const loadMe = useCallback(async () => {
     if (!linkedEmployee) {
       setMe(null);
+      setConsent(null);
       return;
     }
     try {
-      const r = await get<{ employee?: MeEmployee | null }>(client, "/personnel/me");
+      const r = await get<MePayload>(client, "/personnel/me");
       setMe(r?.employee || null);
+      setConsent(r?.location_consent || null);
     } catch {
       setMe(null);
+      setConsent(null);
     }
   }, [client, linkedEmployee]);
 
@@ -124,6 +141,25 @@ export function SettingsScreen() {
     }
   };
 
+  const revokeConsent = async () => {
+    if (!linkedEmployee || !consentOk) return;
+    setConsentBusy(true);
+    setError(null);
+    try {
+      const r = await post<{ message?: string; location_consent?: LocationConsent }>(
+        client,
+        locationConsentRevokePath(),
+        {},
+      );
+      setConsent(r?.location_consent || { accept_kvkk: false, accept_share: false, accepted: false });
+      setMessage(r?.message || "Konum sözleşmesi iptal edildi. Mesaim paneli kilitlendi.");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Sözleşme iptal edilemedi."));
+    } finally {
+      setConsentBusy(false);
+    }
+  };
+
   return (
     <Screen>
       <H1>Ayarlar</H1>
@@ -162,6 +198,27 @@ export function SettingsScreen() {
               ) : null}
             </View>
           </View>
+        </Card>
+      ) : null}
+
+      {linkedEmployee ? (
+        <Card testID="settings-location-consent">
+          <Text style={{ fontWeight: "800", color: colors.text }}>Konum paylaşımı sözleşmeleri</Text>
+          <Muted testID="settings-location-consent-status">{locationConsentStatusLabel(consent)}</Muted>
+          {consentOk ? (
+            <>
+              <Muted>İptal ederseniz Mesaim paneli kilitlenir; yeniden kabul etmeniz gerekir.</Muted>
+              <PrimaryButton
+                title={consentBusy ? "İptal ediliyor…" : "Sözleşmeyi iptal et"}
+                testID="settings-location-consent-revoke"
+                onPress={revokeConsent}
+                loading={consentBusy}
+                color={colors.danger}
+              />
+            </>
+          ) : (
+            <Muted>Mesaim ekranından KVKK (K) ve konum (KK) sözleşmelerini kabul edebilirsiniz.</Muted>
+          )}
         </Card>
       ) : null}
 
