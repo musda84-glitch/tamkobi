@@ -2,6 +2,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { useBadges } from "@/auth/BadgeContext";
 import { AccountMenu } from "@/components/AccountMenu";
 import { HomeHeaderTitle } from "@/components/HomeHeaderTitle";
+import { MesaimHeaderTitle } from "@/components/MesaimHeaderTitle";
 import { HeaderBack } from "@/components/StackHeader";
 import { colors } from "@/theme";
 import { typeface } from "@/theme/softFont";
@@ -74,6 +75,8 @@ export default function TabsLayout() {
         name="mesai"
         options={{
           title: "Mesaim",
+          headerTitleAlign: "left",
+          headerTitle: () => <MesaimHeaderTitle />,
           href: selfTabs ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="time" color={tabIconColor(color)} size={size} />,
         }}
