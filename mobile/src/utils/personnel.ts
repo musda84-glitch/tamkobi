@@ -120,6 +120,20 @@ export function locationCellCaption(on: boolean): string {
   return on ? "Açık" : "Kapalı";
 }
 
+/** Personel kartı: atanan fazla mesai — giriş/çıkış gibi kısa değer. */
+export function assignedOvertimeCellCaption(today?: {
+  assigned_overtime_hours?: number;
+  assigned_overtime_start?: string;
+  assigned_overtime_end?: string;
+} | null): string {
+  const start = String(today?.assigned_overtime_start || "").trim().slice(0, 5);
+  const end = String(today?.assigned_overtime_end || "").trim().slice(0, 5);
+  if (/^\d{1,2}:\d{2}$/.test(start) && /^\d{1,2}:\d{2}$/.test(end)) return `${start}–${end}`;
+  const h = Number(today?.assigned_overtime_hours) || 0;
+  if (h > 0) return `+${h} sa`;
+  return "--:--";
+}
+
 export function locationTrackingTogglePayload(raw: LocationTracking | null | undefined, enabled: boolean): LocationTracking {
   const company = initLocMode(raw);
   const field = initLocMode(raw?.field || raw);
@@ -1168,6 +1182,9 @@ export type AttendanceToday = {
   status?: string;
   late_minutes?: number;
   assigned_overtime_hours?: number;
+  assigned_overtime_start?: string;
+  assigned_overtime_end?: string;
+  expected_end?: string;
   location_inside_at?: string;
   location_left_at?: string;
   location_exit_request?: { status?: string } | null;
