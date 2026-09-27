@@ -2247,7 +2247,7 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
         today_wd = local_now(schedule).weekday()
     today_win = day_window(schedule, today_wd)
     habit = attendance_habit(enriched)
-    return {"employee": {"id": emp["_id"], "full_name": emp["full_name"], "department": emp.get("department"), "position": emp.get("position")},
+    return {"employee": {"id": emp["_id"], "full_name": emp["full_name"], "department": emp.get("department"), "position": emp.get("position"), "photo_url": emp.get("photo_url")},
             "month": month, "records": enriched, "summary": summarize(enriched), "today": _clean(today_e) if today_e else None,
             "schedule": schedule, "day_labels": DAY_LABELS, "location": loc, "workplace": workplace,
             "company_location": company.get("location"), "location_tracking": lt,

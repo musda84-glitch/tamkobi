@@ -4,6 +4,7 @@ import { Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
+import { EmployeeAvatar } from "../components/EmployeeAvatar";
 import { Card, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
@@ -25,7 +26,7 @@ type LocationTracking = {
 };
 
 type AttendancePayload = {
-  employee?: { full_name: string } | null;
+  employee?: { full_name: string; photo_url?: string | null; id?: string } | null;
   now?: string;
   today_date?: string;
   today?: {
@@ -344,18 +345,28 @@ export function AttendanceScreen() {
 
   return (
     <Screen onRefresh={load}>
-      <Text
-        testID="mesai-employee-name"
-        style={{
-          textAlign: "center",
-          fontSize: 22,
-          fontWeight: "800",
-          color: colors.text,
-          width: "100%",
-        }}
-      >
-        {data?.employee?.full_name || "Personel kartı bağlı değilse giriş yapılamaz."}
-      </Text>
+      <View style={{ alignItems: "center", gap: 10, width: "100%" }} testID="mesai-employee-header">
+        {data?.employee ? (
+          <EmployeeAvatar
+            name={data.employee.full_name}
+            photoUrl={data.employee.photo_url}
+            size={72}
+            testID="mesai-employee-photo"
+          />
+        ) : null}
+        <Text
+          testID="mesai-employee-name"
+          style={{
+            textAlign: "center",
+            fontSize: 22,
+            fontWeight: "800",
+            color: colors.text,
+            width: "100%",
+          }}
+        >
+          {data?.employee?.full_name || "Personel kartı bağlı değilse giriş yapılamaz."}
+        </Text>
+      </View>
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
       {data?.employee && !consentOk ? (

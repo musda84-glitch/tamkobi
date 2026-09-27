@@ -29,9 +29,12 @@ def roles_data(admin_headers):
 
 def test_roles_features_shape(roles_data):
     feats = roles_data.get("features")
-    assert isinstance(feats, list) and len(feats) == 5
+    assert isinstance(feats, list) and len(feats) == 7
     keys = {f["key"] for f in feats}
-    assert keys == {"view_prices", "header_barcode", "header_virman", "header_invoice", "header_ai"}
+    assert keys == {
+        "view_prices", "header_barcode", "header_virman", "header_invoice", "header_ai",
+        "order_cargo_label", "order_more_actions",
+    }
     for f in feats:
         assert f.get("label")
     # Each role has features dict
@@ -120,7 +123,8 @@ def test_zzz_restore_warehouse_features(admin_headers):
     wh = next(x for x in r.json()["roles"] if x["code"] == "warehouse")
     r2 = requests.put(f"{BASE_URL}/api/roles/{wh['id']}",
                       json={"features": {"view_prices": True, "header_barcode": True, "header_virman": True,
-                                         "header_invoice": True, "header_ai": True}}, headers=admin_headers)
+                                         "header_invoice": True, "header_ai": True,
+                                         "order_cargo_label": True, "order_more_actions": True}}, headers=admin_headers)
     assert r2.status_code == 200
     assert r2.json()["features"]["view_prices"] is True
     assert r2.json()["features"]["header_virman"] is True

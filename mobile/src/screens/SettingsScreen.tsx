@@ -1,28 +1,67 @@
-import React, { useEffect, useState } from "react";
-import { Platform, Pressable, Text } from "react-native";
-import { post } from "../api/client";
+import * as ImagePicker from "expo-image-picker";
+import React, { useCallback, useEffect, useState } from "react";
+import { Platform, Pressable, Text, View } from "react-native";
+import { get, post, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { EmployeeAvatar } from "../components/EmployeeAvatar";
 import { Card, ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
 import { passwordChangePayload, validatePasswordChange } from "../utils/account";
-import { getPriceDecimals, idOf } from "../utils/money";
+import { compressPickerAsset } from "../utils/compressUploadImage";
+import {
+  appendUploadBlob,
+  imageUploadRequest,
+  pickBrowserImages,
+  resolveUploadBlob,
+  uploadedImageUrl,
+} from "../utils/formDataFile";
+import { idOf } from "../utils/money";
 import { playTamkobiNotify, unlockTamkobiNotify } from "../utils/notifySound";
 import { getStoredPushToken, presentLocalNotification, registerDevicePush, type PushStatus } from "../utils/pushRegister";
 
+type MeEmployee = {
+  id?: string;
+  _id?: string;
+  full_name?: string;
+  photo_url?: string | null;
+};
+
 export function SettingsScreen() {
-  const { client, companies, activeCompany, switchCompany, user, logout } = useAuth();
+  const { client, companies, activeCompany, switchCompany, companyId, user, logout } = useAuth();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pushStatus, setPushStatus] = useState<PushStatus>("idle");
   const [pushBusy, setPushBusy] = useState(false);
+  const [me, setMe] = useState<MeEmployee | null>(null);
+
+  const linkedEmployee = Boolean(user?.employee_id);
+  const empId = String(user?.employee_id || idOf(me) || "").trim();
+
+  const loadMe = useCallback(async () => {
+    if (!linkedEmployee) {
+      setMe(null);
+      return;
+    }
+    try {
+      const r = await get<{ employee?: MeEmployee | null }>(client, "/personnel/me");
+      setMe(r?.employee || null);
+    } catch {
+      setMe(null);
+    }
+  }, [client, linkedEmployee]);
 
   useEffect(() => {
     getStoredPushToken().then((t) => setPushStatus(t ? "ok" : Platform.OS === "web" ? "web" : "idle"));
   }, []);
+
+  useEffect(() => {
+    loadMe();
+  }, [loadMe]);
 
   const savePassword = async () => {
     const invalid = validatePasswordChange(current, next, confirm);
@@ -42,12 +81,89 @@ export function SettingsScreen() {
     }
   };
 
+  const uploadSelfPhoto = async (fromCamera: boolean) => {
+    if (!empId) {
+      setError("Hesabınıza bağlı personel kartı yok.");
+      return;
+    }
+    setPhotoBusy(true);
+    setError(null);
+    try {
+      let assets: { uri?: string; fileName?: string | null; mimeType?: string | null; file?: Blob }[] = [];
+      if (!fromCamera && Platform.OS === "web") {
+        assets = await pickBrowserImages(undefined, false);
+      } else {
+        const perm = fromCamera
+          ? await ImagePicker.requestCameraPermissionsAsync()
+          : await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (perm.status !== "granted") {
+          setError(fromCamera ? "Kamera izni verilmedi." : "Galeri izni verilmedi.");
+          return;
+        }
+        const res = fromCamera
+          ? await ImagePicker.launchCameraAsync({ quality: 0.8, exif: false })
+          : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
+        if (res.canceled || !res.assets?.length) return;
+        assets = res.assets;
+      }
+      if (!assets.length) return;
+      const form = new FormData();
+      const compact = await compressPickerAsset(assets[0]);
+      const { blob, name } = await resolveUploadBlob(compact);
+      appendUploadBlob(form, blob, name);
+      const { path, query } = imageUploadRequest("employee", empId, companyId);
+      const res = await upload<unknown>(client, path, form, query);
+      const url = uploadedImageUrl(res);
+      if (!url) throw new Error("Fotoğraf adresi dönmedi.");
+      setMe((prev) => ({ ...(prev || {}), id: empId, photo_url: url }));
+      setMessage("Fotoğrafınız güncellendi.");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
   return (
     <Screen>
       <H1>Ayarlar</H1>
       <Muted>{user?.email} · {user?.role_name || user?.role}</Muted>
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
+
+      {linkedEmployee ? (
+        <Card testID="settings-self-photo">
+          <Text style={{ fontWeight: "800", color: colors.text }}>Profil fotoğrafı</Text>
+          <Muted>Personel kartınızda ve Mesaim ekranında görünür.</Muted>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 14, paddingTop: 4 }}>
+            <EmployeeAvatar
+              name={me?.full_name || user?.name}
+              photoUrl={me?.photo_url}
+              size={64}
+              testID="settings-self-photo-avatar"
+            />
+            <View style={{ flex: 1, gap: 8 }}>
+              <PrimaryButton
+                title={photoBusy ? "Yükleniyor…" : "Galeriden seç"}
+                testID="settings-self-photo-gallery"
+                onPress={() => uploadSelfPhoto(false)}
+                loading={photoBusy}
+                color={colors.primary}
+              />
+              {Platform.OS !== "web" ? (
+                <Pressable
+                  testID="settings-self-photo-camera"
+                  onPress={() => uploadSelfPhoto(true)}
+                  disabled={photoBusy}
+                  style={{ paddingVertical: 6 }}
+                >
+                  <Text style={{ color: colors.primary, fontWeight: "700", fontSize: 13 }}>Kamera ile çek</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+        </Card>
+      ) : null}
 
       <Card testID="settings-change-password">
         <Text style={{ fontWeight: "800", color: colors.text }}>Şifre yenile</Text>
@@ -105,13 +221,6 @@ export function SettingsScreen() {
             color={colors.indigo}
           />
         )}
-      </Card>
-
-      <Card testID="settings-price-decimals">
-        <Text style={{ fontWeight: "800", color: colors.text }}>Fiyat hassasiyeti</Text>
-        <Muted>
-          {getPriceDecimals()} hane. Web paneldeki şirket ayarıdır; ürün fiyatı, sipariş, fatura ve B2B tutarları bu hassasiyetle gösterilir.
-        </Muted>
       </Card>
 
       <Card>
