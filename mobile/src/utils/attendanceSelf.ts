@@ -167,6 +167,58 @@ export function mesaimOutSubtitle(opts?: { checkIn?: string | null; checkOut?: s
   return "puantaj / beklenen mesai bitişinden";
 }
 
+export type MesaimOutInfoLines = {
+  headline: string;
+  baseNote: string;
+  scheduleLine: string;
+  fieldDutyLine: string;
+};
+
+/** Mesaim çıkış kartı: kayıtlı saat + atanmış mesai bitiş + dış görev (varsa). */
+export function mesaimOutInfoLines(opts?: {
+  checkIn?: string | null;
+  checkOut?: string | null;
+  scheduledEnd?: string | null;
+  expectedEnd?: string | null;
+  assignedOvertimeHours?: number | null;
+  workplace?: {
+    kind?: string;
+    task_title?: string;
+    project_name?: string;
+    project_number?: string;
+    label?: string;
+    duration_days?: number | null;
+  } | null;
+} | null): MesaimOutInfoLines {
+  const checkOut = String(opts?.checkOut || "").trim();
+  const checkIn = String(opts?.checkIn || "").trim();
+  const end = String(opts?.expectedEnd || opts?.scheduledEnd || "").trim().slice(0, 5);
+  const ot = Number(opts?.assignedOvertimeHours) || 0;
+  const headline = checkOut
+    ? `Çıkış ${checkOut}`
+    : checkIn
+      ? (end ? `Beklenen çıkış ${end}` : "puantaj / beklenen mesai bitişinden")
+      : "önce giriş yapın";
+  const baseNote = "Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır.";
+  let scheduleLine = "";
+  if (end || ot > 0) {
+    const bits = [end ? `Atanan mesai çıkış ${end}` : null];
+    if (ot > 0) bits.push(`+${ot} sa fazla mesai`);
+    scheduleLine = bits.filter(Boolean).join(" · ");
+  }
+  let fieldDutyLine = "";
+  const wp = opts?.workplace;
+  if (wp && String(wp.kind || "") === "task") {
+    const title = String(wp.task_title || "Dış görev").trim();
+    const proj = String(wp.project_number || wp.project_name || wp.label || "").trim();
+    const days = Math.trunc(Number(wp.duration_days) || 0);
+    const parts = [proj ? `${title} · ${proj}` : title];
+    if (days > 0) parts.push(`${days} gün`);
+    fieldDutyLine = `Dış görev: ${parts.join(" · ")}`;
+  }
+  return { headline, baseNote, scheduleLine, fieldDutyLine };
+}
+
 export function geoConfirmHint(rec?: { geo_confirm_request?: GeoConfirmRequest | null } | null): string {
   const g = rec?.geo_confirm_request;
   if (!g || g.status !== "pending") return "";

@@ -11,7 +11,7 @@ import {
   mesaimEarlyArrivalLine,
   mesaimInSubtitle,
   mesaimLongDate,
-  mesaimOutSubtitle,
+  mesaimOutInfoLines,
   mesaimScheduleLine,
   mesaimWorkDaysLine,
   resolveMesaimTodayHours,
@@ -241,7 +241,14 @@ export function MesaimTodayCard({
   const geoPlace = workplace || location;
   const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo });
   const geoInLabel = mesaimGeoInLabel({ workplace: geoPlace, requireGeo });
-  const outLine = mesaimOutSubtitle({ checkIn: today?.check_in, checkOut: today?.check_out });
+  const outInfo = mesaimOutInfoLines({
+    checkIn: today?.check_in,
+    checkOut: today?.check_out,
+    scheduledEnd: hours.end || today?.scheduled_end || schedule?.end,
+    expectedEnd: today?.expected_end || mesaiEnd,
+    assignedOvertimeHours: today?.assigned_overtime_hours,
+    workplace,
+  });
   const inDone = Boolean(checkedIn);
 
   return (
@@ -310,18 +317,21 @@ export function MesaimTodayCard({
           >
             <Text style={{ color: "#FECDD3", fontSize: 13, fontWeight: "800" }}>Çıkış</Text>
             <Text style={{ color: "#E2E8F0", fontSize: 12, fontWeight: "600" }} testID="mesai-today-out">
-              {outLine}
+              {outInfo.headline}
             </Text>
-            <Text style={{ color: "#94A3B8", fontSize: 11, lineHeight: 15 }}>
-              Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır
-              {today?.assigned_overtime_hours
-                ? ` (atanan +${today.assigned_overtime_hours} sa · beklenen ${today.expected_end || mesaiEnd || "—"})`
-                : today?.expected_end
-                  ? ` (beklenen ${today.expected_end})`
-                  : mesaiEnd
-                    ? ` (beklenen ${mesaiEnd})`
-                    : ""}.
+            <Text style={{ color: "#94A3B8", fontSize: 11, lineHeight: 15 }} testID="mesai-out-base">
+              {outInfo.baseNote}
             </Text>
+            {outInfo.scheduleLine ? (
+              <Text style={{ color: "#C4B5FD", fontSize: 11, fontWeight: "700", lineHeight: 15 }} testID="mesai-out-schedule">
+                {outInfo.scheduleLine}
+              </Text>
+            ) : null}
+            {outInfo.fieldDutyLine ? (
+              <Text style={{ color: "#A5B4FC", fontSize: 11, fontWeight: "700", lineHeight: 15 }} testID="mesai-out-field">
+                {outInfo.fieldDutyLine}
+              </Text>
+            ) : null}
           </View>
         </View>
 

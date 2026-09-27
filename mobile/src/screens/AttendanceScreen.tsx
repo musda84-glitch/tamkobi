@@ -1,7 +1,8 @@
 import * as Location from "expo-location";
+import * as ImagePicker from "expo-image-picker";
 import React, { useCallback, useEffect, useState } from "react";
-import { Text, View } from "react-native";
-import { del, get, post } from "../api/client";
+import { Platform, Text, View } from "react-native";
+import { del, get, post, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
@@ -11,6 +12,14 @@ import { colors } from "../theme";
 import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { resolveNowHm } from "../utils/clock";
 import { fmtDmy } from "../utils/calendar";
+import { compressPickerAsset } from "../utils/compressUploadImage";
+import {
+  appendUploadBlob,
+  imageUploadRequest,
+  pickBrowserImages,
+  resolveUploadBlob,
+  uploadedImageUrl,
+} from "../utils/formDataFile";
 import { statusTr } from "../utils/labels";
 import { idOf } from "../utils/money";
 import { LocationConsentCard } from "../components/LocationConsentCard";
@@ -26,7 +35,13 @@ type LocationTracking = {
 };
 
 type AttendancePayload = {
-  employee?: { full_name: string; photo_url?: string | null; id?: string } | null;
+  employee?: {
+    full_name: string;
+    photo_url?: string | null;
+    id?: string;
+    department?: string | null;
+    position?: string | null;
+  } | null;
   now?: string;
   today_date?: string;
   today?: {
@@ -117,6 +132,7 @@ export function AttendanceScreen() {
   const [disputeOut, setDisputeOut] = useState("");
   const [consentBusy, setConsentBusy] = useState(false);
   const [signal, setSignal] = useState<LocationSignal | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -335,6 +351,49 @@ export function AttendanceScreen() {
     }
   };
 
+  const uploadSelfPhoto = async () => {
+    const eid = String(data?.employee?.id || "").trim();
+    if (!eid) {
+      setError("Personel kartı bulunamadı.");
+      return;
+    }
+    setPhotoBusy(true);
+    setError(null);
+    try {
+      let assets: { uri?: string; fileName?: string | null; mimeType?: string | null; file?: Blob }[] = [];
+      if (Platform.OS === "web") {
+        assets = await pickBrowserImages(undefined, false);
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (perm.status !== "granted") {
+          setError("Galeri izni verilmedi.");
+          return;
+        }
+        const res = await ImagePicker.launchImageLibraryAsync({ quality: 0.8, exif: false, mediaTypes: ["images"] });
+        if (res.canceled || !res.assets?.length) return;
+        assets = res.assets;
+      }
+      if (!assets.length) return;
+      const form = new FormData();
+      const compact = await compressPickerAsset(assets[0]);
+      const { blob, name } = await resolveUploadBlob(compact);
+      appendUploadBlob(form, blob, name);
+      const { path, query } = imageUploadRequest("employee", eid, companyId);
+      const uploaded = await upload<unknown>(client, path, form, query);
+      const url = uploadedImageUrl(uploaded);
+      if (!url) throw new Error("Fotoğraf adresi dönmedi.");
+      setData((prev) => prev ? {
+        ...prev,
+        employee: prev.employee ? { ...prev.employee, photo_url: url } : prev.employee,
+      } : prev);
+      setMessage("Fotoğrafınız güncellendi.");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fotoğraf yüklenemedi."));
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
   const today = data?.today;
   const checkedIn = checkInAlreadyDone(today?.check_in);
   const checkInOnceMsg = checkInOnceHint(today?.check_in);
@@ -342,30 +401,61 @@ export function AttendanceScreen() {
   const earlyOk = earlyLeaveApproved(today);
   const consentOk = locationConsentAccepted(data?.location_consent);
   const liveSignal = signal || data?.location_signal;
+  const empRoleLine = [data?.employee?.position, data?.employee?.department].filter(Boolean).join(" · ");
 
   return (
     <Screen onRefresh={load}>
-      <View style={{ alignItems: "center", gap: 10, width: "100%" }} testID="mesai-employee-header">
+      <View style={{ width: "100%", gap: 8 }} testID="mesai-employee-header">
         {data?.employee ? (
-          <EmployeeAvatar
-            name={data.employee.full_name}
-            photoUrl={data.employee.photo_url}
-            size={72}
-            testID="mesai-employee-photo"
-          />
-        ) : null}
-        <Text
-          testID="mesai-employee-name"
-          style={{
-            textAlign: "center",
-            fontSize: 22,
-            fontWeight: "800",
-            color: colors.text,
-            width: "100%",
-          }}
-        >
-          {data?.employee?.full_name || "Personel kartı bağlı değilse giriş yapılamaz."}
-        </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 14, width: "100%" }}>
+            <EmployeeAvatar
+              name={data.employee.full_name}
+              photoUrl={data.employee.photo_url}
+              size={72}
+              testID="mesai-employee-photo"
+              onLongPress={photoBusy ? undefined : () => { void uploadSelfPhoto(); }}
+            />
+            <View style={{ flex: 1, gap: 2, minWidth: 0 }}>
+              <Text
+                testID="mesai-employee-name"
+                numberOfLines={2}
+                style={{
+                  textAlign: "left",
+                  fontSize: 20,
+                  fontWeight: "800",
+                  color: colors.text,
+                }}
+              >
+                {data.employee.full_name}
+              </Text>
+              {empRoleLine ? (
+                <Text
+                  testID="mesai-employee-role"
+                  numberOfLines={2}
+                  style={{ fontSize: 13, fontWeight: "600", color: colors.muted }}
+                >
+                  {empRoleLine}
+                </Text>
+              ) : (
+                <Muted testID="mesai-employee-role-empty">Bölüm / görev tanımsız</Muted>
+              )}
+              <Muted testID="mesai-photo-hint">Fotoğraf için basılı tutun{photoBusy ? " · yükleniyor…" : ""}</Muted>
+            </View>
+          </View>
+        ) : (
+          <Text
+            testID="mesai-employee-name"
+            style={{
+              textAlign: "center",
+              fontSize: 22,
+              fontWeight: "800",
+              color: colors.text,
+              width: "100%",
+            }}
+          >
+            Personel kartı bağlı değilse giriş yapılamaz.
+          </Text>
+        )}
       </View>
       <ErrorBanner message={error} />
       {message ? <Card><Text style={{ color: colors.accent, fontWeight: "700" }}>{message}</Text></Card> : null}
