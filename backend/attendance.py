@@ -684,24 +684,79 @@ def potential_overtime_hours(end_hm: Optional[str], now_hm: Optional[str]) -> fl
     return round(minutes_past_hm(end_hm, now_hm) / 60.0, 2)
 
 
+def _auto_checkout_prev_end(rec: Optional[dict] = None) -> Optional[str]:
+    """Son otomatik çıkışın yazıldığı beklenen bitiş (yoksa check_out)."""
+    row = rec or {}
+    prev = str(row.get("auto_checkout_end") or row.get("check_out") or "").strip()[:5]
+    return prev or None
+
+
+def _is_system_auto_out(rec: Optional[dict] = None) -> bool:
+    """Otomatik çıkış kaydı mı? (bayrak veya source=auto)."""
+    row = rec or {}
+    if row.get("auto_checkout"):
+        return True
+    return str(row.get("source") or "") == "auto" and bool(str(row.get("check_out") or "").strip())
+
+
+def should_retract_auto_checkout(
+    rec: Optional[dict],
+    *,
+    end_hm: Optional[str],
+    now_hm: Optional[str] = None,
+) -> bool:
+    """Otomatik çıkıştan sonra mesai/OT bitişi uzadıysa, yeni bitiş gelene kadar çıkışı geri al."""
+    row = rec or {}
+    if not _is_system_auto_out(row) or not row.get("check_in") or not row.get("check_out"):
+        return False
+    if not end_hm:
+        return False
+    if row.get("status") in ("leave", "absent"):
+        return False
+    prev = _auto_checkout_prev_end(row)
+    if not prev:
+        return False
+    try:
+        if _hm(str(end_hm)[:5]) <= _hm(prev):
+            return False
+        # Yeni bitişe ulaşıldıysa retract değil — should_auto_checkout günceller
+        if now_hm and _hm(str(now_hm)[:5]) >= _hm(str(end_hm)[:5]):
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def should_auto_checkout(
     rec: Optional[dict],
     *,
     end_hm: Optional[str],
     now_hm: Optional[str],
 ) -> bool:
-    """Mesai bitişinde giriş var / çıkış yoksa otomatik çıkış yazılsın mı?"""
+    """Mesai bitişinde giriş var / çıkış yoksa (veya erken otomatik çıkış uzadıysa) otomatik çıkış yazılsın mı?"""
     row = rec or {}
     if not end_hm or not now_hm:
         return False
-    if not row.get("check_in") or row.get("check_out"):
+    if not row.get("check_in"):
         return False
     if row.get("status") in ("leave", "absent"):
         return False
     try:
-        return _hm(str(now_hm)[:5]) >= _hm(str(end_hm)[:5])
+        if _hm(str(now_hm)[:5]) < _hm(str(end_hm)[:5]):
+            return False
     except Exception:
         return False
+    co = str(row.get("check_out") or "").strip()[:5]
+    if not co:
+        return True
+    # Erken otomatik çıkış: beklenen bitiş uzadıysa yeni bitişe taşı
+    if _is_system_auto_out(row):
+        prev = _auto_checkout_prev_end(row) or co
+        try:
+            return _hm(str(end_hm)[:5]) > _hm(prev)
+        except Exception:
+            return False
+    return False
 
 
 def location_signal_fresh(
@@ -2224,9 +2279,17 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
     schedule = merge_schedule(company, emp)
     month = month or _today(schedule)[:7]
     today_s = _today(schedule)
+    now_s = now_hm(schedule)
     await rehome_early_checkout(emp, today_s, schedule)
-    rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(100)
     today = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today_s})
+    if today and today.get("check_in"):
+        today["id"] = today.get("_id") or today.get("id")
+        auto_ot = await process_auto_exit_overtime(
+            emp, company, schedule, today, date=today_s, now_s=now_s,
+        )
+        if auto_ot.get("record"):
+            today = auto_ot["record"]
+    rows = await _db.attendance.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}}).sort("date", -1).to_list(100)
     plans = {p["date"]: p for p in await _db.shift_plans.find({"employee_id": emp["_id"], "date": {"$regex": f"^{month}"}}).to_list(100)}
     enriched = []
     for r in rows:
@@ -2240,7 +2303,6 @@ async def my_attendance(request: Request, company_id: Optional[str] = None, mont
     # Giriş geo: iş/görev yeri hedefi varsa zorunlu (takip açık/kapalıdan bağımsız).
     if workplace and workplace.get("kind") == "task":
         schedule = {**schedule, "require_geo": True}
-    now_s = now_hm(schedule)
     try:
         today_wd = datetime.strptime(today_s, "%Y-%m-%d").weekday()
     except Exception:
@@ -2662,6 +2724,44 @@ async def maybe_open_location_exit(
     return req
 
 
+async def maybe_retract_auto_checkout(
+    emp: dict,
+    schedule: dict,
+    rec: dict,
+    *,
+    date: Optional[str] = None,
+    plan: Optional[dict] = None,
+    now_s: Optional[str] = None,
+) -> Optional[dict]:
+    """Mesai bitişi uzadıysa erken otomatik çıkışı geri al (yeni bitişe kadar açık kalsın)."""
+    day = date or rec.get("date") or _today(schedule)
+    end_hm = expected_checkout_hm(rec, schedule, day, plan)
+    clock = now_s or now_hm(schedule)
+    if not should_retract_auto_checkout(rec, end_hm=end_hm, now_hm=clock):
+        return None
+    saved = await apply_day(
+        emp,
+        day,
+        {"status": "present", "check_out": None, "auto_checkout": False},
+        source=rec.get("source") or "auto",
+        confirmed=True,
+    )
+    await _db.attendance.update_one(
+        {"employee_id": emp["_id"], "date": day},
+        {
+            "$set": {"updated_at": _now()},
+            "$unset": {"auto_checkout": "", "auto_checkout_at": "", "auto_checkout_end": ""},
+        },
+    )
+    saved = _clean(await _db.attendance.find_one({"employee_id": emp["_id"], "date": day}) or saved)
+    if saved:
+        saved.pop("auto_checkout", None)
+        saved.pop("auto_checkout_at", None)
+        saved.pop("auto_checkout_end", None)
+        saved["id"] = saved.get("_id") or saved.get("id")
+    return saved
+
+
 async def maybe_auto_checkout(
     emp: dict,
     schedule: dict,
@@ -2671,7 +2771,7 @@ async def maybe_auto_checkout(
     plan: Optional[dict] = None,
     now_s: Optional[str] = None,
 ) -> Optional[dict]:
-    """Beklenen çıkışta (mesai + atanan fazla mesai) çıkış yoksa otomatik yazar."""
+    """Beklenen çıkışta (mesai + atanan fazla mesai) çıkış yoksa otomatik yazar; erken auto çıkışı günceller."""
     day = date or rec.get("date") or _today(schedule)
     end_hm = expected_checkout_hm(rec, schedule, day, plan)
     clock = now_s or now_hm(schedule)
@@ -2774,6 +2874,10 @@ async def process_auto_exit_overtime(
     clock = now_s or now_hm(schedule)
     lt = mode or location_mode_for(normalize_location_tracking(emp.get("location_tracking")), None)
     active = bool(location_active) or location_signal_fresh(emp, lt)
+    retracted = await maybe_retract_auto_checkout(emp, schedule, row, date=day, plan=plan, now_s=clock)
+    if retracted:
+        row = retracted
+        row["id"] = row.get("id") or row.get("_id")
     auto = await maybe_auto_checkout(emp, schedule, row, date=day, plan=plan, now_s=clock)
     if auto:
         row = auto
@@ -2784,7 +2888,12 @@ async def process_auto_exit_overtime(
             emp, row, schedule, lt,
             location_active=True, date=day, plan=plan, now_s=clock,
         )
-    return {"record": row or None, "auto_checkout": bool(auto), "overtime_confirm": opened}
+    return {
+        "record": row or None,
+        "auto_checkout": bool(auto),
+        "auto_checkout_retracted": bool(retracted),
+        "overtime_confirm": opened,
+    }
 
 
 @router.post("/personnel/attendance/self/location")
@@ -4117,11 +4226,15 @@ async def run_auto_checkout_ot_check(company_id: Optional[str] = None) -> list:
         for emp in emps:
             sch = merge_schedule(company, emp)
             plan = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": today})
-            end_hm = day_end_hm(sch, today, plan)
-            if not end_hm or minutes_past_hm(end_hm, now_s) <= 0:
-                continue
             rec = await _db.attendance.find_one({"employee_id": emp["_id"], "date": today}) or {}
             if not rec.get("check_in"):
+                continue
+            end_hm = expected_checkout_hm(rec, sch, today, plan) or day_end_hm(sch, today, plan)
+            if not end_hm:
+                continue
+            past_end = minutes_past_hm(end_hm, now_s) > 0
+            needs_retract = should_retract_auto_checkout(rec, end_hm=end_hm, now_hm=now_s)
+            if not past_end and not needs_retract:
                 continue
             if await _on_leave_today(emp["_id"], today):
                 continue
@@ -4133,12 +4246,13 @@ async def run_auto_checkout_ot_check(company_id: Optional[str] = None) -> list:
                 location_active=False,  # watcher: freshness from emp signal
                 mode=mode, date=today, now_s=now_s,
             )
-            if out.get("auto_checkout") or out.get("overtime_confirm"):
+            if out.get("auto_checkout") or out.get("auto_checkout_retracted") or out.get("overtime_confirm"):
                 results.append({
                     "company_id": company["_id"],
                     "employee_id": emp["_id"],
                     "employee_name": emp.get("full_name"),
                     "auto_checkout": bool(out.get("auto_checkout")),
+                    "auto_checkout_retracted": bool(out.get("auto_checkout_retracted")),
                     "overtime_confirm": bool(out.get("overtime_confirm")),
                     "check_out": (out.get("record") or {}).get("check_out"),
                 })

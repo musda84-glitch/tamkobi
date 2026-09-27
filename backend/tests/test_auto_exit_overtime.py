@@ -8,6 +8,7 @@ from attendance import (
     parse_overtime_confirm_decision,
     potential_overtime_hours,
     should_auto_checkout,
+    should_retract_auto_checkout,
 )
 
 
@@ -28,6 +29,32 @@ def test_should_auto_checkout_at_schedule_end():
     assert should_auto_checkout({**rec, "check_out": "18:00"}, end_hm="18:00", now_hm="19:00") is False
     assert should_auto_checkout({"status": "leave", "check_in": "09:00"}, end_hm="18:00", now_hm="18:00") is False
     assert should_auto_checkout({}, end_hm="18:00", now_hm="18:00") is False
+
+
+def test_auto_checkout_upgrades_when_schedule_end_extends():
+    """Eski bitişte (03:30) auto çıkış yazıldı; bitiş 13:33 olunca yeni bitişte güncellenir."""
+    premature = {
+        "check_in": "02:30",
+        "check_out": "03:30",
+        "auto_checkout": True,
+        "auto_checkout_end": "03:30",
+        "status": "present",
+    }
+    assert should_auto_checkout(premature, end_hm="13:33", now_hm="13:33") is True
+    assert should_auto_checkout(premature, end_hm="13:33", now_hm="13:32") is False
+    assert should_retract_auto_checkout(premature, end_hm="13:33", now_hm="12:00") is True
+    assert should_retract_auto_checkout(premature, end_hm="13:33", now_hm="13:33") is False
+    # Manuel çıkış uzayan bitişle ezilmez
+    manual = {**premature, "auto_checkout": False, "source": "manager"}
+    assert should_auto_checkout(manual, end_hm="13:33", now_hm="13:33") is False
+    assert should_retract_auto_checkout(manual, end_hm="13:33", now_hm="12:00") is False
+    # Bayrak yok ama source=auto ise yine uzatılabilir
+    legacy = {"check_in": "02:30", "check_out": "03:30", "source": "auto", "status": "present"}
+    assert should_auto_checkout(legacy, end_hm="13:33", now_hm="13:33") is True
+    assert should_retract_auto_checkout(legacy, end_hm="13:33", now_hm="12:00") is True
+    # Aynı bitişte tekrar yazılmaz
+    assert should_auto_checkout(premature, end_hm="03:30", now_hm="04:00") is False
+    assert should_retract_auto_checkout(premature, end_hm="03:30", now_hm="04:00") is False
 
 
 def test_potential_overtime_hours():
