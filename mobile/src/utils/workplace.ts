@@ -40,6 +40,24 @@ export function mesaimGeoInLabel(opts?: { workplace?: Workplace | null; requireG
   return mesaimGeoInOn(opts) ? "Konumlu giriş açık" : "Konumlu giriş kapalı";
 }
 
+/** Üst bar için kısa konum satırı (Mesaim header). */
+export function mesaimGeoHeaderLine(opts?: {
+  workplace?: Workplace | null;
+  location?: { radius_m?: number; kind?: string; label?: string } | null;
+  requireGeo?: boolean;
+} | null): { title: string; place: string; status: string; on: boolean } {
+  const placeWp = opts?.workplace || null;
+  const on = mesaimGeoInOn({ workplace: placeWp, requireGeo: opts?.requireGeo });
+  const status = on ? "Giriş açık" : "Giriş kapalı";
+  if (placeWp?.kind === "task") {
+    const short = workplaceShort(placeWp) || placeWp.task_title || "Dış görev";
+    return { title: "Mesaim", place: short, status, on };
+  }
+  const radius = placeWp?.radius_m || opts?.location?.radius_m;
+  const place = radius ? `Firma · ${radius} m` : "Firma konumu";
+  return { title: "Mesaim", place, status, on };
+}
+
 export function workplaceHint(w?: Workplace | null, requireGeo = true): string {
   if (!w) return "İş yeri konumu tanımsız — konumsuz giriş";
   const place = [w.task_title, w.project_name || w.label].filter(Boolean).join(" · ");

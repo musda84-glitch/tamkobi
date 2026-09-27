@@ -19,7 +19,7 @@ import {
   type GeoConfirmRequest,
   type MesaimTodayWindow,
 } from "../utils/attendanceSelf";
-import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHint, type Workplace } from "../utils/workplace";
+import type { Workplace } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnel";
 import type { LocationSignal } from "../utils/locationConsent";
 
@@ -117,8 +117,6 @@ export function MesaimTodayCard({
   now,
   todayDate,
   workplace,
-  location,
-  requireGeo,
   schedule,
   todayWindow,
   dayLabels,
@@ -157,8 +155,6 @@ export function MesaimTodayCard({
   now?: string;
   todayDate?: string;
   workplace?: Workplace | null;
-  location?: { label?: string; radius_m?: number; kind?: string; has_coords?: boolean } | null;
-  requireGeo?: boolean;
   schedule?: { start?: string; end?: string; break_minutes?: number; work_days?: number[] } | null;
   todayWindow?: MesaimTodayWindow | null;
   dayLabels?: string[] | null;
@@ -238,9 +234,6 @@ export function MesaimTodayCard({
   const habitText = habitLabel(habit, habitFallback);
   const mesaiEnd = hours.end || today?.expected_end || schedule?.end || "";
   const yevLine = yevmiyeStatusLine(today);
-  const geoPlace = workplace || location;
-  const geoInOn = mesaimGeoInOn({ workplace: geoPlace, requireGeo });
-  const geoInLabel = mesaimGeoInLabel({ workplace: geoPlace, requireGeo });
   const outInfo = mesaimOutInfoLines({
     checkIn: today?.check_in,
     checkOut: today?.check_out,
@@ -330,64 +323,6 @@ export function MesaimTodayCard({
             ) : null}
           </View>
         ) : null}
-
-        <View
-          style={{
-            alignSelf: "stretch",
-            backgroundColor: workplace?.kind === "task" ? "rgba(99,102,241,0.16)" : "rgba(16,185,129,0.12)",
-            borderWidth: 1,
-            borderColor: workplace?.kind === "task" ? "rgba(199,210,254,0.22)" : "rgba(110,231,183,0.22)",
-            borderRadius: 14,
-            paddingVertical: 12,
-            paddingHorizontal: 14,
-            gap: 10,
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
-            <View
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 11,
-                backgroundColor: workplace?.kind === "task" ? "rgba(99,102,241,0.28)" : "rgba(16,185,129,0.25)",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Ionicons
-                name={workplace?.kind === "task" ? "navigate-outline" : "business-outline"}
-                size={18}
-                color={workplace?.kind === "task" ? "#C7D2FE" : "#6EE7B7"}
-              />
-            </View>
-            <Text
-              style={{
-                color: workplace?.kind === "task" ? "#C7D2FE" : "#A7F3D0",
-                fontSize: 13,
-                fontWeight: "700",
-                flex: 1,
-                lineHeight: 18,
-              }}
-              testID="mesai-workplace"
-            >
-              {workplaceHint(workplace || location, requireGeo !== false)}
-            </Text>
-          </View>
-          <View
-            testID="mesai-geo-in"
-            style={{
-              alignSelf: "flex-start",
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-              borderRadius: 999,
-              backgroundColor: geoInOn ? "rgba(16,185,129,0.28)" : "rgba(244,63,94,0.28)",
-            }}
-          >
-            <Text style={{ color: geoInOn ? "#A7F3D0" : "#FECDD3", fontSize: 12, fontWeight: "800" }}>
-              {geoInLabel}
-            </Text>
-          </View>
-        </View>
       </View>
 
       <View style={{ gap: 10 }}>

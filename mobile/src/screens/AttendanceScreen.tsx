@@ -1,12 +1,14 @@
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
-import React, { useCallback, useEffect, useState } from "react";
+import { useNavigation } from "expo-router";
+import React, { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Platform, Text, View } from "react-native";
 import { del, get, post, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { TimeField } from "../components/TimeField";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
 import { Card, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen } from "../components/kit";
+import { MesaimHeaderTitle } from "../components/MesaimHeaderTitle";
 import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
 import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
@@ -25,7 +27,7 @@ import { idOf } from "../utils/money";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { locationConsentAccepted, locationConsentPayload, locationUnavailablePayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
 import { syncLocationBackground } from "../utils/locationBackgroundSync";
-import { workplaceHasCoords, type Workplace } from "../utils/workplace";
+import { mesaimGeoHeaderLine, workplaceHasCoords, type Workplace } from "../utils/workplace";
 
 type LocationTracking = {
   enabled?: boolean;
@@ -115,6 +117,7 @@ async function coords() {
 
 export function AttendanceScreen() {
   const { client, companyId } = useAuth();
+  const navigation = useNavigation();
   const [data, setData] = useState<AttendancePayload | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -147,6 +150,21 @@ export function AttendanceScreen() {
   }, [client, companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useLayoutEffect(() => {
+    const placeWp = (data?.workplace || data?.location || null) as Workplace | null;
+    const geo = mesaimGeoHeaderLine({
+      workplace: placeWp,
+      location: data?.location,
+      requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
+    });
+    navigation.setOptions({
+      headerTitleAlign: "left",
+      headerTitle: () => (
+        <MesaimHeaderTitle place={geo.place} status={geo.status} on={geo.on} />
+      ),
+    });
+  }, [navigation, data?.workplace, data?.location, data?.schedule?.require_geo]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -478,8 +496,6 @@ export function AttendanceScreen() {
           now={data?.now}
           todayDate={data?.today_date}
           workplace={data?.workplace}
-          location={data?.location}
-          requireGeo={data?.schedule?.require_geo}
           schedule={data?.schedule}
           todayWindow={data?.today_window}
           dayLabels={data?.day_labels}
