@@ -1144,6 +1144,27 @@ def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
     return s
 
 
+def has_mesaim_check_in(rec: Optional[dict]) -> bool:
+    """Bugünkü (veya açık gece mesaisi) kayıtta giriş saati var mı."""
+    return bool(rec and str(rec.get("check_in") or "").strip())
+
+
+def shopfloor_operator_checked_in(
+    today_rec: Optional[dict] = None,
+    yesterday_rec: Optional[dict] = None,
+) -> bool:
+    """Atölye operatör girişi: bugün giriş yapılmış veya dünden açık mesai devam ediyor olmalı."""
+    if has_mesaim_check_in(today_rec):
+        return True
+    y = yesterday_rec or {}
+    return bool(str(y.get("check_in") or "").strip() and not str(y.get("check_out") or "").strip())
+
+
+SHOPFLOOR_REQUIRE_CHECKIN_DETAIL = (
+    "Önce Mesaim'den giriş yapın. Operatör girişi için bugünkü mesai girişi gerekli."
+)
+
+
 def day_window(schedule: dict, weekday: int) -> dict:
     """Haftanın günü için etkin başlangıç/bitiş/mola (gün bazlı override varsa onu kullanır)."""
     d = (schedule.get("days") or {}).get(str(weekday)) or {}

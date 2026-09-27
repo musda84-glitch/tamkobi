@@ -194,6 +194,7 @@ export default function ShopFloorPage() {
               <div>
                 <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2"><KeyRound className="w-5 h-5 text-emerald-600" /> Operatör şifresi</h3>
                 <p className="text-sm text-slate-500 mt-1">{pendingEmp.full_name} — {pendingEmp.position}</p>
+                <p className="text-[11px] text-amber-700 mt-1">Mesaim girişi yapılmamış personel operatör olamaz.</p>
               </div>
               <button type="button" onClick={cancelUnlock} className="text-slate-400 hover:text-slate-700" data-testid="shopfloor-pin-cancel"><X className="w-5 h-5" /></button>
             </div>
