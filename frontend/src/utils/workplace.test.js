@@ -1,4 +1,4 @@
-import { mesaimGeoInLabel, mesaimGeoInOn, workplaceHint, workplaceShort } from "./workplace";
+import { mesaimGeoHeaderLine, mesaimGeoInLabel, mesaimGeoInOn, workplaceHint, workplaceShort } from "./workplace";
 
 describe("workplace labels", () => {
   it("describes a field task as the workplace", () => {
@@ -8,6 +8,21 @@ describe("workplace labels", () => {
     expect(workplaceHint(w, true)).toContain("300 m");
     expect(workplaceShort(w)).toBe("Montaj · Villa");
     expect(workplaceShort({ ...w, duration_days: 3 })).toBe("Montaj · Villa · 3 gün");
+  });
+
+  it("builds a minimal Mesaim header geo line", () => {
+    expect(mesaimGeoHeaderLine({
+      workplace: { kind: "company", has_coords: true, radius_m: 200 },
+      requireGeo: true,
+    })).toEqual({ title: "Mesaim", place: "Firma · 200 m", status: "Giriş açık", on: true });
+    expect(mesaimGeoHeaderLine({
+      workplace: { kind: "task", task_title: "Montaj", project_name: "Villa", has_coords: true },
+      requireGeo: true,
+    }).place).toBe("Montaj · Villa");
+    expect(mesaimGeoHeaderLine({
+      workplace: { kind: "company", has_coords: false },
+      requireGeo: true,
+    }).status).toBe("Giriş kapalı");
   });
 
   it("allows check-in without company geo when the task has no coords", () => {

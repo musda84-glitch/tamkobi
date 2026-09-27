@@ -94,6 +94,33 @@ export function checkInAlreadyDone(checkIn) {
   return Boolean(checkIn);
 }
 
+/** Bugün açık mesai: giriş var, çıkış yok. */
+export function hasOpenMesaimSession(today) {
+  const inn = String(today?.check_in || "").trim();
+  const out = String(today?.check_out || "").trim();
+  return Boolean(inn) && !out;
+}
+
+/**
+ * Çıkış yapıldıysa (veya henüz giriş yoksa) bir sonraki girişe kadar yalnızca Mesaim.
+ * Yönetici / admin kilitlenmez.
+ */
+export function mesaimExclusiveUntilCheckIn(user, today) {
+  if (!user?.employee_id) return false;
+  const role = String(user.role || "");
+  if (role === "admin" || role === "manager") return false;
+  return !hasOpenMesaimSession(today);
+}
+
+/** Kilitliyken yalnızca Mesaim + hesap (şifre/sözleşme iptali). */
+export function mesaimExclusivePathAllowed(path) {
+  const p = String(path || "");
+  if (p === "/mesai" || p.startsWith("/mesai/")) return true;
+  if (p === "/hesap" || p.startsWith("/hesap")) return true;
+  if (p === "/login") return true;
+  return false;
+}
+
 export function checkInOnceHint(checkIn) {
   const t = String(checkIn || "").trim().slice(0, 5);
   if (!t) return "";
@@ -123,6 +150,105 @@ export function mesaimPunchEditHint(action) {
 
 export function mesaimPunchNowLabel(action) {
   return action === "check_out" ? "Şimdiki saat ile çıkış" : "Şimdiki saat ile giriş";
+}
+
+export function mesaimLongDate(ymd) {
+  const raw = String(ymd || "").trim().slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!m) return "";
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
+}
+
+export function mesaimWorkDaysLine(workDays, labels) {
+  const labs = labels && labels.length ? labels : ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
+  return (workDays || []).map((n) => labs[Number(n)] || "").filter(Boolean).join(", ");
+}
+
+export function resolveMesaimTodayHours(opts = {}) {
+  const win = opts.todayWindow || {};
+  const today = opts.today || {};
+  const sch = opts.schedule || {};
+  const start = String(win.start || today.scheduled_start || sch.start || "").slice(0, 5);
+  const end = String(win.end || today.scheduled_end || today.expected_end || sch.end || "").slice(0, 5);
+  const brRaw = win.break_minutes ?? sch.break_minutes;
+  if (brRaw == null || brRaw === undefined) {
+    return { start, end, breakMinutes: null };
+  }
+  const breakMinutes = Number(brRaw);
+  return {
+    start,
+    end,
+    breakMinutes: Number.isFinite(breakMinutes) ? breakMinutes : null,
+  };
+}
+
+export function mesaimScheduleLine(sch, opts = {}) {
+  if (!sch?.start || !sch?.end) return "";
+  const br = sch.break_minutes != null && sch.break_minutes !== undefined ? ` · mola ${sch.break_minutes} dk` : "";
+  const label = opts.label || "Mesai";
+  return `${label} ${sch.start}–${sch.end}${br}`;
+}
+
+export function mesaimEarlyArrivalLine(opts = {}) {
+  const mins = Number(opts.earlyMinutes) || 0;
+  if (mins <= 0 || !opts.checkIn) return "";
+  const start = opts.mesaiStart ? ` ${opts.mesaiStart}` : "";
+  return `Erken giriş ${opts.checkIn} kaydedildi · çalışma saati${start} başlangıcından sayılır (${mins} dk erken)`;
+}
+
+export function mesaimDateHolidaySuffix(opts = {}) {
+  if (opts.isWorkDay === false) return " · tatil günü (çalışma = fazla mesai)";
+  if (opts.isWorkDay === true) return "";
+  const raw = String(opts.todayDate || "").trim().slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!m || !Array.isArray(opts.workDays)) return "";
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(d.getTime())) return "";
+  const weekday = (d.getDay() + 6) % 7;
+  return opts.workDays.includes(weekday) ? "" : " · tatil günü (çalışma = fazla mesai)";
+}
+
+export function mesaimInSubtitle(checkIn) {
+  return checkIn ? `Giriş ${checkIn}` : "henüz giriş yok";
+}
+
+export function mesaimOutSubtitle(opts = {}) {
+  if (opts.checkOut) return `Çıkış ${opts.checkOut}`;
+  if (!opts.checkIn) return "önce giriş yapın";
+  return "puantaj / beklenen mesai bitişinden";
+}
+
+/** Mesaim çıkış kartı: kayıtlı saat + atanmış mesai bitiş + dış görev (varsa). */
+export function mesaimOutInfoLines(opts = {}) {
+  const checkOut = String(opts.checkOut || "").trim();
+  const checkIn = String(opts.checkIn || "").trim();
+  const end = String(opts.expectedEnd || opts.scheduledEnd || "").trim().slice(0, 5);
+  const ot = Number(opts.assignedOvertimeHours) || 0;
+  const headline = checkOut
+    ? `Çıkış ${checkOut}`
+    : checkIn
+      ? (end ? `Beklenen çıkış ${end}` : "puantaj / beklenen mesai bitişinden")
+      : "önce giriş yapın";
+  const baseNote = "Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır.";
+  let scheduleLine = "";
+  if (end || ot > 0) {
+    const bits = [end ? `Atanan mesai çıkış ${end}` : null];
+    if (ot > 0) bits.push(`+${ot} sa fazla mesai`);
+    scheduleLine = bits.filter(Boolean).join(" · ");
+  }
+  let fieldDutyLine = "";
+  const wp = opts.workplace;
+  if (wp && String(wp.kind || "") === "task") {
+    const title = String(wp.task_title || "Dış görev").trim();
+    const proj = String(wp.project_number || wp.project_name || wp.label || "").trim();
+    const days = Math.trunc(Number(wp.duration_days) || 0);
+    const parts = [proj ? `${title} · ${proj}` : title];
+    if (days > 0) parts.push(`${days} gün`);
+    fieldDutyLine = `Dış görev: ${parts.join(" · ")}`;
+  }
+  return { headline, baseNote, scheduleLine, fieldDutyLine };
 }
 
 /** Karttaki canlı saat varsa onu kullan; yoksa cihaz saati. */

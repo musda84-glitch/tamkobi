@@ -1,4 +1,4 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, checkInAlreadyDone, checkInBlockedHint, checkInOffsiteBlocked, checkInOnceHint, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, checkInAlreadyDone, checkInBlockedHint, checkInOffsiteBlocked, checkInOnceHint, earlyLeaveApproved, geoConfirmHint, geoConfirmPending, habitLabel, hasOpenMesaimSession, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimExclusivePathAllowed, mesaimExclusiveUntilCheckIn, mesaimInSubtitle, mesaimOutInfoLines, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, resolveMesaimTodayHours, resolveNowHm, selfAttendanceGeoMode, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "./attendanceSelf";
 
 describe("selfAttendanceGeoMode", () => {
   test("pulls GPS on check-in press; required when workplace/task target exists", () => {
@@ -68,5 +68,50 @@ describe("check-in once per day", () => {
     expect(checkInAlreadyDone("09:13")).toBe(true);
     expect(checkInAlreadyDone(null)).toBe(false);
     expect(checkInOnceHint("09:13")).toMatch(/Günde bir kez/);
+  });
+});
+
+describe("mesaimExclusiveUntilCheckIn", () => {
+  test("locks staff to Mesaim after checkout until next check-in", () => {
+    const staff = { role: "personel", employee_id: "e1" };
+    expect(hasOpenMesaimSession({ check_in: "08:00" })).toBe(true);
+    expect(hasOpenMesaimSession({ check_in: "08:00", check_out: "17:00" })).toBe(false);
+    expect(mesaimExclusiveUntilCheckIn(staff, { check_in: "08:00", check_out: "17:00" })).toBe(true);
+    expect(mesaimExclusiveUntilCheckIn(staff, { check_in: "08:00" })).toBe(false);
+    expect(mesaimExclusiveUntilCheckIn({ role: "admin", employee_id: "e1" }, { check_out: "17:00" })).toBe(false);
+    expect(mesaimExclusivePathAllowed("/mesai")).toBe(true);
+    expect(mesaimExclusivePathAllowed("/hesap?tab=profil")).toBe(true);
+    expect(mesaimExclusivePathAllowed("/panel")).toBe(false);
+  });
+});
+
+describe("mesaim today card helpers", () => {
+  test("builds schedule, early arrival and out-info lines", () => {
+    expect(resolveMesaimTodayHours({
+      todayWindow: { start: "08:00", end: "18:00", break_minutes: 60 },
+      schedule: { start: "09:00", end: "17:00" },
+    })).toEqual({ start: "08:00", end: "18:00", breakMinutes: 60 });
+    expect(mesaimScheduleLine({ start: "08:00", end: "18:00", break_minutes: 60 }, { label: "Bugün" }))
+      .toBe("Bugün 08:00–18:00 · mola 60 dk");
+    expect(mesaimEarlyArrivalLine({ checkIn: "07:40", earlyMinutes: 20, mesaiStart: "08:00" })).toMatch(/07:40/);
+    expect(mesaimDateHolidaySuffix({ isWorkDay: false })).toMatch(/tatil/);
+    expect(mesaimInSubtitle("09:05")).toBe("Giriş 09:05");
+    expect(mesaimOutInfoLines({
+      checkIn: "02:30",
+      checkOut: "03:30",
+      scheduledEnd: "03:30",
+      expectedEnd: "03:30",
+      workplace: { kind: "task", task_title: "Montaj", project_name: "Villa", duration_days: 2 },
+    })).toEqual({
+      headline: "Çıkış 03:30",
+      baseNote: "Mesaim’den çıkış yok. Çıkış saati personel puantajından yazılır.",
+      scheduleLine: "Atanan mesai çıkış 03:30",
+      fieldDutyLine: "Dış görev: Montaj · Villa · 2 gün",
+    });
+    expect(mesaimOutInfoLines({
+      checkIn: "08:00",
+      expectedEnd: "19:00",
+      assignedOvertimeHours: 1,
+    }).scheduleLine).toBe("Atanan mesai çıkış 19:00 · +1 sa fazla mesai");
   });
 });

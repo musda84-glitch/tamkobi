@@ -1,6 +1,7 @@
 import React, { Suspense, lazy } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
+import { MesaimGateProvider } from "./context/MesaimGateContext";
 import { Toaster } from "sonner";
 import MainLayout from "./components/MainLayout";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -90,6 +91,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <MesaimGateProvider>
         <Toaster position="top-right" richColors closeButton />
         <NoticesGate />
         <SetupGuard>
@@ -171,6 +173,7 @@ export default function App() {
             </ProtectedRoute>
           </MainLayout>
         </SetupGuard>
+        </MesaimGateProvider>
       </AuthProvider>
     </BrowserRouter>
   );
