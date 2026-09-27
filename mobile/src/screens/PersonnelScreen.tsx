@@ -102,7 +102,7 @@ import {
   locationTrackingPayload,
   locationTrackingEnabled,
   locationControllerLabel,
-  locationCellCaption,
+  assignedOvertimeCellCaption,
   locationTrackingTogglePayload,
   todayAttendanceParts,
   cardPunchAttempts,
@@ -1469,9 +1469,11 @@ export function PersonnelScreen() {
                   </View>
                 </View>
                 {(() => {
-                  const locOn = false;
                   const today = (attendance?.summary || []).find((s) => s.employee_id === eid)?.today || null;
                   const punch = todayAttendanceParts(today);
+                  const otCap = assignedOvertimeCellCaption(today);
+                  const otOn = otCap !== "--:--";
+                  const otColor = otOn ? "#4F46E5" : colors.muted;
                   return (
                     <View
                       testID={`emp-card-loc-${eid}`}
@@ -1485,19 +1487,14 @@ export function PersonnelScreen() {
                     >
                       <Row style={{ alignItems: "stretch", gap: 3 }}>
                         <View
-                          testID={`emp-card-loc-toggle-${eid}`}
-                          accessibilityLabel="Konum takibi kapalı"
+                          testID={`emp-card-assigned-ot-${eid}`}
+                          accessibilityLabel={otOn ? `Atanan fazla mesai ${otCap}` : "Atanan fazla mesai yok"}
                           style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: "#fff" }}
                         >
-                          <Row style={{ alignItems: "center", justifyContent: "space-between", gap: 4 }}>
-                            <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>KONUM</Text>
-                          </Row>
-                          <Row style={{ alignItems: "center", gap: 3 }}>
-                            <Ionicons name="location-outline" size={12} color={colors.muted} />
-                            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 11, color: colors.muted, flex: 1 }}>
-                              {locationCellCaption(locOn)}
-                            </Text>
-                          </Row>
+                          <Text style={{ fontSize: 9, fontWeight: "800", color: otColor, letterSpacing: 0.3 }}>MESAİ</Text>
+                          <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: otColor }}>
+                            {otCap}
+                          </Text>
                         </View>
                         <View testID={`emp-card-today-${eid}`} style={{ flex: 2, minWidth: 0, flexDirection: "row", gap: 3 }}>
                           <Pressable

@@ -11,6 +11,16 @@ export function locationCellCaption(on) {
   return on ? "Açık" : "Kapalı";
 }
 
+/** Personel kartı: atanan fazla mesai — giriş/çıkış gibi kısa değer. */
+export function assignedOvertimeCellCaption(today) {
+  const start = String(today?.assigned_overtime_start || "").trim().slice(0, 5);
+  const end = String(today?.assigned_overtime_end || "").trim().slice(0, 5);
+  if (/^\d{1,2}:\d{2}$/.test(start) && /^\d{1,2}:\d{2}$/.test(end)) return `${start}–${end}`;
+  const h = Number(today?.assigned_overtime_hours) || 0;
+  if (h > 0) return `+${h} sa`;
+  return "--:--";
+}
+
 export function requestsDetailsToggleLabel(open) {
   return open ? "Gizle" : "Büyüt";
 }

@@ -90,6 +90,7 @@ import {
   requestsDetailsToggleIcon,
   requestsDetailsSummary,
   locationCellCaption,
+  assignedOvertimeCellCaption,
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
   workplaceDetailsToggleIcon,
@@ -295,6 +296,9 @@ describe("employee draft", () => {
     expect(requestsDetailsSummary([])).toBe("Talep yok");
     expect(locationCellCaption(true)).toBe("Açık");
     expect(locationCellCaption(false)).toBe("Kapalı");
+    expect(assignedOvertimeCellCaption(null)).toBe("--:--");
+    expect(assignedOvertimeCellCaption({ assigned_overtime_hours: 2 })).toBe("+2 sa");
+    expect(assignedOvertimeCellCaption({ assigned_overtime_start: "18:00", assigned_overtime_end: "20:30" })).toBe("18:00–20:30");
     expect(companyBonusPayload("e1", "second_salary", "2000", "2026-09", "", "not").type).toBe("second_salary");
     expect(bonusesPeriodTotal([{ period: "2026-09", amount: 100 }, { period: "2026-08", amount: 50 }], "2026-09")).toBe(100);
     expect(attendanceGroupToggleLabel(false, 3)).toBe("Kayıtlar (3)");
