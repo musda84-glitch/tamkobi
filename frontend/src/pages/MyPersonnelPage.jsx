@@ -11,6 +11,7 @@ import { formatTrAmount } from "../utils/money";
 import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
 import { LocationConsentCard } from "../components/LocationConsentCard";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
+import { archivedAssignedDuties, openAssignedDuties } from "../utils/assignedDuty";
 
 const money = (n) => `${formatTrAmount(Number(n || 0))} ₺`;
 const statusTr = {
@@ -52,6 +53,7 @@ export default function MyPersonnelPage() {
   const [advanceOpen, setAdvanceOpen] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState(null);
   const [consentBusy, setConsentBusy] = useState(false);
+  const [showArchivedTasks, setShowArchivedTasks] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -81,7 +83,9 @@ export default function MyPersonnelPage() {
   const leave = data?.leave_balance;
   const comp = data?.compensation;
   const tasks = data?.tasks || [];
-  const openTasks = tasks.filter((t) => !t.done);
+  const openTasks = openAssignedDuties(tasks);
+  const archivedTasks = archivedAssignedDuties(tasks);
+  const visibleTasks = showArchivedTasks ? archivedTasks : openTasks;
   const wos = data?.work_orders || [];
   const payrolls = data?.payrolls || [];
   const bonuses = data?.bonuses || [];
@@ -340,9 +344,22 @@ export default function MyPersonnelPage() {
       {tab === "gorevler" && emp && (
         <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden" data-testid="my-personnel-tasks">
           <div className="px-4 py-3 border-b text-xs font-bold text-slate-700 flex items-center justify-between gap-2">
-            <span>Proje görevlerim ({tasks.length})</span>
+            <span data-testid="my-pers-tasks-count">
+              {showArchivedTasks
+                ? `Arşiv · ${archivedTasks.length} tamamlanan`
+                : `Proje görevlerim (${openTasks.length} açık)`}
+            </span>
             <div className="flex items-center gap-2">
-              <span className="font-normal text-slate-400">{openTasks.length} açık</span>
+              {archivedTasks.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowArchivedTasks((v) => !v)}
+                  className="font-bold text-emerald-700 hover:underline"
+                  data-testid="my-pers-tasks-archive-toggle"
+                >
+                  {showArchivedTasks ? "Açık görevler" : `Arşiv (${archivedTasks.length})`}
+                </button>
+              )}
               <Link to="/atolye" className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 text-white font-bold" data-testid="my-pers-goto-atolye">
                 <Factory className="w-3.5 h-3.5" /> Atölye ekranı
               </Link>
@@ -350,9 +367,13 @@ export default function MyPersonnelPage() {
           </div>
           {tasks.length === 0 ? (
             <div className="p-6 text-xs text-slate-400 text-center">Size atanmış proje görevi yok.</div>
+          ) : !visibleTasks.length ? (
+            <div className="p-6 text-xs text-slate-400 text-center" data-testid="my-pers-tasks-empty">
+              {showArchivedTasks ? "Arşivde tamamlanan görev yok." : "Açık görev kalmadı. Tamamlananlar arşivde."}
+            </div>
           ) : (
             <div className="p-3 space-y-3">
-              {tasks.map((t, i) => (
+              {visibleTasks.map((t, i) => (
                 <AssignedDutyCard
                   key={t.id || i}
                   duty={t}
