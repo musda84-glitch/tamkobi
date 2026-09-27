@@ -40,6 +40,27 @@ export function checkInAlreadyDone(checkIn?: string | null): boolean {
   return Boolean(checkIn);
 }
 
+/** Bugün açık mesai: giriş var, çıkış yok. */
+export function hasOpenMesaimSession(today?: { check_in?: string | null; check_out?: string | null } | null): boolean {
+  const inn = String(today?.check_in || "").trim();
+  const out = String(today?.check_out || "").trim();
+  return Boolean(inn) && !out;
+}
+
+/**
+ * Çıkış yapıldıysa (veya henüz giriş yoksa) bir sonraki girişe kadar yalnızca Mesaim.
+ * Yönetici / admin kilitlenmez.
+ */
+export function mesaimExclusiveUntilCheckIn(
+  user?: { role?: string | null; employee_id?: string | null } | null,
+  today?: { check_in?: string | null; check_out?: string | null } | null,
+): boolean {
+  if (!user?.employee_id) return false;
+  const role = String(user.role || "");
+  if (role === "admin" || role === "manager") return false;
+  return !hasOpenMesaimSession(today);
+}
+
 export function checkInOnceHint(checkIn?: string | null): string {
   const t = String(checkIn || "").trim().slice(0, 5);
   if (!t) return "";

@@ -1,8 +1,10 @@
 import "@/locationTask";
 import { AuthProvider, useAuth } from "@/auth/AuthContext";
 import { BadgeProvider } from "@/auth/BadgeContext";
+import { MesaimGateProvider } from "@/auth/MesaimGateContext";
 import { ConfirmHost } from "@/components/ConfirmDialog";
 import { LocationBgBridge } from "@/components/LocationBgBridge";
+import { MesaimLockBridge } from "@/components/MesaimLockBridge";
 import { PushBridge } from "@/components/PushBridge";
 import { HeaderBack } from "@/components/StackHeader";
 import { colors } from "@/theme";
@@ -111,11 +113,14 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <BadgeProvider>
-        <StatusBar style="auto" />
-        <PushBridge />
-        <LocationBgBridge />
-        <ConfirmHost />
-        <RootStack />
+        <MesaimGateProvider>
+          <StatusBar style="auto" />
+          <PushBridge />
+          <LocationBgBridge />
+          <MesaimLockBridge />
+          <ConfirmHost />
+          <RootStack />
+        </MesaimGateProvider>
       </BadgeProvider>
     </AuthProvider>
   );

@@ -1,4 +1,4 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimInSubtitle, mesaimLongDate, mesaimOutInfoLines, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, resolveMesaimTodayHours, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, hasOpenMesaimSession, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimExclusiveUntilCheckIn, mesaimInSubtitle, mesaimLongDate, mesaimOutInfoLines, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimWorkDaysLine, resolveMesaimTodayHours, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -38,6 +38,21 @@ describe("selfAttendanceGeoMode", () => {
   it("disables checkout geo — Mesaim has no checkout button", () => {
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: true, hasTarget: true })).toBe("none");
     expect(selfAttendanceGeoMode("check_out", { trackingEnabled: false })).toBe("none");
+  });
+});
+
+describe("mesaimExclusiveUntilCheckIn", () => {
+  it("locks staff to Mesaim after checkout until next check-in", () => {
+    const staff = { role: "personel", employee_id: "e1" };
+    expect(hasOpenMesaimSession({ check_in: "08:00" })).toBe(true);
+    expect(hasOpenMesaimSession({ check_in: "08:00", check_out: "17:00" })).toBe(false);
+    expect(hasOpenMesaimSession({})).toBe(false);
+    expect(mesaimExclusiveUntilCheckIn(staff, { check_in: "08:00", check_out: "17:00" })).toBe(true);
+    expect(mesaimExclusiveUntilCheckIn(staff, { check_in: "08:00" })).toBe(false);
+    expect(mesaimExclusiveUntilCheckIn(staff, {})).toBe(true);
+    expect(mesaimExclusiveUntilCheckIn({ role: "admin", employee_id: "e1" }, { check_out: "17:00" })).toBe(false);
+    expect(mesaimExclusiveUntilCheckIn({ role: "manager", employee_id: "e1" }, {})).toBe(false);
+    expect(mesaimExclusiveUntilCheckIn({ role: "personel" }, { check_out: "17:00" })).toBe(false);
   });
 });
 

@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useState } from "react"
 import { Platform, Text, View } from "react-native";
 import { del, get, post, upload } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { useMesaimGate } from "../auth/MesaimGateContext";
 import { TimeField } from "../components/TimeField";
 import { EmployeeAvatar } from "../components/EmployeeAvatar";
 import { Card, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen } from "../components/kit";
@@ -117,6 +118,7 @@ async function coords() {
 
 export function AttendanceScreen() {
   const { client, companyId } = useAuth();
+  const { refresh: refreshMesaimGate } = useMesaimGate();
   const navigation = useNavigation();
   const [data, setData] = useState<AttendancePayload | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -144,10 +146,11 @@ export function AttendanceScreen() {
       setData(res);
       setSignal(res.location_signal || null);
       setError(null);
+      await refreshMesaimGate();
     } catch (err) {
       setError(apiErrorMessage(err, "Puantaj yüklenemedi."));
     }
-  }, [client, companyId]);
+  }, [client, companyId, refreshMesaimGate]);
 
   useEffect(() => { load(); }, [load]);
 
