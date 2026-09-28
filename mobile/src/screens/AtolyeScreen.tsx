@@ -801,12 +801,17 @@ export function AtolyeScreen() {
             </Row>
             {finishing && (() => {
               const plan = workOrderFinishPlan(finishing);
+              const entered = Number(fin.produced_qty) + Number(fin.scrap_qty || 0);
               const over = finishOverPlan(Number(fin.produced_qty), Number(fin.scrap_qty || 0), plan.qty);
-              if (!over) return null;
+              const under = Number(plan.qty || 0) > 0 && entered < Number(plan.qty || 0) - 1e-9;
+              if (!over && !under) return null;
               return (
-                <Card testID="wo-finish-over-hint" style={{ backgroundColor: "#FFFBEB", borderColor: "#FDE68A" }}>
+                <Card
+                  testID={over ? "wo-finish-over-hint" : "wo-finish-under-hint"}
+                  style={{ backgroundColor: over ? "#FFFBEB" : "#F0F9FF", borderColor: over ? "#FDE68A" : "#BAE6FD" }}
+                >
                   <Muted>
-                    Plan üstü: {plan.qty} {plan.unit} planlandı, siz {Number(fin.produced_qty) + Number(fin.scrap_qty || 0)} giriyorsunuz — kayıt kabul edilir.
+                    {over ? "Plan üstü" : "Plan altı"}: {plan.qty} {plan.unit} planlandı, siz {entered} giriyorsunuz — stok buna göre işlenir.
                   </Muted>
                 </Card>
               );
@@ -824,11 +829,15 @@ export function AtolyeScreen() {
                   {(() => {
                     const plan = finishing ? workOrderFinishPlan(finishing) : null;
                     if (plan?.isMaterial) {
-                      return `Son adım: bitirince hammaddeler düşülür, mamul stoka ${finishing?.planned_quantity ?? ""} ${finishing?.unit || ""} yazılır.`.trim();
+                      return `Son adım: girilen hammadde stoğundan düşülür; mamul stoka ${finishing?.planned_quantity ?? ""} ${finishing?.unit || ""} yazılır.`.trim();
                     }
-                    return "Son adım: bitirince hammaddeler düşülür, üretilen miktar stoğa eklenir. Plan üstü miktar da stoğa yazılır.";
+                    return "Son adım: üretilen miktar mamul stoğa eklenir, hammaddeler buna göre düşülür (fazla/eksik dahil).";
                   })()}
                 </Muted>
+              </Card>
+            ) : finishing && workOrderFinishPlan(finishing).isMaterial ? (
+              <Card style={{ backgroundColor: colors.slate50 }}>
+                <Muted>Hammadde adımı: girilen üretilen + fire miktarı stoktan hemen düşülür.</Muted>
               </Card>
             ) : null}
             <Row>

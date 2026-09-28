@@ -464,7 +464,9 @@ export default function ShopFloorPage() {
       )}
           {finishing && (() => {
         const plan = workOrderFinishPlan(finishing);
-        const overPlan = Number(fin.produced_qty) + Number(fin.scrap_qty || 0) > Number(plan.qty || 0) + 1e-9;
+        const entered = Number(fin.produced_qty) + Number(fin.scrap_qty || 0);
+        const overPlan = entered > Number(plan.qty || 0) + 1e-9;
+        const underPlan = Number(plan.qty || 0) > 0 && entered < Number(plan.qty || 0) - 1e-9;
         return (
         <div className="fixed inset-0 z-[110] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(() => setFinishing(null))}>
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()} data-testid="wo-finish-modal">
@@ -482,13 +484,25 @@ export default function ShopFloorPage() {
             </div>
             {overPlan && (
               <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="wo-finish-over-hint">
-                Plan üstü: {plan.qty} {plan.unit} planlandı, siz {Number(fin.produced_qty) + Number(fin.scrap_qty || 0)} giriyorsunuz — kayıt kabul edilir.
+                Plan üstü: {plan.qty} {plan.unit} planlandı, siz {entered} giriyorsunuz — stok buna göre işlenir.
+              </p>
+            )}
+            {underPlan && (
+              <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg p-2" data-testid="wo-finish-under-hint">
+                Plan altı: {plan.qty} {plan.unit} planlandı, siz {entered} giriyorsunuz — stok buna göre işlenir.
               </p>
             )}
             <input value={fin.notes} onChange={(e) => setFin({ ...fin, notes: e.target.value })} placeholder="Not (isteğe bağlı)" className="w-full border rounded-xl p-3" data-testid="wo-finish-notes" />
             {finishing.step_no === finishing.step_count && (
               <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2">
-                Son adım: bitirince hammaddeler düşülür{plan.isMaterial ? `, mamul stoka ${finishing.planned_quantity} ${finishing.unit} yazılır` : ", üretilen miktar stoğa eklenir. Plan üstü miktar da stoğa yazılır"}.
+                Son adım: {plan.isMaterial
+                  ? `girilen hammadde stoğundan düşülür; mamul stoka ${finishing.planned_quantity} ${finishing.unit} yazılır`
+                  : "üretilen miktar mamul stoğa eklenir, hammaddeler buna göre düşülür (fazla/eksik dahil)"}.
+              </p>
+            )}
+            {plan.isMaterial && finishing.step_no !== finishing.step_count && (
+              <p className="text-xs text-slate-600 bg-slate-50 rounded-lg p-2">
+                Hammadde adımı: girilen üretilen + fire miktarı stoktan hemen düşülür.
               </p>
             )}
             <div className="flex gap-2"><button onClick={() => setFinishing(null)} className="flex-1 py-3 border-2 rounded-xl font-semibold">İptal</button><button onClick={() => act(finishing, "finish", { produced_qty: Number(fin.produced_qty), scrap_qty: Number(fin.scrap_qty), notes: fin.notes })} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold" data-testid="wo-finish-confirm">Tamamla</button></div>

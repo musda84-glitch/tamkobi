@@ -51,6 +51,19 @@ describe("workOrderFinishPlan", () => {
       }),
     ).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: null });
   });
+
+  test("ceils fractional finish_qty Adet from API", () => {
+    expect(
+      workOrderFinishPlan({
+        planned_quantity: 10,
+        unit: "M2",
+        finish_qty: 2.857,
+        finish_unit: "Adet",
+        finish_is_material: true,
+        materials: [],
+      }),
+    ).toEqual({ qty: 3, unit: "Adet", isMaterial: true, materialName: null });
+  });
 });
 
 describe("shopFloorCardActions", () => {
