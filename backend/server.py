@@ -83,6 +83,7 @@ import cheques
 import fx
 import attendance
 import production_work_orders as pwo
+import work_order_trash_requests as wo_trash_req
 import shopfloor_pause as sfp
 import location_consent
 import personnel_wage
@@ -9390,6 +9391,11 @@ async def personnel_pending_requests(company_id: Optional[str] = "comp_nexus_mai
                 "tolerance_hours": ocr.get("tolerance_hours"),
             },
         })
+    trash_reqs = await db.work_order_trash_requests.find(
+        {"company_id": company_id, "status": "pending"}
+    ).sort("requested_at", -1).to_list(200)
+    for tr in trash_reqs:
+        items.append(wo_trash_req.inbox_item(tr))
     items.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
     return {"count": len(items), "items": items}
 
@@ -13147,7 +13153,16 @@ async def list_work_orders(company_id: Optional[str] = "comp_nexus_main_01", sta
         if company.get("shopfloor_group_same_station"):
             rows = pwo.group_work_orders_for_display(rows)
     now = datetime.now(timezone.utc)
+    wo_ids = [r.get("id") or r.get("_id") for r in rows if r.get("id") or r.get("_id")]
+    pending_trash = set()
+    if wo_ids:
+        pend = await db.work_order_trash_requests.find(
+            {"work_order_id": {"$in": wo_ids}, "status": "pending"}
+        ).to_list(len(wo_ids) + 50)
+        pending_trash = wo_trash_req.pending_ids_for_work_orders(pend)
     for r in rows:
+        wid = str(r.get("id") or r.get("_id") or "")
+        r["trash_request_pending"] = wid in pending_trash
         if r.get("started_at") and r["status"] in ("in_progress", "paused"):
             r["elapsed_min"] = round(((datetime.fromisoformat(r["started_at"]) if r["status"] == "in_progress" else datetime.fromisoformat(r.get("paused_at") or r["started_at"])) - datetime.fromisoformat(r["started_at"])).total_seconds() / 60 - r.get("paused_seconds", 0) / 60, 1)
             if r["status"] == "in_progress":
@@ -13493,13 +13508,8 @@ async def _verify_company_admin_password(company_id: str, password: str) -> Dict
     raise HTTPException(status_code=403, detail="Yönetici şifresi hatalı.")
 
 
-@api_router.post("/production/work-orders/{wo_id}/admin-trash")
-async def admin_trash_work_order(wo_id: str, req: Dict[str, Any] = None):
-    """Atölye kartından sil: yönetici şifresiyle üretim emri + tüm adımları çöpe taşır."""
-    req = req or {}
-    w = await _wo(wo_id)
-    company_id = w.get("company_id") or req.get("company_id") or "comp_nexus_main_01"
-    admin = await _verify_company_admin_password(company_id, req.get("password") or "")
+async def _soft_trash_work_order_cascade(w: Dict[str, Any], *, note_prefix: str) -> Dict[str, Any]:
+    """Üretim emri varsa tüm adımlar + emir; yoksa tek iş emri → çöp."""
     order_id = w.get("order_id")
     order = await db.production_orders.find_one({"_id": order_id}) if order_id else None
     if order:
@@ -13514,22 +13524,130 @@ async def admin_trash_work_order(wo_id: str, req: Dict[str, Any] = None):
             "production_order",
             label,
             related=[{"collection": "work_orders", "docs": wos}],
-            note=f"Atölye silme · {admin.get('name') or admin.get('email') or 'yönetici'} · {len(wos)} iş emri",
+            note=f"{note_prefix} · {len(wos)} iş emri",
         )
         return {
             "status": "success",
             "trashed_work_orders": len(wos),
             "message": f"{label} ve {len(wos)} iş emri çöp kutusuna taşındı.",
         }
-    # Üretim emri yoksa yalnızca bu iş emrini taşı
     await trash.soft_delete(
         "work_orders",
         w,
         "work_order",
         pwo.work_order_trash_label(w),
-        note=f"Atölye silme · {admin.get('name') or admin.get('email') or 'yönetici'} · {pwo.work_order_trash_note(w)}",
+        note=f"{note_prefix} · {pwo.work_order_trash_note(w)}",
     )
     return {"status": "success", "trashed_work_orders": 1, "message": "İş emri çöp kutusuna taşındı."}
+
+
+@api_router.post("/production/work-orders/{wo_id}/trash-request")
+async def request_trash_work_order(wo_id: str, req: Dict[str, Any] = None):
+    """Atölye: silme talebini yönetici onayına gönder (hemen silmez)."""
+    req = req or {}
+    w = await _wo(wo_id)
+    if w.get("status") == "done":
+        raise HTTPException(
+            status_code=400,
+            detail="Tamamlanan adım buradan silinmez; “Tamamlananları çöpe taşı” veya üretim emri iptali kullanın.",
+        )
+    company_id = w.get("company_id") or req.get("company_id") or "comp_nexus_main_01"
+    who = str(req.get("operator_name") or w.get("operator_name") or "").strip()
+    if not who:
+        raise HTTPException(status_code=400, detail="Silme talebi için operatör seçin.")
+    existing = await db.work_order_trash_requests.find_one(
+        {"work_order_id": wo_id, "status": "pending"}
+    )
+    if existing:
+        return {
+            "status": "success",
+            "id": existing.get("_id"),
+            "message": "Bu iş emri için zaten yönetici onayı bekleniyor.",
+            "already_pending": True,
+        }
+    # Üretim emri silinemeyecek durumdaysa talebi erken reddet
+    order_id = w.get("order_id")
+    if order_id:
+        order = await db.production_orders.find_one({"_id": order_id})
+        if order:
+            block = pwo.production_order_trash_block_reason(order)
+            if block:
+                raise HTTPException(status_code=400, detail=block)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    doc = wo_trash_req.build_trash_request(
+        w, requested_by=who, reason=str(req.get("reason") or ""), now_iso=now_iso
+    )
+    doc["_id"] = str(uuid.uuid4())
+    doc["company_id"] = company_id
+    await db.work_order_trash_requests.insert_one(doc)
+    return {
+        "status": "success",
+        "id": doc["_id"],
+        "message": "Silme talebi yönetici onayına gönderildi.",
+        "already_pending": False,
+    }
+
+
+@api_router.post("/production/work-orders/trash-requests/{req_id}/decide")
+async def decide_trash_work_order(req_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+    """Yönetici: iş emri silme talebini onayla (çöpe taşı) veya reddet."""
+    req = req or {}
+    role = str(user.get("role") or "")
+    if not (user.get("is_super_admin") or role in ("admin", "owner", "manager", "accountant")):
+        raise HTTPException(status_code=403, detail="Bu işlem için yönetici yetkisi gerekir.")
+    status_val = str(req.get("status") or "").strip().lower()
+    if status_val not in ("approved", "rejected"):
+        raise HTTPException(status_code=400, detail="Geçersiz karar.")
+    row = await db.work_order_trash_requests.find_one({"_id": req_id})
+    if not row or row.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Bekleyen silme talebi bulunamadı.")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    decider = user.get("name") or user.get("email") or user.get("_id") or "yönetici"
+    if status_val == "rejected":
+        await db.work_order_trash_requests.update_one(
+            {"_id": req_id},
+            {"$set": {"status": "rejected", "decided_at": now_iso, "decided_by": decider, "decision_note": req.get("note", "")}},
+        )
+        return {"status": "success", "message": "Silme talebi reddedildi."}
+    w = await db.work_orders.find_one({"_id": row.get("work_order_id")})
+    if not w:
+        await db.work_order_trash_requests.update_one(
+            {"_id": req_id},
+            {"$set": {"status": "approved", "decided_at": now_iso, "decided_by": decider, "decision_note": "İş emri zaten yok"}},
+        )
+        return {"status": "success", "message": "İş emri bulunamadı; talep kapatıldı.", "trashed_work_orders": 0}
+    result = await _soft_trash_work_order_cascade(
+        w, note_prefix=f"Yönetici onaylı silme · {decider} · talep {req_id[:8]}"
+    )
+    # Aynı üretim emrine bağlı diğer bekleyen talepleri kapat
+    order_id = row.get("order_id") or w.get("order_id")
+    close_q: Dict[str, Any] = {"status": "pending"}
+    if order_id:
+        close_q["order_id"] = order_id
+    else:
+        close_q["work_order_id"] = row.get("work_order_id")
+    await db.work_order_trash_requests.update_many(
+        close_q,
+        {"$set": {"status": "approved", "decided_at": now_iso, "decided_by": decider}},
+    )
+    result["message"] = (result.get("message") or "Silindi.") + " Talep onaylandı."
+    return result
+
+
+@api_router.post("/production/work-orders/{wo_id}/admin-trash")
+async def admin_trash_work_order(wo_id: str, req: Dict[str, Any] = None):
+    """Acil: yönetici şifresiyle anında çöpe taşı (onay kuyruğunu atlar)."""
+    req = req or {}
+    w = await _wo(wo_id)
+    company_id = w.get("company_id") or req.get("company_id") or "comp_nexus_main_01"
+    admin = await _verify_company_admin_password(company_id, req.get("password") or "")
+    who = admin.get("name") or admin.get("email") or "yönetici"
+    result = await _soft_trash_work_order_cascade(w, note_prefix=f"Atölye silme · {who}")
+    await db.work_order_trash_requests.update_many(
+        {"work_order_id": wo_id, "status": "pending"},
+        {"$set": {"status": "approved", "decided_at": datetime.now(timezone.utc).isoformat(), "decided_by": who}},
+    )
+    return result
 
 
 @api_router.put("/production/orders/{order_id}")

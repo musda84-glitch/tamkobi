@@ -345,6 +345,7 @@ export const REQUEST_KIND_TR: Record<string, string> = {
   location_exit: "Konum dışı",
   geo_confirm: "Teyitli giriş",
   overtime_confirm: "Mesai onayı",
+  work_order_trash: "İş emri silme",
 };
 
 export function requestKindLabel(kind?: string | null): string {
@@ -398,6 +399,9 @@ export function pendingRequestDecision(
   }
   if (it.kind === "overtime_confirm") {
     return { path: `/personnel/attendance/${id}/overtime-confirm-decision`, body: { decision: approved ? "yes" : "no" } };
+  }
+  if (it.kind === "work_order_trash") {
+    return { path: `/production/work-orders/trash-requests/${id}/decide`, body: { status: approved ? "approved" : "rejected" } };
   }
   return null;
 }

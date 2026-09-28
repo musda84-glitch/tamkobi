@@ -36,6 +36,7 @@ export type WorkOrder = {
   produced_qty?: number;
   scrap_qty?: number;
   finished_at?: string;
+  trash_request_pending?: boolean;
 };
 
 /** Web ShopFloorPage STATUS etiketleri. */

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Bell, CalendarDays, Check, ChevronDown, ChevronUp, Clock, Coins, Loader2, MapPin, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight, ShieldCheck, Timer } from "lucide-react";
+import { Bell, CalendarDays, Check, ChevronDown, ChevronUp, Clock, Coins, Loader2, MapPin, MessageSquareWarning, RefreshCw, Wallet, X, ArrowLeftRight, ShieldCheck, Timer, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { requestsDetailsToggleLabel } from "../utils/employeeCardStatus";
@@ -17,6 +17,7 @@ export const KIND_META = {
   location_exit: { label: "Konum dışı", Icon: MapPin, chip: "bg-emerald-50 text-emerald-800 border-emerald-200" },
   geo_confirm: { label: "Teyitli giriş / saat", Icon: ShieldCheck, chip: "bg-violet-50 text-violet-800 border-violet-200" },
   overtime_confirm: { label: "Mesai onayı", Icon: Timer, chip: "bg-indigo-50 text-indigo-800 border-indigo-200" },
+  work_order_trash: { label: "İş emri silme", Icon: Trash2, chip: "bg-rose-50 text-rose-800 border-rose-200" },
 };
 
 const chipBtn = "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[9px] font-bold disabled:opacity-50";
@@ -34,6 +35,7 @@ export function EmployeeRequestChips({
   onDecideOvertimeConfirm,
   onDecideGeoConfirm,
   onDecideDispute,
+  onDecideWorkOrderTrash,
   onViewDispute,
   maxVisible = 3,
 }) {
@@ -188,6 +190,16 @@ export function EmployeeRequestChips({
                   </button>
                 </>
               )}
+              {it.kind === "work_order_trash" && (
+                <>
+                  <button type="button" disabled={busy} onClick={() => onDecideWorkOrderTrash?.(it.id, "approved")} className={`${chipBtn} bg-emerald-600 text-white hover:bg-emerald-700`} data-testid={`card-approve-wo-trash-${it.id}`}>
+                    <Check className="w-2.5 h-2.5" /> Onayla
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => onDecideWorkOrderTrash?.(it.id, "rejected")} className={`${chipBtn} bg-rose-600 text-white hover:bg-rose-700`} data-testid={`card-reject-wo-trash-${it.id}`}>
+                    <X className="w-2.5 h-2.5" /> Reddet
+                  </button>
+                </>
+              )}
             </div>
           </div>
         );
@@ -336,6 +348,20 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
     try {
       const r = await axios.post(`${API_URL}/personnel/attendance/${id}/geo-confirm-decision`, { decision });
       toast.success(r.data?.message || (decision === "approve" ? "Teyit edildi." : "Reddedildi."));
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const decideWorkOrderTrash = async (id, status) => {
+    setBusyId(id);
+    try {
+      const r = await axios.post(`${API_URL}/production/work-orders/trash-requests/${id}/decide`, { status });
+      toast.success(r.data?.message || (status === "approved" ? "Silme onaylandı." : "Silme reddedildi."));
       await load();
       onChanged?.();
     } catch (err) {
@@ -518,6 +544,16 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
                       </button>
                       <button type="button" onClick={() => navigate(it.link || "/personnel?tab=attendance")} className="px-2 py-1 rounded-lg border border-slate-200 text-[10px] font-bold text-slate-700 hover:bg-slate-50" data-testid={`inbox-view-dispute-${it.id}`}>
                         Puantajda aç
+                      </button>
+                    </>
+                  )}
+                  {it.kind === "work_order_trash" && (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => decideWorkOrderTrash(it.id, "approved")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 disabled:opacity-50" data-testid={`inbox-approve-wo-trash-${it.id}`}>
+                        <Check className="w-3 h-3" /> Onayla
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => decideWorkOrderTrash(it.id, "rejected")} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 disabled:opacity-50" data-testid={`inbox-reject-wo-trash-${it.id}`}>
+                        <X className="w-3 h-3" /> Reddet
                       </button>
                     </>
                   )}
