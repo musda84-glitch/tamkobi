@@ -28,6 +28,7 @@ export default function ProductionPage() {
   const [completeQty, setCompleteQty] = useState({});
   const [filter, setFilter] = useState("open");
   const [recipesLoaded, setRecipesLoaded] = useState(false);
+  const [productsLoaded, setProductsLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [missingItems, setMissingItems] = useState([]);
   const [missingLoading, setMissingLoading] = useState(false);
@@ -65,21 +66,35 @@ export default function ProductionPage() {
     setParams(np);
   };
 
+  const loadProducts = useCallback(async () => {
+    if (productsLoaded) return;
+    try {
+      const p = await axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`);
+      setProducts(p.data || []);
+      setProductsLoaded(true);
+    } catch {
+      /* düşük stok bandı opsiyonel — emir listesini engelleme */
+    }
+  }, [companyId, productsLoaded]);
+
   const loadOrders = useCallback(async () => {
     try {
       setLoading(true);
       const statusQs = filter === "open" ? "&status=open" : filter === "all" ? "" : `&status=${filter}`;
-      const [o, p, k] = await Promise.all([
-        axios.get(`${API_URL}/production/orders?company_id=${companyId}${statusQs}&include_steps=1`),
-        axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`),
-        axios.get(`${API_URL}/production/kpis?company_id=${companyId}`),
-      ]);
+      // Emir listesini önce getir; KPI ve ürünler tabloyu bloklamasın
+      const ordersReq = axios.get(`${API_URL}/production/orders?company_id=${companyId}${statusQs}&include_steps=1`);
+      const kpisReq = axios.get(`${API_URL}/production/kpis?company_id=${companyId}`);
+      const o = await ordersReq;
       setOrders(o.data || []);
-      setProducts(p.data || []);
-      setKpis(k.data || { open: 0, in_production: 0, completed_this_month: 0, recipes: 0, missing_notifications: 0 });
+      setLoading(false);
+      try {
+        const k = await kpisReq;
+        setKpis(k.data || { open: 0, in_production: 0, completed_this_month: 0, recipes: 0, missing_notifications: 0 });
+      } catch {
+        /* KPI ikincil */
+      }
     } catch {
       toast.error("Üretim emirleri yüklenemedi.");
-    } finally {
       setLoading(false);
     }
   }, [companyId, filter]);
@@ -131,10 +146,16 @@ export default function ProductionPage() {
     if (tab === "missing") await loadMissing();
   }, [loadOrders, loadRecipes, loadMissing, tab, recipesLoaded]);
 
+  useEffect(() => {
+    setProductsLoaded(false);
+    setProducts([]);
+    setRecipesLoaded(false);
+    setRecipes([]);
+  }, [companyId]);
   useEffect(() => { loadOrders(); }, [loadOrders]);
+  useEffect(() => { if ((tab === "orders" || tab === "recipes") && !productsLoaded) loadProducts(); }, [tab, productsLoaded, loadProducts]);
   useEffect(() => { if (tab === "recipes" && !recipesLoaded) loadRecipes(); }, [tab, recipesLoaded, loadRecipes]);
   useEffect(() => { if (tab === "missing") loadMissing(); }, [tab, loadMissing]);
-  useEffect(() => { if (tab === "orders" && !recipesLoaded) loadRecipes(); }, [tab, recipesLoaded, loadRecipes]);
   useEffect(() => { const nf = params.get("new_for"); if (nf && products.length) { setRecipeModal({ presetProductId: nf }); const np = new URLSearchParams(params); np.delete("new_for"); setParams(np); } }, [params, products, setParams]);
 
   const act = async (id, action, body) => { try { const r = await axios.post(`${API_URL}/production/orders/${id}/${action}`, body || {}); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
@@ -186,6 +207,9 @@ export default function ProductionPage() {
   const lowStockWithRecipe = products.filter((p) => p.has_recipe && p.track_stock !== false && (p.stock_quantity || 0) <= (p.min_stock_alert || 0));
   const recipeCount = recipesLoaded ? recipes.length : (kpis.recipes || products.filter((p) => p.has_recipe).length);
   const missingCount = tab === "missing" ? missingMeta.count : (kpis.missing_notifications || missingMeta.count || 0);
+  const ordersTabCount = filter === "open"
+    ? (loading ? (kpis.open || "…") : orders.length)
+    : (kpis.open || orders.filter((o) => ["planned", "in_production"].includes(o.status)).length);
   const kpi = [
     ["Açık Emir", kpis.open, "text-amber-600"],
     ["Üretimde", kpis.in_production, "text-blue-600"],
@@ -267,7 +291,7 @@ export default function ProductionPage() {
       <div className="flex items-center gap-1 border-b border-slate-200" data-testid="production-tabs">
         {[
           ["missing", "Eksik Ürün Bildirimleri", BellRing, missingCount],
-          ["orders", "Üretim Emirleri", Factory, filter === "open" ? orders.length : kpis.open],
+          ["orders", "Üretim Emirleri", Factory, ordersTabCount],
           ["recipes", "Reçeteler", BookOpen, recipeCount],
         ].map(([k, l, Icon, n]) => (
           <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 -mb-px ${tab === k ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500"}`} data-testid={`production-tab-${k}`}>
