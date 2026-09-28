@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
+import { shopFloorCardActions, shopFloorCardBorder } from "../utils/shopFloorActions";
 
 const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
 
@@ -152,11 +153,25 @@ export default function ShopFloorPage() {
     }
   };
 
-  const Card = ({ w }) => { const [l, c] = STATUS[w.status] || STATUS.waiting; return (
-    <div className={`bg-white rounded-2xl border-2 p-4 space-y-3 ${w.status === "in_progress" ? "border-amber-400 shadow-lg shadow-amber-100" : w.status === "ready" ? "border-blue-200" : "border-slate-200"}`} data-testid={`wo-card-${w.order_code}-${w.step_no}`}>
+  const Card = ({ w }) => {
+    const [l, c] = STATUS[w.status] || STATUS.waiting;
+    const actions = shopFloorCardActions(w.status);
+    return (
+    <div className={`bg-white rounded-2xl border-2 p-4 space-y-3 ${shopFloorCardBorder(w.status)}`} data-testid={`wo-card-${w.order_code}-${w.step_no}`}>
       <div className="flex justify-between items-start gap-2">
         <div className="min-w-0"><div className="font-mono text-xs text-slate-400">{w.order_code} • Adım {w.step_no}/{w.step_count}</div><div className="font-bold text-slate-900 text-base leading-tight truncate">{w.step_name}</div><div className="text-sm text-slate-600 flex items-center gap-1 truncate"><Package className="w-3.5 h-3.5" /> {w.product_name}</div></div>
         <div className="flex items-center gap-1 shrink-0">
+          {actions.pause && (
+            <button
+              type="button"
+              onClick={() => act(w, "pause")}
+              className="p-1.5 rounded-lg text-orange-600 hover:bg-orange-50 border border-orange-200"
+              title="Duraklat"
+              data-testid={`wo-pause-icon-${w.order_code}-${w.step_no}`}
+            >
+              <Pause className="w-4 h-4" />
+            </button>
+          )}
           {w.status !== "done" && (
             <button
               type="button"
@@ -204,9 +219,26 @@ export default function ShopFloorPage() {
       </div>
       {w.notes && <div className="text-xs bg-slate-50 rounded-lg p-2 text-slate-600">{w.notes}</div>}
       <div className="grid grid-cols-2 gap-2">
-        {w.status === "ready" && <button onClick={() => act(w, "start")} className="col-span-2 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-base" data-testid={`wo-start-${w.order_code}-${w.step_no}`}><Play className="w-5 h-5" /> Başla</button>}
-        {w.status === "in_progress" && <><button onClick={() => act(w, "pause")} className="flex items-center justify-center gap-2 py-3 bg-orange-100 hover:bg-orange-200 text-orange-800 rounded-xl font-bold" data-testid={`wo-pause-${w.order_code}-${w.step_no}`}><Pause className="w-5 h-5" /> Duraklat</button><button onClick={() => openFinish(w)} className="flex items-center justify-center gap-2 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold" data-testid={`wo-finish-${w.order_code}-${w.step_no}`}><CheckCircle2 className="w-5 h-5" /> Bitir</button></>}
-        {w.status === "paused" && <><button onClick={() => act(w, "start")} className="flex items-center justify-center gap-2 py-3 bg-emerald-600 text-white rounded-xl font-bold" data-testid={`wo-resume-${w.order_code}-${w.step_no}`}><Play className="w-5 h-5" /> Devam</button><button onClick={() => openFinish(w)} className="flex items-center justify-center gap-2 py-3 bg-slate-900 text-white rounded-xl font-bold"><CheckCircle2 className="w-5 h-5" /> Bitir</button></>}
+        {actions.start && (
+          <button onClick={() => act(w, "start")} className="col-span-2 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-base" data-testid={`wo-start-${w.order_code}-${w.step_no}`}>
+            <Play className="w-5 h-5" /> Başla
+          </button>
+        )}
+        {actions.pause && (
+          <button onClick={() => act(w, "pause")} className="flex items-center justify-center gap-2 py-3.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold text-base shadow-sm shadow-orange-500/30" data-testid={`wo-pause-${w.order_code}-${w.step_no}`}>
+            <Pause className="w-5 h-5" /> Duraklat
+          </button>
+        )}
+        {actions.resume && (
+          <button onClick={() => act(w, "start")} className="flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold" data-testid={`wo-resume-${w.order_code}-${w.step_no}`}>
+            <Play className="w-5 h-5" /> Devam
+          </button>
+        )}
+        {actions.finish && (
+          <button onClick={() => openFinish(w)} className="flex items-center justify-center gap-2 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold" data-testid={`wo-finish-${w.order_code}-${w.step_no}`}>
+            <CheckCircle2 className="w-5 h-5" /> Bitir
+          </button>
+        )}
         {w.status === "waiting" && <div className="col-span-2 text-center text-xs text-slate-400 py-2">Önceki adım tamamlanınca açılır</div>}
         {w.status === "done" && <div className="col-span-2 text-center text-xs text-emerald-700 py-2 font-semibold">{w.produced_qty} üretildi{w.scrap_qty ? `, ${w.scrap_qty} fire` : ""} • {w.operator_name}</div>}
       </div>
