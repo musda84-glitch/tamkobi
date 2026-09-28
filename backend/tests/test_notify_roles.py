@@ -49,6 +49,16 @@ def test_staff_admin_sees_only_assigned():
     assert not notification_visible(broadcast, staff_admin)
 
 
+def test_staff_admin_sees_bank_and_cash_broadcasts():
+    staff_admin = {"role": "admin", "id": "u1", "employee_id": "emp_1"}
+    bank = notification_doc("c1", "bank_sync", "2 yeni banka hareketi", "Enpara", link="/banking?tab=match")
+    cash = notification_doc("c1", "cash_approval", "Kasa onayı", "500 ₺")
+    pick = {"type": "order_pick_missing", "title": "depo"}
+    assert notification_visible(bank, staff_admin)
+    assert notification_visible(cash, staff_admin)
+    assert not notification_visible(pick, staff_admin)
+
+
 def test_warehouse_sees_pick_missing_not_late():
     warehouse = {"role": "warehouse", "id": "u1"}
     assert notification_visible({"type": "order_pick_missing"}, warehouse)

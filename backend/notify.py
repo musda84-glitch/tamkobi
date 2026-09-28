@@ -60,6 +60,9 @@ ROLE_LABELS = {
     "advisor": "Mali Müşavir",
 }
 
+# Personel kartı bağlı yönetici depo/üretim yayınlarını görmez; kasa-banka kritik.
+STAFF_ADMIN_BROADCAST_TYPES = frozenset({"bank_sync", "cash_approval", "license"})
+
 
 def roles_for_type(ntype: str) -> List[str]:
     return list(TYPE_ROLES.get((ntype or "").strip(), ("admin",)))
@@ -75,7 +78,8 @@ def _ids_of(user: Dict[str, Any]) -> set[str]:
 
 def notification_visible(note: Dict[str, Any], user: Optional[Dict[str, Any]]) -> bool:
     """Şirket yöneticisi (personel kartı yok) her şeyi görür.
-    Personel kartı bağlıysa yalnız kendisine atanan veya rolüne düşen kayıt."""
+    Personel kartı bağlıysa yalnız kendisine atanan veya rolüne düşen kayıt;
+    personelli admin ayrıca banka/kasa yayınlarını alır (uygulama kapalıyken push)."""
     if not user:
         return True
     role = (user.get("role") or "").lower()
@@ -88,10 +92,11 @@ def notification_visible(note: Dict[str, Any], user: Optional[Dict[str, Any]]) -
     targeted = bool(target_user or target_emp)
     if targeted:
         return bool((target_user and target_user in mine) or (target_emp and target_emp in mine))
-    if role == "admin" and staff:
+    ntype = str(note.get("type") or "").strip()
+    if role == "admin" and staff and ntype not in STAFF_ADMIN_BROADCAST_TYPES:
         return False
     stored = note.get("roles")
-    roles = list(stored) if stored is not None else roles_for_type(note.get("type") or "")
+    roles = list(stored) if stored is not None else roles_for_type(ntype)
     if role and role in roles:
         return True
     return False
@@ -432,6 +437,12 @@ async def dispatch_push(db, note: Dict[str, Any]) -> Dict[str, Any]:
     tokens = collect_dispatch_tokens(user_tokens, company_tokens, is_targeted_note(note))
     messages = expo_push_messages(tokens, note)
     if not messages:
+        logger.warning(
+            "push skipped (no tokens) type=%s company=%s recipients=%s",
+            note.get("type"),
+            note.get("company_id"),
+            len(recipients),
+        )
         return {"sent": 0}
     result = await send_expo_push(messages)
     try:

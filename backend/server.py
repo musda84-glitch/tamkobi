@@ -8214,11 +8214,17 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
         bal_note = f" Bakiye farkı: {balance_delta:+,.2f} ₺."
     if inserted:
         import notify as _notify
+        still_open = max(0, int(inserted) - int(auto_matched or 0))
+        detail = (
+            f"{acc.get('account_name') or 'Hesap'}: {inserted} yeni hareket"
+            + (f" ({still_open} eşleşme bekliyor)" if still_open else " (otomatik eşleşti)")
+            + f".{bal_note}"
+        )
         await _notify.insert_notification(db, _notify.notification_doc(
             doc["company_id"], "bank_sync",
             f"{inserted} yeni banka hareketi",
-            f"{acc.get('account_name') or 'Hesap'}: {inserted} eşleşmemiş hareket geldi.{bal_note}",
-            link="/banking",
+            detail,
+            link="/banking?tab=match" if still_open else "/banking",
             ref_type="bank",
             ref_id=str(acc.get("_id") or ""),
         ))
@@ -11038,17 +11044,18 @@ async def _run_bank_auto_sync_tick():
         except Exception:
             logger.exception("banka otomatik senkron %s", c.get("_id"))
 
-async def _bank_auto_sync_loop(interval_s: int = 600):
-    """auto_sync açık, kimlik bilgisi olan banka bağlantılarını 10 dakikada bir çeker."""
+async def _bank_auto_sync_loop(interval_s: Optional[int] = None):
+    """auto_sync açık, kimlik bilgisi olan banka bağlantılarını sık aralıkla çeker; yeni hareket → push."""
     import asyncio as _a
-    from bank_auto_sync import BANK_AUTO_SYNC_STARTUP_DELAY_S
+    from bank_auto_sync import BANK_AUTO_SYNC_INTERVAL_S, BANK_AUTO_SYNC_STARTUP_DELAY_S
+    delay = int(interval_s if interval_s is not None else BANK_AUTO_SYNC_INTERVAL_S)
     await _a.sleep(BANK_AUTO_SYNC_STARTUP_DELAY_S)
     while True:
         try:
             await _run_bank_auto_sync_tick()
         except Exception:
             logger.exception("banka otomatik senkron döngüsü")
-        await _a.sleep(interval_s)
+        await _a.sleep(delay)
 
 DEFAULT_CHANNEL_FEES = {"trendyol": {"commission_rate": 21.5, "service_fee": 12.99, "cargo_fee": 0.0}, "hepsiburada": {"commission_rate": 18.0, "service_fee": 9.90, "cargo_fee": 0.0},
                         "amazon": {"commission_rate": 15.0, "service_fee": 0.0, "cargo_fee": 0.0}, "n11": {"commission_rate": 16.0, "service_fee": 7.99, "cargo_fee": 0.0}, "ciceksepeti": {"commission_rate": 20.0, "service_fee": 0.0, "cargo_fee": 0.0}}

@@ -5,8 +5,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from bank_providers import has_credentials
 
-BANK_AUTO_SYNC_INTERVAL_S = 600
-BANK_AUTO_SYNC_STARTUP_DELAY_S = 30
+# Yeni hareketler uygulamaya kapalı telefona push ile düşsün diye sık çek.
+BANK_AUTO_SYNC_INTERVAL_S = 120
+BANK_AUTO_SYNC_STARTUP_DELAY_S = 20
 
 
 def should_background_sync(conn: Optional[Dict[str, Any]]) -> bool:

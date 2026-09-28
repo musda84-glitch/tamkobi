@@ -121,7 +121,7 @@ export function BankingMatchPanel({
     const turningOn = c.auto_sync === false;
     await put(client, `/banking/connections/${idOf(c)}`, { auto_sync: turningOn });
     setMessage(turningOn
-      ? "Arka plan senkronu açık: sunucu her 10 dakikada hareketleri çeker."
+      ? "Arka plan senkronu açık: sunucu her 2 dakikada hareketleri çeker; yeni hareket telefona push gider."
       : "Arka plan senkronu kapalı: yalnızca manuel çekim çalışır.");
   });
 
@@ -217,7 +217,7 @@ export function BankingMatchPanel({
       <Card>
         <Muted>Bağlı bankalar</Muted>
         <Text style={{ fontWeight: "800", color: colors.text }}>Hareketleri çekip cari / fatura / kasa ile eşleştirin</Text>
-        <Muted>Kimlik bilgisi olan bağlantılar sunucuda her 10 dakikada arka planda çekilir. Banka bağlama ve API anahtarları web’den yönetilir.</Muted>
+        <Muted>Kimlik bilgisi olan bağlantılar sunucuda her 2 dakikada arka planda çekilir; yeni hareket uygulama kapalıyken de push olarak gelir. Banka bağlama ve API anahtarları web’den yönetilir.</Muted>
       </Card>
 
       {tiles.length ? <ActionTiles items={tiles as never} /> : null}
@@ -253,7 +253,7 @@ export function BankingMatchPanel({
                 <Text style={{ fontWeight: "800", color: c.auto_sync === false ? colors.text : "#075985" }}>
                   Arka plan senkron {c.auto_sync === false ? "kapalı" : "açık"}
                 </Text>
-                <Muted>Kimlik bilgisi varsa her 10 dakikada otomatik çekilir</Muted>
+                <Muted>Kimlik bilgisi varsa her 2 dakikada otomatik çekilir</Muted>
               </Pressable>
             ) : null}
             {canEdit ? (
