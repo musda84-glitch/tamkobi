@@ -420,6 +420,70 @@ async def make_chat(
     return LlmChat(api_key=key, session_id=session_id, system_message=system_message).with_model(vendor, model)
 
 
+async def get_production_ai_advice(company_context: dict, prompt: str, history: list = None) -> str:
+    """Üretim emirleri + reçete (BOM) verisine göre yönetici yorumu."""
+    recipes = company_context.get("recipes_sample") or []
+    orders = company_context.get("open_orders_sample") or []
+    wos = company_context.get("work_orders_sample") or []
+    recipe_lines = "\n".join(
+        f"- {r.get('name')}: mamul={r.get('finished_product_name')}, kalem={r.get('material_count')}, adım={r.get('step_count')}, maliyet≈{r.get('unit_cost')}"
+        for r in recipes[:12]
+    ) or "- (reçete yok)"
+    order_lines = "\n".join(
+        f"- {o.get('order_code')}: {o.get('finished_product_name')} ×{o.get('planned_quantity')} ({o.get('status')})"
+        f"{' · eksik hammadde' if o.get('has_shortages') else ''}"
+        for o in orders[:15]
+    ) or "- (açık emir yok)"
+    wo_lines = "\n".join(
+        f"- {w.get('step_name')}/{w.get('station')}: {w.get('status')} · {w.get('finished_product_name')}"
+        for w in wos[:15]
+    ) or "- (iş emri yok)"
+
+    system_prompt = f"""Sen TamKobi'nin üretim ve reçete (BOM) danışmanısın. Yöneticiye Türkçe, net, aksiyon odaklı yorum yazarsın.
+Şirket: {company_context.get('company_name', 'TamKobi')}
+Özet sayaçlar:
+- Reçete: {company_context.get('recipes', 0)}
+- Açık üretim emri: {company_context.get('open_orders', 0)} (üretimde: {company_context.get('in_production', 0)})
+- Bu ay tamamlanan: {company_context.get('completed_this_month', 0)}
+- Okunmamış eksik ürün bildirimi: {company_context.get('missing_notifications', 0)}
+- Atölye iş emri (açık/hazır/devam): {company_context.get('open_work_orders', 0)} · duraklatılmış: {company_context.get('paused_work_orders', 0)} · biten (son): {company_context.get('done_work_orders_recent', 0)}
+
+Örnek reçeteler:
+{recipe_lines}
+
+Açık üretim emirleri:
+{order_lines}
+
+Atölye iş emirleri:
+{wo_lines}
+
+Kurallar:
+1. Veriye dayan; uydurma sayı verme.
+2. Darboğaz, eksik hammadde, reçetesiz ürün, uzun süren adım, istasyon yükü gibi yönetici aksiyonlarını maddeler halinde yaz.
+3. Kısa tut (en fazla ~8 madde). Markdown kullanabilirsin.
+4. Finansal danışman gibi davranma; üretim/operasyon odaklı kal."""
+
+    try:
+        chat = await make_chat(
+            f"prod-session-{company_context.get('company_id', 'default')}",
+            system_prompt,
+            purpose="advisor",
+        )
+        user_msg = UserMessage(text=prompt)
+        return await chat.send_message(user_msg)
+    except RuntimeError as e:
+        return str(e)
+    except Exception as e:
+        logger.error(f"Error invoking production AI: {e}")
+        return f"""**TamKobi AI Üretim Değerlendirmesi**
+
+1. **Emir yükü:** Açık {company_context.get('open_orders', 0)} üretim emri var; {company_context.get('in_production', 0)} tanesi üretimde.
+2. **Eksikler:** {company_context.get('missing_notifications', 0)} okunmamış eksik ürün bildirimi — planlama/satın alma kontrol edilmeli.
+3. **Atölye:** {company_context.get('open_work_orders', 0)} açık iş emri, {company_context.get('paused_work_orders', 0)} duraklatılmış.
+4. **Reçete:** {company_context.get('recipes', 0)} reçete tanımlı; reçetesiz veya adım eksik mamulleri gözden geçirin.
+5. AI sağlayıcı geçici yanıt veremedi; yukarıdaki özet mevcut sayaçlardan üretildi."""
+
+
 async def get_financial_ai_advice(company_context: dict, prompt: str, history: list = None) -> str:
 
     system_prompt = f"""Sen TamKobi'nin uzman Türk Ticaret ve Vergi Mevzuatına, E-Fatura ve Ön Muhasebe standartlarına hakim AI Finans ve Mali Müşavir Danışmanısın.
