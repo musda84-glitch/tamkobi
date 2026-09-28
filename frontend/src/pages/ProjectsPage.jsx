@@ -271,7 +271,7 @@ export default function ProjectsPage({ section } = {}) {
   const [focusFlash, setFocusFlash] = useState("");
   const [quotes, setQuotes] = useState([]); const [projects, setProjects] = useState([]); const [surveys, setSurveys] = useState([]);
   const [contacts, setContacts] = useState([]); const [products, setProducts] = useState([]);
-  const [recipes, setRecipes] = useState([]);
+  const [productionOrders, setProductionOrders] = useState([]);
   const [refsReady, setRefsReady] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [form, setForm] = useState(null);
@@ -314,30 +314,30 @@ export default function ProjectsPage({ section } = {}) {
   const ensureFormRefs = useCallback(async () => {
     if (refsReady || !companyId) return;
     try {
-      const [c, pr, rec] = await Promise.all([
+      const [c, pr, po] = await Promise.all([
         axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`),
         axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`),
-        axios.get(`${API_URL}/production/recipes?company_id=${companyId}`).catch(() => ({ data: [] })),
+        axios.get(`${API_URL}/production/orders?company_id=${companyId}&include_steps=1`).catch(() => ({ data: [] })),
       ]);
       setContacts(c.data || []); setProducts(pr.data || []);
-      setRecipes((Array.isArray(rec.data) ? rec.data : []).filter((r) => !r.one_time && r.is_active !== false));
+      setProductionOrders((Array.isArray(po.data) ? po.data : []).filter((o) => o.status !== "cancelled"));
       setRefsReady(true);
     } catch {
       toast.error("Cari / ürün listesi yüklenemedi.");
     }
   }, [companyId, refsReady]);
 
-  const loadFixedRecipes = useCallback(async () => {
+  const loadProductionOrders = useCallback(async () => {
     if (!companyId) return [];
     try {
-      const r = await axios.get(`${API_URL}/production/recipes?company_id=${companyId}`);
-      const rows = (Array.isArray(r.data) ? r.data : []).filter((x) => !x.one_time && x.is_active !== false);
-      setRecipes(rows);
+      const r = await axios.get(`${API_URL}/production/orders?company_id=${companyId}&include_steps=1`);
+      const rows = (Array.isArray(r.data) ? r.data : []).filter((o) => o.status !== "cancelled");
+      setProductionOrders(rows);
       return rows;
     } catch {
-      return recipes;
+      return productionOrders;
     }
-  }, [companyId, recipes]);
+  }, [companyId, productionOrders]);
 
   const ensureContacts = useCallback(async () => {
     if (contacts.length || !companyId) return contacts;
@@ -382,14 +382,15 @@ export default function ProjectsPage({ section } = {}) {
       survey_date: new Date().toISOString().slice(0, 10),
       measurements: [],
       radius_m: DEFAULT_LOCATION_RADIUS_M,
-      recipe_id: "",
+      production_order_id: "",
+      production_order_code: "",
       recipe_name: "",
       production_steps: [],
       show_production_steps: false,
     });
     setItems([computeLine(emptyLine())]);
     ensureFormRefs();
-    if (kind === "project") loadFixedRecipes();
+    if (kind === "project") loadProductionOrders();
   };
   const openQuoteForProject = async (project) => {
     await ensureFormRefs();
@@ -442,7 +443,7 @@ export default function ProjectsPage({ section } = {}) {
   };
   const openEditProject = async (p) => {
     await ensureFormRefs();
-    await loadFixedRecipes();
+    await loadProductionOrders();
     const pid = p?.id || p?._id;
     try {
       const r = await axios.get(`${API_URL}/projects/${pid}`);
@@ -468,8 +469,9 @@ export default function ProjectsPage({ section } = {}) {
         longitude: full.longitude ?? "",
         location_url: full.location_url || "",
         radius_m: full.radius_m ?? DEFAULT_LOCATION_RADIUS_M,
-        recipe_id: full.recipe_id || "",
-        recipe_name: full.recipe_name || "",
+        production_order_id: full.production_order_id || "",
+        production_order_code: full.production_order_code || "",
+        recipe_name: full.recipe_name || full.production_order_code || "",
         production_steps: Array.isArray(full.production_steps) ? full.production_steps : [],
         show_production_steps: !!full.show_production_steps,
       });
@@ -479,49 +481,54 @@ export default function ProjectsPage({ section } = {}) {
     }
   };
 
-  const pickProjectRecipe = async (id) => {
+  const pickProjectProductionOrder = async (id, order) => {
     if (!id) {
-      setForm((f) => ({ ...f, recipe_id: "", recipe_name: "", production_steps: [] }));
-      return;
-    }
-    try {
-      const r = await axios.get(`${API_URL}/production/recipes/${id}`);
-      const rec = r.data || {};
-      const mats = Array.isArray(rec.materials) ? rec.materials : [];
-      const general = Array.isArray(rec.steps) ? rec.steps : [];
-      const steps = [];
-      for (const m of mats) {
-        for (const st of m.steps || []) {
-          const name = String(st?.name || st?.station || "").trim();
-          if (!name) continue;
-          steps.push({
-            no: steps.length + 1,
-            name,
-            station: String(st?.station || "").trim(),
-            note: String(st?.note || "").trim(),
-            material_name: String(m?.product_name || "").trim() || undefined,
-          });
-        }
-      }
-      for (const st of general) {
-        const name = String(st?.name || st?.station || "").trim();
-        if (!name) continue;
-        steps.push({
-          no: steps.length + 1,
-          name,
-          station: String(st?.station || "").trim(),
-          note: String(st?.note || "").trim(),
-        });
-      }
       setForm((f) => ({
         ...f,
-        recipe_id: rec.id || rec._id || id,
-        recipe_name: rec.name || rec.code || "",
-        production_steps: steps.length ? steps : [{ no: 1, name: "Üretim", station: "" }],
+        production_order_id: "",
+        production_order_code: "",
+        recipe_name: "",
+        production_steps: [],
       }));
-    } catch {
-      toast.error("Reçete adımları yüklenemedi.");
+      return;
     }
+    const o = order || productionOrders.find((x) => String(x.id || x._id) === String(id)) || {};
+    const oid = o.id || o._id || id;
+    const code = o.order_code || "";
+    const label = [code, o.finished_product_name || o.recipe_name].filter(Boolean).join(" · ");
+    let steps = [];
+    try {
+      const r = await axios.get(`${API_URL}/production/work-orders`, {
+        params: { company_id: companyId, order_id: oid },
+      });
+      const wos = Array.isArray(r.data) ? r.data : [];
+      steps = wos
+        .slice()
+        .sort((a, b) => Number(a.step_no || 0) - Number(b.step_no || 0))
+        .map((w, i) => ({
+          no: Number(w.step_no || i + 1),
+          name: String(w.step_name || `Adım ${i + 1}`).trim(),
+          station: String(w.station || "").trim(),
+          note: String(w.step_note || "").trim(),
+          material_name: String(w.material_name || "").trim() || undefined,
+        }))
+        .filter((st) => st.name);
+    } catch {
+      const summarySteps = Array.isArray(o.steps_summary?.steps) ? o.steps_summary.steps : [];
+      steps = summarySteps.map((st, i) => ({
+        no: Number(st.no || i + 1),
+        name: String(st.name || `Adım ${i + 1}`).trim(),
+        station: "",
+      }));
+    }
+    if (!steps.length) steps = [{ no: 1, name: "Üretim", station: "" }];
+    setForm((f) => ({
+      ...f,
+      production_order_id: oid,
+      production_order_code: code,
+      recipe_name: label,
+      production_steps: steps,
+    }));
   };
   const lineTotals = useMemo(() => documentLineTotals(items), [items]);
   const setContact = (id, c) => setForm({ ...form, contact_id: id, contact_name: c?.name || "", address: form.address || c?.address || "" });
@@ -569,9 +576,9 @@ export default function ProjectsPage({ section } = {}) {
           longitude: form.longitude || null,
           location_url: form.location_url || "",
           radius_m: form.radius_m,
-          recipe_id: form.recipe_id || null,
+          production_order_id: form.production_order_id || null,
           show_production_steps: !!form.show_production_steps,
-          refresh_production_steps: !!form.recipe_id,
+          refresh_production_steps: !!form.production_order_id,
         };
         if (form.id) await axios.put(`${API_URL}/projects/${form.id}`, projectBody);
         else await axios.post(`${API_URL}/projects`, { company_id: companyId, ...projectBody });
@@ -830,7 +837,9 @@ export default function ProjectsPage({ section } = {}) {
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1">
                       <ListOrdered className="w-3 h-3" /> Üretim adımları
-                      {p.recipe_name ? <span className="normal-case text-slate-500">· {p.recipe_name}</span> : null}
+                      {(p.production_order_code || p.recipe_name) ? (
+                        <span className="normal-case text-slate-500">· {p.production_order_code || p.recipe_name}</span>
+                      ) : null}
                     </div>
                     <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded ${p.show_production_steps ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} title={p.show_production_steps ? "Müşteri takip linkinde görünür" : "Sadece iç ekranda"}>
                       {p.show_production_steps ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
@@ -1014,19 +1023,19 @@ export default function ProjectsPage({ section } = {}) {
             {form.kind === "quote" && <div className="grid grid-cols-2 gap-2"><div><label className="block font-semibold mb-1">Geçerlilik</label><input type="date" value={form.valid_until} onChange={(e) => setForm({ ...form, valid_until: e.target.value })} className={inputCls} /></div></div>}
             {form.kind === "project" && <div className="grid grid-cols-1 sm:grid-cols-3 gap-2"><div><label className="block font-semibold mb-1">Bütçe (₺)</label><input type="number" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} className={inputCls} data-testid="pf-budget" /></div><div><label className="block font-semibold mb-1">Başlangıç</label><input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className={inputCls} /></div><div><label className="block font-semibold mb-1">Bitiş</label><input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className={inputCls} /></div></div>}
             {form.kind === "project" && (
-              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-2" data-testid="pf-recipe-steps">
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-2" data-testid="pf-production-order-block">
                 <div className="flex items-center gap-1.5 font-bold text-slate-800">
-                  <Factory className="w-3.5 h-3.5 text-emerald-600" /> Sabit üretim reçetesi
+                  <Factory className="w-3.5 h-3.5 text-emerald-600" /> Üretim emri
                 </div>
-                <p className="text-[11px] text-slate-500">Reçete adımları proje dosyasında görünür. Müşteri takip linkinde göstermek için aşağıdaki kutuyu işaretleyin.</p>
+                <p className="text-[11px] text-slate-500">Seçilen üretim emrinin adımları proje dosyasında görünür. Müşteri takip linkinde göstermek için aşağıdaki kutuyu işaretleyin.</p>
                 <SearchSelect
-                  value={form.recipe_id || ""}
-                  options={recipes}
-                  placeholder="Sabit üretim reçetesi ara…"
-                  getLabel={(r) => r.name || r.code || "Reçete"}
-                  getSub={(r) => [r.code, r.finished_product_name, r.job_file_name].filter(Boolean).join(" · ")}
-                  onChange={pickProjectRecipe}
-                  testId="pf-recipe"
+                  value={form.production_order_id || ""}
+                  options={productionOrders}
+                  placeholder="Üretim emri ara…"
+                  getLabel={(o) => o.order_code || o.id || "Üretim emri"}
+                  getSub={(o) => [o.finished_product_name || o.recipe_name, o.status, o.planned_quantity != null ? `${o.planned_quantity} ${o.unit || ""}`.trim() : ""].filter(Boolean).join(" · ")}
+                  onChange={pickProjectProductionOrder}
+                  testId="pf-production-order"
                 />
                 <label className="flex items-start gap-2 cursor-pointer select-none rounded-lg border border-slate-200 bg-white px-3 py-2" data-testid="pf-show-production-steps-wrap">
                   <input

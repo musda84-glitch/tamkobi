@@ -1888,28 +1888,66 @@ def _normalize_radius_m(raw, default: int = 300) -> Optional[int]:
     return min(5000, n)
 
 
-async def _project_recipe_fields(req: Dict[str, Any], company_id: Optional[str] = None) -> Dict[str, Any]:
-    """Proje ↔ sabit üretim reçetesi: adım anlık görüntüsü + müşteri görünürlüğü."""
+async def _project_production_order_fields(req: Dict[str, Any], company_id: Optional[str] = None) -> Dict[str, Any]:
+    """Proje ↔ üretim emri: iş emri adım anlık görüntüsü + müşteri görünürlüğü."""
     out: Dict[str, Any] = {}
     if "show_production_steps" in req:
         out["show_production_steps"] = bool(req.get("show_production_steps"))
-    if "recipe_id" not in req:
+    # Yeni alan: production_order_id. Eski recipe_id istemci göndermeye devam ederse temizle.
+    if "production_order_id" not in req and "recipe_id" not in req:
         return out
+    if "production_order_id" in req:
+        oid = str(req.get("production_order_id") or "").strip()
+        if not oid:
+            out.update({
+                "production_order_id": None,
+                "production_order_code": None,
+                "recipe_id": None,
+                "recipe_name": None,
+                "production_steps": [],
+            })
+            return out
+        order = await db.production_orders.find_one({"_id": oid})
+        if not order:
+            raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
+        if company_id and order.get("company_id") and order.get("company_id") != company_id:
+            raise HTTPException(status_code=400, detail="Üretim emri bu firmaya ait değil.")
+        if order.get("status") == "cancelled":
+            raise HTTPException(status_code=400, detail="İptal edilmiş üretim emri projeye bağlanamaz.")
+        wos = await db.work_orders.find(
+            {"order_id": oid},
+            {"step_no": 1, "original_step_no": 1, "step_name": 1, "station": 1, "step_note": 1, "material_name": 1},
+        ).to_list(500)
+        steps = pwo.customer_work_order_steps(wos)
+        if not steps and order.get("recipe_id"):
+            recipe = await db.recipes.find_one({"_id": order.get("recipe_id")})
+            if recipe:
+                steps = pwo.customer_recipe_steps(recipe)
+        if not steps:
+            steps = [{"no": 1, "name": "Üretim", "station": ""}]
+        code = order.get("order_code") or oid
+        label = f"{code} · {order.get('finished_product_name') or order.get('recipe_name') or 'Üretim'}".strip(" ·")
+        out.update({
+            "production_order_id": order["_id"],
+            "production_order_code": code,
+            "recipe_id": None,
+            "recipe_name": label,
+            "production_steps": steps,
+        })
+        return out
+    # Geriye dönük: recipe_id temizliği (UI artık reçete göndermez)
     rid = str(req.get("recipe_id") or "").strip()
     if not rid:
-        out.update({"recipe_id": None, "recipe_name": None, "production_steps": []})
-        return out
-    recipe = await db.recipes.find_one({"_id": rid})
-    if not recipe:
-        raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
-    if company_id and recipe.get("company_id") and recipe.get("company_id") != company_id:
-        raise HTTPException(status_code=400, detail="Reçete bu firmaya ait değil.")
-    if recipe.get("one_time"):
-        raise HTTPException(status_code=400, detail="Tek seferlik reçete projeye bağlanamaz; sabit üretim reçetesi seçin.")
-    out["recipe_id"] = recipe["_id"]
-    out["recipe_name"] = recipe.get("name") or recipe.get("code") or "Reçete"
-    out["production_steps"] = pwo.customer_recipe_steps(recipe)
+        out.update({"recipe_id": None, "recipe_name": None})
+        if "production_order_id" not in req:
+            out.setdefault("production_steps", [])
+            out["production_order_id"] = None
+            out["production_order_code"] = None
     return out
+
+
+# geriye dönük alias
+_project_recipe_fields = _project_production_order_fields
 
 
 @api_router.post("/projects")
@@ -1926,6 +1964,8 @@ async def create_project(req: Dict[str, Any]):
            "images": [], "stage_photos": [], "tasks": req.get("tasks", []),
            "recipe_id": recipe_fields.get("recipe_id"),
            "recipe_name": recipe_fields.get("recipe_name"),
+           "production_order_id": recipe_fields.get("production_order_id"),
+           "production_order_code": recipe_fields.get("production_order_code"),
            "production_steps": recipe_fields.get("production_steps") or [],
            "show_production_steps": bool(recipe_fields.get("show_production_steps", False)),
            "tracking": {"token": track_token, "link": f"/proje/{track_token}", "sent_count": 0, "view_count": 0},
@@ -1957,12 +1997,20 @@ async def update_project(project_id: str, req: Dict[str, Any]):
         allowed["tasks"] = wp.preserve_other_assignees(prev.get("tasks") or [], allowed["tasks"])
     recipe_fields = await _project_recipe_fields(req, prev.get("company_id"))
     allowed.update(recipe_fields)
-    # Reçete bağlı kaldıysa ve adımlar boşsa / yenile isteniyorsa senkronize et
-    if req.get("refresh_production_steps") and prev.get("recipe_id") and "recipe_id" not in req:
-        recipe = await db.recipes.find_one({"_id": prev["recipe_id"]})
-        if recipe:
-            allowed["recipe_name"] = recipe.get("name") or recipe.get("code") or prev.get("recipe_name")
-            allowed["production_steps"] = pwo.customer_recipe_steps(recipe)
+    # Üretim emri bağlı kaldıysa adımları yenile
+    if req.get("refresh_production_steps") and "production_order_id" not in req:
+        oid = prev.get("production_order_id")
+        if oid:
+            refreshed = await _project_production_order_fields(
+                {"production_order_id": oid, "show_production_steps": prev.get("show_production_steps")},
+                prev.get("company_id"),
+            )
+            allowed.update({k: v for k, v in refreshed.items() if k != "show_production_steps"})
+        elif prev.get("recipe_id"):
+            recipe = await db.recipes.find_one({"_id": prev["recipe_id"]})
+            if recipe:
+                allowed["recipe_name"] = recipe.get("name") or recipe.get("code") or prev.get("recipe_name")
+                allowed["production_steps"] = pwo.customer_recipe_steps(recipe)
     await db.projects.update_one({"_id": project_id}, {"$set": allowed})
     p = await db.projects.find_one({"_id": project_id})
     if not p:

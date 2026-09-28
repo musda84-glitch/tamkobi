@@ -95,6 +95,8 @@ export type ProjectDoc = {
   tracking?: ProjectTracking;
   recipe_id?: string | null;
   recipe_name?: string;
+  production_order_id?: string | null;
+  production_order_code?: string | null;
   production_steps?: ProductionStep[];
   show_production_steps?: boolean;
 };
@@ -599,7 +601,7 @@ export function projectPayload(companyId: string, form: {
   latitude?: string;
   longitude?: string;
   radius_m?: number | string;
-  recipe_id?: string;
+  production_order_id?: string;
   show_production_steps?: boolean;
 }) {
   return {
@@ -616,13 +618,13 @@ export function projectPayload(companyId: string, form: {
     latitude: coordValue(form.latitude || ""),
     longitude: coordValue(form.longitude || ""),
     radius_m: normalizeRadiusM(form.radius_m),
-    recipe_id: form.recipe_id || null,
+    production_order_id: form.production_order_id || null,
     show_production_steps: !!form.show_production_steps,
-    refresh_production_steps: !!form.recipe_id,
+    refresh_production_steps: !!form.production_order_id,
   };
 }
 
-/** Sabit reçete → proje üretim adımları (web ProjectsPage.pickProjectRecipe ile aynı). */
+/** Sabit reçete → adım listesi (üretim emri yokken / geriye dönük). */
 export function recipeToProductionSteps(rec: {
   materials?: Array<{ product_name?: string; steps?: Array<{ name?: string; station?: string; note?: string }> }>;
   steps?: Array<{ name?: string; station?: string; note?: string }>;

@@ -494,6 +494,32 @@ def customer_recipe_steps(recipe: Optional[Dict[str, Any]] = None) -> List[Dict[
     return out
 
 
+def customer_work_order_steps(work_orders: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """Proje dosyası: üretim emri iş emirlerinden adım özeti (maliyet yok)."""
+    rows = sorted(
+        [w for w in (work_orders or []) if isinstance(w, dict)],
+        key=lambda w: int(w.get("step_no") or w.get("original_step_no") or 0),
+    )
+    out: List[Dict[str, Any]] = []
+    for w in rows:
+        name = str(w.get("step_name") or w.get("name") or "").strip()
+        if not name:
+            continue
+        row: Dict[str, Any] = {
+            "no": int(w.get("step_no") or len(out) + 1),
+            "name": name,
+            "station": str(w.get("station") or "").strip(),
+        }
+        note = str(w.get("step_note") or w.get("note") or "").strip()
+        if note:
+            row["note"] = note
+        mname = str(w.get("material_name") or "").strip()
+        if mname:
+            row["material_name"] = mname
+        out.append(row)
+    return out
+
+
 def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Liste yanıtında eksik job_file_name / recipe_name / station / images / materials / step_note doldur."""
     m = meta or {}
