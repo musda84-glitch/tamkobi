@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { X, Plus, Zap, Search } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export const ChannelCatalogModal = ({ companyId, onClose, onAdded }) => {
   useEscape(onClose);
@@ -19,7 +20,7 @@ export const ChannelCatalogModal = ({ companyId, onClose, onAdded }) => {
     catch (e) { toast.error(e.response?.data?.detail || "Eklenemedi."); } finally { setBusy(""); }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="channel-catalog-modal">
         <div className="flex items-center justify-between"><div><h3 className="text-base font-bold text-slate-900">Satış Kanalı Ekle</h3><p className="text-slate-500">Pazaryerleri, e-ticaret altyapıları, e-ihracat platformları ve entegratörler — BizimHesap ile aynı kanal kataloğu.</p></div><button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="channel-catalog-close"><X className="w-4 h-4" /></button></div>
         <div className="relative"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Kanal ara…" className="pl-8 pr-3 py-2 bg-slate-50 border rounded-xl w-full" data-testid="channel-catalog-search" /></div>

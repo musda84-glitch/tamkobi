@@ -6,6 +6,7 @@ import { Check, Lock, Users, Sparkles, Clock, CreditCard, Building2, Plus, Loade
 import { API_URL, useAuth } from "../../context/AuthContext";
 import { fmtTL, fmtDate, PlanChip, StatusBadge, groupByCategory } from "./saasUi";
 import { sortCompanyTree } from "../../utils/companyTree";
+import { backdropDismissProps } from "../../utils/modalBackdrop";
 
 export const MyPlanPanel = ({ companyId }) => {
   const { refreshLicense, reloadSession, switchCompany, companies: myCompanies } = useAuth();
@@ -35,7 +36,7 @@ export const MyPlanPanel = ({ companyId }) => {
   };
   return (
     <div className="space-y-5 text-xs" data-testid="my-plan-panel">
-      {paytr && <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPaytr(null)}><div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-3" data-testid="paytr-modal"><div className="flex items-center justify-between px-2 pb-2"><b className="text-slate-900">PayTR Güvenli Ödeme</b><button onClick={() => setPaytr(null)} className="text-slate-500 text-xs" data-testid="paytr-close">Kapat</button></div><iframe title="PayTR ödeme" src={paytr.iframe_url} className="w-full h-[640px] rounded-xl" frameBorder="0" /></div></div>}
+      {paytr && <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(() => setPaytr(null))}><div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-3" data-testid="paytr-modal"><div className="flex items-center justify-between px-2 pb-2"><b className="text-slate-900">PayTR Güvenli Ödeme</b><button onClick={() => setPaytr(null)} className="text-slate-500 text-xs" data-testid="paytr-close">Kapat</button></div><iframe title="PayTR ödeme" src={paytr.iframe_url} className="w-full h-[640px] rounded-xl" frameBorder="0" /></div></div>}
       <div className="bg-slate-900 text-white rounded-2xl p-5 flex flex-wrap items-center gap-5">
         <div className="flex-1 min-w-[220px]">
           <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Mevcut Paketiniz</div>

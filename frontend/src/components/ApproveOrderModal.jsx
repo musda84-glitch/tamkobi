@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { X, Truck, CheckCircle, Loader2, Plug } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { ShipmentPackageFields, packageDefaultsFromOrder, packagePayload } from "./ShipmentPackageFields";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export const ApproveOrderModal = ({ order, companyId, onClose, onDone }) => {
   useEscape(onClose);
@@ -57,7 +58,7 @@ export const ApproveOrderModal = ({ order, companyId, onClose, onDone }) => {
     } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl max-w-md w-full p-5 space-y-4 text-xs shadow-2xl max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="approve-order-modal">
         <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><CheckCircle className="w-4 h-4 text-emerald-600" /> Siparişi Onayla — {order.order_number}</h3><p className="text-slate-500">{order.customer_name} • {order.city}</p></div><button onClick={onClose} className="text-slate-400" data-testid="approve-close"><X className="w-5 h-5" /></button></div>
         <div>

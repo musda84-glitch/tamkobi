@@ -5,6 +5,7 @@ import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Tr
 import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
 import { descendantIds, sortCompanyTree } from "../../utils/companyTree";
+import { backdropDismissProps } from "../../utils/modalBackdrop";
 
 const cred = { withCredentials: true };
 
@@ -89,7 +90,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
     } catch (e) { toast.error(e.response?.data?.detail || "Şirket silinemedi."); } finally { setBusy(""); }
   };
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" {...backdropDismissProps(onClose)}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 h-full overflow-y-auto shadow-2xl text-xs" data-testid="company-license-drawer">
         <div className="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between z-10 gap-3">
           <div className="min-w-0"><div className="text-sm font-bold text-slate-900">{d.name}</div><div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5"><PlanChip name={lic.plan_name} color={lic.plan_color} /><StatusBadge status={lic.status} testId="drawer-status" /> · {d.admin?.email || "yönetici yok"} · {d.usage.users} kullanıcı · {d.usage.invoices} fatura · {d.usage.contacts} cari · {d.usage.products} ürün</div></div>

@@ -7,6 +7,7 @@ import { X, Save, Loader2, User, Receipt, MapPin, Wallet, ShoppingCart, StickyNo
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30";
 const TABS = [["general", "Genel", User], ["tax", "Vergi & e-Fatura", Receipt], ["address", "Adres & Konum", MapPin], ["finance", "Finans & Vade", Wallet], ["b2b", "B2B Portal", ShoppingCart], ["notes", "Notlar & Etiket", StickyNote]];
@@ -88,7 +89,7 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   // Portal to body: header uses sticky + backdrop-blur, which traps position:fixed
   // and clips the modal when opened from HeaderQuickActions ("Yeni Cari").
   return createPortal(
-    <div className="fixed inset-0 z-[90] bg-slate-900/60 backdrop-blur-sm overflow-y-auto overscroll-contain" onClick={onClose} data-testid="contact-form-overlay">
+    <div className="fixed inset-0 z-[90] bg-slate-900/60 backdrop-blur-sm overflow-y-auto overscroll-contain" {...backdropDismissProps(onClose)} data-testid="contact-form-overlay">
       <div className="min-h-full flex items-start justify-center p-4 sm:p-6">
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-slate-200 max-h-[calc(100vh-2rem)] flex flex-col my-4 sm:my-6" data-testid="contact-form">
         <div className="flex items-center justify-between px-6 py-4 border-b shrink-0"><div><h2 className="text-base font-bold text-slate-900">{contact?.id ? "Cari Bilgilerini Güncelle" : "Gelişmiş Cari Kartı Oluştur"}</h2><p className="text-[11px] text-slate-500">{contact?.name || "Cariye tanımlanabilen tüm özellikler tek ekranda"}</p></div><button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="cf-close"><X className="w-5 h-5" /></button></div>

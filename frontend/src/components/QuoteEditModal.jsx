@@ -6,6 +6,7 @@ import { X, Plus, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { fmtMoney } from "../utils/money";
 import { lineDraftKey, lineNumberCommit, lineNumberOnFocus, lineNumberShown } from "../utils/lineNumberDraft";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n, c = "TRY") => fmtMoney(n, c);
 const STATUSES = [["draft", "Taslak"], ["sent", "Gönderildi"], ["accepted", "Kabul Edildi"], ["rejected", "Reddedildi"]];
@@ -41,7 +42,7 @@ export const QuoteEditModal = ({ quote, onClose, onSaved }) => {
   };
   const cls = "w-full bg-slate-50 border rounded-lg p-2";
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl max-w-3xl w-full p-5 space-y-3 text-xs shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="quote-edit-modal">
         <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">Teklif Düzenle — {quote.quote_number}</h3><button onClick={onClose} className="text-slate-400" data-testid="quote-edit-close"><X className="w-5 h-5" /></button></div>
         <div className="grid grid-cols-3 gap-2">

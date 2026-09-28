@@ -6,6 +6,7 @@ import { Loader2, Link2, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount(n || 0);
 const sel = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
@@ -68,7 +69,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
   if (!tx) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[95] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose} data-testid={`tx-match-modal-${txId}`}>
+    <div className="fixed inset-0 z-[95] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)} data-testid={`tx-match-modal-${txId}`}>
       <form
         onSubmit={submit}
         className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 text-xs shadow-2xl border border-slate-200"

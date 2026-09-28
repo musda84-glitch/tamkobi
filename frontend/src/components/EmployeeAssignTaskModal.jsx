@@ -14,6 +14,7 @@ import {
   validateEmployeeTaskAssign,
 } from "../utils/employeeTaskAssign";
 import { findOfficeTaskType, normalizeOfficeTaskTypes, officeTaskPayload, validateOfficeTaskAssign } from "../utils/workParks";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 
@@ -152,7 +153,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
   };
 
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose} data-testid="emp-task-modal">
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)} data-testid="emp-task-modal">
       <form
         onSubmit={save}
         onClick={(e) => e.stopPropagation()}

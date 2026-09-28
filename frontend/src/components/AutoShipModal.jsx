@@ -8,6 +8,7 @@ import { useEscape } from "../utils/useEscape";
 import { channelTr } from "../utils/labels";
 import { ShipmentPackageFields, emptyPackageForm, packagePayload } from "./ShipmentPackageFields";
 import { formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 
@@ -34,7 +35,7 @@ export const AutoShipModal = ({ companyId, onClose, onDone }) => {
   };
   const rows = (result || preview)?.results || [];
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="auto-ship-modal">
         <div className="flex items-center justify-between"><h3 className="text-base font-bold text-slate-900 flex items-center gap-2"><Truck className="w-5 h-5 text-emerald-600" /> Günlük Toplu Kargolama</h3><button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="auto-ship-close"><X className="w-4 h-4" /></button></div>
         <p className="text-slate-500">Onaylı / hazırlanıyor durumundaki, henüz kargo kaydı olmayan siparişler için tek tıkla gönderi oluşturur. Takip numarası siparişe yazılır; ShopPHP siparişlerinde mağazaya da bildirilir.</p>

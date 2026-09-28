@@ -1,5 +1,6 @@
 import React from "react";
 import { X } from "lucide-react";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inputCls = "w-full bg-slate-50 border rounded-lg p-2";
 
@@ -11,7 +12,7 @@ export function AssignOvertimeModal({ value, onChange, onClose, onSave, testIdPr
   const hasHrs = Number.isFinite(hrs) && hrs > 0;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid={tid("modal")} onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid={tid("modal")} {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-bold text-slate-900">Fazla Mesai Ata — {value.employee_name}</h4>

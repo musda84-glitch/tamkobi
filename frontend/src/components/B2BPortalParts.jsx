@@ -11,6 +11,7 @@ import { B2BOrderPreview, PreviewOrderBtn } from "./B2BOrderPreview";
 import { formatOrderItemLabel } from "../utils/b2bCart";
 import { LegalConsent } from "./LegalConsent";
 import { fmtDate, fmtMoney } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export const fmt = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -93,7 +94,7 @@ export const B2BHeader = ({ company, contact, token, onPasswordChanged }) => {
         </div>
       </div>
       {open && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={close} data-testid="b2b-change-password-overlay">
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(close)} data-testid="b2b-change-password-overlay">
           <form onSubmit={submit} onClick={(e) => e.stopPropagation()} className="bg-white text-slate-900 w-full max-w-md rounded-2xl p-5 space-y-3 shadow-2xl" data-testid="b2b-change-password-modal">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-sm flex items-center gap-2"><KeyRound className="w-4 h-4 text-emerald-600" /> Şifre değiştir</h3>
@@ -165,7 +166,7 @@ export const MobileCartBar = ({ lines, total, open, setOpen, children, heldCount
         </button>
       </div>
       {open && (
-        <div className="lg:hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end" onClick={() => setOpen(false)}>
+        <div className="lg:hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end" {...backdropDismissProps(() => setOpen(false))}>
           <div className="bg-white w-full rounded-t-3xl p-4 pb-6 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="b2b-mobile-cart-sheet">
             <div className="flex items-center justify-between"><div className="font-bold text-slate-900 flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Sepet ({lines.length})</div><button onClick={() => setOpen(false)} className="p-2 text-slate-400" aria-label="Kapat" data-testid="b2b-mobile-cart-close"><X className="w-5 h-5" /></button></div>
             {children}
@@ -258,7 +259,7 @@ const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
     } catch (e) { toast.error(e.response?.data?.detail || "Güncellenemedi."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-t-2xl sm:rounded-2xl max-w-lg w-full p-4 sm:p-5 space-y-3 text-xs shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="b2b-edit-order-modal">
         <div className="flex justify-between items-start"><div><h3 className="text-sm font-bold text-slate-900">Siparişi düzenle</h3><p className="text-slate-500 font-mono">{order.order_number}</p></div><button type="button" onClick={onClose} className="text-slate-400" data-testid="b2b-edit-close"><X className="w-5 h-5" /></button></div>
         <div className="divide-y">{lines.map((l) => (
@@ -302,7 +303,7 @@ const CancelRequestModal = ({ order, token, onClose, onDone }) => {
     } catch (e) { toast.error(e.response?.data?.detail || "Talep gönderilemedi."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="b2b-cancel-modal">
         <div className="flex justify-between items-start"><div><h3 className="text-sm font-bold text-slate-900">İptal talebi gönder</h3><p className="text-slate-500">{order.order_number} onaylandı; satıcı talebinizi değerlendirecek.</p></div><button type="button" onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button></div>
         <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="İptal gerekçesi (isteğe bağlı)" className="w-full border rounded-xl p-2.5" data-testid="b2b-cancel-reason" />

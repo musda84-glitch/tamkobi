@@ -6,6 +6,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { useEscape } from "../utils/useEscape";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const cred = { withCredentials: true };
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-amber-400 outline-none";
@@ -85,7 +86,7 @@ const Compose = ({ companyId, meta, onClose, onCreated }) => {
     } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-3 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="support-compose">
         <div className="flex items-center justify-between border-b pb-2"><h3 className="font-bold text-slate-900 flex items-center gap-2"><Headset className="w-4 h-4 text-amber-600" /> Yeni destek talebi</h3><button type="button" onClick={onClose}><X className="w-4 h-4 text-slate-400" /></button></div>
         <div><label className="block text-xs font-semibold mb-1">Konu</label><input required minLength={3} value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} className={inputCls} placeholder="Kısaca ne olduğunu yazın" data-testid="support-subject" /></div>

@@ -8,6 +8,7 @@ import { empIdOf } from "../utils/personnelIds";
 import { AssignOvertimeModal } from "./AssignOvertimeModal";
 import { EmployeePuantajPanel } from "./EmployeePuantajPanel";
 import {
+import { backdropDismissProps } from "../utils/modalBackdrop";
   employeePayMoves,
   filterPayMoves,
   fmtPayMoveAmount,
@@ -198,7 +199,7 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
 
   return (
     <>
-    <div className="fixed inset-0 z-[70] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" {...backdropDismissProps(onClose)}>
       <div
         className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[88vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(ev) => ev.stopPropagation()}

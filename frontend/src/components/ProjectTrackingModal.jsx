@@ -5,6 +5,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, Send, Mail, MessageSquare, Phone, Copy, Loader2, Eye, Link2, Clock } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 /** Proje kartında takip linki / görüntülenme durumu */
 export const TrackingBadge = ({ project }) => {
@@ -94,7 +95,7 @@ export const ProjectTrackingModal = ({ project, contact, onClose, onSent }) => {
   );
 
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" {...backdropDismissProps(onClose)}>
       <div
         className="bg-white rounded-t-2xl sm:rounded-2xl max-w-lg w-full p-4 sm:p-5 space-y-4 text-xs shadow-2xl max-h-[92vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}

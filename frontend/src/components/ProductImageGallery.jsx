@@ -7,6 +7,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { compressProductImageFile } from "../utils/compressImage";
 import { productGalleryUrls, productIdOf, mediaRef, productLabelImageUrl } from "../utils/productImages";
 import { ImageCropModal } from "./ImageCropModal";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export const ProductImageGallery = ({ product, onUpdated }) => {
   const [uploading, setUploading] = useState(false);
@@ -165,7 +166,7 @@ export const ProductImageGallery = ({ product, onUpdated }) => {
       {preview ? (
         <div
           className="fixed inset-0 z-[80] bg-slate-900/80 flex items-center justify-center p-4"
-          onClick={() => setPreview("")}
+          {...backdropDismissProps(() => setPreview(""))}
           data-testid="product-image-preview"
         >
           <button type="button" className="absolute top-4 right-4 p-2 rounded-full bg-white/90 text-slate-700" aria-label="Kapat" data-testid="product-image-preview-close">

@@ -8,6 +8,7 @@ import { SearchSelect } from "../components/SearchSelect";
 import { fmtMoney } from "../utils/money";
 import { FxPicker } from "../components/FxPicker";
 import { statusTr } from "../utils/labels";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const emptyItem = () => ({ product_id: "", name: "", sku: "", gtip: "", origin_country: "", quantity: 1, unit: "Adet", unit_price_fx: 0, net_weight: 0 });
 const emptyForm = (kind) => ({
@@ -173,7 +174,7 @@ export default function TradePage() {
       </div>
 
       {form && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-start justify-center p-4 overflow-y-auto" onClick={() => setForm(null)}>
+        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-start justify-center p-4 overflow-y-auto" {...backdropDismissProps(() => setForm(null))}>
           <div className="bg-white rounded-2xl w-full max-w-5xl my-6 p-5 space-y-4 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="trade-modal">
             <div className="flex justify-between items-center border-b pb-2">
               <h3 className="text-base font-bold">{editing ? `${editing.file_number} düzenle` : `Yeni ${form.kind === "import" ? "ithalat" : "ihracat"} dosyası`}</h3>
@@ -241,7 +242,7 @@ export default function TradePage() {
       )}
 
       {printDoc && (
-        <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-start justify-center p-4 overflow-y-auto" onClick={() => setPrintDoc(null)}>
+        <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-start justify-center p-4 overflow-y-auto" {...backdropDismissProps(() => setPrintDoc(null))}>
           <div className="bg-white rounded-2xl w-full max-w-3xl my-6 p-6 text-xs shadow-2xl print:shadow-none print:my-0" onClick={(e) => e.stopPropagation()} data-testid="trade-print-modal">
             <div className="flex justify-between items-center mb-4 print:hidden">
               <div className="flex gap-2">

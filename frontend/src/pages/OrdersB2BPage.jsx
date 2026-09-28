@@ -49,6 +49,7 @@ import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_C
 import { buildProduceFromOrderPayload, orderLineCanProduce, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import {
+import { backdropDismissProps } from "../utils/modalBackdrop";
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -933,7 +934,7 @@ export default function OrdersB2BPage() {
         </div>
       )}
       {bulkLabels && (
-        <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:static print:bg-white print:p-0" onClick={() => setBulkLabels(null)}>
+        <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:static print:bg-white print:p-0" {...backdropDismissProps(() => setBulkLabels(null))}>
           <div className="bg-white rounded-2xl w-full max-w-3xl p-4 space-y-3 print:shadow-none" onClick={(e) => e.stopPropagation()} data-testid="bulk-labels-modal">
             <div className="flex justify-between items-center no-print"><b className="text-sm">{bulkLabels.length} kargo etiketi</b><div className="flex gap-2"><button onClick={() => window.print()} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold" data-testid="bulk-labels-print">Yazdır</button><button onClick={() => setBulkLabels(null)} className="px-3 py-1.5 border rounded-lg text-xs">Kapat</button></div></div>
             <div id="print-area" className="grid grid-cols-2 gap-3">{bulkLabels.map((o) => <div key={o.id} className="border-2 border-dashed rounded-xl p-3 text-xs space-y-1 break-inside-avoid"><div className="flex justify-between"><b className="text-sm">{activeCompany?.name}</b><span className="font-mono">{o.order_number}</span></div><div className="text-[10px] text-slate-500">GÖNDERİCİ: {activeCompany?.address} {activeCompany?.city} • {activeCompany?.phone}</div><div className="border-t pt-1"><div className="text-[10px] text-slate-500">ALICI</div><div className="font-bold text-sm">{o.customer_name}</div><div>{o.shipping_address}</div><div className="font-bold">{o.city}</div><div>{o.customer_phone}</div></div><div className="flex justify-between border-t pt-1"><span>{(o.items || []).reduce((s, i) => s + i.quantity, 0)} parça • {o.cargo_carrier || "Kargo seçilmedi"}</span><span className="font-mono font-bold">{o.cargo_tracking_number || "—"}</span></div></div>)}</div>

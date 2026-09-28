@@ -8,6 +8,7 @@ import { resolveImageUrl } from "../../utils/imageUrl";
 import { compressImageFile } from "../../utils/compressImage";
 import { StatusFlow } from "../../pages/SupportPage";
 import { fmtDate } from "./saasUi";
+import { backdropDismissProps } from "../../utils/modalBackdrop";
 
 const cred = { withCredentials: true };
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
@@ -99,7 +100,7 @@ export const SupportTicketsPanel = ({ onOpenCompany }) => {
         ))}
       </div>
       {sel && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 flex justify-end" onClick={() => setSel(null)}>
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex justify-end" {...backdropDismissProps(() => setSel(null))}>
           <div className="w-full max-w-xl bg-white h-full overflow-y-auto p-5 space-y-3" onClick={(e) => e.stopPropagation()} data-testid="st-drawer">
             <div className="flex items-start justify-between gap-2">
               <div>

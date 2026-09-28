@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { X, MessageSquare, Mail, Send, Loader2, Paperclip } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { fmtDate, formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export const TEMPLATES = {
   balance: (c) => `Sayın ${c.name}, ${new Date().toLocaleDateString("tr-TR")} tarihi itibarıyla cari hesap bakiyeniz ${formatTrAmount(Math.abs(c.balance || 0))} ₺ ${c.balance > 0 ? "borç" : "alacak"} olarak görünmektedir. Bilgilerinize sunarız.`,
@@ -53,7 +54,7 @@ export const QuickMessageModal = ({ companyId, recipient, defaultSubject = "", d
   const smsCount = Math.ceil(message.length / (/[çğıöşüÇĞİÖŞÜ]/.test(message) ? 70 : 160)) || 1;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(e) => e.stopPropagation()} data-testid="quick-message-modal">
         <div className="flex items-center justify-between border-b pb-2">
           <div>

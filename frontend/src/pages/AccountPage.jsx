@@ -14,6 +14,7 @@ import {
 } from "../utils/locationConsent";
 import { isPersonelRole, personelAccountTabs, personelCanManageCompany } from "../utils/selfPersonnelNav";
 import SettingsPage from "./SettingsPage";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const ALL_TABS = [
   ["profil", "Profilim", UserRound],
@@ -299,7 +300,7 @@ export const GibCreditsPanel = ({ companyId }) => {
   };
   return (
     <div className="space-y-4 text-xs" data-testid="gib-credits-panel">
-      {paytr && <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4" onClick={() => setPaytr(null)}><div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-3"><div className="flex justify-between px-2 pb-2"><b>PayTR — GİB Kontör</b><button type="button" onClick={() => setPaytr(null)}>Kapat</button></div><iframe title="PayTR" src={paytr.iframe_url} className="w-full h-[640px] rounded-xl" /></div></div>}
+      {paytr && <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4" {...backdropDismissProps(() => setPaytr(null))}><div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-3"><div className="flex justify-between px-2 pb-2"><b>PayTR — GİB Kontör</b><button type="button" onClick={() => setPaytr(null)}>Kapat</button></div><iframe title="PayTR" src={paytr.iframe_url} className="w-full h-[640px] rounded-xl" /></div></div>}
       <div className="bg-slate-900 text-white rounded-2xl p-5 flex flex-wrap items-center gap-4">
         <div className="w-12 h-12 rounded-2xl bg-amber-400 text-slate-900 flex items-center justify-center"><Wallet className="w-6 h-6" /></div>
         <div className="flex-1 min-w-[200px]">

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Receipt, Users, Plus, Trash2, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 
@@ -63,7 +64,7 @@ export function ProjectExpenseModal({ project, companyId, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" {...backdropDismissProps(onClose)}>
       <form
         onSubmit={save}
         onClick={(e) => e.stopPropagation()}
@@ -203,7 +204,7 @@ export function ProjectTeamTasksModal({ project, companyId, onClose, onSaved }) 
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" {...backdropDismissProps(onClose)}>
       <form
         onSubmit={save}
         onClick={(e) => e.stopPropagation()}

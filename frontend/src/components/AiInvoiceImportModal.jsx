@@ -8,6 +8,7 @@ import { useEscape } from "../utils/useEscape";
 import { SearchSelect } from "./SearchSelect";
 import { computeLine, emptyLine, fmtMoney, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
 import { useAiStatus } from "../hooks/useAiStatus";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => fmtMoney(n);
 const lineOf = (it) => computeLine(it);
@@ -23,7 +24,6 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
   const { extractLabel, configured, enabled, ready: aiReady, lastTest, decryptFailed, loading: aiLoading } = useAiStatus();
   const ref = useRef(null);
   const suppressBackdropUntil = useRef(0);
-  const backdropArmed = useRef(false);
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -53,17 +53,6 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
     if (busy || saving) return;
     if (Date.now() < suppressBackdropUntil.current) return;
     onClose();
-  };
-
-  const onBackdropPointerDown = (e) => {
-    backdropArmed.current = e.target === e.currentTarget;
-  };
-
-  const onBackdropClick = (e) => {
-    if (e.target !== e.currentTarget) return;
-    if (!backdropArmed.current) return;
-    backdropArmed.current = false;
-    tryClose();
   };
 
   const resetFileInput = () => {
@@ -160,11 +149,10 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
   return (
     <div
       className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
-      onPointerDown={onBackdropPointerDown}
-      onClick={onBackdropClick}
+      {...backdropDismissProps(tryClose)}
       data-testid="ai-invoice-backdrop"
     >
-      <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} data-testid="ai-invoice-modal">
+      <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} data-testid="ai-invoice-modal">
         <div className="flex items-center justify-between border-b pb-3">
           <h3 className="text-base font-bold text-slate-900 flex items-center gap-2"><Sparkles className="w-5 h-5 text-violet-600" /> {title} <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${aiReady ? "bg-violet-100 text-violet-700" : "bg-amber-100 text-amber-800"}`} data-testid="ai-invoice-model-badge">{modelBadge}</span></h3>
           <button type="button" onClick={tryClose} className="text-slate-400" data-testid="ai-invoice-close" disabled={busy || saving}><X className="w-5 h-5" /></button>

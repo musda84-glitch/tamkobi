@@ -7,6 +7,7 @@ import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { ledgerPayPayload } from "../utils/personnelWage";
 import { formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 const empIdOf = (e) => e?.id || e?._id || "";
@@ -45,7 +46,7 @@ export function EmployeeLedgerModal({ employee, companyId, accounts, remaining =
   };
 
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose} data-testid="emp-ledger-modal">
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)} data-testid="emp-ledger-modal">
       <form onSubmit={save} onClick={(ev) => ev.stopPropagation()} className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3 text-xs shadow-2xl">
         <div className="flex items-center justify-between border-b pb-2">
           <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
