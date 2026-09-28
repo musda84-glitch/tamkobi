@@ -10,6 +10,7 @@ import { HeaderQuickActions } from "./HeaderQuickActions";
 import { RadialQuickMenu } from "./RadialQuickMenu";
 import { isPublicPath } from "../utils/publicPath";
 import { mesaimExclusivePathAllowed } from "../utils/attendanceSelf";
+import { isPersonelRole, personelMenuPathAllowed } from "../utils/selfPersonnelNav";
 import TamKobiMark from "./TamKobiMark";
 import { AccountMenu } from "./AccountMenu";
 import { BuildStamp } from "./BuildStamp";
@@ -183,8 +184,15 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const routeKey = (permPath || ((p) => p))(location.pathname);
   const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
   const lockedModule = !moduleOn(location.pathname);
+  const personelDenied =
+    isPersonelRole(user)
+    && !personelMenuPathAllowed(location.pathname, user)
+    && !location.pathname.startsWith("/hesap");
 
   if (mesaimReady && mesaimLocked && !mesaimExclusivePathAllowed(location.pathname) && !isPublicPath(location.pathname)) {
+    return <Navigate to="/mesai" replace />;
+  }
+  if (personelDenied) {
     return <Navigate to="/mesai" replace />;
   }
 

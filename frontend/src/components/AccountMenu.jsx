@@ -5,6 +5,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Building2, ChevronDown, Plus, Settings, UserRound, Wallet, Check, Loader2 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { isPersonelRole, personelCanManageCompany } from "../utils/selfPersonnelNav";
 
 export const AccountMenu = () => {
   const { companies, activeCompany, switchCompany, reloadSession, user, license } = useAuth();
@@ -16,15 +17,17 @@ export const AccountMenu = () => {
   const [credits, setCredits] = useState(null);
   const box = useRef(null);
   const cid = activeCompany?.id || activeCompany?._id;
+  const canManageCo = personelCanManageCompany(user);
+  const staffOnly = isPersonelRole(user);
   useEffect(() => {
     const close = (e) => { if (box.current && !box.current.contains(e.target)) { setOpen(false); setAdding(false); } };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, []);
   useEffect(() => {
-    if (!cid || !open) return;
+    if (!cid || !open || staffOnly || !canManageCo) return;
     axios.get(`${API_URL}/account/gib-credits`, { params: { company_id: cid } }).then((r) => setCredits(r.data.balance)).catch(() => {});
-  }, [cid, open]);
+  }, [cid, open, staffOnly, canManageCo]);
   const mine = (companies || []).filter((c) => c && (c.id || c._id));
   const create = async (e) => {
     e.preventDefault();
@@ -59,8 +62,9 @@ export const AccountMenu = () => {
     if (id !== cid) switchCompany(id);
     setOpen(false);
   };
-  const canAdmin = !user?.role || user.role === "admin" || user?.is_super_admin;
-  const salesOn = !!license?.gib_credits_sales;
+  const canAdmin = canManageCo && (!user?.role || user.role === "admin" || user?.is_super_admin);
+  const salesOn = canManageCo && !!license?.gib_credits_sales;
+  const multiCompany = mine.length > 1;
   return (
     <div className="px-3.5 py-3 border-b border-slate-800/60 relative" ref={box} data-testid="account-menu">
       <button
@@ -77,24 +81,30 @@ export const AccountMenu = () => {
       </button>
       {open && (
         <div className="absolute top-[4.5rem] left-3 right-3 bg-slate-800 border border-slate-700 rounded-xl shadow-xl py-1 z-50 text-xs" data-testid="account-menu-panel">
-          <div className="px-3 py-1.5 text-[10px] text-slate-400 font-semibold uppercase">Şirketlerim</div>
-          {mine.length === 0 && <div className="px-3 py-2 text-slate-500">Bu hesapta şirket yok.</div>}
-          {mine.map((c) => {
-            const id = c.id || c._id;
-            const on = id === cid;
-            return (
-              <button key={id} type="button" onClick={() => go(c)} className={`w-full text-left px-3 py-2 hover:bg-slate-700 transition flex items-center justify-between gap-2 ${on ? "text-emerald-400 font-medium bg-slate-700/50" : "text-slate-300"}`} data-testid={`company-opt-${id}`}>
-                <span className="truncate flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 shrink-0 opacity-70" />{c.name}</span>
-                {on && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-              </button>
-            );
-          })}
+          {(!staffOnly || multiCompany) ? (
+            <>
+              <div className="px-3 py-1.5 text-[10px] text-slate-400 font-semibold uppercase">Şirketlerim</div>
+              {mine.length === 0 && <div className="px-3 py-2 text-slate-500">Bu hesapta şirket yok.</div>}
+              {mine.map((c) => {
+                const id = c.id || c._id;
+                const on = id === cid;
+                return (
+                  <button key={id} type="button" onClick={() => go(c)} className={`w-full text-left px-3 py-2 hover:bg-slate-700 transition flex items-center justify-between gap-2 ${on ? "text-emerald-400 font-medium bg-slate-700/50" : "text-slate-300"}`} data-testid={`company-opt-${id}`}>
+                    <span className="truncate flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 shrink-0 opacity-70" />{c.name}</span>
+                    {on && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                  </button>
+                );
+              })}
+            </>
+          ) : (
+            <div className="px-3 py-2 text-slate-400 truncate" data-testid="account-single-company">{activeCompany?.name || "Şirket"}</div>
+          )}
           {canAdmin && !adding && (
             <button type="button" onClick={() => setAdding(true)} className="w-full text-left px-3 py-2 text-emerald-300 hover:bg-slate-700 flex items-center gap-1.5 font-semibold" data-testid="account-add-company">
               <Plus className="w-3.5 h-3.5" /> Yeni şirket aç
             </button>
           )}
-          {adding && (
+          {adding && canAdmin && (
             <form onSubmit={create} className="px-3 py-2 space-y-1.5 border-t border-slate-700" data-testid="account-new-company-form">
               <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ünvan" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white" data-testid="account-new-co-name" />
               <input value={form.tax_number} onChange={(e) => setForm({ ...form, tax_number: e.target.value })} placeholder="VKN" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-white" data-testid="account-new-co-tax" />
@@ -115,9 +125,13 @@ export const AccountMenu = () => {
               <span className="font-bold text-amber-300" data-testid="account-gib-balance">{credits == null ? "…" : `${credits}`}</span>
             </Link>
           )}
-          <Link to="/hesap?tab=sirketler" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-page"><Building2 className="w-3.5 h-3.5" /> Hesabım</Link>
-          <Link to="/hesap?tab=profil" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-profile"><UserRound className="w-3.5 h-3.5" /> Profilim</Link>
-          <Link to="/hesap?tab=ayarlar" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200 rounded-b-xl" data-testid="account-go-settings"><Settings className="w-3.5 h-3.5" /> Firma ayarları</Link>
+          {!staffOnly && (
+            <Link to="/hesap?tab=sirketler" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200" data-testid="account-go-page"><Building2 className="w-3.5 h-3.5" /> Hesabım</Link>
+          )}
+          <Link to="/hesap?tab=profil" onClick={() => setOpen(false)} className={`flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200 ${canManageCo ? "" : "rounded-b-xl"}`} data-testid="account-go-profile"><UserRound className="w-3.5 h-3.5" /> Profilim</Link>
+          {canManageCo && (
+            <Link to="/hesap?tab=ayarlar" onClick={() => setOpen(false)} className="flex items-center gap-1.5 px-3 py-2 hover:bg-slate-700 text-slate-200 rounded-b-xl" data-testid="account-go-settings"><Settings className="w-3.5 h-3.5" /> Firma ayarları</Link>
+          )}
         </div>
       )}
     </div>
