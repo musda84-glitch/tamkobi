@@ -5,12 +5,13 @@ import { X, Sparkles, Upload, Loader2, Link2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { SearchSelect } from "./SearchSelect";
 import { DocumentLineEditor, LineTotalsFooter } from "./DocumentLineEditor";
-import { computeLine, documentLineTotals, emptyLine, hydrateLine } from "../utils/documentLines";
+import { computeLine, documentLineTotals, emptyLine, hydrateLine, lineFromProduct } from "../utils/documentLines";
 import { orderLinesLocked } from "../utils/orderEdit";
 import { useEscape } from "../utils/useEscape";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { OrderAiCart } from "./B2BAiCart";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -67,6 +68,20 @@ export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved 
           <div className="md:col-span-2"><label className="block font-semibold mb-1">Teslimat Adresi</label><input value={f.shipping_address} onChange={(e) => setF({ ...f, shipping_address: e.target.value })} className={inp} data-testid="new-order-address" /></div>
           <div><label className="block font-semibold mb-1">İl</label><input value={f.city} onChange={(e) => setF({ ...f, city: e.target.value })} className={inp} data-testid="new-order-city" /></div>
         </div>
+        <OrderAiCart
+          companyId={companyId}
+          products={products}
+          onApply={(sel) => {
+            const byId = Object.fromEntries((products || []).map((p) => [p.id || p._id, p]));
+            const lines = sel.map((i) => lineFromProduct(byId[i.product_id], { invoiceType: "sales", quantity: Number(i.quantity) || 1 }));
+            const blank = (it) => !(it.product_id || it.product_name || it.name) && !(Number(it.unit_price) || Number(it.unit_price_incl));
+            setItems((prev) => {
+              const keep = (prev || []).filter((it) => !blank(it));
+              const next = [...keep, ...lines];
+              return next.length ? next : [computeLine(emptyLine())];
+            });
+          }}
+        />
         <DocumentLineEditor
           items={items}
           onChange={setItems}
