@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
+import { openAssignedDuties } from "../utils/assignedDuty";
 import { shopFloorCardActions, shopFloorCardBorder } from "../utils/shopFloorActions";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
@@ -104,7 +105,7 @@ export default function ShopFloorPage() {
     }
   };
   const mine = active.filter((w) => w.operator_name === operator || w.assigned_name === operator);
-  const openDuties = duties.filter((t) => !t.done);
+  const openDuties = openAssignedDuties(duties);
 
   const approveDuty = async (t) => {
     if (!t?.id) return;
@@ -277,11 +278,11 @@ export default function ShopFloorPage() {
           </div>
         )}
       </div>
-      {duties.length > 0 && (
+      {openDuties.length > 0 && (
         <div data-testid="shopfloor-duties">
           <h2 className="text-sm font-bold text-slate-700 mb-2">Atanan Görevler ({openDuties.length} açık)</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {duties.map((t, i) => (
+            {openDuties.map((t, i) => (
               <AssignedDutyCard
                 key={t.id || i}
                 duty={t}
