@@ -71,6 +71,20 @@ describe("productDraft", () => {
     expect(body.manufacturer_code).toBe("ACME-1");
   });
 
+  it("includes unit coverage for recipe / scrap", () => {
+    const d = emptyProductDraft();
+    d.name = "Plaka";
+    d.sku = "PL-1";
+    d.unit_content_qty = "2,98";
+    d.unit_content_unit = "M2";
+    const body = productPayload(d);
+    expect(body.unit_content_qty).toBe(2.98);
+    expect(body.unit_content_unit).toBe("M2");
+    d.unit_content_qty = "";
+    expect(productPayload(d).unit_content_qty).toBeNull();
+    expect(productPayload(d).unit_content_unit).toBeNull();
+  });
+
   it("generates EAN-like 868 barcodes", () => {
     const code = generateBarcode();
     expect(code).toMatch(/^868\d{10}$/);

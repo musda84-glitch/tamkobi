@@ -12185,10 +12185,25 @@ def _material_unit_net(m: Dict[str, Any]) -> float:
 
 
 def _recipe_costs(recipe: Dict[str, Any]) -> Dict[str, Any]:
-    mat = sum(
-        _material_unit_net(m) * float(m.get("quantity", 0)) * (1 + float(m.get("wastage_percent", 0)) / 100)
-        for m in recipe.get("materials", [])
-    )
+    mat = 0.0
+    for m in recipe.get("materials", []):
+        if not isinstance(m, dict):
+            continue
+        raw = float(m.get("quantity", 0) or 0) * (1 + float(m.get("wastage_percent", 0) or 0) / 100)
+        net = _material_unit_net(m)
+        cov_qty, cov_unit = pwo.parse_unit_content(m)
+        stock_unit = str(m.get("stock_unit") or "").strip()
+        mat_unit = str(m.get("unit") or "").strip()
+        if (
+            cov_qty > 0
+            and cov_unit
+            and pwo.units_compatible(mat_unit, cov_unit)
+            and (not stock_unit or not pwo.units_compatible(mat_unit, stock_unit))
+        ):
+            stock = pwo.round_needed_qty(raw / cov_qty, stock_unit or "Adet") if raw > 0 else 0.0
+            mat += net * stock
+        else:
+            mat += net * raw
     total = round(mat + float(recipe.get("labor_cost", 0)) + float(recipe.get("overhead_cost", 0)), 2)
     tq = float(recipe.get("target_quantity", 1) or 1)
     return {"material_cost": round(mat, 2), "total_estimated_cost": total, "unit_cost": round(total / tq, 2)}
@@ -12199,24 +12214,53 @@ async def _fill_material_costs(materials: List[Dict[str, Any]]):
         if p:
             m.setdefault("unit", p.get("unit", "Adet"))
             m.setdefault("product_name", p.get("name"))
+            m.setdefault("stock_unit", p.get("unit") or "Adet")
+            if p.get("unit_content_qty") and p.get("unit_content_unit"):
+                m.setdefault("unit_content_qty", p.get("unit_content_qty"))
+                m.setdefault("unit_content_unit", p.get("unit_content_unit"))
             if m.get("vat_rate") is None:
                 m["vat_rate"] = float(p.get("purchase_vat_rate") or p.get("vat_rate") or 20)
             if not m.get("cost_per_unit"):
                 m["cost_per_unit"] = float(p.get("purchase_price", 0) or 0)
 
 async def _requirements(recipe: Dict[str, Any], quantity: float) -> List[Dict[str, Any]]:
+    mats = list(recipe.get("materials") or [])
+    pids = [m.get("product_id") for m in mats if isinstance(m, dict) and m.get("product_id")]
+    products = await db.products.find({"_id": {"$in": pids}}).to_list(len(pids) or 1) if pids else []
+    by_id = {p["_id"]: p for p in products}
+    scaled = pwo.recipe_materials_for_qty(recipe, quantity, products_by_id=by_id)
     rows = []
-    factor = quantity / float(recipe.get("target_quantity", 1) or 1)
-    for m in recipe.get("materials", []):
-        p = await db.products.find_one({"_id": m.get("product_id")}) or {}
-        unit = m.get("unit") or p.get("unit") or "Adet"
-        needed = pwo.round_needed_qty(
-            float(m.get("quantity", 0)) * factor * (1 + float(m.get("wastage_percent", 0)) / 100),
-            unit,
-        )
+    for row in scaled:
+        p = by_id.get(row.get("product_id")) or {}
         stock = float(p.get("stock_quantity", 0) or 0)
+        needed = float(row.get("needed") or 0)
+        # needed stok biriminde (Adet); cost_per_unit stok birimi fiyatı
+        m = next((x for x in mats if isinstance(x, dict) and x.get("product_id") == row.get("product_id")), {}) or {}
         unit_net = _material_unit_net(m)
-        rows.append({"product_id": m.get("product_id"), "product_name": m.get("product_name") or p.get("name"), "unit": unit, "needed": needed, "in_stock": stock, "shortage": round(max(0.0, needed - stock), 3), "cost": round(needed * unit_net, 2)})
+        cov_qty = float(row.get("unit_content_qty") or m.get("unit_content_qty") or p.get("unit_content_qty") or 0) or 0
+        # Reçete kalemi içerik biriminde (M2) ve cost_per_unit Adet fiyatıysa stok adedine göre maliyetle.
+        mat_unit = str(m.get("unit") or "")
+        content_unit = str(row.get("content_unit") or m.get("unit_content_unit") or p.get("unit_content_unit") or "")
+        if cov_qty > 0 and content_unit and pwo.units_compatible(mat_unit, content_unit) and not pwo.units_compatible(mat_unit, row.get("unit")):
+            cost = round(needed * unit_net, 2)
+        else:
+            cost = round(needed * unit_net, 2)
+        out = {
+            "product_id": row.get("product_id"),
+            "product_name": row.get("product_name") or p.get("name"),
+            "unit": row.get("unit") or p.get("unit") or "Adet",
+            "needed": needed,
+            "in_stock": stock,
+            "shortage": round(max(0.0, needed - stock), 3),
+            "cost": cost,
+        }
+        if row.get("scrap_content"):
+            out["scrap_content"] = row["scrap_content"]
+            out["content_needed"] = row.get("content_needed")
+            out["content_unit"] = row.get("content_unit")
+            out["unit_content_qty"] = row.get("unit_content_qty")
+            out["unit_content_unit"] = row.get("unit_content_unit")
+        rows.append(out)
     return rows
 
 def _normalize_recipe_steps_payload(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -13089,6 +13133,21 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
         else []
     )
     by_recipe = {r["_id"]: r for r in recipes}
+    mat_pids: list = []
+    for rec in recipes:
+        for m in rec.get("materials") or []:
+            if isinstance(m, dict) and m.get("product_id"):
+                mat_pids.append(m["product_id"])
+    mat_pids = list({pid for pid in mat_pids})
+    mat_products = (
+        await db.products.find(
+            {"_id": {"$in": mat_pids}},
+            {"unit": 1, "unit_content_qty": 1, "unit_content_unit": 1, "name": 1},
+        ).to_list(len(mat_pids) or 1)
+        if mat_pids
+        else []
+    )
+    products_by_id = {p["_id"]: p for p in mat_products}
     persist_station: list = []
     persist_images: list = []
     for r in rows:
@@ -13097,7 +13156,7 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
         meta = pwo.recipe_job_fields(recipe)
         if not meta.get("recipe_name"):
             meta["recipe_name"] = o.get("recipe_name")
-        all_mats = pwo.recipe_materials_for_qty(recipe, r.get("planned_quantity") or 1)
+        all_mats = pwo.recipe_materials_for_qty(recipe, r.get("planned_quantity") or 1, products_by_id=products_by_id)
         steps = pwo.flatten_recipe_steps(recipe) if recipe else []
         step = pwo.recipe_step_for_work_order(steps, r) if steps else None
         if step:
@@ -13123,6 +13182,10 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
         r["finish_qty"] = plan["qty"]
         r["finish_unit"] = plan["unit"]
         r["finish_is_material"] = plan["is_material"]
+        if plan.get("scrap_content"):
+            r["finish_scrap_content"] = plan["scrap_content"]
+            r["finish_content_unit"] = plan.get("content_unit")
+            r["finish_content_needed"] = plan.get("content_needed")
         if not had_images_key:
             imgs = pwo.sanitize_step_images(r.get("images"))
             r["images"] = imgs
@@ -13406,7 +13469,24 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
                     w["material_product_id"] = step.get("material_product_id")
                 if step.get("material_name") and not w.get("material_name"):
                     w["material_name"] = step.get("material_name")
-            all_mats = pwo.recipe_materials_for_qty(recipe, w.get("planned_quantity") or o.get("planned_quantity") or 1)
+            mat_pids = [
+                m.get("product_id")
+                for m in (recipe.get("materials") or [])
+                if isinstance(m, dict) and m.get("product_id")
+            ]
+            mat_prods = (
+                await db.products.find(
+                    {"_id": {"$in": mat_pids}},
+                    {"unit": 1, "unit_content_qty": 1, "unit_content_unit": 1, "name": 1},
+                ).to_list(len(mat_pids) or 1)
+                if mat_pids
+                else []
+            )
+            all_mats = pwo.recipe_materials_for_qty(
+                recipe,
+                w.get("planned_quantity") or o.get("planned_quantity") or 1,
+                products_by_id={p["_id"]: p for p in mat_prods},
+            )
             finish_mats = pwo.materials_for_work_order_step(all_mats, w)
     finish_plan = pwo.resolve_work_order_finish_plan(w, finish_mats)
     default_qty = finish_plan["qty"] if finish_plan["qty"] else float(w.get("planned_quantity", 0) or 0)
@@ -13417,6 +13497,18 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
     planned_q = float(finish_plan["qty"] or w.get("planned_quantity", 0) or 0)
     is_material_step = bool(finish_plan.get("is_material"))
     over = planned_q > 0 and produced + scrap > planned_q + 1e-9
+    # Kapsama fire (M2/Metre): Adet yuvarlamasından kalan içerik — stok biriminden ayrı.
+    scrap_content = 0.0
+    scrap_content_unit = None
+    if req.get("scrap_content") is not None:
+        try:
+            scrap_content = float(req.get("scrap_content") or 0)
+        except (TypeError, ValueError):
+            scrap_content = 0.0
+        scrap_content_unit = str(req.get("scrap_content_unit") or finish_plan.get("content_unit") or "").strip() or None
+    else:
+        scrap_content = float(finish_plan.get("scrap_content") or 0)
+        scrap_content_unit = finish_plan.get("content_unit")
     # Plan dışı fazla üretim serbest — mamul adımında iş emri planını hizala.
     # Hammadde adımında (ör. 16 Metre kesim) mamul planına (1 Adet) taşma.
     wo_patch: Dict[str, Any] = {
@@ -13428,6 +13520,10 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
         "finish_unit": finish_plan.get("unit") or w.get("unit") or "Adet",
         "finish_is_material": is_material_step,
     }
+    if scrap_content > 0:
+        wo_patch["scrap_content"] = scrap_content
+        if scrap_content_unit:
+            wo_patch["scrap_content_unit"] = scrap_content_unit
     if over and not is_material_step:
         wo_patch["planned_quantity"] = produced + scrap
         wo_patch["over_produced"] = True

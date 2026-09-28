@@ -7,6 +7,31 @@ _DISCRETE_UNITS = frozenset({
     "adet", "ad", "takım", "takim", "çift", "cift", "koli", "kutu", "paket", "set", "parça", "parca",
 })
 
+# İçerik / kapsama birimi eşdeğerleri (1 Adet = X M2 vb.).
+_UNIT_CANON = {
+    "m2": "M2", "m²": "M2", "m^2": "M2", "sqm": "M2", "metrekare": "M2",
+    "m3": "M3", "m³": "M3", "m^3": "M3", "metrekup": "M3", "metreküp": "M3",
+    "metre": "Metre", "mt": "Metre", "mtr": "Metre", "m": "Metre",
+    "cm": "Cm", "mm": "Mm",
+    "kg": "Kg", "gr": "Gr", "g": "Gr",
+    "lt": "Lt", "l": "Lt", "litre": "Lt", "ml": "Ml",
+    "adet": "Adet", "ad": "Adet",
+}
+
+
+def normalize_unit_key(unit: Any) -> str:
+    u = str(unit or "").strip()
+    if not u:
+        return ""
+    return _UNIT_CANON.get(u.casefold(), u)
+
+
+def units_compatible(a: Any, b: Any) -> bool:
+    ka, kb = normalize_unit_key(a), normalize_unit_key(b)
+    if not ka or not kb:
+        return False
+    return ka.casefold() == kb.casefold()
+
 
 def is_discrete_unit(unit: Any) -> bool:
     u = str(unit or "").strip().casefold()
@@ -29,6 +54,82 @@ def round_needed_qty(needed: float, unit: Any) -> float:
     return round(n, 3)
 
 
+def parse_unit_content(product_or_mat: Optional[Dict[str, Any]] = None) -> tuple:
+    """(content_qty, content_unit) — geçersizse (0, '')."""
+    src = product_or_mat or {}
+    try:
+        qty = float(src.get("unit_content_qty") or 0)
+    except (TypeError, ValueError):
+        qty = 0.0
+    unit = str(src.get("unit_content_unit") or "").strip()
+    if qty <= 0 or not unit:
+        return 0.0, ""
+    return qty, unit
+
+
+def apply_unit_content(
+    raw_needed: float,
+    material_unit: Any,
+    *,
+    stock_unit: Any = None,
+    unit_content_qty: Any = None,
+    unit_content_unit: Any = None,
+) -> Dict[str, Any]:
+    """İçerik ihtiyacını stok birimine çevir; kalan kapsama fire.
+
+    Örn. ihtiyaç 8.5 M2, 1 Adet = 2.98 M2 → 3 Adet stok, fire 0.44 M2.
+    """
+    mat_unit = str(material_unit or "Adet").strip() or "Adet"
+    try:
+        content_need = float(raw_needed)
+    except (TypeError, ValueError):
+        content_need = 0.0
+    if content_need <= 0:
+        return {
+            "needed": 0.0,
+            "unit": mat_unit,
+            "content_needed": 0.0,
+            "content_unit": None,
+            "scrap_content": 0.0,
+            "coverage_applied": False,
+        }
+    try:
+        cov_qty = float(unit_content_qty or 0)
+    except (TypeError, ValueError):
+        cov_qty = 0.0
+    cov_unit = str(unit_content_unit or "").strip()
+    stock = str(stock_unit or "").strip() or mat_unit
+    if (
+        cov_qty > 0
+        and cov_unit
+        and units_compatible(mat_unit, cov_unit)
+        and is_discrete_unit(stock)
+        and not units_compatible(mat_unit, stock)
+    ):
+        stock_needed = float(math.ceil(content_need / cov_qty - 1e-9))
+        taken = stock_needed * cov_qty
+        scrap = round(max(0.0, taken - content_need), 3)
+        return {
+            "needed": stock_needed,
+            "unit": stock,
+            "content_needed": round(content_need, 3),
+            "content_unit": normalize_unit_key(cov_unit) or cov_unit,
+            "scrap_content": scrap,
+            "coverage_applied": True,
+            "unit_content_qty": cov_qty,
+            "unit_content_unit": normalize_unit_key(cov_unit) or cov_unit,
+        }
+    needed = round_needed_qty(content_need, mat_unit)
+    return {
+        "needed": needed,
+        "unit": mat_unit,
+        "content_needed": round(content_need, 3) if cov_qty > 0 and cov_unit else None,
+        "content_unit": (normalize_unit_key(cov_unit) or cov_unit) if cov_qty > 0 and cov_unit else None,
+        "scrap_content": 0.0,
+        "coverage_applied": False,
+    }
+
+
 def recipe_job_fields(recipe: Optional[Dict[str, Any]] = None) -> Dict[str, Optional[str]]:
     """Reçeteden iş emrine kopyalanacak iş dosyası / reçete adı."""
     r = recipe or {}
@@ -37,9 +138,18 @@ def recipe_job_fields(recipe: Optional[Dict[str, Any]] = None) -> Dict[str, Opti
     return {"job_file_name": job, "recipe_name": name}
 
 
-def recipe_materials_for_qty(recipe: Optional[Dict[str, Any]] = None, quantity: Any = 1) -> List[Dict[str, Any]]:
-    """Plan miktarına göre reçete hammaddeleri (atölye kartı için)."""
+def recipe_materials_for_qty(
+    recipe: Optional[Dict[str, Any]] = None,
+    quantity: Any = 1,
+    products_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Plan miktarına göre reçete hammaddeleri (atölye kartı için).
+
+    products_by_id verilirse stok kartındaki unit_content_* ile M2/Metre → Adet çevrilir;
+    kalan kapsama scrap_content olarak döner (fire).
+    """
     r = recipe or {}
+    by_id = products_by_id or {}
     try:
         qty = float(quantity if quantity is not None else 1)
     except (TypeError, ValueError):
@@ -59,16 +169,38 @@ def recipe_materials_for_qty(recipe: Optional[Dict[str, Any]] = None, quantity: 
         except (TypeError, ValueError):
             continue
         unit = str(m.get("unit") or "Adet").strip() or "Adet"
-        needed = round_needed_qty(base * factor * (1 + waste / 100.0), unit)
+        raw = base * factor * (1 + waste / 100.0)
+        pid = str(m.get("product_id") or "").strip()
+        prod = by_id.get(pid) or by_id.get(m.get("product_id")) or {}
+        cov_qty, cov_unit = parse_unit_content(m)
+        if cov_qty <= 0:
+            cov_qty, cov_unit = parse_unit_content(prod)
+        stock_unit = str(m.get("stock_unit") or prod.get("unit") or unit).strip() or unit
+        conv = apply_unit_content(
+            raw,
+            unit,
+            stock_unit=stock_unit,
+            unit_content_qty=cov_qty,
+            unit_content_unit=cov_unit,
+        )
+        needed = conv["needed"]
         if needed <= 0:
             continue
         name = str(m.get("product_name") or "").strip() or "Hammadde"
-        out.append({
+        row: Dict[str, Any] = {
             "product_id": m.get("product_id"),
             "product_name": name,
-            "unit": unit,
+            "unit": conv["unit"],
             "needed": needed,
-        })
+        }
+        if conv.get("coverage_applied"):
+            row["content_needed"] = conv.get("content_needed")
+            row["content_unit"] = conv.get("content_unit")
+            row["scrap_content"] = conv.get("scrap_content") or 0.0
+            row["unit_content_qty"] = conv.get("unit_content_qty")
+            row["unit_content_unit"] = conv.get("unit_content_unit")
+            row["stock_unit"] = conv["unit"]
+        out.append(row)
     return out
 
 
@@ -293,12 +425,21 @@ def resolve_work_order_finish_plan(
         needed = 0.0
     if hit and needed > 0 and (mid or mname or len(mats) == 1):
         unit = str(hit.get("unit") or "Adet").strip() or "Adet"
-        return {
+        plan: Dict[str, Any] = {
             "qty": round_needed_qty(needed, unit),
             "unit": unit,
             "is_material": True,
             "material_name": str(hit.get("product_name") or mname or "").strip() or None,
         }
+        try:
+            scrap_c = float(hit.get("scrap_content") or 0)
+        except (TypeError, ValueError):
+            scrap_c = 0.0
+        if scrap_c > 0:
+            plan["scrap_content"] = scrap_c
+            plan["content_needed"] = hit.get("content_needed")
+            plan["content_unit"] = hit.get("content_unit")
+        return plan
     try:
         pq = float(w.get("planned_quantity") or 0)
     except (TypeError, ValueError):

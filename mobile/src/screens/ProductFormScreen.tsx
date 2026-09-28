@@ -281,6 +281,27 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
         groups={unitSelectGroups(mergeUnitOptions(savedUnits, draft.unit))}
       />
 
+      <Card>
+        <Text style={{ fontWeight: "800", color: colors.text }}>Kapsama (1 {draft.unit || "Adet"} = ?)</Text>
+        <Muted>Reçete M2/Metre hesabı ve kalan fire için. Örn. 1 Adet = 2,98 M2.</Muted>
+        <Field
+          label={`1 ${draft.unit || "Adet"} =`}
+          testID="stock-unit-content-qty"
+          value={draft.unit_content_qty}
+          onChangeText={(v) => set("unit_content_qty", v)}
+          keyboardType="decimal-pad"
+          placeholder="örn. 2.98"
+          editable={canEdit}
+        />
+        <GroupedSelect
+          label="İçerik birimi"
+          testID="stock-unit-content-unit"
+          value={draft.unit_content_unit || ""}
+          onChange={(v) => canEdit && set("unit_content_unit", v || "")}
+          groups={[{ label: "İçerik", options: ["", "M2", "M3", "Metre", "Mt", "Cm", "Kg", "Lt", "Ml"].map((u) => ({ value: u, label: u || "— yok —" })) }]}
+        />
+      </Card>
+
       <Field label="Alış fiyatı (₺)" testID="stock-purchase" value={draft.purchase_price} onChangeText={(v) => set("purchase_price", v)} keyboardType="decimal-pad" editable={canEdit} />
       <Field label="Satış fiyatı (₺)" testID="stock-sale" value={draft.sale_price} onChangeText={(v) => set("sale_price", v)} keyboardType="decimal-pad" editable={canEdit} />
       <Field label="Mevcut stok" testID="stock-qty" value={draft.stock_quantity} onChangeText={(v) => set("stock_quantity", v)} keyboardType="decimal-pad" editable={canEdit} />
