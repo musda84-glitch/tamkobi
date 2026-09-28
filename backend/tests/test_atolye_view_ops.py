@@ -12,6 +12,8 @@ def test_shopfloor_unlock_allowed_with_atolye_view():
     assert mutation_allowed("/atolye", "/api/production/work-orders/shopfloor-unlock", perms) is True
     assert mutation_allowed("/atolye", "/api/production/work-orders/wo1/start", perms) is True
     assert mutation_allowed("/atolye", "/api/production/work-orders/wo1/finish", perms) is True
+    # Yönetici şifreli silme: view ile endpoint çağrılabilir (şifre sunucuda doğrulanır)
+    assert mutation_allowed("/atolye", "/api/production/work-orders/wo1/admin-trash", perms) is True
 
 
 def test_shopfloor_blocked_when_atolye_none_and_no_production():
