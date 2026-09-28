@@ -116,7 +116,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
       contact_id: f.contact_id || null,
       contact_name: f.contact_name || null,
       job_file_name: (f.job_file_name || "").trim() || null,
-      steps: steps.filter((x) => x.name?.trim()).map((x, i) => ({ no: i + 1, name: x.name.trim(), station: x.station || "Genel", duration_min: Number(x.duration_min || 0) })),
+      steps: steps.filter((x) => x.name?.trim()).map((x, i) => ({ no: i + 1, name: x.name.trim(), station: x.station || stationOptions[0] || "", duration_min: Number(x.duration_min || 0) })),
       code: recipe?.code || "",
       name: f.name || `${fp?.name} Reçetesi`,
       finished_product_name: fp?.name || "",
@@ -196,7 +196,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
           </div>
         </div>
         <div>
-          <div className="flex items-center justify-between mb-1"><span className="font-bold text-slate-800 flex items-center gap-1"><ListOrdered className="w-3.5 h-3.5" /> Üretim Adımları (Atölye iş emirleri)</span><button onClick={() => setSteps([...steps, { name: "", station: "", duration_min: 0 }])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="recipe-add-step"><Plus className="w-3.5 h-3.5" /> Adım Ekle</button></div>
+          <div className="flex items-center justify-between mb-1"><span className="font-bold text-slate-800 flex items-center gap-1"><ListOrdered className="w-3.5 h-3.5" /> Üretim Adımları (Atölye iş emirleri)</span><button onClick={() => setSteps([...steps, { name: "", station: stationOptions[0] || "", duration_min: 0 }])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="recipe-add-step"><Plus className="w-3.5 h-3.5" /> Adım Ekle</button></div>
           {steps.length === 0 && <p className="text-[11px] text-slate-400">Adım tanımlanmazsa tek adımlı (&quot;Üretim&quot;) iş emri oluşur. Bölümler Firma Ayarları → Atölye Bölge; istasyonlar Parkur listesinden gelir.</p>}
           <div className="space-y-1.5">{steps.map((st, i) => (
             <div key={i} className="grid grid-cols-12 gap-1 items-center bg-slate-50 border border-slate-200 rounded-lg p-1.5" data-testid={`recipe-step-${i}`}>
