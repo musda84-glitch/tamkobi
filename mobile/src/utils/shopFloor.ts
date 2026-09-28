@@ -94,15 +94,26 @@ export function openWorkOrderCount(wos: WorkOrder[] | null | undefined): number 
   return (wos || []).filter((w) => w.status === "ready" || w.status === "in_progress" || w.status === "paused").length;
 }
 
-export function finishQtyError(produced: number, scrap: number, planned?: number | null): string | null {
+/** Negatif miktar kontrolü. Plan üstü web ile aynı şekilde serbest (uyarı UI’da). */
+export function finishQtyError(produced: number, scrap: number, _planned?: number | null): string | null {
   if (!Number.isFinite(produced) || !Number.isFinite(scrap) || produced < 0 || scrap < 0) {
     return "Miktar negatif olamaz.";
   }
-  const plannedQ = Number(planned || 0);
-  if (plannedQ && produced + scrap > plannedQ + 1e-9) {
-    return `Üretilen + fire (${produced + scrap}) planlanan miktarı (${plannedQ}) aşamaz.`;
-  }
   return null;
+}
+
+export function finishOverPlan(produced: number, scrap: number, planned?: number | null): boolean {
+  const plannedQ = Number(planned || 0);
+  if (!plannedQ || !Number.isFinite(produced) || !Number.isFinite(scrap)) return false;
+  return produced + scrap > plannedQ + 1e-9;
+}
+
+export function shopFloorCardBorder(status?: string | null): string {
+  const s = String(status || "").trim().toLowerCase();
+  if (s === "in_progress" || s === "running" || s === "active") return "#F59E0B";
+  if (s === "paused" || s === "pause") return "#FDBA74";
+  if (s === "ready") return "#C7D2FE";
+  return "#E2E8F0";
 }
 
 /** Bitir modalı: hammadde adımında kalem ihtiyacı (ör. 16 Metre). */
