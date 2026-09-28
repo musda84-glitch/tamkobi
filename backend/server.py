@@ -12193,12 +12193,43 @@ async def update_recipe(recipe_id: str, req: Dict[str, Any]):
     if not r:
         raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
     allowed = {k: v for k, v in req.items() if k in {"name", "code", "finished_product_id", "finished_product_name", "target_quantity", "unit", "materials", "steps", "labor_cost", "overhead_cost", "notes", "is_active", "contact_id", "contact_name", "job_file_name", "one_time"}}
+    # Kalem / genel adımları normalize et (istasyon seçili, bölüm boşsa düşmesin)
+    if "steps" in allowed and isinstance(allowed["steps"], list):
+        allowed["steps"] = [
+            {**s, "no": i + 1}
+            for i, s in enumerate(
+                x for x in (pwo.normalize_step(st) for st in allowed["steps"]) if x
+            )
+        ]
+    if "materials" in allowed and isinstance(allowed["materials"], list):
+        mats_norm = []
+        for m in allowed["materials"]:
+            if not isinstance(m, dict):
+                mats_norm.append(m)
+                continue
+            mc = dict(m)
+            raw_steps = mc.get("steps") or []
+            mc["steps"] = [
+                {**s, "no": i + 1}
+                for i, s in enumerate(
+                    x for x in (pwo.normalize_step(st) for st in raw_steps) if x
+                )
+            ]
+            mats_norm.append(mc)
+        allowed["materials"] = mats_norm
+    steps_changed = "steps" in allowed or "materials" in allowed
     merged = {**r, **allowed}
     await _fill_material_costs(merged.get("materials", []))
     merged.update(_recipe_costs(merged))
     merged.pop("_id", None)
     await db.recipes.update_one({"_id": recipe_id}, {"$set": merged})
-    return clean_doc(await db.recipes.find_one({"_id": recipe_id}))
+    out = clean_doc(await db.recipes.find_one({"_id": recipe_id}))
+    if steps_changed:
+        rebuilt = await _rebuild_open_work_orders_for_recipe(recipe_id)
+        if rebuilt:
+            out["work_orders_rebuilt"] = rebuilt
+            out["message"] = f"Reçete güncellendi; {rebuilt} açık üretim emrinin atölye adımları yenilendi."
+    return out
 
 @api_router.delete("/production/recipes/{recipe_id}")
 async def delete_recipe(recipe_id: str):
@@ -12803,9 +12834,18 @@ async def create_production_order(req: Dict[str, Any]):
     return {**clean_doc(doc), "requirements": rows, "message": f"{order.order_code} üretim emri oluşturuldu." + (f" ⚠ {len(shortages)} hammaddede eksik var." if shortages else "")}
 
 # ---- İş Emirleri (atölye / tablet ekranı)
-async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any]):
-    if await db.work_orders.count_documents({"order_id": order["_id"]}):
+async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any], force: bool = False):
+    """Reçete adımlarından iş emri oluştur. force=True: başlamamış emirleri silip yeniden kur."""
+    existing = await db.work_orders.count_documents({"order_id": order["_id"]})
+    if existing and not force:
         return
+    if existing and force:
+        busy = await db.work_orders.count_documents(
+            {"order_id": order["_id"], "status": {"$in": ["in_progress", "paused", "done"]}}
+        )
+        if busy:
+            return
+        await db.work_orders.delete_many({"order_id": order["_id"]})
     import work_parks as wp
     company = await db.companies.find_one({"_id": order["company_id"]}) or {}
     parks = company.get("work_parks")
@@ -12823,7 +12863,28 @@ async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any]):
                      "job_file_name": job_meta.get("job_file_name"), "recipe_name": job_meta.get("recipe_name") or order.get("recipe_name"),
                      "status": "ready" if idx == 0 else "waiting", "assigned_to": None, "assigned_name": None, "operator_name": None, "started_at": None, "finished_at": None, "paused_seconds": 0,
                      "produced_qty": 0, "scrap_qty": 0, "logs": [], "created_at": now})
-    await db.work_orders.insert_many(docs)
+    if docs:
+        await db.work_orders.insert_many(docs)
+
+
+async def _rebuild_open_work_orders_for_recipe(recipe_id: str) -> int:
+    """Reçete adımları değişince planlı/başlamamış üretim emirlerinin iş emirlerini yenile."""
+    recipe = await db.recipes.find_one({"_id": recipe_id})
+    if not recipe:
+        return 0
+    orders = await db.production_orders.find(
+        {"recipe_id": recipe_id, "status": {"$in": ["planned", "in_production"]}},
+    ).to_list(500)
+    rebuilt = 0
+    for o in orders:
+        busy = await db.work_orders.count_documents(
+            {"order_id": o["_id"], "status": {"$in": ["in_progress", "paused", "done"]}}
+        )
+        if busy:
+            continue
+        await _generate_work_orders(o, recipe, force=True)
+        rebuilt += 1
+    return rebuilt
 
 async def _filter_active_production_work_orders(rows: list) -> list:
     """İptal veya silinmiş üretim emirlerine bağlı iş emirlerini listeden çıkar."""
@@ -12969,12 +13030,21 @@ async def shopfloor_unlock(req: Dict[str, Any]):
     return {"status": "success", "employee_id": emp["_id"], "operator_name": emp["full_name"]}
 
 @api_router.post("/production/orders/{order_id}/generate-work-orders")
-async def generate_work_orders_for_order(order_id: str):
+async def generate_work_orders_for_order(order_id: str, force: bool = False):
     o = await db.production_orders.find_one({"_id": order_id})
     if not o:
         raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
     recipe = await db.recipes.find_one({"_id": o.get("recipe_id")}) or {}
-    await _generate_work_orders(o, recipe)
+    if force:
+        busy = await db.work_orders.count_documents(
+            {"order_id": order_id, "status": {"$in": ["in_progress", "paused", "done"]}}
+        )
+        if busy:
+            raise HTTPException(
+                status_code=400,
+                detail="Başlanmış veya bitmiş adımlar varken iş emirleri yenilenemez.",
+            )
+    await _generate_work_orders(o, recipe, force=force)
     return {"status": "success", "count": await db.work_orders.count_documents({"order_id": order_id})}
 
 async def _wo(wo_id: str) -> Dict[str, Any]:

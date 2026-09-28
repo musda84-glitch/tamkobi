@@ -37,7 +37,7 @@ export const normalizeStepImages = (list) => {
   return out;
 };
 
-const emptyStep = (station = "") => ({ name: "", station, duration_min: 0, images: [] });
+const emptyStep = (station = "", name = "") => ({ name, station, duration_min: 0, images: [] });
 
 const emptyMat = () => ({
   product_id: "",
@@ -59,13 +59,19 @@ export const normalizeSteps = (list) =>
     images: normalizeStepImages(x?.images),
   }));
 
+/** Adım adı (bölüm) boşsa istasyon adını kullan — sessizce düşmesin. */
 export const serializeSteps = (list, fallbackStation = "") =>
   normalizeSteps(list)
-    .filter((x) => x.name?.trim())
+    .map((x) => {
+      const name = (x.name || "").trim() || (x.station || "").trim();
+      const station = (x.station || "").trim() || fallbackStation || "";
+      return { ...x, name, station };
+    })
+    .filter((x) => x.name)
     .map((x, i) => ({
       no: i + 1,
-      name: x.name.trim(),
-      station: x.station || fallbackStation,
+      name: x.name,
+      station: x.station,
       duration_min: Number(x.duration_min || 0),
       images: normalizeStepImages(x.images),
     }));
@@ -168,7 +174,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
   };
   const addMatStep = (mi) => {
     const cur = mats[mi]?.steps || [];
-    upd(mi, { steps: [...cur, emptyStep(stations[0] || "")] });
+    upd(mi, { steps: [...cur, emptyStep(stations[0] || "", zones[0] || "")] });
   };
   const removeMatStep = (mi, si) => {
     const cur = mats[mi]?.steps || [];
@@ -218,13 +224,36 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
     const valid = mats.filter((m) => m.product_id && Number(m.quantity) > 0);
     if (!f.finished_product_id) { toast.error("Üretilecek ürünü seçin."); return; }
     if (!valid.length) { toast.error("En az bir hammadde ekleyin."); return; }
+    const generalSteps = serializeSteps(steps, stations[0] || "");
+    const matsWithSteps = valid.map((m) => ({
+      product_id: m.product_id,
+      product_name: m.product_name,
+      unit: m.unit,
+      quantity: Number(m.quantity),
+      cost_per_unit: Number(m.cost_per_unit),
+      wastage_percent: Number(m.wastage_percent || 0),
+      cost_includes_vat: !!m.cost_includes_vat,
+      vat_rate: Number(m.vat_rate ?? 20),
+      steps: serializeSteps(m.steps, stations[0] || ""),
+    }));
+    const uiStepCount =
+      normalizeSteps(steps).filter((x) => (x.name || "").trim() || (x.station || "").trim() || (x.images || []).length).length
+      + valid.reduce(
+        (n, m) => n + normalizeSteps(m.steps).filter((x) => (x.name || "").trim() || (x.station || "").trim() || (x.images || []).length).length,
+        0
+      );
+    const savedStepCount = generalSteps.length + matsWithSteps.reduce((n, m) => n + (m.steps || []).length, 0);
+    if (uiStepCount > 0 && savedStepCount === 0) {
+      toast.error("Adımlar kaydedilemedi: her adımda bölüm veya istasyon seçin.");
+      return;
+    }
     const payload = {
       company_id: companyId,
       ...f,
       contact_id: f.contact_id || null,
       contact_name: f.contact_name || null,
       job_file_name: (f.job_file_name || "").trim() || null,
-      steps: serializeSteps(steps, stations[0] || ""),
+      steps: generalSteps,
       code: recipe?.code || "",
       name: f.name || `${fp?.name} Reçetesi`,
       finished_product_name: fp?.name || "",
@@ -232,17 +261,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
       labor_cost: Number(f.labor_cost),
       overhead_cost: Number(f.overhead_cost),
       one_time: !!f.one_time,
-      materials: valid.map((m) => ({
-        product_id: m.product_id,
-        product_name: m.product_name,
-        unit: m.unit,
-        quantity: Number(m.quantity),
-        cost_per_unit: Number(m.cost_per_unit),
-        wastage_percent: Number(m.wastage_percent || 0),
-        cost_includes_vat: !!m.cost_includes_vat,
-        vat_rate: Number(m.vat_rate ?? 20),
-        steps: serializeSteps(m.steps, stations[0] || ""),
-      })),
+      materials: matsWithSteps,
     };
     try {
       if (recipe) await axios.put(`${API_URL}/production/recipes/${recipe.id}`, payload); else await axios.post(`${API_URL}/production/recipes`, payload);
@@ -359,7 +378,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
           </div>
         </div>
         <div>
-          <div className="flex items-center justify-between mb-1"><span className="font-bold text-slate-800 flex items-center gap-1"><ListOrdered className="w-3.5 h-3.5" /> Genel üretim adımları</span><button onClick={() => setSteps([...steps, emptyStep(stationOptions[0] || "")])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="recipe-add-step"><Plus className="w-3.5 h-3.5" /> Adım Ekle</button></div>
+          <div className="flex items-center justify-between mb-1"><span className="font-bold text-slate-800 flex items-center gap-1"><ListOrdered className="w-3.5 h-3.5" /> Genel üretim adımları</span><button onClick={() => setSteps([...steps, emptyStep(stationOptions[0] || "", zoneOptions[0] || "")])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="recipe-add-step"><Plus className="w-3.5 h-3.5" /> Adım Ekle</button></div>
           {steps.length === 0 && <p className="text-[11px] text-slate-400">Kalem adımlarından sonra uygulanır. Hiç adım yoksa tek adımlı (&quot;Üretim&quot;) iş emri oluşur. Bölümler Firma Ayarları → Atölye Bölge; istasyonlar Parkur listesinden gelir.</p>}
           <div className="space-y-1.5">{steps.map((st, i) => (
             <div key={i} className="grid grid-cols-12 gap-1 items-center bg-slate-50 border border-slate-200 rounded-lg p-1.5" data-testid={`recipe-step-${i}`}>

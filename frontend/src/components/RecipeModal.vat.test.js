@@ -24,19 +24,21 @@ describe("recipe material vat cost", () => {
 });
 
 describe("per-material recipe steps", () => {
-  it("serializes named steps and drops blanks", () => {
+  it("serializes named steps; station-only keeps step; empty drops", () => {
     expect(
       serializeSteps(
         [
           { name: " Kesim ", station: "CNC", duration_min: "10", images: ["/a.jpg", "/a.jpg"] },
           { name: "  ", station: "X", duration_min: 1 },
           { name: "Montaj", station: "", duration_min: 0 },
+          { name: "", station: "", duration_min: 5 },
         ],
         "Genel"
       )
     ).toEqual([
       { no: 1, name: "Kesim", station: "CNC", duration_min: 10, images: ["/a.jpg"] },
-      { no: 2, name: "Montaj", station: "Genel", duration_min: 0, images: [] },
+      { no: 2, name: "X", station: "X", duration_min: 1, images: [] },
+      { no: 3, name: "Montaj", station: "Genel", duration_min: 0, images: [] },
     ]);
   });
 
