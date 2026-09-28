@@ -20,21 +20,45 @@ import { GroupedSelect } from "../GroupedSelect";
 import { Card, Muted, PrimaryButton, Row } from "../kit";
 import { B2BSheet } from "./B2BSheet";
 
+type ProductLike = { id?: string; _id?: string; name?: string; sku?: string };
+
+/** B2B portal veya ERP sipariş (auth) AI liste yükleme. */
 export function B2BAiCartPanel({
   client,
   token,
   products,
   onApply,
+  uploadPath,
+  learnPath,
+  learnExtra,
+  testIdPrefix = "b2b-ai",
+  dropLabel = "Excel / PDF sipariş listesi yükle",
+  dropHint = "xlsx, csv, pdf · dosya fiyatı yok sayılır, katalog fiyatı geçerli",
+  applyLabel = "Seçilenleri Sepete Ekle",
+  sheetTitle = "AI Sepet Önerisi",
 }: {
   client: ApiClient;
-  token: string;
-  products: B2BProduct[];
+  token?: string | null;
+  products: Array<B2BProduct | ProductLike>;
   onApply: (lines: Array<{ product_id: string; quantity: number }>) => void;
+  uploadPath?: string;
+  learnPath?: string;
+  learnExtra?: Record<string, unknown>;
+  testIdPrefix?: string;
+  dropLabel?: string;
+  dropHint?: string;
+  applyLabel?: string;
+  sheetTitle?: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [res, setRes] = useState<AiCartResult | null>(null);
   const [pick, setPick] = useState<Record<number, string>>({});
+
+  const staffMode = Boolean(uploadPath);
+  const uploadUrl = staffMode ? String(uploadPath) : `/public/b2b/${token}/ai-cart`;
+  const learnUrl = staffMode ? String(learnPath || "/ai/cart-learn") : `/public/b2b/${token}/ai-cart/learn`;
+  const uploadClient = staffMode ? client : { ...client, token: null };
 
   const choose = async () => {
     setError(null);
@@ -50,8 +74,8 @@ export function B2BAiCartPanel({
       const fd = new FormData();
       appendPickedFile(fd, file);
       const data = await upload<{ items?: AiCartResult["items"]; unmatched?: AiCartResult["unmatched"]; filename?: string }>(
-        { ...client, token: null },
-        `/public/b2b/${token}/ai-cart`,
+        uploadClient,
+        uploadUrl,
         fd
       );
       setRes(normalizeAiCart(data));
@@ -66,32 +90,38 @@ export function B2BAiCartPanel({
     if (!res) return;
     const mappings = learnMappings(res);
     if (mappings.length) {
-      await post({ ...client, token: null }, `/public/b2b/${token}/ai-cart/learn`, { mappings }).catch(() => null);
+      await post(uploadClient, learnUrl, { mappings, ...(learnExtra || {}) }).catch(() => null);
     }
     onApply(selectedAiLines(res));
     setRes(null);
   };
 
-  const groups = [{ label: "Katalog", options: products.map((p) => ({ value: p.id, label: p.sku ? `${p.name} (${p.sku})` : p.name })) }];
+  const groups = [{
+    label: "Katalog",
+    options: products.map((p) => {
+      const id = String(p.id || (p as { _id?: string })._id || "");
+      return { value: id, label: p.sku ? `${p.name} (${p.sku})` : String(p.name || id) };
+    }),
+  }];
 
   return (
     <View>
       <Pressable
-        testID="b2b-ai-cart-drop"
+        testID={`${testIdPrefix}-cart-drop`}
         onPress={choose}
         disabled={busy}
         style={{ borderWidth: 1, borderStyle: "dashed", borderColor: colors.indigo, borderRadius: 14, padding: 12, backgroundColor: colors.indigo50, marginBottom: 8 }}
       >
-        <Text style={{ fontWeight: "800", color: colors.text }}>{busy ? "AI sipariş listenizi okuyor…" : "Excel / PDF sipariş listesi yükle"}</Text>
-        <Muted>xlsx, csv, pdf · dosya fiyatı yok sayılır, B2B fiyatı geçerli</Muted>
+        <Text style={{ fontWeight: "800", color: colors.text }}>{busy ? "AI sipariş listenizi okuyor…" : dropLabel}</Text>
+        <Muted>{dropHint}</Muted>
       </Pressable>
       {error ? <Text style={{ color: colors.danger, fontWeight: "700", marginBottom: 8 }}>{error}</Text> : null}
 
-      <B2BSheet visible={!!res} title="AI Sepet Önerisi" subtitle={res ? `${res.filename || "liste"} · ${res.items.length} eşleşen, ${res.unmatched.length} eşleşmeyen` : undefined} onClose={() => setRes(null)} testID="b2b-ai-cart-modal">
+      <B2BSheet visible={!!res} title={sheetTitle} subtitle={res ? `${res.filename || "liste"} · ${res.items.length} eşleşen, ${res.unmatched.length} eşleşmeyen` : undefined} onClose={() => setRes(null)} testID={`${testIdPrefix}-cart-modal`}>
         {res?.items.map((it, i) => (
           <Pressable
             key={`${it.product_id}-${i}`}
-            testID={`b2b-ai-item-${i}`}
+            testID={`${testIdPrefix}-item-${i}`}
             onPress={() => setRes(toggleAiItem(res, i, !it.on))}
             style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8, opacity: it.on ? 1 : 0.5 }}
           >
@@ -101,7 +131,7 @@ export function B2BAiCartPanel({
               <Muted>Listede: “{it.requested}” · %{Math.round((it.confidence || 0) * 100)}{it.learned ? " · öğrenilen" : ""}</Muted>
             </View>
             <TextInput
-              testID={`b2b-ai-qty-${i}`}
+              testID={`${testIdPrefix}-qty-${i}`}
               value={String(it.quantity)}
               keyboardType="number-pad"
               onChangeText={(v) => setRes(setAiQty(res, i, Number(v)))}
@@ -110,13 +140,13 @@ export function B2BAiCartPanel({
           </Pressable>
         ))}
         {res && res.unmatched.length > 0 ? (
-          <Card testID="b2b-ai-unmatched">
+          <Card testID={`${testIdPrefix}-unmatched`}>
             <Text style={{ fontWeight: "800", color: colors.text }}>Katalogda bulunamayanlar</Text>
             {res.unmatched.map((u, i) => (
-              <View key={`${u.requested}-${i}`} testID={`b2b-ai-unmatched-${i}`} style={{ marginTop: 8 }}>
+              <View key={`${u.requested}-${i}`} testID={`${testIdPrefix}-unmatched-${i}`} style={{ marginTop: 8 }}>
                 <Muted>• {u.requested} × {u.quantity}</Muted>
                 <GroupedSelect
-                  testID={`b2b-ai-map-select-${i}`}
+                  testID={`${testIdPrefix}-map-select-${i}`}
                   value={pick[i] || ""}
                   onChange={(v) => setPick((p) => ({ ...p, [i]: v }))}
                   groups={groups}
@@ -124,11 +154,14 @@ export function B2BAiCartPanel({
                 />
                 <PrimaryButton
                   title="Eşle"
-                  testID={`b2b-ai-map-btn-${i}`}
+                  testID={`${testIdPrefix}-map-btn-${i}`}
                   disabled={!pick[i]}
                   onPress={() => {
-                    const p = products.find((x) => x.id === pick[i]);
-                    if (p) setRes(mapUnmatched(res, i, p));
+                    const p = products.find((x) => String(x.id || (x as { _id?: string })._id || "") === pick[i]);
+                    if (p) {
+                      const pid = String(p.id || (p as { _id?: string })._id || "");
+                      setRes(mapUnmatched(res, i, { id: pid, name: String(p.name || "") }));
+                    }
                   }}
                 />
               </View>
@@ -140,7 +173,7 @@ export function B2BAiCartPanel({
             <PrimaryButton title="Vazgeç" onPress={() => setRes(null)} color={colors.slate800} />
           </View>
           <View style={{ flex: 1 }}>
-            <PrimaryButton testID="b2b-ai-apply" title="Seçilenleri Sepete Ekle" onPress={apply} disabled={!selectedAiLines(res).length} color={colors.primary} />
+            <PrimaryButton testID={`${testIdPrefix}-apply`} title={applyLabel} onPress={apply} disabled={!selectedAiLines(res).length} color={colors.primary} />
           </View>
         </Row>
       </B2BSheet>

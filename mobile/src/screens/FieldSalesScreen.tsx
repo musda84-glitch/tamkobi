@@ -12,6 +12,7 @@ import { colors } from "../theme";
 import type { Contact, Order, Product } from "../types";
 import { addOrBump, cartTotals, findProductByScan, lineFromProduct, parseScanQty, removeCartLine, type CartLine } from "../utils/cart";
 import { normalizeScanText } from "../utils/b2bCatalog";
+import { B2BAiCartPanel } from "../components/b2b/B2BAiCartPanel";
 import { orderNumberLabel, statusTr } from "../utils/labels";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 
@@ -190,6 +191,26 @@ export function FieldSalesScreen() {
           <Text style={{ fontWeight: "800", color: colors.text }}>2. Ürün</Text>
           <PrimaryButton title="Barkod" onPress={() => { setScanStatus(""); setScan(true); }} testID="saha-scan" />
         </Row>
+        {canEdit ? (
+          <B2BAiCartPanel
+            client={client}
+            products={products}
+            uploadPath={`/ai/cart-extract?company_id=${encodeURIComponent(companyId)}`}
+            learnPath="/ai/cart-learn"
+            learnExtra={{ company_id: companyId }}
+            testIdPrefix="saha-ai"
+            dropLabel="Excel / PDF sipariş listesi yükle → AI kalemleri doldursun"
+            dropHint="xlsx, csv, pdf · dosya fiyatı yok sayılır, satış fiyatı geçerli"
+            applyLabel="Seçilenleri Sepete Ekle"
+            sheetTitle="AI Sipariş Kalemleri"
+            onApply={(lines) => {
+              lines.forEach((line) => {
+                const p = products.find((x) => idOf(x) === line.product_id);
+                if (p) addProduct(p, line.quantity);
+              });
+            }}
+          />
+        ) : null}
         <Field label="Ürün ara" value={prodQ} onChangeText={setProdQ} placeholder="Ad / SKU / barkod" />
         {prodHits.map((p) => (
           <ProductPickRow key={idOf(p)} product={p} onPress={() => addProduct(p)} />
