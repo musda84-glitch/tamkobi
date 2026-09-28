@@ -1,5 +1,11 @@
 """İş emri: istasyon + iş dosyası adı reçeteden kopyalanır / listede zenginleştirilir."""
-from production_work_orders import enrich_work_order_row, recipe_job_fields
+from production_work_orders import (
+    enrich_work_order_row,
+    recipe_job_fields,
+    work_order_trash_label,
+    work_order_trash_note,
+)
+from trash import TYPE_LABELS
 
 
 def test_recipe_job_fields():
@@ -25,3 +31,17 @@ def test_enrich_does_not_overwrite_existing():
     assert row["job_file_name"] == "KEEP"
     assert row["station"] == "CNC"
     assert row["recipe_name"] == "X"
+
+
+def test_work_order_trash_label_and_note():
+    wo = {
+        "order_code": "URT-1",
+        "step_name": "Kesim",
+        "product_name": "MDF",
+        "station": "CNC",
+        "job_file_name": "AHM-014",
+    }
+    assert work_order_trash_label(wo) == "URT-1 · Kesim · MDF"
+    assert "CNC" in work_order_trash_note(wo)
+    assert "AHM-014" in work_order_trash_note(wo)
+    assert TYPE_LABELS["work_order"] == "İş Emri (Atölye)"

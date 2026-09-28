@@ -12995,6 +12995,32 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
     return result
 
 
+@api_router.post("/production/work-orders/trash-completed")
+async def trash_completed_work_orders(req: Dict[str, Any] = None):
+    """Atölye: tamamlanan iş emirlerini çöp kutusuna taşı (30 gün geri alınabilir)."""
+    req = req or {}
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    q: Dict[str, Any] = {"company_id": company_id, "status": "done"}
+    if req.get("station"):
+        q["station"] = req["station"]
+    rows = await db.work_orders.find(q).sort([("finished_at", -1)]).to_list(2000)
+    count = 0
+    for w in rows:
+        await trash.soft_delete(
+            "work_orders",
+            w,
+            "work_order",
+            pwo.work_order_trash_label(w),
+            note=pwo.work_order_trash_note(w),
+        )
+        count += 1
+    return {
+        "status": "success",
+        "count": count,
+        "message": f"{count} tamamlanan iş emri çöp kutusuna taşındı." if count else "Taşınacak tamamlanan iş emri yok.",
+    }
+
+
 @api_router.put("/production/orders/{order_id}")
 async def update_production_order(order_id: str, req: Dict[str, Any]):
     """Plan miktarı ve/veya reçete değiştir (planlanan veya ilerleme yokken)."""

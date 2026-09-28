@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2, FileText } from "lucide-react";
+import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2, FileText, Trash2 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -24,7 +24,7 @@ export default function ShopFloorPage() {
   const [kiosk, setKiosk] = useState(false);
   const [finishing, setFinishing] = useState(null);
   const [fin, setFin] = useState({ produced_qty: 0, scrap_qty: 0, notes: "" });
-  const [showDone, setShowDone] = useState(false);
+  const [trashBusy, setTrashBusy] = useState(false);
   const [perf, setPerf] = useState(null);
   const [showPerf, setShowPerf] = useState(false);
   const [duties, setDuties] = useState([]);
@@ -78,6 +78,24 @@ export default function ShopFloorPage() {
   const active = wos.filter((w) => w.status !== "done" && w.status !== "waiting");
   const waiting = wos.filter((w) => w.status === "waiting");
   const done = wos.filter((w) => w.status === "done");
+  const trashCompleted = async () => {
+    if (!done.length || trashBusy) return;
+    if (!window.confirm(`${done.length} tamamlanan iş emri çöp kutusuna taşınsın mı? 30 gün içinde Geri Dönüşüm’den geri getirilebilir.`)) return;
+    setTrashBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/production/work-orders/trash-completed`, {
+        company_id: companyId,
+        ...(station ? { station } : {}),
+      });
+      toast.success(r.data?.message || "Tamamlananlar çöpe taşındı.");
+      load();
+      loadPerf();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Çöpe taşınamadı.");
+    } finally {
+      setTrashBusy(false);
+    }
+  };
   const mine = active.filter((w) => w.operator_name === operator || w.assigned_name === operator);
   const openDuties = duties.filter((t) => !t.done);
 
@@ -169,7 +187,21 @@ export default function ShopFloorPage() {
         {active.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-sm text-slate-400" data-testid="shopfloor-empty">Bekleyen iş emri yok. Üretim &amp; Reçete sayfasından "Üretim Emri Ver" ile oluşturun.</div>}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{active.filter((w) => !mine.includes(w)).map((w) => <Card key={w.id} w={w} />)}</div></div>
       {waiting.length > 0 && <div><h2 className="text-sm font-bold text-slate-500 mb-2">Sıradaki Adımlar ({waiting.length})</h2><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 opacity-70">{waiting.map((w) => <Card key={w.id} w={w} />)}</div></div>}
-      <div><button onClick={() => setShowDone(!showDone)} className="text-xs font-semibold text-slate-500 hover:text-slate-900" data-testid="shopfloor-toggle-done">{showDone ? "Tamamlananları gizle" : `Tamamlananları göster (${done.length})`}</button>{showDone && <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-2">{done.slice(0, 30).map((w) => <Card key={w.id} w={w} />)}</div>}</div>
+      {done.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={trashCompleted}
+            disabled={trashBusy}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-600 hover:text-rose-800 disabled:opacity-60"
+            data-testid="shopfloor-trash-done"
+          >
+            {trashBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            Tamamlananları çöpe taşı ({done.length})
+          </button>
+          <span className="text-[10px] text-slate-400">Çöp kutusundan 30 gün içinde geri getirilebilir.</span>
+        </div>
+      )}
       {finishing && (
         <div className="fixed inset-0 z-[110] bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setFinishing(null)}>
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()} data-testid="wo-finish-modal">
