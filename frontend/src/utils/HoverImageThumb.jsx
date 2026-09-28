@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { backdropDismissProps } from "./modalBackdrop";
 import { X, ExternalLink } from "lucide-react";
 import { resolveImageUrl } from "./imageUrl";
 
@@ -134,7 +135,7 @@ export function HoverImageThumb({
       {lightbox && typeof document !== "undefined" && createPortal(
         <div
           className="fixed inset-0 z-[10000] bg-slate-900/80 flex items-center justify-center p-4"
-          onClick={() => setLightbox(false)}
+          {...backdropDismissProps(() => setLightbox(false))}
           data-testid="image-lightbox-preview"
           role="dialog"
           aria-modal="true"

@@ -10,6 +10,7 @@ import { orderLinesLocked } from "../utils/orderEdit";
 import { useEscape } from "../utils/useEscape";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -54,7 +55,7 @@ export const NewOrderModal = ({ companyId, contacts, products, onClose, onSaved 
     } catch (e) { toast.error(e.response?.data?.detail || "Sipariş oluşturulamadı."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="new-order-modal">
         <div className="flex items-center justify-between"><h3 className="text-base font-bold text-slate-900">Yeni Sipariş Oluştur</h3><button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="new-order-close"><X className="w-4 h-4" /></button></div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -125,7 +126,7 @@ export const OrderEditModal = ({ order, products, onClose, onSaved }) => {
     }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="edit-order-modal">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-bold text-slate-900">Siparişi Düzenle · {order.order_number}</h3>
@@ -172,7 +173,7 @@ export const AiOrderImportModal = ({ companyId, onClose, onSaved }) => {
     catch (e) { toast.error(e.response?.data?.detail || "Siparişler oluşturulamadı."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto p-5 space-y-4 text-xs" onClick={(e) => e.stopPropagation()} data-testid="ai-order-modal">
         <div className="flex items-center justify-between"><h3 className="text-base font-bold text-slate-900 flex items-center gap-2"><Sparkles className="w-5 h-5 text-purple-600" /> AI ile Sipariş Yükle (PDF / Excel / CSV)</h3><button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="ai-order-close"><X className="w-4 h-4" /></button></div>
         {!res ? (

@@ -8,6 +8,7 @@ import { RecipeModal } from "../components/RecipeModal";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { formatTrAmount } from "../utils/money";
 import { filterMissingByOrder, missingLinesForOrder } from "../utils/missingOrderLines";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const STATUS = { planned: ["Planlandı", "bg-slate-100 text-slate-700", Clock], in_production: ["Üretimde", "bg-amber-50 text-amber-700", Play], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700", CheckCircle2], cancelled: ["İptal", "bg-rose-50 text-rose-700", XCircle] };
@@ -625,7 +626,7 @@ export default function ProductionPage() {
       )}
       {orderModal && <ProductionOrderModal companyId={companyId} product={orderModal === true ? null : orderModal} recipes={orderModal === true ? recipes.filter((r) => r.is_active !== false) : null} onClose={() => setOrderModal(false)} onCreated={() => { load(); setParams({ tab: "orders" }); }} />}
       {orderMissingView && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setOrderMissingView(null)} data-testid="order-missing-modal-backdrop">
+        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(() => setOrderMissingView(null))} data-testid="order-missing-modal-backdrop">
           <div
             className="bg-white rounded-2xl max-w-lg w-full p-5 space-y-3 text-xs shadow-2xl max-h-[85vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}

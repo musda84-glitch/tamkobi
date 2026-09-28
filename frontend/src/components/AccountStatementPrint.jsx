@@ -3,6 +3,7 @@ import React, { useMemo } from "react";
 import { Printer, X } from "lucide-react";
 import { useEscape } from "../utils/useEscape";
 import { fmtDate, fmtMoney } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export const txSignedAmount = (tx, accountId) => {
   const amt = Number(tx.amount) || 0;
@@ -51,7 +52,7 @@ export const AccountStatementPrint = ({ company, account, title, transactions, o
     ? `${account.bank_name || ""} — ${account.account_name || ""}`.trim()
     : title || "Tüm hesaplar";
   return (
-    <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" {...backdropDismissProps(onClose)}>
       <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" onClick={(e) => e.stopPropagation()} data-testid="account-statement-print-modal">
         <div className="flex items-center justify-between px-5 py-3 border-b no-print print:hidden">
           <span className="text-xs font-bold text-slate-700">Hesap Ekstresi Önizleme</span>

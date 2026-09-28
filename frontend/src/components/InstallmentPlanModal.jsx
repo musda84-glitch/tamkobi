@@ -7,6 +7,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { PromissoryPrint } from "./PromissoryPrint";
 import { fmtDate, formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const INTERVALS = [["month", "Aylık"], ["week", "Haftalık"], ["days", "Gün aralığı"]];
@@ -175,7 +176,7 @@ export const InstallmentPlanModal = ({ doc, kind = "invoice", accounts = [], com
   const total = (doc.grand_total || 0) - (doc.paid_amount || 0);
   return (
     <>
-      <div className="fixed inset-0 z-[75] bg-slate-900/60 backdrop-blur-sm overflow-y-auto overscroll-contain" onClick={onClose}>
+      <div className="fixed inset-0 z-[75] bg-slate-900/60 backdrop-blur-sm overflow-y-auto overscroll-contain" {...backdropDismissProps(onClose)}>
         <div className="min-h-full flex items-start justify-center p-4 sm:p-6">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[calc(100vh-2rem)] overflow-y-auto my-4" onClick={(e) => e.stopPropagation()} data-testid="installment-plan-modal">
             <div className="flex items-center justify-between border-b pb-3">

@@ -10,6 +10,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
 import { productLabelImageUrl } from "../utils/productImages";
 import { LABEL_DESIGN_FIELDS, LABEL_TAG_PALETTE, labelFieldValue } from "../utils/labelDesignFields";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
@@ -108,7 +109,7 @@ const PrintModal = ({ tpl, products, company, onClose, initialSel = {}, template
   const jobs = useMemo(() => Object.entries(sel).flatMap(([id, n]) => { const p = products.find((x) => (x.id || x._id) === id); return p && n > 0 ? Array.from({ length: n }, () => p) : []; }), [sel, products]);
   const print = () => printLabelJobs(tpl, jobs, page, "label-print-source");
   return (
-    <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto p-5 space-y-3 text-xs" onClick={(e) => e.stopPropagation()} data-testid="label-print-modal">
         <div className="flex items-center justify-between"><b className="text-sm flex items-center gap-2">Toplu Etiket Yazdır — {templates.length ? <select value={tpl.id || ""} onChange={(e) => onTplChange(templates.find((t) => t.id === e.target.value) || tpl)} className="border rounded-lg p-1 text-xs font-normal" data-testid="label-print-tpl">{templates.map((t) => <option key={t.id} value={t.id}>{t.is_default ? "★ " : ""}{t.name}</option>)}</select> : tpl.name} ({tpl.width_mm}×{tpl.height_mm} mm)</b><button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg" data-testid="label-print-close"><X className="w-4 h-4" /></button></div>
         <div className="flex flex-wrap items-center gap-2">
@@ -261,7 +262,7 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
   if (!tpl || !target) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-5 space-y-3 text-xs text-slate-800" onClick={(e) => e.stopPropagation()} data-testid="print-barcode-modal">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">

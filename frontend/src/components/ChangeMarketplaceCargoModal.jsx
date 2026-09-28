@@ -6,6 +6,7 @@ import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { channelTr } from "../utils/labels";
 import { cargoChangeBody, cargoChangeConfirm, marketplaceCargoOptions } from "../utils/marketplaceCargo";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 /** Pazaryeri paketinin kargo firmasını değiştirir (Trendyol cargoProvider vb.). */
 export const ChangeMarketplaceCargoModal = ({ order, onClose, onDone }) => {
@@ -47,7 +48,7 @@ export const ChangeMarketplaceCargoModal = ({ order, onClose, onDone }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div
         className="bg-white rounded-2xl max-w-lg w-full p-5 space-y-4 text-xs shadow-2xl max-h-[92vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}

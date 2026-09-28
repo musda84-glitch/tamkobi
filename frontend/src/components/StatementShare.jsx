@@ -8,6 +8,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { QuickMessageModal } from "./QuickMessageModal";
 import { downloadStatementPdf, fetchStatementShare, statementPdfFile } from "../utils/statementShare";
 import { fmtDate, fmtMoney } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export const buildStatementRows = (data, { includeCheques = false } = {}) => {
   const rows = [];
@@ -181,7 +182,7 @@ export const StatementPrint = ({ contact, rows, company, onClose, variant = "sta
   const isRecon = variant === "reconciliation";
   const title = isRecon ? "CARİ HESAP MUTABAKAT MEKTUBU" : "CARİ HESAP EKSTRESİ";
   return (
-    <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" {...backdropDismissProps(onClose)}>
       <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none" onClick={(e) => e.stopPropagation()} data-testid={isRecon ? "reconciliation-print-modal" : "statement-print-modal"}>
         <div className="flex items-center justify-between px-5 py-3 border-b no-print">
           <span className="text-xs font-bold text-slate-700">{isRecon ? "Mutabakat Önizleme" : "Ekstre Önizleme"}</span>

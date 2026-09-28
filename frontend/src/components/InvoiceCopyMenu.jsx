@@ -12,6 +12,7 @@ import {
 import { SearchSelect } from "./SearchSelect";
 import { API_URL } from "../context/AuthContext";
 import { INVOICE_COPY_MODES, canCopyInvoice } from "./invoiceCopyModes";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export { INVOICE_COPY_MODES, canCopyInvoice } from "./invoiceCopyModes";
 
@@ -69,7 +70,7 @@ export function InvoiceCopyContactModal({ mode, invoice, contacts = [], companyI
   };
 
   return (
-    <div className="fixed inset-0 z-[80] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose} data-testid="invoice-copy-contact-modal">
+    <div className="fixed inset-0 z-[80] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)} data-testid="invoice-copy-contact-modal">
       <form
         onSubmit={submit}
         onClick={(e) => e.stopPropagation()}

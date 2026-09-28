@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { X, Plug, Loader2, ShieldCheck, FlaskConical, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const LABELS = {
   api_key: "API Token / Key",
@@ -136,7 +137,7 @@ export const CargoConfigModal = ({ config, catalogItem, onClose, onSaved }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="cargo-config-modal">
         <div className="flex items-center justify-between border-b pb-2">
           <h3 className="text-base font-bold text-slate-900">{config.carrier_name} API Ayarları</h3>

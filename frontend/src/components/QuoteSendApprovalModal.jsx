@@ -5,6 +5,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { X, Send, Mail, MessageSquare, Phone, Copy, Loader2, CheckCircle2, Clock, XCircle, Eye } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export const ApprovalBadge = ({ quote }) => {
   const ap = quote.approval;
@@ -36,7 +37,7 @@ export const QuoteSendApprovalModal = ({ quote, contact, onClose, onSent }) => {
     <label className={`flex items-start gap-2 border-2 rounded-xl p-2.5 cursor-pointer transition ${channels[k] ? "border-emerald-600 bg-emerald-50" : "border-slate-200"} ${!ok ? "opacity-60" : ""}`}><input type="checkbox" checked={channels[k]} onChange={(e) => setChannels({ ...channels, [k]: e.target.checked })} className="mt-0.5 rounded" data-testid={`approval-ch-${k}`} /><span><span className="flex items-center gap-1 font-bold text-slate-900"><Icon className="w-3.5 h-3.5" /> {label}</span><span className="block text-[10px] text-slate-500">{sub}</span></span></label>
   );
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl max-w-lg w-full p-5 space-y-4 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="quote-approval-modal">
         <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><Send className="w-4 h-4 text-emerald-600" /> Onaya Gönder — {quote.quote_number}</h3><p className="text-slate-500">{quote.contact_name} • Müşteri linke tıklayıp tek tıkla onaylar/reddeder, sonuç teklife işlenir.</p></div><button onClick={onClose} className="text-slate-400" data-testid="approval-close"><X className="w-5 h-5" /></button></div>
         <div className="grid grid-cols-3 gap-2">

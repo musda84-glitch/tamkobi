@@ -14,6 +14,7 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseScanHint } from "../utils/expenseScan";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -119,7 +120,7 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { if (Date.now() < pickGuard.current) return; onClose(); }}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(() => { if (Date.now() < pickGuard.current) return; onClose(); })}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-6 space-y-4 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="expense-modal">
         <div className="flex items-center justify-between border-b pb-3"><h3 className="text-base font-bold text-slate-900 flex items-center gap-2"><Receipt className="w-5 h-5 text-rose-600" /> {isEdit ? `Masraf Düzenle · ${f.expense_number}` : "Yeni Masraf"}</h3><button type="button" onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button></div>
         <div className="space-y-1.5">
@@ -269,7 +270,7 @@ export default function ExpensesPage() {
       </div>
       {modal && <ExpenseModal companyId={companyId} initial={modal} categories={categories} accounts={accounts} contacts={contacts} employees={employees} projects={projects} onClose={() => setModal(null)} onSaved={load} />}
       {payFor && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setPayFor(null)}>
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(() => setPayFor(null))}>
           <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 text-xs shadow-2xl" data-testid="exp-pay-modal">
             <div className="font-bold text-slate-900 text-sm flex items-center gap-2"><Wallet className="w-4 h-4 text-emerald-600" /> Masrafı Öde · {fmtMoney(payFor.total, payFor.currency || "TRY")}</div>
             <div className="text-slate-500">{payFor.expense_number} — {payFor.description}</div>

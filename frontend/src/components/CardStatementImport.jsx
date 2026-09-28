@@ -6,6 +6,7 @@ import { Sparkles, Loader2, X, CreditCard } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 
@@ -118,7 +119,7 @@ export const CardStatementImport = ({ account, contacts = [], initialFile = null
   const cariCount = rows.filter((t) => t.included && !t.duplicate && t.kind === "cari_odeme").length;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-5xl p-6 space-y-4 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="card-statement-modal">
         <div className="flex items-center justify-between border-b pb-3">
           <h3 className="text-base font-bold flex items-center gap-2">

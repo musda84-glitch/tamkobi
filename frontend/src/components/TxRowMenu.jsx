@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { API_URL } from "../context/AuthContext";
 import { ReceiptPrint } from "./ReceiptPrint";
 import { BankMatchModal } from "./BankMatchModal";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export const LOCKED_TX_SOURCES = new Set(["bank_sync", "partner", "bank_match"]);
 
@@ -221,7 +222,7 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
         document.body
       )}
       {editTx && createPortal(
-        <div className="fixed inset-0 z-[90] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditTx(null)}>
+        <div className="fixed inset-0 z-[90] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setEditTx(null))}>
           <form onSubmit={saveEdit} className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="tx-edit-modal">
             <div className="flex justify-between border-b pb-2">
               <h3 className="text-sm font-bold">{editTx.type === "inflow" ? "Tahsilat" : editTx.type === "outflow" ? "Ödeme" : "Virman"} Düzenle</h3>

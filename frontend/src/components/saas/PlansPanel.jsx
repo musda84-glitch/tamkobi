@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plus, Pencil, Trash2, X, Save, Loader2, Check, Sparkles, ExternalLink } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { fmtTL, PlanChip, Toggle, inputCls, groupByCategory, PLAN_COLORS } from "./saasUi";
+import { backdropDismissProps } from "../../utils/modalBackdrop";
 
 const cred = { withCredentials: true };
 
@@ -59,7 +60,7 @@ const PlanEditor = ({ plan, catalog, onClose, onSaved }) => {
   };
   const num = (k, l) => <div><label className="block font-semibold text-slate-700 mb-1">{l}</label><input type="number" min={0} value={f[k]} onChange={(e) => setF({ ...f, [k]: Number(e.target.value) })} className={inputCls} data-testid={`plan-${k}`} /></div>;
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-3xl p-5 space-y-4 text-xs max-h-[90vh] overflow-y-auto" data-testid="plan-editor">
         <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-slate-900">{plan.id ? `${plan.name} paketini düzenle` : "Yeni Paket"}</h3><button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button></div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

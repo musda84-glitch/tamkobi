@@ -6,6 +6,7 @@ import { Timer, Save, Loader2, X, RotateCcw, Bell, Banknote, MapPin } from "luci
 import { API_URL } from "../context/AuthContext";
 import { isDailyWage, monthlyLoad } from "../utils/personnelWage";
 import { TimeInput } from "./TimeInput";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
 export const DAY_LABELS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
@@ -243,7 +244,7 @@ export const EmployeeScheduleModal = ({ employee, companySchedule, onClose, onSa
   const id = employee.employee_id || employee.id || employee._id;
   useEffect(() => { axios.get(`${API_URL}/personnel/employees/${id}/card`).then((r) => setEmp(r.data.employee)).catch(() => toast.error("Personel yüklenemedi.")); }, [id]);
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[92vh] overflow-y-auto p-5 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="employee-schedule-modal">
         <div className="flex items-center justify-between border-b pb-2"><h3 className="text-sm font-bold">{employee.employee_name || employee.full_name} — Ücret & Mesai</h3><button onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button></div>
         {emp ? <EmployeeCompensationForm employee={emp} companySchedule={companySchedule} onSaved={onSaved} onClose={onClose} /> : <div className="text-xs text-slate-400">Yükleniyor…</div>}

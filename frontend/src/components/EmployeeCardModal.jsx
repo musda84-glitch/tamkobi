@@ -23,6 +23,7 @@ import { workplaceHint, workplaceShort } from "../utils/workplace";
 import { dutyFromCurrent, pendingDutyPhotoCount } from "../utils/assignedDuty";
 import { AssignedDutyCard } from "./AssignedDutyCard";
 import { StaffMessagesPanel } from "./StaffMessagesPanel";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const TABS = [["summary", "Özet", User], ["docs", "Belgeler", FileText], ["salary", "Ödemeler", Wallet], ["pay", "Ücret & Mesai", Banknote], ["leaves", "İzinler", CalendarDays], ["attendance", "Puantaj", Clock], ["user", "Sistem", KeyRound]];
@@ -274,7 +275,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const ot = card?.overtime || {};
   const perf = card?.performance || {};
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl" onClick={(ev) => ev.stopPropagation()} data-testid="employee-card-modal">
         <div className="p-5 border-b space-y-3">
         <div className="flex items-start justify-between gap-3">
@@ -553,7 +554,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
         const sgkPay = Boolean(String((card?.employee || e)?.sgk_number || "").trim());
         const empIban = (card?.employee || e)?.iban;
         return (
-        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setPayItem(null); }} data-testid="emp-card-salary-modal">
+        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps((ev) => { ev.stopPropagation(); setPayItem(null); })} data-testid="emp-card-salary-modal">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(ev) => ev.stopPropagation()}>
             <div className="flex items-center justify-between border-b pb-2">
               <h3 className="text-base font-bold text-slate-900">Maaş Ödemesi</h3>
@@ -590,7 +591,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
         );
       })()}
       {termOpen && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); setTermOpen(false); setTermOk(false); }} data-testid="emp-terminate-modal">
+        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps((ev) => { ev.stopPropagation(); setTermOpen(false); setTermOk(false); })} data-testid="emp-terminate-modal">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" onClick={(ev) => ev.stopPropagation()}>
             <div className="flex items-center justify-between border-b pb-2">
               <h3 className="text-base font-bold text-rose-800 flex items-center gap-1.5"><UserMinus className="w-4 h-4" /> İşten çıkar</h3>

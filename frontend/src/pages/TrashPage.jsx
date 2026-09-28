@@ -6,6 +6,7 @@ import { Trash2, RotateCcw, Search, X, Eye, AlertTriangle, Clock, Smartphone, Re
 import { API_URL, useAuth } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 
 const fmtDate = (s) => (s ? new Date(s).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -16,7 +17,7 @@ const DetailModal = ({ id, onClose }) => {
   const [d, setD] = useState(null);
   useEffect(() => { axios.get(`${API_URL}/trash/${id}`).then((r) => setD(r.data)).catch(() => toast.error("Detay yüklenemedi.")); }, [id]);
   return (
-    <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5 space-y-3 text-xs" onClick={(e) => e.stopPropagation()} data-testid="trash-detail-modal">
         <div className="flex items-center justify-between"><b className="text-sm text-slate-900">{d?.type_label} · {d?.label}</b><button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100" data-testid="trash-detail-close"><X className="w-4 h-4" /></button></div>
         {!d ? <div className="text-slate-400">Yükleniyor…</div> : (
@@ -33,7 +34,7 @@ const LogDetailModal = ({ log, onClose }) => {
   useEscape(onClose);
   if (!log) return null;
   return (
-    <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[80] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5 space-y-3 text-xs" onClick={(e) => e.stopPropagation()} data-testid="mobile-log-detail-modal">
         <div className="flex items-center justify-between gap-2">
           <b className="text-sm text-slate-900">{log.level} · {log.source} · {log.screen || "genel"}</b>

@@ -12,6 +12,7 @@ import { PromissoryPrint } from "../components/PromissoryPrint";
 import { fmtDate, formatTrAmount } from "../utils/money";
 import { compressImageFile } from "../utils/compressImage";
 import { applyChequeScan, CHEQUE_SCAN_IDLE_HINT, chequeScanHint } from "../utils/chequeScan";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -92,7 +93,7 @@ const ChequeModal = ({ companyId, contacts, onClose, onSaved }) => {
     (kind === "camera" ? camRef : galRef).current?.click();
   };
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { if (Date.now() < pickGuard.current) return; onClose(); }}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(() => { if (Date.now() < pickGuard.current) return; onClose(); })}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-3 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="cheque-modal">
         <div className="flex items-center justify-between border-b pb-3">
           <h3 className="text-base font-bold flex items-center gap-2"><ScrollText className="w-5 h-5 text-teal-600" /> Yeni Çek / Senet</h3>
@@ -202,7 +203,7 @@ const ActionModal = ({ kind, row, accounts, contacts, companyId, onClose, onDone
     }
   };
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <form onSubmit={run} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3 shadow-2xl" data-testid="cheque-action-modal">
         <div className="flex items-center justify-between border-b pb-2">
           <h3 className="text-sm font-bold">{titles[kind]} · {row.number} · {fmt(row.amount)} ₺</h3>

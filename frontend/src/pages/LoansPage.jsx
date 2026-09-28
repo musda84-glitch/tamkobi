@@ -10,6 +10,7 @@ import { ExportButtons } from "../components/ExportButtons";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { useAiStatus } from "../hooks/useAiStatus";
 import { fmtDate, formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -32,7 +33,7 @@ const LoanModal = ({ companyId, accounts, onClose, onSaved }) => {
   const save = async (e) => { e.preventDefault(); setBusy("save"); try { const { account_id: _a, ...rest } = d; await axios.post(`${API_URL}/loans`, { ...rest, company_id: companyId, principal: Number(d.principal), term_months: Number(d.term_months), ...splitPaymentTarget(d.account_id) }); toast.success("Kredi kaydedildi."); onSaved(); onClose(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(null); } };
   const total = d.installments.reduce((t, i) => t + (Number(i.amount) || 0), 0);
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-4xl p-6 space-y-4 shadow-2xl max-h-[92vh] overflow-y-auto" data-testid="loan-modal">
         <div className="flex items-center justify-between border-b pb-3"><h3 className="text-base font-bold flex items-center gap-2"><Landmark className="w-5 h-5 text-indigo-600" /> Yeni Kredi</h3><button type="button" onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button></div>
         {addonOn("ai.finance_docs") && (

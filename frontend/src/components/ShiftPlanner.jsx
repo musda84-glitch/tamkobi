@@ -6,6 +6,7 @@ import { CalendarRange, ChevronLeft, ChevronRight, Copy, Loader2, X, Trash2, Ale
 import { BulkAssignModal } from "./BulkAssignModal";
 import { TimeInput } from "./TimeInput";
 import { API_URL } from "../context/AuthContext";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const monday = (iso) => { const d = new Date(iso + "T00:00:00"); const wd = (d.getDay() + 6) % 7; d.setDate(d.getDate() - wd); return d.toISOString().slice(0, 10); };
@@ -21,7 +22,7 @@ const CellEditor = ({ row, cell, companyId, onClose, onSaved }) => {
   };
   const reset = async () => { if (!cell.id) return onClose(); try { await axios.delete(`${API_URL}/personnel/shifts/${cell.id}`); toast.success("Plan kaldırıldı, varsayılan mesai geçerli."); onSaved(); onClose(); } catch { toast.error("Silinemedi."); } };
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl w-full max-w-sm p-4 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="shift-cell-editor">
         <div className="flex items-center justify-between border-b pb-2"><b>{row.employee_name} · {cell.date}</b><button onClick={onClose} className="text-slate-400"><X className="w-4 h-4" /></button></div>
         {cell.leave && <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800" data-testid="shift-leave-warning"><AlertTriangle className="w-4 h-4 shrink-0" /><span>Bu gün için <b>onaylı {cell.leave.label} izni</b> var. Çalışma saati atarsanız çakışma oluşur; "İzinli / tatil" işaretlemeniz önerilir.</span></div>}

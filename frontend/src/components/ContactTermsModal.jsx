@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { X, CalendarClock, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { fmtDate, formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const QUICK = [0, 7, 15, 30, 45, 60, 90];
@@ -22,7 +23,7 @@ export const ContactTermsModal = ({ contact, onClose, onSaved }) => {
     catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); }
   };
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl max-w-2xl w-full p-5 space-y-4 text-xs shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="contact-terms-modal">
         <div className="flex justify-between items-start border-b pb-2">
           <div><h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><CalendarClock className="w-4 h-4 text-emerald-600" /> Vade Uygula — {contact.name}</h3><p className="text-slate-500">Bu cariye kesilen faturalarda otomatik vade ve gecikme (vade farkı) oranı</p></div>

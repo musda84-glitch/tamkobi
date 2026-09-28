@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { X, Truck, Loader2, Plug, Package } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { ShipmentPackageFields, packageDefaultsFromOrder, packagePayload } from "./ShipmentPackageFields";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 /** Carrier-agnostic shipment create modal with package/desi fields. */
 export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
@@ -70,7 +71,7 @@ export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl max-w-lg w-full p-5 space-y-4 text-xs shadow-2xl max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="create-shipment-modal">
         <div className="flex justify-between items-start border-b pb-2">
           <div>

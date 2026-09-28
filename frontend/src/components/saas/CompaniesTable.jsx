@@ -6,6 +6,7 @@ import { Plus, Search, Settings2, Users, FileText, Loader2, X, LogIn, ShieldOff 
 import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, inputCls } from "./saasUi";
 import { sortCompanyTree } from "../../utils/companyTree";
+import { backdropDismissProps } from "../../utils/modalBackdrop";
 
 export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
   const [q, setQ] = useState("");
@@ -81,7 +82,7 @@ const NewCompanyModal = ({ plans, onClose, onCreated }) => {
   };
   const F = (k, l, type = "text", req, span) => <div className={span ? "sm:col-span-2" : ""}><label className="block font-semibold text-slate-700 mb-1">{l}</label><input type={type} required={req} value={f[k]} onChange={(e) => set(k, e.target.value)} className={inputCls} data-testid={`new-company-${k}`} /></div>;
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <form onSubmit={submit} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-5 space-y-4 text-xs max-h-[90vh] overflow-y-auto" data-testid="new-company-modal">
         <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-slate-900">Yeni Müşteri Şirket Aç</h3><button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button></div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

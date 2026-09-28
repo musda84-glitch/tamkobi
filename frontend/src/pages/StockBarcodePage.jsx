@@ -50,6 +50,7 @@ import {
 import { CURRENCIES, fmtMoney, moneySuffix } from "../utils/money";
 import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi } from "../utils/stockUnits";
 import {
+import { backdropDismissProps } from "../utils/modalBackdrop";
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -636,7 +637,7 @@ export default function StockBarcodePage() {
       {aiStockImport && <AiStockImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiStockImport(false)} onSaved={loadProducts} />}
       {produceProduct && <ProductionOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} product={produceProduct} onClose={() => setProduceProduct(null)} onCreated={loadProducts} />}
       {movesProduct && (
-        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setMovesProduct(null)}>
+        <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(() => setMovesProduct(null))}>
           <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="stock-moves-modal">
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <div>

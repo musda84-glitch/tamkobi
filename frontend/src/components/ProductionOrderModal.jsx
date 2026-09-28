@@ -7,6 +7,7 @@ import { X, Factory, Loader2, AlertTriangle, CheckCircle2, ClipboardList } from 
 import { useNavigate } from "react-router-dom";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
 
@@ -38,7 +39,7 @@ export const ProductionOrderModal = ({ companyId, product, recipes: recipesProp,
     } catch (err) { toast.error(err.response?.data?.detail || "Üretim emri oluşturulamadı."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-2xl max-w-2xl w-full p-5 space-y-4 text-xs shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="production-order-modal">
         <div className="flex justify-between items-start border-b pb-2">
           <div><h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><Factory className="w-4 h-4 text-emerald-600" /> Üretim Emri Ver{product ? ` — ${product.name}` : ""}</h3>{product && <p className="text-slate-500">Stok: <b className={product.stock_quantity <= 0 ? "text-rose-600" : ""}>{product.stock_quantity} {product.unit}</b> • Min: {product.min_stock_alert}</p>}</div>

@@ -6,6 +6,7 @@ import { useEscape } from "../utils/useEscape";
 import { Barcode } from "./BarcodeLabelPrint";
 import { statusTr } from "../utils/labels";
 import { formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 
@@ -25,7 +26,7 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
   const items = order.items || [];
   const custNo = (order.customer_order_number || "").trim();
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" {...backdropDismissProps(onClose)}>
       <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none my-6" onClick={(e) => e.stopPropagation()} data-testid="b2b-order-preview">
         <div className="flex items-center justify-between px-5 py-3 border-b no-print print:hidden">
           <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5"><Eye className="w-3.5 h-3.5" /> Sipariş önizleme</span>

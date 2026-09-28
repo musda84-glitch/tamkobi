@@ -6,6 +6,7 @@ import { useParams } from "react-router-dom";
 import { CreditCard, ShieldCheck, Loader2, Clock, Check } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PLAN_COLORS } from "../components/saas/saasUi";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const tl = (n) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 }) + " ₺";
 
@@ -50,7 +51,7 @@ export default function RenewPage() {
           <ul className="mt-4 space-y-1 text-xs">{(plan.modules || []).slice(0, 12).map((m) => <li key={m} className="flex items-center gap-1.5"><Check className="w-3 h-3 text-emerald-600" />{(d.catalog || []).find((c) => c.key === m)?.label || m}</li>)}{plan.modules.length > 12 && <li className="text-slate-400">+{plan.modules.length - 12} modül daha</li>}</ul>
         </aside>}
       </div>
-      {paytr && <div className="fixed inset-0 z-50 bg-slate-900/80 flex items-center justify-center p-4" onClick={() => setPaytr(null)}><div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-3" data-testid="renew-paytr-modal"><iframe title="PayTR" src={paytr.iframe_url} className="w-full h-[640px] rounded-xl" frameBorder="0" /></div></div>}
+      {paytr && <div className="fixed inset-0 z-50 bg-slate-900/80 flex items-center justify-center p-4" {...backdropDismissProps(() => setPaytr(null))}><div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-2xl p-3" data-testid="renew-paytr-modal"><iframe title="PayTR" src={paytr.iframe_url} className="w-full h-[640px] rounded-xl" frameBorder="0" /></div></div>}
     </div>
   );
 }

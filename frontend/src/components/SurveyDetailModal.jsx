@@ -8,6 +8,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { formatTrAmount } from "../utils/money";
 import { workMapsLink } from "../utils/mapsLink";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const STATUSES = [["planned", "Planlandı"], ["done", "Yapıldı"], ["quoted", "Teklif Verildi"], ["cancelled", "İptal"]];
@@ -49,7 +50,7 @@ export const SurveyDetailModal = ({ survey, onClose, onChanged }) => {
   const ms = survey.measurements || [];
   const est = ms.reduce((s, m) => s + Number(m.quantity || 0) * Number(m.unit_price || 0), 0);
   return (
-    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-t-2xl sm:rounded-2xl max-w-2xl w-full p-4 sm:p-5 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="survey-detail-modal">
         <div className="flex justify-between items-start border-b pb-2">
           <div><h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><Ruler className="w-4 h-4 text-emerald-600" /> Keşif {survey.survey_number}</h3><p className="text-slate-500">{survey.contact_name}</p></div>

@@ -7,6 +7,7 @@ import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { useEscape } from "../utils/useEscape";
 import { notifyDataChanged } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -88,7 +89,7 @@ export const QuickPayModal = ({ payroll: p, type, companyId, accounts, onClose, 
     } catch (err) { toast.error(err.response?.data?.detail || err.message || "Kaydedilemedi."); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={(ev) => { ev.stopPropagation(); onClose(); }}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps((ev) => { ev.stopPropagation(); onClose(); })}>
       <form onSubmit={submit} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3 text-xs shadow-2xl" data-testid="quick-pay-modal">
         <div className="flex items-center justify-between"><div className="font-bold text-slate-900 text-sm flex items-center gap-2">{isExpense ? <Receipt className="w-4 h-4 text-sky-600" /> : <Wallet className="w-4 h-4 text-amber-600" />} {title} — {p.employee_name}</div><button type="button" onClick={onClose} className="text-slate-400 flex items-center gap-1" title="Kapat (Esc)"><kbd className="text-[9px] border rounded px-1">ESC</kbd><X className="w-4 h-4" /></button></div>
         {isExpense && (

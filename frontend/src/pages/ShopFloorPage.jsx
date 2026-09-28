@@ -8,6 +8,7 @@ import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { shopFloorCardActions, shopFloorCardBorder } from "../utils/shopFloorActions";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
 
@@ -307,7 +308,7 @@ export default function ShopFloorPage() {
         </div>
       )}
       {finishing && (
-        <div className="fixed inset-0 z-[110] bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setFinishing(null)}>
+        <div className="fixed inset-0 z-[110] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(() => setFinishing(null))}>
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()} data-testid="wo-finish-modal">
             <h3 className="font-bold text-slate-900 text-lg">{finishing.step_name} — Bitir</h3>
             <p className="text-sm text-slate-500">{finishing.order_code} • {finishing.product_name} • Plan {finishing.planned_quantity} {finishing.unit}</p>
@@ -327,7 +328,7 @@ export default function ShopFloorPage() {
         </div>
       )}
       {pendingEmp && (
-        <div className="fixed inset-0 z-[120] bg-slate-900/60 flex items-center justify-center p-4" onClick={cancelUnlock}>
+        <div className="fixed inset-0 z-[120] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(cancelUnlock)}>
           <form onSubmit={unlockOperator} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4" data-testid="shopfloor-pin-modal">
             <div className="flex items-start justify-between gap-2">
               <div>
@@ -350,7 +351,7 @@ export default function ShopFloorPage() {
         </div>
       )}
       {trashTarget && (
-        <div className="fixed inset-0 z-[120] bg-slate-900/60 flex items-center justify-center p-4" onClick={cancelAdminTrash}>
+        <div className="fixed inset-0 z-[120] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(cancelAdminTrash)}>
           <form onSubmit={confirmAdminTrash} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4" data-testid="wo-admin-trash-modal">
             <div className="flex items-start justify-between gap-2">
               <div>

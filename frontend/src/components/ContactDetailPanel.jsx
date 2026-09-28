@@ -37,6 +37,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { ContactForm } from "./ContactForm";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { orderEditBlockedReason, orderLinesLocked as orderChannelLocked } from "../utils/orderEdit";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n, c = "TRY") => fmtMoney(n, c);
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["b2b", "B2B Portal", KeyRound], ["comm", "İletişim", MessageSquare], ["mail_status", "E-posta Durumu", Mail], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
@@ -466,7 +467,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6" {...backdropDismissProps(onClose)}>
       <div className="bg-white w-full max-w-[min(1680px,calc(100vw-2rem))] h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()} data-testid="contact-detail-panel">
         <div className="px-6 py-4 border-b flex items-start justify-between gap-3">
           <div className="flex items-start gap-3 min-w-0">
@@ -870,7 +871,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           />
         )}
         {statementView && statementView.mode !== "reconciliation" && (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setStatementView(null)} data-testid="detail-statement-modal">
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setStatementView(null))} data-testid="detail-statement-modal">
             <div className="bg-white rounded-2xl max-w-[min(960px,calc(100vw-2rem))] w-full p-5 space-y-3 text-xs shadow-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between border-b pb-2 gap-3">
                 <div>
@@ -914,7 +915,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {surveyDetail && <SurveyDetailModal survey={surveyDetail} onClose={() => setSurveyDetail(null)} onChanged={load} />}
         {trackingProject && <ProjectTrackingModal project={trackingProject} contact={c} onClose={() => setTrackingProject(null)} onSent={load} />}
         {editPay && (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditPay(null)}>
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setEditPay(null))}>
             <form onSubmit={savePayEdit} className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="pay-edit-modal">
               <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editPay.cheque ? "Çek / Senet Düzenle" : editPay.type === "inflow" ? "Tahsilat Düzenle" : "Ödeme Düzenle"}</h3><button type="button" onClick={() => setEditPay(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div><label className="block font-semibold mb-1">{editPay.cheque ? "Vade" : "Tarih"}</label><input type="date" value={editPay.date || ""} onChange={(e) => setEditPay({ ...editPay, date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-date" /></div>
@@ -935,7 +936,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {payForm && (() => {
           const meta = contactPayModalMeta(payForm);
           return (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => { if (Date.now() < receiptPickGuard.current) return; setPayForm(null); }}>
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => { if (Date.now() < receiptPickGuard.current) return; setPayForm(null); })}>
             <form onSubmit={savePay} className="bg-white rounded-2xl max-w-md w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="collect-modal" data-menu-id={payForm.menuId || ""}>
               <div className="flex justify-between border-b pb-2">
                 <div>
@@ -1009,7 +1010,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           );
         })()}
         {editInv && (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditInv(null)}>
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setEditInv(null))}>
             <div className="bg-white rounded-2xl max-w-6xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="invoice-edit-modal">
               <div className="flex justify-between items-center border-b pb-2 gap-3">
                 <h3 className="text-sm font-bold">{editInv.status === "draft" ? "Taslak Fatura Düzenle" : "Fatura Düzenle"} — {editInv.invoice_number}</h3>
@@ -1045,7 +1046,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           </div>
         )}
         {editOrder && (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setEditOrder(null)}>
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setEditOrder(null))}>
             <div className="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="detail-order-edit-modal">
               <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">Sipariş Düzenle · {editOrder.order_number}</h3><button type="button" onClick={() => setEditOrder(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1062,7 +1063,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           </div>
         )}
         {orderDetail && (
-          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" onClick={() => setOrderDetail(null)}>
+          <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setOrderDetail(null))}>
             <div className="bg-white rounded-2xl max-w-5xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="order-detail-modal">
               <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900">Sipariş {orderDetail.order_number}</h3><p className="text-slate-500">{new Date(orderDetail.order_date).toLocaleString("tr-TR")} • {channelTr(orderDetail.channel)} • <b>{statusTr(orderDetail.order_status)}</b></p></div><button onClick={() => setOrderDetail(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div className="text-slate-600"><b>Teslimat:</b> {orderDetail.shipping_address}, {orderDetail.city} {orderDetail.customer_phone && `• ${orderDetail.customer_phone}`}</div>
