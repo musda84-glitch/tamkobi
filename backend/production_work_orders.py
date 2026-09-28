@@ -100,3 +100,26 @@ def work_order_trash_note(wo: Optional[Dict[str, Any]] = None) -> str:
     if job:
         note += f" · İş dosyası: {job}"
     return note
+
+
+def production_order_trash_block_reason(order: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Stok işlenmiş / tamamlanmış emir silinemez."""
+    o = order or {}
+    if o.get("status") == "completed":
+        return "Tamamlanmış üretim emri silinemez."
+    try:
+        done = float(o.get("completed_quantity") or 0)
+    except (TypeError, ValueError):
+        done = 0.0
+    if done > 0:
+        return "Üretimi yapılmış (stok işlenmiş) emir silinemez."
+    return None
+
+
+def production_order_trash_label(order: Optional[Dict[str, Any]] = None, wo: Optional[Dict[str, Any]] = None) -> str:
+    o = order or {}
+    w = wo or {}
+    code = str(o.get("order_code") or o.get("order_number") or w.get("order_code") or "").strip()
+    product = str(o.get("finished_product_name") or o.get("product_name") or w.get("product_name") or "").strip()
+    bits = [b for b in (code, product) if b]
+    return " · ".join(bits) or str(o.get("_id") or w.get("_id") or "Üretim emri")

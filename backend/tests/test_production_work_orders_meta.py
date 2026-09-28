@@ -2,6 +2,8 @@
 from production_work_orders import (
     enrich_work_order_row,
     flatten_recipe_steps,
+    production_order_trash_block_reason,
+    production_order_trash_label,
     recipe_job_fields,
     work_order_step_label,
     work_order_trash_label,
@@ -81,3 +83,13 @@ def test_work_order_trash_label_and_note():
     assert "CNC" in work_order_trash_note(wo)
     assert "AHM-014" in work_order_trash_note(wo)
     assert TYPE_LABELS["work_order"] == "İş Emri (Atölye)"
+
+
+def test_production_order_trash_block_and_label():
+    assert production_order_trash_block_reason({"status": "planned"}) is None
+    assert production_order_trash_block_reason({"status": "completed"})
+    assert production_order_trash_block_reason({"completed_quantity": 2})
+    assert production_order_trash_label(
+        {"order_code": "URT-9", "finished_product_name": "Dolap"},
+        {"product_name": "X"},
+    ) == "URT-9 · Dolap"

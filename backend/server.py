@@ -13052,6 +13052,69 @@ async def trash_completed_work_orders(req: Dict[str, Any] = None):
     }
 
 
+async def _verify_company_admin_password(company_id: str, password: str) -> Dict[str, Any]:
+    """Atölye silme: şirket yöneticisi (admin/owner) veya süper admin şifresi."""
+    pwd = str(password or "").strip()
+    if not pwd:
+        raise HTTPException(status_code=400, detail="Silmek için yönetici şifresi gerekli.")
+    users = await db.users.find(
+        {
+            "is_active": {"$ne": False},
+            "$or": [
+                {"is_super_admin": True},
+                {
+                    "role": {"$in": ["admin", "owner"]},
+                    "$or": [{"company_ids": company_id}, {"active_company_id": company_id}],
+                },
+            ],
+        },
+        {"password_hash": 1, "name": 1, "email": 1, "role": 1},
+    ).to_list(200)
+    for u in users:
+        if verify_password(pwd, u.get("password_hash") or ""):
+            return u
+    raise HTTPException(status_code=403, detail="Yönetici şifresi hatalı.")
+
+
+@api_router.post("/production/work-orders/{wo_id}/admin-trash")
+async def admin_trash_work_order(wo_id: str, req: Dict[str, Any] = None):
+    """Atölye kartından sil: yönetici şifresiyle üretim emri + tüm adımları çöpe taşır."""
+    req = req or {}
+    w = await _wo(wo_id)
+    company_id = w.get("company_id") or req.get("company_id") or "comp_nexus_main_01"
+    admin = await _verify_company_admin_password(company_id, req.get("password") or "")
+    order_id = w.get("order_id")
+    order = await db.production_orders.find_one({"_id": order_id}) if order_id else None
+    if order:
+        block = pwo.production_order_trash_block_reason(order)
+        if block:
+            raise HTTPException(status_code=400, detail=block)
+        wos = await db.work_orders.find({"order_id": order_id}).to_list(500)
+        label = pwo.production_order_trash_label(order, w)
+        await trash.soft_delete(
+            "production_orders",
+            order,
+            "production_order",
+            label,
+            related=[{"collection": "work_orders", "docs": wos}],
+            note=f"Atölye silme · {admin.get('name') or admin.get('email') or 'yönetici'} · {len(wos)} iş emri",
+        )
+        return {
+            "status": "success",
+            "trashed_work_orders": len(wos),
+            "message": f"{label} ve {len(wos)} iş emri çöp kutusuna taşındı.",
+        }
+    # Üretim emri yoksa yalnızca bu iş emrini taşı
+    await trash.soft_delete(
+        "work_orders",
+        w,
+        "work_order",
+        pwo.work_order_trash_label(w),
+        note=f"Atölye silme · {admin.get('name') or admin.get('email') or 'yönetici'} · {pwo.work_order_trash_note(w)}",
+    )
+    return {"status": "success", "trashed_work_orders": 1, "message": "İş emri çöp kutusuna taşındı."}
+
+
 @api_router.put("/production/orders/{order_id}")
 async def update_production_order(order_id: str, req: Dict[str, Any]):
     """Plan miktarı ve/veya reçete değiştir (planlanan veya ilerleme yokken)."""
@@ -13135,10 +13198,19 @@ async def delete_production_order(order_id: str):
     o = await db.production_orders.find_one({"_id": order_id})
     if not o:
         raise HTTPException(status_code=404, detail="Üretim emri bulunamadı.")
-    if o.get("status") == "completed" or float(o.get("completed_quantity", 0) or 0) > 0:
-        raise HTTPException(status_code=400, detail="Üretimi yapılmış (stok işlenmiş) emir silinemez; iptal edin.")
+    block = pwo.production_order_trash_block_reason(o)
+    if block:
+        raise HTTPException(status_code=400, detail=block + " İptal edin.")
     wos = await db.work_orders.find({"order_id": order_id}).to_list(500)
-    await trash.soft_delete("production_orders", o, "production_order", f"{o.get('order_number') or order_id} · {o.get('product_name') or ''}", related=[{"collection": "work_orders", "docs": wos}], note=f"{len(wos)} iş emri")
+    label = pwo.production_order_trash_label(o)
+    await trash.soft_delete(
+        "production_orders",
+        o,
+        "production_order",
+        label,
+        related=[{"collection": "work_orders", "docs": wos}],
+        note=f"{len(wos)} iş emri",
+    )
     return {"status": "success", "message": "Üretim emri ve iş emirleri çöp kutusuna taşındı."}
 
 @api_router.post("/production/orders/{order_id}/start")

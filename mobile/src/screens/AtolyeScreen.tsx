@@ -32,6 +32,7 @@ function WoCard({
   onStart,
   onPause,
   onFinish,
+  onTrash,
 }: {
   w: WorkOrder;
   operator: string;
@@ -39,6 +40,7 @@ function WoCard({
   onStart: () => void;
   onPause: () => void;
   onFinish: () => void;
+  onTrash?: () => void;
 }) {
   const key = woCardKey(w);
   const border =
@@ -52,7 +54,14 @@ function WoCard({
           <Text style={{ fontWeight: "800", color: colors.text }} numberOfLines={2}>{w.step_name || "İş emri"}</Text>
           <Muted>{w.product_name || ""}</Muted>
         </View>
-        <Badge label={woStatusTr(w.status)} tone={woStatusTone(w.status)} />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          {onTrash && w.status !== "done" ? (
+            <Pressable onPress={onTrash} testID={`wo-trash-${key}`} hitSlop={8} style={{ padding: 4 }}>
+              <Text style={{ color: "#E11D48", fontWeight: "800", fontSize: 12 }}>Sil</Text>
+            </Pressable>
+          ) : null}
+          <Badge label={woStatusTr(w.status)} tone={woStatusTone(w.status)} />
+        </View>
       </Row>
       <View
         testID={`wo-meta-${key}`}
@@ -122,6 +131,10 @@ export function AtolyeScreen() {
   const [finishing, setFinishing] = useState<WorkOrder | null>(null);
   const [fin, setFin] = useState({ produced_qty: "", scrap_qty: "0", notes: "" });
   const [trashBusy, setTrashBusy] = useState(false);
+  const [trashTarget, setTrashTarget] = useState<WorkOrder | null>(null);
+  const [adminPin, setAdminPin] = useState("");
+  const [adminTrashBusy, setAdminTrashBusy] = useState(false);
+  const [adminTrashErr, setAdminTrashErr] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -313,6 +326,42 @@ export function AtolyeScreen() {
     }
   };
 
+  const openAdminTrash = (w: WorkOrder) => {
+    if (w.status === "done") {
+      setError("Tamamlanan adım buradan silinmez; alttaki çöpe taşıyı kullanın.");
+      return;
+    }
+    setTrashTarget(w);
+    setAdminPin("");
+    setAdminTrashErr("");
+  };
+  const cancelAdminTrash = () => {
+    setTrashTarget(null);
+    setAdminPin("");
+    setAdminTrashErr("");
+  };
+  const confirmAdminTrash = async () => {
+    const wid = idOf(trashTarget);
+    if (!wid || adminTrashBusy) return;
+    setAdminTrashBusy(true);
+    setAdminTrashErr("");
+    try {
+      const r = await post<{ message?: string }>(client, `/production/work-orders/${wid}/admin-trash`, {
+        company_id: companyId,
+        password: adminPin,
+      });
+      setNotice(r.message || "Çöp kutusuna taşındı.");
+      setError(null);
+      cancelAdminTrash();
+      await load();
+    } catch (err) {
+      setAdminTrashErr(apiErrorMessage(err, "Silinemedi."));
+      setAdminPin("");
+    } finally {
+      setAdminTrashBusy(false);
+    }
+  };
+
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
       <GroupedSelect
@@ -404,6 +453,7 @@ export function AtolyeScreen() {
               onStart={() => act(w, "start")}
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}
+              onTrash={() => openAdminTrash(w)}
             />
           ))}
         </View>
@@ -421,6 +471,7 @@ export function AtolyeScreen() {
           onStart={() => act(w, "start")}
           onPause={() => act(w, "pause")}
           onFinish={() => openFinish(w)}
+          onTrash={() => openAdminTrash(w)}
         />
       ))}
 
@@ -436,6 +487,7 @@ export function AtolyeScreen() {
               onStart={() => {}}
               onPause={() => {}}
               onFinish={() => {}}
+              onTrash={() => openAdminTrash(w)}
             />
           ))}
         </View>
@@ -482,6 +534,45 @@ export function AtolyeScreen() {
                   loading={unlockBusy}
                   color={colors.primary}
                   testID="shopfloor-pin-submit"
+                />
+              </View>
+            </Row>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={!!trashTarget} transparent animationType="fade" onRequestClose={cancelAdminTrash}>
+        <Pressable style={{ flex: 1, backgroundColor: "rgba(15,23,42,0.5)", justifyContent: "center", padding: spacing.md }} onPress={cancelAdminTrash}>
+          <Pressable
+            testID="wo-admin-trash-modal"
+            onPress={() => { /* keep */ }}
+            style={{ backgroundColor: "#fff", borderRadius: radius.lg, padding: spacing.md, gap: 8 }}
+          >
+            <Text style={{ fontWeight: "800", color: colors.text, fontSize: 16 }}>Yönetici onaylı sil</Text>
+            <Muted>{[trashTarget?.order_code, trashTarget?.step_name].filter(Boolean).join(" · ")}</Muted>
+            <Muted>Üretim emri ve tüm adımlar çöp kutusuna taşınır (30 gün geri alınabilir).</Muted>
+            <Field
+              label="Yönetici şifresi"
+              testID="wo-admin-trash-password"
+              value={adminPin}
+              onChangeText={setAdminPin}
+              secureTextEntry
+              placeholder="••••"
+              autoFocus
+            />
+            <ErrorBanner message={adminTrashErr} />
+            <Row>
+              <View style={{ flex: 1 }}>
+                <PrimaryButton title="Vazgeç" onPress={cancelAdminTrash} color={colors.muted} testID="wo-admin-trash-cancel" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <PrimaryButton
+                  title="Sil"
+                  onPress={confirmAdminTrash}
+                  disabled={adminTrashBusy || adminPin.length < 4}
+                  loading={adminTrashBusy}
+                  color="#E11D48"
+                  testID="wo-admin-trash-confirm"
                 />
               </View>
             </Row>
