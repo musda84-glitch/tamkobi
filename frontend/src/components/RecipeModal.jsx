@@ -22,6 +22,8 @@ export const materialUnitNet = (m) => {
 export const materialLineCost = (m) =>
   materialUnitNet(m) * Number(m?.quantity || 0) * (1 + Number(m?.wastage_percent || 0) / 100);
 
+const emptyStep = (station = "") => ({ name: "", station, duration_min: 0 });
+
 const emptyMat = () => ({
   product_id: "",
   product_name: "",
@@ -31,7 +33,25 @@ const emptyMat = () => ({
   wastage_percent: 0,
   cost_includes_vat: false,
   vat_rate: 20,
+  steps: [],
 });
+
+export const normalizeSteps = (list) =>
+  (Array.isArray(list) ? list : []).map((x) => ({
+    name: x?.name || "",
+    station: x?.station || "",
+    duration_min: x?.duration_min ?? 0,
+  }));
+
+export const serializeSteps = (list, fallbackStation = "") =>
+  normalizeSteps(list)
+    .filter((x) => x.name?.trim())
+    .map((x, i) => ({
+      no: i + 1,
+      name: x.name.trim(),
+      station: x.station || fallbackStation,
+      duration_min: Number(x.duration_min || 0),
+    }));
 
 export const RecipeModal = ({ companyId, products, recipe, presetProductId, onClose, onSaved }) => {
   useEscape(onClose);
@@ -53,8 +73,8 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
     job_file_name: recipe?.job_file_name || "",
     one_time: !!recipe?.one_time,
   });
-  const [steps, setSteps] = useState(recipe?.steps?.length ? recipe.steps.map((x) => ({ ...x })) : []);
-  const updStep = (i, patch) => setSteps(steps.map((x, idx) => idx === i ? { ...x, ...patch } : x));
+  const [steps, setSteps] = useState(normalizeSteps(recipe?.steps));
+  const updStep = (i, patch) => setSteps(steps.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
   const [mats, setMats] = useState(
     recipe?.materials?.length
       ? recipe.materials.map((m) => ({
@@ -62,10 +82,23 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
           ...m,
           cost_includes_vat: !!m.cost_includes_vat,
           vat_rate: Number(m.vat_rate ?? 20),
+          steps: normalizeSteps(m.steps),
         }))
       : [emptyMat()]
   );
-  const upd = (i, patch) => setMats(mats.map((m, idx) => idx === i ? { ...m, ...patch } : m));
+  const upd = (i, patch) => setMats(mats.map((m, idx) => (idx === i ? { ...m, ...patch } : m)));
+  const updMatStep = (mi, si, patch) => {
+    const cur = mats[mi]?.steps || [];
+    upd(mi, { steps: cur.map((x, idx) => (idx === si ? { ...x, ...patch } : x)) });
+  };
+  const addMatStep = (mi) => {
+    const cur = mats[mi]?.steps || [];
+    upd(mi, { steps: [...cur, emptyStep(stations[0] || "")] });
+  };
+  const removeMatStep = (mi, si) => {
+    const cur = mats[mi]?.steps || [];
+    upd(mi, { steps: cur.filter((_, idx) => idx !== si) });
+  };
   const pickMat = (i, id) => {
     const p = products.find((x) => x.id === id);
     upd(i, {
@@ -116,7 +149,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
       contact_id: f.contact_id || null,
       contact_name: f.contact_name || null,
       job_file_name: (f.job_file_name || "").trim() || null,
-      steps: steps.filter((x) => x.name?.trim()).map((x, i) => ({ no: i + 1, name: x.name.trim(), station: x.station || stationOptions[0] || "", duration_min: Number(x.duration_min || 0) })),
+      steps: serializeSteps(steps, stations[0] || ""),
       code: recipe?.code || "",
       name: f.name || `${fp?.name} Reçetesi`,
       finished_product_name: fp?.name || "",
@@ -125,12 +158,15 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
       overhead_cost: Number(f.overhead_cost),
       one_time: !!f.one_time,
       materials: valid.map((m) => ({
-        ...m,
+        product_id: m.product_id,
+        product_name: m.product_name,
+        unit: m.unit,
         quantity: Number(m.quantity),
         cost_per_unit: Number(m.cost_per_unit),
         wastage_percent: Number(m.wastage_percent || 0),
         cost_includes_vat: !!m.cost_includes_vat,
         vat_rate: Number(m.vat_rate ?? 20),
+        steps: serializeSteps(m.steps, stations[0] || ""),
       })),
     };
     try {
@@ -170,34 +206,79 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
         <div>
           <div className="flex items-center justify-between mb-1"><span className="font-bold text-slate-800">Hammaddeler / Bileşenler</span><button onClick={() => setMats([...mats, emptyMat()])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="recipe-add-material"><Plus className="w-3.5 h-3.5" /> Hammadde Ekle</button></div>
           <div className="grid grid-cols-12 gap-1 px-1 text-[10px] uppercase font-semibold text-slate-400"><div className="col-span-4">Hammadde</div><div className="col-span-2 text-center">Miktar</div><div className="col-span-1 text-center">Fire %</div><div className="col-span-3 text-right">Birim Maliyet / KDV</div><div className="col-span-2 text-right">Tutar</div></div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {mats.map((m, i) => (
-              <div key={i} className="grid grid-cols-12 gap-1 items-center bg-slate-50 border border-slate-200 rounded-lg p-1.5" data-testid={`recipe-material-${i}`}>
-                <div className="col-span-4"><SearchSelect value={m.product_id} options={materialsSrc.filter((p) => p.id !== f.finished_product_id)} placeholder="Hammadde ara…" getLabel={(p) => p.name} getSub={(p) => `${p.sku} • Stok: ${p.stock_quantity} ${p.unit}`} onChange={(id) => pickMat(i, id)} testId={`recipe-mat-select-${i}`} /></div>
-                <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" step="any" value={m.quantity} onChange={(e) => upd(i, { quantity: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center font-semibold" data-testid={`recipe-mat-qty-${i}`} /><span className="text-slate-400 text-[10px]">{m.unit}</span></div>
-                <div className="col-span-1"><input type="number" min="0" step="any" value={m.wastage_percent} onChange={(e) => upd(i, { wastage_percent: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Fire / kayıp yüzdesi" /></div>
-                <div className="col-span-3 flex items-center gap-1">
-                  <input type="number" min="0" step="any" value={m.cost_per_unit} onChange={(e) => upd(i, { cost_per_unit: e.target.value })} className="w-full min-w-0 bg-white border rounded p-1.5 text-right" data-testid={`recipe-mat-cost-${i}`} />
-                  <select
-                    value={m.cost_includes_vat ? "incl" : "excl"}
-                    onChange={(e) => upd(i, { cost_includes_vat: e.target.value === "incl" })}
-                    className="shrink-0 bg-white border rounded p-1.5 text-[10px] font-semibold text-slate-700"
-                    title="Birim maliyet KDV dahil / hariç"
-                    data-testid={`recipe-mat-vat-${i}`}
-                  >
-                    <option value="excl">Hariç</option>
-                    <option value="incl">Dahil</option>
-                  </select>
+              <div key={i} className="rounded-lg border border-slate-200 bg-slate-50/80 overflow-hidden" data-testid={`recipe-material-${i}`}>
+                <div className="grid grid-cols-12 gap-1 items-center p-1.5">
+                  <div className="col-span-4"><SearchSelect value={m.product_id} options={materialsSrc.filter((p) => p.id !== f.finished_product_id)} placeholder="Hammadde ara…" getLabel={(p) => p.name} getSub={(p) => `${p.sku} • Stok: ${p.stock_quantity} ${p.unit}`} onChange={(id) => pickMat(i, id)} testId={`recipe-mat-select-${i}`} /></div>
+                  <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" step="any" value={m.quantity} onChange={(e) => upd(i, { quantity: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center font-semibold" data-testid={`recipe-mat-qty-${i}`} /><span className="text-slate-400 text-[10px]">{m.unit}</span></div>
+                  <div className="col-span-1"><input type="number" min="0" step="any" value={m.wastage_percent} onChange={(e) => upd(i, { wastage_percent: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Fire / kayıp yüzdesi" /></div>
+                  <div className="col-span-3 flex items-center gap-1">
+                    <input type="number" min="0" step="any" value={m.cost_per_unit} onChange={(e) => upd(i, { cost_per_unit: e.target.value })} className="w-full min-w-0 bg-white border rounded p-1.5 text-right" data-testid={`recipe-mat-cost-${i}`} />
+                    <select
+                      value={m.cost_includes_vat ? "incl" : "excl"}
+                      onChange={(e) => upd(i, { cost_includes_vat: e.target.value === "incl" })}
+                      className="shrink-0 bg-white border rounded p-1.5 text-[10px] font-semibold text-slate-700"
+                      title="Birim maliyet KDV dahil / hariç"
+                      data-testid={`recipe-mat-vat-${i}`}
+                    >
+                      <option value="excl">Hariç</option>
+                      <option value="incl">Dahil</option>
+                    </select>
+                  </div>
+                  <div className="col-span-1 text-right font-bold" data-testid={`recipe-mat-line-${i}`}>{fmt(materialLineCost(m))}</div>
+                  <div className="col-span-1 text-right"><button onClick={() => setMats(mats.filter((_, idx) => idx !== i))} className="text-rose-500 p-1" title="Kaldır"><Trash2 className="w-3.5 h-3.5" /></button></div>
                 </div>
-                <div className="col-span-1 text-right font-bold" data-testid={`recipe-mat-line-${i}`}>{fmt(materialLineCost(m))}</div>
-                <div className="col-span-1 text-right"><button onClick={() => setMats(mats.filter((_, idx) => idx !== i))} className="text-rose-500 p-1" title="Kaldır"><Trash2 className="w-3.5 h-3.5" /></button></div>
+                <div className="border-t border-slate-200/80 px-2 py-1.5 space-y-1.5 bg-white/60" data-testid={`recipe-mat-steps-${i}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 flex items-center gap-1">
+                      <ListOrdered className="w-3 h-3" /> Bu kalem için üretim adımları
+                      {(m.steps || []).length > 0 ? <span className="normal-case font-normal text-slate-400">({(m.steps || []).length})</span> : null}
+                    </span>
+                    <button type="button" onClick={() => addMatStep(i)} className="flex items-center gap-0.5 text-emerald-700 font-semibold text-[11px]" data-testid={`recipe-mat-add-step-${i}`}>
+                      <Plus className="w-3 h-3" /> Adım Ekle
+                    </button>
+                  </div>
+                  {(m.steps || []).length === 0 && (
+                    <p className="text-[10px] text-slate-400">Boş bırakılırsa bu kalem için ayrı iş emri açılmaz; genel adımlar veya tek &quot;Üretim&quot; kullanılır.</p>
+                  )}
+                  {(m.steps || []).map((st, si) => (
+                    <div key={si} className="grid grid-cols-12 gap-1 items-center" data-testid={`recipe-mat-${i}-step-${si}`}>
+                      <div className="col-span-1 text-center font-bold text-slate-400 text-[10px]">{si + 1}</div>
+                      <div className="col-span-5">
+                        {zoneOptions.length ? (
+                          <select value={st.name || ""} onChange={(e) => updMatStep(i, si, { name: e.target.value })} className="w-full bg-white border rounded p-1.5" data-testid={`recipe-mat-${i}-step-name-${si}`}>
+                            <option value="">Bölüm seç…</option>
+                            {zoneOptions.map((z) => <option key={z} value={z}>{z}</option>)}
+                            {st.name && !zoneOptions.includes(st.name) ? <option value={st.name}>{st.name}</option> : null}
+                          </select>
+                        ) : (
+                          <input value={st.name} onChange={(e) => updMatStep(i, si, { name: e.target.value })} placeholder="Bölüm" className="w-full bg-white border rounded p-1.5" data-testid={`recipe-mat-${i}-step-name-${si}`} />
+                        )}
+                      </div>
+                      <div className="col-span-3">
+                        {stationOptions.length ? (
+                          <select value={st.station || ""} onChange={(e) => updMatStep(i, si, { station: e.target.value })} className="w-full bg-white border rounded p-1.5" data-testid={`recipe-mat-${i}-step-station-${si}`}>
+                            <option value="">İstasyon</option>
+                            {stationOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                            {st.station && !stationOptions.includes(st.station) ? <option value={st.station}>{st.station}</option> : null}
+                          </select>
+                        ) : (
+                          <input value={st.station} onChange={(e) => updMatStep(i, si, { station: e.target.value })} placeholder="İstasyon" className="w-full bg-white border rounded p-1.5" data-testid={`recipe-mat-${i}-step-station-${si}`} />
+                        )}
+                      </div>
+                      <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" value={st.duration_min} onChange={(e) => updMatStep(i, si, { duration_min: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Hedef süre (dk)" /><span className="text-[10px] text-slate-400">dk</span></div>
+                      <div className="col-span-1 text-right"><button type="button" onClick={() => removeMatStep(i, si)} className="text-rose-500 p-1" data-testid={`recipe-mat-${i}-step-del-${si}`}><Trash2 className="w-3.5 h-3.5" /></button></div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
         </div>
         <div>
-          <div className="flex items-center justify-between mb-1"><span className="font-bold text-slate-800 flex items-center gap-1"><ListOrdered className="w-3.5 h-3.5" /> Üretim Adımları (Atölye iş emirleri)</span><button onClick={() => setSteps([...steps, { name: "", station: stationOptions[0] || "", duration_min: 0 }])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="recipe-add-step"><Plus className="w-3.5 h-3.5" /> Adım Ekle</button></div>
-          {steps.length === 0 && <p className="text-[11px] text-slate-400">Adım tanımlanmazsa tek adımlı (&quot;Üretim&quot;) iş emri oluşur. Bölümler Firma Ayarları → Atölye Bölge; istasyonlar Parkur listesinden gelir.</p>}
+          <div className="flex items-center justify-between mb-1"><span className="font-bold text-slate-800 flex items-center gap-1"><ListOrdered className="w-3.5 h-3.5" /> Genel üretim adımları</span><button onClick={() => setSteps([...steps, emptyStep(stationOptions[0] || "")])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="recipe-add-step"><Plus className="w-3.5 h-3.5" /> Adım Ekle</button></div>
+          {steps.length === 0 && <p className="text-[11px] text-slate-400">Kalem adımlarından sonra uygulanır. Hiç adım yoksa tek adımlı (&quot;Üretim&quot;) iş emri oluşur. Bölümler Firma Ayarları → Atölye Bölge; istasyonlar Parkur listesinden gelir.</p>}
           <div className="space-y-1.5">{steps.map((st, i) => (
             <div key={i} className="grid grid-cols-12 gap-1 items-center bg-slate-50 border border-slate-200 rounded-lg p-1.5" data-testid={`recipe-step-${i}`}>
               <div className="col-span-1 text-center font-bold text-slate-500">{i + 1}</div>
