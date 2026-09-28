@@ -165,7 +165,11 @@ def test_enrich_does_not_overwrite_existing():
 
 
 def test_resolve_work_order_finish_plan_material_vs_product():
-    from production_work_orders import materials_for_work_order_step, resolve_work_order_finish_plan
+    from production_work_orders import (
+        materials_for_work_order_step,
+        recipe_step_for_work_order,
+        resolve_work_order_finish_plan,
+    )
 
     wo = {
         "planned_quantity": 1,
@@ -183,6 +187,17 @@ def test_resolve_work_order_finish_plan_material_vs_product():
     assert plan["is_material"] is True
     assert materials_for_work_order_step(wo["materials"], wo) == [wo["materials"][0]]
     assert resolve_work_order_finish_plan({"planned_quantity": 2, "unit": "Adet"})["qty"] == 2
+    # Kartta tek hammadde, material_* yok → yine 16 Metre
+    sole = resolve_work_order_finish_plan(
+        {"planned_quantity": 1, "unit": "Adet"},
+        [{"product_id": "m1", "product_name": "MDF", "needed": 16, "unit": "Metre"}],
+    )
+    assert sole["qty"] == 16 and sole["unit"] == "Metre" and sole["is_material"] is True
+    steps = [
+        {"name": "Kesim", "material_name": "MDF", "material_product_id": "m1"},
+        {"name": "Montaj"},
+    ]
+    assert recipe_step_for_work_order(steps, {"step_no": 2, "original_step_no": 1})["material_name"] == "MDF"
 
 
 def test_recipe_materials_for_qty_scales_with_plan():

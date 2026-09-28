@@ -17,6 +17,29 @@ describe("workOrderFinishPlan", () => {
       qty: 2, unit: "Adet", isMaterial: false, materialName: null,
     });
   });
+
+  test("uses sole material when material_* missing (card shows 16 Metre)", () => {
+    expect(
+      workOrderFinishPlan({
+        planned_quantity: 1,
+        unit: "Adet",
+        materials: [{ product_id: "m1", product_name: "MDF", needed: 16, unit: "Metre" }],
+      }),
+    ).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: "MDF" });
+  });
+
+  test("prefers finish_qty from API", () => {
+    expect(
+      workOrderFinishPlan({
+        planned_quantity: 1,
+        unit: "Adet",
+        finish_qty: 16,
+        finish_unit: "Metre",
+        finish_is_material: true,
+        materials: [],
+      }),
+    ).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: null });
+  });
 });
 
 describe("shopFloorCardActions", () => {

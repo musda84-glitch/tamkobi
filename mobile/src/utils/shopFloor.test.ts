@@ -139,4 +139,14 @@ describe("workOrderFinishPlan", () => {
       })
     ).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: "MDF" });
   });
+
+  it("uses sole material when material_* missing", () => {
+    expect(
+      workOrderFinishPlan({
+        planned_quantity: 1,
+        unit: "Adet",
+        materials: [{ product_id: "m1", product_name: "MDF", needed: 16, unit: "Metre" }],
+      })
+    ).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: "MDF" });
+  });
 });

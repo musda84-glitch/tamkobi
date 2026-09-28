@@ -13052,10 +13052,8 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
             meta["recipe_name"] = o.get("recipe_name")
         all_mats = pwo.recipe_materials_for_qty(recipe, r.get("planned_quantity") or 1)
         steps = pwo.flatten_recipe_steps(recipe) if recipe else []
-        step = None
-        sn = r.get("step_no")
-        if sn and steps and 1 <= int(sn) <= len(steps):
-            step = steps[int(sn) - 1]
+        step = pwo.recipe_step_for_work_order(steps, r) if steps else None
+        if step:
             if step.get("material_product_id") and not r.get("material_product_id"):
                 r["material_product_id"] = step.get("material_product_id")
             if step.get("material_name") and not r.get("material_name"):
@@ -13292,7 +13290,29 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
     w = await _wo(wo_id)
     if w["status"] not in ("in_progress", "paused"):
         raise HTTPException(status_code=400, detail="Sadece başlatılmış adım bitirilebilir.")
-    finish_plan = pwo.resolve_work_order_finish_plan(w)
+    # DB satırında materials yok; reçeteden kalem ihtiyacını yükle (16 Metre vb.).
+    finish_mats = list(w.get("materials") or [])
+    if not finish_mats or not (w.get("material_product_id") or w.get("material_name")):
+        o = await db.production_orders.find_one({"_id": w.get("order_id")}, {"recipe_id": 1, "planned_quantity": 1}) or {}
+        recipe = (
+            await db.recipes.find_one(
+                {"_id": o.get("recipe_id")},
+                {"materials": 1, "steps": 1, "target_quantity": 1, "group_same_station": 1},
+            )
+            if o.get("recipe_id")
+            else None
+        ) or {}
+        if recipe:
+            steps = pwo.flatten_recipe_steps(recipe)
+            step = pwo.recipe_step_for_work_order(steps, w)
+            if step:
+                if step.get("material_product_id") and not w.get("material_product_id"):
+                    w["material_product_id"] = step.get("material_product_id")
+                if step.get("material_name") and not w.get("material_name"):
+                    w["material_name"] = step.get("material_name")
+            all_mats = pwo.recipe_materials_for_qty(recipe, w.get("planned_quantity") or o.get("planned_quantity") or 1)
+            finish_mats = pwo.materials_for_work_order_step(all_mats, w)
+    finish_plan = pwo.resolve_work_order_finish_plan(w, finish_mats)
     default_qty = finish_plan["qty"] if finish_plan["qty"] else float(w.get("planned_quantity", 0) or 0)
     produced = float(req.get("produced_qty") if req.get("produced_qty") is not None else default_qty)
     scrap = float(req.get("scrap_qty") or 0)

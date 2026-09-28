@@ -9,8 +9,10 @@ export function workOrderFinishPlan(w) {
     const key = mname.toLocaleLowerCase("tr");
     hit = mats.find((m) => String(m?.product_name || "").trim().toLocaleLowerCase("tr") === key) || null;
   }
+  // Kartta tek hammadde (ör. 16 Metre) varken material_* eksik olsa da onu kullan.
+  if (!hit && mats.length === 1) hit = mats[0];
   const needed = Number(hit?.needed);
-  if (hit && Number.isFinite(needed) && needed > 0) {
+  if (hit && Number.isFinite(needed) && needed > 0 && (mid || mname || mats.length === 1)) {
     return {
       qty: needed,
       unit: String(hit.unit || "Adet").trim() || "Adet",

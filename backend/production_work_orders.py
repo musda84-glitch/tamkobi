@@ -219,6 +219,28 @@ def work_order_step_label(st: Optional[Dict[str, Any]] = None, idx: int = 0) -> 
     return f"{base} — {mname}" if mname else base
 
 
+def recipe_step_for_work_order(
+    steps: Optional[List[Dict[str, Any]]] = None,
+    wo: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Reçete adımını bul — regroup sonrası step_no kayarsa original_step_no kullan."""
+    seq = list(steps or [])
+    if not seq:
+        return None
+    w = wo or {}
+    for key in ("original_step_no", "step_no"):
+        raw = w.get(key)
+        if raw is None or raw == "":
+            continue
+        try:
+            sn = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= sn <= len(seq):
+            return seq[sn - 1]
+    return None
+
+
 def resolve_work_order_finish_plan(
     wo: Optional[Dict[str, Any]] = None,
     materials: Optional[List[Dict[str, Any]]] = None,
@@ -234,11 +256,14 @@ def resolve_work_order_finish_plan(
     if not hit and mname:
         key = mname.casefold()
         hit = next((m for m in mats if str(m.get("product_name") or "").strip().casefold() == key), None)
+    # Kartta tek hammadde satırı varken material_* eksik olsa da o kalemi kullan.
+    if not hit and len(mats) == 1:
+        hit = mats[0]
     try:
         needed = float((hit or {}).get("needed") or 0)
     except (TypeError, ValueError):
         needed = 0.0
-    if hit and needed > 0:
+    if hit and needed > 0 and (mid or mname or len(mats) == 1):
         return {
             "qty": needed,
             "unit": str(hit.get("unit") or "Adet").strip() or "Adet",
