@@ -36,6 +36,8 @@ export function selfPersonnelNavAllowed(path, user) {
  * Diğer roller için kısıt yok.
  */
 export function personelMenuPathAllowed(path, user) {
+  // Fail-closed while auth is loading so the full ERP menu cannot flash.
+  if (!user) return false;
   if (!isPersonelRole(user)) return true;
   const p = String(path || "").split("?")[0];
   if (p === "/hesap" || p.startsWith("/hesap/")) return true;
@@ -49,6 +51,7 @@ export function personelCanManageCompany(user) {
 
 /** Header / radial ERP kısayolları (fatura, barkod, virman, arama). */
 export function personelCanUseErpShortcuts(user) {
+  if (!user) return false;
   return !isPersonelRole(user);
 }
 
