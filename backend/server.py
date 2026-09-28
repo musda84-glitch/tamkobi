@@ -12923,7 +12923,7 @@ async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any], f
         station = wp.resolve_step_station(st, parks)
         docs.append({"_id": str(uuid.uuid4()), "company_id": order["company_id"], "order_id": order["_id"], "order_code": order.get("order_code"), "product_name": order.get("finished_product_name"),
                      "planned_quantity": order.get("planned_quantity"), "unit": recipe.get("unit", "Adet"), "planned_date": order.get("planned_date"), "notes": order.get("notes"),
-                     "step_no": idx + 1, "step_count": len(steps), "step_name": pwo.work_order_step_label(st, idx), "station": station, "duration_min": st.get("duration_min", 0),
+                     "step_no": idx + 1, "original_step_no": idx + 1, "step_count": len(steps), "step_name": pwo.work_order_step_label(st, idx), "station": station, "duration_min": st.get("duration_min", 0),
                      "material_name": st.get("material_name"), "material_product_id": st.get("material_product_id"),
                      "images": pwo.sanitize_step_images(st.get("images")),
                      "step_note": str(st.get("note") or "").strip(),
@@ -13045,6 +13045,10 @@ async def list_work_orders(company_id: Optional[str] = "comp_nexus_main_01", sta
     # İptal / silinmiş üretim emirlerine ait iş emirlerini atölyeden gizle
     rows = await _filter_active_production_work_orders(rows)
     await _enrich_work_orders_job_fields(rows)
+    if not station:
+        company = await db.companies.find_one({"_id": company_id}, {"shopfloor_group_same_station": 1}) or {}
+        if company.get("shopfloor_group_same_station"):
+            rows = pwo.group_work_orders_for_display(rows)
     now = datetime.now(timezone.utc)
     for r in rows:
         if r.get("started_at") and r["status"] in ("in_progress", "paused"):
@@ -13097,6 +13101,69 @@ async def shopfloor_unlock(req: Dict[str, Any]):
         raise HTTPException(status_code=401, detail="Şifre hatalı.")
     await _shopfloor_require_mesaim_check_in(emp)
     return {"status": "success", "employee_id": emp["_id"], "operator_name": emp["full_name"]}
+
+
+@api_router.get("/production/work-orders/shopfloor-settings")
+async def get_shopfloor_settings(company_id: Optional[str] = "comp_nexus_main_01"):
+    c = await db.companies.find_one({"_id": company_id}, {"shopfloor_group_same_station": 1}) or {}
+    return {"group_same_station": bool(c.get("shopfloor_group_same_station"))}
+
+
+async def _apply_shopfloor_station_grouping(company_id: str, enabled: bool) -> int:
+    """Açık üretim emirlerinin kalan (ready/waiting) adımlarını istasyona göre diz."""
+    orders = await db.production_orders.find(
+        {"company_id": company_id, "status": {"$in": ["planned", "in_production"]}},
+        {"_id": 1},
+    ).to_list(500)
+    updated_orders = 0
+    for o in orders:
+        rows = await db.work_orders.find({"order_id": o["_id"]}).to_list(200)
+        if not rows:
+            continue
+        for w in rows:
+            if w.get("original_step_no") is None:
+                w["original_step_no"] = int(w.get("step_no") or 0)
+        before = [(w.get("_id"), int(w.get("step_no") or 0), w.get("status")) for w in rows]
+        regrouped = pwo.regroup_remaining_work_orders(rows, enabled=enabled)
+        after = [(w.get("_id"), int(w.get("step_no") or 0), w.get("status")) for w in regrouped]
+        if before == after:
+            continue
+        for w in regrouped:
+            await db.work_orders.update_one(
+                {"_id": w["_id"]},
+                {"$set": {
+                    "step_no": int(w.get("step_no") or 0),
+                    "status": w.get("status"),
+                    "original_step_no": int(w.get("original_step_no") or w.get("step_no") or 0),
+                }},
+            )
+        updated_orders += 1
+    return updated_orders
+
+
+@api_router.post("/production/work-orders/shopfloor-settings")
+async def put_shopfloor_settings(req: Dict[str, Any] = None):
+    """Atölye: aynı istasyonu peşi sıra işle — kalan adımları yeniden sıralar."""
+    req = req or {}
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    c = await db.companies.find_one({"_id": company_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    enabled = bool(req.get("group_same_station"))
+    await db.companies.update_one(
+        {"_id": company_id},
+        {"$set": {"shopfloor_group_same_station": enabled}},
+    )
+    regrouped = await _apply_shopfloor_station_grouping(company_id, enabled)
+    return {
+        "status": "success",
+        "group_same_station": enabled,
+        "regrouped_orders": regrouped,
+        "message": (
+            "Peşi sıra istasyon sıralaması açıldı." if enabled else "Peşi sıra istasyon sıralaması kapatıldı."
+        ) + (f" {regrouped} üretim emrinde kalan adımlar güncellendi." if regrouped else ""),
+    }
+
 
 @api_router.post("/production/orders/{order_id}/generate-work-orders")
 async def generate_work_orders_for_order(order_id: str, force: bool = False):

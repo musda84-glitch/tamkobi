@@ -1,6 +1,6 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
-import { Alert, Image, Modal, Pressable, Text, View } from "react-native";
+import { Alert, Image, Modal, Pressable, Switch, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -14,10 +14,12 @@ import type { Employee } from "../utils/personnel";
 import {
   employeeLabel,
   finishQtyError,
+  groupWorkOrdersByStation,
   mergeSelfEmployee,
   partitionWorkOrders,
   readyCount,
   runningCount,
+  shopFloorStationSections,
   todayDoneCount,
   woCardKey,
   woStatusTone,
@@ -174,11 +176,13 @@ export function AtolyeScreen() {
   const [duties, setDuties] = useState<AssignedDuty[]>([]);
   const [dutyBusyId, setDutyBusyId] = useState<string | null>(null);
   const [showArchivedDuties, setShowArchivedDuties] = useState(false);
+  const [groupSameStation, setGroupSameStation] = useState(false);
+  const [groupBusy, setGroupBusy] = useState(false);
 
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [w, e, s, parks, me] = await Promise.all([
+      const [w, e, s, parks, me, settings] = await Promise.all([
         get<WorkOrder[]>(client, "/production/work-orders", {
           company_id: companyId,
           station: station || undefined,
@@ -187,11 +191,13 @@ export function AtolyeScreen() {
         get<string[]>(client, "/production/work-orders/stations", { company_id: companyId }).catch(() => []),
         get<{ parks?: unknown[] }>(client, `/companies/${companyId}/work-parks`).catch(() => ({ parks: [] })),
         get<{ employee?: Employee; tasks?: AssignedDuty[] }>(client, "/personnel/me").catch(() => null),
+        get<{ group_same_station?: boolean }>(client, "/production/work-orders/shopfloor-settings", { company_id: companyId }).catch(() => null),
       ]);
       setWos(Array.isArray(w) ? w : []);
       setEmployees(mergeSelfEmployee(Array.isArray(e) ? e : [], me?.employee));
       setStations(stationNamesFromParks(parks?.parks, Array.isArray(s) ? s : []));
       setDuties(Array.isArray(me?.tasks) ? me.tasks : []);
+      if (settings && typeof settings.group_same_station === "boolean") setGroupSameStation(settings.group_same_station);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "İş emirleri yüklenemedi."));
@@ -294,6 +300,52 @@ export function AtolyeScreen() {
   };
 
   const parts = useMemo(() => partitionWorkOrders(wos, operator), [wos, operator]);
+  const arrangedMine = useMemo(
+    () => (groupSameStation ? groupWorkOrdersByStation(parts.mine) : parts.mine),
+    [groupSameStation, parts.mine],
+  );
+  const arrangedOthers = useMemo(
+    () => (groupSameStation ? groupWorkOrdersByStation(parts.others) : parts.others),
+    [groupSameStation, parts.others],
+  );
+  const arrangedWaiting = useMemo(
+    () => (groupSameStation ? groupWorkOrdersByStation(parts.waiting) : parts.waiting),
+    [groupSameStation, parts.waiting],
+  );
+
+  const toggleGroupSameStation = async (on: boolean) => {
+    setGroupSameStation(on);
+    setGroupBusy(true);
+    try {
+      const r = await post<{ message?: string }>(client, "/production/work-orders/shopfloor-settings", {
+        company_id: companyId,
+        group_same_station: on,
+      });
+      setNotice(r.message || (on ? "Peşi sıra istasyon sıralaması açıldı." : "Peşi sıra istasyon sıralaması kapatıldı."));
+      setError(null);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Sıralama kaydedilemedi."));
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const renderGrouped = (items: WorkOrder[], renderCard: (w: WorkOrder) => React.ReactNode) => {
+    const sections = groupSameStation
+      ? shopFloorStationSections(items)
+      : [{ key: "all", label: "", items }];
+    return sections.map((sec) => (
+      <View key={sec.key} testID={groupSameStation ? `shopfloor-station-group-${sec.key}` : undefined}>
+        {groupSameStation ? (
+          <Text style={{ fontWeight: "800", color: colors.muted, marginTop: 6 }}>
+            {sec.label} ({sec.items.length})
+          </Text>
+        ) : null}
+        {sec.items.map((w) => renderCard(w))}
+      </View>
+    ));
+  };
   const empGroups = useMemo(
     () => [{ label: "Personel", options: employees.map((e) => ({ value: idOf(e), label: employeeLabel(e) })).filter((o) => o.value) }],
     [employees],
@@ -412,6 +464,20 @@ export function AtolyeScreen() {
         groups={stationGroups}
         emptyLabel="Tüm istasyonlar"
       />
+      <Card testID="shopfloor-group-station-wrap">
+        <Row style={{ justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: "800", color: colors.text }}>Aynı istasyonu peşi sıra işle</Text>
+            <Muted>Açıkken iş emirleri istasyona göre gruplanır; kalan adımlar peşi sıra yeniden sıralanır.</Muted>
+          </View>
+          <Switch
+            value={groupSameStation}
+            disabled={groupBusy}
+            onValueChange={toggleGroupSameStation}
+            testID="shopfloor-group-same-station"
+          />
+        </Row>
+      </Card>
       {!operator ? (
         <Card testID="shopfloor-no-operator" style={{ backgroundColor: colors.amber50 }}>
           <Text style={{ fontWeight: "700", color: "#92400E" }}>Başlamak için operatörü seçin ve şifrenizi girin.</Text>
@@ -476,7 +542,7 @@ export function AtolyeScreen() {
       {parts.mine.length ? (
         <View testID="shopfloor-mine">
           <Text style={{ fontWeight: "800", color: colors.text }}>Benim İşlerim ({parts.mine.length})</Text>
-          {parts.mine.map((w) => (
+          {renderGrouped(arrangedMine, (w) => (
             <WoCard
               key={woCardKey(w)}
               w={w}
@@ -495,7 +561,7 @@ export function AtolyeScreen() {
       <Text style={{ fontWeight: "800", color: colors.text }}>Açık İş Emirleri ({parts.others.length})</Text>
       {!parts.active.length ? (
         <Empty icon="build-outline" title="Bekleyen iş emri yok" hint="Üretim & Reçete sayfasından üretim emri verin." />
-      ) : parts.others.map((w) => (
+      ) : renderGrouped(arrangedOthers, (w) => (
         <WoCard
           key={woCardKey(w)}
           w={w}
@@ -512,7 +578,7 @@ export function AtolyeScreen() {
       {parts.waiting.length ? (
         <View testID="shopfloor-waiting">
           <Text style={{ fontWeight: "800", color: colors.muted }}>Sıradaki Adımlar ({parts.waiting.length})</Text>
-          {parts.waiting.map((w) => (
+          {renderGrouped(arrangedWaiting, (w) => (
             <WoCard
               key={woCardKey(w)}
               w={w}

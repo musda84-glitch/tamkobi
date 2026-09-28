@@ -1,6 +1,7 @@
 import {
   employeeLabel,
   finishQtyError,
+  groupWorkOrdersByStation,
   isMine,
   isOpenStatus,
   mergeSelfEmployee,
@@ -8,6 +9,7 @@ import {
   partitionWorkOrders,
   readyCount,
   runningCount,
+  shopFloorStationSections,
   todayDoneCount,
   woCardKey,
   woStatusTone,
@@ -109,5 +111,17 @@ describe("woCardKey", () => {
   it("prefers the document id", () => {
     expect(woCardKey({ id: "abc", order_code: "UE-1", step_no: 2 })).toBe("abc");
     expect(woCardKey({ order_code: "UE-1", step_no: 2 })).toBe("UE-1-2");
+  });
+});
+
+describe("groupWorkOrdersByStation", () => {
+  it("batches the same station consecutively", () => {
+    const rows: WorkOrder[] = [
+      wo({ id: "a", station: "HOLZHER", step_no: 1 }),
+      wo({ id: "b", station: "OMAKSAN", step_no: 2 }),
+      wo({ id: "c", station: "HOLZHER", step_no: 3 }),
+    ];
+    expect(groupWorkOrdersByStation(rows).map((w) => w.id)).toEqual(["a", "c", "b"]);
+    expect(shopFloorStationSections(groupWorkOrdersByStation(rows)).map((s) => s.label)).toEqual(["HOLZHER", "OMAKSAN"]);
   });
 });
