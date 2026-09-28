@@ -12716,9 +12716,23 @@ async def production_missing_plan_create(req: Dict[str, Any]):
     return {"status": "ok", "message": msg, "created": created, "skipped": skipped}
 
 
+def _production_kpi_from_orders(rows: List[Dict[str, Any]], month: str) -> Dict[str, int]:
+    """Tek üretim-emri taramasından açık / üretimde / ay tamamlanan sayaçları."""
+    open_n = in_prod = done_month = 0
+    for r in rows:
+        st = r.get("status")
+        if st in ("planned", "in_production"):
+            open_n += 1
+        if st == "in_production":
+            in_prod += 1
+        if st == "completed" and str(r.get("end_date") or "").startswith(month):
+            done_month += 1
+    return {"open": open_n, "in_production": in_prod, "completed_this_month": done_month}
+
+
 @api_router.get("/production/kpis")
 async def production_order_kpis(company_id: Optional[str] = "comp_nexus_main_01"):
-    """Hafif sayaçlar — liste filtresinden bağımsız KPI (count_documents + index)."""
+    """Hafif sayaçlar — MySQL'de COUNT(*) (JSON yüklemeden); eksik bildirim Python filtresi."""
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     open_n, in_prod, done_month, recipes_n, missing_n = await asyncio.gather(
         db.production_orders.count_documents({"company_id": company_id, "status": {"$in": ["planned", "in_production"]}}),
@@ -12763,6 +12777,29 @@ def _production_steps_summary(ws: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+_PO_LIST_PROJ = {
+    "company_id": 1,
+    "order_code": 1,
+    "recipe_id": 1,
+    "recipe_name": 1,
+    "finished_product_id": 1,
+    "finished_product_name": 1,
+    "planned_quantity": 1,
+    "completed_quantity": 1,
+    "total_cost": 1,
+    "status": 1,
+    "planned_date": 1,
+    "start_date": 1,
+    "end_date": 1,
+    "source": 1,
+    "notes": 1,
+    "shortages": 1,
+    "over_produced": 1,
+    "needs_recipe": 1,
+    "created_at": 1,
+}
+
+
 @api_router.get("/production/orders")
 async def list_production_orders(
     company_id: Optional[str] = "comp_nexus_main_01",
@@ -12778,11 +12815,12 @@ async def list_production_orders(
         q["status"] = {"$in": status.split(",")} if "," in status else status
     if product_id:
         q["finished_product_id"] = product_id
-    rows = await db.production_orders.find(q).sort("created_at", -1).to_list(300)
+    rows = await db.production_orders.find(q, _PO_LIST_PROJ).sort("created_at", -1).to_list(300)
     if include_steps and rows:
         oids = [r["_id"] for r in rows]
+        # company_id ile daralt — MySQL idx_docs_coll_company + order_id $in
         wos = await db.work_orders.find(
-            {"order_id": {"$in": oids}},
+            {"company_id": company_id, "order_id": {"$in": oids}},
             {"order_id": 1, "status": 1, "step_name": 1, "operator_name": 1, "step_no": 1},
         ).to_list(2000)
         by: Dict[str, list] = {}

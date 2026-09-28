@@ -230,6 +230,56 @@ def sql_pushdown(collection: str, query: Optional[dict]) -> Tuple[str, list]:
     return "SELECT doc FROM docs WHERE " + " AND ".join(clauses), params
 
 
+def sql_count_exact(collection: str, query: Optional[dict]) -> Optional[Tuple[str, list]]:
+    """COUNT(*) SQL when every query clause is fully pushable (no Python post-filter).
+
+    Used by count_documents to avoid loading JSON blobs for simple KPI/list counts.
+    Returns None when any clause must stay in Python (bool/None/numeric/$or/…).
+    """
+    q = query or {}
+    if any(str(k).startswith("$") for k in q):
+        return None
+    for k, v in q.items():
+        if not _SAFE_FIELD.match(k):
+            return None
+        if k == "_id":
+            if isinstance(v, dict):
+                if list(v.keys()) != ["$in"] or not v.get("$in") or not all(isinstance(x, (str, int)) for x in v["$in"]):
+                    return None
+            elif not isinstance(v, (str, int)):
+                return None
+            continue
+        if k == "company_id" and not isinstance(v, dict):
+            continue
+        if not isinstance(v, dict):
+            if v is None or isinstance(v, (bool, int, float)):
+                return None
+            continue
+        # Operators — only those sql_pushdown always applies.
+        allowed = set(v.keys())
+        if not allowed or not allowed.issubset({"$in", "$nin", "$ne", "$regex", "$gte", "$lte", "$gt", "$lt"}):
+            return None
+        if "$in" in v and (not v["$in"] or not all(isinstance(x, str) for x in v["$in"])):
+            return None
+        if "$nin" in v and (not v["$nin"] or not all(isinstance(x, str) for x in v["$nin"])):
+            return None
+        if "$ne" in v and not isinstance(v["$ne"], str):
+            return None
+        if "$regex" in v:
+            rx = str(v.get("$regex") or "")
+            if not _PREFIX_RE.match(rx):
+                return None
+        for op in ("$gte", "$lte", "$gt", "$lt"):
+            if op not in v:
+                continue
+            val = v[op]
+            if isinstance(val, (bool, int, float)) or not _DATEISH.match(str(val)):
+                return None
+    select_sql, params = sql_pushdown(collection, q)
+    count_sql = select_sql.replace("SELECT doc FROM", "SELECT COUNT(*) FROM", 1)
+    return count_sql, params
+
+
 def ensure_docs_query_helpers(cur, db_name: str) -> None:
     """Stored company_id + index so tenant report queries skip other firms."""
     cur.execute(
@@ -1035,6 +1085,17 @@ class MySQLCollection:
         return docs, cursor, more
 
     async def count_documents(self, query: Optional[dict] = None):
+        exact = sql_count_exact(self.name, query)
+        if exact:
+            sql, params = exact
+            await self._db._ensure()
+            t0 = time.perf_counter()
+            async with self._db._pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(sql, params)
+                    row = await cur.fetchone()
+            _audit_sql("COUNT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
+            return int((row or [0])[0] or 0)
         return len(await self._load_filtered(query))
 
     async def distinct(self, key: str, query: Optional[dict] = None):
@@ -1368,6 +1429,16 @@ class SyncMySQLCollection:
         return DeleteResult(n)
 
     def count_documents(self, query=None):
+        exact = sql_count_exact(self.name, query)
+        if exact:
+            sql, params = exact
+            self._db._ensure()
+            t0 = time.perf_counter()
+            with self._db._conn.cursor() as cur:
+                cur.execute(sql, params)
+                row = cur.fetchone()
+            _audit_sql("COUNT", self.name, duration_ms=(time.perf_counter() - t0) * 1000)
+            return int((row or [0])[0] or 0)
         return len(self._load_filtered(query))
 
     def distinct(self, key, query=None):
