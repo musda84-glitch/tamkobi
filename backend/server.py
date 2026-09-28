@@ -83,6 +83,7 @@ import cheques
 import fx
 import attendance
 import production_work_orders as pwo
+import shopfloor_pause as sfp
 import location_consent
 import personnel_wage
 import trash
@@ -13275,14 +13276,54 @@ async def start_work_order(wo_id: str, req: Dict[str, Any] = None):
     await db.production_orders.update_one({"_id": w["order_id"], "status": "planned"}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
     return {"status": "success", "message": f"{w['step_name']} başlatıldı."}
 
+async def _shopfloor_pause_policy(company_id: str, operator_name: Optional[str] = None) -> Dict[str, Any]:
+    """Operatör adına göre mesai/mola/OT Duraklat politikası."""
+    name = str(operator_name or "").strip()
+    if not name:
+        return {
+            "allowed": False,
+            "phase": "outside",
+            "reason": sfp.PAUSE_NO_OPERATOR_DETAIL,
+            "operator_name": None,
+        }
+    company = await db.companies.find_one({"_id": company_id}) or {}
+    emp = await db.employees.find_one({"company_id": company_id, "full_name": name, "status": "active"})
+    if not emp:
+        emp = await db.employees.find_one({"company_id": company_id, "full_name": name})
+    if emp:
+        policy = await sfp.pause_policy_for_employee(emp, company)
+    else:
+        # Personel kartı yoksa (eski operatör adı) firma mesai penceresine göre karar ver.
+        policy = sfp.resolve_pause_phase(schedule=attendance.merge_schedule(company))
+    policy["operator_name"] = name
+    policy["employee_id"] = (emp or {}).get("_id")
+    return policy
+
+
+@api_router.get("/production/work-orders/pause-policy")
+async def get_pause_policy(company_id: Optional[str] = "comp_nexus_main_01", operator_name: Optional[str] = None):
+    """Atölye Duraklat: mesai / mola / fazla mesai penceresi."""
+    return await _shopfloor_pause_policy(company_id, operator_name)
+
+
 @api_router.post("/production/work-orders/{wo_id}/pause")
 async def pause_work_order(wo_id: str, req: Dict[str, Any] = None):
     req = req or {}
     w = await _wo(wo_id)
     if w["status"] != "in_progress":
         raise HTTPException(status_code=400, detail="Sadece devam eden adım duraklatılabilir.")
-    await db.work_orders.update_one({"_id": wo_id}, {"$set": {"status": "paused", "paused_at": datetime.now(timezone.utc).isoformat()}, "$push": {"logs": _log(w, "pause", req.get("operator_name"), req.get("reason", ""))}})
-    return {"status": "success", "message": "Adım duraklatıldı."}
+    who = str(req.get("operator_name") or w.get("operator_name") or "").strip()
+    policy = await _shopfloor_pause_policy(w.get("company_id") or "comp_nexus_main_01", who)
+    if not policy.get("allowed"):
+        raise HTTPException(status_code=400, detail=policy.get("reason") or sfp.PAUSE_OUTSIDE_DETAIL)
+    await db.work_orders.update_one(
+        {"_id": wo_id},
+        {
+            "$set": {"status": "paused", "paused_at": datetime.now(timezone.utc).isoformat(), "auto_paused": False},
+            "$push": {"logs": _log(w, "pause", who, req.get("reason", ""))},
+        },
+    )
+    return {"status": "success", "message": "Adım duraklatıldı.", "pause_phase": policy.get("phase")}
 
 @api_router.post("/production/work-orders/{wo_id}/finish")
 async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):

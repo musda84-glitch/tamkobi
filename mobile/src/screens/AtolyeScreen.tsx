@@ -19,12 +19,14 @@ import {
   partitionWorkOrders,
   readyCount,
   runningCount,
+  shopFloorPausePhaseLabel,
   shopFloorStationSections,
   todayDoneCount,
   woCardKey,
   workOrderFinishPlan,
   woStatusTone,
   woStatusTr,
+  type PausePolicy,
   type WorkOrder,
 } from "../utils/shopFloor";
 import { stationNamesFromParks } from "../utils/workParks";
@@ -34,6 +36,8 @@ function WoCard({
   operator,
   busy,
   baseUrl,
+  pauseAllowed,
+  pauseHint,
   onStart,
   onPause,
   onFinish,
@@ -43,6 +47,8 @@ function WoCard({
   operator: string;
   busy: boolean;
   baseUrl: string;
+  pauseAllowed?: boolean;
+  pauseHint?: string;
   onStart: () => void;
   onPause: () => void;
   onFinish: () => void;
@@ -134,11 +140,14 @@ function WoCard({
             <PrimaryButton
               title={w.status === "paused" ? "Devam" : "Duraklat"}
               onPress={w.status === "paused" ? onStart : onPause}
-              disabled={!operator || busy}
+              disabled={!operator || busy || (w.status === "in_progress" && pauseAllowed === false)}
               loading={busy}
               color={w.status === "paused" ? colors.primary : "#EA580C"}
               testID={w.status === "paused" ? `wo-resume-${key}` : `wo-pause-${key}`}
             />
+            {w.status === "in_progress" && pauseAllowed === false && pauseHint ? (
+              <Muted>{pauseHint}</Muted>
+            ) : null}
           </View>
           <View style={{ flex: 1 }}>
             <PrimaryButton title="Bitir" onPress={onFinish} disabled={!operator || busy} color={colors.secondary} testID={`wo-finish-${key}`} />
@@ -185,6 +194,23 @@ export function AtolyeScreen() {
   const [showArchivedDuties, setShowArchivedDuties] = useState(false);
   const [groupSameStation, setGroupSameStation] = useState(false);
   const [groupBusy, setGroupBusy] = useState(false);
+  const [pausePolicy, setPausePolicy] = useState<PausePolicy>({ allowed: true, phase: "mesai" });
+
+  const loadPausePolicy = useCallback(async (opName: string) => {
+    if (!opName) {
+      setPausePolicy({ allowed: false, phase: "outside", reason: "Önce operatör seçin." });
+      return;
+    }
+    try {
+      const r = await get<PausePolicy>(client, "/production/work-orders/pause-policy", {
+        company_id: companyId,
+        operator_name: opName,
+      });
+      setPausePolicy(r || { allowed: false, phase: "outside" });
+    } catch {
+      setPausePolicy({ allowed: true, phase: "mesai" });
+    }
+  }, [client, companyId]);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -214,6 +240,11 @@ export function AtolyeScreen() {
   }, [client, companyId, station]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      loadPausePolicy(operator);
+    }, [loadPausePolicy, operator])
+  );
 
   const requestOperator = (id: string) => {
     if (!id) {
@@ -258,6 +289,7 @@ export function AtolyeScreen() {
       setPendingEmp(null);
       setPin("");
       setNotice(`${name} olarak giriş yapıldı.`);
+      await loadPausePolicy(name);
     } catch (err) {
       setUnlockErr(apiErrorMessage(err, "Şifre doğrulanamadı."));
       setPin("");
@@ -500,6 +532,22 @@ export function AtolyeScreen() {
       ) : (
         <Muted testID="shopfloor-operator-name">{operator}{user?.employee_id === operatorId ? " · siz" : ""}</Muted>
       )}
+      {operator && pausePolicy?.allowed === false ? (
+        <Card testID="shopfloor-pause-blocked" style={{ backgroundColor: "#F1F5F9" }}>
+          <Text style={{ fontWeight: "700", color: colors.text }}>
+            Duraklat kapalı: {pausePolicy?.reason || "Mesai / mola / fazla mesai dışında."}
+            {pausePolicy?.deadline ? ` (otomatik: ${pausePolicy.deadline})` : ""}
+          </Text>
+        </Card>
+      ) : null}
+      {operator && pausePolicy?.allowed && pausePolicy?.phase && pausePolicy.phase !== "mesai" ? (
+        <Card testID="shopfloor-pause-phase" style={{ backgroundColor: "#FFF7ED" }}>
+          <Text style={{ fontWeight: "700", color: "#9A3412" }}>
+            Duraklat aktif — {shopFloorPausePhaseLabel(pausePolicy.phase)}
+            {pausePolicy.deadline ? ` · otomatik ${pausePolicy.deadline}` : ""}
+          </Text>
+        </Card>
+      ) : null}
       <ErrorBanner message={error} />
       {notice ? (
         <Card testID="shopfloor-notice" style={{ backgroundColor: colors.emerald50 }}>
@@ -564,6 +612,8 @@ export function AtolyeScreen() {
               operator={operator}
               busy={busyId === woCardKey(w)}
               baseUrl={baseUrl}
+              pauseAllowed={!!pausePolicy?.allowed}
+              pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
               onStart={() => act(w, "start")}
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}
@@ -583,6 +633,8 @@ export function AtolyeScreen() {
           operator={operator}
           busy={busyId === woCardKey(w)}
           baseUrl={baseUrl}
+          pauseAllowed={!!pausePolicy?.allowed}
+          pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
           onStart={() => act(w, "start")}
           onPause={() => act(w, "pause")}
           onFinish={() => openFinish(w)}

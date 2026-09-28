@@ -1,4 +1,4 @@
-import { shopFloorCardActions, shopFloorCardBorder, workOrderFinishPlan } from "./shopFloorActions";
+import { shopFloorCardActions, shopFloorCardBorder, shopFloorPausePhaseLabel, workOrderFinishPlan } from "./shopFloorActions";
 
 describe("workOrderFinishPlan", () => {
   test("uses material needed for material-linked step", () => {
@@ -45,20 +45,30 @@ describe("workOrderFinishPlan", () => {
 describe("shopFloorCardActions", () => {
   test("ready shows only start", () => {
     expect(shopFloorCardActions("ready")).toEqual({
-      start: true, pause: false, resume: false, finish: false,
+      start: true, pause: false, pauseEnabled: false, resume: false, finish: false,
     });
   });
 
   test("in_progress shows Duraklat + Bitir", () => {
     expect(shopFloorCardActions("in_progress")).toEqual({
-      start: false, pause: true, resume: false, finish: true,
+      start: false, pause: true, pauseEnabled: true, resume: false, finish: true,
     });
+  });
+
+  test("in_progress disables Duraklat outside mesai window", () => {
+    expect(shopFloorCardActions("in_progress", false).pauseEnabled).toBe(false);
+    expect(shopFloorCardActions("in_progress", false).pause).toBe(true);
   });
 
   test("paused shows Devam + Bitir", () => {
     expect(shopFloorCardActions("paused")).toEqual({
-      start: false, pause: false, resume: true, finish: true,
+      start: false, pause: false, pauseEnabled: false, resume: true, finish: true,
     });
+  });
+
+  test("pause phase labels", () => {
+    expect(shopFloorPausePhaseLabel("mola")).toBe("Mola");
+    expect(shopFloorPausePhaseLabel("fazla_mesai")).toBe("Fazla mesai");
   });
 
   test("border highlights running and paused", () => {

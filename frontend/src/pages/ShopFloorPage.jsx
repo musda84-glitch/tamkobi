@@ -8,7 +8,7 @@ import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { openAssignedDuties } from "../utils/assignedDuty";
-import { shopFloorCardActions, shopFloorCardBorder, workOrderFinishPlan } from "../utils/shopFloorActions";
+import { shopFloorCardActions, shopFloorCardBorder, shopFloorPausePhaseLabel, workOrderFinishPlan } from "../utils/shopFloorActions";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 
@@ -40,8 +40,24 @@ export default function ShopFloorPage() {
   const [adminPin, setAdminPin] = useState("");
   const [adminTrashBusy, setAdminTrashBusy] = useState(false);
   const [adminTrashErr, setAdminTrashErr] = useState("");
+  const [pausePolicy, setPausePolicy] = useState({ allowed: true, phase: "mesai", reason: null, deadline: null });
   const loadPerf = useCallback(() => axios.get(`${API_URL}/production/work-orders/performance?company_id=${companyId}`).then((r) => setPerf(r.data)).catch(() => {}), [companyId]);
   useEffect(() => { loadPerf(); }, [loadPerf, wos.length]);
+
+  const loadPausePolicy = useCallback(async (opName) => {
+    if (!opName) {
+      setPausePolicy({ allowed: false, phase: "outside", reason: "Önce operatör seçin.", deadline: null });
+      return;
+    }
+    try {
+      const r = await axios.get(`${API_URL}/production/work-orders/pause-policy`, {
+        params: { company_id: companyId, operator_name: opName },
+      });
+      setPausePolicy(r.data || { allowed: false, phase: "outside" });
+    } catch {
+      setPausePolicy({ allowed: true, phase: "mesai", reason: null, deadline: null });
+    }
+  }, [companyId]);
 
   const load = useCallback(async () => {
     try {
@@ -58,6 +74,12 @@ export default function ShopFloorPage() {
     } catch { /* keep last */ }
   }, [companyId, station]);
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
+  useEffect(() => {
+    loadPausePolicy(operator);
+    if (!operator) return undefined;
+    const t = setInterval(() => loadPausePolicy(operator), 60000);
+    return () => clearInterval(t);
+  }, [operator, loadPausePolicy]);
   useEffect(() => { localStorage.setItem("nx_station", station); }, [station]);
   useEffect(() => { localStorage.setItem("nx_group_same_station", groupSameStation ? "1" : "0"); }, [groupSameStation]);
   useEffect(() => {
@@ -219,9 +241,13 @@ export default function ShopFloorPage() {
     }
   };
 
+  const pauseAllowed = !!pausePolicy?.allowed;
   const Card = ({ w }) => {
     const [l, c] = STATUS[w.status] || STATUS.waiting;
-    const actions = shopFloorCardActions(w.status);
+    const actions = shopFloorCardActions(w.status, pauseAllowed);
+    const pauseTitle = actions.pauseEnabled
+      ? `Duraklat (${shopFloorPausePhaseLabel(pausePolicy?.phase)})`
+      : (pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz");
     return (
     <div className={`bg-white rounded-2xl border-2 p-4 space-y-3 ${shopFloorCardBorder(w.status)}`} data-testid={`wo-card-${w.order_code}-${w.step_no}`}>
       <div className="flex justify-between items-start gap-2">
@@ -230,9 +256,10 @@ export default function ShopFloorPage() {
           {actions.pause && (
             <button
               type="button"
-              onClick={() => act(w, "pause")}
-              className="p-1.5 rounded-lg text-orange-600 hover:bg-orange-50 border border-orange-200"
-              title="Duraklat"
+              onClick={() => actions.pauseEnabled && act(w, "pause")}
+              disabled={!actions.pauseEnabled}
+              className={`p-1.5 rounded-lg border ${actions.pauseEnabled ? "text-orange-600 hover:bg-orange-50 border-orange-200" : "text-slate-300 border-slate-200 cursor-not-allowed"}`}
+              title={pauseTitle}
               data-testid={`wo-pause-icon-${w.order_code}-${w.step_no}`}
             >
               <Pause className="w-4 h-4" />
@@ -309,7 +336,13 @@ export default function ShopFloorPage() {
           </button>
         )}
         {actions.pause && (
-          <button onClick={() => act(w, "pause")} className="flex items-center justify-center gap-2 py-3.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold text-base shadow-sm shadow-orange-500/30" data-testid={`wo-pause-${w.order_code}-${w.step_no}`}>
+          <button
+            onClick={() => actions.pauseEnabled && act(w, "pause")}
+            disabled={!actions.pauseEnabled}
+            title={pauseTitle}
+            className={`flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-base ${actions.pauseEnabled ? "bg-orange-500 hover:bg-orange-600 text-white shadow-sm shadow-orange-500/30" : "bg-slate-200 text-slate-400 cursor-not-allowed"}`}
+            data-testid={`wo-pause-${w.order_code}-${w.step_no}`}
+          >
             <Pause className="w-5 h-5" /> Duraklat
           </button>
         )}
@@ -340,6 +373,18 @@ export default function ShopFloorPage() {
         </div>
       </div>
       {!operator && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 font-semibold" data-testid="shopfloor-no-operator">Başlamak için yukarıdan operatörü (kendinizi) seçin ve şifrenizi girin.</div>}
+      {operator && !pauseAllowed && (
+        <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-sm text-slate-700" data-testid="shopfloor-pause-blocked">
+          Duraklat kapalı: {pausePolicy?.reason || "Mesai / mola / fazla mesai dışında."}
+          {pausePolicy?.deadline ? ` (otomatik duraklatma: ${pausePolicy.deadline})` : ""}
+        </div>
+      )}
+      {operator && pauseAllowed && pausePolicy?.phase && pausePolicy.phase !== "mesai" && (
+        <div className="bg-orange-50 border border-orange-100 rounded-xl px-3 py-2 text-xs text-orange-800 font-semibold" data-testid="shopfloor-pause-phase">
+          Duraklat aktif — {shopFloorPausePhaseLabel(pausePolicy.phase)}
+          {pausePolicy.deadline ? ` · otomatik duraklatma ${pausePolicy.deadline}` : ""}
+        </div>
+      )}
       <label className="flex items-start gap-2 cursor-pointer select-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 hover:bg-slate-50" data-testid="shopfloor-group-station-wrap">
         <input
           type="checkbox"
