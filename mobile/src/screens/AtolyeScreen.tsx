@@ -91,9 +91,9 @@ function WoCard({
           İş dosyası: <Text style={{ fontWeight: "700", color: colors.text }}>{w.job_file_name || "—"}</Text>
         </Text>
         {String(w.step_note || "").trim() ? (
-          <View testID={`wo-step-note-${key}`} style={{ flexDirection: "row", alignItems: "flex-start", gap: 6, minWidth: 0 }}>
+          <View testID={`wo-step-note-${key}`} style={{ flexDirection: "row", alignItems: "flex-start", gap: 6, width: "100%", maxWidth: "100%" }}>
             <Text style={{ fontSize: 12, color: colors.muted }}>Not:</Text>
-            <Text style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: "700", color: colors.text }}>
+            <Text style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, fontSize: 12, fontWeight: "700", color: colors.text }}>
               {String(w.step_note).trim()}
             </Text>
           </View>
