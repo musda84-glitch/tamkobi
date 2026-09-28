@@ -10,7 +10,6 @@ import { normalizeWorkParks, normalizeWorkshopZones, stationNamesFromParks, zone
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { sameStationOrderHint } from "../utils/recipeStationOrder";
-import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
 
@@ -297,7 +296,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
   const zoneOptions = zones.length ? zones : [];
   const stationOptions = stations.length ? stations : [];
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" data-testid="recipe-modal-backdrop">
       <div className="bg-white rounded-2xl max-w-3xl w-full p-5 space-y-4 text-xs shadow-2xl max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="recipe-modal">
         <div className="flex justify-between items-start border-b pb-2"><h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><BookOpen className="w-4 h-4 text-emerald-600" /> {recipe ? `Reçete Düzenle — ${recipe.code}` : "Yeni Reçete (Ürün Ağacı / BOM)"}</h3><button onClick={onClose} className="text-slate-400" data-testid="recipe-close"><X className="w-5 h-5" /></button></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
