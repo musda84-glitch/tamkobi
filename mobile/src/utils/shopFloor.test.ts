@@ -1,5 +1,6 @@
 import {
   employeeLabel,
+  finishOverPlan,
   finishQtyError,
   groupWorkOrdersByStation,
   isMine,
@@ -9,6 +10,7 @@ import {
   partitionWorkOrders,
   readyCount,
   runningCount,
+  shopFloorCardBorder,
   shopFloorStationSections,
   todayDoneCount,
   woCardKey,
@@ -86,11 +88,21 @@ describe("shop-floor KPIs", () => {
 });
 
 describe("finishQtyError", () => {
-  it("rejects negative or over-plan quantities", () => {
+  it("rejects only negative quantities; over-plan is allowed like web", () => {
     expect(finishQtyError(2, 0, 2)).toBeNull();
     expect(finishQtyError(1.5, 0.5, 2)).toBeNull();
     expect(finishQtyError(-1, 0, 2)).toBe("Miktar negatif olamaz.");
-    expect(finishQtyError(2, 1, 2)).toMatch(/planlanan miktarı/);
+    expect(finishQtyError(2, 1, 2)).toBeNull();
+    expect(finishOverPlan(2, 1, 2)).toBe(true);
+    expect(finishOverPlan(1, 0, 2)).toBe(false);
+  });
+});
+
+describe("shopFloorCardBorder", () => {
+  it("matches web progress / paused / ready colors", () => {
+    expect(shopFloorCardBorder("in_progress")).toBe("#F59E0B");
+    expect(shopFloorCardBorder("paused")).toBe("#FDBA74");
+    expect(shopFloorCardBorder("ready")).toBe("#C7D2FE");
   });
 });
 
