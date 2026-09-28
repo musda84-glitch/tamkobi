@@ -12811,27 +12811,29 @@ async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any]):
     await db.work_orders.insert_many(docs)
 
 async def _enrich_work_orders_job_fields(rows: list) -> list:
-    """Eski iş emirlerinde eksik iş dosyası / reçete adını üretim emri + reçeteden doldur."""
-    need = [r for r in rows if not r.get("job_file_name") or not r.get("recipe_name")]
-    if not need:
-        for r in rows:
-            pwo.enrich_work_order_row(r)
+    """İş emirlerine reçete meta + plan miktarına göre hammaddeleri ekle."""
+    if not rows:
         return rows
-    order_ids = list({r.get("order_id") for r in need if r.get("order_id")})
-    if not order_ids:
-        for r in rows:
-            pwo.enrich_work_order_row(r)
-        return rows
-    orders = await db.production_orders.find({"_id": {"$in": order_ids}}, {"recipe_id": 1, "recipe_name": 1}).to_list(len(order_ids))
+    order_ids = list({r.get("order_id") for r in rows if r.get("order_id")})
+    orders = await db.production_orders.find({"_id": {"$in": order_ids}}, {"recipe_id": 1, "recipe_name": 1}).to_list(len(order_ids) or 1) if order_ids else []
     by_order = {o["_id"]: o for o in orders}
     recipe_ids = list({o.get("recipe_id") for o in orders if o.get("recipe_id")})
-    recipes = await db.recipes.find({"_id": {"$in": recipe_ids}}, {"job_file_name": 1, "name": 1}).to_list(len(recipe_ids) or 1) if recipe_ids else []
+    recipes = (
+        await db.recipes.find(
+            {"_id": {"$in": recipe_ids}},
+            {"job_file_name": 1, "name": 1, "materials": 1, "target_quantity": 1},
+        ).to_list(len(recipe_ids) or 1)
+        if recipe_ids
+        else []
+    )
     by_recipe = {r["_id"]: r for r in recipes}
     for r in rows:
         o = by_order.get(r.get("order_id")) or {}
-        meta = pwo.recipe_job_fields(by_recipe.get(o.get("recipe_id")))
+        recipe = by_recipe.get(o.get("recipe_id")) or {}
+        meta = pwo.recipe_job_fields(recipe)
         if not meta.get("recipe_name"):
             meta["recipe_name"] = o.get("recipe_name")
+        meta["materials"] = pwo.recipe_materials_for_qty(recipe, r.get("planned_quantity") or 1)
         pwo.enrich_work_order_row(r, meta)
     return rows
 

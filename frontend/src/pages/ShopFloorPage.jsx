@@ -123,6 +123,19 @@ export default function ShopFloorPage() {
         <div className="flex items-center gap-1.5 text-slate-600"><MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span>İstasyon: <span className="font-semibold text-slate-900">{w.station || "—"}</span></span></div>
         <div className="flex items-center gap-1.5 text-slate-600 min-w-0"><FileText className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span className="truncate">İş dosyası: <span className="font-semibold text-slate-900">{w.job_file_name || "—"}</span></span></div>
       </div>
+      {(w.materials || []).length > 0 && (
+        <div className="text-xs border border-slate-100 rounded-xl px-2.5 py-2 space-y-1" data-testid={`wo-materials-${w.order_code}-${w.step_no}`}>
+          <div className="font-semibold text-slate-700">Hammaddeler</div>
+          <ul className="space-y-0.5">
+            {w.materials.map((m, i) => (
+              <li key={m.product_id || i} className="flex justify-between gap-2 text-slate-600">
+                <span className="truncate min-w-0">{m.product_name}</span>
+                <span className="shrink-0 font-semibold text-slate-900">{m.needed} {m.unit}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
         <span className="font-bold text-slate-900 text-sm">{w.planned_quantity} {w.unit}</span>
         {w.duration_min > 0 && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Hedef {w.duration_min} dk</span>}

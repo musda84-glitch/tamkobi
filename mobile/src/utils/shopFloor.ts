@@ -13,6 +13,7 @@ export type WorkOrder = {
   station?: string;
   job_file_name?: string;
   recipe_name?: string;
+  materials?: { product_id?: string; product_name?: string; unit?: string; needed?: number }[];
   planned_quantity?: number;
   unit?: string;
   duration_min?: number;
