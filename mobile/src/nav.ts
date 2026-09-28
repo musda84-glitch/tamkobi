@@ -70,6 +70,8 @@ export function go(name: string, params?: Record<string, unknown>) {
       return router.push("/sevk");
     case "Atolye":
       return router.push("/atolye");
+    case "Production":
+      return router.push("/production");
     case "SevkPick":
       return router.push({ pathname: "/sevk/[id]", params: { id: String(params?.id || ""), name: String(params?.name || "") } });
     case "StockNew":

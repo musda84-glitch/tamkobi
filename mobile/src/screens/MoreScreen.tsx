@@ -17,6 +17,7 @@ const LINKS = [
   { title: "Depo Sevkiyat", path: "/sevk", screen: "Sevk", icon: "cube" as const },
   { title: "Stok Sayımı", path: "/sayim", screen: "StockCount", icon: "clipboard" as const },
   { title: "Üretim Atölye", path: "/atolye", screen: "Atolye", icon: "build" as const },
+  { title: "Üretim & Reçete (BOM)", path: "/production", screen: "Production", icon: "git-network" as const },
   { title: "Kasa & Banka", path: "/banking", screen: "Banking", icon: "wallet" as const },
   { title: "Tahsilat & Ödeme Yap", path: "/banking", screen: "Pay", icon: "cash" as const },
   { title: "Masraflar", path: "/expenses", screen: "Expenses", icon: "receipt" as const },

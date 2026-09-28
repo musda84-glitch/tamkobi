@@ -59,6 +59,7 @@ function RootStack() {
         <Stack.Screen name="sevk/index" options={{ title: "Depo Sevkiyat" }} />
         <Stack.Screen name="sevk/[id]" options={{ title: "Sipariş topla" }} />
         <Stack.Screen name="atolye/index" options={{ title: "Üretim Atölye" }} />
+        <Stack.Screen name="production/index" options={{ title: "Üretim & Reçete (BOM)" }} />
         <Stack.Screen name="orders/[id]" options={{ title: "Sipariş" }} />
         <Stack.Screen name="stock/new" options={{ title: "Yeni stok kartı" }} />
         <Stack.Screen name="stock/[id]" options={{ title: "Stok kartı" }} />
