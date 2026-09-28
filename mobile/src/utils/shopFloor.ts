@@ -146,6 +146,22 @@ export function workOrderFinishPlan(w?: WorkOrder | null): {
   };
 }
 
+export type PausePolicy = {
+  allowed?: boolean;
+  phase?: string;
+  reason?: string | null;
+  deadline?: string | null;
+};
+
+export function shopFloorPausePhaseLabel(phase?: string | null): string {
+  const p = String(phase || "").trim().toLowerCase();
+  if (p === "mesai") return "Mesai";
+  if (p === "mola") return "Mola";
+  if (p === "fazla_mesai") return "Fazla mesai";
+  if (p === "tolerans") return "Mesai bitiş toleransı";
+  return "Mesai dışı";
+}
+
 export function employeeLabel(e: Employee): string {
   const name = e.full_name || "Personel";
   return e.position ? `${name} — ${e.position}` : name;
