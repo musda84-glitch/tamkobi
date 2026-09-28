@@ -1,4 +1,4 @@
-import { materialLineCost, materialUnitNet } from "../components/RecipeModal";
+import { materialLineCost, materialUnitNet, serializeSteps } from "../components/RecipeModal";
 import { normalizeWorkshopZones, zoneNamesFromList, workshopZoneSelectGroups } from "../utils/workParks";
 
 describe("recipe material vat cost", () => {
@@ -20,6 +20,24 @@ describe("recipe material vat cost", () => {
     });
     // 100 * 2 * 1.1 = 220
     expect(line).toBeCloseTo(220);
+  });
+});
+
+describe("per-material recipe steps", () => {
+  it("serializes named steps and drops blanks", () => {
+    expect(
+      serializeSteps(
+        [
+          { name: " Kesim ", station: "CNC", duration_min: "10" },
+          { name: "  ", station: "X", duration_min: 1 },
+          { name: "Montaj", station: "", duration_min: 0 },
+        ],
+        "Genel"
+      )
+    ).toEqual([
+      { no: 1, name: "Kesim", station: "CNC", duration_min: 10 },
+      { no: 2, name: "Montaj", station: "Genel", duration_min: 0 },
+    ]);
   });
 });
 

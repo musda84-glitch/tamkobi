@@ -595,6 +595,8 @@ class RecipeItem(BaseModel):
     wastage_percent: float = 0.0
     cost_includes_vat: bool = False  # True = girilen birim maliyet KDV dahil
     vat_rate: float = 20.0
+    # Kaleme özel atölye adımları — üretim emrinde sırayla iş emrine açılır
+    steps: List[Dict[str, Any]] = []  # [{no, name, station, duration_min}]
 
 class Recipe(BaseDocument):
     company_id: str

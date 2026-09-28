@@ -1,7 +1,9 @@
 """İş emri: istasyon + iş dosyası adı reçeteden kopyalanır / listede zenginleştirilir."""
 from production_work_orders import (
     enrich_work_order_row,
+    flatten_recipe_steps,
     recipe_job_fields,
+    work_order_step_label,
     work_order_trash_label,
     work_order_trash_note,
 )
@@ -15,6 +17,40 @@ def test_recipe_job_fields():
     }
     assert recipe_job_fields({}) == {"job_file_name": None, "recipe_name": None}
     assert recipe_job_fields(None) == {"job_file_name": None, "recipe_name": None}
+
+
+def test_flatten_recipe_steps_material_then_recipe():
+    recipe = {
+        "materials": [
+            {
+                "product_id": "m1",
+                "product_name": "MDF",
+                "steps": [{"no": 1, "name": "Kesim", "station": "CNC", "duration_min": 10}],
+            },
+            {
+                "product_id": "m2",
+                "product_name": "Medelak",
+                "steps": [
+                    {"no": 1, "name": "Kaplama", "station": "Pres", "duration_min": 15},
+                    {"no": 2, "name": "Kenar", "station": "Bant", "duration_min": 5},
+                ],
+            },
+            {"product_id": "m3", "product_name": "Vida", "steps": []},
+        ],
+        "steps": [{"no": 1, "name": "Montaj", "station": "Montaj", "duration_min": 20}],
+    }
+    flat = flatten_recipe_steps(recipe)
+    assert [s["name"] for s in flat] == ["Kesim", "Kaplama", "Kenar", "Montaj"]
+    assert flat[0]["material_name"] == "MDF"
+    assert flat[1]["material_product_id"] == "m2"
+    assert flat[3].get("material_name") is None
+    assert work_order_step_label(flat[1], 1) == "Kaplama — Medelak"
+    assert work_order_step_label(flat[3], 3) == "Montaj"
+
+
+def test_flatten_recipe_steps_default_uretim():
+    assert flatten_recipe_steps({}) == [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0}]
+    assert flatten_recipe_steps({"materials": [{"product_name": "X", "steps": []}], "steps": []})[0]["name"] == "Üretim"
 
 
 def test_enrich_work_order_row_fills_missing():

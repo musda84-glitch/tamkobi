@@ -1,5 +1,5 @@
 """Atölye iş emri yardımcıları — reçeteden istasyon / iş dosyası alanları."""
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 def recipe_job_fields(recipe: Optional[Dict[str, Any]] = None) -> Dict[str, Optional[str]]:
@@ -8,6 +8,58 @@ def recipe_job_fields(recipe: Optional[Dict[str, Any]] = None) -> Dict[str, Opti
     job = str(r.get("job_file_name") or "").strip() or None
     name = str(r.get("name") or "").strip() or None
     return {"job_file_name": job, "recipe_name": name}
+
+
+def _normalize_step(st: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(st, dict):
+        return None
+    name = str(st.get("name") or "").strip()
+    if not name:
+        return None
+    return {
+        "no": st.get("no", 0),
+        "name": name,
+        "station": str(st.get("station") or "").strip(),
+        "duration_min": st.get("duration_min", 0) or 0,
+    }
+
+
+def flatten_recipe_steps(recipe: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Kalem adımları (malzeme sırası) + reçete geneli adımlar; yoksa tek 'Üretim'."""
+    r = recipe or {}
+    out: List[Dict[str, Any]] = []
+    for mat in r.get("materials") or []:
+        if not isinstance(mat, dict):
+            continue
+        mat_steps = mat.get("steps") or []
+        if not mat_steps:
+            continue
+        mname = str(mat.get("product_name") or "").strip() or None
+        mid = str(mat.get("product_id") or "").strip() or None
+        for st in sorted(mat_steps, key=lambda x: (x or {}).get("no", 0) if isinstance(x, dict) else 0):
+            norm = _normalize_step(st)
+            if not norm:
+                continue
+            norm["material_name"] = mname
+            norm["material_product_id"] = mid
+            out.append(norm)
+    for st in sorted(r.get("steps") or [], key=lambda x: (x or {}).get("no", 0) if isinstance(x, dict) else 0):
+        norm = _normalize_step(st)
+        if norm:
+            out.append(norm)
+    if not out:
+        return [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0}]
+    for i, st in enumerate(out):
+        st["no"] = i + 1
+    return out
+
+
+def work_order_step_label(st: Optional[Dict[str, Any]] = None, idx: int = 0) -> str:
+    """İş emri başlığı: bölüm + varsa kalem adı."""
+    s = st or {}
+    base = str(s.get("name") or f"Adım {idx + 1}").strip() or f"Adım {idx + 1}"
+    mname = str(s.get("material_name") or "").strip()
+    return f"{base} — {mname}" if mname else base
 
 
 def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
