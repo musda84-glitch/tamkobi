@@ -47,6 +47,11 @@ export function personelCanManageCompany(user) {
   return !isPersonelRole(user);
 }
 
+/** Header / radial ERP kısayolları (fatura, barkod, virman, arama). */
+export function personelCanUseErpShortcuts(user) {
+  return !isPersonelRole(user);
+}
+
 /** Mobil özet: personel kartı bağlıysa ciro/kâr kartları gizlenir. */
 export function showHomeFinanceSummary(user) {
   if (isPersonelRole(user)) return false;

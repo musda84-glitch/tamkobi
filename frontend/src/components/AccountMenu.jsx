@@ -65,21 +65,34 @@ export const AccountMenu = () => {
   const canAdmin = canManageCo && (!user?.role || user.role === "admin" || user?.is_super_admin);
   const salesOn = canManageCo && !!license?.gib_credits_sales;
   const multiCompany = mine.length > 1;
+  // Personel + tek şirket: mobildeki gibi hesap yönetimi yok — yalnız firma adı
+  const staffStatic = staffOnly && !multiCompany;
   return (
     <div className="px-3.5 py-3 border-b border-slate-800/60 relative" ref={box} data-testid="account-menu">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full bg-slate-800/80 hover:bg-slate-800 px-3 py-2 rounded-lg text-left flex items-center justify-between border border-slate-700/50 transition text-xs"
-        data-testid="company-switcher-dropdown"
-      >
-        <div className="truncate pr-2 min-w-0">
-          <div className="text-[10px] uppercase font-semibold text-emerald-400/80 tracking-wider">Hesap</div>
-          <div className="font-medium text-white truncate">{activeCompany?.name || "Şirket seçin"}</div>
+      {staffStatic ? (
+        <div
+          className="w-full bg-slate-800/80 px-3 py-2 rounded-lg text-left border border-slate-700/50 text-xs"
+          data-testid="company-switcher-static"
+          title={activeCompany?.name || "Şirket"}
+        >
+          <div className="text-[10px] uppercase font-semibold text-emerald-400/80 tracking-wider">Firma</div>
+          <div className="font-medium text-white truncate">{activeCompany?.name || "Şirket"}</div>
         </div>
-        <ChevronDown className={`w-4 h-4 text-slate-400 flex-shrink-0 transition ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && (
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="w-full bg-slate-800/80 hover:bg-slate-800 px-3 py-2 rounded-lg text-left flex items-center justify-between border border-slate-700/50 transition text-xs"
+          data-testid="company-switcher-dropdown"
+        >
+          <div className="truncate pr-2 min-w-0">
+            <div className="text-[10px] uppercase font-semibold text-emerald-400/80 tracking-wider">{staffOnly ? "Firma" : "Hesap"}</div>
+            <div className="font-medium text-white truncate">{activeCompany?.name || "Şirket seçin"}</div>
+          </div>
+          <ChevronDown className={`w-4 h-4 text-slate-400 flex-shrink-0 transition ${open ? "rotate-180" : ""}`} />
+        </button>
+      )}
+      {open && !staffStatic && (
         <div className="absolute top-[4.5rem] left-3 right-3 bg-slate-800 border border-slate-700 rounded-xl shadow-xl py-1 z-50 text-xs" data-testid="account-menu-panel">
           {(!staffOnly || multiCompany) ? (
             <>

@@ -5,6 +5,7 @@ import { Search, UserPlus, ShoppingBag, Users, Package, Receipt, FileText } from
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ContactForm } from "./ContactForm";
 import { fmtMoney } from "../utils/money";
+import { personelCanUseErpShortcuts, personelMenuPathAllowed } from "../utils/selfPersonnelNav";
 
 const money = (n, c = "TRY") => fmtMoney(n, c);
 
@@ -43,13 +44,14 @@ export const GlobalSearch = ({ companyId, className = "" }) => {
 };
 
 export const HeaderQuickActions = ({ companyId }) => {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const navigate = useNavigate();
   const [newContact, setNewContact] = useState(false);
+  if (!personelCanUseErpShortcuts(user)) return null;
   return (
     <div className="flex items-center gap-2">
-      {can("/contacts", "edit") && <button type="button" onClick={() => setNewContact(true)} className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition" title="Yeni cari aç" data-testid="quick-new-contact-btn"><UserPlus className="w-4 h-4 md:w-3.5 md:h-3.5 text-blue-600" /><span className="hidden md:inline">Yeni Cari</span></button>}
-      {can("/orders", "edit") && <button type="button" onClick={() => navigate("/orders?new=1")} className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition" title="Yeni sipariş" data-testid="quick-new-order-btn"><FileText className="w-4 h-4 md:w-3.5 md:h-3.5 text-amber-600" /><span className="hidden md:inline">Yeni Sipariş</span></button>}
+      {can("/contacts", "edit") && personelMenuPathAllowed("/contacts", user) && <button type="button" onClick={() => setNewContact(true)} className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition" title="Yeni cari aç" data-testid="quick-new-contact-btn"><UserPlus className="w-4 h-4 md:w-3.5 md:h-3.5 text-blue-600" /><span className="hidden md:inline">Yeni Cari</span></button>}
+      {can("/orders", "edit") && personelMenuPathAllowed("/orders", user) && <button type="button" onClick={() => navigate("/orders?new=1")} className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition" title="Yeni sipariş" data-testid="quick-new-order-btn"><FileText className="w-4 h-4 md:w-3.5 md:h-3.5 text-amber-600" /><span className="hidden md:inline">Yeni Sipariş</span></button>}
       {newContact && <ContactForm companyId={companyId} onClose={() => setNewContact(false)} onSaved={(c) => { setNewContact(false); navigate(`/contacts?contact_id=${c.id}`); }} />}
     </div>
   );

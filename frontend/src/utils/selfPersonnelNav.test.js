@@ -4,6 +4,7 @@ import {
   isSelfPersonnelPath,
   personelAccountTabs,
   personelCanManageCompany,
+  personelCanUseErpShortcuts,
   personelMenuPathAllowed,
   selfPersonnelNavAllowed,
   showHomeFinanceSummary,
@@ -49,6 +50,8 @@ describe("selfPersonnelNav", () => {
     const p = { role: "personel", employee_id: "e1" };
     expect(personelCanManageCompany(p)).toBe(false);
     expect(personelCanManageCompany({ role: "admin" })).toBe(true);
+    expect(personelCanUseErpShortcuts(p)).toBe(false);
+    expect(personelCanUseErpShortcuts({ role: "admin" })).toBe(true);
     expect(showHomeFinanceSummary(p)).toBe(false);
     expect(showHomeFinanceSummary({ role: "sales", employee_id: "e2" })).toBe(false);
     expect(showHomeFinanceSummary({ role: "admin" })).toBe(true);
