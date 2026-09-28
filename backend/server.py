@@ -1886,16 +1886,46 @@ def _normalize_radius_m(raw, default: int = 300) -> Optional[int]:
     return min(5000, n)
 
 
+async def _project_recipe_fields(req: Dict[str, Any], company_id: Optional[str] = None) -> Dict[str, Any]:
+    """Proje ↔ sabit üretim reçetesi: adım anlık görüntüsü + müşteri görünürlüğü."""
+    out: Dict[str, Any] = {}
+    if "show_production_steps" in req:
+        out["show_production_steps"] = bool(req.get("show_production_steps"))
+    if "recipe_id" not in req:
+        return out
+    rid = str(req.get("recipe_id") or "").strip()
+    if not rid:
+        out.update({"recipe_id": None, "recipe_name": None, "production_steps": []})
+        return out
+    recipe = await db.recipes.find_one({"_id": rid})
+    if not recipe:
+        raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
+    if company_id and recipe.get("company_id") and recipe.get("company_id") != company_id:
+        raise HTTPException(status_code=400, detail="Reçete bu firmaya ait değil.")
+    if recipe.get("one_time"):
+        raise HTTPException(status_code=400, detail="Tek seferlik reçete projeye bağlanamaz; sabit üretim reçetesi seçin.")
+    out["recipe_id"] = recipe["_id"]
+    out["recipe_name"] = recipe.get("name") or recipe.get("code") or "Reçete"
+    out["production_steps"] = pwo.customer_recipe_steps(recipe)
+    return out
+
+
 @api_router.post("/projects")
 async def create_project(req: Dict[str, Any]):
     track_token = uuid.uuid4().hex
     radius = _normalize_radius_m(req.get("radius_m"))
-    doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "project_number": await _next_number("PRJ", db.projects), "name": req.get("name"),
+    company_id = req.get("company_id", "comp_nexus_main_01")
+    recipe_fields = await _project_recipe_fields(req, company_id)
+    doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "project_number": await _next_number("PRJ", db.projects), "name": req.get("name"),
            "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"), "status": req.get("status", "planning"), "budget": float(req.get("budget", 0) or 0),
            "start_date": req.get("start_date"), "end_date": req.get("end_date"), "description": req.get("description", ""), "address": req.get("address", ""),
            "latitude": req.get("latitude"), "longitude": req.get("longitude"), "location_url": req.get("location_url"),
            "radius_m": radius if radius is not None else 300,
            "images": [], "stage_photos": [], "tasks": req.get("tasks", []),
+           "recipe_id": recipe_fields.get("recipe_id"),
+           "recipe_name": recipe_fields.get("recipe_name"),
+           "production_steps": recipe_fields.get("production_steps") or [],
+           "show_production_steps": bool(recipe_fields.get("show_production_steps", False)),
            "tracking": {"token": track_token, "link": f"/proje/{track_token}", "sent_count": 0, "view_count": 0},
            "created_at": datetime.now(timezone.utc).isoformat()}
     if not doc["name"]:
@@ -1923,6 +1953,14 @@ async def update_project(project_id: str, req: Dict[str, Any]):
     if isinstance(allowed.get("tasks"), list) and not req.get("replace_assignees"):
         import work_parks as wp
         allowed["tasks"] = wp.preserve_other_assignees(prev.get("tasks") or [], allowed["tasks"])
+    recipe_fields = await _project_recipe_fields(req, prev.get("company_id"))
+    allowed.update(recipe_fields)
+    # Reçete bağlı kaldıysa ve adımlar boşsa / yenile isteniyorsa senkronize et
+    if req.get("refresh_production_steps") and prev.get("recipe_id") and "recipe_id" not in req:
+        recipe = await db.recipes.find_one({"_id": prev["recipe_id"]})
+        if recipe:
+            allowed["recipe_name"] = recipe.get("name") or recipe.get("code") or prev.get("recipe_name")
+            allowed["production_steps"] = pwo.customer_recipe_steps(recipe)
     await db.projects.update_one({"_id": project_id}, {"$set": allowed})
     p = await db.projects.find_one({"_id": project_id})
     if not p:
@@ -2041,7 +2079,7 @@ def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: Lis
     stage_groups = project_photos.group_stage_photos(
         p.get("stage_photos"), p.get("images"), ps.normalize_project_stages((company or {}).get("project_stages")),
     )
-    return {
+    view = {
         "project_number": p.get("project_number"),
         "name": p.get("name"),
         "contact_name": p.get("contact_name"),
@@ -2062,6 +2100,21 @@ def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: Lis
                     "address": company.get("address"), "city": company.get("city"), "logo_url": company.get("logo_url")},
         "created_at": p.get("created_at"),
     }
+    if p.get("show_production_steps") and (p.get("production_steps") or []):
+        view["production_steps"] = [
+            {
+                "no": int(s.get("no") or i + 1),
+                "name": str(s.get("name") or "").strip(),
+                "station": str(s.get("station") or "").strip(),
+                **({"note": str(s.get("note")).strip()} if str(s.get("note") or "").strip() else {}),
+                **({"material_name": str(s.get("material_name")).strip()} if str(s.get("material_name") or "").strip() else {}),
+            }
+            for i, s in enumerate(p.get("production_steps") or [])
+            if isinstance(s, dict) and str(s.get("name") or "").strip()
+        ]
+        if p.get("recipe_name"):
+            view["recipe_name"] = p.get("recipe_name")
+    return view
 
 
 async def _send_customer_link(company_id: str, channels: List[str], phone: Optional[str], email: Optional[str],
