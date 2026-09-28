@@ -52,7 +52,7 @@ from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
 import demo
-from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test
+from ai_service import get_financial_ai_advice, get_production_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test
 from cheque_extract import extract_cheque_file, public_cheque_match, session_token_from_headers
 from expense_extract import extract_expense_file, public_expense_match
 from receipt_extract import extract_receipt_file
@@ -84,6 +84,7 @@ import fx
 import attendance
 import production_work_orders as pwo
 import work_order_trash_requests as wo_trash_req
+import shopfloor_pause as sfp
 import location_consent
 import personnel_wage
 import trash
@@ -3817,16 +3818,8 @@ async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
         await db.b2b_product_aliases.update_many({"company_id": company_id, "alias": {"$in": used_aliases}}, {"$inc": {"hits": 1}})
     return items, unmatched
 
-@api_router.post("/public/b2b/{token}/ai-cart")
-async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
-    c = await _b2b_contact(token)
-    b2b_st = resolve_b2b_settings(await db.companies.find_one({"_id": c["company_id"]}, {"b2b_settings": 1}) or {}, c)
-    if b2b_st.get("allow_ai_cart") is False:
-        raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
-    import addons as _addons
-    if not await _addons.is_on(c["company_id"], "ai.b2b_cart"):
-        raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
-    data = await file.read()
+async def _ai_cart_parse_upload(company_id: str, file: UploadFile, data: bytes) -> Dict[str, Any]:
+    """Excel/PDF/CSV sipariş listesi → eşleşen/eşleşmeyen kalemler (B2B + panel ortak)."""
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
     fname = (file.filename or "").lower()
@@ -3838,21 +3831,18 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
     parsed_items: list = []
     parse_mode = "table"
     ai_error = None
-    # Excel/CSV: önce AI’sız tablo okuma (ürün/kod + adet). AI anahtarı kırık olsa bile çalışır.
-    # Uzantı boş/yanlış olsa da ZIP(PK) içeriği xlsx olarak denenir.
     try:
         parsed_items = _b2b_parse_cart_table(file.filename, data)
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("B2B cart table parse failed: %s", e)
+        logger.warning("AI cart table parse failed: %s", e)
         parsed_items = []
     if not parsed_items:
         text = await _file_to_text(file, data)
         if len(text.strip()) < 10:
             raise HTTPException(status_code=400, detail="Dosyada okunabilir metin bulunamadı (taranmış PDF olabilir).")
         try:
-            # B2B: fiyat/tutar okunmaz; yalnız ürün kimliği + adet. Katalog fiyatı geçerli.
             parsed = await ai_service_extract_b2b_cart(text)
             parsed_items = list(parsed.get("items") or [])
             parse_mode = "ai"
@@ -3863,10 +3853,10 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
             if not parsed_items:
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Sipariş listesi okunamadı. Excel’de Ürün/Kod/EAN + Adet (veya Stok Miktarı/Talep) sütunları kullanın; fiyat sütunları yok sayılır, B2B katalog fiyatı uygulanır. AI anahtarını da kontrol edin. ({ai_error})",
+                    detail=f"Sipariş listesi okunamadı. Excel’de Ürün/Kod/EAN + Adet (veya Stok Miktarı/Talep) sütunları kullanın; fiyat sütunları yok sayılır, katalog fiyatı uygulanır. AI anahtarını da kontrol edin. ({ai_error})",
                 )
     parsed_items = _b2b_sanitize_cart_lines(parsed_items)
-    items, unmatched = await _b2b_match_cart_items(c["company_id"], parsed_items)
+    items, unmatched = await _b2b_match_cart_items(company_id, parsed_items)
     return {
         "filename": file.filename,
         "items": items,
@@ -3874,6 +3864,56 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
         "total_lines": len(items) + len(unmatched),
         "parse_mode": parse_mode,
     }
+
+
+async def _ai_cart_learn_mappings(company_id: str, mappings: list, contact_id: Optional[str] = None) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    saved = []
+    for m in mappings or []:
+        alias = _alias_key(m.get("alias") or m.get("requested") or "")
+        pid = m.get("product_id")
+        if not alias or not pid:
+            continue
+        p = await db.products.find_one({"_id": pid, "company_id": company_id})
+        if not p:
+            continue
+        patch = {
+            "product_id": pid,
+            "product_name": p.get("name"),
+            "alias_raw": m.get("alias") or m.get("requested"),
+            "updated_at": now,
+        }
+        if contact_id:
+            patch["contact_id"] = contact_id
+        await db.b2b_product_aliases.update_one(
+            {"company_id": company_id, "alias": alias},
+            {
+                "$set": patch,
+                "$setOnInsert": {
+                    "_id": f"als_{uuid.uuid4().hex[:12]}",
+                    "company_id": company_id,
+                    "alias": alias,
+                    "created_at": now,
+                    "hits": 0,
+                },
+            },
+            upsert=True,
+        )
+        saved.append({"alias": alias, "product_id": pid, "product_name": p.get("name")})
+    return {"saved": saved, "count": len(saved)}
+
+
+@api_router.post("/public/b2b/{token}/ai-cart")
+async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
+    c = await _b2b_contact(token)
+    b2b_st = resolve_b2b_settings(await db.companies.find_one({"_id": c["company_id"]}, {"b2b_settings": 1}) or {}, c)
+    if b2b_st.get("allow_ai_cart") is False:
+        raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
+    import addons as _addons
+    if not await _addons.is_on(c["company_id"], "ai.b2b_cart"):
+        raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
+    data = await file.read()
+    return await _ai_cart_parse_upload(c["company_id"], file, data)
 
 
 @api_router.post("/public/b2b/{token}/ai-cart/match")
@@ -3890,24 +3930,21 @@ async def b2b_ai_cart_learn(token: str, req: Dict[str, Any]):
     c = await _b2b_contact(token)
     import addons as _addons
     await _addons.require(c["company_id"], "ai.b2b_cart")
-    now = datetime.now(timezone.utc).isoformat()
-    saved = []
-    for m in (req.get("mappings") or []):
-        alias = _alias_key(m.get("alias") or m.get("requested") or "")
-        pid = m.get("product_id")
-        if not alias or not pid:
-            continue
-        p = await db.products.find_one({"_id": pid, "company_id": c["company_id"]})
-        if not p:
-            continue
-        await db.b2b_product_aliases.update_one(
-            {"company_id": c["company_id"], "alias": alias},
-            {"$set": {"product_id": pid, "product_name": p.get("name"), "alias_raw": m.get("alias") or m.get("requested"), "contact_id": c["_id"], "updated_at": now},
-             "$setOnInsert": {"_id": f"als_{uuid.uuid4().hex[:12]}", "company_id": c["company_id"], "alias": alias, "created_at": now, "hits": 0}},
-            upsert=True,
-        )
-        saved.append({"alias": alias, "product_id": pid, "product_name": p.get("name")})
-    return {"saved": saved, "count": len(saved)}
+    return await _ai_cart_learn_mappings(c["company_id"], req.get("mappings") or [], contact_id=c["_id"])
+
+
+@api_router.post("/ai/cart-extract")
+async def ai_cart_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):
+    """Panel Yeni Sipariş: Excel/PDF liste → stok eşleşmeli kalemler (B2B AI sepet ile aynı motor)."""
+    data = await file.read()
+    return await _ai_cart_parse_upload(company_id, file, data)
+
+
+@api_router.post("/ai/cart-learn")
+async def ai_cart_learn(req: Dict[str, Any]):
+    """Panel: kullanıcı eşlemelerini sonraki yüklemeler için hatırla."""
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    return await _ai_cart_learn_mappings(company_id, req.get("mappings") or [])
 
 def _b2b_gross(amount, vat_rate, includes_vat) -> float:
     n = round(float(amount or 0), 2)
@@ -13290,14 +13327,54 @@ async def start_work_order(wo_id: str, req: Dict[str, Any] = None):
     await db.production_orders.update_one({"_id": w["order_id"], "status": "planned"}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
     return {"status": "success", "message": f"{w['step_name']} başlatıldı."}
 
+async def _shopfloor_pause_policy(company_id: str, operator_name: Optional[str] = None) -> Dict[str, Any]:
+    """Operatör adına göre mesai/mola/OT Duraklat politikası."""
+    name = str(operator_name or "").strip()
+    if not name:
+        return {
+            "allowed": False,
+            "phase": "outside",
+            "reason": sfp.PAUSE_NO_OPERATOR_DETAIL,
+            "operator_name": None,
+        }
+    company = await db.companies.find_one({"_id": company_id}) or {}
+    emp = await db.employees.find_one({"company_id": company_id, "full_name": name, "status": "active"})
+    if not emp:
+        emp = await db.employees.find_one({"company_id": company_id, "full_name": name})
+    if emp:
+        policy = await sfp.pause_policy_for_employee(emp, company)
+    else:
+        # Personel kartı yoksa (eski operatör adı) firma mesai penceresine göre karar ver.
+        policy = sfp.resolve_pause_phase(schedule=attendance.merge_schedule(company))
+    policy["operator_name"] = name
+    policy["employee_id"] = (emp or {}).get("_id")
+    return policy
+
+
+@api_router.get("/production/work-orders/pause-policy")
+async def get_pause_policy(company_id: Optional[str] = "comp_nexus_main_01", operator_name: Optional[str] = None):
+    """Atölye Duraklat: mesai / mola / fazla mesai penceresi."""
+    return await _shopfloor_pause_policy(company_id, operator_name)
+
+
 @api_router.post("/production/work-orders/{wo_id}/pause")
 async def pause_work_order(wo_id: str, req: Dict[str, Any] = None):
     req = req or {}
     w = await _wo(wo_id)
     if w["status"] != "in_progress":
         raise HTTPException(status_code=400, detail="Sadece devam eden adım duraklatılabilir.")
-    await db.work_orders.update_one({"_id": wo_id}, {"$set": {"status": "paused", "paused_at": datetime.now(timezone.utc).isoformat()}, "$push": {"logs": _log(w, "pause", req.get("operator_name"), req.get("reason", ""))}})
-    return {"status": "success", "message": "Adım duraklatıldı."}
+    who = str(req.get("operator_name") or w.get("operator_name") or "").strip()
+    policy = await _shopfloor_pause_policy(w.get("company_id") or "comp_nexus_main_01", who)
+    if not policy.get("allowed"):
+        raise HTTPException(status_code=400, detail=policy.get("reason") or sfp.PAUSE_OUTSIDE_DETAIL)
+    await db.work_orders.update_one(
+        {"_id": wo_id},
+        {
+            "$set": {"status": "paused", "paused_at": datetime.now(timezone.utc).isoformat(), "auto_paused": False},
+            "$push": {"logs": _log(w, "pause", who, req.get("reason", ""))},
+        },
+    )
+    return {"status": "success", "message": "Adım duraklatıldı.", "pause_phase": policy.get("phase")}
 
 @api_router.post("/production/work-orders/{wo_id}/finish")
 async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
@@ -15282,6 +15359,95 @@ async def ask_financial_ai(req: AIChatRequest):
 
     advice = await get_financial_ai_advice(context, req.message)
     return {"advice": advice, "metrics": context}
+
+
+async def _production_ai_context(company_id: str) -> Dict[str, Any]:
+    company = await db.companies.find_one({"_id": company_id}, {"name": 1})
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    open_n, in_prod, done_month, recipes_n, missing_n = await asyncio.gather(
+        db.production_orders.count_documents({"company_id": company_id, "status": {"$in": ["planned", "in_production"]}}),
+        db.production_orders.count_documents({"company_id": company_id, "status": "in_production"}),
+        db.production_orders.count_documents({"company_id": company_id, "status": "completed", "end_date": {"$regex": f"^{month}"}}),
+        db.recipes.count_documents({"company_id": company_id}),
+        db.notifications.count_documents({"company_id": company_id, "type": "order_pick_missing", "is_read": False}),
+    )
+    open_wo = await db.work_orders.count_documents({"company_id": company_id, "status": {"$in": ["ready", "in_progress", "queued"]}})
+    paused_wo = await db.work_orders.count_documents({"company_id": company_id, "status": "paused"})
+    done_wo = await db.work_orders.count_documents({"company_id": company_id, "status": "done"})
+    recipes = await db.recipes.find(
+        {"company_id": company_id},
+        {"name": 1, "finished_product_name": 1, "materials": 1, "steps": 1, "unit_cost": 1, "total_cost": 1},
+    ).to_list(40)
+    pos = await db.production_orders.find(
+        {"company_id": company_id, "status": {"$in": ["planned", "in_production"]}},
+        {"order_code": 1, "finished_product_name": 1, "planned_quantity": 1, "status": 1, "shortages": 1, "recipe_name": 1},
+    ).to_list(40)
+    wos = await db.work_orders.find(
+        {"company_id": company_id, "status": {"$in": ["ready", "in_progress", "paused", "queued"]}},
+        {"step_name": 1, "station": 1, "status": 1, "finished_product_name": 1, "operator_name": 1},
+    ).to_list(40)
+    return {
+        "company_id": company_id,
+        "company_name": (company or {}).get("name") or "TamKobi",
+        "recipes": recipes_n,
+        "open_orders": open_n,
+        "in_production": in_prod,
+        "completed_this_month": done_month,
+        "missing_notifications": missing_n,
+        "open_work_orders": open_wo,
+        "paused_work_orders": paused_wo,
+        "done_work_orders_recent": done_wo,
+        "recipes_sample": [
+            {
+                "name": r.get("name"),
+                "finished_product_name": r.get("finished_product_name"),
+                "material_count": len(r.get("materials") or []),
+                "step_count": len(r.get("steps") or []),
+                "unit_cost": r.get("unit_cost") or r.get("total_cost"),
+            }
+            for r in recipes[:12]
+        ],
+        "open_orders_sample": [
+            {
+                "order_code": o.get("order_code"),
+                "finished_product_name": o.get("finished_product_name") or o.get("recipe_name"),
+                "planned_quantity": o.get("planned_quantity"),
+                "status": o.get("status"),
+                "has_shortages": bool(o.get("shortages")),
+            }
+            for o in pos[:15]
+        ],
+        "work_orders_sample": [
+            {
+                "step_name": w.get("step_name"),
+                "station": w.get("station"),
+                "status": w.get("status"),
+                "finished_product_name": w.get("finished_product_name"),
+                "operator_name": w.get("operator_name"),
+            }
+            for w in wos[:15]
+        ],
+    }
+
+
+@api_router.get("/ai/production-summary")
+async def ai_production_summary(company_id: Optional[str] = "comp_nexus_main_01"):
+    """Yönetici için üretim+reçete AI özeti (şirket bazlı ai.production eklentisi)."""
+    context = await _production_ai_context(company_id)
+    advice = await get_production_ai_advice(
+        context,
+        "Güncel üretim ve reçete durumunu yönetici için özetle; öncelikli aksiyonları madde madde yaz.",
+    )
+    metrics = {k: v for k, v in context.items() if not k.endswith("_sample")}
+    return {"advice": advice, "metrics": metrics}
+
+
+@api_router.post("/ai/production-advisor")
+async def ask_production_ai(req: AIChatRequest):
+    context = await _production_ai_context(req.company_id or "comp_nexus_main_01")
+    advice = await get_production_ai_advice(context, req.message or "Üretim durumunu yorumla.")
+    metrics = {k: v for k, v in context.items() if not k.endswith("_sample")}
+    return {"advice": advice, "metrics": metrics}
 
 @api_router.get("/ai/status")
 async def get_ai_status():

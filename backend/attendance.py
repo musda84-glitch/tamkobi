@@ -4313,6 +4313,11 @@ async def watcher_loop(interval_s: int = 60):
             await run_auto_checkout_ot_check()
         except Exception:
             pass
+        try:
+            import shopfloor_pause as sfp
+            await sfp.run_auto_pause_work_orders()
+        except Exception:
+            pass
         await asyncio.sleep(interval_s)
 
 
@@ -4325,7 +4330,12 @@ async def run_alerts_now(request: Request, company_id: Optional[str] = "comp_nex
         raise HTTPException(status_code=404, detail="Firma bulunamadı.")
     missing = await run_missing_checkin_check(company_id, force=force)
     auto_ot = await run_auto_checkout_ot_check(company_id)
-    return {"status": "success", "results": missing, "auto_checkout": auto_ot}
+    try:
+        import shopfloor_pause as sfp
+        auto_pause = await sfp.run_auto_pause_work_orders(company_id)
+    except Exception:
+        auto_pause = []
+    return {"status": "success", "results": missing, "auto_checkout": auto_ot, "auto_pause": auto_pause}
 
 
 @router.get("/personnel/overtime-preview")

@@ -6,6 +6,7 @@ import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
 import { descendantIds, sortCompanyTree } from "../../utils/companyTree";
 import { backdropDismissProps } from "../../utils/modalBackdrop";
+import { AddonToggles } from "./AddonsPanel";
 
 const cred = { withCredentials: true };
 
@@ -37,6 +38,22 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
   };
   const extend = async (days) => { setBusy("ext"); try { await axios.put(`${API_URL}/system/companies/${companyId}/license`, { extend_days: days }, cred); toast.success(`${days} gün uzatıldı.`); await load(); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Uzatılamadı."); } finally { setBusy(""); } };
   const toggle = async (key, enabled) => { setBusy(key); try { const r = await axios.post(`${API_URL}/system/companies/${companyId}/modules${key}`, { enabled }, cred); setD({ ...d, license: r.data }); onChanged(); } catch (e) { toast.error(e.response?.data?.detail || "Modül değiştirilemedi."); } finally { setBusy(""); } };
+  const toggleAddon = async (key, enabled) => {
+    setBusy(key);
+    try {
+      const r = await axios.post(`${API_URL}/system/companies/${companyId}/addons/${key}`, { enabled }, cred);
+      setD({ ...d, license: r.data });
+      onChanged();
+    } catch (e) { toast.error(e.response?.data?.detail || "Araç değiştirilemedi."); } finally { setBusy(""); }
+  };
+  const inheritAddon = async (key) => {
+    setBusy(key);
+    try {
+      const r = await axios.post(`${API_URL}/system/companies/${companyId}/addons/${key}`, { inherit: true }, cred);
+      setD({ ...d, license: r.data });
+      onChanged();
+    } catch (e) { toast.error(e.response?.data?.detail || "Varsayılana dönülemedi."); } finally { setBusy(""); }
+  };
   const siblings = d.license_companies || [];
   const siblingTree = sortCompanyTree(siblings.map((c) => ({ ...c, created_at: c.created_at || "", is_primary: !!c.primary })));
   const blocked = descendantIds(companies.length ? companies : siblings, companyId);
@@ -176,6 +193,8 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
             </div>
             {lic.days_left !== null && lic.days_left !== undefined && <div className={`rounded-lg px-3 py-2 ${lic.days_left <= 7 ? "bg-amber-50 text-amber-800" : "bg-slate-50 text-slate-600"}`}>Bitiş: {fmtDate(lic.trial_ends_at || lic.expires_at)} · <b>{lic.days_left} gün</b> kaldı</div>}
           </section>
+
+          <AddonToggles license={lic} busy={busy} onToggle={toggleAddon} onInherit={inheritAddon} />
 
           <section className="bg-white border border-slate-200 rounded-2xl p-4">
             <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-slate-900 text-sm">Modüller <span className="text-slate-400 font-normal">({lic.enabled_count}/{lic.total_count} aktif)</span></h3>{lic.locked && <span className="text-rose-600 font-semibold flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Lisans {lic.status_label.toLowerCase()} — tüm modüller kilitli</span>}</div>

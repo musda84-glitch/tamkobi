@@ -37,16 +37,26 @@ export function workOrderFinishPlan(w) {
 }
 
 /** Atölye kartı aksiyonları — durum → hangi butonlar. */
-export function shopFloorCardActions(status) {
+export function shopFloorCardActions(status, pauseAllowed = true) {
   const s = String(status || "").trim().toLowerCase();
-  if (s === "ready") return { start: true, pause: false, resume: false, finish: false };
+  if (s === "ready") return { start: true, pause: false, pauseEnabled: false, resume: false, finish: false };
   if (s === "in_progress" || s === "running" || s === "active") {
-    return { start: false, pause: true, resume: false, finish: true };
+    return { start: false, pause: true, pauseEnabled: !!pauseAllowed, resume: false, finish: true };
   }
   if (s === "paused" || s === "pause") {
-    return { start: false, pause: false, resume: true, finish: true };
+    return { start: false, pause: false, pauseEnabled: false, resume: true, finish: true };
   }
-  return { start: false, pause: false, resume: false, finish: false };
+  return { start: false, pause: false, pauseEnabled: false, resume: false, finish: false };
+}
+
+/** Duraklat politikası faz etiketi (mesai / mola / OT). */
+export function shopFloorPausePhaseLabel(phase) {
+  const p = String(phase || "").trim().toLowerCase();
+  if (p === "mesai") return "Mesai";
+  if (p === "mola") return "Mola";
+  if (p === "fazla_mesai") return "Fazla mesai";
+  if (p === "tolerans") return "Mesai bitiş toleransı";
+  return "Mesai dışı";
 }
 
 export function shopFloorCardBorder(status) {

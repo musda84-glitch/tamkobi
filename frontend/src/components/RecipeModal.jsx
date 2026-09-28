@@ -10,7 +10,6 @@ import { normalizeWorkParks, normalizeWorkshopZones, stationNamesFromParks, zone
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { sameStationOrderHint } from "../utils/recipeStationOrder";
-import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
 
@@ -297,7 +296,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
   const zoneOptions = zones.length ? zones : [];
   const stationOptions = stations.length ? stations : [];
   return (
-    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
+    <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" data-testid="recipe-modal-backdrop">
       <div className="bg-white rounded-2xl max-w-3xl w-full p-5 space-y-4 text-xs shadow-2xl max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="recipe-modal">
         <div className="flex justify-between items-start border-b pb-2"><h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><BookOpen className="w-4 h-4 text-emerald-600" /> {recipe ? `Reçete Düzenle — ${recipe.code}` : "Yeni Reçete (Ürün Ağacı / BOM)"}</h3><button onClick={onClose} className="text-slate-400" data-testid="recipe-close"><X className="w-5 h-5" /></button></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -437,13 +436,13 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
                       </div>
                       <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" value={st.duration_min} onChange={(e) => updMatStep(i, si, { duration_min: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Hedef süre (dk)" /><span className="text-[10px] text-slate-400">dk</span></div>
                       <div className="col-span-1 text-right"><button type="button" onClick={() => removeMatStep(i, si)} className="text-rose-500 p-1" data-testid={`recipe-mat-${i}-step-del-${si}`}><Trash2 className="w-3.5 h-3.5" /></button></div>
-                      <div className="col-span-12 pl-7">
-                        <textarea
-                          rows={2}
+                      <div className="col-span-1" />
+                      <div className="col-span-5">
+                        <input
                           value={st.note || ""}
                           onChange={(e) => updMatStep(i, si, { note: e.target.value })}
                           placeholder="Atölyede iş dosyası yanında görünecek not / yazı…"
-                          className="w-full bg-white border rounded p-1.5 text-[11px] resize-y min-h-[2.25rem]"
+                          className="w-full bg-white border rounded p-1.5"
                           data-testid={`recipe-mat-${i}-step-note-${si}`}
                         />
                       </div>
@@ -501,13 +500,13 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
               </div>
               <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" value={st.duration_min} onChange={(e) => updStep(i, { duration_min: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Hedef süre (dk)" /><span className="text-[10px] text-slate-400">dk</span></div>
               <div className="col-span-1 text-right"><button onClick={() => setSteps(steps.filter((_, idx) => idx !== i))} className="text-rose-500 p-1"><Trash2 className="w-3.5 h-3.5" /></button></div>
-              <div className="col-span-12 pl-7">
-                <textarea
-                  rows={2}
+              <div className="col-span-1" />
+              <div className="col-span-5">
+                <input
                   value={st.note || ""}
                   onChange={(e) => updStep(i, { note: e.target.value })}
                   placeholder="Atölyede iş dosyası yanında görünecek not / yazı…"
-                  className="w-full bg-white border rounded p-1.5 text-[11px] resize-y min-h-[2.25rem]"
+                  className="w-full bg-white border rounded p-1.5"
                   data-testid={`recipe-step-note-${i}`}
                 />
               </div>

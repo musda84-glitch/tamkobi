@@ -13,18 +13,22 @@ import { fmtDate, idOf } from "../utils/money";
 import type { Employee } from "../utils/personnel";
 import {
   employeeLabel,
+  finishOverPlan,
   finishQtyError,
   groupWorkOrdersByStation,
   mergeSelfEmployee,
   partitionWorkOrders,
   readyCount,
   runningCount,
+  shopFloorCardBorder,
+  shopFloorPausePhaseLabel,
   shopFloorStationSections,
   todayDoneCount,
   woCardKey,
   workOrderFinishPlan,
   woStatusTone,
   woStatusTr,
+  type PausePolicy,
   type WorkOrder,
 } from "../utils/shopFloor";
 import { stationNamesFromParks } from "../utils/workParks";
@@ -34,6 +38,8 @@ function WoCard({
   operator,
   busy,
   baseUrl,
+  pauseAllowed,
+  pauseHint,
   onStart,
   onPause,
   onFinish,
@@ -43,18 +49,20 @@ function WoCard({
   operator: string;
   busy: boolean;
   baseUrl: string;
+  pauseAllowed?: boolean;
+  pauseHint?: string;
   onStart: () => void;
   onPause: () => void;
   onFinish: () => void;
   onTrash?: () => void;
 }) {
   const key = woCardKey(w);
-  const border =
-    w.status === "in_progress" ? "#F59E0B" : w.status === "ready" ? "#C7D2FE" : colors.border;
+  const border = shopFloorCardBorder(w.status);
+  const borderWide = w.status === "in_progress" || w.status === "paused";
   const who = w.operator_name || w.assigned_name;
   const imgs = (w.images || []).map((u) => resolveMediaUrl(baseUrl, u)).filter(Boolean).slice(0, 8);
   return (
-    <Card testID={`wo-card-${key}`} style={{ borderColor: border, borderWidth: w.status === "in_progress" ? 2 : 1 }}>
+    <Card testID={`wo-card-${key}`} style={{ borderColor: border, borderWidth: borderWide ? 2 : 1 }}>
       <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Muted>{[w.order_code, w.step_no != null ? `Adım ${w.step_no}/${w.step_count || w.step_no}` : null].filter(Boolean).join(" · ")}</Muted>
@@ -81,9 +89,12 @@ function WoCard({
           İş dosyası: <Text style={{ fontWeight: "700", color: colors.text }}>{w.job_file_name || "—"}</Text>
         </Text>
         {String(w.step_note || "").trim() ? (
-          <Text testID={`wo-step-note-${key}`} style={{ fontSize: 12, color: colors.muted }}>
-            Not: <Text style={{ fontWeight: "700", color: colors.text }}>{String(w.step_note).trim()}</Text>
-          </Text>
+          <View testID={`wo-step-note-${key}`} style={{ flexDirection: "row", alignItems: "flex-start", gap: 6, minWidth: 0 }}>
+            <Text style={{ fontSize: 12, color: colors.muted }}>Not:</Text>
+            <Text style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: "700", color: colors.text }}>
+              {String(w.step_note).trim()}
+            </Text>
+          </View>
         ) : null}
       </View>
       {(w.materials || []).length > 0 ? (
@@ -134,11 +145,14 @@ function WoCard({
             <PrimaryButton
               title={w.status === "paused" ? "Devam" : "Duraklat"}
               onPress={w.status === "paused" ? onStart : onPause}
-              disabled={!operator || busy}
+              disabled={!operator || busy || (w.status === "in_progress" && pauseAllowed === false)}
               loading={busy}
               color={w.status === "paused" ? colors.primary : "#EA580C"}
               testID={w.status === "paused" ? `wo-resume-${key}` : `wo-pause-${key}`}
             />
+            {w.status === "in_progress" && pauseAllowed === false && pauseHint ? (
+              <Muted>{pauseHint}</Muted>
+            ) : null}
           </View>
           <View style={{ flex: 1 }}>
             <PrimaryButton title="Bitir" onPress={onFinish} disabled={!operator || busy} color={colors.secondary} testID={`wo-finish-${key}`} />
@@ -184,6 +198,23 @@ export function AtolyeScreen() {
   const [showArchivedDuties, setShowArchivedDuties] = useState(false);
   const [groupSameStation, setGroupSameStation] = useState(false);
   const [groupBusy, setGroupBusy] = useState(false);
+  const [pausePolicy, setPausePolicy] = useState<PausePolicy>({ allowed: true, phase: "mesai" });
+
+  const loadPausePolicy = useCallback(async (opName: string) => {
+    if (!opName) {
+      setPausePolicy({ allowed: false, phase: "outside", reason: "Önce operatör seçin." });
+      return;
+    }
+    try {
+      const r = await get<PausePolicy>(client, "/production/work-orders/pause-policy", {
+        company_id: companyId,
+        operator_name: opName,
+      });
+      setPausePolicy(r || { allowed: false, phase: "outside" });
+    } catch {
+      setPausePolicy({ allowed: true, phase: "mesai" });
+    }
+  }, [client, companyId]);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -212,7 +243,20 @@ export function AtolyeScreen() {
     }
   }, [client, companyId, station]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      load();
+      const t = setInterval(load, 15000);
+      return () => clearInterval(t);
+    }, [load])
+  );
+  useFocusEffect(
+    useCallback(() => {
+      loadPausePolicy(operator);
+      const t = setInterval(() => loadPausePolicy(operator), 60000);
+      return () => clearInterval(t);
+    }, [loadPausePolicy, operator])
+  );
 
   const requestOperator = (id: string) => {
     if (!id) {
@@ -257,6 +301,7 @@ export function AtolyeScreen() {
       setPendingEmp(null);
       setPin("");
       setNotice(`${name} olarak giriş yapıldı.`);
+      await loadPausePolicy(name);
     } catch (err) {
       setUnlockErr(apiErrorMessage(err, "Şifre doğrulanamadı."));
       setPin("");
@@ -299,15 +344,10 @@ export function AtolyeScreen() {
     const produced = Number(fin.produced_qty);
     const scrap = Number(fin.scrap_qty);
     const plan = workOrderFinishPlan(finishing);
-    // Hammadde adımında plan üstü serbest (web ile aynı); mamul adımında uyarı.
-    if (!plan.isMaterial) {
-      const qtyErr = finishQtyError(produced, scrap, plan.qty);
-      if (qtyErr) {
-        setError(qtyErr);
-        return;
-      }
-    } else if (!Number.isFinite(produced) || !Number.isFinite(scrap) || produced < 0 || scrap < 0) {
-      setError("Miktar negatif olamaz.");
+    // Web ile aynı: plan üstü serbest; yalnızca negatif miktar engellenir.
+    const qtyErr = finishQtyError(produced, scrap, plan.qty);
+    if (qtyErr) {
+      setError(qtyErr);
       return;
     }
     act(finishing, "finish", { produced_qty: produced, scrap_qty: scrap, notes: fin.notes });
@@ -504,6 +544,22 @@ export function AtolyeScreen() {
       ) : (
         <Muted testID="shopfloor-operator-name">{operator}{user?.employee_id === operatorId ? " · siz" : ""}</Muted>
       )}
+      {operator && pausePolicy?.allowed === false ? (
+        <Card testID="shopfloor-pause-blocked" style={{ backgroundColor: "#F1F5F9" }}>
+          <Text style={{ fontWeight: "700", color: colors.text }}>
+            Duraklat kapalı: {pausePolicy?.reason || "Mesai / mola / fazla mesai dışında."}
+            {pausePolicy?.deadline ? ` (otomatik: ${pausePolicy.deadline})` : ""}
+          </Text>
+        </Card>
+      ) : null}
+      {operator && pausePolicy?.allowed && pausePolicy?.phase && pausePolicy.phase !== "mesai" ? (
+        <Card testID="shopfloor-pause-phase" style={{ backgroundColor: "#FFF7ED" }}>
+          <Text style={{ fontWeight: "700", color: "#9A3412" }}>
+            Duraklat aktif — {shopFloorPausePhaseLabel(pausePolicy.phase)}
+            {pausePolicy.deadline ? ` · otomatik ${pausePolicy.deadline}` : ""}
+          </Text>
+        </Card>
+      ) : null}
       <ErrorBanner message={error} />
       {notice ? (
         <Card testID="shopfloor-notice" style={{ backgroundColor: colors.emerald50 }}>
@@ -568,6 +624,8 @@ export function AtolyeScreen() {
               operator={operator}
               busy={busyId === woCardKey(w)}
               baseUrl={baseUrl}
+              pauseAllowed={!!pausePolicy?.allowed}
+              pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
               onStart={() => act(w, "start")}
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}
@@ -587,6 +645,8 @@ export function AtolyeScreen() {
           operator={operator}
           busy={busyId === woCardKey(w)}
           baseUrl={baseUrl}
+          pauseAllowed={!!pausePolicy?.allowed}
+          pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
           onStart={() => act(w, "start")}
           onPause={() => act(w, "pause")}
           onFinish={() => openFinish(w)}
@@ -728,6 +788,18 @@ export function AtolyeScreen() {
                 />
               </View>
             </Row>
+            {finishing && (() => {
+              const plan = workOrderFinishPlan(finishing);
+              const over = finishOverPlan(Number(fin.produced_qty), Number(fin.scrap_qty || 0), plan.qty);
+              if (!over) return null;
+              return (
+                <Card testID="wo-finish-over-hint" style={{ backgroundColor: "#FFFBEB", borderColor: "#FDE68A" }}>
+                  <Muted>
+                    Plan üstü: {plan.qty} {plan.unit} planlandı, siz {Number(fin.produced_qty) + Number(fin.scrap_qty || 0)} giriyorsunuz — kayıt kabul edilir.
+                  </Muted>
+                </Card>
+              );
+            })()}
             <Field
               label="Not"
               testID="wo-finish-notes"
@@ -737,7 +809,15 @@ export function AtolyeScreen() {
             />
             {finishLast ? (
               <Card style={{ backgroundColor: colors.emerald50 }}>
-                <Muted>Son adım: bitirince hammaddeler düşülür, üretilen miktar stoğa eklenir.</Muted>
+                <Muted>
+                  {(() => {
+                    const plan = finishing ? workOrderFinishPlan(finishing) : null;
+                    if (plan?.isMaterial) {
+                      return `Son adım: bitirince hammaddeler düşülür, mamul stoka ${finishing?.planned_quantity ?? ""} ${finishing?.unit || ""} yazılır.`.trim();
+                    }
+                    return "Son adım: bitirince hammaddeler düşülür, üretilen miktar stoğa eklenir. Plan üstü miktar da stoğa yazılır.";
+                  })()}
+                </Muted>
               </Card>
             ) : null}
             <Row>
