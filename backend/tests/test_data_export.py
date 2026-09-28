@@ -1,12 +1,37 @@
 """Text-only personal data ZIP (no live DB)."""
+import asyncio
 import io
 import os
 import sys
 import zipfile
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import data_export as de
+from fastapi import HTTPException
+
+
+def test_personel_blocked():
+    assert de.personel_blocked({"role": "personel"}) is True
+    assert de.personel_blocked({"role": "Personel"}) is True
+    assert de.personel_blocked({"role": "admin"}) is False
+    assert de.personel_blocked({"role": "accountant"}) is False
+    assert de.personel_blocked({}) is False
+
+
+def test_export_rejects_personel_role():
+    async def run():
+        req = MagicMock()
+        with patch.object(de, "_token_user", AsyncMock(return_value={"role": "personel", "id": "u1"})):
+            try:
+                await de.export_my_data(req)
+                assert False, "expected 403"
+            except HTTPException as e:
+                assert e.status_code == 403
+                assert "Personel" in e.detail
+
+    asyncio.run(run())
 
 
 def test_sanitize_strips_secrets_and_data_uris():

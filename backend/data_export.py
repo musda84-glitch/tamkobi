@@ -187,9 +187,19 @@ async def _safe_find(coll, query, limit=500) -> list:
             return []
 
 
+def personel_blocked(user: Optional[dict] = None) -> bool:
+    """Personel rolü şirket/fatura paketini indiremez."""
+    return str((user or {}).get("role") or "").strip().lower() == "personel"
+
+
 @router.get("/me/data-export")
 async def export_my_data(request: Request, company_id: Optional[str] = None):
     user = await _token_user(request)
+    if personel_blocked(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Personel rolü kişisel veri ZIP indirme ve şirket verisi dışa aktarımı yapamaz.",
+        )
     uid = str(user.get("id") or user.get("_id"))
     cids = [c for c in (user.get("company_ids") or []) if c]
     if company_id:

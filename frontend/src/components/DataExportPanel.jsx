@@ -5,6 +5,12 @@ import { toast } from "sonner";
 import { Download, Loader2, FileArchive } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 
+/** Personel rolü ZIP indirme / şirket verisi dışa aktarımı yapamaz. */
+export const canExportPersonalData = (user) => {
+  if (!user) return false;
+  return String(user.role || "").trim().toLowerCase() !== "personel";
+};
+
 export const downloadPersonalDataZip = async (companyId) => {
   const r = await axios.get(`${API_URL}/me/data-export`, {
     params: companyId ? { company_id: companyId } : {},
@@ -35,9 +41,10 @@ const fail = async (err) => {
 };
 
 export const DataExportPanel = () => {
-  const { activeCompany } = useAuth();
+  const { user, activeCompany } = useAuth();
   const [busy, setBusy] = useState(false);
   const companyId = activeCompany?.id || activeCompany?._id;
+  if (!canExportPersonalData(user)) return null;
   const run = async () => {
     setBusy(true);
     try {
@@ -62,8 +69,9 @@ export const DataExportPanel = () => {
 };
 
 export const DataExportIconButton = () => {
-  const { activeCompany } = useAuth();
+  const { user, activeCompany } = useAuth();
   const [busy, setBusy] = useState(false);
+  if (!canExportPersonalData(user)) return null;
   const run = async () => {
     setBusy(true);
     try {
