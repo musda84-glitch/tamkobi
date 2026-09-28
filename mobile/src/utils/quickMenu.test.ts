@@ -174,7 +174,7 @@ describe("resolveMobilePath", () => {
     expect(resolveMobilePath("/personnel")).toBe("/personnel");
     expect(resolveMobilePath("/sevk")).toBe("/sevk");
     expect(resolveMobilePath("/atolye")).toBe("/atolye");
-    expect(resolveMobilePath("/production")).toBe("/atolye");
+    expect(resolveMobilePath("/production")).toBe("/production");
     expect(resolveMobilePath("/bilinmeyen")).toBeNull();
     expect(resolveMobilePath("")).toBeNull();
   });

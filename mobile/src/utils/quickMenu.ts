@@ -73,7 +73,7 @@ const TASK_PATH_MAP: Record<string, string> = {
   "/sayim": "/sayim",
   "/sevk": "/sevk",
   "/atolye": "/atolye",
-  "/production": "/atolye",
+  "/production": "/production",
   "/installments": "/installments",
   "/cheques": "/cheques",
   "/saha": "/saha",

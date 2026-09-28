@@ -193,7 +193,7 @@ const REF_ROUTES: Record<string, string> = {
   order: "/orders",
   order_pick: "/sevk",
   work_order: "/atolye",
-  production: "/atolye",
+  production: "/production",
   invoice: "/invoices",
   edoc: "/edoc-inbox",
   contact: "/contacts",
