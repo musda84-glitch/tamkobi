@@ -22,6 +22,7 @@ import {
   shopFloorStationSections,
   todayDoneCount,
   woCardKey,
+  workOrderFinishPlan,
   woStatusTone,
   woStatusTr,
   type WorkOrder,
@@ -110,7 +111,13 @@ function WoCard({
       ) : null}
       <Muted>
         {[
-          w.planned_quantity != null ? `${w.planned_quantity} ${w.unit || ""}`.trim() : null,
+          (() => {
+            const plan = workOrderFinishPlan(w);
+            if (plan.isMaterial) {
+              return `${plan.qty} ${plan.unit}${w.planned_quantity != null ? ` · mamul ${w.planned_quantity} ${w.unit || ""}` : ""}`.trim();
+            }
+            return w.planned_quantity != null ? `${w.planned_quantity} ${w.unit || ""}`.trim() : null;
+          })(),
           w.duration_min ? `Hedef ${w.duration_min} dk` : null,
           w.elapsed_min != null ? `${w.elapsed_min} dk geçti` : null,
           who,
@@ -283,17 +290,25 @@ export function AtolyeScreen() {
   };
 
   const openFinish = (w: WorkOrder) => {
+    const plan = workOrderFinishPlan(w);
     setFinishing(w);
-    setFin({ produced_qty: String(w.planned_quantity ?? 0), scrap_qty: "0", notes: "" });
+    setFin({ produced_qty: String(plan.qty ?? 0), scrap_qty: "0", notes: "" });
   };
 
   const confirmFinish = () => {
     if (!finishing) return;
     const produced = Number(fin.produced_qty);
     const scrap = Number(fin.scrap_qty);
-    const qtyErr = finishQtyError(produced, scrap, finishing.planned_quantity);
-    if (qtyErr) {
-      setError(qtyErr);
+    const plan = workOrderFinishPlan(finishing);
+    // Hammadde adımında plan üstü serbest (web ile aynı); mamul adımında uyarı.
+    if (!plan.isMaterial) {
+      const qtyErr = finishQtyError(produced, scrap, plan.qty);
+      if (qtyErr) {
+        setError(qtyErr);
+        return;
+      }
+    } else if (!Number.isFinite(produced) || !Number.isFinite(scrap) || produced < 0 || scrap < 0) {
+      setError("Miktar negatif olamaz.");
       return;
     }
     act(finishing, "finish", { produced_qty: produced, scrap_qty: scrap, notes: fin.notes });
@@ -690,12 +705,16 @@ export function AtolyeScreen() {
           >
             <Text style={{ fontWeight: "800", color: colors.text, fontSize: 16 }}>{finishing?.step_name} — Bitir</Text>
             <Muted>
-              {[finishing?.order_code, finishing?.product_name, finishing?.planned_quantity != null ? `Plan ${finishing.planned_quantity} ${finishing.unit || ""}`.trim() : null].filter(Boolean).join(" · ")}
+              {(() => {
+                const plan = finishing ? workOrderFinishPlan(finishing) : null;
+                const planTxt = plan ? `Plan ${plan.qty} ${plan.unit}${plan.isMaterial && plan.materialName ? ` (${plan.materialName})` : ""}` : null;
+                return [finishing?.order_code, finishing?.product_name, planTxt].filter(Boolean).join(" · ");
+              })()}
             </Muted>
             <Row>
               <View style={{ flex: 1 }}>
                 <Field
-                  label={`Üretilen (${finishing?.unit || "adet"})`}
+                  label={`Üretilen (${finishing ? workOrderFinishPlan(finishing).unit : "adet"})`}
                   testID="wo-finish-produced"
                   value={fin.produced_qty}
                   onChangeText={(v) => setFin((f) => ({ ...f, produced_qty: v }))}

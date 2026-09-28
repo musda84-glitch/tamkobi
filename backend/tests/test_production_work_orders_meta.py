@@ -164,6 +164,27 @@ def test_enrich_does_not_overwrite_existing():
     assert row["recipe_name"] == "X"
 
 
+def test_resolve_work_order_finish_plan_material_vs_product():
+    from production_work_orders import materials_for_work_order_step, resolve_work_order_finish_plan
+
+    wo = {
+        "planned_quantity": 1,
+        "unit": "Adet",
+        "material_product_id": "m1",
+        "material_name": "MDF",
+        "materials": [
+            {"product_id": "m1", "product_name": "MDF", "needed": 16, "unit": "Metre"},
+            {"product_id": "m2", "product_name": "Vida", "needed": 20, "unit": "Adet"},
+        ],
+    }
+    plan = resolve_work_order_finish_plan(wo)
+    assert plan["qty"] == 16
+    assert plan["unit"] == "Metre"
+    assert plan["is_material"] is True
+    assert materials_for_work_order_step(wo["materials"], wo) == [wo["materials"][0]]
+    assert resolve_work_order_finish_plan({"planned_quantity": 2, "unit": "Adet"})["qty"] == 2
+
+
 def test_recipe_materials_for_qty_scales_with_plan():
     recipe = {
         "target_quantity": 2,
