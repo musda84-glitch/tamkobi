@@ -11,6 +11,8 @@ export type WorkOrder = {
   step_name?: string;
   product_name?: string;
   station?: string;
+  job_file_name?: string;
+  recipe_name?: string;
   planned_quantity?: number;
   unit?: string;
   duration_min?: number;

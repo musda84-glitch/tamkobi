@@ -54,9 +54,19 @@ function WoCard({
         </View>
         <Badge label={woStatusTr(w.status)} tone={woStatusTone(w.status)} />
       </Row>
+      <View
+        testID={`wo-meta-${key}`}
+        style={{ backgroundColor: "#F8FAFC", borderWidth: 1, borderColor: "#F1F5F9", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, gap: 2 }}
+      >
+        <Text style={{ fontSize: 12, color: colors.muted }}>
+          İstasyon: <Text style={{ fontWeight: "700", color: colors.text }}>{w.station || "—"}</Text>
+        </Text>
+        <Text style={{ fontSize: 12, color: colors.muted }} numberOfLines={2}>
+          İş dosyası: <Text style={{ fontWeight: "700", color: colors.text }}>{w.job_file_name || "—"}</Text>
+        </Text>
+      </View>
       <Muted>
         {[
-          w.station,
           w.planned_quantity != null ? `${w.planned_quantity} ${w.unit || ""}`.trim() : null,
           w.duration_min ? `Hedef ${w.duration_min} dk` : null,
           w.elapsed_min != null ? `${w.elapsed_min} dk geçti` : null,

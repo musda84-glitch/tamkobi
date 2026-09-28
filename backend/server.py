@@ -82,6 +82,7 @@ from card_match import sanitize_card_fields
 import cheques
 import fx
 import attendance
+import production_work_orders as pwo
 import location_consent
 import personnel_wage
 import trash
@@ -12798,14 +12799,41 @@ async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any]):
         return
     steps = recipe.get("steps") or [{"no": 1, "name": "Üretim", "station": "Genel", "duration_min": 0}]
     now = datetime.now(timezone.utc).isoformat()
+    job_meta = pwo.recipe_job_fields(recipe)
     docs = []
     for idx, st in enumerate(sorted(steps, key=lambda x: x.get("no", 0))):
         docs.append({"_id": str(uuid.uuid4()), "company_id": order["company_id"], "order_id": order["_id"], "order_code": order.get("order_code"), "product_name": order.get("finished_product_name"),
                      "planned_quantity": order.get("planned_quantity"), "unit": recipe.get("unit", "Adet"), "planned_date": order.get("planned_date"), "notes": order.get("notes"),
                      "step_no": idx + 1, "step_count": len(steps), "step_name": st.get("name", f"Adım {idx + 1}"), "station": st.get("station") or "Genel", "duration_min": st.get("duration_min", 0),
+                     "job_file_name": job_meta.get("job_file_name"), "recipe_name": job_meta.get("recipe_name") or order.get("recipe_name"),
                      "status": "ready" if idx == 0 else "waiting", "assigned_to": None, "assigned_name": None, "operator_name": None, "started_at": None, "finished_at": None, "paused_seconds": 0,
                      "produced_qty": 0, "scrap_qty": 0, "logs": [], "created_at": now})
     await db.work_orders.insert_many(docs)
+
+async def _enrich_work_orders_job_fields(rows: list) -> list:
+    """Eski iş emirlerinde eksik iş dosyası / reçete adını üretim emri + reçeteden doldur."""
+    need = [r for r in rows if not r.get("job_file_name") or not r.get("recipe_name")]
+    if not need:
+        for r in rows:
+            pwo.enrich_work_order_row(r)
+        return rows
+    order_ids = list({r.get("order_id") for r in need if r.get("order_id")})
+    if not order_ids:
+        for r in rows:
+            pwo.enrich_work_order_row(r)
+        return rows
+    orders = await db.production_orders.find({"_id": {"$in": order_ids}}, {"recipe_id": 1, "recipe_name": 1}).to_list(len(order_ids))
+    by_order = {o["_id"]: o for o in orders}
+    recipe_ids = list({o.get("recipe_id") for o in orders if o.get("recipe_id")})
+    recipes = await db.recipes.find({"_id": {"$in": recipe_ids}}, {"job_file_name": 1, "name": 1}).to_list(len(recipe_ids) or 1) if recipe_ids else []
+    by_recipe = {r["_id"]: r for r in recipes}
+    for r in rows:
+        o = by_order.get(r.get("order_id")) or {}
+        meta = pwo.recipe_job_fields(by_recipe.get(o.get("recipe_id")))
+        if not meta.get("recipe_name"):
+            meta["recipe_name"] = o.get("recipe_name")
+        pwo.enrich_work_order_row(r, meta)
+    return rows
 
 @api_router.get("/production/work-orders")
 async def list_work_orders(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None, station: Optional[str] = None, assigned_to: Optional[str] = None, order_id: Optional[str] = None):
@@ -12819,6 +12847,7 @@ async def list_work_orders(company_id: Optional[str] = "comp_nexus_main_01", sta
     if order_id:
         q["order_id"] = order_id
     rows = clean_docs(await db.work_orders.find(q).sort([("planned_date", 1), ("order_code", 1), ("step_no", 1)]).to_list(1000))
+    await _enrich_work_orders_job_fields(rows)
     now = datetime.now(timezone.utc)
     for r in rows:
         if r.get("started_at") and r["status"] in ("in_progress", "paused"):

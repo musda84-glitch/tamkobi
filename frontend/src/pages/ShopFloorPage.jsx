@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2 } from "lucide-react";
+import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2, FileText } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -101,8 +101,11 @@ export default function ShopFloorPage() {
         <div className="min-w-0"><div className="font-mono text-xs text-slate-400">{w.order_code} • Adım {w.step_no}/{w.step_count}</div><div className="font-bold text-slate-900 text-base leading-tight truncate">{w.step_name}</div><div className="text-sm text-slate-600 flex items-center gap-1 truncate"><Package className="w-3.5 h-3.5" /> {w.product_name}</div></div>
         <span className={`shrink-0 px-2 py-1 rounded-lg text-xs font-bold ${c}`}>{l}</span>
       </div>
+      <div className="text-xs bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-2 space-y-0.5" data-testid={`wo-meta-${w.order_code}-${w.step_no}`}>
+        <div className="flex items-center gap-1.5 text-slate-600"><MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span>İstasyon: <span className="font-semibold text-slate-900">{w.station || "—"}</span></span></div>
+        <div className="flex items-center gap-1.5 text-slate-600 min-w-0"><FileText className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span className="truncate">İş dosyası: <span className="font-semibold text-slate-900">{w.job_file_name || "—"}</span></span></div>
+      </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-        <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> {w.station}</span>
         <span className="font-bold text-slate-900 text-sm">{w.planned_quantity} {w.unit}</span>
         {w.duration_min > 0 && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Hedef {w.duration_min} dk</span>}
         {w.elapsed_min != null && <span className={`flex items-center gap-1 font-semibold ${w.duration_min && w.elapsed_min > w.duration_min ? "text-rose-600" : "text-amber-700"}`}><Clock className="w-3.5 h-3.5" /> {w.elapsed_min} dk geçti</span>}
