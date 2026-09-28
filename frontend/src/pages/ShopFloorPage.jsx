@@ -12,6 +12,7 @@ import { shopFloorCardActions, shopFloorCardBorder, shopFloorPausePhaseLabel, wo
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
+import { formatTrQty } from "../utils/money";
 
 const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
 
@@ -309,7 +310,7 @@ export default function ShopFloorPage() {
             {w.materials.map((m, i) => (
               <li key={m.product_id || i} className="flex justify-between gap-2 text-slate-600">
                 <span className="truncate min-w-0">{m.product_name}</span>
-                <span className="shrink-0 font-semibold text-slate-900">{m.needed} {m.unit}</span>
+                <span className="shrink-0 font-semibold text-slate-900">{formatTrQty(m.needed)} {m.unit}</span>
               </li>
             ))}
           </ul>
@@ -327,9 +328,9 @@ export default function ShopFloorPage() {
           const plan = workOrderFinishPlan(w);
           return (
             <span className="font-bold text-slate-900 text-sm" data-testid={`wo-plan-${w.order_code}-${w.step_no}`}>
-              {plan.isMaterial ? `${plan.qty} ${plan.unit}` : `${w.planned_quantity} ${w.unit}`}
+              {plan.isMaterial ? `${formatTrQty(plan.qty)} ${plan.unit}` : `${formatTrQty(w.planned_quantity)} ${w.unit}`}
               {plan.isMaterial && Number(w.planned_quantity) > 0 ? (
-                <span className="ml-1 font-semibold text-slate-400">· mamul {w.planned_quantity} {w.unit}</span>
+                <span className="ml-1 font-semibold text-slate-400">· mamul {formatTrQty(w.planned_quantity)} {w.unit}</span>
               ) : null}
             </span>
           );

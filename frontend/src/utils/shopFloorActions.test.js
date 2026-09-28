@@ -28,6 +28,17 @@ describe("workOrderFinishPlan", () => {
     ).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: "MDF" });
   });
 
+  test("ceils fractional Adet for plate steps (2.857 → 3)", () => {
+    expect(
+      workOrderFinishPlan({
+        planned_quantity: 10,
+        unit: "M2",
+        material_product_id: "plaka",
+        materials: [{ product_id: "plaka", product_name: "SAFİR MEŞE MDF PLAKA", needed: 2.857, unit: "Adet" }],
+      }),
+    ).toEqual({ qty: 3, unit: "Adet", isMaterial: true, materialName: "SAFİR MEŞE MDF PLAKA" });
+  });
+
   test("prefers finish_qty from API", () => {
     expect(
       workOrderFinishPlan({

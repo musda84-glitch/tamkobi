@@ -33,6 +33,16 @@ export function formatTrAmount(n) {
   return amount.toLocaleString("tr-TR", { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
+/** Stok / reçete / atölye miktarı — TR ondalık, gereksiz sıfır yok (2,857 veya 3). */
+export function formatTrQty(n, maxFrac = 3) {
+  const num = Number(n);
+  const amount = Number.isFinite(num) ? num : 0;
+  if (Number.isInteger(amount) || Math.abs(amount - Math.round(amount)) < 1e-9) {
+    return Math.round(amount).toLocaleString("tr-TR");
+  }
+  return amount.toLocaleString("tr-TR", { minimumFractionDigits: 0, maximumFractionDigits: maxFrac });
+}
+
 export const fmtMoney = (n, c) => `${formatTrAmount(n)} ${moneySuffix(c)}`;
 export { fmtDmy as fmtDate } from "./dateFormat";
 

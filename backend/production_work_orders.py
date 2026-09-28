@@ -1,5 +1,32 @@
 """Atölye iş emri yardımcıları — reçeteden istasyon / iş dosyası / hammadde alanları."""
+import math
 from typing import Any, Dict, List, Optional
+
+# Sayılabilir birimler: 2.857 Adet olmaz → yukarı yuvarla (plaka / vida / paket).
+_DISCRETE_UNITS = frozenset({
+    "adet", "ad", "takım", "takim", "çift", "cift", "koli", "kutu", "paket", "set", "parça", "parca",
+})
+
+
+def is_discrete_unit(unit: Any) -> bool:
+    u = str(unit or "").strip().casefold()
+    if not u:
+        return True
+    return u in _DISCRETE_UNITS or u.startswith("adet")
+
+
+def round_needed_qty(needed: float, unit: Any) -> float:
+    """Sürekli birimde 3 hane; Adet vb. sayılabilir birimde yukarı tam sayı."""
+    try:
+        n = float(needed)
+    except (TypeError, ValueError):
+        return 0.0
+    if n <= 0:
+        return 0.0
+    if is_discrete_unit(unit):
+        # 2.0001 → 3 değil 2; 2.857 → 3
+        return float(math.ceil(n - 1e-9))
+    return round(n, 3)
 
 
 def recipe_job_fields(recipe: Optional[Dict[str, Any]] = None) -> Dict[str, Optional[str]]:
@@ -31,14 +58,15 @@ def recipe_materials_for_qty(recipe: Optional[Dict[str, Any]] = None, quantity: 
             waste = float(m.get("wastage_percent") or 0)
         except (TypeError, ValueError):
             continue
-        needed = round(base * factor * (1 + waste / 100.0), 3)
+        unit = str(m.get("unit") or "Adet").strip() or "Adet"
+        needed = round_needed_qty(base * factor * (1 + waste / 100.0), unit)
         if needed <= 0:
             continue
         name = str(m.get("product_name") or "").strip() or "Hammadde"
         out.append({
             "product_id": m.get("product_id"),
             "product_name": name,
-            "unit": str(m.get("unit") or "Adet").strip() or "Adet",
+            "unit": unit,
             "needed": needed,
         })
     return out
@@ -264,9 +292,10 @@ def resolve_work_order_finish_plan(
     except (TypeError, ValueError):
         needed = 0.0
     if hit and needed > 0 and (mid or mname or len(mats) == 1):
+        unit = str(hit.get("unit") or "Adet").strip() or "Adet"
         return {
-            "qty": needed,
-            "unit": str(hit.get("unit") or "Adet").strip() or "Adet",
+            "qty": round_needed_qty(needed, unit),
+            "unit": unit,
             "is_material": True,
             "material_name": str(hit.get("product_name") or mname or "").strip() or None,
         }

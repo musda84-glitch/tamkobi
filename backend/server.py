@@ -12209,10 +12209,14 @@ async def _requirements(recipe: Dict[str, Any], quantity: float) -> List[Dict[st
     factor = quantity / float(recipe.get("target_quantity", 1) or 1)
     for m in recipe.get("materials", []):
         p = await db.products.find_one({"_id": m.get("product_id")}) or {}
-        needed = round(float(m.get("quantity", 0)) * factor * (1 + float(m.get("wastage_percent", 0)) / 100), 3)
+        unit = m.get("unit") or p.get("unit") or "Adet"
+        needed = pwo.round_needed_qty(
+            float(m.get("quantity", 0)) * factor * (1 + float(m.get("wastage_percent", 0)) / 100),
+            unit,
+        )
         stock = float(p.get("stock_quantity", 0) or 0)
         unit_net = _material_unit_net(m)
-        rows.append({"product_id": m.get("product_id"), "product_name": m.get("product_name") or p.get("name"), "unit": m.get("unit") or p.get("unit"), "needed": needed, "in_stock": stock, "shortage": round(max(0.0, needed - stock), 3), "cost": round(needed * unit_net, 2)})
+        rows.append({"product_id": m.get("product_id"), "product_name": m.get("product_name") or p.get("name"), "unit": unit, "needed": needed, "in_stock": stock, "shortage": round(max(0.0, needed - stock), 3), "cost": round(needed * unit_net, 2)})
     return rows
 
 def _normalize_recipe_steps_payload(doc: Dict[str, Any]) -> Dict[str, Any]:
