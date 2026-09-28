@@ -583,6 +583,19 @@ export default function PersonnelPage() {
     }
   };
 
+  const decideWorkOrderTrash = async (id, status) => {
+    setBusyReqId(id);
+    try {
+      const r = await axios.post(`${API_URL}/production/work-orders/trash-requests/${id}/decide`, { status });
+      toast.success(r.data?.message || (status === "approved" ? "Silme onaylandı." : "Silme reddedildi."));
+      await afterRequestDecision();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İşlem başarısız.");
+    } finally {
+      setBusyReqId(null);
+    }
+  };
+
   const decideGeoConfirm = async (id, decision) => {
     setBusyReqId(id);
     try {
@@ -877,6 +890,7 @@ export default function PersonnelPage() {
               onDecideOvertimeConfirm={decideOvertimeConfirm}
               onDecideGeoConfirm={decideGeoConfirm}
               onDecideDispute={decideDispute}
+              onDecideWorkOrderTrash={decideWorkOrderTrash}
               onViewDispute={() => setTab("attendance")}
             />
 

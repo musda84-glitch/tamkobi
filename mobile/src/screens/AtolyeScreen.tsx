@@ -173,9 +173,8 @@ export function AtolyeScreen() {
   const [fin, setFin] = useState({ produced_qty: "", scrap_qty: "0", notes: "" });
   const [trashBusy, setTrashBusy] = useState(false);
   const [trashTarget, setTrashTarget] = useState<WorkOrder | null>(null);
-  const [adminPin, setAdminPin] = useState("");
-  const [adminTrashBusy, setAdminTrashBusy] = useState(false);
-  const [adminTrashErr, setAdminTrashErr] = useState("");
+  const [trashReqBusy, setTrashReqBusy] = useState(false);
+  const [trashReqErr, setTrashReqErr] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -425,39 +424,44 @@ export function AtolyeScreen() {
     }
   };
 
-  const openAdminTrash = (w: WorkOrder) => {
+  const openTrashRequest = (w: WorkOrder) => {
     if (w.status === "done") {
       setError("Tamamlanan adım buradan silinmez; alttaki çöpe taşıyı kullanın.");
       return;
     }
+    if ((w as WorkOrder & { trash_request_pending?: boolean }).trash_request_pending) {
+      setNotice("Bu iş emri için silme talebi zaten yönetici onayında.");
+      return;
+    }
+    if (!operator) {
+      setError("Önce operatör seçin.");
+      return;
+    }
     setTrashTarget(w);
-    setAdminPin("");
-    setAdminTrashErr("");
+    setTrashReqErr("");
   };
-  const cancelAdminTrash = () => {
+  const cancelTrashRequest = () => {
     setTrashTarget(null);
-    setAdminPin("");
-    setAdminTrashErr("");
+    setTrashReqErr("");
   };
-  const confirmAdminTrash = async () => {
+  const confirmTrashRequest = async () => {
     const wid = idOf(trashTarget);
-    if (!wid || adminTrashBusy) return;
-    setAdminTrashBusy(true);
-    setAdminTrashErr("");
+    if (!wid || trashReqBusy) return;
+    setTrashReqBusy(true);
+    setTrashReqErr("");
     try {
-      const r = await post<{ message?: string }>(client, `/production/work-orders/${wid}/admin-trash`, {
+      const r = await post<{ message?: string }>(client, `/production/work-orders/${wid}/trash-request`, {
         company_id: companyId,
-        password: adminPin,
+        operator_name: operator,
       });
-      setNotice(r.message || "Çöp kutusuna taşındı.");
+      setNotice(r.message || "Silme talebi yöneticiye gönderildi.");
       setError(null);
-      cancelAdminTrash();
+      cancelTrashRequest();
       await load();
     } catch (err) {
-      setAdminTrashErr(apiErrorMessage(err, "Silinemedi."));
-      setAdminPin("");
+      setTrashReqErr(apiErrorMessage(err, "Talep gönderilemedi."));
     } finally {
-      setAdminTrashBusy(false);
+      setTrashReqBusy(false);
     }
   };
 
@@ -567,7 +571,7 @@ export function AtolyeScreen() {
               onStart={() => act(w, "start")}
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}
-              onTrash={() => openAdminTrash(w)}
+              onTrash={() => openTrashRequest(w)}
             />
           ))}
         </View>
@@ -586,7 +590,7 @@ export function AtolyeScreen() {
           onStart={() => act(w, "start")}
           onPause={() => act(w, "pause")}
           onFinish={() => openFinish(w)}
-          onTrash={() => openAdminTrash(w)}
+          onTrash={() => openTrashRequest(w)}
         />
       ))}
 
@@ -603,7 +607,7 @@ export function AtolyeScreen() {
               onStart={() => {}}
               onPause={() => {}}
               onFinish={() => {}}
-              onTrash={() => openAdminTrash(w)}
+              onTrash={() => openTrashRequest(w)}
             />
           ))}
         </View>
@@ -657,38 +661,29 @@ export function AtolyeScreen() {
         </Pressable>
       </Modal>
 
-      <Modal visible={!!trashTarget} transparent animationType="fade" onRequestClose={cancelAdminTrash}>
-        <Pressable style={{ flex: 1, backgroundColor: "rgba(15,23,42,0.5)", justifyContent: "center", padding: spacing.md }} onPress={cancelAdminTrash}>
+      <Modal visible={!!trashTarget} transparent animationType="fade" onRequestClose={cancelTrashRequest}>
+        <Pressable style={{ flex: 1, backgroundColor: "rgba(15,23,42,0.5)", justifyContent: "center", padding: spacing.md }} onPress={cancelTrashRequest}>
           <Pressable
-            testID="wo-admin-trash-modal"
+            testID="wo-trash-request-modal"
             onPress={() => { /* keep */ }}
             style={{ backgroundColor: "#fff", borderRadius: radius.lg, padding: spacing.md, gap: 8 }}
           >
-            <Text style={{ fontWeight: "800", color: colors.text, fontSize: 16 }}>Yönetici onaylı sil</Text>
+            <Text style={{ fontWeight: "800", color: colors.text, fontSize: 16 }}>Yönetici onayına gönder</Text>
             <Muted>{[trashTarget?.order_code, trashTarget?.step_name].filter(Boolean).join(" · ")}</Muted>
-            <Muted>Üretim emri ve tüm adımlar çöp kutusuna taşınır (30 gün geri alınabilir).</Muted>
-            <Field
-              label="Yönetici şifresi"
-              testID="wo-admin-trash-password"
-              value={adminPin}
-              onChangeText={setAdminPin}
-              secureTextEntry
-              placeholder="••••"
-              autoFocus
-            />
-            <ErrorBanner message={adminTrashErr} />
+            <Muted>Talep yöneticiye iletilir; onaylanınca üretim emri ve adımlar çöp kutusuna taşınır.</Muted>
+            <ErrorBanner message={trashReqErr} />
             <Row>
               <View style={{ flex: 1 }}>
-                <PrimaryButton title="Vazgeç" onPress={cancelAdminTrash} color={colors.muted} testID="wo-admin-trash-cancel" />
+                <PrimaryButton title="Vazgeç" onPress={cancelTrashRequest} color={colors.muted} testID="wo-trash-request-cancel" />
               </View>
               <View style={{ flex: 1 }}>
                 <PrimaryButton
-                  title="Sil"
-                  onPress={confirmAdminTrash}
-                  disabled={adminTrashBusy || adminPin.length < 4}
-                  loading={adminTrashBusy}
+                  title="Onaya gönder"
+                  onPress={confirmTrashRequest}
+                  disabled={trashReqBusy}
+                  loading={trashReqBusy}
                   color="#E11D48"
-                  testID="wo-admin-trash-confirm"
+                  testID="wo-trash-request-confirm"
                 />
               </View>
             </Row>

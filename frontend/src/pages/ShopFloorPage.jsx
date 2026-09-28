@@ -37,9 +37,8 @@ export default function ShopFloorPage() {
   const [duties, setDuties] = useState([]);
   const [dutyBusyId, setDutyBusyId] = useState(null);
   const [trashTarget, setTrashTarget] = useState(null);
-  const [adminPin, setAdminPin] = useState("");
-  const [adminTrashBusy, setAdminTrashBusy] = useState(false);
-  const [adminTrashErr, setAdminTrashErr] = useState("");
+  const [trashReqBusy, setTrashReqBusy] = useState(false);
+  const [trashReqErr, setTrashReqErr] = useState("");
   const loadPerf = useCallback(() => axios.get(`${API_URL}/production/work-orders/performance?company_id=${companyId}`).then((r) => setPerf(r.data)).catch(() => {}), [companyId]);
   useEffect(() => { loadPerf(); }, [loadPerf, wos.length]);
 
@@ -185,37 +184,42 @@ export default function ShopFloorPage() {
     }
   };
 
-  const openAdminTrash = (w) => {
+  const openTrashRequest = (w) => {
     if (w.status === "done") {
       toast.error("Tamamlanan adım buradan silinmez; alttaki “Tamamlananları çöpe taşı”yı kullanın veya üretim emrinden iptal edin.");
       return;
     }
+    if (w.trash_request_pending) {
+      toast.message("Bu iş emri için silme talebi zaten yönetici onayında.");
+      return;
+    }
+    if (!operator) {
+      toast.error("Önce operatör seçin.");
+      return;
+    }
     setTrashTarget(w);
-    setAdminPin("");
-    setAdminTrashErr("");
+    setTrashReqErr("");
   };
-  const cancelAdminTrash = () => { setTrashTarget(null); setAdminPin(""); setAdminTrashErr(""); };
-  const confirmAdminTrash = async (e) => {
+  const cancelTrashRequest = () => { setTrashTarget(null); setTrashReqErr(""); };
+  const confirmTrashRequest = async (e) => {
     e?.preventDefault?.();
     if (!trashTarget?.id) return;
-    setAdminTrashBusy(true);
-    setAdminTrashErr("");
+    setTrashReqBusy(true);
+    setTrashReqErr("");
     try {
-      const r = await axios.post(`${API_URL}/production/work-orders/${trashTarget.id}/admin-trash`, {
+      const r = await axios.post(`${API_URL}/production/work-orders/${trashTarget.id}/trash-request`, {
         company_id: companyId,
-        password: adminPin,
+        operator_name: operator,
       });
-      toast.success(r.data?.message || "Çöp kutusuna taşındı.");
-      cancelAdminTrash();
+      toast.success(r.data?.message || "Silme talebi yöneticiye gönderildi.");
+      cancelTrashRequest();
       load();
-      loadPerf();
     } catch (err) {
-      const msg = err.response?.data?.detail || "Silinemedi.";
-      setAdminTrashErr(msg);
+      const msg = err.response?.data?.detail || "Talep gönderilemedi.";
+      setTrashReqErr(msg);
       toast.error(msg);
-      setAdminPin("");
     } finally {
-      setAdminTrashBusy(false);
+      setTrashReqBusy(false);
     }
   };
 
@@ -241,15 +245,21 @@ export default function ShopFloorPage() {
           {w.status !== "done" && (
             <button
               type="button"
-              onClick={() => openAdminTrash(w)}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-              title="Yönetici onaylı sil"
+              onClick={() => openTrashRequest(w)}
+              disabled={!!w.trash_request_pending}
+              className={`p-1.5 rounded-lg ${w.trash_request_pending ? "text-amber-500 bg-amber-50 cursor-default" : "text-slate-400 hover:text-rose-600 hover:bg-rose-50"}`}
+              title={w.trash_request_pending ? "Silme onayı bekleniyor" : "Yönetici onayına gönder (sil)"}
               data-testid={`wo-trash-${w.order_code}-${w.step_no}`}
             >
               <Trash2 className="w-4 h-4" />
             </button>
           )}
           <span className={`px-2 py-1 rounded-lg text-xs font-bold ${c}`}>{l}</span>
+          {w.trash_request_pending ? (
+            <span className="px-2 py-1 rounded-lg text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200" data-testid={`wo-trash-pending-${w.order_code}-${w.step_no}`}>
+              Silme onayı bekliyor
+            </span>
+          ) : null}
         </div>
       </div>
       <div className="text-xs bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-2 space-y-0.5" data-testid={`wo-meta-${w.order_code}-${w.step_no}`}>
@@ -463,23 +473,19 @@ export default function ShopFloorPage() {
       )}
       {trashTarget && (
         <div className="fixed inset-0 z-[120] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(cancelAdminTrash)}>
-          <form onSubmit={confirmAdminTrash} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4" data-testid="wo-admin-trash-modal">
+          <form onSubmit={confirmTrashRequest} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4" data-testid="wo-trash-request-modal">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2"><Trash2 className="w-5 h-5 text-rose-600" /> Yönetici onaylı sil</h3>
+                <h3 className="font-bold text-slate-900 text-lg flex items-center gap-2"><Trash2 className="w-5 h-5 text-rose-600" /> Yönetici onayına gönder</h3>
                 <p className="text-sm text-slate-500 mt-1">{trashTarget.order_code} · {trashTarget.step_name}</p>
-                <p className="text-[11px] text-slate-500 mt-1">Üretim emri ve tüm adımlar çöp kutusuna taşınır (30 gün geri alınabilir).</p>
+                <p className="text-[11px] text-slate-500 mt-1">Talep yöneticiye iletilir; onaylanınca üretim emri ve adımlar çöp kutusuna taşınır.</p>
               </div>
-              <button type="button" onClick={cancelAdminTrash} className="text-slate-400 hover:text-slate-700" data-testid="wo-admin-trash-cancel"><X className="w-5 h-5" /></button>
+              <button type="button" onClick={cancelTrashRequest} className="text-slate-400 hover:text-slate-700" data-testid="wo-trash-request-cancel"><X className="w-5 h-5" /></button>
             </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1">Yönetici şifresi</label>
-              <input type="password" autoFocus value={adminPin} onChange={(e) => setAdminPin(e.target.value)} className="w-full border-2 rounded-xl p-3 text-lg font-semibold tracking-widest" required minLength={4} data-testid="wo-admin-trash-password" autoComplete="current-password" />
-            </div>
-            {adminTrashErr && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2" data-testid="wo-admin-trash-error">{adminTrashErr}</div>}
+            {trashReqErr && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2" data-testid="wo-trash-request-error">{trashReqErr}</div>}
             <div className="flex gap-2">
-              <button type="button" onClick={cancelAdminTrash} className="flex-1 py-3 border-2 rounded-xl font-semibold">Vazgeç</button>
-              <button type="submit" disabled={adminTrashBusy || adminPin.length < 4} className="flex-1 py-3 bg-rose-600 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="wo-admin-trash-confirm">{adminTrashBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Sil</button>
+              <button type="button" onClick={cancelTrashRequest} className="flex-1 py-3 border-2 rounded-xl font-semibold">Vazgeç</button>
+              <button type="submit" disabled={trashReqBusy} className="flex-1 py-3 bg-rose-600 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 disabled:opacity-60" data-testid="wo-trash-request-confirm">{trashReqBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Onaya gönder</button>
             </div>
           </form>
         </div>
