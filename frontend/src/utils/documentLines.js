@@ -28,8 +28,39 @@ export function emptyLine(overrides = {}) {
 }
 
 function num(v, fallback = 0) {
+  if (v == null || v === "") return fallback;
+  if (typeof v === "string") {
+    let s = v.trim().replace(/\s/g, "");
+    if (s.includes(",") && s.includes(".")) {
+      // TR 1.250,50 → 1250.50 | EN 1,250.50 → 1250.50
+      s = s.lastIndexOf(",") > s.lastIndexOf(".")
+        ? s.replace(/\./g, "").replace(",", ".")
+        : s.replace(/,/g, "");
+    } else if (s.includes(",")) {
+      s = s.replace(",", ".");
+    }
+    const n = Number(s);
+    return Number.isFinite(n) ? n : fallback;
+  }
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/** Stok kartından satış/alış birim fiyatı (ilk anlamlı değer). */
+export function productCardPrice(prod, invoiceType = "sales") {
+  if (!prod) return 0;
+  if (invoiceType === "purchase") {
+    for (const k of ["last_purchase_price", "purchase_price", "avg_purchase_price", "card_purchase_price"]) {
+      const n = num(prod[k]);
+      if (n > 0) return n;
+    }
+    return num(prod.purchase_price);
+  }
+  for (const k of ["sale_price", "list_price", "price", "last_sale_price"]) {
+    const n = num(prod[k]);
+    if (n > 0) return n;
+  }
+  return num(prod.sale_price);
 }
 
 export function computeLine(item, editedField) {
@@ -83,7 +114,7 @@ export function hydrateLine(item) {
 export function lineFromProduct(prod, { invoiceType = "sales", quantity = 1 } = {}) {
   if (!prod) return computeLine(emptyLine({ quantity }));
   const vatRate = prod.vat_rate ?? 20;
-  let price = invoiceType === "purchase" ? num(prod.purchase_price) : num(prod.sale_price);
+  const price = productCardPrice(prod, invoiceType);
   // Satış fiyatı KDV dahil ise net birim fiyata indir; computeLine tekrar KDV eklemesin.
   const includesVat = invoiceType !== "purchase" && !!prod.price_includes_vat;
   const editedField = includesVat ? "unit_price_incl" : "unit_price";

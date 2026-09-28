@@ -1,4 +1,4 @@
-import { computeLine, documentLineTotals, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "./documentLines";
+import { computeLine, documentLineTotals, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct, productCardPrice } from "./documentLines";
 
 test("computeLine fills dual unit prices and net/gross totals with discount", () => {
   const row = computeLine({
@@ -43,11 +43,21 @@ test("lineFromProduct uses sale vs purchase price and product VAT", () => {
   const prod = { id: "p1", name: "Kart", sale_price: 100, purchase_price: 80, vat_rate: 10, sku: "SKU-1", unit: "Koli" };
   const sale = lineFromProduct(prod, { invoiceType: "sales", quantity: 2 });
   expect(sale.unit_price).toBe(100);
+  expect(sale.unit_price_incl).toBeCloseTo(110);
   expect(sale.unit).toBe("Koli");
   expect(sale.vat_rate).toBe(10);
   expect(sale.total_incl).toBeCloseTo(220);
   const buy = lineFromProduct(prod, { invoiceType: "purchase", quantity: 1 });
   expect(buy.unit_price).toBe(80);
+});
+
+test("productCardPrice prefers stock card sale_price and parses TR decimals", () => {
+  expect(productCardPrice({ sale_price: "1.250,50" })).toBeCloseTo(1250.5);
+  expect(productCardPrice({ list_price: 99, sale_price: 0 })).toBe(99);
+  expect(productCardPrice({ last_purchase_price: 40, purchase_price: 35 }, "purchase")).toBe(40);
+  const line = lineFromProduct({ id: "x", name: "A", list_price: 200, vat_rate: 20 }, { invoiceType: "sales" });
+  expect(line.unit_price).toBe(200);
+  expect(line.unit_price_incl).toBeCloseTo(240);
 });
 
 test("documentLineTotals sums hariç, KDV and dahil", () => {

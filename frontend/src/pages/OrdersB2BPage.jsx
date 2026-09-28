@@ -980,8 +980,8 @@ export default function OrdersB2BPage() {
       {activeTab === "questions" && <QuestionsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "pricing" && <PricingCenter companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "mp_products" && <MarketplaceProductsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
-      {newOrder && <NewOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} products={allProducts} onClose={() => setNewOrder(false)} onSaved={loadData} />}
-      {editOrder && <OrderEditModal order={editOrder} products={allProducts} onClose={() => setEditOrder(null)} onSaved={loadData} />}
+      {newOrder && <NewOrderModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contacts={contacts} products={productCatalog} onClose={() => setNewOrder(false)} onSaved={loadData} />}
+      {editOrder && <OrderEditModal order={editOrder} products={productCatalog} onClose={() => setEditOrder(null)} onSaved={loadData} />}
       {produceFromOrder && (
         <ProductionOrderModal
           companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}

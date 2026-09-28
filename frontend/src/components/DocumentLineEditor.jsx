@@ -1,10 +1,10 @@
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { Plus, Trash2 } from "lucide-react";
 import { SearchSelect } from "./SearchSelect";
 import { API_URL, useAuth } from "../context/AuthContext";
-import { VAT_OPTIONS, computeLine, emptyLine, fmtMoney, hydrateLine, lineFromProduct } from "../utils/documentLines";
+import { VAT_OPTIONS, computeLine, emptyLine, fmtMoney, hydrateLine, lineFromProduct, productCardPrice } from "../utils/documentLines";
 import { inputStepForPrice } from "../utils/money";
 import { lineDraftKey, lineNumberCommit, lineNumberOnFocus, lineNumberShown } from "../utils/lineNumberDraft";
 
@@ -37,6 +37,8 @@ export function DocumentLineEditor({
   const { activeCompany } = useAuth();
   const [units, setUnits] = useState(FALLBACK_UNITS);
   const [lineDrafts, setLineDrafts] = useState({});
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   useEffect(() => {
     const companyId = activeCompany?.id || activeCompany?._id;
     if (!companyId) return undefined;
@@ -79,14 +81,35 @@ export function DocumentLineEditor({
     });
   };
 
-  const pickProduct = (index, id) => {
-    const prod = products.find((p) => (p.id || p._id) === id);
-    const next = rows.map((it, i) => {
+  const applyProductLine = (index, prod, id) => {
+    const latest = (itemsRef.current || []).map((it) => hydrateLine(it));
+    const qty = latest[index]?.quantity || 1;
+    const next = latest.map((it, i) => {
       if (i !== index) return it;
-      if (!prod) return { ...it, product_id: id };
-      return lineFromProduct(prod, { invoiceType, quantity: it.quantity || 1 });
+      if (!prod) return { ...it, product_id: id || it.product_id };
+      return lineFromProduct(prod, { invoiceType, quantity: qty });
     });
     setRows(next);
+  };
+
+  const pickProduct = (index, id, selected) => {
+    const sid = id != null && id !== "" ? String(id) : "";
+    const prod =
+      selected && (selected.id || selected._id || selected.name)
+        ? selected
+        : products.find((p) => String(p.id || p._id || "") === sid);
+    applyProductLine(index, prod, sid);
+    // Liste eksik/eskiyse veya fiyat 0 ise stok kartından güncel fiyatı çek
+    if (!sid) return;
+    if (productCardPrice(prod, invoiceType) > 0) return;
+    axios
+      .get(`${API_URL}/products/${encodeURIComponent(sid)}`)
+      .then((r) => {
+        const full = r.data;
+        if (!full || productCardPrice(full, invoiceType) <= 0) return;
+        applyProductLine(index, full, sid);
+      })
+      .catch(() => {});
   };
 
   const toggleService = (index) => {
@@ -167,9 +190,14 @@ export function DocumentLineEditor({
                             placeholder="Ürün ara (ad / SKU / barkod)..."
                             getLabel={(p) => p.name}
                             getSub={(p) => `${p.unit || "Adet"} • SKU ${p.sku || "—"} • Stok ${p.stock_quantity ?? "—"}`}
-                            getExtra={getProductExtra}
+                            getExtra={getProductExtra || ((p) => {
+                              const price = productCardPrice(p, invoiceType);
+                              if (!(price > 0)) return "";
+                              const incl = invoiceType !== "purchase" && p.price_includes_vat;
+                              return `Stok kartı: ${fmtMoney(price, ccy)}${incl ? " (KDV dahil)" : ""}`;
+                            })}
                             getImage={(p) => p.image_url}
-                            onChange={(id) => pickProduct(idx, id)}
+                            onChange={(id, p) => pickProduct(idx, id, p)}
                             inline
                             testId={kind === "invoice" ? `inv-item-product-${idx}` : kind === "order" ? `new-order-product-${idx}` : `${testIdPrefix}-product-${idx}`}
                           />
