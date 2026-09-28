@@ -10,7 +10,7 @@ import { HeaderQuickActions } from "./HeaderQuickActions";
 import { RadialQuickMenu } from "./RadialQuickMenu";
 import { isPublicPath } from "../utils/publicPath";
 import { mesaimExclusivePathAllowed } from "../utils/attendanceSelf";
-import { isPersonelRole, personelMenuPathAllowed } from "../utils/selfPersonnelNav";
+import { isPersonelRole, personelCanUseErpShortcuts, personelMenuPathAllowed } from "../utils/selfPersonnelNav";
 import TamKobiMark from "./TamKobiMark";
 import { AccountMenu } from "./AccountMenu";
 import { BuildStamp } from "./BuildStamp";
@@ -188,6 +188,9 @@ export default function MainLayout({ children, onOpenQuickAction }) {
     isPersonelRole(user)
     && !personelMenuPathAllowed(location.pathname, user)
     && !location.pathname.startsWith("/hesap");
+  const staffUi = isPersonelRole(user);
+  const erpShortcuts = personelCanUseErpShortcuts(user);
+  const homePath = staffUi ? "/mesai" : "/panel";
 
   if (mesaimReady && mesaimLocked && !mesaimExclusivePathAllowed(location.pathname) && !isPublicPath(location.pathname)) {
     return <Navigate to="/mesai" replace />;
@@ -211,11 +214,11 @@ export default function MainLayout({ children, onOpenQuickAction }) {
       <aside className={`fixed inset-y-0 left-0 z-40 bg-slate-900 text-slate-200 border-r border-slate-800 flex flex-col transition-[width,transform] duration-300 lg:translate-x-0 ${sidebarCollapsed ? "w-16" : "w-64"} ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`} data-testid="app-sidebar" data-collapsed={sidebarCollapsed ? "1" : "0"}>
         <div className={`h-16 border-b border-slate-800/80 flex items-center ${sidebarCollapsed ? "px-2 justify-center gap-1" : "px-5 justify-between"}`}>
           <Link
-            to="/panel"
+            to={homePath}
             onClick={() => setMobileMenuOpen(false)}
             className={`flex items-center font-bold text-white tracking-tight ${sidebarCollapsed ? "gap-0 justify-center" : "gap-2.5 text-lg"}`}
             data-testid="brand-logo-btn"
-            title="Genel Bakış"
+            title={staffUi ? "Mesaim" : "Genel Bakış"}
           >
             <TamKobiMark className="w-8 h-8 shrink-0 rounded-lg shadow-lg shadow-emerald-500/25" />
             {!sidebarCollapsed && (
@@ -292,28 +295,28 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           </div>
 
           <div className="flex items-center gap-2.5">
-            <HeaderQuickActions companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
-            <RadialQuickMenu companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+            {erpShortcuts && <HeaderQuickActions companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
+            {erpShortcuts && <RadialQuickMenu companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
             <NotificationBell companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
-            {feature("header_barcode") && (
+            {erpShortcuts && feature("header_barcode") && personelMenuPathAllowed("/stock", user) && (
               <Link to="/stock?scan=true" className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition" data-testid="quick-barcode-scan-btn">
                 <QrCode className="w-4 h-4 md:w-3.5 md:h-3.5 text-indigo-600" />
                 <span className="hidden md:inline">Barkod Oku</span>
               </Link>
             )}
-            {feature("header_virman") && (
+            {erpShortcuts && feature("header_virman") && personelMenuPathAllowed("/banking", user) && (
               <Link to="/banking?action=virman" className="hidden md:flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition" data-testid="quick-virman-btn">
                 <ArrowRightLeft className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Virman</span>
               </Link>
             )}
-            {feature("header_invoice") && (
+            {erpShortcuts && feature("header_invoice") && personelMenuPathAllowed("/invoices", user) && (
               <Link to="/invoices?new=true" className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium shadow-sm shadow-emerald-600/30 transition" data-testid="quick-create-invoice-btn">
                 <PlusCircle className="w-3.5 h-3.5" />
                 <span>Yeni Fatura</span>
               </Link>
             )}
-            {feature("header_ai") && addonOn("ai.advisor") && (
+            {erpShortcuts && feature("header_ai") && addonOn("ai.advisor") && personelMenuPathAllowed("/ai-advisor", user) && (
               <Link to="/ai-advisor" className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm shadow-purple-600/30 transition" data-testid="quick-ai-btn">
                 <Sparkles className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">AI Danışman</span>
