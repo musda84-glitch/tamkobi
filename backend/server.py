@@ -12155,9 +12155,18 @@ async def copy_recipe(recipe_id: str):
         code = f"BOM-{str(uuid.uuid4().int)[:6]}"
     skip = {"_id", "id", "code", "name", "created_at", "updated_at", "copied_from"}
     doc = {k: v for k, v in src.items() if k not in skip}
-    # materials/steps: deep-ish copy of lists/dicts
+    # materials/steps: deep-ish copy of lists/dicts (kalem adımları dahil)
     if isinstance(doc.get("materials"), list):
-        doc["materials"] = [dict(m) if isinstance(m, dict) else m for m in doc["materials"]]
+        mats_copy = []
+        for m in doc["materials"]:
+            if not isinstance(m, dict):
+                mats_copy.append(m)
+                continue
+            mc = dict(m)
+            if isinstance(mc.get("steps"), list):
+                mc["steps"] = [dict(s) if isinstance(s, dict) else s for s in mc["steps"]]
+            mats_copy.append(mc)
+        doc["materials"] = mats_copy
     if isinstance(doc.get("steps"), list):
         doc["steps"] = [dict(s) if isinstance(s, dict) else s for s in doc["steps"]]
     doc.update({
@@ -12777,7 +12786,7 @@ async def create_production_order(req: Dict[str, Any]):
         doc = order.to_mongo()
         doc["needs_recipe"] = True
         await db.production_orders.insert_one(doc)
-        await _generate_work_orders(doc, {"unit": prod.get("unit") or "Adet", "steps": [{"no": 1, "name": "Üretim", "station": "Genel", "duration_min": 0}]})
+        await _generate_work_orders(doc, {"unit": prod.get("unit") or "Adet", "steps": [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0}]})
         return {**clean_doc(doc), "requirements": [], "needs_recipe": True, "message": f"{order.order_code} üretim emri oluşturuldu (reçetesiz)."}
     rows = await _requirements(recipe, qty)
     shortages = [x for x in rows if x["shortage"] > 0]
@@ -12797,36 +12806,48 @@ async def create_production_order(req: Dict[str, Any]):
 async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any]):
     if await db.work_orders.count_documents({"order_id": order["_id"]}):
         return
-    steps = recipe.get("steps") or [{"no": 1, "name": "Üretim", "station": "Genel", "duration_min": 0}]
+    import work_parks as wp
+    company = await db.companies.find_one({"_id": order["company_id"]}) or {}
+    parks = company.get("work_parks")
+    steps = pwo.flatten_recipe_steps(recipe)
     now = datetime.now(timezone.utc).isoformat()
     job_meta = pwo.recipe_job_fields(recipe)
     docs = []
-    for idx, st in enumerate(sorted(steps, key=lambda x: x.get("no", 0))):
+    for idx, st in enumerate(steps):
+        station = wp.resolve_step_station(st, parks)
         docs.append({"_id": str(uuid.uuid4()), "company_id": order["company_id"], "order_id": order["_id"], "order_code": order.get("order_code"), "product_name": order.get("finished_product_name"),
                      "planned_quantity": order.get("planned_quantity"), "unit": recipe.get("unit", "Adet"), "planned_date": order.get("planned_date"), "notes": order.get("notes"),
-                     "step_no": idx + 1, "step_count": len(steps), "step_name": st.get("name", f"Adım {idx + 1}"), "station": st.get("station") or "Genel", "duration_min": st.get("duration_min", 0),
+                     "step_no": idx + 1, "step_count": len(steps), "step_name": pwo.work_order_step_label(st, idx), "station": station, "duration_min": st.get("duration_min", 0),
+                     "material_name": st.get("material_name"), "material_product_id": st.get("material_product_id"),
+                     "images": pwo.sanitize_step_images(st.get("images")),
                      "job_file_name": job_meta.get("job_file_name"), "recipe_name": job_meta.get("recipe_name") or order.get("recipe_name"),
                      "status": "ready" if idx == 0 else "waiting", "assigned_to": None, "assigned_name": None, "operator_name": None, "started_at": None, "finished_at": None, "paused_seconds": 0,
                      "produced_qty": 0, "scrap_qty": 0, "logs": [], "created_at": now})
     await db.work_orders.insert_many(docs)
 
 async def _enrich_work_orders_job_fields(rows: list) -> list:
-    """İş emirlerine reçete meta + plan miktarına göre hammaddeleri ekle."""
+    """İş emirlerine reçete meta, hammaddeler, istasyon ve görseller ekle."""
     if not rows:
         return rows
+    import work_parks as wp
     order_ids = list({r.get("order_id") for r in rows if r.get("order_id")})
+    company_ids = list({r.get("company_id") for r in rows if r.get("company_id")})
+    companies = await db.companies.find({"_id": {"$in": company_ids}}, {"work_parks": 1}).to_list(len(company_ids) or 1) if company_ids else []
+    parks_by_co = {c["_id"]: c.get("work_parks") for c in companies}
     orders = await db.production_orders.find({"_id": {"$in": order_ids}}, {"recipe_id": 1, "recipe_name": 1}).to_list(len(order_ids) or 1) if order_ids else []
     by_order = {o["_id"]: o for o in orders}
     recipe_ids = list({o.get("recipe_id") for o in orders if o.get("recipe_id")})
     recipes = (
         await db.recipes.find(
             {"_id": {"$in": recipe_ids}},
-            {"job_file_name": 1, "name": 1, "materials": 1, "target_quantity": 1},
+            {"job_file_name": 1, "name": 1, "steps": 1, "materials": 1, "target_quantity": 1},
         ).to_list(len(recipe_ids) or 1)
         if recipe_ids
         else []
     )
     by_recipe = {r["_id"]: r for r in recipes}
+    persist_station: list = []
+    persist_images: list = []
     for r in rows:
         o = by_order.get(r.get("order_id")) or {}
         recipe = by_recipe.get(o.get("recipe_id")) or {}
@@ -12834,7 +12855,34 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
         if not meta.get("recipe_name"):
             meta["recipe_name"] = o.get("recipe_name")
         meta["materials"] = pwo.recipe_materials_for_qty(recipe, r.get("planned_quantity") or 1)
+        steps = pwo.flatten_recipe_steps(recipe) if recipe else []
+        step = None
+        sn = r.get("step_no")
+        if sn and steps and 1 <= int(sn) <= len(steps):
+            step = steps[int(sn) - 1]
+        if pwo.needs_station_resolve(r):
+            if not step:
+                step = {"name": r.get("step_name"), "station": r.get("station")}
+            resolved = wp.resolve_step_station(step, parks_by_co.get(r.get("company_id")))
+            meta["station"] = resolved
+            if resolved and resolved != r.get("station") and r.get("status") in ("ready", "waiting", "in_progress", "paused"):
+                persist_station.append((r.get("id") or r.get("_id"), resolved))
+        had_images_key = "images" in r
+        if step and not had_images_key:
+            meta["images"] = pwo.sanitize_step_images(step.get("images"))
         pwo.enrich_work_order_row(r, meta)
+        if not had_images_key:
+            imgs = pwo.sanitize_step_images(r.get("images"))
+            r["images"] = imgs
+            wid = r.get("id") or r.get("_id")
+            if wid:
+                persist_images.append((wid, imgs))
+    for wo_id, station in persist_station:
+        if wo_id:
+            await db.work_orders.update_one({"_id": wo_id}, {"$set": {"station": station}})
+    for wo_id, imgs in persist_images:
+        if wo_id:
+            await db.work_orders.update_one({"_id": wo_id}, {"$set": {"images": imgs}})
     return rows
 
 @api_router.get("/production/work-orders")

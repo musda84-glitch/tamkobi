@@ -127,6 +127,25 @@ def station_names_from_parks(raw: Any, fallback: Optional[list] = None) -> list:
     return extra
 
 
+def resolve_step_station(step: Optional[dict] = None, parks: Any = None, *, fallback: str = "Genel") -> str:
+    """Reçete adımı → iş emri istasyonu: seçili parkur, ada eşleşen parkur, yoksa ilk parkur.
+
+    Firma Ayarları → Parkurlar listesi kaynak alınır. Boş / «Genel» ise parkur kataloğundan çözülür.
+    """
+    names = station_names_from_parks(parks)
+    by_cf = {n.casefold(): n for n in names}
+    st = step or {}
+    chosen = str(st.get("station") or "").strip()
+    if chosen and chosen.casefold() != "genel":
+        return by_cf.get(chosen.casefold(), chosen)
+    step_name = str(st.get("name") or "").strip()
+    if step_name and step_name.casefold() in by_cf:
+        return by_cf[step_name.casefold()]
+    if names:
+        return names[0]
+    return chosen or fallback
+
+
 def find_named(items: list, item_id: Optional[str]) -> Optional[dict]:
     pid = str(item_id or "")
     for p in items or []:

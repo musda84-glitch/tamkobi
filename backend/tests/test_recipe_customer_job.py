@@ -11,7 +11,15 @@ def test_recipe_model_has_customer_and_job_fields():
         name="Test",
         finished_product_id="p1",
         finished_product_name="Mamul",
-        materials=[RecipeItem(product_id="m1", product_name="H1", quantity=1, unit="Adet")],
+        materials=[
+            RecipeItem(
+                product_id="m1",
+                product_name="H1",
+                quantity=1,
+                unit="Adet",
+                steps=[{"no": 1, "name": "Kesim", "station": "CNC", "duration_min": 5}],
+            )
+        ],
         contact_id="c1",
         contact_name="Acme",
         job_file_name="AHM-014",
@@ -20,6 +28,7 @@ def test_recipe_model_has_customer_and_job_fields():
     assert doc["contact_id"] == "c1"
     assert doc["contact_name"] == "Acme"
     assert doc["job_file_name"] == "AHM-014"
+    assert doc["materials"][0]["steps"][0]["name"] == "Kesim"
 
 
 def test_update_recipe_allows_contact_and_job_file():

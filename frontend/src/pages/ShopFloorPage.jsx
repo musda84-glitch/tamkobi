@@ -6,6 +6,7 @@ import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, 
 import { API_URL, useAuth } from "../context/AuthContext";
 import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
+import { HoverImageThumb } from "../utils/HoverImageThumb";
 
 const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
 
@@ -134,6 +135,13 @@ export default function ShopFloorPage() {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+      {Array.isArray(w.images) && w.images.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap" data-testid={`wo-images-${w.order_code}-${w.step_no}`}>
+          {w.images.slice(0, 8).map((url) => (
+            <HoverImageThumb key={url} src={url} className="w-14 h-14 rounded-lg object-cover border border-slate-200" testId={`wo-img-${w.order_code}-${w.step_no}`} />
+          ))}
         </div>
       )}
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
