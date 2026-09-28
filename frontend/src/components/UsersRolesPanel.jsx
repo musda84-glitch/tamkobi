@@ -21,7 +21,18 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
   const [busy, setBusy] = useState(false);
   const [pwdFor, setPwdFor] = useState(null);
   const [pwd, setPwd] = useState("");
+  const [companiesFor, setCompaniesFor] = useState(null);
+  const assignable = Array.isArray(data?.assignable_companies) ? data.assignable_companies : [];
   const toggleChannel = (key) => setInv((s) => ({ ...s, channels: { ...s.channels, [key]: !s.channels[key] } }));
+  const toggleUserCompany = async (u, cid, on) => {
+    const cur = new Set((u.company_ids || []).map(String));
+    if (on) cur.add(String(cid));
+    else {
+      if (cur.size <= 1) { toast.error("En az bir hesap seçili kalmalı."); return; }
+      cur.delete(String(cid));
+    }
+    await patch(u, { company_ids: [...cur], company_id: companyId }, "Hesap erişimi güncellendi.");
+  };
   const invite = async (e) => {
     e.preventDefault();
     const channels = Object.entries(inv.channels).filter(([, on]) => on).map(([k]) => k);
@@ -132,8 +143,13 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
           ))}
         </div>
       )}
+      {assignable.length > 1 ? (
+        <p className="text-[11px] text-slate-500" data-testid="user-company-access-hint">
+          Sol menüdeki <span className="font-semibold">Hesap</span> seçicide hangi şirketlere geçilebileceğini kullanıcı satırından işaretleyin.
+        </p>
+      ) : null}
       <table className="w-full text-xs" data-testid="users-table">
-        <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-2">ID</th><th className="text-left py-2">Kullanıcı</th><th className="text-left">Personel</th><th className="text-left">Rol</th><th className="text-left">Durum</th><th className="text-left">Son Giriş</th><th className="text-right">İşlem</th></tr></thead>
+        <thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-2">ID</th><th className="text-left py-2">Kullanıcı</th><th className="text-left">Personel</th><th className="text-left">Rol</th><th className="text-left">Hesap erişimi</th><th className="text-left">Durum</th><th className="text-left">Son Giriş</th><th className="text-right">İşlem</th></tr></thead>
         <tbody className="divide-y">
           {data.users.map((u) => (
             <tr key={u.id} data-testid={`user-row-${u.email}`}>
@@ -145,6 +161,35 @@ const UsersTab = ({ companyId, roles, reload, data }) => {
                   : <span className="text-slate-300">—</span>}
               </td>
               <td><select value={u.role} onChange={(e) => patch(u, { role: e.target.value }, "Rol güncellendi.")} className="border rounded-lg p-1.5 bg-white" data-testid={`user-role-${u.email}`}>{roles.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}</select></td>
+              <td className="py-2 align-top" data-testid={`user-companies-${u.email}`}>
+                {assignable.length <= 1 ? (
+                  <span className="text-slate-400 text-[10px]">Tek hesap</span>
+                ) : companiesFor === u.id ? (
+                  <div className="space-y-1 min-w-[160px]">
+                    {assignable.map((c) => {
+                      const cid = String(c.id);
+                      const on = (u.company_ids || []).map(String).includes(cid);
+                      return (
+                        <label key={cid} className="flex items-center gap-1.5 cursor-pointer" data-testid={`user-company-${u.email}-${cid}`}>
+                          <input type="checkbox" checked={on} onChange={(e) => toggleUserCompany(u, cid, e.target.checked)} className="accent-emerald-600" />
+                          <span className="text-[10px] font-semibold text-slate-700 truncate" title={c.name}>{c.name}</span>
+                        </label>
+                      );
+                    })}
+                    <button type="button" onClick={() => setCompaniesFor(null)} className="text-[10px] font-bold text-slate-500 hover:text-slate-800" data-testid={`user-companies-done-${u.email}`}>Kapat</button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setCompaniesFor(u.id)}
+                    className="px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-[10px] font-bold text-slate-700"
+                    title="Hesap seçicide görünecek şirketler"
+                    data-testid={`user-companies-edit-${u.email}`}
+                  >
+                    {(u.company_ids || []).length || 1} hesap
+                  </button>
+                )}
+              </td>
               <td><button onClick={() => patch(u, { is_active: !u.is_active }, u.is_active ? "Kullanıcı pasife alındı." : "Kullanıcı aktif.")} className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${u.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`} data-testid={`user-active-${u.email}`}>{u.is_active ? "Aktif" : "Pasif"}</button></td>
               <td className="text-slate-500">{u.last_login_at ? new Date(u.last_login_at).toLocaleString("tr-TR") : "-"}</td>
               <td className="text-right whitespace-nowrap">

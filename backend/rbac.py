@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional, Callable, Awaitable
 
 import user_numbers
+import user_company_access as uca
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -583,9 +584,14 @@ async def list_users(company_id: str = "comp_nexus_main_01"):
             "employee_name": emp_names.get(str(eid), "") if eid else "",
         }
 
+    import saas
+    lid = await saas.license_id_of(company_id)
+    sibling_docs = await saas.companies_on_license(lid)
+    assignable = [uca.company_brief(c) for c in sibling_docs if c.get("_id")]
     return {
-        "users": [{**_enrich(u), "is_active": u.get("is_active", True)} for u in users],
+        "users": [{**_enrich(u), "is_active": u.get("is_active", True), "company_ids": list(u.get("company_ids") or [])} for u in users],
         "invites": [_enrich(i) for i in invites],
+        "assignable_companies": assignable,
     }
 
 
@@ -603,6 +609,18 @@ async def update_user(user_id: str, req: Dict[str, Any]):
         if len(req["password"]) < 6:
             raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
         upd["password_hash"] = hash_password(req["password"])
+    if "company_ids" in req:
+        import saas
+        context_cid = str(req.get("company_id") or u.get("active_company_id") or ((u.get("company_ids") or [None])[0]) or "").strip()
+        if not context_cid:
+            raise HTTPException(status_code=400, detail="Şirket bağlamı gerekli.")
+        lid = await saas.license_id_of(context_cid)
+        assignable_ids = [c["_id"] for c in await saas.companies_on_license(lid)]
+        chosen = uca.filter_assignable_company_ids(req.get("company_ids"), assignable_ids)
+        if not chosen:
+            raise HTTPException(status_code=400, detail="En az bir şirket seçilmeli (lisans grubundaki hesaplar).")
+        upd["company_ids"] = chosen
+        upd["active_company_id"] = uca.resolve_active_company_id(chosen, u.get("active_company_id"))
     await _db.users.update_one({"_id": user_id}, {"$set": {**upd, "updated_at": _now()}})
     if "role" in upd and upd["role"] != u.get("role"):
         await _notify_role_assigned(u.get("active_company_id") or (u.get("company_ids") or [None])[0], {
