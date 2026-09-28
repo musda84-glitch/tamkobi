@@ -12825,6 +12825,21 @@ async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any]):
                      "produced_qty": 0, "scrap_qty": 0, "logs": [], "created_at": now})
     await db.work_orders.insert_many(docs)
 
+async def _filter_active_production_work_orders(rows: list) -> list:
+    """İptal veya silinmiş üretim emirlerine bağlı iş emirlerini listeden çıkar."""
+    if not rows:
+        return rows
+    order_ids = list({r.get("order_id") for r in rows if r.get("order_id")})
+    if not order_ids:
+        return []
+    orders = await db.production_orders.find(
+        {"_id": {"$in": order_ids}},
+        {"status": 1},
+    ).to_list(len(order_ids))
+    alive = {o["_id"] for o in orders if o.get("status") != "cancelled"}
+    return [r for r in rows if r.get("order_id") in alive]
+
+
 async def _enrich_work_orders_job_fields(rows: list) -> list:
     """Eski iş emirlerinde eksik iş dosyası / reçete / istasyon / görselleri doldur."""
     import work_parks as wp
@@ -12892,6 +12907,8 @@ async def list_work_orders(company_id: Optional[str] = "comp_nexus_main_01", sta
     if order_id:
         q["order_id"] = order_id
     rows = clean_docs(await db.work_orders.find(q).sort([("planned_date", 1), ("order_code", 1), ("step_no", 1)]).to_list(1000))
+    # İptal / silinmiş üretim emirlerine ait iş emirlerini atölyeden gizle
+    rows = await _filter_active_production_work_orders(rows)
     await _enrich_work_orders_job_fields(rows)
     now = datetime.now(timezone.utc)
     for r in rows:
@@ -13316,7 +13333,25 @@ async def cancel_production_order(order_id: str):
     if o.get("status") == "completed":
         raise HTTPException(status_code=400, detail="Tamamlanmış emir iptal edilemez.")
     await db.production_orders.update_one({"_id": order_id}, {"$set": {"status": "cancelled"}})
-    return {"status": "success", "message": "Üretim emri iptal edildi."}
+    # Atölye ekranı iptal edilen emrin iş emirlerini göstermesin
+    wos = await db.work_orders.find({"order_id": order_id}).to_list(500)
+    for w in wos:
+        note = pwo.work_order_trash_note(w)
+        if note:
+            note = f"{note} · üretim emri iptal"
+        else:
+            note = "üretim emri iptal"
+        await trash.soft_delete(
+            "work_orders",
+            w,
+            "work_order",
+            pwo.work_order_trash_label(w),
+            note=note,
+        )
+    msg = "Üretim emri iptal edildi."
+    if wos:
+        msg = f"Üretim emri iptal edildi; {len(wos)} iş emri atölyeden kaldırıldı."
+    return {"status": "success", "message": msg, "trashed_work_orders": len(wos)}
 
 @api_router.post("/production/orders/{order_id}/complete")
 async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
