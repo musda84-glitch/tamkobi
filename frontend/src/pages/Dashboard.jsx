@@ -27,6 +27,7 @@ import {
   ArrowRight
 } from "lucide-react";
 import { fmtDate, fmtMoney } from "../utils/money";
+import { showHomeFinanceSummary } from "../utils/selfPersonnelNav";
 import {
   AreaChart,
   Area,
@@ -40,6 +41,8 @@ import {
   Cell
 } from "recharts";
 
+const STAFF_HIDDEN_SECTIONS = new Set(["kpis", "charts", "bottom", "ai", "decision", "overview", "demo"]);
+
 export default function Dashboard() {
   const { activeCompany, addonOn, user } = useAuth();
   const { order, wrap, toolbar } = useDashboardLayout();
@@ -47,6 +50,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const financeHome = showHomeFinanceSummary(user);
   const fetchStats = useCallback(async ({ silent = false } = {}) => {
     try {
       if (!silent) setLoading(true);
@@ -63,7 +67,7 @@ export default function Dashboard() {
   const refreshStatsSilent = useCallback(() => fetchStats({ silent: true }), [fetchStats]);
   useDataRefresh(refreshStatsSilent, { companyId, scopes: ["cash", "contacts", "invoices", "expenses"] });
 
-  const staffHome = Boolean(user?.employee_id);
+  const staffHome = !financeHome;
   const staffRow = (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4" data-testid="dashboard-staff-row">
       {staffHome ? (
@@ -369,11 +373,13 @@ export default function Dashboard() {
     ),
   };
 
+  const visibleOrder = financeHome ? order : order.filter((id) => !STAFF_HIDDEN_SECTIONS.has(id));
+
   return (
-    <div className="space-y-6" data-testid="dashboard-view">
-      {toolbar}
+    <div className="space-y-6" data-testid="dashboard-view" data-staff-home={staffHome ? "1" : "0"}>
+      {financeHome ? toolbar : null}
       <div className="space-y-8" data-testid="dashboard-sections">
-        {order.map((id) => wrap(id, sections[id]))}
+        {visibleOrder.map((id) => wrap(id, sections[id]))}
       </div>
     </div>
   );

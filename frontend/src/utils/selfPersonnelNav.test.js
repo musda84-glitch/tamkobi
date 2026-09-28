@@ -1,4 +1,13 @@
-import { hasSelfPersonnelRecord, isSelfPersonnelPath, selfPersonnelNavAllowed } from "./selfPersonnelNav";
+import {
+  hasSelfPersonnelRecord,
+  isPersonelRole,
+  isSelfPersonnelPath,
+  personelAccountTabs,
+  personelCanManageCompany,
+  personelMenuPathAllowed,
+  selfPersonnelNavAllowed,
+  showHomeFinanceSummary,
+} from "./selfPersonnelNav";
 
 describe("selfPersonnelNav", () => {
   test("only Benim Sayfam and Mesaim are self-personnel paths", () => {
@@ -21,5 +30,34 @@ describe("selfPersonnelNav", () => {
     expect(hasSelfPersonnelRecord(staff)).toBe(true);
     expect(selfPersonnelNavAllowed("/personelim", staff)).toBe(true);
     expect(selfPersonnelNavAllowed("/mesai", staff)).toBe(true);
+  });
+
+  test("personel role menu allowlist matches mobile self modules", () => {
+    const p = { role: "personel", employee_id: "e1" };
+    expect(isPersonelRole(p)).toBe(true);
+    expect(personelMenuPathAllowed("/mesai", p)).toBe(true);
+    expect(personelMenuPathAllowed("/personelim", p)).toBe(true);
+    expect(personelMenuPathAllowed("/atolye", p)).toBe(true);
+    expect(personelMenuPathAllowed("/hesap", p)).toBe(true);
+    expect(personelMenuPathAllowed("/invoices", p)).toBe(false);
+    expect(personelMenuPathAllowed("/settings", p)).toBe(false);
+    expect(personelMenuPathAllowed("/stock", p)).toBe(false);
+    expect(personelMenuPathAllowed("/banking", { role: "admin" })).toBe(true);
+  });
+
+  test("personel cannot manage company settings or see finance home", () => {
+    const p = { role: "personel", employee_id: "e1" };
+    expect(personelCanManageCompany(p)).toBe(false);
+    expect(personelCanManageCompany({ role: "admin" })).toBe(true);
+    expect(showHomeFinanceSummary(p)).toBe(false);
+    expect(showHomeFinanceSummary({ role: "sales", employee_id: "e2" })).toBe(false);
+    expect(showHomeFinanceSummary({ role: "admin" })).toBe(true);
+  });
+
+  test("personel account tabs are profil (+ şirketler if multi)", () => {
+    const p = { role: "personel" };
+    expect(personelAccountTabs(p, 1)).toEqual(["profil"]);
+    expect(personelAccountTabs(p, 2)).toEqual(["profil", "sirketler"]);
+    expect(personelAccountTabs({ role: "admin" }, 1)).toContain("ayarlar");
   });
 });
