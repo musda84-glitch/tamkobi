@@ -4651,7 +4651,17 @@ async def get_contact_overview(contact_id: str):
         invoices=invoices,
     )
     payments.sort(key=lambda x: x.get("date") or x.get("created_at") or "", reverse=True)
-    orders = await db.orders.find({"company_id": contact["company_id"], "customer_name": contact.get("name")}).sort("order_date", -1).to_list(100)
+    orders = await db.orders.find({
+        "company_id": contact["company_id"],
+        "$or": [{"contact_id": contact_id}, {"customer_name": contact.get("name")}],
+    }).sort("order_date", -1).to_list(100)
+    inv_by_id = {i["_id"]: i for i in invoices}
+    for o in orders:
+        inv = inv_by_id.get(o.get("invoice_id")) if o.get("invoice_id") else None
+        if inv:
+            o["invoice_e_type"] = inv.get("e_type")
+            o["einvoice_state"] = inv.get("einvoice_state") or o.get("einvoice_state")
+            o["invoice_gib_status"] = inv.get("gib_status")
     sms = await db.sms_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(50)
     mails = await db.mail_logs.find({"contact_id": contact_id}).sort("created_at", -1).to_list(200)
     email_deliveries = [m for m in mails if mail_tracking.within_days(m.get("created_at") or "")][:80]

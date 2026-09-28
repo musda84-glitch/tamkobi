@@ -8,10 +8,32 @@ test("approved order with a draft invoice id stays editable", () => {
   })).toBe("");
 });
 
-test("issued e-document blocks edit, paper does not", () => {
-  expect(orderEditBlockedReason({ order_status: "approved", is_invoiced: true, e_type: "e_archive" }))
-    .toMatch(/E-belge/);
-  expect(orderEditBlockedReason({ order_status: "approved", is_invoiced: true, e_type: "paper" })).toBe("");
+test("panel-approved e-archive without GIB send stays editable", () => {
+  expect(orderEditBlockedReason({
+    order_status: "approved",
+    is_invoiced: true,
+    e_type: "e_archive",
+    einvoice_state: "draft",
+  })).toBe("");
+  expect(orderEditBlockedReason({
+    order_status: "approved",
+    is_invoiced: true,
+    invoice_e_type: "e_invoice",
+  })).toBe("");
+});
+
+test("GIB-sent e-document blocks edit, paper does not", () => {
+  expect(orderEditBlockedReason({
+    order_status: "approved",
+    is_invoiced: true,
+    e_type: "e_archive",
+    einvoice_state: "sent",
+  })).toMatch(/E-belge/);
+  expect(orderEditBlockedReason({
+    order_status: "approved",
+    is_invoiced: true,
+    e_type: "paper",
+  })).toBe("");
 });
 
 test("cancelled stays locked and marketplace lines stay locked", () => {
