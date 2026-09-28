@@ -12072,11 +12072,17 @@ async def create_warehouse_transfer(transfer: WarehouseTransfer):
 
 # ----------------- ÜRETİM & REÇETE (BOM) -----------------
 def _material_unit_net(m: Dict[str, Any]) -> float:
-    """Birim maliyet net (KDV hariç). cost_includes_vat ise KDV düşülür."""
+    """Birim maliyet net (KDV hariç).
+    cost_includes_vat=True → girilen tutar KDV dahil; False → KDV hariç.
+    """
     cost = float(m.get("cost_per_unit", 0) or 0)
     if not m.get("cost_includes_vat"):
         return cost
-    rate = float(m.get("vat_rate") or 0)
+    raw_rate = m.get("vat_rate")
+    if raw_rate is None or raw_rate == "":
+        rate = 20.0
+    else:
+        rate = float(raw_rate or 0)
     if rate <= 0:
         return cost
     return cost / (1 + rate / 100)

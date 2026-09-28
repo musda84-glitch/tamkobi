@@ -10,6 +10,38 @@ describe("recipe material vat cost", () => {
     expect(materialUnitNet({ cost_per_unit: 120, cost_includes_vat: true, vat_rate: 20 })).toBeCloseTo(100);
   });
 
+  it("defaults missing vat_rate to 20 when dahil", () => {
+    expect(materialUnitNet({ cost_per_unit: 120, cost_includes_vat: true })).toBeCloseTo(100);
+  });
+
+  it("keeps typed amount as exclusive when hariç", () => {
+    // 3000 hariç → net 3000; satır (qty2, fire%20) = 7200
+    expect(materialUnitNet({ cost_per_unit: 3000, cost_includes_vat: false, vat_rate: 20 })).toBeCloseTo(3000);
+    expect(
+      materialLineCost({
+        cost_per_unit: 3000,
+        cost_includes_vat: false,
+        vat_rate: 20,
+        quantity: 2,
+        wastage_percent: 20,
+      })
+    ).toBeCloseTo(7200);
+  });
+
+  it("treats typed amount as inclusive when dahil", () => {
+    // 3000 dahil %20 → net 2500; satır (qty2, fire%20) = 6000
+    expect(materialUnitNet({ cost_per_unit: 3000, cost_includes_vat: true, vat_rate: 20 })).toBeCloseTo(2500);
+    expect(
+      materialLineCost({
+        cost_per_unit: 3000,
+        cost_includes_vat: true,
+        vat_rate: 20,
+        quantity: 2,
+        wastage_percent: 20,
+      })
+    ).toBeCloseTo(6000);
+  });
+
   it("applies wastage on net unit cost", () => {
     const line = materialLineCost({
       cost_per_unit: 120,

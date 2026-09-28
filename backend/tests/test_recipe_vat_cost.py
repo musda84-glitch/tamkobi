@@ -20,6 +20,18 @@ def test_material_unit_net_incl_zero_rate():
     assert _material_unit_net({"cost_per_unit": 50, "cost_includes_vat": True, "vat_rate": 0}) == 50
 
 
+def test_material_unit_net_incl_missing_rate_defaults_20():
+    net = _material_unit_net({"cost_per_unit": 120, "cost_includes_vat": True})
+    assert abs(net - 100.0) < 1e-9
+
+
+def test_typed_amount_is_gross_when_dahil_and_net_when_haric():
+    # Dahil 3000 → net 2500
+    assert abs(_material_unit_net({"cost_per_unit": 3000, "cost_includes_vat": True, "vat_rate": 20}) - 2500) < 1e-9
+    # Hariç 3000 → net 3000
+    assert _material_unit_net({"cost_per_unit": 3000, "cost_includes_vat": False, "vat_rate": 20}) == 3000
+
+
 def test_recipe_costs_strips_vat_when_included():
     recipe = {
         "materials": [
