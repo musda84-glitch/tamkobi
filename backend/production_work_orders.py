@@ -11,15 +11,22 @@ def recipe_job_fields(recipe: Optional[Dict[str, Any]] = None) -> Dict[str, Opti
 
 
 def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Liste yanıtında eksik job_file_name / recipe_name doldur."""
+    """Liste yanıtında eksik job_file_name / recipe_name / station doldur."""
     m = meta or {}
     if not row.get("job_file_name") and m.get("job_file_name"):
         row["job_file_name"] = m["job_file_name"]
     if not row.get("recipe_name") and m.get("recipe_name"):
         row["recipe_name"] = m["recipe_name"]
-    if not row.get("station"):
+    if m.get("station") and (not row.get("station") or str(row.get("station")).strip().casefold() == "genel"):
+        row["station"] = m["station"]
+    elif not row.get("station"):
         row["station"] = "Genel"
     return row
+
+
+def needs_station_resolve(row: Optional[Dict[str, Any]] = None) -> bool:
+    st = str((row or {}).get("station") or "").strip()
+    return (not st) or st.casefold() == "genel"
 
 
 def work_order_trash_label(wo: Optional[Dict[str, Any]] = None) -> str:
