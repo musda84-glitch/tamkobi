@@ -77,6 +77,11 @@ function WoCard({
         <Text style={{ fontSize: 12, color: colors.muted }} numberOfLines={2}>
           İş dosyası: <Text style={{ fontWeight: "700", color: colors.text }}>{w.job_file_name || "—"}</Text>
         </Text>
+        {String(w.step_note || "").trim() ? (
+          <Text testID={`wo-step-note-${key}`} style={{ fontSize: 12, color: colors.muted }}>
+            Not: <Text style={{ fontWeight: "700", color: colors.text }}>{String(w.step_note).trim()}</Text>
+          </Text>
+        ) : null}
       </View>
       {(w.materials || []).length > 0 ? (
         <View

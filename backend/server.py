@@ -12920,6 +12920,7 @@ async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any], f
                      "step_no": idx + 1, "step_count": len(steps), "step_name": pwo.work_order_step_label(st, idx), "station": station, "duration_min": st.get("duration_min", 0),
                      "material_name": st.get("material_name"), "material_product_id": st.get("material_product_id"),
                      "images": pwo.sanitize_step_images(st.get("images")),
+                     "step_note": str(st.get("note") or "").strip(),
                      "job_file_name": job_meta.get("job_file_name"), "recipe_name": job_meta.get("recipe_name") or order.get("recipe_name"),
                      "status": "ready" if idx == 0 else "waiting", "assigned_to": None, "assigned_name": None, "operator_name": None, "started_at": None, "finished_at": None, "paused_seconds": 0,
                      "produced_qty": 0, "scrap_qty": 0, "logs": [], "created_at": now})
@@ -13006,6 +13007,8 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
         had_images_key = "images" in r
         if step and not had_images_key:
             meta["images"] = pwo.sanitize_step_images(step.get("images"))
+        if step and not str(r.get("step_note") or "").strip():
+            meta["step_note"] = str(step.get("note") or "").strip()
         pwo.enrich_work_order_row(r, meta)
         if not had_images_key:
             imgs = pwo.sanitize_step_images(r.get("images"))

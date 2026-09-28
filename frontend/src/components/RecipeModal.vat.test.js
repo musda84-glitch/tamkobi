@@ -36,10 +36,16 @@ describe("per-material recipe steps", () => {
         "Genel"
       )
     ).toEqual([
-      { no: 1, name: "Kesim", station: "CNC", duration_min: 10, images: ["/a.jpg"] },
-      { no: 2, name: "X", station: "X", duration_min: 1, images: [] },
-      { no: 3, name: "Montaj", station: "Genel", duration_min: 0, images: [] },
+      { no: 1, name: "Kesim", station: "CNC", duration_min: 10, note: "", images: ["/a.jpg"] },
+      { no: 2, name: "X", station: "X", duration_min: 1, note: "", images: [] },
+      { no: 3, name: "Montaj", station: "Genel", duration_min: 0, note: "", images: [] },
     ]);
+  });
+
+  it("serializes step note for atelier", () => {
+    expect(
+      serializeSteps([{ name: "Kesim", station: "CNC", duration_min: 5, note: "  Delik Ø8  " }])
+    ).toEqual([{ no: 1, name: "Kesim", station: "CNC", duration_min: 5, note: "Delik Ø8", images: [] }]);
   });
 
   it("normalizes step image urls", () => {
