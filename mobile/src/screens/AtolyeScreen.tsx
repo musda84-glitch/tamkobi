@@ -5,6 +5,7 @@ import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { GroupedSelect } from "../components/GroupedSelect";
+import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { colors, radius, spacing } from "../theme";
 import { archivedAssignedDuties, openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
@@ -72,7 +73,14 @@ function WoCard({
           <Muted>{w.product_name || ""}</Muted>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          {onTrash && w.status !== "done" ? (
+          {w.trash_request_pending && w.status !== "done" ? (
+            <View
+              testID={`wo-trash-pending-${key}`}
+              style={{ backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 3 }}
+            >
+              <Text style={{ color: "#B45309", fontWeight: "800", fontSize: 10 }}>Silme onayı bekliyor</Text>
+            </View>
+          ) : onTrash && w.status !== "done" ? (
             <Pressable onPress={onTrash} testID={`wo-trash-${key}`} hitSlop={8} style={{ padding: 4 }}>
               <Text style={{ color: "#E11D48", fontWeight: "800", fontSize: 12 }}>Sil</Text>
             </Pressable>
@@ -509,6 +517,7 @@ export function AtolyeScreen() {
 
   return (
     <Screen onRefresh={load} refreshing={refreshing}>
+      <ProductionAiAdvisor companyId={companyId} compact />
       <GroupedSelect
         label="Operatör"
         testID="shopfloor-operator"

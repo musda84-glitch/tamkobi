@@ -255,6 +255,50 @@ export function ProjectCard({
         testID={`project-stage-photos-${id}`}
       />
       <View style={{ gap: 6, marginTop: 8 }}>
+        {canEdit ? (
+          <ActionBtn
+            title="Proje Düzenle"
+            testID={`project-edit-${id}`}
+            onPress={() => go("ProjectDetail", { id })}
+            bg="#F8FAFC"
+            border="#CBD5E1"
+            color="#1E293B"
+          />
+        ) : null}
+        {(project.production_steps || []).length > 0 ? (
+          <View
+            testID={`project-recipe-steps-${id}`}
+            style={{ borderRadius: 10, borderWidth: 1, borderColor: "#E2E8F0", backgroundColor: "#F8FAFC", padding: 8, gap: 4 }}
+          >
+            <Row style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={{ fontSize: 11, fontWeight: "800", color: colors.text }}>
+                Üretim adımları{project.recipe_name ? ` · ${project.recipe_name}` : ""}
+              </Text>
+              <View
+                style={{
+                  backgroundColor: project.show_production_steps ? "#ECFDF5" : "#F1F5F9",
+                  borderRadius: 999,
+                  paddingHorizontal: 8,
+                  paddingVertical: 2,
+                }}
+              >
+                <Text style={{ fontSize: 10, fontWeight: "700", color: project.show_production_steps ? "#047857" : "#64748B" }}>
+                  {project.show_production_steps ? "Müşteri görür" : "Gizli"}
+                </Text>
+              </View>
+            </Row>
+            {(project.production_steps || []).slice(0, 6).map((st, i) => (
+              <Text key={`${st.no || i}-${st.name}`} style={{ fontSize: 11, color: colors.muted }} numberOfLines={2}>
+                <Text style={{ fontWeight: "700", color: colors.text }}>{st.no || i + 1}. {st.name}</Text>
+                {st.station ? ` · ${st.station}` : ""}
+                {st.material_name ? ` — ${st.material_name}` : ""}
+              </Text>
+            ))}
+            {(project.production_steps || []).length > 6 ? (
+              <Muted>+{(project.production_steps || []).length - 6} adım daha</Muted>
+            ) : null}
+          </View>
+        ) : null}
         <Row style={{ flexWrap: "wrap" }}>
           {canQuote ? (
             <ActionBtn

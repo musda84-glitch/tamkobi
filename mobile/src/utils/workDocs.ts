@@ -93,6 +93,18 @@ export type ProjectDoc = {
   stage_photos?: StagePhoto[];
   tasks?: ProjectTask[];
   tracking?: ProjectTracking;
+  recipe_id?: string | null;
+  recipe_name?: string;
+  production_steps?: ProductionStep[];
+  show_production_steps?: boolean;
+};
+
+export type ProductionStep = {
+  no?: number;
+  name?: string;
+  station?: string;
+  note?: string;
+  material_name?: string;
 };
 
 export type ProjectTracking = {
@@ -574,7 +586,22 @@ export function quoteProjectSyncPayload(quote: {
   return payload;
 }
 
-export function projectPayload(companyId: string, form: { name: string; contact_id: string; contact_name: string; budget: string; start_date: string; end_date: string; notes: string; address: string; location_url: string; latitude?: string; longitude?: string; radius_m?: number | string }) {
+export function projectPayload(companyId: string, form: {
+  name: string;
+  contact_id: string;
+  contact_name: string;
+  budget: string;
+  start_date: string;
+  end_date: string;
+  notes: string;
+  address: string;
+  location_url: string;
+  latitude?: string;
+  longitude?: string;
+  radius_m?: number | string;
+  recipe_id?: string;
+  show_production_steps?: boolean;
+}) {
   return {
     company_id: companyId,
     name: form.name.trim(),
@@ -589,7 +616,42 @@ export function projectPayload(companyId: string, form: { name: string; contact_
     latitude: coordValue(form.latitude || ""),
     longitude: coordValue(form.longitude || ""),
     radius_m: normalizeRadiusM(form.radius_m),
+    recipe_id: form.recipe_id || null,
+    show_production_steps: !!form.show_production_steps,
+    refresh_production_steps: !!form.recipe_id,
   };
+}
+
+/** Sabit reçete → proje üretim adımları (web ProjectsPage.pickProjectRecipe ile aynı). */
+export function recipeToProductionSteps(rec: {
+  materials?: Array<{ product_name?: string; steps?: Array<{ name?: string; station?: string; note?: string }> }>;
+  steps?: Array<{ name?: string; station?: string; note?: string }>;
+} | null | undefined): ProductionStep[] {
+  const steps: ProductionStep[] = [];
+  for (const m of rec?.materials || []) {
+    for (const st of m.steps || []) {
+      const name = String(st?.name || st?.station || "").trim();
+      if (!name) continue;
+      steps.push({
+        no: steps.length + 1,
+        name,
+        station: String(st?.station || "").trim(),
+        note: String(st?.note || "").trim(),
+        material_name: String(m?.product_name || "").trim() || undefined,
+      });
+    }
+  }
+  for (const st of rec?.steps || []) {
+    const name = String(st?.name || st?.station || "").trim();
+    if (!name) continue;
+    steps.push({
+      no: steps.length + 1,
+      name,
+      station: String(st?.station || "").trim(),
+      note: String(st?.note || "").trim(),
+    });
+  }
+  return steps.length ? steps : [{ no: 1, name: "Üretim", station: "" }];
 }
 
 /** Keşif ölçüsü = teklif satırı (ürün/hizmet, görsel, KDV, stok). */

@@ -53,6 +53,7 @@ type AuthContextValue = AuthState & {
   can: (path: string, level?: "view" | "edit" | "delete") => boolean;
   feature: (key: string) => boolean;
   moduleOn: (path: string) => boolean;
+  addonOn: (key: string) => boolean;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -342,6 +343,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       can: (path, level = "view") => (state.sessionKind === "b2b" ? false : canPerm(state.user, path, level)),
       feature: (key) => (state.sessionKind === "b2b" ? false : featurePerm(state.user, key)),
       moduleOn: (path) => (state.sessionKind === "b2b" ? false : moduleOnPerm(state.license, path)),
+      addonOn: (key) => {
+        if (state.sessionKind === "b2b") return false;
+        const addons = state.license?.addons;
+        if (!addons) return true;
+        return addons[key] !== false;
+      },
     }),
     [bootstrap, client, companyId, enterB2bToken, forgotB2b, forgotErp, login, loginB2b, logout, resetB2b, resetErp, setServer, state, switchCompany]
   );
