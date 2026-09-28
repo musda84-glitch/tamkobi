@@ -12,10 +12,12 @@ def test_catalog_keys_and_groups():
     assert keys == addons.ADDON_KEYS
     assert "ai.advisor" in keys and "ai.invoice" in keys and "ai.orders" in keys
     assert "ai.stock" in keys and "ai.b2b_cart" in keys
+    assert "ai.production" in keys
     assert "ai.finance_docs" in keys and "ai.migration" in keys
     assert "support.impersonate" in keys and "support.contact" in keys and "support.tickets" in keys
     advisor = addons.ADDON_BY_KEY["ai.advisor"]
     assert advisor["plan_module"] == "/ai-advisor"
+    assert addons.ADDON_BY_KEY["ai.production"]["default"] is False
     assert addons.ADDON_BY_KEY["support.impersonate"].get("lock_safe") is True
 
 
@@ -25,6 +27,8 @@ def test_resolve_defaults_without_plan():
     assert m["ai.invoice"]["source"] == "default"
     assert m["ai.advisor"]["enabled"] is False
     assert m["ai.advisor"]["source"] == "plan"
+    assert m["ai.production"]["enabled"] is False
+    assert m["ai.production"]["source"] == "default"
     assert m["support.contact"]["enabled"] is True
     assert addons.enabled_map(m)["ai.orders"] is True
 
@@ -89,6 +93,8 @@ def test_addon_for_path_longest_prefix_and_statement():
     assert addons.addon_for_path("/api/ai/product-extract") == "ai.stock"
     assert addons.addon_for_path("/api/ai/financial-advisor") == "ai.advisor"
     assert addons.addon_for_path("/api/ai/cashflow-forecast") == "ai.advisor"
+    assert addons.addon_for_path("/api/ai/production-advisor") == "ai.production"
+    assert addons.addon_for_path("/api/ai/production-summary") == "ai.production"
     assert addons.addon_for_path("/api/loans/extract") == "ai.finance_docs"
     assert addons.addon_for_path("/api/migration/ai-map") == "ai.migration"
     assert addons.addon_for_path("/api/support/tickets") == "support.tickets"

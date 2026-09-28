@@ -9,6 +9,7 @@ import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { formatTrAmount } from "../utils/money";
 import { filterMissingByOrder, missingLinesForOrder } from "../utils/missingOrderLines";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const STATUS = { planned: ["Planlandı", "bg-slate-100 text-slate-700", Clock], in_production: ["Üretimde", "bg-amber-50 text-amber-700", Play], completed: ["Tamamlandı", "bg-emerald-50 text-emerald-700", CheckCircle2], cancelled: ["İptal", "bg-rose-50 text-rose-700", XCircle] };
@@ -281,6 +282,7 @@ export default function ProductionPage() {
           <button onClick={() => { setOrderModal(true); if (!recipesLoaded) loadRecipes(); }} className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700" data-testid="new-production-order-btn"><Plus className="w-4 h-4" /> Üretim Emri Ver</button>
         </div>
       </div>
+      <ProductionAiAdvisor companyId={companyId} />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{kpi.map(([l, v, c]) => <div key={l} className="bg-white border border-slate-200 rounded-2xl p-4" data-testid={`prod-kpi-${l}`}><div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div><div className={`text-2xl font-bold ${c}`}>{v}</div></div>)}</div>
       {tab !== "missing" && lowStockWithRecipe.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs flex flex-wrap items-center gap-2" data-testid="low-stock-recipe-alert">

@@ -52,7 +52,7 @@ from build_stamp import read_stamp
 from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
 import demo
-from ai_service import get_financial_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test
+from ai_service import get_financial_ai_advice, get_production_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test
 from cheque_extract import extract_cheque_file, public_cheque_match, session_token_from_headers
 from expense_extract import extract_expense_file, public_expense_match
 from receipt_extract import extract_receipt_file
@@ -15241,6 +15241,95 @@ async def ask_financial_ai(req: AIChatRequest):
 
     advice = await get_financial_ai_advice(context, req.message)
     return {"advice": advice, "metrics": context}
+
+
+async def _production_ai_context(company_id: str) -> Dict[str, Any]:
+    company = await db.companies.find_one({"_id": company_id}, {"name": 1})
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    open_n, in_prod, done_month, recipes_n, missing_n = await asyncio.gather(
+        db.production_orders.count_documents({"company_id": company_id, "status": {"$in": ["planned", "in_production"]}}),
+        db.production_orders.count_documents({"company_id": company_id, "status": "in_production"}),
+        db.production_orders.count_documents({"company_id": company_id, "status": "completed", "end_date": {"$regex": f"^{month}"}}),
+        db.recipes.count_documents({"company_id": company_id}),
+        db.notifications.count_documents({"company_id": company_id, "type": "order_pick_missing", "is_read": False}),
+    )
+    open_wo = await db.work_orders.count_documents({"company_id": company_id, "status": {"$in": ["ready", "in_progress", "queued"]}})
+    paused_wo = await db.work_orders.count_documents({"company_id": company_id, "status": "paused"})
+    done_wo = await db.work_orders.count_documents({"company_id": company_id, "status": "done"})
+    recipes = await db.recipes.find(
+        {"company_id": company_id},
+        {"name": 1, "finished_product_name": 1, "materials": 1, "steps": 1, "unit_cost": 1, "total_cost": 1},
+    ).to_list(40)
+    pos = await db.production_orders.find(
+        {"company_id": company_id, "status": {"$in": ["planned", "in_production"]}},
+        {"order_code": 1, "finished_product_name": 1, "planned_quantity": 1, "status": 1, "shortages": 1, "recipe_name": 1},
+    ).to_list(40)
+    wos = await db.work_orders.find(
+        {"company_id": company_id, "status": {"$in": ["ready", "in_progress", "paused", "queued"]}},
+        {"step_name": 1, "station": 1, "status": 1, "finished_product_name": 1, "operator_name": 1},
+    ).to_list(40)
+    return {
+        "company_id": company_id,
+        "company_name": (company or {}).get("name") or "TamKobi",
+        "recipes": recipes_n,
+        "open_orders": open_n,
+        "in_production": in_prod,
+        "completed_this_month": done_month,
+        "missing_notifications": missing_n,
+        "open_work_orders": open_wo,
+        "paused_work_orders": paused_wo,
+        "done_work_orders_recent": done_wo,
+        "recipes_sample": [
+            {
+                "name": r.get("name"),
+                "finished_product_name": r.get("finished_product_name"),
+                "material_count": len(r.get("materials") or []),
+                "step_count": len(r.get("steps") or []),
+                "unit_cost": r.get("unit_cost") or r.get("total_cost"),
+            }
+            for r in recipes[:12]
+        ],
+        "open_orders_sample": [
+            {
+                "order_code": o.get("order_code"),
+                "finished_product_name": o.get("finished_product_name") or o.get("recipe_name"),
+                "planned_quantity": o.get("planned_quantity"),
+                "status": o.get("status"),
+                "has_shortages": bool(o.get("shortages")),
+            }
+            for o in pos[:15]
+        ],
+        "work_orders_sample": [
+            {
+                "step_name": w.get("step_name"),
+                "station": w.get("station"),
+                "status": w.get("status"),
+                "finished_product_name": w.get("finished_product_name"),
+                "operator_name": w.get("operator_name"),
+            }
+            for w in wos[:15]
+        ],
+    }
+
+
+@api_router.get("/ai/production-summary")
+async def ai_production_summary(company_id: Optional[str] = "comp_nexus_main_01"):
+    """Yönetici için üretim+reçete AI özeti (şirket bazlı ai.production eklentisi)."""
+    context = await _production_ai_context(company_id)
+    advice = await get_production_ai_advice(
+        context,
+        "Güncel üretim ve reçete durumunu yönetici için özetle; öncelikli aksiyonları madde madde yaz.",
+    )
+    metrics = {k: v for k, v in context.items() if not k.endswith("_sample")}
+    return {"advice": advice, "metrics": metrics}
+
+
+@api_router.post("/ai/production-advisor")
+async def ask_production_ai(req: AIChatRequest):
+    context = await _production_ai_context(req.company_id or "comp_nexus_main_01")
+    advice = await get_production_ai_advice(context, req.message or "Üretim durumunu yorumla.")
+    metrics = {k: v for k, v in context.items() if not k.endswith("_sample")}
+    return {"advice": advice, "metrics": metrics}
 
 @api_router.get("/ai/status")
 async def get_ai_status():
