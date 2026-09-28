@@ -86,8 +86,32 @@ def normalize_step(st: Any) -> Optional[Dict[str, Any]]:
 _normalize_step = normalize_step
 
 
+def group_steps_by_station(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Aynı istasyon adımlarını peşi sıra topla (ilk görülen istasyon sırası korunur)."""
+    buckets: List[List[Dict[str, Any]]] = []
+    index_by_key: Dict[str, int] = {}
+    no_station: List[Dict[str, Any]] = []
+    for st in steps or []:
+        key = str(st.get("station") or "").strip().casefold()
+        if not key:
+            no_station.append(st)
+            continue
+        if key not in index_by_key:
+            index_by_key[key] = len(buckets)
+            buckets.append([])
+        buckets[index_by_key[key]].append(st)
+    out: List[Dict[str, Any]] = []
+    for group in buckets:
+        out.extend(group)
+    out.extend(no_station)
+    return out
+
+
 def flatten_recipe_steps(recipe: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    """Kalem adımları (malzeme sırası) + reçete geneli adımlar; yoksa tek 'Üretim'."""
+    """Kalem adımları (malzeme sırası) + reçete geneli adımlar; yoksa tek 'Üretim'.
+
+    group_same_station=True ise aynı istasyonlar peşi sıra gruplanır.
+    """
     r = recipe or {}
     out: List[Dict[str, Any]] = []
     for mat in r.get("materials") or []:
@@ -111,6 +135,8 @@ def flatten_recipe_steps(recipe: Optional[Dict[str, Any]] = None) -> List[Dict[s
             out.append(norm)
     if not out:
         return [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0, "images": []}]
+    if r.get("group_same_station"):
+        out = group_steps_by_station(out)
     for i, st in enumerate(out):
         st["no"] = i + 1
         st.setdefault("images", [])
