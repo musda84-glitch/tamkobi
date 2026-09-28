@@ -3817,16 +3817,8 @@ async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
         await db.b2b_product_aliases.update_many({"company_id": company_id, "alias": {"$in": used_aliases}}, {"$inc": {"hits": 1}})
     return items, unmatched
 
-@api_router.post("/public/b2b/{token}/ai-cart")
-async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
-    c = await _b2b_contact(token)
-    b2b_st = resolve_b2b_settings(await db.companies.find_one({"_id": c["company_id"]}, {"b2b_settings": 1}) or {}, c)
-    if b2b_st.get("allow_ai_cart") is False:
-        raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
-    import addons as _addons
-    if not await _addons.is_on(c["company_id"], "ai.b2b_cart"):
-        raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
-    data = await file.read()
+async def _ai_cart_parse_upload(company_id: str, file: UploadFile, data: bytes) -> Dict[str, Any]:
+    """Excel/PDF/CSV sipariş listesi → eşleşen/eşleşmeyen kalemler (B2B + panel ortak)."""
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
     fname = (file.filename or "").lower()
@@ -3838,21 +3830,18 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
     parsed_items: list = []
     parse_mode = "table"
     ai_error = None
-    # Excel/CSV: önce AI’sız tablo okuma (ürün/kod + adet). AI anahtarı kırık olsa bile çalışır.
-    # Uzantı boş/yanlış olsa da ZIP(PK) içeriği xlsx olarak denenir.
     try:
         parsed_items = _b2b_parse_cart_table(file.filename, data)
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("B2B cart table parse failed: %s", e)
+        logger.warning("AI cart table parse failed: %s", e)
         parsed_items = []
     if not parsed_items:
         text = await _file_to_text(file, data)
         if len(text.strip()) < 10:
             raise HTTPException(status_code=400, detail="Dosyada okunabilir metin bulunamadı (taranmış PDF olabilir).")
         try:
-            # B2B: fiyat/tutar okunmaz; yalnız ürün kimliği + adet. Katalog fiyatı geçerli.
             parsed = await ai_service_extract_b2b_cart(text)
             parsed_items = list(parsed.get("items") or [])
             parse_mode = "ai"
@@ -3863,10 +3852,10 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
             if not parsed_items:
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Sipariş listesi okunamadı. Excel’de Ürün/Kod/EAN + Adet (veya Stok Miktarı/Talep) sütunları kullanın; fiyat sütunları yok sayılır, B2B katalog fiyatı uygulanır. AI anahtarını da kontrol edin. ({ai_error})",
+                    detail=f"Sipariş listesi okunamadı. Excel’de Ürün/Kod/EAN + Adet (veya Stok Miktarı/Talep) sütunları kullanın; fiyat sütunları yok sayılır, katalog fiyatı uygulanır. AI anahtarını da kontrol edin. ({ai_error})",
                 )
     parsed_items = _b2b_sanitize_cart_lines(parsed_items)
-    items, unmatched = await _b2b_match_cart_items(c["company_id"], parsed_items)
+    items, unmatched = await _b2b_match_cart_items(company_id, parsed_items)
     return {
         "filename": file.filename,
         "items": items,
@@ -3874,6 +3863,56 @@ async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
         "total_lines": len(items) + len(unmatched),
         "parse_mode": parse_mode,
     }
+
+
+async def _ai_cart_learn_mappings(company_id: str, mappings: list, contact_id: Optional[str] = None) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    saved = []
+    for m in mappings or []:
+        alias = _alias_key(m.get("alias") or m.get("requested") or "")
+        pid = m.get("product_id")
+        if not alias or not pid:
+            continue
+        p = await db.products.find_one({"_id": pid, "company_id": company_id})
+        if not p:
+            continue
+        patch = {
+            "product_id": pid,
+            "product_name": p.get("name"),
+            "alias_raw": m.get("alias") or m.get("requested"),
+            "updated_at": now,
+        }
+        if contact_id:
+            patch["contact_id"] = contact_id
+        await db.b2b_product_aliases.update_one(
+            {"company_id": company_id, "alias": alias},
+            {
+                "$set": patch,
+                "$setOnInsert": {
+                    "_id": f"als_{uuid.uuid4().hex[:12]}",
+                    "company_id": company_id,
+                    "alias": alias,
+                    "created_at": now,
+                    "hits": 0,
+                },
+            },
+            upsert=True,
+        )
+        saved.append({"alias": alias, "product_id": pid, "product_name": p.get("name")})
+    return {"saved": saved, "count": len(saved)}
+
+
+@api_router.post("/public/b2b/{token}/ai-cart")
+async def b2b_ai_cart(token: str, file: UploadFile = File(...)):
+    c = await _b2b_contact(token)
+    b2b_st = resolve_b2b_settings(await db.companies.find_one({"_id": c["company_id"]}, {"b2b_settings": 1}) or {}, c)
+    if b2b_st.get("allow_ai_cart") is False:
+        raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
+    import addons as _addons
+    if not await _addons.is_on(c["company_id"], "ai.b2b_cart"):
+        raise HTTPException(status_code=403, detail="AI sepet özelliği bu portalda kapalı.")
+    data = await file.read()
+    return await _ai_cart_parse_upload(c["company_id"], file, data)
 
 
 @api_router.post("/public/b2b/{token}/ai-cart/match")
@@ -3890,24 +3929,21 @@ async def b2b_ai_cart_learn(token: str, req: Dict[str, Any]):
     c = await _b2b_contact(token)
     import addons as _addons
     await _addons.require(c["company_id"], "ai.b2b_cart")
-    now = datetime.now(timezone.utc).isoformat()
-    saved = []
-    for m in (req.get("mappings") or []):
-        alias = _alias_key(m.get("alias") or m.get("requested") or "")
-        pid = m.get("product_id")
-        if not alias or not pid:
-            continue
-        p = await db.products.find_one({"_id": pid, "company_id": c["company_id"]})
-        if not p:
-            continue
-        await db.b2b_product_aliases.update_one(
-            {"company_id": c["company_id"], "alias": alias},
-            {"$set": {"product_id": pid, "product_name": p.get("name"), "alias_raw": m.get("alias") or m.get("requested"), "contact_id": c["_id"], "updated_at": now},
-             "$setOnInsert": {"_id": f"als_{uuid.uuid4().hex[:12]}", "company_id": c["company_id"], "alias": alias, "created_at": now, "hits": 0}},
-            upsert=True,
-        )
-        saved.append({"alias": alias, "product_id": pid, "product_name": p.get("name")})
-    return {"saved": saved, "count": len(saved)}
+    return await _ai_cart_learn_mappings(c["company_id"], req.get("mappings") or [], contact_id=c["_id"])
+
+
+@api_router.post("/ai/cart-extract")
+async def ai_cart_extract(file: UploadFile = File(...), company_id: str = Query("comp_nexus_main_01")):
+    """Panel Yeni Sipariş: Excel/PDF liste → stok eşleşmeli kalemler (B2B AI sepet ile aynı motor)."""
+    data = await file.read()
+    return await _ai_cart_parse_upload(company_id, file, data)
+
+
+@api_router.post("/ai/cart-learn")
+async def ai_cart_learn(req: Dict[str, Any]):
+    """Panel: kullanıcı eşlemelerini sonraki yüklemeler için hatırla."""
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    return await _ai_cart_learn_mappings(company_id, req.get("mappings") or [])
 
 def _b2b_gross(amount, vat_rate, includes_vat) -> float:
     n = round(float(amount or 0), 2)
