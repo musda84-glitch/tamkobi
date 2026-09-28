@@ -71,6 +71,41 @@ export function groupStepsByStation(steps) {
   return out.map((st, i) => ({ ...st, no: i + 1 }));
 }
 
+/** Atölye kartları: aynı istasyon peşi sıra (step_no değişmez). */
+export function groupWorkOrdersByStation(wos) {
+  const buckets = [];
+  const indexByKey = new Map();
+  const noStation = [];
+  for (const w of wos || []) {
+    const key = stationKey(w?.station);
+    if (!key) {
+      noStation.push(w);
+      continue;
+    }
+    if (!indexByKey.has(key)) {
+      indexByKey.set(key, buckets.length);
+      buckets.push([]);
+    }
+    buckets[indexByKey.get(key)].push(w);
+  }
+  const out = [];
+  for (const g of buckets) out.push(...g);
+  out.push(...noStation);
+  return out;
+}
+
+export function shopFloorStationSections(wos) {
+  const sections = [];
+  for (const w of wos || []) {
+    const key = stationKey(w?.station) || "_none";
+    const label = String(w?.station || "").trim() || "İstasyon yok";
+    const last = sections[sections.length - 1];
+    if (!last || last.key !== key) sections.push({ key, label, items: [w] });
+    else last.items.push(w);
+  }
+  return sections;
+}
+
 export function sameStationOrderHint(materials, generalSteps, groupEnabled) {
   if (groupEnabled) return null;
   const flat = flattenRecipeStepsPreview(materials, generalSteps);

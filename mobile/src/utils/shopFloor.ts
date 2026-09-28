@@ -118,3 +118,38 @@ export function mergeSelfEmployee(list: Employee[] | null | undefined, self?: Em
 export function woCardKey(w: WorkOrder): string {
   return idOf(w) || `${w.order_code || "wo"}-${w.step_no || 0}`;
 }
+
+export function stationKey(s?: string | null): string {
+  return String(s || "").trim().toLocaleLowerCase("tr");
+}
+
+export function groupWorkOrdersByStation(wos: WorkOrder[]): WorkOrder[] {
+  const buckets: WorkOrder[][] = [];
+  const indexByKey = new Map<string, number>();
+  const noStation: WorkOrder[] = [];
+  for (const w of wos || []) {
+    const key = stationKey(w.station);
+    if (!key) {
+      noStation.push(w);
+      continue;
+    }
+    if (!indexByKey.has(key)) {
+      indexByKey.set(key, buckets.length);
+      buckets.push([]);
+    }
+    buckets[indexByKey.get(key)!].push(w);
+  }
+  return [...buckets.flat(), ...noStation];
+}
+
+export function shopFloorStationSections(wos: WorkOrder[]): { key: string; label: string; items: WorkOrder[] }[] {
+  const sections: { key: string; label: string; items: WorkOrder[] }[] = [];
+  for (const w of wos || []) {
+    const key = stationKey(w.station) || "_none";
+    const label = String(w.station || "").trim() || "İstasyon yok";
+    const last = sections[sections.length - 1];
+    if (!last || last.key !== key) sections.push({ key, label, items: [w] });
+    else last.items.push(w);
+  }
+  return sections;
+}

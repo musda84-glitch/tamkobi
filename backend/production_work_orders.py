@@ -88,25 +88,90 @@ def normalize_step(st: Any) -> Optional[Dict[str, Any]]:
 _normalize_step = normalize_step
 
 
-def group_steps_by_station(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+LOCKED_WO_STATUSES = ("done", "in_progress", "paused")
+
+
+def group_steps_by_station(steps: List[Dict[str, Any]], station_order: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Aynı istasyon adımlarını peşi sıra topla (ilk görülen istasyon sırası korunur)."""
-    buckets: List[List[Dict[str, Any]]] = []
-    index_by_key: Dict[str, int] = {}
+    if station_order is None:
+        station_order = []
+        seen = set()
+        for st in steps or []:
+            key = str(st.get("station") or "").strip().casefold()
+            if key and key not in seen:
+                seen.add(key)
+                station_order.append(key)
+    buckets: Dict[str, List[Dict[str, Any]]] = {k: [] for k in station_order}
+    extra: List[List[Dict[str, Any]]] = []
+    extra_index: Dict[str, int] = {}
     no_station: List[Dict[str, Any]] = []
     for st in steps or []:
         key = str(st.get("station") or "").strip().casefold()
         if not key:
             no_station.append(st)
             continue
-        if key not in index_by_key:
-            index_by_key[key] = len(buckets)
-            buckets.append([])
-        buckets[index_by_key[key]].append(st)
+        if key in buckets:
+            buckets[key].append(st)
+            continue
+        if key not in extra_index:
+            extra_index[key] = len(extra)
+            extra.append([])
+        extra[extra_index[key]].append(st)
     out: List[Dict[str, Any]] = []
-    for group in buckets:
+    for key in station_order:
+        out.extend(buckets[key])
+    for group in extra:
         out.extend(group)
     out.extend(no_station)
     return out
+
+
+def group_work_orders_for_display(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Atölye listesi: aynı istasyon kartları peşi sıra (step_no değişmez)."""
+    return group_steps_by_station(list(rows or []))
+
+
+def regroup_remaining_work_orders(rows: List[Dict[str, Any]], enabled: bool = True) -> List[Dict[str, Any]]:
+    """Hazır/bekleyen adımları istasyona göre yeniden diz; başlamış/bitenler yerinde kalır.
+
+    Kilitli (done / in_progress / paused) step_no slotları korunur. Kalan adımlar
+    bu slotlara istasyon gruplu (veya original_step_no ile) yerleştirilir.
+    Ardından ilk açık adım ready, sonrası waiting olur.
+    """
+    ordered = sorted(list(rows or []), key=lambda w: int(w.get("step_no") or 0))
+    movable_idx = [i for i, w in enumerate(ordered) if w.get("status") not in LOCKED_WO_STATUSES]
+    movable = [ordered[i] for i in movable_idx]
+    if enabled:
+        station_order: List[str] = []
+        seen = set()
+        for w in ordered:
+            key = str(w.get("station") or "").strip().casefold()
+            if key and key not in seen:
+                seen.add(key)
+                station_order.append(key)
+        movable = group_steps_by_station(movable, station_order)
+    else:
+        movable = sorted(
+            movable,
+            key=lambda w: int(w.get("original_step_no") or w.get("step_no") or 0),
+        )
+    slot_nos = [int(ordered[i].get("step_no") or 0) for i in movable_idx]
+    for wo, new_no in zip(movable, slot_nos):
+        wo["step_no"] = new_no
+    for i, wo in zip(movable_idx, movable):
+        ordered[i] = wo
+    ordered.sort(key=lambda w: int(w.get("step_no") or 0))
+    seen_open = False
+    for w in ordered:
+        st = str(w.get("status") or "")
+        if st == "done":
+            continue
+        if st in ("in_progress", "paused"):
+            seen_open = True
+            continue
+        w["status"] = "waiting" if seen_open else "ready"
+        seen_open = True
+    return ordered
 
 
 def flatten_recipe_steps(recipe: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:

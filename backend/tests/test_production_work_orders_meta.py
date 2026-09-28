@@ -113,6 +113,41 @@ def test_flatten_group_same_station_batches():
     assert group_steps_by_station([{"station": "A"}, {"station": "B"}, {"station": "A"}])[0]["station"] == "A"
 
 
+def test_regroup_remaining_keeps_locked_and_batches_station():
+    from production_work_orders import regroup_remaining_work_orders
+
+    rows = [
+        {"_id": "1", "step_no": 1, "status": "done", "station": "HOLZHER", "original_step_no": 1},
+        {"_id": "2", "step_no": 2, "status": "ready", "station": "OMAKSAN", "original_step_no": 2},
+        {"_id": "3", "step_no": 3, "status": "waiting", "station": "HOLZHER", "original_step_no": 3},
+    ]
+    out = regroup_remaining_work_orders(rows, enabled=True)
+    assert [w["_id"] for w in out] == ["1", "3", "2"]
+    assert [w["step_no"] for w in out] == [1, 2, 3]
+    assert out[0]["status"] == "done"
+    assert out[1]["status"] == "ready"
+    assert out[1]["station"] == "HOLZHER"
+    assert out[2]["status"] == "waiting"
+
+    restored = regroup_remaining_work_orders(out, enabled=False)
+    assert [w["_id"] for w in restored] == ["1", "2", "3"]
+    assert restored[1]["status"] == "ready"
+    assert restored[1]["station"] == "OMAKSAN"
+
+
+def test_group_work_orders_for_display_keeps_step_no():
+    from production_work_orders import group_work_orders_for_display
+
+    rows = [
+        {"id": "a", "station": "HOLZHER", "step_no": 1},
+        {"id": "b", "station": "OMAKSAN", "step_no": 2},
+        {"id": "c", "station": "HOLZHER", "step_no": 3},
+    ]
+    grouped = group_work_orders_for_display(rows)
+    assert [w["id"] for w in grouped] == ["a", "c", "b"]
+    assert [w["step_no"] for w in grouped] == [1, 3, 2]
+
+
 def test_enrich_work_order_row_fills_missing():
     row = {"station": None, "order_code": "URT-1"}
     enrich_work_order_row(row, {"job_file_name": "DOSYA-1", "recipe_name": "Reçete A"})

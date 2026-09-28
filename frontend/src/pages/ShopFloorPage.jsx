@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2, FileText, Trash2 } from "lucide-react";
+import { Factory, Play, Pause, CheckCircle2, Clock, User, Maximize2, Minimize2, RefreshCw, MapPin, Package, KeyRound, X, Loader2, FileText, Trash2, ArrowDownUp } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -10,6 +10,7 @@ import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { openAssignedDuties } from "../utils/assignedDuty";
 import { shopFloorCardActions, shopFloorCardBorder } from "../utils/shopFloorActions";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 
 const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
 
@@ -21,6 +22,8 @@ export default function ShopFloorPage() {
   const [stations, setStations] = useState([]);
   const [operator, setOperator] = useState("");
   const [station, setStation] = useState(() => localStorage.getItem("nx_station") || "");
+  const [groupSameStation, setGroupSameStation] = useState(() => localStorage.getItem("nx_group_same_station") === "1");
+  const [groupBusy, setGroupBusy] = useState(false);
   const [pendingEmp, setPendingEmp] = useState(null);
   const [pin, setPin] = useState("");
   const [unlockBusy, setUnlockBusy] = useState(false);
@@ -56,6 +59,17 @@ export default function ShopFloorPage() {
   }, [companyId, station]);
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
   useEffect(() => { localStorage.setItem("nx_station", station); }, [station]);
+  useEffect(() => { localStorage.setItem("nx_group_same_station", groupSameStation ? "1" : "0"); }, [groupSameStation]);
+  useEffect(() => {
+    axios.get(`${API_URL}/production/work-orders/shopfloor-settings`, { params: { company_id: companyId } })
+      .then((r) => {
+        if (typeof r.data?.group_same_station === "boolean") {
+          setGroupSameStation(r.data.group_same_station);
+          localStorage.setItem("nx_group_same_station", r.data.group_same_station ? "1" : "0");
+        }
+      })
+      .catch(() => {});
+  }, [companyId]);
 
   const requestOperator = (name) => {
     if (!name) { setOperator(""); setPendingEmp(null); setPin(""); setUnlockErr(""); return; }
@@ -106,6 +120,52 @@ export default function ShopFloorPage() {
   };
   const mine = active.filter((w) => w.operator_name === operator || w.assigned_name === operator);
   const openDuties = openAssignedDuties(duties);
+  const arrangeWos = (list) => (groupSameStation ? groupWorkOrdersByStation(list) : list);
+
+  const toggleGroupSameStation = async (on) => {
+    setGroupSameStation(on);
+    localStorage.setItem("nx_group_same_station", on ? "1" : "0");
+    setGroupBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/production/work-orders/shopfloor-settings`, {
+        company_id: companyId,
+        group_same_station: on,
+      });
+      toast.success(r.data?.message || (on ? "Peşi sıra istasyon sıralaması açıldı." : "Peşi sıra istasyon sıralaması kapatıldı."));
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Sıralama kaydedilemedi.");
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const renderWoGrid = (list, extraClass = "") => {
+    if (!list.length) return null;
+    if (!groupSameStation) {
+      return (
+        <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 ${extraClass}`}>
+          {list.map((w) => <Card key={w.id} w={w} />)}
+        </div>
+      );
+    }
+    return (
+      <div className={`space-y-4 ${extraClass}`} data-testid="shopfloor-station-groups">
+        {shopFloorStationSections(arrangeWos(list)).map((sec) => (
+          <div key={sec.key} data-testid={`shopfloor-station-group-${sec.key}`}>
+            <div className="flex items-center gap-2 mb-2">
+              <ArrowDownUp className="w-3.5 h-3.5 text-slate-400" />
+              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">{sec.label}</h3>
+              <span className="text-[10px] font-semibold text-slate-400">{sec.items.length}</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {sec.items.map((w) => <Card key={w.id} w={w} />)}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   const approveDuty = async (t) => {
     if (!t?.id) return;
@@ -266,6 +326,20 @@ export default function ShopFloorPage() {
         </div>
       </div>
       {!operator && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 font-semibold" data-testid="shopfloor-no-operator">Başlamak için yukarıdan operatörü (kendinizi) seçin ve şifrenizi girin.</div>}
+      <label className="flex items-start gap-2 cursor-pointer select-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 hover:bg-slate-50" data-testid="shopfloor-group-station-wrap">
+        <input
+          type="checkbox"
+          checked={!!groupSameStation}
+          disabled={groupBusy}
+          onChange={(e) => toggleGroupSameStation(e.target.checked)}
+          className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+          data-testid="shopfloor-group-same-station"
+        />
+        <span>
+          <span className="block font-semibold text-slate-800 text-sm">Aynı istasyonu peşi sıra işle</span>
+          <span className="block text-[11px] text-slate-500 font-normal mt-0.5">Açıkken iş emirleri istasyona göre gruplanır; kalan adımlar peşi sıra yeniden sıralanır (ör. tüm HOLZHER kesimleri ardışık).</span>
+        </span>
+      </label>
       <div className="grid grid-cols-3 gap-3 text-center">{[["Hazır", wos.filter((w) => w.status === "ready").length, "text-blue-600"], ["Devam Eden", wos.filter((w) => ["in_progress", "paused"].includes(w.status)).length, "text-amber-600"], ["Bugün Biten", done.filter((w) => (w.finished_at || "").startsWith(new Date().toISOString().slice(0, 10))).length, "text-emerald-600"]].map(([l, v, c]) => <div key={l} className="bg-white border rounded-2xl p-3"><div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div><div className={`text-3xl font-black ${c}`}>{v}</div></div>)}</div>
       <div className="bg-white border rounded-2xl p-3" data-testid="shopfloor-performance">
         <button onClick={() => setShowPerf(!showPerf)} className="w-full flex items-center justify-between text-sm font-bold text-slate-800" data-testid="shopfloor-perf-toggle"><span>Bugünkü Performans — operatör / istasyon ({perf?.total_done || 0} adım tamamlandı)</span><span className="text-xs text-slate-400">{showPerf ? "Gizle" : "Göster"}</span></button>
@@ -296,11 +370,11 @@ export default function ShopFloorPage() {
           </div>
         </div>
       )}
-      {mine.length > 0 && <div><h2 className="text-sm font-bold text-slate-700 mb-2">Benim İşlerim ({mine.length})</h2><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{mine.map((w) => <Card key={w.id} w={w} />)}</div></div>}
+      {mine.length > 0 && <div><h2 className="text-sm font-bold text-slate-700 mb-2">Benim İşlerim ({mine.length})</h2>{renderWoGrid(mine)}</div>}
       <div><h2 className="text-sm font-bold text-slate-700 mb-2">Açık İş Emirleri ({active.length})</h2>
         {active.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-sm text-slate-400" data-testid="shopfloor-empty">Bekleyen iş emri yok. Üretim &amp; Reçete sayfasından "Üretim Emri Ver" ile oluşturun.</div>}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{active.filter((w) => !mine.includes(w)).map((w) => <Card key={w.id} w={w} />)}</div></div>
-      {waiting.length > 0 && <div><h2 className="text-sm font-bold text-slate-500 mb-2">Sıradaki Adımlar ({waiting.length})</h2><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 opacity-70">{waiting.map((w) => <Card key={w.id} w={w} />)}</div></div>}
+        {renderWoGrid(active.filter((w) => !mine.includes(w)))}</div>
+      {waiting.length > 0 && <div><h2 className="text-sm font-bold text-slate-500 mb-2">Sıradaki Adımlar ({waiting.length})</h2>{renderWoGrid(waiting, "opacity-70")}</div>}
       {done.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <button
