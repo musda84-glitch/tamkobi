@@ -7,8 +7,8 @@ import { useEscape } from "../utils/useEscape";
 import { empIdOf } from "../utils/personnelIds";
 import { AssignOvertimeModal } from "./AssignOvertimeModal";
 import { EmployeePuantajPanel } from "./EmployeePuantajPanel";
-import {
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import {
   employeePayMoves,
   filterPayMoves,
   fmtPayMoveAmount,
