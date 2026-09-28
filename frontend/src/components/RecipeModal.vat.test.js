@@ -1,4 +1,4 @@
-import { materialLineCost, materialUnitNet, normalizeStepImages, serializeSteps } from "../components/RecipeModal";
+import { coerceStepsList, materialLineCost, materialUnitNet, materialsFromRecipe, normalizeStepImages, normalizeSteps, serializeSteps } from "../components/RecipeModal";
 import { normalizeWorkshopZones, zoneNamesFromList, workshopZoneSelectGroups } from "../utils/workParks";
 
 describe("recipe material vat cost", () => {
@@ -44,6 +44,20 @@ describe("per-material recipe steps", () => {
 
   it("normalizes step image urls", () => {
     expect(normalizeStepImages(["/a", { url: "/b" }, "", { image_url: "/a" }])).toEqual(["/a", "/b"]);
+  });
+
+  it("coerces JSON-string steps and loads material steps on edit", () => {
+    expect(coerceStepsList('[{"name":"Kesim","station":"CNC"}]')).toEqual([{ name: "Kesim", station: "CNC" }]);
+    expect(normalizeSteps('[{"name":"Kesim","station":"CNC","duration_min":5}]')[0].name).toBe("Kesim");
+    const mats = materialsFromRecipe({
+      materials: [
+        { product_id: "m1", product_name: "MDF", quantity: 2, unit: "Adet", steps: [{ name: "Kesim", station: "CNC OEMAK", duration_min: 10 }] },
+        { product_id: "m2", product_name: "Medelak", quantity: 1, unit: "Adet", steps: '[{"name":"Kaplama","station":"Pres"}]' },
+      ],
+    });
+    expect(mats[0].steps).toHaveLength(1);
+    expect(mats[0].steps[0].station).toBe("CNC OEMAK");
+    expect(mats[1].steps[0].name).toBe("Kaplama");
   });
 });
 

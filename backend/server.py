@@ -12113,6 +12113,37 @@ async def _requirements(recipe: Dict[str, Any], quantity: float) -> List[Dict[st
         rows.append({"product_id": m.get("product_id"), "product_name": m.get("product_name") or p.get("name"), "unit": m.get("unit") or p.get("unit"), "needed": needed, "in_stock": stock, "shortage": round(max(0.0, needed - stock), 3), "cost": round(needed * unit_net, 2)})
     return rows
 
+def _normalize_recipe_steps_payload(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Kalem / genel adımları normalize et (istasyon seçili, bölüm boşsa düşmesin)."""
+    if isinstance(doc.get("steps"), list):
+        doc["steps"] = [
+            {**s, "no": i + 1}
+            for i, s in enumerate(x for x in (pwo.normalize_step(st) for st in doc["steps"]) if x)
+        ]
+    if isinstance(doc.get("materials"), list):
+        mats_norm = []
+        for m in doc["materials"]:
+            if not isinstance(m, dict):
+                mats_norm.append(m)
+                continue
+            mc = dict(m)
+            raw_steps = mc.get("steps") or []
+            if isinstance(raw_steps, str):
+                try:
+                    import json as _json
+                    parsed = _json.loads(raw_steps)
+                    raw_steps = parsed if isinstance(parsed, list) else []
+                except Exception:
+                    raw_steps = []
+            mc["steps"] = [
+                {**s, "no": i + 1}
+                for i, s in enumerate(x for x in (pwo.normalize_step(st) for st in raw_steps) if x)
+            ]
+            mats_norm.append(mc)
+        doc["materials"] = mats_norm
+    return doc
+
+
 @api_router.get("/production/recipes")
 async def list_recipes(company_id: Optional[str] = "comp_nexus_main_01", product_id: Optional[str] = None):
     q: Dict[str, Any] = {"company_id": company_id}
@@ -12124,11 +12155,22 @@ async def list_recipes(company_id: Optional[str] = "comp_nexus_main_01", product
         out.append(clean_doc(r))
     return out
 
+
+@api_router.get("/production/recipes/{recipe_id}")
+async def get_recipe(recipe_id: str):
+    """Tek reçete — düzenleme modalı için taze (kalem adımları dahil)."""
+    r = await db.recipes.find_one({"_id": recipe_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
+    r.update(_recipe_costs(r))
+    return clean_doc(r)
+
+
 @api_router.post("/production/recipes")
 async def create_recipe(recipe: Recipe):
     if not recipe.code:
         recipe.code = f"BOM-{str(uuid.uuid4().int)[:6]}"
-    doc = recipe.to_mongo()
+    doc = _normalize_recipe_steps_payload(recipe.to_mongo())
     await _fill_material_costs(doc["materials"])
     doc.update(_recipe_costs(doc))
     await db.recipes.insert_one(doc)
@@ -12193,31 +12235,9 @@ async def update_recipe(recipe_id: str, req: Dict[str, Any]):
     if not r:
         raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
     allowed = {k: v for k, v in req.items() if k in {"name", "code", "finished_product_id", "finished_product_name", "target_quantity", "unit", "materials", "steps", "labor_cost", "overhead_cost", "notes", "is_active", "contact_id", "contact_name", "job_file_name", "one_time"}}
-    # Kalem / genel adımları normalize et (istasyon seçili, bölüm boşsa düşmesin)
-    if "steps" in allowed and isinstance(allowed["steps"], list):
-        allowed["steps"] = [
-            {**s, "no": i + 1}
-            for i, s in enumerate(
-                x for x in (pwo.normalize_step(st) for st in allowed["steps"]) if x
-            )
-        ]
-    if "materials" in allowed and isinstance(allowed["materials"], list):
-        mats_norm = []
-        for m in allowed["materials"]:
-            if not isinstance(m, dict):
-                mats_norm.append(m)
-                continue
-            mc = dict(m)
-            raw_steps = mc.get("steps") or []
-            mc["steps"] = [
-                {**s, "no": i + 1}
-                for i, s in enumerate(
-                    x for x in (pwo.normalize_step(st) for st in raw_steps) if x
-                )
-            ]
-            mats_norm.append(mc)
-        allowed["materials"] = mats_norm
     steps_changed = "steps" in allowed or "materials" in allowed
+    if steps_changed:
+        allowed = _normalize_recipe_steps_payload(dict(allowed))
     merged = {**r, **allowed}
     await _fill_material_costs(merged.get("materials", []))
     merged.update(_recipe_costs(merged))
