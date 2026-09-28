@@ -219,6 +219,28 @@ def work_order_step_label(st: Optional[Dict[str, Any]] = None, idx: int = 0) -> 
     return f"{base} — {mname}" if mname else base
 
 
+def customer_recipe_steps(recipe: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Proje dosyası / müşteri takibi için reçete adım özeti (maliyet yok)."""
+    out: List[Dict[str, Any]] = []
+    for st in flatten_recipe_steps(recipe):
+        name = str(st.get("name") or "").strip()
+        if not name:
+            continue
+        row: Dict[str, Any] = {
+            "no": int(st.get("no") or len(out) + 1),
+            "name": name,
+            "station": str(st.get("station") or "").strip(),
+        }
+        note = str(st.get("note") or "").strip()
+        if note:
+            row["note"] = note
+        mname = str(st.get("material_name") or "").strip()
+        if mname:
+            row["material_name"] = mname
+        out.append(row)
+    return out
+
+
 def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Liste yanıtında eksik job_file_name / recipe_name / station / images / materials / step_note doldur."""
     m = meta or {}

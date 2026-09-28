@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock, Send, Eye, EyeOff } from "lucide-react";
+import { FileSignature, Briefcase, Ruler, Plus, Trash2, ImagePlus, FileText, Printer, ArrowRight, X, Receipt, Users, Pencil, CheckCircle2, Check, CalendarClock, Send, Eye, EyeOff, Factory, ListOrdered } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { DocumentLineEditor, LineTotalsFooter } from "../components/DocumentLineEditor";
@@ -271,6 +271,7 @@ export default function ProjectsPage({ section } = {}) {
   const [focusFlash, setFocusFlash] = useState("");
   const [quotes, setQuotes] = useState([]); const [projects, setProjects] = useState([]); const [surveys, setSurveys] = useState([]);
   const [contacts, setContacts] = useState([]); const [products, setProducts] = useState([]);
+  const [recipes, setRecipes] = useState([]);
   const [refsReady, setRefsReady] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [form, setForm] = useState(null);
@@ -313,15 +314,30 @@ export default function ProjectsPage({ section } = {}) {
   const ensureFormRefs = useCallback(async () => {
     if (refsReady || !companyId) return;
     try {
-      const [c, pr] = await Promise.all([
+      const [c, pr, rec] = await Promise.all([
         axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`),
         axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`),
+        axios.get(`${API_URL}/production/recipes?company_id=${companyId}`).catch(() => ({ data: [] })),
       ]);
-      setContacts(c.data || []); setProducts(pr.data || []); setRefsReady(true);
+      setContacts(c.data || []); setProducts(pr.data || []);
+      setRecipes((Array.isArray(rec.data) ? rec.data : []).filter((r) => !r.one_time && r.is_active !== false));
+      setRefsReady(true);
     } catch {
       toast.error("Cari / ürün listesi yüklenemedi.");
     }
   }, [companyId, refsReady]);
+
+  const loadFixedRecipes = useCallback(async () => {
+    if (!companyId) return [];
+    try {
+      const r = await axios.get(`${API_URL}/production/recipes?company_id=${companyId}`);
+      const rows = (Array.isArray(r.data) ? r.data : []).filter((x) => !x.one_time && x.is_active !== false);
+      setRecipes(rows);
+      return rows;
+    } catch {
+      return recipes;
+    }
+  }, [companyId, recipes]);
 
   const ensureContacts = useCallback(async () => {
     if (contacts.length || !companyId) return contacts;
@@ -351,9 +367,29 @@ export default function ProjectsPage({ section } = {}) {
   const openTracking = async (p) => { await ensureContacts(); setTrackingProject(p); };
 
   const openForm = (kind) => {
-    setForm({ kind, contact_id: "", contact_name: "", title: "", name: "", valid_until: "", notes: "", address: "", budget: "", start_date: "", end_date: "", survey_date: new Date().toISOString().slice(0, 10), measurements: [], radius_m: DEFAULT_LOCATION_RADIUS_M });
+    setForm({
+      kind,
+      contact_id: "",
+      contact_name: "",
+      title: "",
+      name: "",
+      valid_until: "",
+      notes: "",
+      address: "",
+      budget: "",
+      start_date: "",
+      end_date: "",
+      survey_date: new Date().toISOString().slice(0, 10),
+      measurements: [],
+      radius_m: DEFAULT_LOCATION_RADIUS_M,
+      recipe_id: "",
+      recipe_name: "",
+      production_steps: [],
+      show_production_steps: false,
+    });
     setItems([computeLine(emptyLine())]);
     ensureFormRefs();
+    if (kind === "project") loadFixedRecipes();
   };
   const openQuoteForProject = async (project) => {
     await ensureFormRefs();
@@ -406,6 +442,7 @@ export default function ProjectsPage({ section } = {}) {
   };
   const openEditProject = async (p) => {
     await ensureFormRefs();
+    await loadFixedRecipes();
     const pid = p?.id || p?._id;
     try {
       const r = await axios.get(`${API_URL}/projects/${pid}`);
@@ -431,10 +468,59 @@ export default function ProjectsPage({ section } = {}) {
         longitude: full.longitude ?? "",
         location_url: full.location_url || "",
         radius_m: full.radius_m ?? DEFAULT_LOCATION_RADIUS_M,
+        recipe_id: full.recipe_id || "",
+        recipe_name: full.recipe_name || "",
+        production_steps: Array.isArray(full.production_steps) ? full.production_steps : [],
+        show_production_steps: !!full.show_production_steps,
       });
       setItems([computeLine(emptyLine())]);
     } catch {
       toast.error("Proje yüklenemedi.");
+    }
+  };
+
+  const pickProjectRecipe = async (id) => {
+    if (!id) {
+      setForm((f) => ({ ...f, recipe_id: "", recipe_name: "", production_steps: [] }));
+      return;
+    }
+    try {
+      const r = await axios.get(`${API_URL}/production/recipes/${id}`);
+      const rec = r.data || {};
+      const mats = Array.isArray(rec.materials) ? rec.materials : [];
+      const general = Array.isArray(rec.steps) ? rec.steps : [];
+      const steps = [];
+      for (const m of mats) {
+        for (const st of m.steps || []) {
+          const name = String(st?.name || st?.station || "").trim();
+          if (!name) continue;
+          steps.push({
+            no: steps.length + 1,
+            name,
+            station: String(st?.station || "").trim(),
+            note: String(st?.note || "").trim(),
+            material_name: String(m?.product_name || "").trim() || undefined,
+          });
+        }
+      }
+      for (const st of general) {
+        const name = String(st?.name || st?.station || "").trim();
+        if (!name) continue;
+        steps.push({
+          no: steps.length + 1,
+          name,
+          station: String(st?.station || "").trim(),
+          note: String(st?.note || "").trim(),
+        });
+      }
+      setForm((f) => ({
+        ...f,
+        recipe_id: rec.id || rec._id || id,
+        recipe_name: rec.name || rec.code || "",
+        production_steps: steps.length ? steps : [{ no: 1, name: "Üretim", station: "" }],
+      }));
+    } catch {
+      toast.error("Reçete adımları yüklenemedi.");
     }
   };
   const lineTotals = useMemo(() => documentLineTotals(items), [items]);
@@ -483,6 +569,9 @@ export default function ProjectsPage({ section } = {}) {
           longitude: form.longitude || null,
           location_url: form.location_url || "",
           radius_m: form.radius_m,
+          recipe_id: form.recipe_id || null,
+          show_production_steps: !!form.show_production_steps,
+          refresh_production_steps: !!form.recipe_id,
         };
         if (form.id) await axios.put(`${API_URL}/projects/${form.id}`, projectBody);
         else await axios.post(`${API_URL}/projects`, { company_id: companyId, ...projectBody });
@@ -736,6 +825,34 @@ export default function ProjectsPage({ section } = {}) {
                 </div>
               </div>
               {p.description && <p className="text-slate-600">{p.description}</p>}
+              {(p.production_steps || []).length > 0 && (
+                <div className="rounded-xl border border-slate-100 bg-slate-50/80 px-2.5 py-2 space-y-1" data-testid={`project-recipe-steps-${p.project_number}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1">
+                      <ListOrdered className="w-3 h-3" /> Üretim adımları
+                      {p.recipe_name ? <span className="normal-case text-slate-500">· {p.recipe_name}</span> : null}
+                    </div>
+                    <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded ${p.show_production_steps ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`} title={p.show_production_steps ? "Müşteri takip linkinde görünür" : "Sadece iç ekranda"}>
+                      {p.show_production_steps ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                      {p.show_production_steps ? "Müşteri görür" : "Gizli"}
+                    </span>
+                  </div>
+                  <ol className="space-y-0.5">
+                    {(p.production_steps || []).slice(0, 6).map((st, i) => (
+                      <li key={`${st.no || i}-${st.name}`} className="text-[11px] text-slate-700 flex gap-1.5">
+                        <span className="font-mono text-slate-400 shrink-0">{st.no || i + 1}.</span>
+                        <span className="min-w-0 truncate">
+                          <span className="font-semibold">{st.name}</span>
+                          {st.station ? <span className="text-slate-400"> · {st.station}</span> : null}
+                        </span>
+                      </li>
+                    ))}
+                    {(p.production_steps || []).length > 6 && (
+                      <li className="text-[10px] text-slate-400 font-semibold">+{(p.production_steps || []).length - 6} adım daha</li>
+                    )}
+                  </ol>
+                </div>
+              )}
               <ProjectStagePhotos project={p} stages={projectStages} onUpdated={load} />
               <div className="flex items-center gap-1.5 flex-wrap"><TrackingBadge project={p} /></div>
               {(() => {
@@ -896,6 +1013,55 @@ export default function ProjectsPage({ section } = {}) {
             )}
             {form.kind === "quote" && <div className="grid grid-cols-2 gap-2"><div><label className="block font-semibold mb-1">Geçerlilik</label><input type="date" value={form.valid_until} onChange={(e) => setForm({ ...form, valid_until: e.target.value })} className={inputCls} /></div></div>}
             {form.kind === "project" && <div className="grid grid-cols-1 sm:grid-cols-3 gap-2"><div><label className="block font-semibold mb-1">Bütçe (₺)</label><input type="number" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} className={inputCls} data-testid="pf-budget" /></div><div><label className="block font-semibold mb-1">Başlangıç</label><input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className={inputCls} /></div><div><label className="block font-semibold mb-1">Bitiş</label><input type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} className={inputCls} /></div></div>}
+            {form.kind === "project" && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-2" data-testid="pf-recipe-steps">
+                <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                  <Factory className="w-3.5 h-3.5 text-emerald-600" /> Sabit üretim reçetesi
+                </div>
+                <p className="text-[11px] text-slate-500">Reçete adımları proje dosyasında görünür. Müşteri takip linkinde göstermek için aşağıdaki kutuyu işaretleyin.</p>
+                <SearchSelect
+                  value={form.recipe_id || ""}
+                  options={recipes}
+                  placeholder="Sabit üretim reçetesi ara…"
+                  getLabel={(r) => r.name || r.code || "Reçete"}
+                  getSub={(r) => [r.code, r.finished_product_name, r.job_file_name].filter(Boolean).join(" · ")}
+                  onChange={pickProjectRecipe}
+                  testId="pf-recipe"
+                />
+                <label className="flex items-start gap-2 cursor-pointer select-none rounded-lg border border-slate-200 bg-white px-3 py-2" data-testid="pf-show-production-steps-wrap">
+                  <input
+                    type="checkbox"
+                    checked={!!form.show_production_steps}
+                    onChange={(e) => setForm({ ...form, show_production_steps: e.target.checked })}
+                    className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    data-testid="pf-show-production-steps"
+                  />
+                  <span>
+                    <span className="block font-semibold text-slate-800">Müşteri üretim adımlarını görsün</span>
+                    <span className="block text-[11px] text-slate-500 font-normal mt-0.5">Kapalıysa sadece iç ekranda görünür; takip linkine eklenmez.</span>
+                  </span>
+                </label>
+                {(form.production_steps || []).length > 0 && (
+                  <div className="rounded-lg border border-slate-200 bg-white p-2 space-y-1" data-testid="pf-production-steps-preview">
+                    <div className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1">
+                      <ListOrdered className="w-3 h-3" /> Üretim adımları ({form.production_steps.length})
+                      {form.recipe_name ? ` · ${form.recipe_name}` : ""}
+                    </div>
+                    {form.production_steps.map((st, i) => (
+                      <div key={`${st.no || i}-${st.name}`} className="flex items-start gap-2 text-[11px] text-slate-700">
+                        <span className="font-mono text-slate-400 shrink-0">{st.no || i + 1}.</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="font-semibold">{st.name}</span>
+                          {st.material_name ? <span className="text-slate-500"> — {st.material_name}</span> : null}
+                          {st.station ? <span className="ml-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1 py-0.5 rounded">{st.station}</span> : null}
+                          {st.note ? <div className="text-slate-500">{st.note}</div> : null}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {form.kind !== "quote" && <div className="space-y-1.5">
               <label className="block font-semibold mb-1">Adres / Saha</label><input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className={inputCls} data-testid="pf-address" />
               <div className="flex gap-1.5">
