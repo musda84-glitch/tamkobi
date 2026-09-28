@@ -54,8 +54,27 @@ def test_flatten_recipe_steps_material_then_recipe():
 
 
 def test_flatten_recipe_steps_default_uretim():
-    assert flatten_recipe_steps({}) == [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0, "images": []}]
+    assert flatten_recipe_steps({}) == [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0, "note": "", "images": []}]
     assert flatten_recipe_steps({"materials": [{"product_name": "X", "steps": []}], "steps": []})[0]["name"] == "Üretim"
+
+
+def test_flatten_keeps_step_note():
+    flat = flatten_recipe_steps({
+        "materials": [{
+            "product_name": "MDF",
+            "steps": [{"name": "Kesim", "station": "CNC", "note": "  Delik Ø8  "}],
+        }],
+        "steps": [],
+    })
+    assert flat[0]["note"] == "Delik Ø8"
+
+
+def test_enrich_fills_step_note():
+    row = {"order_code": "URT-1"}
+    enrich_work_order_row(row, {"step_note": "Kenar bant beyaz"})
+    assert row["step_note"] == "Kenar bant beyaz"
+    enrich_work_order_row(row, {"step_note": "IGNORE"})
+    assert row["step_note"] == "Kenar bant beyaz"
 
 
 def test_flatten_keeps_station_only_step():

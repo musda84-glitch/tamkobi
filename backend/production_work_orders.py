@@ -73,11 +73,13 @@ def normalize_step(st: Any) -> Optional[Dict[str, Any]]:
         name = station
     if not name:
         return None
+    note = str(st.get("note") or "").strip()
     return {
         "no": st.get("no", 0),
         "name": name,
         "station": station,
         "duration_min": st.get("duration_min", 0) or 0,
+        "note": note,
         "images": sanitize_step_images(st.get("images")),
     }
 
@@ -134,12 +136,13 @@ def flatten_recipe_steps(recipe: Optional[Dict[str, Any]] = None) -> List[Dict[s
         if norm:
             out.append(norm)
     if not out:
-        return [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0, "images": []}]
+        return [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0, "note": "", "images": []}]
     if r.get("group_same_station"):
         out = group_steps_by_station(out)
     for i, st in enumerate(out):
         st["no"] = i + 1
         st.setdefault("images", [])
+        st.setdefault("note", "")
     return out
 
 
@@ -152,7 +155,7 @@ def work_order_step_label(st: Optional[Dict[str, Any]] = None, idx: int = 0) -> 
 
 
 def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Liste yanıtında eksik job_file_name / recipe_name / station / images / materials doldur."""
+    """Liste yanıtında eksik job_file_name / recipe_name / station / images / materials / step_note doldur."""
     m = meta or {}
     if not row.get("job_file_name") and m.get("job_file_name"):
         row["job_file_name"] = m["job_file_name"]
@@ -170,6 +173,10 @@ def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = 
         row["images"] = list(m["images"])
     elif "images" not in row:
         row["images"] = []
+    if not str(row.get("step_note") or "").strip() and m.get("step_note") is not None:
+        row["step_note"] = m.get("step_note") or ""
+    elif "step_note" not in row:
+        row["step_note"] = ""
     return row
 
 

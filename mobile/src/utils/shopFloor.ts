@@ -12,6 +12,8 @@ export type WorkOrder = {
   product_name?: string;
   station?: string;
   job_file_name?: string;
+  /** Reçete adım notu — atölyede iş dosyası yanında */
+  step_note?: string;
   recipe_name?: string;
   materials?: { product_id?: string; product_name?: string; unit?: string; needed?: number }[];
   /** Reçete adımına bağlı istasyon görselleri */

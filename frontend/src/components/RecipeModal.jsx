@@ -39,7 +39,7 @@ export const normalizeStepImages = (list) => {
   return out;
 };
 
-const emptyStep = (station = "", name = "") => ({ name, station, duration_min: 0, images: [] });
+const emptyStep = (station = "", name = "") => ({ name, station, duration_min: 0, note: "", images: [] });
 
 const emptyMat = () => ({
   product_id: "",
@@ -72,6 +72,7 @@ export const normalizeSteps = (list) =>
     name: x?.name || "",
     station: x?.station || "",
     duration_min: x?.duration_min ?? 0,
+    note: typeof x?.note === "string" ? x.note : (x?.note != null ? String(x.note) : ""),
     images: normalizeStepImages(x?.images),
   }));
 
@@ -101,6 +102,7 @@ export const serializeSteps = (list, fallbackStation = "") =>
       name: x.name,
       station: x.station,
       duration_min: Number(x.duration_min || 0),
+      note: (x.note || "").trim() || "",
       images: normalizeStepImages(x.images),
     }));
 
@@ -416,6 +418,16 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
                       </div>
                       <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" value={st.duration_min} onChange={(e) => updMatStep(i, si, { duration_min: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Hedef süre (dk)" /><span className="text-[10px] text-slate-400">dk</span></div>
                       <div className="col-span-1 text-right"><button type="button" onClick={() => removeMatStep(i, si)} className="text-rose-500 p-1" data-testid={`recipe-mat-${i}-step-del-${si}`}><Trash2 className="w-3.5 h-3.5" /></button></div>
+                      <div className="col-span-12 pl-7">
+                        <textarea
+                          rows={2}
+                          value={st.note || ""}
+                          onChange={(e) => updMatStep(i, si, { note: e.target.value })}
+                          placeholder="Atölyede iş dosyası yanında görünecek not / yazı…"
+                          className="w-full bg-white border rounded p-1.5 text-[11px] resize-y min-h-[2.25rem]"
+                          data-testid={`recipe-mat-${i}-step-note-${si}`}
+                        />
+                      </div>
                       <StepImages
                         images={st.images}
                         onChange={(images) => updMatStep(i, si, { images })}
@@ -470,6 +482,16 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
               </div>
               <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" value={st.duration_min} onChange={(e) => updStep(i, { duration_min: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Hedef süre (dk)" /><span className="text-[10px] text-slate-400">dk</span></div>
               <div className="col-span-1 text-right"><button onClick={() => setSteps(steps.filter((_, idx) => idx !== i))} className="text-rose-500 p-1"><Trash2 className="w-3.5 h-3.5" /></button></div>
+              <div className="col-span-12 pl-7">
+                <textarea
+                  rows={2}
+                  value={st.note || ""}
+                  onChange={(e) => updStep(i, { note: e.target.value })}
+                  placeholder="Atölyede iş dosyası yanında görünecek not / yazı…"
+                  className="w-full bg-white border rounded p-1.5 text-[11px] resize-y min-h-[2.25rem]"
+                  data-testid={`recipe-step-note-${i}`}
+                />
+              </div>
               <StepImages
                 images={st.images}
                 onChange={(images) => updStep(i, { images })}

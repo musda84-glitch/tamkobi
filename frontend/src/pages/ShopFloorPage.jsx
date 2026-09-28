@@ -189,7 +189,15 @@ export default function ShopFloorPage() {
       </div>
       <div className="text-xs bg-slate-50 border border-slate-100 rounded-xl px-2.5 py-2 space-y-0.5" data-testid={`wo-meta-${w.order_code}-${w.step_no}`}>
         <div className="flex items-center gap-1.5 text-slate-600"><MapPin className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span>İstasyon: <span className="font-semibold text-slate-900">{w.station || "—"}</span></span></div>
-        <div className="flex items-center gap-1.5 text-slate-600 min-w-0"><FileText className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span className="truncate">İş dosyası: <span className="font-semibold text-slate-900">{w.job_file_name || "—"}</span></span></div>
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-0.5 text-slate-600 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0"><FileText className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span className="truncate">İş dosyası: <span className="font-semibold text-slate-900">{w.job_file_name || "—"}</span></span></div>
+          {String(w.step_note || "").trim() ? (
+            <div className="flex items-start gap-1.5 min-w-0 flex-1" data-testid={`wo-step-note-${w.order_code}-${w.step_no}`}>
+              <span className="shrink-0 text-slate-400">Not:</span>
+              <span className="font-semibold text-slate-900 whitespace-pre-wrap break-words">{String(w.step_note).trim()}</span>
+            </div>
+          ) : null}
+        </div>
       </div>
       {(w.materials || []).length > 0 && (
         <div className="text-xs border border-slate-100 rounded-xl px-2.5 py-2 space-y-1" data-testid={`wo-materials-${w.order_code}-${w.step_no}`}>
