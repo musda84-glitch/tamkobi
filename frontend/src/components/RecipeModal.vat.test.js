@@ -1,4 +1,4 @@
-import { materialLineCost, materialUnitNet, serializeSteps } from "../components/RecipeModal";
+import { materialLineCost, materialUnitNet, normalizeStepImages, serializeSteps } from "../components/RecipeModal";
 import { normalizeWorkshopZones, zoneNamesFromList, workshopZoneSelectGroups } from "../utils/workParks";
 
 describe("recipe material vat cost", () => {
@@ -28,16 +28,20 @@ describe("per-material recipe steps", () => {
     expect(
       serializeSteps(
         [
-          { name: " Kesim ", station: "CNC", duration_min: "10" },
+          { name: " Kesim ", station: "CNC", duration_min: "10", images: ["/a.jpg", "/a.jpg"] },
           { name: "  ", station: "X", duration_min: 1 },
           { name: "Montaj", station: "", duration_min: 0 },
         ],
         "Genel"
       )
     ).toEqual([
-      { no: 1, name: "Kesim", station: "CNC", duration_min: 10 },
-      { no: 2, name: "Montaj", station: "Genel", duration_min: 0 },
+      { no: 1, name: "Kesim", station: "CNC", duration_min: 10, images: ["/a.jpg"] },
+      { no: 2, name: "Montaj", station: "Genel", duration_min: 0, images: [] },
     ]);
+  });
+
+  it("normalizes step image urls", () => {
+    expect(normalizeStepImages(["/a", { url: "/b" }, "", { image_url: "/a" }])).toEqual(["/a", "/b"]);
   });
 });
 

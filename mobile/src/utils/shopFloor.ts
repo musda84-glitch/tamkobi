@@ -13,6 +13,8 @@ export type WorkOrder = {
   station?: string;
   job_file_name?: string;
   recipe_name?: string;
+  /** Reçete adımına bağlı istasyon görselleri */
+  images?: string[];
   planned_quantity?: number;
   unit?: string;
   duration_min?: number;

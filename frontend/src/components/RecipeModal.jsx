@@ -2,11 +2,13 @@ import React, { useEffect, useState } from "react";
 import { useEscape } from "../utils/useEscape";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Plus, Trash2, BookOpen, ListOrdered } from "lucide-react";
+import { X, Plus, Trash2, BookOpen, ListOrdered, ImagePlus } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { SearchSelect } from "./SearchSelect";
 import { formatTrAmount } from "../utils/money";
 import { normalizeWorkParks, normalizeWorkshopZones, stationNamesFromParks, zoneNamesFromList } from "../utils/workParks";
+import { compressImageFile } from "../utils/compressImage";
+import { HoverImageThumb } from "../utils/HoverImageThumb";
 
 const fmt = (n) => formatTrAmount((n || 0));
 
@@ -22,7 +24,20 @@ export const materialUnitNet = (m) => {
 export const materialLineCost = (m) =>
   materialUnitNet(m) * Number(m?.quantity || 0) * (1 + Number(m?.wastage_percent || 0) / 100);
 
-const emptyStep = (station = "") => ({ name: "", station, duration_min: 0 });
+export const normalizeStepImages = (list) => {
+  const out = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    const url = typeof item === "string" ? item.trim() : String(item?.url || item?.image_url || "").trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+    if (out.length >= 12) break;
+  }
+  return out;
+};
+
+const emptyStep = (station = "") => ({ name: "", station, duration_min: 0, images: [] });
 
 const emptyMat = () => ({
   product_id: "",
@@ -41,6 +56,7 @@ export const normalizeSteps = (list) =>
     name: x?.name || "",
     station: x?.station || "",
     duration_min: x?.duration_min ?? 0,
+    images: normalizeStepImages(x?.images),
   }));
 
 export const serializeSteps = (list, fallbackStation = "") =>
@@ -51,7 +67,66 @@ export const serializeSteps = (list, fallbackStation = "") =>
       name: x.name.trim(),
       station: x.station || fallbackStation,
       duration_min: Number(x.duration_min || 0),
+      images: normalizeStepImages(x.images),
     }));
+
+/** Adım satırı — istasyona özel reçete görselleri. */
+const StepImages = ({ images, onChange, companyId, recipeId, testId }) => {
+  const [busy, setBusy] = useState(false);
+  const imgs = normalizeStepImages(images);
+  const upload = async (e) => {
+    const raw = e.target.files?.[0];
+    e.target.value = "";
+    if (!raw) return;
+    if (!companyId) { toast.error("Firma seçili değil."); return; }
+    setBusy(true);
+    try {
+      const file = await compressImageFile(raw);
+      const fd = new FormData();
+      fd.append("file", file);
+      const q = new URLSearchParams({
+        entity: "recipe",
+        entity_id: recipeId || "",
+        company_id: companyId,
+      });
+      const r = await axios.post(`${API_URL}/files/upload?${q}`, fd);
+      const url = r.data?.url;
+      if (!url) throw new Error("url yok");
+      onChange([...imgs, url]);
+      toast.success("Görsel yüklendi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Görsel yüklenemedi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="col-span-12 flex items-center gap-1.5 flex-wrap pl-7 pt-0.5" data-testid={testId}>
+      <span className="text-[10px] font-semibold uppercase text-slate-400 shrink-0">İstasyon görselleri</span>
+      {imgs.map((url) => (
+        <div key={url} className="relative group">
+          <HoverImageThumb src={url} className="w-9 h-9 rounded-md object-cover border border-slate-200" testId={`${testId}-thumb`} />
+          <button
+            type="button"
+            onClick={() => onChange(imgs.filter((u) => u !== url))}
+            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] leading-none opacity-0 group-hover:opacity-100"
+            title="Kaldır"
+            data-testid={`${testId}-remove`}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <label
+        className={`w-9 h-9 rounded-md border-2 border-dashed flex items-center justify-center cursor-pointer shrink-0 ${busy ? "opacity-50 border-slate-200" : "border-slate-300 hover:border-emerald-500 text-slate-400"}`}
+        title="Bu istasyon adımına görsel ekle"
+      >
+        {busy ? <span className="text-[9px]">…</span> : <ImagePlus className="w-3.5 h-3.5" />}
+        <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" className="hidden" onChange={upload} disabled={busy} data-testid={`${testId}-upload`} />
+      </label>
+    </div>
+  );
+};
 
 export const RecipeModal = ({ companyId, products, recipe, presetProductId, onClose, onSaved }) => {
   useEscape(onClose);
@@ -269,6 +344,13 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
                       </div>
                       <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" value={st.duration_min} onChange={(e) => updMatStep(i, si, { duration_min: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Hedef süre (dk)" /><span className="text-[10px] text-slate-400">dk</span></div>
                       <div className="col-span-1 text-right"><button type="button" onClick={() => removeMatStep(i, si)} className="text-rose-500 p-1" data-testid={`recipe-mat-${i}-step-del-${si}`}><Trash2 className="w-3.5 h-3.5" /></button></div>
+                      <StepImages
+                        images={st.images}
+                        onChange={(images) => updMatStep(i, si, { images })}
+                        companyId={companyId}
+                        recipeId={recipe?.id}
+                        testId={`recipe-mat-${i}-step-images-${si}`}
+                      />
                     </div>
                   ))}
                 </div>
@@ -316,6 +398,13 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
               </div>
               <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" value={st.duration_min} onChange={(e) => updStep(i, { duration_min: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Hedef süre (dk)" /><span className="text-[10px] text-slate-400">dk</span></div>
               <div className="col-span-1 text-right"><button onClick={() => setSteps(steps.filter((_, idx) => idx !== i))} className="text-rose-500 p-1"><Trash2 className="w-3.5 h-3.5" /></button></div>
+              <StepImages
+                images={st.images}
+                onChange={(images) => updStep(i, { images })}
+                companyId={companyId}
+                recipeId={recipe?.id}
+                testId={`recipe-step-images-${i}`}
+              />
             </div>))}</div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">

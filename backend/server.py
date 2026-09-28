@@ -12819,15 +12819,16 @@ async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any]):
                      "planned_quantity": order.get("planned_quantity"), "unit": recipe.get("unit", "Adet"), "planned_date": order.get("planned_date"), "notes": order.get("notes"),
                      "step_no": idx + 1, "step_count": len(steps), "step_name": pwo.work_order_step_label(st, idx), "station": station, "duration_min": st.get("duration_min", 0),
                      "material_name": st.get("material_name"), "material_product_id": st.get("material_product_id"),
+                     "images": pwo.sanitize_step_images(st.get("images")),
                      "job_file_name": job_meta.get("job_file_name"), "recipe_name": job_meta.get("recipe_name") or order.get("recipe_name"),
                      "status": "ready" if idx == 0 else "waiting", "assigned_to": None, "assigned_name": None, "operator_name": None, "started_at": None, "finished_at": None, "paused_seconds": 0,
                      "produced_qty": 0, "scrap_qty": 0, "logs": [], "created_at": now})
     await db.work_orders.insert_many(docs)
 
 async def _enrich_work_orders_job_fields(rows: list) -> list:
-    """Eski iş emirlerinde eksik iş dosyası / reçete / istasyon bilgisini doldur."""
+    """Eski iş emirlerinde eksik iş dosyası / reçete / istasyon / görselleri doldur."""
     import work_parks as wp
-    need = [r for r in rows if not r.get("job_file_name") or not r.get("recipe_name") or pwo.needs_station_resolve(r)]
+    need = [r for r in rows if not r.get("job_file_name") or not r.get("recipe_name") or pwo.needs_station_resolve(r) or ("images" not in r)]
     if not need:
         for r in rows:
             pwo.enrich_work_order_row(r)
@@ -12841,29 +12842,42 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
     recipe_ids = list({o.get("recipe_id") for o in orders if o.get("recipe_id")})
     recipes = await db.recipes.find({"_id": {"$in": recipe_ids}}, {"job_file_name": 1, "name": 1, "steps": 1, "materials": 1}).to_list(len(recipe_ids) or 1) if recipe_ids else []
     by_recipe = {r["_id"]: r for r in recipes}
-    persist: list = []
+    persist_station: list = []
+    persist_images: list = []
     for r in rows:
         o = by_order.get(r.get("order_id")) or {}
         recipe = by_recipe.get(o.get("recipe_id")) or {}
         meta = pwo.recipe_job_fields(recipe)
         if not meta.get("recipe_name"):
             meta["recipe_name"] = o.get("recipe_name")
+        steps = pwo.flatten_recipe_steps(recipe) if recipe else []
+        step = None
+        sn = r.get("step_no")
+        if sn and steps and 1 <= int(sn) <= len(steps):
+            step = steps[int(sn) - 1]
         if pwo.needs_station_resolve(r):
-            steps = pwo.flatten_recipe_steps(recipe) if recipe else []
-            step = None
-            sn = r.get("step_no")
-            if sn and steps and 1 <= int(sn) <= len(steps):
-                step = steps[int(sn) - 1]
             if not step:
                 step = {"name": r.get("step_name"), "station": r.get("station")}
             resolved = wp.resolve_step_station(step, parks_by_co.get(r.get("company_id")))
             meta["station"] = resolved
             if resolved and resolved != r.get("station") and r.get("status") in ("ready", "waiting", "in_progress", "paused"):
-                persist.append((r.get("id") or r.get("_id"), resolved))
+                persist_station.append((r.get("id") or r.get("_id"), resolved))
+        if step and "images" not in r:
+            meta["images"] = pwo.sanitize_step_images(step.get("images"))
+        had_images_key = "images" in r
         pwo.enrich_work_order_row(r, meta)
-    for wo_id, station in persist:
+        if not had_images_key:
+            imgs = pwo.sanitize_step_images(r.get("images"))
+            r["images"] = imgs
+            wid = r.get("id") or r.get("_id")
+            if wid:
+                persist_images.append((wid, imgs))
+    for wo_id, station in persist_station:
         if wo_id:
             await db.work_orders.update_one({"_id": wo_id}, {"$set": {"station": station}})
+    for wo_id, imgs in persist_images:
+        if wo_id:
+            await db.work_orders.update_one({"_id": wo_id}, {"$set": {"images": imgs}})
     return rows
 
 @api_router.get("/production/work-orders")

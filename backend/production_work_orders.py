@@ -10,6 +10,25 @@ def recipe_job_fields(recipe: Optional[Dict[str, Any]] = None) -> Dict[str, Opti
     return {"job_file_name": job, "recipe_name": name}
 
 
+def sanitize_step_images(raw: Any, limit: int = 12) -> List[str]:
+    """Adım / iş emri görsel URL listesi — tekrarları düş, boşları at."""
+    out: List[str] = []
+    seen = set()
+    for item in raw or []:
+        url = ""
+        if isinstance(item, str):
+            url = item.strip()
+        elif isinstance(item, dict):
+            url = str(item.get("url") or item.get("image_url") or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        out.append(url)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _normalize_step(st: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(st, dict):
         return None
@@ -21,6 +40,7 @@ def _normalize_step(st: Any) -> Optional[Dict[str, Any]]:
         "name": name,
         "station": str(st.get("station") or "").strip(),
         "duration_min": st.get("duration_min", 0) or 0,
+        "images": sanitize_step_images(st.get("images")),
     }
 
 
@@ -48,9 +68,10 @@ def flatten_recipe_steps(recipe: Optional[Dict[str, Any]] = None) -> List[Dict[s
         if norm:
             out.append(norm)
     if not out:
-        return [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0}]
+        return [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0, "images": []}]
     for i, st in enumerate(out):
         st["no"] = i + 1
+        st.setdefault("images", [])
     return out
 
 
@@ -63,7 +84,7 @@ def work_order_step_label(st: Optional[Dict[str, Any]] = None, idx: int = 0) -> 
 
 
 def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Liste yanıtında eksik job_file_name / recipe_name / station doldur."""
+    """Liste yanıtında eksik job_file_name / recipe_name / station / images doldur."""
     m = meta or {}
     if not row.get("job_file_name") and m.get("job_file_name"):
         row["job_file_name"] = m["job_file_name"]
@@ -73,6 +94,10 @@ def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = 
         row["station"] = m["station"]
     elif not row.get("station"):
         row["station"] = "Genel"
+    if not sanitize_step_images(row.get("images")) and m.get("images"):
+        row["images"] = list(m["images"])
+    elif "images" not in row:
+        row["images"] = []
     return row
 
 
