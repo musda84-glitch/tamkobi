@@ -14,12 +14,14 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
 
-/** Birim maliyet net (KDV hariç) — reçete toplamı için. */
+/** Birim maliyet net (KDV hariç) — reçete toplamı için.
+ *  cost_includes_vat=true → girilen tutar KDV dahil; false → KDV hariç. */
 export const materialUnitNet = (m) => {
   const cost = Number(m?.cost_per_unit || 0);
   if (!m?.cost_includes_vat) return cost;
-  const rate = Number(m?.vat_rate || 0);
-  if (rate <= 0) return cost;
+  // Eksik oranda stok/eski kayıt için %20; açıkça 0 ise KDV yok.
+  const rate = m?.vat_rate == null || m?.vat_rate === "" ? 20 : Number(m.vat_rate);
+  if (!(rate > 0)) return cost;
   return cost / (1 + rate / 100);
 };
 
@@ -362,18 +364,35 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
                   <div className="col-span-4"><SearchSelect value={m.product_id} options={materialsSrc.filter((p) => p.id !== f.finished_product_id)} placeholder="Hammadde ara…" getLabel={(p) => p.name} getSub={(p) => `${p.sku} • Stok: ${p.stock_quantity} ${p.unit}`} onChange={(id) => pickMat(i, id)} testId={`recipe-mat-select-${i}`} /></div>
                   <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" step="any" value={m.quantity} onChange={(e) => upd(i, { quantity: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center font-semibold" data-testid={`recipe-mat-qty-${i}`} /><span className="text-slate-400 text-[10px]">{m.unit}</span></div>
                   <div className="col-span-1"><input type="number" min="0" step="any" value={m.wastage_percent} onChange={(e) => upd(i, { wastage_percent: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Fire / kayıp yüzdesi" /></div>
-                  <div className="col-span-3 flex items-center gap-1">
-                    <input type="number" min="0" step="any" value={m.cost_per_unit} onChange={(e) => upd(i, { cost_per_unit: e.target.value })} className="w-full min-w-0 bg-white border rounded p-1.5 text-right" data-testid={`recipe-mat-cost-${i}`} />
-                    <select
-                      value={m.cost_includes_vat ? "incl" : "excl"}
-                      onChange={(e) => upd(i, { cost_includes_vat: e.target.value === "incl" })}
-                      className="shrink-0 bg-white border rounded p-1.5 text-[10px] font-semibold text-slate-700"
-                      title="Birim maliyet KDV dahil / hariç"
-                      data-testid={`recipe-mat-vat-${i}`}
-                    >
-                      <option value="excl">Hariç</option>
-                      <option value="incl">Dahil</option>
-                    </select>
+                  <div className="col-span-3 flex flex-col gap-0.5 min-w-0">
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={m.cost_per_unit}
+                        onChange={(e) => upd(i, { cost_per_unit: e.target.value })}
+                        className="w-full min-w-0 bg-white border rounded p-1.5 text-right"
+                        title={m.cost_includes_vat ? "KDV dahil birim fiyat" : "KDV hariç birim fiyat"}
+                        placeholder={m.cost_includes_vat ? "Dahil fiyat" : "Hariç fiyat"}
+                        data-testid={`recipe-mat-cost-${i}`}
+                      />
+                      <select
+                        value={m.cost_includes_vat ? "incl" : "excl"}
+                        onChange={(e) => upd(i, { cost_includes_vat: e.target.value === "incl" })}
+                        className="shrink-0 bg-white border rounded p-1.5 text-[10px] font-semibold text-slate-700"
+                        title="Girilen tutar KDV dahil mi, hariç mi?"
+                        data-testid={`recipe-mat-vat-${i}`}
+                      >
+                        <option value="excl">Hariç</option>
+                        <option value="incl">Dahil</option>
+                      </select>
+                    </div>
+                    {m.cost_includes_vat && Number(m.cost_per_unit) > 0 && (
+                      <div className="text-[9px] text-slate-500 text-right pr-14" data-testid={`recipe-mat-net-${i}`}>
+                        net {fmt(materialUnitNet(m))}
+                      </div>
+                    )}
                   </div>
                   <div className="col-span-1 text-right font-bold" data-testid={`recipe-mat-line-${i}`}>{fmt(materialLineCost(m))}</div>
                   <div className="col-span-1 text-right"><button onClick={() => setMats(mats.filter((_, idx) => idx !== i))} className="text-rose-500 p-1" title="Kaldır"><Trash2 className="w-3.5 h-3.5" /></button></div>

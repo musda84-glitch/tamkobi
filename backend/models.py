@@ -593,7 +593,7 @@ class RecipeItem(BaseModel):
     unit: str
     cost_per_unit: float = 0.0
     wastage_percent: float = 0.0
-    cost_includes_vat: bool = False  # True = girilen birim maliyet KDV dahil
+    cost_includes_vat: bool = False  # True = cost_per_unit KDV dahil; False = KDV hariç
     vat_rate: float = 20.0
     # Kaleme özel atölye adımları — üretim emrinde sırayla iş emrine açılır
     steps: List[Dict[str, Any]] = Field(default_factory=list)  # [{no, name, station, duration_min, note}]
