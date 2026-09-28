@@ -215,6 +215,21 @@ def test_recipe_materials_for_qty_scales_with_plan():
     assert recipe_materials_for_qty({}, 1) == []
 
 
+def test_recipe_materials_ceil_discrete_adet():
+    """10 M2 mamul / 3.5 M2 hedef → 2.857 Adet plaka değil 3 Adet."""
+    recipe = {
+        "target_quantity": 3.5,
+        "unit": "M2",
+        "materials": [
+            {"product_id": "plaka", "product_name": "SAFİR MEŞE MDF PLAKA", "unit": "Adet", "quantity": 1, "wastage_percent": 0},
+        ],
+    }
+    rows = recipe_materials_for_qty(recipe, 10)
+    assert len(rows) == 1
+    assert rows[0]["needed"] == 3
+    assert rows[0]["unit"] == "Adet"
+
+
 def test_enrich_attaches_materials():
     row = {"order_code": "URT-1"}
     enrich_work_order_row(row, {"materials": [{"product_name": "X", "needed": 1, "unit": "Adet"}]})

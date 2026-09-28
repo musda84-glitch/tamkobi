@@ -15,10 +15,12 @@ import {
   employeeLabel,
   finishOverPlan,
   finishQtyError,
+  formatQty,
   groupWorkOrdersByStation,
   mergeSelfEmployee,
   partitionWorkOrders,
   readyCount,
+  roundNeededQty,
   runningCount,
   shopFloorCardBorder,
   shopFloorPausePhaseLabel,
@@ -107,7 +109,7 @@ function WoCard({
             <Row key={m.product_id || String(i)} style={{ justifyContent: "space-between", gap: 8 }}>
               <Text style={{ flex: 1, fontSize: 12, color: colors.muted }} numberOfLines={1}>{m.product_name || "Hammadde"}</Text>
               <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
-                {m.needed} {m.unit || ""}
+                {formatQty(roundNeededQty(Number(m.needed), m.unit))} {m.unit || ""}
               </Text>
             </Row>
           ))}
@@ -125,9 +127,9 @@ function WoCard({
           (() => {
             const plan = workOrderFinishPlan(w);
             if (plan.isMaterial) {
-              return `${plan.qty} ${plan.unit}${w.planned_quantity != null ? ` · mamul ${w.planned_quantity} ${w.unit || ""}` : ""}`.trim();
+              return `${formatQty(plan.qty)} ${plan.unit}${w.planned_quantity != null ? ` · mamul ${formatQty(w.planned_quantity)} ${w.unit || ""}` : ""}`.trim();
             }
-            return w.planned_quantity != null ? `${w.planned_quantity} ${w.unit || ""}`.trim() : null;
+            return w.planned_quantity != null ? `${formatQty(w.planned_quantity)} ${w.unit || ""}`.trim() : null;
           })(),
           w.duration_min ? `Hedef ${w.duration_min} dk` : null,
           w.elapsed_min != null ? `${w.elapsed_min} dk geçti` : null,

@@ -117,6 +117,31 @@ export function shopFloorCardBorder(status?: string | null): string {
   return "#E2E8F0";
 }
 
+const DISCRETE_UNITS = new Set(["adet", "ad", "takım", "takim", "çift", "cift", "koli", "kutu", "paket", "set", "parça", "parca"]);
+
+export function isDiscreteUnit(unit?: string | null): boolean {
+  const u = String(unit || "").trim().toLocaleLowerCase("tr");
+  if (!u) return true;
+  return DISCRETE_UNITS.has(u) || u.startsWith("adet");
+}
+
+/** Sayılabilir birimde yukarı yuvarla (2.857 Adet → 3). */
+export function roundNeededQty(needed: number, unit?: string | null): number {
+  const n = Number(needed);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (isDiscreteUnit(unit)) return Math.ceil(n - 1e-9);
+  return Math.round(n * 1000) / 1000;
+}
+
+export function formatQty(n: number | string | null | undefined): string {
+  const num = Number(n);
+  if (!Number.isFinite(num)) return "0";
+  if (Number.isInteger(num) || Math.abs(num - Math.round(num)) < 1e-9) {
+    return String(Math.round(num));
+  }
+  return String(Math.round(num * 1000) / 1000).replace(".", ",");
+}
+
 /** Bitir modalı: hammadde adımında kalem ihtiyacı (ör. 16 Metre). */
 export function workOrderFinishPlan(w?: WorkOrder | null): {
   qty: number;
@@ -135,9 +160,10 @@ export function workOrderFinishPlan(w?: WorkOrder | null): {
   if (!hit && mats.length === 1) hit = mats[0];
   const needed = Number(hit?.needed);
   if (hit && Number.isFinite(needed) && needed > 0 && (mid || mname || mats.length === 1)) {
+    const unit = String(hit.unit || "Adet").trim() || "Adet";
     return {
-      qty: needed,
-      unit: String(hit.unit || "Adet").trim() || "Adet",
+      qty: roundNeededQty(needed, unit),
+      unit,
       isMaterial: true,
       materialName: String(hit.product_name || mname || "").trim() || null,
     };
