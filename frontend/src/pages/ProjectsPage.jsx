@@ -404,6 +404,39 @@ export default function ProjectsPage({ section } = {}) {
       toast.error("Teklif yüklenemedi.");
     }
   };
+  const openEditProject = async (p) => {
+    await ensureFormRefs();
+    const pid = p?.id || p?._id;
+    try {
+      const r = await axios.get(`${API_URL}/projects/${pid}`);
+      const full = r.data || p;
+      const desc = full.description || full.notes || "";
+      setForm({
+        id: full.id || full._id || pid,
+        kind: "project",
+        contact_id: full.contact_id || "",
+        contact_name: full.contact_name || "",
+        title: "",
+        name: full.name || "",
+        valid_until: "",
+        notes: desc,
+        description: desc,
+        address: full.address || "",
+        budget: full.budget ?? "",
+        start_date: full.start_date || "",
+        end_date: full.end_date || "",
+        survey_date: "",
+        measurements: [],
+        latitude: full.latitude ?? "",
+        longitude: full.longitude ?? "",
+        location_url: full.location_url || "",
+        radius_m: full.radius_m ?? DEFAULT_LOCATION_RADIUS_M,
+      });
+      setItems([computeLine(emptyLine())]);
+    } catch {
+      toast.error("Proje yüklenemedi.");
+    }
+  };
   const lineTotals = useMemo(() => documentLineTotals(items), [items]);
   const setContact = (id, c) => setForm({ ...form, contact_id: id, contact_name: c?.name || "", address: form.address || c?.address || "" });
   const [newContact, setNewContact] = useState(null);
@@ -436,8 +469,24 @@ export default function ProjectsPage({ section } = {}) {
         } else {
           await axios.post(`${API_URL}/quotes`, { company_id: companyId, ...form, project_id: form.project_id || undefined, items: lineItems });
         }
-      } else if (form.kind === "project") await axios.post(`${API_URL}/projects`, { company_id: companyId, ...form, budget: Number(form.budget || 0) });
-      else await axios.post(`${API_URL}/surveys`, {
+      } else if (form.kind === "project") {
+        const projectBody = {
+          name: form.name,
+          contact_id: form.contact_id,
+          contact_name: form.contact_name,
+          budget: Number(form.budget || 0),
+          start_date: form.start_date || null,
+          end_date: form.end_date || null,
+          description: form.description || form.notes || "",
+          address: form.address || "",
+          latitude: form.latitude || null,
+          longitude: form.longitude || null,
+          location_url: form.location_url || "",
+          radius_m: form.radius_m,
+        };
+        if (form.id) await axios.put(`${API_URL}/projects/${form.id}`, projectBody);
+        else await axios.post(`${API_URL}/projects`, { company_id: companyId, ...projectBody });
+      } else await axios.post(`${API_URL}/surveys`, {
         company_id: companyId,
         ...form,
         measurements: lineItems.map((i) => ({
@@ -709,6 +758,9 @@ export default function ProjectsPage({ section } = {}) {
                 );
               })()}
               <div className="grid grid-cols-2 gap-1.5" data-testid={`project-quick-actions-${p.project_number}`}>
+                <button type="button" onClick={() => openEditProject(p)} className="col-span-2 flex items-center justify-center gap-1.5 px-2.5 py-2 border border-slate-300 text-slate-800 bg-slate-50 hover:bg-slate-100 rounded-xl font-bold" data-testid={`project-edit-${p.project_number}`} title="Proje bilgilerini düzenle">
+                  <Pencil className="w-3.5 h-3.5" /> Proje Düzenle
+                </button>
                 <button type="button" onClick={() => openQuoteForProject(p)} className="flex items-center justify-center gap-1.5 px-2.5 py-2 border border-emerald-200 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl font-bold" data-testid={`project-add-quote-${p.project_number}`} title="Bu projeye yeni teklif ekle">
                   <FileSignature className="w-3.5 h-3.5" /> Teklif Ekle
                 </button>
@@ -821,7 +873,7 @@ export default function ProjectsPage({ section } = {}) {
       {form && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
           <form onSubmit={save} className={`bg-white rounded-t-2xl sm:rounded-2xl w-full p-4 sm:p-6 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto ${form.kind === "project" ? "max-w-2xl" : "max-w-6xl"}`} data-testid={`${form.kind}-form`}>
-            <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{form.kind === "quote" ? (form.id ? "Teklifi Düzenle" : "Yeni Teklif") : form.kind === "project" ? "Yeni Proje" : "Yeni Keşif"}</h3><button type="button" onClick={() => setForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+            <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{form.kind === "quote" ? (form.id ? "Teklifi Düzenle" : "Yeni Teklif") : form.kind === "project" ? (form.id ? "Projeyi Düzenle" : "Yeni Proje") : "Yeni Keşif"}</h3><button type="button" onClick={() => setForm(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
             {form.kind === "quote" && form.project_number && <div className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-2.5 py-1.5" data-testid="pf-project-link">Bu teklif {form.project_number} projesine bağlanacak. Cari ve adres projeden geldi.</div>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div><label className="block font-semibold mb-1 flex justify-between">Cari <button type="button" onClick={() => setNewContact({ name: "", tax: "", phone: "", email: "", address: "" })} className="text-emerald-700 font-semibold hover:underline" data-testid="pf-new-contact-btn">+ Yeni cari aç</button></label><SearchSelect value={form.contact_id} options={contacts} placeholder="Cari ara..." getLabel={(c) => c.name} getSub={(c) => c.phone || c.email || ""} onChange={setContact} testId="pf-contact" /></div>
