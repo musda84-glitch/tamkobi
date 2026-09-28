@@ -13050,12 +13050,15 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
         meta = pwo.recipe_job_fields(recipe)
         if not meta.get("recipe_name"):
             meta["recipe_name"] = o.get("recipe_name")
-        meta["materials"] = pwo.recipe_materials_for_qty(recipe, r.get("planned_quantity") or 1)
+        all_mats = pwo.recipe_materials_for_qty(recipe, r.get("planned_quantity") or 1)
         steps = pwo.flatten_recipe_steps(recipe) if recipe else []
-        step = None
-        sn = r.get("step_no")
-        if sn and steps and 1 <= int(sn) <= len(steps):
-            step = steps[int(sn) - 1]
+        step = pwo.recipe_step_for_work_order(steps, r) if steps else None
+        if step:
+            if step.get("material_product_id") and not r.get("material_product_id"):
+                r["material_product_id"] = step.get("material_product_id")
+            if step.get("material_name") and not r.get("material_name"):
+                r["material_name"] = step.get("material_name")
+        meta["materials"] = pwo.materials_for_work_order_step(all_mats, r)
         if pwo.needs_station_resolve(r):
             if not step:
                 step = {"name": r.get("step_name"), "station": r.get("station")}
@@ -13069,6 +13072,10 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
         if step and not str(r.get("step_note") or "").strip():
             meta["step_note"] = str(step.get("note") or "").strip()
         pwo.enrich_work_order_row(r, meta)
+        plan = pwo.resolve_work_order_finish_plan(r, meta.get("materials"))
+        r["finish_qty"] = plan["qty"]
+        r["finish_unit"] = plan["unit"]
+        r["finish_is_material"] = plan["is_material"]
         if not had_images_key:
             imgs = pwo.sanitize_step_images(r.get("images"))
             r["images"] = imgs
@@ -13283,41 +13290,79 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
     w = await _wo(wo_id)
     if w["status"] not in ("in_progress", "paused"):
         raise HTTPException(status_code=400, detail="Sadece başlatılmış adım bitirilebilir.")
-    produced = float(req.get("produced_qty") if req.get("produced_qty") is not None else w.get("planned_quantity", 0))
+    # DB satırında materials yok; reçeteden kalem ihtiyacını yükle (16 Metre vb.).
+    finish_mats = list(w.get("materials") or [])
+    if not finish_mats or not (w.get("material_product_id") or w.get("material_name")):
+        o = await db.production_orders.find_one({"_id": w.get("order_id")}, {"recipe_id": 1, "planned_quantity": 1}) or {}
+        recipe = (
+            await db.recipes.find_one(
+                {"_id": o.get("recipe_id")},
+                {"materials": 1, "steps": 1, "target_quantity": 1, "group_same_station": 1},
+            )
+            if o.get("recipe_id")
+            else None
+        ) or {}
+        if recipe:
+            steps = pwo.flatten_recipe_steps(recipe)
+            step = pwo.recipe_step_for_work_order(steps, w)
+            if step:
+                if step.get("material_product_id") and not w.get("material_product_id"):
+                    w["material_product_id"] = step.get("material_product_id")
+                if step.get("material_name") and not w.get("material_name"):
+                    w["material_name"] = step.get("material_name")
+            all_mats = pwo.recipe_materials_for_qty(recipe, w.get("planned_quantity") or o.get("planned_quantity") or 1)
+            finish_mats = pwo.materials_for_work_order_step(all_mats, w)
+    finish_plan = pwo.resolve_work_order_finish_plan(w, finish_mats)
+    default_qty = finish_plan["qty"] if finish_plan["qty"] else float(w.get("planned_quantity", 0) or 0)
+    produced = float(req.get("produced_qty") if req.get("produced_qty") is not None else default_qty)
     scrap = float(req.get("scrap_qty") or 0)
     if produced < 0 or scrap < 0:
         raise HTTPException(status_code=400, detail="Miktar negatif olamaz.")
-    planned_q = float(w.get("planned_quantity", 0) or 0)
+    planned_q = float(finish_plan["qty"] or w.get("planned_quantity", 0) or 0)
+    is_material_step = bool(finish_plan.get("is_material"))
     over = planned_q > 0 and produced + scrap > planned_q + 1e-9
-    # Plan dışı fazla üretim serbest — iş emri planını üretilen+fire ile hizala
+    # Plan dışı fazla üretim serbest — mamul adımında iş emri planını hizala.
+    # Hammadde adımında (ör. 16 Metre kesim) mamul planına (1 Adet) taşma.
     wo_patch: Dict[str, Any] = {
         "status": "done",
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "produced_qty": produced,
         "scrap_qty": scrap,
         "finish_note": req.get("notes", ""),
+        "finish_unit": finish_plan.get("unit") or w.get("unit") or "Adet",
+        "finish_is_material": is_material_step,
     }
-    if over:
+    if over and not is_material_step:
         wo_patch["planned_quantity"] = produced + scrap
         wo_patch["over_produced"] = True
     await db.work_orders.update_one(
         {"_id": wo_id},
-        {"$set": wo_patch, "$push": {"logs": _log(w, "finish", req.get("operator_name"), f"{produced:g} üretildi, {scrap:g} fire" + (" (plan üstü)" if over else ""))}},
+        {"$set": wo_patch, "$push": {"logs": _log(w, "finish", req.get("operator_name"), f"{produced:g} üretildi, {scrap:g} fire" + (" (plan üstü)" if over and not is_material_step else ""))}},
     )
     nxt = await db.work_orders.find_one({"order_id": w["order_id"], "step_no": w["step_no"] + 1})
-    result: Dict[str, Any] = {"status": "success", "message": f"{w['step_name']} tamamlandı." + (" Plan üstü üretim kaydedildi." if over else "")}
+    result: Dict[str, Any] = {"status": "success", "message": f"{w['step_name']} tamamlandı." + (" Plan üstü üretim kaydedildi." if over and not is_material_step else "")}
     if nxt:
-        await db.work_orders.update_one({"_id": nxt["_id"]}, {"$set": {"status": "ready", **({"planned_quantity": produced + scrap} if over else {})}})
+        nxt_patch: Dict[str, Any] = {"status": "ready"}
+        if over and not is_material_step:
+            nxt_patch["planned_quantity"] = produced + scrap
+        await db.work_orders.update_one({"_id": nxt["_id"]}, {"$set": nxt_patch})
         result["message"] += f" Sıradaki adım: {nxt['step_name']} ({nxt['station']})."
     else:
         o = await db.production_orders.find_one({"_id": w["order_id"]})
-        if o and o.get("status") == "in_production" and produced > 0:
-            try:
-                r = await complete_production_order(w["order_id"], {"quantity": produced, "scrap_qty": scrap, "update_cost": bool(req.get("update_cost", False)), "allow_over": True})
-                result["message"] += " " + r["message"]
-                result["order_completed"] = r["finished"]
-            except HTTPException as e:
-                result["message"] += f" (Stok işlenemedi: {e.detail})"
+        if o and o.get("status") == "in_production":
+            # Hammadde adımında stoka mamul plan miktarı yazılır (16 Metre ≠ 16 dolap).
+            stock_qty = float(o.get("planned_quantity") or 0) if is_material_step else produced
+            stock_scrap = 0.0 if is_material_step else scrap
+            if stock_qty > 0:
+                try:
+                    r = await complete_production_order(
+                        w["order_id"],
+                        {"quantity": stock_qty, "scrap_qty": stock_scrap, "update_cost": bool(req.get("update_cost", False)), "allow_over": True},
+                    )
+                    result["message"] += " " + r["message"]
+                    result["order_completed"] = r["finished"]
+                except HTTPException as e:
+                    result["message"] += f" (Stok işlenemedi: {e.detail})"
     return result
 
 

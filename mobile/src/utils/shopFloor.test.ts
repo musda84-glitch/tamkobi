@@ -12,6 +12,7 @@ import {
   shopFloorStationSections,
   todayDoneCount,
   woCardKey,
+  workOrderFinishPlan,
   woStatusTone,
   woStatusTr,
   type WorkOrder,
@@ -123,5 +124,29 @@ describe("groupWorkOrdersByStation", () => {
     ];
     expect(groupWorkOrdersByStation(rows).map((w) => w.id)).toEqual(["a", "c", "b"]);
     expect(shopFloorStationSections(groupWorkOrdersByStation(rows)).map((s) => s.label)).toEqual(["HOLZHER", "OMAKSAN"]);
+  });
+});
+
+describe("workOrderFinishPlan", () => {
+  it("prefers material needed over finished product plan", () => {
+    expect(
+      workOrderFinishPlan({
+        planned_quantity: 1,
+        unit: "Adet",
+        material_product_id: "m1",
+        material_name: "MDF",
+        materials: [{ product_id: "m1", product_name: "MDF", needed: 16, unit: "Metre" }],
+      })
+    ).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: "MDF" });
+  });
+
+  it("uses sole material when material_* missing", () => {
+    expect(
+      workOrderFinishPlan({
+        planned_quantity: 1,
+        unit: "Adet",
+        materials: [{ product_id: "m1", product_name: "MDF", needed: 16, unit: "Metre" }],
+      })
+    ).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: "MDF" });
   });
 });

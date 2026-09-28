@@ -8,7 +8,7 @@ import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { openAssignedDuties } from "../utils/assignedDuty";
-import { shopFloorCardActions, shopFloorCardBorder } from "../utils/shopFloorActions";
+import { shopFloorCardActions, shopFloorCardBorder, workOrderFinishPlan } from "../utils/shopFloorActions";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 
@@ -96,7 +96,11 @@ export default function ShopFloorPage() {
     try { const r = await axios.post(`${API_URL}/production/work-orders/${w.id}/${action}`, { operator_name: operator, ...(body || {}) }); toast.success(r.data.message); setFinishing(null); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); }
   };
-  const openFinish = (w) => { setFinishing(w); setFin({ produced_qty: w.planned_quantity, scrap_qty: 0, notes: "" }); };
+  const openFinish = (w) => {
+    const plan = workOrderFinishPlan(w);
+    setFinishing(w);
+    setFin({ produced_qty: plan.qty, scrap_qty: 0, notes: "" });
+  };
   const active = wos.filter((w) => w.status !== "done" && w.status !== "waiting");
   const waiting = wos.filter((w) => w.status === "waiting");
   const done = wos.filter((w) => w.status === "done");
@@ -281,7 +285,17 @@ export default function ShopFloorPage() {
         </div>
       )}
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-        <span className="font-bold text-slate-900 text-sm">{w.planned_quantity} {w.unit}</span>
+        {(() => {
+          const plan = workOrderFinishPlan(w);
+          return (
+            <span className="font-bold text-slate-900 text-sm" data-testid={`wo-plan-${w.order_code}-${w.step_no}`}>
+              {plan.isMaterial ? `${plan.qty} ${plan.unit}` : `${w.planned_quantity} ${w.unit}`}
+              {plan.isMaterial && Number(w.planned_quantity) > 0 ? (
+                <span className="ml-1 font-semibold text-slate-400">· mamul {w.planned_quantity} {w.unit}</span>
+              ) : null}
+            </span>
+          );
+        })()}
         {w.duration_min > 0 && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Hedef {w.duration_min} dk</span>}
         {w.elapsed_min != null && <span className={`flex items-center gap-1 font-semibold ${w.duration_min && w.elapsed_min > w.duration_min ? "text-rose-600" : "text-amber-700"}`}><Clock className="w-3.5 h-3.5" /> {w.elapsed_min} dk geçti</span>}
         {(w.operator_name || w.assigned_name) && <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" /> {w.operator_name || w.assigned_name}</span>}
@@ -390,26 +404,40 @@ export default function ShopFloorPage() {
           <span className="text-[10px] text-slate-400">Çöp kutusundan 30 gün içinde geri getirilebilir.</span>
         </div>
       )}
-      {finishing && (
+          {finishing && (() => {
+        const plan = workOrderFinishPlan(finishing);
+        const overPlan = Number(fin.produced_qty) + Number(fin.scrap_qty || 0) > Number(plan.qty || 0) + 1e-9;
+        return (
         <div className="fixed inset-0 z-[110] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(() => setFinishing(null))}>
           <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()} data-testid="wo-finish-modal">
             <h3 className="font-bold text-slate-900 text-lg">{finishing.step_name} — Bitir</h3>
-            <p className="text-sm text-slate-500">{finishing.order_code} • {finishing.product_name} • Plan {finishing.planned_quantity} {finishing.unit}</p>
+            <p className="text-sm text-slate-500">
+              {finishing.order_code} • {finishing.product_name} • Plan {plan.qty} {plan.unit}
+              {plan.isMaterial && plan.materialName ? ` (${plan.materialName})` : ""}
+            </p>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="block text-xs font-semibold mb-1">Üretilen ({finishing.unit})</label><input type="number" min="0" step="any" value={fin.produced_qty} onChange={(e) => setFin({ ...fin, produced_qty: e.target.value })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center" data-testid="wo-finish-produced" /></div>
+              <div>
+                <label className="block text-xs font-semibold mb-1">Üretilen ({plan.unit})</label>
+                <input type="number" min="0" step="any" value={fin.produced_qty} onChange={(e) => setFin({ ...fin, produced_qty: e.target.value })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center" data-testid="wo-finish-produced" />
+              </div>
               <div><label className="block text-xs font-semibold mb-1">Fire / Hatalı</label><input type="number" min="0" step="any" value={fin.scrap_qty} onChange={(e) => setFin({ ...fin, scrap_qty: e.target.value })} className="w-full border-2 rounded-xl p-3 text-xl font-bold text-center text-rose-600" data-testid="wo-finish-scrap" /></div>
             </div>
-            {Number(fin.produced_qty) + Number(fin.scrap_qty || 0) > Number(finishing.planned_quantity || 0) && (
+            {overPlan && (
               <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="wo-finish-over-hint">
-                Plan üstü üretim: {finishing.planned_quantity} {finishing.unit} planlandı, siz {Number(fin.produced_qty) + Number(fin.scrap_qty || 0)} giriyorsunuz — kayıt kabul edilir.
+                Plan üstü: {plan.qty} {plan.unit} planlandı, siz {Number(fin.produced_qty) + Number(fin.scrap_qty || 0)} giriyorsunuz — kayıt kabul edilir.
               </p>
             )}
             <input value={fin.notes} onChange={(e) => setFin({ ...fin, notes: e.target.value })} placeholder="Not (isteğe bağlı)" className="w-full border rounded-xl p-3" data-testid="wo-finish-notes" />
-            {finishing.step_no === finishing.step_count && <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2">Son adım: bitirince hammaddeler düşülür, üretilen miktar stoğa eklenir. Plan üstü miktar da stoğa yazılır.</p>}
+            {finishing.step_no === finishing.step_count && (
+              <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2">
+                Son adım: bitirince hammaddeler düşülür{plan.isMaterial ? `, mamul stoka ${finishing.planned_quantity} ${finishing.unit} yazılır` : ", üretilen miktar stoğa eklenir. Plan üstü miktar da stoğa yazılır"}.
+              </p>
+            )}
             <div className="flex gap-2"><button onClick={() => setFinishing(null)} className="flex-1 py-3 border-2 rounded-xl font-semibold">İptal</button><button onClick={() => act(finishing, "finish", { produced_qty: Number(fin.produced_qty), scrap_qty: Number(fin.scrap_qty), notes: fin.notes })} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold" data-testid="wo-finish-confirm">Tamamla</button></div>
           </div>
         </div>
-      )}
+        );
+      })()}
       {pendingEmp && (
         <div className="fixed inset-0 z-[120] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(cancelUnlock)}>
           <form onSubmit={unlockOperator} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4" data-testid="shopfloor-pin-modal">

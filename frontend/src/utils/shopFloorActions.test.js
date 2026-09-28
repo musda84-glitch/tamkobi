@@ -1,4 +1,46 @@
-import { shopFloorCardActions, shopFloorCardBorder } from "./shopFloorActions";
+import { shopFloorCardActions, shopFloorCardBorder, workOrderFinishPlan } from "./shopFloorActions";
+
+describe("workOrderFinishPlan", () => {
+  test("uses material needed for material-linked step", () => {
+    const plan = workOrderFinishPlan({
+      planned_quantity: 1,
+      unit: "Adet",
+      material_product_id: "m1",
+      material_name: "MDF",
+      materials: [{ product_id: "m1", product_name: "MDF", needed: 16, unit: "Metre" }],
+    });
+    expect(plan).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: "MDF" });
+  });
+
+  test("falls back to finished product plan", () => {
+    expect(workOrderFinishPlan({ planned_quantity: 2, unit: "Adet", materials: [] })).toEqual({
+      qty: 2, unit: "Adet", isMaterial: false, materialName: null,
+    });
+  });
+
+  test("uses sole material when material_* missing (card shows 16 Metre)", () => {
+    expect(
+      workOrderFinishPlan({
+        planned_quantity: 1,
+        unit: "Adet",
+        materials: [{ product_id: "m1", product_name: "MDF", needed: 16, unit: "Metre" }],
+      }),
+    ).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: "MDF" });
+  });
+
+  test("prefers finish_qty from API", () => {
+    expect(
+      workOrderFinishPlan({
+        planned_quantity: 1,
+        unit: "Adet",
+        finish_qty: 16,
+        finish_unit: "Metre",
+        finish_is_material: true,
+        materials: [],
+      }),
+    ).toEqual({ qty: 16, unit: "Metre", isMaterial: true, materialName: null });
+  });
+});
 
 describe("shopFloorCardActions", () => {
   test("ready shows only start", () => {
