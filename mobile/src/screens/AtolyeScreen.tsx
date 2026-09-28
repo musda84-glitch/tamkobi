@@ -1,6 +1,6 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
-import { Modal, Pressable, Text, View } from "react-native";
+import { Alert, Modal, Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -121,7 +121,7 @@ export function AtolyeScreen() {
   const [unlockErr, setUnlockErr] = useState("");
   const [finishing, setFinishing] = useState<WorkOrder | null>(null);
   const [fin, setFin] = useState({ produced_qty: "", scrap_qty: "0", notes: "" });
-  const [showDone, setShowDone] = useState(false);
+  const [trashBusy, setTrashBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -257,6 +257,38 @@ export function AtolyeScreen() {
     () => [{ label: "İstasyon", options: stations.map((s) => ({ value: s, label: s })) }],
     [stations],
   );
+
+  const trashCompleted = () => {
+    const n = parts.done.length;
+    if (!n || trashBusy) return;
+    Alert.alert(
+      "Çöpe taşı",
+      `${n} tamamlanan iş emri çöp kutusuna taşınsın mı? 30 gün içinde geri getirilebilir.`,
+      [
+        { text: "Vazgeç", style: "cancel" },
+        {
+          text: "Çöpe taşı",
+          style: "destructive",
+          onPress: async () => {
+            setTrashBusy(true);
+            try {
+              const r = await post<{ message?: string; count?: number }>(client, "/production/work-orders/trash-completed", {
+                company_id: companyId,
+                ...(station ? { station } : {}),
+              });
+              setNotice(r.message || "Tamamlananlar çöpe taşındı.");
+              setError(null);
+              await load();
+            } catch (err) {
+              setError(apiErrorMessage(err, "Çöpe taşınamadı."));
+            } finally {
+              setTrashBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const finishLast = finishing && finishing.step_no === finishing.step_count && (finishing.step_count || 0) > 0;
   const openDuties = useMemo(() => openAssignedDuties(duties), [duties]);
@@ -409,22 +441,14 @@ export function AtolyeScreen() {
         </View>
       ) : null}
 
-      <Pressable onPress={() => setShowDone((v) => !v)} testID="shopfloor-toggle-done" style={{ minHeight: 40, justifyContent: "center" }}>
-        <Text style={{ fontWeight: "700", color: colors.muted }}>
-          {showDone ? "Tamamlananları gizle" : `Tamamlananları göster (${parts.done.length})`}
-        </Text>
-      </Pressable>
-      {showDone ? parts.done.slice(0, 30).map((w) => (
-        <WoCard
-          key={woCardKey(w)}
-          w={w}
-          operator={operator}
-          busy={false}
-          onStart={() => {}}
-          onPause={() => {}}
-          onFinish={() => {}}
-        />
-      )) : null}
+      {parts.done.length > 0 ? (
+        <Pressable onPress={trashCompleted} disabled={trashBusy} testID="shopfloor-trash-done" style={{ minHeight: 40, justifyContent: "center" }}>
+          <Text style={{ fontWeight: "700", color: "#E11D48" }}>
+            {trashBusy ? "Çöpe taşınıyor…" : `Tamamlananları çöpe taşı (${parts.done.length})`}
+          </Text>
+          <Muted>Çöp kutusundan 30 gün içinde geri getirilebilir.</Muted>
+        </Pressable>
+      ) : null}
 
       <Modal visible={!!pendingEmp} transparent animationType="fade" onRequestClose={cancelUnlock}>
         <Pressable style={{ flex: 1, backgroundColor: "rgba(15,23,42,0.5)", justifyContent: "center", padding: spacing.md }} onPress={cancelUnlock}>
