@@ -44,6 +44,7 @@ describe("selfPersonnelNav", () => {
     expect(personelMenuPathAllowed("/settings", p)).toBe(false);
     expect(personelMenuPathAllowed("/stock", p)).toBe(false);
     expect(personelMenuPathAllowed("/banking", { role: "admin" })).toBe(true);
+    expect(personelMenuPathAllowed("/orders", null)).toBe(false);
   });
 
   test("personel cannot manage company settings or see finance home", () => {
@@ -52,6 +53,7 @@ describe("selfPersonnelNav", () => {
     expect(personelCanManageCompany({ role: "admin" })).toBe(true);
     expect(personelCanUseErpShortcuts(p)).toBe(false);
     expect(personelCanUseErpShortcuts({ role: "admin" })).toBe(true);
+    expect(personelCanUseErpShortcuts(null)).toBe(false);
     expect(showHomeFinanceSummary(p)).toBe(false);
     expect(showHomeFinanceSummary({ role: "sales", employee_id: "e2" })).toBe(false);
     expect(showHomeFinanceSummary({ role: "admin" })).toBe(true);

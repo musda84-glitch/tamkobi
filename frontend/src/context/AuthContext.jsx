@@ -6,6 +6,7 @@ import { API_URL } from "../api/client";
 import { groupIdOf } from "../navGroups";
 import { loadRadialSlots, normalizeRadialSlots, saveRadialSlotsLocal } from "../utils/radialQuickMenu";
 import { personelMenuPathAllowed, selfPersonnelNavAllowed } from "../utils/selfPersonnelNav";
+import { authPermPath, canAccessPath, isAddonEnabled, isFeatureEnabled, isModuleEnabled } from "../utils/authAccess";
 import { setPriceDecimals } from "../utils/money";
 
 const AuthContext = createContext(null);
@@ -60,20 +61,11 @@ export const AuthProvider = ({ children }) => {
     { label: "Destek", path: "/support", badge: "Talep" },
     { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
   ];
-  const LICENSE_KEY = { "/panel": "/", "/personelim": "/mesai" }; // first-class modules keep their own role/license keys
-  const permPath = (path) => LICENSE_KEY[path] || path;
-  const perms = user?.permissions;
-  const can = (path, level = "view") => {
-    if (!perms || user?.role === "admin") return true;
-    const value = perms[permPath(path)];
-    if (level === "view") return value !== "none";
-    if (level === "edit") return value === "edit" || value === "delete";
-    if (level === "delete") return value === "delete";
-    return false;
-  };
-  const feature = (key) => !user || user?.role === "admin" || !user?.features || user.features[key] !== false;
-  const moduleOn = (path) => !license?.modules || license.modules[LICENSE_KEY[path] || path] !== false;
-  const addonOn = (key) => !license?.addons || license.addons[key] !== false;
+  const permPath = authPermPath;
+  const can = (path, level = "view") => canAccessPath(user, path, level, permPath);
+  const feature = (key) => isFeatureEnabled(user, key);
+  const moduleOn = (path) => isModuleEnabled(user, license, path, permPath);
+  const addonOn = (key) => isAddonEnabled(user, license, key);
   const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path) && selfPersonnelNavAllowed(m.path, user) && personelMenuPathAllowed(m.path, user) && (m.path !== "/ai-advisor" || addonOn("ai.advisor")) && (m.path !== "/support" || addonOn("support.tickets")));
   const rank = (path) => {
     const i = moduleOrder.indexOf(path);
@@ -82,7 +74,8 @@ export const AuthProvider = ({ children }) => {
     for (let k = bi - 1; k >= 0; k--) { const j = moduleOrder.indexOf(BASE_MENU[k].path); if (j !== -1) return j + 0.5 + bi / 1000; }
     return -0.5 + bi / 1000;
   };
-  const menuItems = BASE_MENU.filter(visible).sort((a, b) => rank(a.path) - rank(b.path));
+  // Empty until session user exists — prevents full BASE_MENU flash while /auth/me is in flight.
+  const menuItems = user ? BASE_MENU.filter(visible).sort((a, b) => rank(a.path) - rank(b.path)) : [];
 
   const persistOrder = async (order) => {
     setModuleOrder(order);

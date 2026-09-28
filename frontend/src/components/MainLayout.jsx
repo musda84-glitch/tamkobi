@@ -11,6 +11,7 @@ import { RadialQuickMenu } from "./RadialQuickMenu";
 import { isPublicPath } from "../utils/publicPath";
 import { mesaimExclusivePathAllowed } from "../utils/attendanceSelf";
 import { isPersonelRole, personelCanUseErpShortcuts, personelMenuPathAllowed } from "../utils/selfPersonnelNav";
+import { erpShellReady } from "../utils/authAccess";
 import TamKobiMark from "./TamKobiMark";
 import { AccountMenu } from "./AccountMenu";
 import { BuildStamp } from "./BuildStamp";
@@ -140,7 +141,7 @@ const SupportConnectionChip = ({ companyId, impersonation, isAdmin, onExitImpers
 };
 
 export default function MainLayout({ children, onOpenQuickAction }) {
-  const { user, activeCompany, logout, feature, license, moduleOn, addonOn, loading, menuItems: orderedMenu, moveModulePath, permPath } = useAuth();
+  const { user, activeCompany, logout, feature, license, moduleOn, addonOn, loading, authenticated, menuItems: orderedMenu, moveModulePath, permPath } = useAuth();
   const { locked: mesaimLocked, ready: mesaimReady } = useMesaimGate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -181,6 +182,21 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
   const publicSite = isPublicPath(location.pathname);
   if (publicSite) return <>{children}</>;
+
+  // Do not paint sidebar/header until session + (when needed) Mesaim gate are ready.
+  // Otherwise role-hidden / license-locked items flash on refresh and mobile back.
+  if (!erpShellReady({ loading, authenticated, user, mesaimReady })) {
+    if (loading || (authenticated && user?.employee_id && !mesaimReady)) {
+      return (
+        <div className="min-h-screen bg-slate-50 text-slate-400 flex items-center justify-center text-xs" data-testid="erp-auth-loading">
+          Yükleniyor…
+        </div>
+      );
+    }
+    // Auth finished but no session — let ProtectedRoute redirect without ERP chrome.
+    return <>{children}</>;
+  }
+
   const routeKey = (permPath || ((p) => p))(location.pathname);
   const denied = user?.permissions && user.role !== "admin" && user.permissions[routeKey] === "none";
   const lockedModule = !moduleOn(location.pathname);
