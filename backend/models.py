@@ -125,6 +125,9 @@ class Product(BaseDocument):
     type: str = "product"  # "product", "service", "raw_material", "finished_good"
     category: str = "Genel"
     unit: str = "Adet"  # Adet, Kg, Metre, Litre, Paket, Koli
+    # 1 stok birimi (ör. Adet) kaç içerik birimi kapsar — reçete çarpanı / fire hesabı
+    unit_content_qty: Optional[float] = None  # örn. 2.98
+    unit_content_unit: Optional[str] = None   # örn. M2, Metre, Mt
     vat_rate: int = 20  # % KDV: 0, 1, 10, 20
     purchase_price: float = 0.0
     sale_price: float = 0.0

@@ -26,6 +26,8 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
     vat_exemption_code: product.vat_exemption_code || "", tags: product.tags || [],
     desi: pkgNum(product.desi), weight: pkgNum(product.weight), length: pkgNum(product.length),
     width: pkgNum(product.width), height: pkgNum(product.height), package_count: product.package_count || 1,
+    unit_content_qty: pkgNum(product.unit_content_qty),
+    unit_content_unit: product.unit_content_unit || "",
     label_template_id: product.label_template_id || "",
     gtip: product.gtip || "",
     origin_country: product.origin_country || "",
@@ -60,6 +62,8 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
     try {
       const n = (v) => (v === "" || v == null ? null : Number(v));
       const unit = String(f.unit || "").trim() || "Adet";
+      const contentQty = n(f.unit_content_qty);
+      const contentUnit = (f.unit_content_unit || "").trim() || null;
       const r = await axios.put(`${API_URL}/products/${product.id}`, {
         ...f,
         unit,
@@ -71,6 +75,8 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
         min_stock_alert: Number(f.min_stock_alert), stock_quantity: Number(f.stock_quantity),
         desi: n(f.desi), weight: n(f.weight), length: n(f.length), width: n(f.width), height: n(f.height),
         package_count: Math.max(1, Math.min(50, parseInt(f.package_count, 10) || 1)),
+        unit_content_qty: contentQty != null && contentQty > 0 ? contentQty : null,
+        unit_content_unit: contentQty != null && contentQty > 0 ? contentUnit : null,
       });
       if (companyId && unit && !units.some((u) => u.name === unit)) {
         await axios.post(`${API_URL}/products/units`, { company_id: companyId, name: unit }).catch(() => {});
@@ -123,6 +129,43 @@ export const ProductEditForm = ({ product, onUpdated, onSaved }) => {
             ))}
           </select>
         </F>
+      </div>
+      <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-3 space-y-2" data-testid="product-unit-content">
+        <div className="font-bold text-slate-800">Kapsama (1 {f.unit || "Adet"} = ?)</div>
+        <p className="text-[10px] text-slate-500">
+          Reçetede M2 / Metre vb. girildiğinde stoktan kaç {f.unit || "Adet"} düşüleceğini ve kalanı fire saymak için kullanılır.
+          Örn. 1 Adet plaka = 2,98 M2.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <F label={`1 ${f.unit || "Adet"} =`}>
+            <input
+              type="number"
+              min={0}
+              step="any"
+              value={f.unit_content_qty}
+              onChange={(e) => set("unit_content_qty", e.target.value)}
+              placeholder="örn. 2.98"
+              className={inputCls}
+              data-testid="edit-unit-content-qty"
+            />
+          </F>
+          <F label="İçerik birimi">
+            <select
+              value={f.unit_content_unit || ""}
+              onChange={(e) => set("unit_content_unit", e.target.value)}
+              className={inputCls}
+              data-testid="edit-unit-content-unit"
+            >
+              <option value="">— yok —</option>
+              {["M2", "M3", "Metre", "Mt", "Cm", "Kg", "Lt", "Ml"].map((u) => (
+                <option key={u} value={u}>{u}</option>
+              ))}
+              {f.unit_content_unit && !["M2", "M3", "Metre", "Mt", "Cm", "Kg", "Lt", "Ml"].includes(f.unit_content_unit) && (
+                <option value={f.unit_content_unit}>{f.unit_content_unit}</option>
+              )}
+            </select>
+          </F>
+        </div>
       </div>
       <div className="bg-sky-50/60 border border-sky-100 rounded-xl p-3 space-y-2" data-testid="product-trade-fields">
         <div className="font-bold text-slate-800">Menşei / GTIP / Üretici</div>

@@ -24,6 +24,8 @@ export type ProductDraft = {
   width: string;
   height: string;
   package_count: string;
+  unit_content_qty: string;
+  unit_content_unit: string;
   gtip: string;
   origin_country: string;
   manufacturer_code: string;
@@ -80,6 +82,8 @@ export function emptyProductDraft(): ProductDraft {
     width: "",
     height: "",
     package_count: "1",
+    unit_content_qty: "",
+    unit_content_unit: "",
     gtip: "",
     origin_country: "",
     manufacturer_code: "",
@@ -114,6 +118,8 @@ export function draftFromProduct(p: Product | null | undefined): ProductDraft {
     width: str(p.width),
     height: str(p.height),
     package_count: str(p.package_count ?? 1),
+    unit_content_qty: str(p.unit_content_qty),
+    unit_content_unit: str(p.unit_content_unit),
     gtip: str(p.gtip),
     origin_country: str(p.origin_country),
     manufacturer_code: str(p.manufacturer_code),
@@ -164,6 +170,15 @@ export function productPayload(draft: ProductDraft, companyId?: string): Record<
     width: optNum(draft.width),
     height: optNum(draft.height),
     package_count: Math.max(1, Math.min(50, Math.round(num(draft.package_count, 1)) || 1)),
+    unit_content_qty: (() => {
+      const q = optNum(draft.unit_content_qty);
+      return q != null && q > 0 ? q : null;
+    })(),
+    unit_content_unit: (() => {
+      const q = optNum(draft.unit_content_qty);
+      const u = draft.unit_content_unit.trim();
+      return q != null && q > 0 && u ? u : null;
+    })(),
     gtip: draft.gtip.trim() || null,
     origin_country: draft.origin_country.trim() || null,
     manufacturer_code: draft.manufacturer_code.trim() || null,

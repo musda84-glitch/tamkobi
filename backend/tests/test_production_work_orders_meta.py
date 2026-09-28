@@ -230,6 +230,52 @@ def test_recipe_materials_ceil_discrete_adet():
     assert rows[0]["unit"] == "Adet"
 
 
+def test_recipe_materials_unit_content_to_adet_with_scrap():
+    """8.5 M2 ihtiyaç, 1 Adet = 2.98 M2 → 3 Adet stok, kalan 0.44 M2 fire."""
+    from production_work_orders import apply_unit_content, units_compatible
+
+    assert units_compatible("m²", "M2")
+    conv = apply_unit_content(8.5, "M2", stock_unit="Adet", unit_content_qty=2.98, unit_content_unit="M2")
+    assert conv["needed"] == 3
+    assert conv["unit"] == "Adet"
+    assert conv["scrap_content"] == 0.44
+    assert conv["coverage_applied"] is True
+
+    recipe = {
+        "target_quantity": 1,
+        "materials": [
+            {
+                "product_id": "plaka",
+                "product_name": "MDF",
+                "unit": "M2",
+                "quantity": 8.5,
+                "wastage_percent": 0,
+                "stock_unit": "Adet",
+                "unit_content_qty": 2.98,
+                "unit_content_unit": "M2",
+            },
+        ],
+    }
+    rows = recipe_materials_for_qty(recipe, 1)
+    assert rows[0]["needed"] == 3
+    assert rows[0]["unit"] == "Adet"
+    assert rows[0]["scrap_content"] == 0.44
+    assert rows[0]["content_needed"] == 8.5
+
+    # products_by_id ile stok kartından kapsama
+    recipe2 = {
+        "target_quantity": 1,
+        "materials": [{"product_id": "plaka", "product_name": "MDF", "unit": "M2", "quantity": 5, "wastage_percent": 0}],
+    }
+    rows2 = recipe_materials_for_qty(
+        recipe2,
+        1,
+        products_by_id={"plaka": {"unit": "Adet", "unit_content_qty": 2.5, "unit_content_unit": "M2"}},
+    )
+    assert rows2[0]["needed"] == 2
+    assert rows2[0]["scrap_content"] == 0.0  # 2 * 2.5 - 5 = 0
+
+
 def test_enrich_attaches_materials():
     row = {"order_code": "URT-1"}
     enrich_work_order_row(row, {"materials": [{"product_name": "X", "needed": 1, "unit": "Adet"}]})

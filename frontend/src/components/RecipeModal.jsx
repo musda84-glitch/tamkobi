@@ -24,8 +24,17 @@ export const materialUnitNet = (m) => {
   return cost / (1 + rate / 100);
 };
 
-export const materialLineCost = (m) =>
-  materialUnitNet(m) * Number(m?.quantity || 0) * (1 + Number(m?.wastage_percent || 0) / 100);
+export const materialLineCost = (m) => {
+  const net = materialUnitNet(m);
+  const raw = Number(m?.quantity || 0) * (1 + Number(m?.wastage_percent || 0) / 100);
+  const cov = Number(m?.unit_content_qty || 0);
+  // İçerik birimi (M2) × Adet fiyatı: tam stok adedi (kalan fire dahil) üzerinden maliyet
+  if (cov > 0 && m?.unit_content_unit && String(m.unit || "").toLocaleLowerCase("tr") !== String(m.stock_unit || "Adet").toLocaleLowerCase("tr")) {
+    const stock = Math.ceil(raw / cov - 1e-9);
+    return net * Math.max(0, stock);
+  }
+  return net * raw;
+};
 
 export const normalizeStepImages = (list) => {
   const out = [];
@@ -47,6 +56,9 @@ const emptyMat = () => ({
   product_name: "",
   quantity: 1,
   unit: "Adet",
+  stock_unit: null,
+  unit_content_qty: null,
+  unit_content_unit: null,
   cost_per_unit: 0,
   wastage_percent: 0,
   cost_includes_vat: false,
@@ -205,10 +217,18 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
   };
   const pickMat = (i, id) => {
     const p = products.find((x) => x.id === id);
+    const stockUnit = p?.unit || "Adet";
+    const contentQty = Number(p?.unit_content_qty || 0);
+    const contentUnit = String(p?.unit_content_unit || "").trim();
+    // Kapsama varsa reçete miktarını içerik biriminde (M2/Metre) tut — stok Adet'e çevirilir.
+    const useContent = contentQty > 0 && contentUnit && contentUnit.toLocaleLowerCase("tr") !== String(stockUnit).toLocaleLowerCase("tr");
     upd(i, {
       product_id: id,
       product_name: p?.name || "",
-      unit: p?.unit || "Adet",
+      unit: useContent ? contentUnit : stockUnit,
+      stock_unit: stockUnit,
+      unit_content_qty: useContent ? contentQty : null,
+      unit_content_unit: useContent ? contentUnit : null,
       cost_per_unit: p?.purchase_price || 0,
       vat_rate: Number(p?.purchase_vat_rate ?? p?.vat_rate ?? 20),
     });
@@ -248,17 +268,25 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
     if (!f.finished_product_id) { toast.error("Üretilecek ürünü seçin."); return; }
     if (!valid.length) { toast.error("En az bir hammadde ekleyin."); return; }
     const generalSteps = serializeSteps(steps, stations[0] || "");
-    const matsWithSteps = valid.map((m) => ({
-      product_id: m.product_id,
-      product_name: m.product_name,
-      unit: m.unit,
-      quantity: Number(m.quantity),
-      cost_per_unit: Number(m.cost_per_unit),
-      wastage_percent: Number(m.wastage_percent || 0),
-      cost_includes_vat: !!m.cost_includes_vat,
-      vat_rate: Number(m.vat_rate ?? 20),
-      steps: serializeSteps(m.steps, stations[0] || ""),
-    }));
+    const matsWithSteps = valid.map((m) => {
+      const row = {
+        product_id: m.product_id,
+        product_name: m.product_name,
+        unit: m.unit,
+        quantity: Number(m.quantity),
+        cost_per_unit: Number(m.cost_per_unit),
+        wastage_percent: Number(m.wastage_percent || 0),
+        cost_includes_vat: !!m.cost_includes_vat,
+        vat_rate: Number(m.vat_rate ?? 20),
+        steps: serializeSteps(m.steps, stations[0] || ""),
+      };
+      if (Number(m.unit_content_qty) > 0 && m.unit_content_unit) {
+        row.stock_unit = m.stock_unit || "Adet";
+        row.unit_content_qty = Number(m.unit_content_qty);
+        row.unit_content_unit = m.unit_content_unit;
+      }
+      return row;
+    });
     const uiStepCount =
       normalizeSteps(steps).filter((x) => (x.name || "").trim() || (x.station || "").trim() || (x.images || []).length).length
       + valid.reduce(
@@ -361,7 +389,17 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
               <div key={i} className="rounded-lg border border-slate-200 bg-slate-50/80 overflow-hidden" data-testid={`recipe-material-${i}`}>
                 <div className="grid grid-cols-12 gap-1 items-center p-1.5">
                   <div className="col-span-4"><SearchSelect value={m.product_id} options={materialsSrc.filter((p) => p.id !== f.finished_product_id)} placeholder="Hammadde ara…" getLabel={(p) => p.name} getSub={(p) => `${p.sku} • Stok: ${p.stock_quantity} ${p.unit}`} onChange={(id) => pickMat(i, id)} testId={`recipe-mat-select-${i}`} /></div>
-                  <div className="col-span-2 flex items-center gap-1"><input type="number" min="0" step="any" value={m.quantity} onChange={(e) => upd(i, { quantity: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center font-semibold" data-testid={`recipe-mat-qty-${i}`} /><span className="text-slate-400 text-[10px]">{m.unit}</span></div>
+                  <div className="col-span-2 flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1">
+                      <input type="number" min="0" step="any" value={m.quantity} onChange={(e) => upd(i, { quantity: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center font-semibold" data-testid={`recipe-mat-qty-${i}`} />
+                      <span className="text-slate-400 text-[10px]">{m.unit}</span>
+                    </div>
+                    {Number(m.unit_content_qty) > 0 && m.unit_content_unit && (
+                      <div className="text-[9px] text-amber-700 px-0.5" data-testid={`recipe-mat-coverage-${i}`}>
+                        1 {m.stock_unit || "Adet"} = {Number(m.unit_content_qty)} {m.unit_content_unit}
+                      </div>
+                    )}
+                  </div>
                   <div className="col-span-1"><input type="number" min="0" step="any" value={m.wastage_percent} onChange={(e) => upd(i, { wastage_percent: e.target.value })} className="w-full bg-white border rounded p-1.5 text-center" title="Fire / kayıp yüzdesi" /></div>
                   <div className="col-span-3 flex flex-col gap-0.5 min-w-0">
                     <div className="flex items-center gap-1">
