@@ -25,7 +25,7 @@ def test_flatten_recipe_steps_material_then_recipe():
             {
                 "product_id": "m1",
                 "product_name": "MDF",
-                "steps": [{"no": 1, "name": "Kesim", "station": "CNC", "duration_min": 10}],
+                "steps": [{"no": 1, "name": "Kesim", "station": "CNC", "duration_min": 10, "images": ["/api/files/a.jpg", "/api/files/a.jpg"]}],
             },
             {
                 "product_id": "m2",
@@ -37,19 +37,21 @@ def test_flatten_recipe_steps_material_then_recipe():
             },
             {"product_id": "m3", "product_name": "Vida", "steps": []},
         ],
-        "steps": [{"no": 1, "name": "Montaj", "station": "Montaj", "duration_min": 20}],
+        "steps": [{"no": 1, "name": "Montaj", "station": "Montaj", "duration_min": 20, "images": [{"url": "/api/files/b.jpg"}]}],
     }
     flat = flatten_recipe_steps(recipe)
     assert [s["name"] for s in flat] == ["Kesim", "Kaplama", "Kenar", "Montaj"]
     assert flat[0]["material_name"] == "MDF"
+    assert flat[0]["images"] == ["/api/files/a.jpg"]
     assert flat[1]["material_product_id"] == "m2"
     assert flat[3].get("material_name") is None
+    assert flat[3]["images"] == ["/api/files/b.jpg"]
     assert work_order_step_label(flat[1], 1) == "Kaplama — Medelak"
     assert work_order_step_label(flat[3], 3) == "Montaj"
 
 
 def test_flatten_recipe_steps_default_uretim():
-    assert flatten_recipe_steps({}) == [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0}]
+    assert flatten_recipe_steps({}) == [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0, "images": []}]
     assert flatten_recipe_steps({"materials": [{"product_name": "X", "steps": []}], "steps": []})[0]["name"] == "Üretim"
 
 

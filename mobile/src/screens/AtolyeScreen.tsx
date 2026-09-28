@@ -1,6 +1,6 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
-import { Alert, Modal, Pressable, Text, View } from "react-native";
+import { Alert, Image, Modal, Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -8,6 +8,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen, StatRows } from "../components/kit";
 import { colors, radius, spacing } from "../theme";
 import { archivedAssignedDuties, openAssignedDuties, type AssignedDuty } from "../utils/assignedDuty";
+import { resolveMediaUrl } from "../utils/media";
 import { fmtDate, idOf } from "../utils/money";
 import type { Employee } from "../utils/personnel";
 import {
@@ -29,6 +30,7 @@ function WoCard({
   w,
   operator,
   busy,
+  baseUrl,
   onStart,
   onPause,
   onFinish,
@@ -36,6 +38,7 @@ function WoCard({
   w: WorkOrder;
   operator: string;
   busy: boolean;
+  baseUrl: string;
   onStart: () => void;
   onPause: () => void;
   onFinish: () => void;
@@ -44,6 +47,7 @@ function WoCard({
   const border =
     w.status === "in_progress" ? "#F59E0B" : w.status === "ready" ? "#C7D2FE" : colors.border;
   const who = w.operator_name || w.assigned_name;
+  const imgs = (w.images || []).map((u) => resolveMediaUrl(baseUrl, u)).filter(Boolean).slice(0, 8);
   return (
     <Card testID={`wo-card-${key}`} style={{ borderColor: border, borderWidth: w.status === "in_progress" ? 2 : 1 }}>
       <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -65,6 +69,13 @@ function WoCard({
           İş dosyası: <Text style={{ fontWeight: "700", color: colors.text }}>{w.job_file_name || "—"}</Text>
         </Text>
       </View>
+      {imgs.length > 0 ? (
+        <View testID={`wo-images-${key}`} style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+          {imgs.map((uri) => (
+            <Image key={uri} source={{ uri }} style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: "#E2E8F0" }} />
+          ))}
+        </View>
+      ) : null}
       <Muted>
         {[
           w.planned_quantity != null ? `${w.planned_quantity} ${w.unit || ""}`.trim() : null,
@@ -108,7 +119,7 @@ function WoCard({
 }
 
 export function AtolyeScreen() {
-  const { client, companyId, user } = useAuth();
+  const { client, companyId, user, baseUrl } = useAuth();
   const [wos, setWos] = useState<WorkOrder[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [stations, setStations] = useState<string[]>([]);
@@ -401,6 +412,7 @@ export function AtolyeScreen() {
               w={w}
               operator={operator}
               busy={busyId === woCardKey(w)}
+              baseUrl={baseUrl}
               onStart={() => act(w, "start")}
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}
@@ -418,6 +430,7 @@ export function AtolyeScreen() {
           w={w}
           operator={operator}
           busy={busyId === woCardKey(w)}
+          baseUrl={baseUrl}
           onStart={() => act(w, "start")}
           onPause={() => act(w, "pause")}
           onFinish={() => openFinish(w)}
@@ -433,6 +446,7 @@ export function AtolyeScreen() {
               w={w}
               operator={operator}
               busy={false}
+              baseUrl={baseUrl}
               onStart={() => {}}
               onPause={() => {}}
               onFinish={() => {}}
