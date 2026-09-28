@@ -10,7 +10,6 @@ import { normalizeWorkParks, normalizeWorkshopZones, stationNamesFromParks, zone
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { sameStationOrderHint } from "../utils/recipeStationOrder";
-import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount((n || 0));
 
