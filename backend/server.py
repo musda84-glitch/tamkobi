@@ -12841,21 +12841,25 @@ async def _filter_active_production_work_orders(rows: list) -> list:
 
 
 async def _enrich_work_orders_job_fields(rows: list) -> list:
-    """Eski iş emirlerinde eksik iş dosyası / reçete / istasyon / görselleri doldur."""
-    import work_parks as wp
-    need = [r for r in rows if not r.get("job_file_name") or not r.get("recipe_name") or pwo.needs_station_resolve(r) or ("images" not in r)]
-    if not need:
-        for r in rows:
-            pwo.enrich_work_order_row(r)
+    """İş emirlerine reçete meta, hammaddeler, istasyon ve görseller ekle."""
+    if not rows:
         return rows
-    order_ids = list({r.get("order_id") for r in need if r.get("order_id")})
+    import work_parks as wp
+    order_ids = list({r.get("order_id") for r in rows if r.get("order_id")})
     company_ids = list({r.get("company_id") for r in rows if r.get("company_id")})
     companies = await db.companies.find({"_id": {"$in": company_ids}}, {"work_parks": 1}).to_list(len(company_ids) or 1) if company_ids else []
     parks_by_co = {c["_id"]: c.get("work_parks") for c in companies}
-    orders = await db.production_orders.find({"_id": {"$in": order_ids}}, {"recipe_id": 1, "recipe_name": 1}).to_list(len(order_ids)) if order_ids else []
+    orders = await db.production_orders.find({"_id": {"$in": order_ids}}, {"recipe_id": 1, "recipe_name": 1}).to_list(len(order_ids) or 1) if order_ids else []
     by_order = {o["_id"]: o for o in orders}
     recipe_ids = list({o.get("recipe_id") for o in orders if o.get("recipe_id")})
-    recipes = await db.recipes.find({"_id": {"$in": recipe_ids}}, {"job_file_name": 1, "name": 1, "steps": 1, "materials": 1}).to_list(len(recipe_ids) or 1) if recipe_ids else []
+    recipes = (
+        await db.recipes.find(
+            {"_id": {"$in": recipe_ids}},
+            {"job_file_name": 1, "name": 1, "steps": 1, "materials": 1, "target_quantity": 1},
+        ).to_list(len(recipe_ids) or 1)
+        if recipe_ids
+        else []
+    )
     by_recipe = {r["_id"]: r for r in recipes}
     persist_station: list = []
     persist_images: list = []
@@ -12865,6 +12869,7 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
         meta = pwo.recipe_job_fields(recipe)
         if not meta.get("recipe_name"):
             meta["recipe_name"] = o.get("recipe_name")
+        meta["materials"] = pwo.recipe_materials_for_qty(recipe, r.get("planned_quantity") or 1)
         steps = pwo.flatten_recipe_steps(recipe) if recipe else []
         step = None
         sn = r.get("step_no")
@@ -12877,9 +12882,9 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
             meta["station"] = resolved
             if resolved and resolved != r.get("station") and r.get("status") in ("ready", "waiting", "in_progress", "paused"):
                 persist_station.append((r.get("id") or r.get("_id"), resolved))
-        if step and "images" not in r:
-            meta["images"] = pwo.sanitize_step_images(step.get("images"))
         had_images_key = "images" in r
+        if step and not had_images_key:
+            meta["images"] = pwo.sanitize_step_images(step.get("images"))
         pwo.enrich_work_order_row(r, meta)
         if not had_images_key:
             imgs = pwo.sanitize_step_images(r.get("images"))

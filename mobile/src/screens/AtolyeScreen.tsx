@@ -78,6 +78,22 @@ function WoCard({
           İş dosyası: <Text style={{ fontWeight: "700", color: colors.text }}>{w.job_file_name || "—"}</Text>
         </Text>
       </View>
+      {(w.materials || []).length > 0 ? (
+        <View
+          testID={`wo-materials-${key}`}
+          style={{ borderWidth: 1, borderColor: "#F1F5F9", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, gap: 4 }}
+        >
+          <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>Hammaddeler</Text>
+          {(w.materials || []).map((m, i) => (
+            <Row key={m.product_id || String(i)} style={{ justifyContent: "space-between", gap: 8 }}>
+              <Text style={{ flex: 1, fontSize: 12, color: colors.muted }} numberOfLines={1}>{m.product_name || "Hammadde"}</Text>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
+                {m.needed} {m.unit || ""}
+              </Text>
+            </Row>
+          ))}
+        </View>
+      ) : null}
       {imgs.length > 0 ? (
         <View testID={`wo-images-${key}`} style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
           {imgs.map((uri) => (

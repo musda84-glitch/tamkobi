@@ -1,4 +1,4 @@
-"""Atölye iş emri yardımcıları — reçeteden istasyon / iş dosyası alanları."""
+"""Atölye iş emri yardımcıları — reçeteden istasyon / iş dosyası / hammadde alanları."""
 from typing import Any, Dict, List, Optional
 
 
@@ -8,6 +8,40 @@ def recipe_job_fields(recipe: Optional[Dict[str, Any]] = None) -> Dict[str, Opti
     job = str(r.get("job_file_name") or "").strip() or None
     name = str(r.get("name") or "").strip() or None
     return {"job_file_name": job, "recipe_name": name}
+
+
+def recipe_materials_for_qty(recipe: Optional[Dict[str, Any]] = None, quantity: Any = 1) -> List[Dict[str, Any]]:
+    """Plan miktarına göre reçete hammaddeleri (atölye kartı için)."""
+    r = recipe or {}
+    try:
+        qty = float(quantity if quantity is not None else 1)
+    except (TypeError, ValueError):
+        qty = 1.0
+    try:
+        target = float(r.get("target_quantity") or 1) or 1.0
+    except (TypeError, ValueError):
+        target = 1.0
+    factor = qty / target
+    out: List[Dict[str, Any]] = []
+    for m in r.get("materials") or []:
+        if not isinstance(m, dict):
+            continue
+        try:
+            base = float(m.get("quantity") or 0)
+            waste = float(m.get("wastage_percent") or 0)
+        except (TypeError, ValueError):
+            continue
+        needed = round(base * factor * (1 + waste / 100.0), 3)
+        if needed <= 0:
+            continue
+        name = str(m.get("product_name") or "").strip() or "Hammadde"
+        out.append({
+            "product_id": m.get("product_id"),
+            "product_name": name,
+            "unit": str(m.get("unit") or "Adet").strip() or "Adet",
+            "needed": needed,
+        })
+    return out
 
 
 def sanitize_step_images(raw: Any, limit: int = 12) -> List[str]:
@@ -84,7 +118,7 @@ def work_order_step_label(st: Optional[Dict[str, Any]] = None, idx: int = 0) -> 
 
 
 def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Liste yanıtında eksik job_file_name / recipe_name / station / images doldur."""
+    """Liste yanıtında eksik job_file_name / recipe_name / station / images / materials doldur."""
     m = meta or {}
     if not row.get("job_file_name") and m.get("job_file_name"):
         row["job_file_name"] = m["job_file_name"]
@@ -94,6 +128,10 @@ def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = 
         row["station"] = m["station"]
     elif not row.get("station"):
         row["station"] = "Genel"
+    if m.get("materials") is not None:
+        row["materials"] = m["materials"]
+    elif "materials" not in row:
+        row["materials"] = []
     if not sanitize_step_images(row.get("images")) and m.get("images"):
         row["images"] = list(m["images"])
     elif "images" not in row:
