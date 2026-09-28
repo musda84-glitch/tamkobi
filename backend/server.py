@@ -13490,13 +13490,19 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
             finish_mats = pwo.materials_for_work_order_step(all_mats, w)
     finish_plan = pwo.resolve_work_order_finish_plan(w, finish_mats)
     default_qty = finish_plan["qty"] if finish_plan["qty"] else float(w.get("planned_quantity", 0) or 0)
+    finish_unit = str(finish_plan.get("unit") or w.get("unit") or "Adet").strip() or "Adet"
     produced = float(req.get("produced_qty") if req.get("produced_qty") is not None else default_qty)
     scrap = float(req.get("scrap_qty") or 0)
     if produced < 0 or scrap < 0:
         raise HTTPException(status_code=400, detail="Miktar negatif olamaz.")
+    # Sayılabilir birimde (Adet) 2.857 → 3; stok tam adet düşülür.
+    if pwo.is_discrete_unit(finish_unit):
+        produced = pwo.round_needed_qty(produced, finish_unit)
+        scrap = pwo.round_needed_qty(scrap, finish_unit) if scrap else 0.0
     planned_q = float(finish_plan["qty"] or w.get("planned_quantity", 0) or 0)
     is_material_step = bool(finish_plan.get("is_material"))
     over = planned_q > 0 and produced + scrap > planned_q + 1e-9
+    under = planned_q > 0 and produced + scrap < planned_q - 1e-9
     # Kapsama fire (M2/Metre): Adet yuvarlamasından kalan içerik — stok biriminden ayrı.
     scrap_content = 0.0
     scrap_content_unit = None
@@ -13517,7 +13523,7 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
         "produced_qty": produced,
         "scrap_qty": scrap,
         "finish_note": req.get("notes", ""),
-        "finish_unit": finish_plan.get("unit") or w.get("unit") or "Adet",
+        "finish_unit": finish_unit,
         "finish_is_material": is_material_step,
     }
     if scrap_content > 0:
@@ -13527,15 +13533,54 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
     if over and not is_material_step:
         wo_patch["planned_quantity"] = produced + scrap
         wo_patch["over_produced"] = True
+    # Hammadde adımı: girilen üretilen+fire kadar stoktan düş (fazla/eksik buna göre).
+    mat_pid = str(w.get("material_product_id") or "").strip()
+    if not mat_pid and finish_mats:
+        mat_pid = str((finish_mats[0] or {}).get("product_id") or "").strip()
+    mat_consume = pwo.round_needed_qty(produced + scrap, finish_unit) if is_material_step else 0.0
+    if is_material_step and mat_pid and mat_consume > 0:
+        mat_prod = await db.products.find_one({"_id": mat_pid}, {"name": 1, "company_id": 1}) or {}
+        await db.products.update_one({"_id": mat_pid}, {"$inc": {"stock_quantity": -mat_consume}})
+        await db.stock_movements.insert_one({
+            "_id": str(uuid.uuid4()),
+            "company_id": mat_prod.get("company_id") or w.get("company_id"),
+            "product_id": mat_pid,
+            "product_name": mat_prod.get("name") or w.get("material_name") or finish_plan.get("material_name"),
+            "change": -mat_consume,
+            "reason": f"Üretim hammadde: {w.get('order_code') or ''} {w.get('step_name') or ''}".strip(),
+            "date": datetime.now(timezone.utc).isoformat(),
+            "work_order_id": wo_id,
+            "order_id": w.get("order_id"),
+        })
+        wo_patch["material_stock_deducted"] = True
+        wo_patch["material_stock_qty"] = mat_consume
+        wo_patch["material_stock_product_id"] = mat_pid
+    log_extra = ""
+    if over:
+        log_extra = " (plan üstü)"
+    elif under:
+        log_extra = " (plan altı)"
+    if mat_consume > 0:
+        log_extra += f"; stok -{mat_consume:g} {finish_unit}"
     await db.work_orders.update_one(
         {"_id": wo_id},
-        {"$set": wo_patch, "$push": {"logs": _log(w, "finish", req.get("operator_name"), f"{produced:g} üretildi, {scrap:g} fire" + (" (plan üstü)" if over and not is_material_step else ""))}},
+        {"$set": wo_patch, "$push": {"logs": _log(w, "finish", req.get("operator_name"), f"{produced:g} üretildi, {scrap:g} fire{log_extra}")}},
     )
     nxt = await db.work_orders.find_one({"order_id": w["order_id"], "step_no": w["step_no"] + 1})
-    result: Dict[str, Any] = {"status": "success", "message": f"{w['step_name']} tamamlandı." + (" Plan üstü üretim kaydedildi." if over and not is_material_step else "")}
+    msg_bits = [f"{w['step_name']} tamamlandı."]
+    if over and not is_material_step:
+        msg_bits.append("Plan üstü üretim kaydedildi.")
+    elif under and not is_material_step:
+        msg_bits.append("Plan altı üretim kaydedildi.")
+    if mat_consume > 0:
+        msg_bits.append(f"Hammadde stoktan {mat_consume:g} {finish_unit} düşüldü.")
+    result: Dict[str, Any] = {"status": "success", "message": " ".join(msg_bits)}
     if nxt:
         nxt_patch: Dict[str, Any] = {"status": "ready"}
         if over and not is_material_step:
+            nxt_patch["planned_quantity"] = produced + scrap
+        elif under and not is_material_step:
+            # Sonraki adımlar da fiili mamul miktarına hizalansın
             nxt_patch["planned_quantity"] = produced + scrap
         await db.work_orders.update_one({"_id": nxt["_id"]}, {"$set": nxt_patch})
         result["message"] += f" Sıradaki adım: {nxt['step_name']} ({nxt['station']})."
@@ -13543,18 +13588,25 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
         o = await db.production_orders.find_one({"_id": w["order_id"]})
         if o and o.get("status") == "in_production":
             # Hammadde adımında stoka mamul plan miktarı yazılır (16 Metre ≠ 16 dolap).
+            # Mamul adımında girilen üretilen (+fire hammaddede tüketilir) stoğa yazılır.
             stock_qty = float(o.get("planned_quantity") or 0) if is_material_step else produced
             stock_scrap = 0.0 if is_material_step else scrap
-            if stock_qty > 0:
-                try:
-                    r = await complete_production_order(
-                        w["order_id"],
-                        {"quantity": stock_qty, "scrap_qty": stock_scrap, "update_cost": bool(req.get("update_cost", False)), "allow_over": True},
-                    )
-                    result["message"] += " " + r["message"]
-                    result["order_completed"] = r["finished"]
-                except HTTPException as e:
-                    result["message"] += f" (Stok işlenemedi: {e.detail})"
+            try:
+                r = await complete_production_order(
+                    w["order_id"],
+                    {
+                        "quantity": stock_qty,
+                        "scrap_qty": stock_scrap,
+                        "update_cost": bool(req.get("update_cost", False)),
+                        "allow_over": True,
+                        "force_close": True,
+                        "allow_zero": stock_qty <= 0,
+                    },
+                )
+                result["message"] += " " + r["message"]
+                result["order_completed"] = r["finished"]
+            except HTTPException as e:
+                result["message"] += f" (Stok işlenemedi: {e.detail})"
     return result
 
 
@@ -13972,23 +14024,73 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
     remaining = planned - done_before
     qty = float(req.get("quantity") if req.get("quantity") is not None else remaining)
     allow_over = bool(req.get("allow_over", True))
-    if qty <= 0:
+    allow_zero = bool(req.get("allow_zero", False))
+    force_close = bool(req.get("force_close", False))
+    if qty < 0 or (qty <= 0 and not allow_zero):
         raise HTTPException(status_code=400, detail="Miktar sıfırdan büyük olmalı.")
     if not allow_over and qty > remaining + 1e-9:
         raise HTTPException(status_code=400, detail=f"Miktar 0 ile {remaining:g} arasında olmalı.")
     recipe = await db.recipes.find_one({"_id": p_order.get("recipe_id")})
     consumed = []
     consume_qty = qty + float(req.get("scrap_qty") or 0)
-    if recipe:
+    # Adım bitişinde zaten düşülen hammaddeleri tekrar düşme.
+    already_rows = await db.work_orders.find(
+        {"order_id": order_id, "material_stock_deducted": True},
+        {"material_stock_product_id": 1, "material_stock_qty": 1, "finish_unit": 1, "material_name": 1},
+    ).to_list(200)
+    already_ids = {
+        str(r.get("material_stock_product_id") or "").strip()
+        for r in already_rows
+        if r.get("material_stock_product_id")
+    }
+    for r in already_rows:
+        pid = str(r.get("material_stock_product_id") or "").strip()
+        if not pid:
+            continue
+        consumed.append({
+            "product_id": pid,
+            "product_name": r.get("material_name") or pid,
+            "quantity": float(r.get("material_stock_qty") or 0),
+            "unit": r.get("finish_unit") or "Adet",
+            "from_step": True,
+        })
+    if recipe and consume_qty > 0:
         for row in await _requirements(recipe, consume_qty):
-            await db.products.update_one({"_id": row["product_id"]}, {"$inc": {"stock_quantity": -row["needed"]}})
-            consumed.append({"product_name": row["product_name"], "quantity": row["needed"], "unit": row["unit"]})
+            pid = str(row.get("product_id") or "").strip()
+            if pid and pid in already_ids:
+                continue
+            needed = float(row.get("needed") or 0)
+            if needed <= 0 or not pid:
+                continue
+            await db.products.update_one({"_id": pid}, {"$inc": {"stock_quantity": -needed}})
+            await db.stock_movements.insert_one({
+                "_id": str(uuid.uuid4()),
+                "company_id": p_order.get("company_id"),
+                "product_id": pid,
+                "product_name": row.get("product_name"),
+                "change": -needed,
+                "reason": f"Üretim tüketim: {p_order.get('order_code') or order_id}",
+                "date": datetime.now(timezone.utc).isoformat(),
+                "order_id": order_id,
+            })
+            consumed.append({"product_name": row["product_name"], "quantity": needed, "unit": row["unit"]})
         unit_cost = _recipe_costs(recipe)["unit_cost"]
         if unit_cost and req.get("update_cost", False):
             await db.products.update_one({"_id": p_order.get("finished_product_id")}, {"$set": {"purchase_price": unit_cost}})
-    await db.products.update_one({"_id": p_order.get("finished_product_id")}, {"$inc": {"stock_quantity": qty}})
+    if qty > 0 and p_order.get("finished_product_id"):
+        await db.products.update_one({"_id": p_order.get("finished_product_id")}, {"$inc": {"stock_quantity": qty}})
+        await db.stock_movements.insert_one({
+            "_id": str(uuid.uuid4()),
+            "company_id": p_order.get("company_id"),
+            "product_id": p_order.get("finished_product_id"),
+            "product_name": p_order.get("finished_product_name"),
+            "change": qty,
+            "reason": f"Üretim mamul: {p_order.get('order_code') or order_id}",
+            "date": datetime.now(timezone.utc).isoformat(),
+            "order_id": order_id,
+        })
     new_done = round(done_before + qty, 3)
-    finished = new_done >= planned - 1e-9
+    finished = force_close or new_done >= planned - 1e-9
     po_set: Dict[str, Any] = {
         "status": "completed" if finished else "in_production",
         "completed_quantity": new_done,
@@ -13998,6 +14100,9 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
     if new_done > planned + 1e-9:
         po_set["over_produced"] = True
         po_set["over_produced_qty"] = round(new_done - planned, 3)
+    if finished and new_done < planned - 1e-9:
+        po_set["under_produced"] = True
+        po_set["under_produced_qty"] = round(planned - new_done, 3)
     await db.production_orders.update_one({"_id": order_id}, {"$set": po_set})
     recipe_deleted = False
     if finished and recipe and recipe.get("one_time"):
@@ -14015,7 +14120,8 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None):
         except Exception:
             recipe_deleted = False
     over_note = f" (plan {planned:g}, fazla {new_done - planned:g})" if new_done > planned + 1e-9 else ""
-    msg = f"{qty:g} {recipe.get('unit', 'Adet') if recipe else 'Adet'} '{p_order.get('finished_product_name')}' üretildi; hammaddeler düşüldü, mamul stoğa eklendi{over_note}." + ("" if finished else f" Kalan: {planned - new_done:g}")
+    under_note = f" (plan {planned:g}, eksik {planned - new_done:g})" if finished and new_done < planned - 1e-9 else ""
+    msg = f"{qty:g} {recipe.get('unit', 'Adet') if recipe else 'Adet'} '{p_order.get('finished_product_name')}' üretildi; hammaddeler düşüldü, mamul stoğa eklendi{over_note}{under_note}." + ("" if finished else f" Kalan: {planned - new_done:g}")
     if recipe_deleted:
         msg += " Tek seferlik reçete silindi."
     return {"status": "success", "finished": finished, "consumed": consumed, "recipe_deleted": recipe_deleted, "message": msg}

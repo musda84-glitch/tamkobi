@@ -38,16 +38,18 @@ export function workOrderFinishPlan(w) {
     };
   }
   if (w?.finish_qty != null && Number(w.finish_qty) > 0) {
+    const unit = String(w.finish_unit || w.unit || "Adet").trim() || "Adet";
     return {
-      qty: Number(w.finish_qty),
-      unit: String(w.finish_unit || w.unit || "Adet").trim() || "Adet",
+      qty: roundNeededQty(Number(w.finish_qty), unit),
+      unit,
       isMaterial: !!w.finish_is_material,
       materialName: mname || null,
     };
   }
+  const unit = String(w?.unit || "Adet").trim() || "Adet";
   return {
-    qty: Number(w?.planned_quantity || 0),
-    unit: String(w?.unit || "Adet").trim() || "Adet",
+    qty: roundNeededQty(Number(w?.planned_quantity || 0), unit),
+    unit,
     isMaterial: false,
     materialName: null,
   };
