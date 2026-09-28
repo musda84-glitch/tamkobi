@@ -596,7 +596,7 @@ class RecipeItem(BaseModel):
     cost_includes_vat: bool = False  # True = girilen birim maliyet KDV dahil
     vat_rate: float = 20.0
     # Kaleme özel atölye adımları — üretim emrinde sırayla iş emrine açılır
-    steps: List[Dict[str, Any]] = []  # [{no, name, station, duration_min}]
+    steps: List[Dict[str, Any]] = Field(default_factory=list)  # [{no, name, station, duration_min}]
 
 class Recipe(BaseDocument):
     company_id: str
@@ -606,8 +606,8 @@ class Recipe(BaseDocument):
     finished_product_name: str
     target_quantity: float = 1.0
     unit: str = "Adet"
-    materials: List[RecipeItem] = []
-    steps: List[Dict[str, Any]] = []  # [{no, name, station, duration_min}]
+    materials: List[RecipeItem] = Field(default_factory=list)
+    steps: List[Dict[str, Any]] = Field(default_factory=list)  # [{no, name, station, duration_min}]
     labor_cost: float = 0.0
     overhead_cost: float = 0.0
     total_estimated_cost: float = 0.0

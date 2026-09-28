@@ -558,7 +558,23 @@ export default function ProductionPage() {
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <button type="button" onClick={() => copyRecipe(r)} className="p-1.5 border rounded-lg hover:bg-indigo-50 hover:border-indigo-200 text-slate-600 hover:text-indigo-700" title="Kopyala" data-testid={`recipe-copy-${r.code}`}><Copy className="w-3.5 h-3.5" /></button>
-                  <button type="button" onClick={() => setRecipeModal({ recipe: r })} className="p-1.5 border rounded-lg hover:bg-slate-50" title="Düzenle" data-testid={`recipe-edit-${r.code}`}><Pencil className="w-3.5 h-3.5" /></button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      // Liste cache'i değil; kalem adımları dahil taze reçete
+                      try {
+                        const res = await axios.get(`${API_URL}/production/recipes/${r.id}`);
+                        setRecipeModal({ recipe: res.data });
+                      } catch {
+                        setRecipeModal({ recipe: r });
+                      }
+                    }}
+                    className="p-1.5 border rounded-lg hover:bg-slate-50"
+                    title="Düzenle"
+                    data-testid={`recipe-edit-${r.code}`}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
                   <button type="button" onClick={() => delRecipe(r)} className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50" title="Sil" data-testid={`recipe-delete-${r.code}`}><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               </div>
@@ -570,7 +586,11 @@ export default function ProductionPage() {
 
       {recipeModal && (
         <RecipeModal
-          key={recipeModal.recipe?.id || recipeModal.presetProductId || "new-recipe"}
+          key={
+            recipeModal.recipe
+              ? `edit-${recipeModal.recipe.id}-s${(recipeModal.recipe.steps || []).length}-m${(recipeModal.recipe.materials || []).map((m) => (Array.isArray(m.steps) ? m.steps.length : 0)).join(".")}`
+              : `new-${recipeModal.presetProductId || "blank"}`
+          }
           companyId={companyId}
           products={products}
           recipe={recipeModal.recipe}

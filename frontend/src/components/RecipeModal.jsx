@@ -51,13 +51,39 @@ const emptyMat = () => ({
   steps: [],
 });
 
+/** API / eski kayıtlarda steps bazen JSON string gelebilir. */
+export const coerceStepsList = (raw) => {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
 export const normalizeSteps = (list) =>
-  (Array.isArray(list) ? list : []).map((x) => ({
+  coerceStepsList(list).map((x) => ({
     name: x?.name || "",
     station: x?.station || "",
     duration_min: x?.duration_min ?? 0,
     images: normalizeStepImages(x?.images),
   }));
+
+export const materialsFromRecipe = (recipe) => {
+  const mats = Array.isArray(recipe?.materials) ? recipe.materials : [];
+  if (!mats.length) return [emptyMat()];
+  return mats.map((m) => ({
+    ...emptyMat(),
+    ...m,
+    cost_includes_vat: !!m.cost_includes_vat,
+    vat_rate: Number(m.vat_rate ?? 20),
+    steps: normalizeSteps(m.steps),
+  }));
+};
 
 /** Adım adı (bölüm) boşsa istasyon adını kullan — sessizce düşmesin. */
 export const serializeSteps = (list, fallbackStation = "") =>
@@ -156,17 +182,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
   });
   const [steps, setSteps] = useState(normalizeSteps(recipe?.steps));
   const updStep = (i, patch) => setSteps(steps.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
-  const [mats, setMats] = useState(
-    recipe?.materials?.length
-      ? recipe.materials.map((m) => ({
-          ...emptyMat(),
-          ...m,
-          cost_includes_vat: !!m.cost_includes_vat,
-          vat_rate: Number(m.vat_rate ?? 20),
-          steps: normalizeSteps(m.steps),
-        }))
-      : [emptyMat()]
-  );
+  const [mats, setMats] = useState(() => materialsFromRecipe(recipe));
   const upd = (i, patch) => setMats(mats.map((m, idx) => (idx === i ? { ...m, ...patch } : m)));
   const updMatStep = (mi, si, patch) => {
     const cur = mats[mi]?.steps || [];
