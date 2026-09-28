@@ -227,6 +227,15 @@ export default function MainLayout({ children, onOpenQuickAction }) {
 
   return (
     <div className="min-h-screen bg-slate-50 flex text-slate-900 font-sans antialiased">
+      {mobileMenuOpen ? (
+        <button
+          type="button"
+          aria-label="Menüyü kapat"
+          className="fixed inset-0 z-[35] bg-slate-900/40 lg:hidden"
+          data-testid="mobile-menu-backdrop"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      ) : null}
       <aside className={`fixed inset-y-0 left-0 z-40 bg-slate-900 text-slate-200 border-r border-slate-800 flex flex-col transition-[width,transform] duration-300 lg:translate-x-0 ${sidebarCollapsed ? "w-16" : "w-64"} ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`} data-testid="app-sidebar" data-collapsed={sidebarCollapsed ? "1" : "0"}>
         <div className={`h-16 border-b border-slate-800/80 flex items-center ${sidebarCollapsed ? "px-2 justify-center gap-1" : "px-5 justify-between"}`}>
           <Link
@@ -292,50 +301,63 @@ export default function MainLayout({ children, onOpenQuickAction }) {
       </aside>
 
       <div className={`flex-1 flex flex-col min-w-0 transition-[padding] duration-300 ${sidebarCollapsed ? "lg:pl-16" : "lg:pl-64"}`}>
-        <header className="h-16 bg-white border-b border-slate-200/80 px-4 sm:px-8 flex items-center justify-between sticky top-0 z-30 shadow-sm backdrop-blur-md bg-white/90">
-          <div className="flex items-center gap-3 min-w-0">
-            <button onClick={() => setMobileMenuOpen(true)} className="lg:hidden p-2 text-slate-600 hover:bg-slate-100 rounded-lg" data-testid="mobile-menu-toggle">
-              <Menu className="w-5 h-5" />
-            </button>
-            <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 min-w-0">
-              <span className="font-medium text-slate-700 truncate max-w-[220px] lg:max-w-[280px]">{activeCompany?.name}</span>
-              <span>•</span>
-              <LicenseBadge license={license} />
-            </div>
-            <SupportConnectionChip
-              companyId={activeCompany?.id || activeCompany?._id}
-              impersonation={user?.impersonation}
-              isAdmin={user?.role === "admin"}
-              onExitImpersonation={exitImpersonation}
-            />
+        <header className="h-16 bg-white border-b border-slate-200/80 px-3 sm:px-8 flex items-center gap-2 sticky top-0 z-30 shadow-sm backdrop-blur-md bg-white/90">
+          {/* Always reserve the hamburger — crowded quick actions used to push it off-screen on mobile. */}
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(true)}
+            className="lg:hidden shrink-0 p-2 -ml-1 text-slate-700 hover:bg-slate-100 rounded-lg"
+            aria-label="Menüyü aç"
+            data-testid="mobile-menu-toggle"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 min-w-0 shrink">
+            <span className="font-medium text-slate-700 truncate max-w-[160px] lg:max-w-[280px]">{activeCompany?.name}</span>
+            <span>•</span>
+            <LicenseBadge license={license} />
           </div>
+          <SupportConnectionChip
+            companyId={activeCompany?.id || activeCompany?._id}
+            impersonation={user?.impersonation}
+            isAdmin={user?.role === "admin"}
+            onExitImpersonation={exitImpersonation}
+          />
 
-          <div className="flex items-center gap-2.5">
-            {erpShortcuts && <HeaderQuickActions companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
-            {erpShortcuts && <RadialQuickMenu companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
+          <div className="ml-auto min-w-0 flex items-center justify-end gap-1.5 sm:gap-2.5">
+            {erpShortcuts && (
+              <div className="hidden sm:flex items-center gap-2 shrink-0">
+                <HeaderQuickActions companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+              </div>
+            )}
+            {erpShortcuts && (
+              <div className="hidden md:flex items-center shrink-0">
+                <RadialQuickMenu companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
+              </div>
+            )}
             <NotificationBell companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
             {erpShortcuts && feature("header_barcode") && personelMenuPathAllowed("/stock", user) && (
-              <Link to="/stock?scan=true" className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition" data-testid="quick-barcode-scan-btn">
+              <Link to="/stock?scan=true" className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 md:px-3 py-1.5 rounded-lg text-xs font-medium transition shrink-0" data-testid="quick-barcode-scan-btn" title="Barkod Oku">
                 <QrCode className="w-4 h-4 md:w-3.5 md:h-3.5 text-indigo-600" />
                 <span className="hidden md:inline">Barkod Oku</span>
               </Link>
             )}
             {erpShortcuts && feature("header_virman") && personelMenuPathAllowed("/banking", user) && (
-              <Link to="/banking?action=virman" className="hidden md:flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition" data-testid="quick-virman-btn">
+              <Link to="/banking?action=virman" className="hidden md:flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition shrink-0" data-testid="quick-virman-btn">
                 <ArrowRightLeft className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Virman</span>
               </Link>
             )}
             {erpShortcuts && feature("header_invoice") && personelMenuPathAllowed("/invoices", user) && (
-              <Link to="/invoices?new=true" className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium shadow-sm shadow-emerald-600/30 transition" data-testid="quick-create-invoice-btn">
+              <Link to="/invoices?new=true" className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-medium shadow-sm shadow-emerald-600/30 transition shrink-0" data-testid="quick-create-invoice-btn">
                 <PlusCircle className="w-3.5 h-3.5" />
-                <span>Yeni Fatura</span>
+                <span className="max-[380px]:hidden">Yeni Fatura</span>
               </Link>
             )}
             {erpShortcuts && feature("header_ai") && addonOn("ai.advisor") && personelMenuPathAllowed("/ai-advisor", user) && (
-              <Link to="/ai-advisor" className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm shadow-purple-600/30 transition" data-testid="quick-ai-btn">
+              <Link to="/ai-advisor" className="hidden sm:flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm shadow-purple-600/30 transition shrink-0" data-testid="quick-ai-btn">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">AI Danışman</span>
+                <span>AI Danışman</span>
               </Link>
             )}
           </div>
