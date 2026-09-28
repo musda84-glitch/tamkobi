@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { navigateNewOrder } from "../utils/ordersNewQuery";
 import {
   PlusCircle,
   QrCode,
@@ -149,6 +150,7 @@ export function RadialQuickMenu({ companyId }) {
           tone: special.tone || toneForIndex(idx),
           run: () => {
             if (special.id === "action:contact-new") setNewContact(true);
+            else if (special.id === "action:order-new") navigateNewOrder(navigate, location);
             else if (special.href) navigate(special.href);
           },
         });
