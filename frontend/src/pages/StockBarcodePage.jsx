@@ -18,6 +18,7 @@ import { SearchSelect } from "../components/SearchSelect";
 import { barcodeSaleLine, barcodeSalePayload, findRetailContact, pickCashAccount, RETAIL_CONTACT_NAME, RETAIL_CONTACT_TAX } from "../utils/barcodeSale";
 import { bulkProgressPercent, BULK_FLAG_TIMEOUT_MS, formatElapsed, runBulkFlagChunks } from "../utils/stockBulkFlags";
 import { parseBarcodeWithQty, parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
+import { StockInlinePrice } from "../components/StockInlinePrice";
 
 import {
   Package,
@@ -158,6 +159,29 @@ export default function StockBarcodePage() {
 
   const productId = (p) => p?.id || p?._id;
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+
+  const saveInlinePrice = async (prod, field, nextPrice) => {
+    const id = productId(prod);
+    if (!id) {
+      toast.error("Ürün kimliği bulunamadı.");
+      throw new Error("no-id");
+    }
+    const prevVal = prod[field];
+    setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, [field]: nextPrice } : p)));
+    try {
+      const res = await axios.put(`${API_URL}/products/${id}`, { [field]: nextPrice });
+      const updated = res.data;
+      if (!updated || !(updated.id || updated._id)) throw new Error("empty");
+      const val = updated[field] ?? nextPrice;
+      setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, ...updated, [field]: val } : p)));
+      await patchCached("products", companyId, { [id]: { ...updated, [field]: val } });
+      toast.success(field === "sale_price" ? "Satış fiyatı güncellendi." : "Alış fiyatı güncellendi.");
+    } catch (err) {
+      setProducts((prev) => prev.map((p) => (productId(p) === id ? { ...p, [field]: prevVal } : p)));
+      toast.error(err.response?.data?.detail || "Fiyat güncellenemedi.");
+      throw err;
+    }
+  };
 
   const toggleFlag = async (prod, field) => {
     const id = productId(prod);
@@ -867,7 +891,13 @@ export default function StockBarcodePage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right text-slate-500 font-medium" data-testid={`stock-purchase-${prod.sku}`}>
-                      <div>{fmtMoney(prod.purchase_price, prod.currency || "TRY")}</div>
+                      <StockInlinePrice
+                        value={prod.purchase_price}
+                        currency={prod.currency || "TRY"}
+                        title="Alış fiyatını düzenle"
+                        testId={`stock-purchase-edit-${prod.sku}`}
+                        onSave={(n) => saveInlinePrice(prod, "purchase_price", n)}
+                      />
                       {prod.last_purchase_price != null && (
                         <div className="text-[10px] text-amber-800 font-semibold" data-testid={`stock-last-buy-${prod.sku}`}>
                           son {fmtMoney(Number(prod.last_purchase_price), prod.currency || "TRY")}
@@ -880,8 +910,15 @@ export default function StockBarcodePage() {
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right font-bold text-slate-900">
-                      {fmtMoney(prod.sale_price, prod.currency || "TRY")}
+                    <td className="px-4 py-3 text-right font-bold text-slate-900" data-testid={`stock-sale-${prod.sku}`}>
+                      <StockInlinePrice
+                        value={prod.sale_price}
+                        currency={prod.currency || "TRY"}
+                        bold
+                        title="Satış fiyatını düzenle"
+                        testId={`stock-sale-edit-${prod.sku}`}
+                        onSave={(n) => saveInlinePrice(prod, "sale_price", n)}
+                      />
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
