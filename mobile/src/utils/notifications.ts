@@ -38,6 +38,8 @@ export function rolesForType(type?: string | null): string[] {
 }
 
 /** Ana ekranda kişi kendi rolüne veya kendisine atanan kayıtlara bakar. */
+const STAFF_ADMIN_BROADCAST = new Set(["bank_sync", "cash_approval", "license"]);
+
 export function visibleNotifications(rows: Notification[] | null | undefined, user?: User | null): Notification[] {
   const list = rows || [];
   if (!user) return list;
@@ -51,7 +53,8 @@ export function visibleNotifications(rows: Notification[] | null | undefined, us
     if (targetUser || targetEmp) {
       return Boolean((targetUser && mine.has(targetUser)) || (targetEmp && mine.has(targetEmp)));
     }
-    if (role === "admin" && staff) return false;
+    const ntype = String(n.type || "");
+    if (role === "admin" && staff && !STAFF_ADMIN_BROADCAST.has(ntype)) return false;
     const roles = n.roles != null ? n.roles : rolesForType(n.type);
     return !!role && roles.includes(role);
   });

@@ -126,6 +126,21 @@ describe("visibleNotifications", () => {
     expect(visibleNotifications(rows, { ...user, role: "admin" })).toHaveLength(4);
     expect(visibleNotifications(rows, { ...user, role: "admin", employee_id: "e1" }).map((n) => n.title)).toEqual(["görev", "rol"]);
   });
+
+  it("lets staff-linked admins see bank and cash alerts for closed-app push", () => {
+    const rows = [
+      { type: "bank_sync", title: "3 yeni banka hareketi" },
+      { type: "cash_approval", title: "Kasa onayı" },
+      { type: "order_pick_missing", title: "depo" },
+      { type: "task_assigned", title: "görev", user_id: "u1", roles: [] },
+    ];
+    const staffAdmin = { id: "u1", email: "a@x", name: "Mustafa", role: "admin", employee_id: "e1" };
+    expect(visibleNotifications(rows, staffAdmin).map((n) => n.title)).toEqual([
+      "3 yeni banka hareketi",
+      "Kasa onayı",
+      "görev",
+    ]);
+  });
 });
 
 describe("notificationRoute", () => {

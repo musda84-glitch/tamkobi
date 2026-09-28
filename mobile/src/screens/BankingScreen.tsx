@@ -1,5 +1,5 @@
-import { useFocusEffect } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
@@ -101,10 +101,19 @@ function Approvals({
   );
 }
 
+type BankingTab = "all" | "cash" | "banks" | "partners" | "pos" | "match";
+const BANKING_TABS: BankingTab[] = ["all", "cash", "banks", "partners", "pos", "match"];
+
+function bankingTabFromParam(raw?: string | string[] | null): BankingTab | null {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  return BANKING_TABS.includes(v as BankingTab) ? (v as BankingTab) : null;
+}
+
 export function BankingScreen() {
   const { client, companyId, can } = useAuth();
+  const params = useLocalSearchParams<{ tab?: string | string[] }>();
   const canEdit = can("/banking", "edit");
-  const [tab, setTab] = useState<"all" | "cash" | "banks" | "partners" | "pos" | "match">("all");
+  const [tab, setTab] = useState<BankingTab>("all");
   const [rows, setRows] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerSummary, setPartnerSummary] = useState<PartnerSummary | null>(null);
@@ -117,6 +126,11 @@ export function BankingScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [partnerDock, setPartnerDock] = useState<React.ReactNode>(null);
+
+  useEffect(() => {
+    const next = bankingTabFromParam(params.tab);
+    if (next) setTab(next);
+  }, [params.tab]);
 
   const load = useCallback(async () => {
     setRefreshing(true);

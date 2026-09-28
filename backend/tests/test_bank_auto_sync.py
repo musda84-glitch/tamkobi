@@ -1,6 +1,10 @@
 import asyncio
 
-from bank_auto_sync import run_bank_auto_sync_tick, should_background_sync
+from bank_auto_sync import BANK_AUTO_SYNC_INTERVAL_S, run_bank_auto_sync_tick, should_background_sync
+
+
+def test_auto_sync_interval_is_two_minutes():
+    assert BANK_AUTO_SYNC_INTERVAL_S == 120
 
 
 def _live_enpara(**extra):
