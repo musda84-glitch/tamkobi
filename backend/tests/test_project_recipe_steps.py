@@ -1,5 +1,5 @@
-"""Proje dosyası: sabit üretim reçete adımları + müşteri görünürlüğü."""
-from production_work_orders import customer_recipe_steps
+"""Proje dosyası: üretim adımları + müşteri görünürlüğü (eski reçete yolu)."""
+from production_work_orders import customer_recipe_steps, customer_work_order_steps
 from server import _public_project_view
 
 
@@ -58,3 +58,8 @@ def test_public_view_shows_production_steps_when_enabled():
     assert [s["name"] for s in view["production_steps"]] == ["Kesim", "Montaj"]
     assert view["production_steps"][0]["note"] == "Ø8"
     assert "recipe_id" not in view
+
+
+def test_customer_work_order_steps_empty():
+    assert customer_work_order_steps([]) == []
+    assert customer_work_order_steps(None) == []

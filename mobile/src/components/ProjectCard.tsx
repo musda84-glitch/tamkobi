@@ -272,7 +272,7 @@ export function ProjectCard({
           >
             <Row style={{ justifyContent: "space-between", alignItems: "center" }}>
               <Text style={{ fontSize: 11, fontWeight: "800", color: colors.text }}>
-                Üretim adımları{project.recipe_name ? ` · ${project.recipe_name}` : ""}
+                Üretim adımları{(project.production_order_code || project.recipe_name) ? ` · ${project.production_order_code || project.recipe_name}` : ""}
               </Text>
               <View
                 style={{

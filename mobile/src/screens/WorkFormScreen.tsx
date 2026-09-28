@@ -70,7 +70,6 @@ import {
   workStatusTone,
   removeWorkItem,
   projectPayload,
-  recipeToProductionSteps,
   quotePayload,
   quoteSaveMessage,
   quoteLinkedProjectId,
@@ -194,9 +193,18 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
   const [quote, setQuote] = useState<QuoteDoc | null>(null);
   const [project, setProject] = useState<ProjectDoc | null>(null);
   const [projectStages, setProjectStages] = useState<ProjectStage[]>([]);
-  const [recipes, setRecipes] = useState<Array<{ id?: string; _id?: string; name?: string; code?: string; finished_product_name?: string; job_file_name?: string; one_time?: boolean; is_active?: boolean; materials?: unknown[]; steps?: unknown[] }>>([]);
-  const [recipeId, setRecipeId] = useState("");
-  const [recipeName, setRecipeName] = useState("");
+  const [productionOrders, setProductionOrders] = useState<Array<{
+    id?: string;
+    _id?: string;
+    order_code?: string;
+    finished_product_name?: string;
+    recipe_name?: string;
+    status?: string;
+    planned_quantity?: number;
+    unit?: string;
+  }>>([]);
+  const [productionOrderId, setProductionOrderId] = useState("");
+  const [productionOrderLabel, setProductionOrderLabel] = useState("");
   const [showProductionSteps, setShowProductionSteps] = useState(false);
   const [productionSteps, setProductionSteps] = useState<ProductionStep[]>([]);
   const [workPreview, setWorkPreview] = useState(false);
@@ -218,44 +226,58 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
 
   const loadRefs = useCallback(async () => {
     try {
-      const [c, p, recipeRows] = await Promise.all([
+      const [c, p, poRows] = await Promise.all([
         get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }),
         get<Product[]>(client, "/products", { company_id: companyId, lite: true }),
         kind === "project"
-          ? get<typeof recipes>(client, "/production/recipes", { company_id: companyId }).catch(() => [])
+          ? get<typeof productionOrders>(client, "/production/orders", { company_id: companyId, include_steps: 1 }).catch(() => [])
           : Promise.resolve([]),
       ]);
       setContacts(c || []);
       setProducts((p || []).filter((x) => x.is_active !== false));
       if (kind === "project") {
-        setRecipes((recipeRows || []).filter((r) => !r.one_time && r.is_active !== false));
+        setProductionOrders((poRows || []).filter((o) => o.status !== "cancelled"));
       }
     } catch (err) {
       setError(apiErrorMessage(err, "Cari / stok listesi yüklenemedi."));
     }
   }, [client, companyId, kind]);
 
-  const pickProjectRecipe = async (id: string) => {
+  const pickProjectProductionOrder = async (id: string) => {
     if (!id) {
-      setRecipeId("");
-      setRecipeName("");
+      setProductionOrderId("");
+      setProductionOrderLabel("");
       setProductionSteps([]);
       return;
     }
     try {
-      const rec = await get<{
-        id?: string;
-        _id?: string;
-        name?: string;
-        code?: string;
-        materials?: Array<{ product_name?: string; steps?: Array<{ name?: string; station?: string; note?: string }> }>;
-        steps?: Array<{ name?: string; station?: string; note?: string }>;
-      }>(client, `/production/recipes/${id}`, { company_id: companyId });
-      setRecipeId(String(rec.id || rec._id || id));
-      setRecipeName(String(rec.name || rec.code || ""));
-      setProductionSteps(recipeToProductionSteps(rec));
+      const o = productionOrders.find((x) => String(x.id || x._id) === String(id));
+      const oid = String(o?.id || o?._id || id);
+      const code = String(o?.order_code || "");
+      const label = [code, o?.finished_product_name || o?.recipe_name].filter(Boolean).join(" · ");
+      const wos = await get<Array<{
+        step_no?: number;
+        step_name?: string;
+        station?: string;
+        step_note?: string;
+        material_name?: string;
+      }>>(client, "/production/work-orders", { company_id: companyId, order_id: oid }).catch(() => []);
+      const steps = (wos || [])
+        .slice()
+        .sort((a, b) => Number(a.step_no || 0) - Number(b.step_no || 0))
+        .map((w, i) => ({
+          no: Number(w.step_no || i + 1),
+          name: String(w.step_name || `Adım ${i + 1}`).trim(),
+          station: String(w.station || "").trim(),
+          note: String(w.step_note || "").trim(),
+          material_name: String(w.material_name || "").trim() || undefined,
+        }))
+        .filter((st) => st.name);
+      setProductionOrderId(oid);
+      setProductionOrderLabel(label);
+      setProductionSteps(steps.length ? steps : [{ no: 1, name: "Üretim", station: "" }]);
     } catch (err) {
-      setError(apiErrorMessage(err, "Reçete adımları yüklenemedi."));
+      setError(apiErrorMessage(err, "Üretim emri adımları yüklenemedi."));
     }
   };
 
@@ -313,14 +335,14 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
         });
         setPhotos(p.images || []);
         setStatus(p.status || "planning");
-        setRecipeId(String(p.recipe_id || ""));
-        setRecipeName(String(p.recipe_name || ""));
+        setProductionOrderId(String(p.production_order_id || ""));
+        setProductionOrderLabel(String(p.production_order_code || p.recipe_name || ""));
         setShowProductionSteps(!!p.show_production_steps);
         setProductionSteps(Array.isArray(p.production_steps) ? p.production_steps : []);
         const stages = await get<{ stages?: ProjectStage[] }>(client, `/companies/${companyId}/project-stages`).catch(() => ({ stages: [] }));
         setProjectStages(normalizeProjectStages(stages?.stages));
-        const recipeRows = await get<typeof recipes>(client, "/production/recipes", { company_id: companyId }).catch(() => []);
-        setRecipes((recipeRows || []).filter((r) => !r.one_time && r.is_active !== false));
+        const poRows = await get<typeof productionOrders>(client, "/production/orders", { company_id: companyId, include_steps: 1 }).catch(() => []);
+        setProductionOrders((poRows || []).filter((o) => o.status !== "cancelled"));
         const [expList, quoteRows, invoiceRows] = await Promise.all([
           get<{ expenses?: Expense[] }>(client, "/expenses", { company_id: companyId, project_id: docId }).catch(() => ({ expenses: [] })),
           get<QuoteDoc[]>(client, "/quotes", { company_id: companyId, project_id: docId, summary: 1 }).catch(() => []),
@@ -384,7 +406,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
     latitude: location.lat,
     longitude: location.lng,
     radius_m: location.radius_m ?? DEFAULT_LOCATION_RADIUS_M,
-    recipe_id: recipeId,
+    production_order_id: productionOrderId,
     show_production_steps: showProductionSteps,
   };
   const pricedItems = items.map((it) => hydrateWorkItem(it, products.find((p) => idOf(p) === it.product_id)));
@@ -921,26 +943,26 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
           <Field label="Bütçe" testID="p-budget" value={budget} onChangeText={setBudget} keyboardType="decimal-pad" editable={canEdit} />
           <DateField label="Başlangıç" testID="p-start" value={startDate} onChangeText={setStartDate} editable={canEdit} defaultToday />
           <DateField label="Bitiş" testID="p-end" value={endDate} onChangeText={setEndDate} min={startDate} editable={canEdit} />
-          <Card testID="pf-recipe-steps">
-            <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Sabit üretim reçetesi</Text>
-            <Muted>Reçete adımları proje dosyasında görünür. Müşteri takip linkinde göstermek için aşağıdaki seçeneği açın.</Muted>
+          <Card testID="pf-production-order-block">
+            <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Üretim emri</Text>
+            <Muted>Seçilen üretim emrinin adımları proje dosyasında görünür. Müşteri takip linkinde göstermek için aşağıdaki seçeneği açın.</Muted>
             <GroupedSelect
               dense
-              label="Reçete"
-              testID="pf-recipe"
-              value={recipeId}
-              onChange={(v) => canEdit && pickProjectRecipe(v)}
+              label="Üretim emri"
+              testID="pf-production-order"
+              value={productionOrderId}
+              onChange={(v) => canEdit && pickProjectProductionOrder(v)}
               groups={[{
-                label: "Sabit reçeteler",
+                label: "Üretim emirleri",
                 options: [
-                  { value: "", label: "Reçete yok" },
-                  ...recipes.map((r) => ({
-                    value: String(r.id || r._id || ""),
-                    label: String(r.name || r.code || "Reçete"),
+                  { value: "", label: "Üretim emri yok" },
+                  ...productionOrders.map((o) => ({
+                    value: String(o.id || o._id || ""),
+                    label: [o.order_code, o.finished_product_name || o.recipe_name].filter(Boolean).join(" · ") || "Üretim emri",
                   })),
                 ],
               }]}
-              emptyLabel="Sabit üretim reçetesi seç…"
+              emptyLabel="Üretim emri seç…"
             />
             <Pressable
               testID="pf-show-production-steps"
@@ -976,7 +998,7 @@ export function WorkFormScreen({ kind, docId }: { kind: WorkKind; docId?: string
             </Pressable>
             {productionSteps.length > 0 ? (
               <View testID="pf-production-steps-preview" style={{ marginTop: 8, gap: 4 }}>
-                <Muted>Üretim adımları ({productionSteps.length}){recipeName ? ` · ${recipeName}` : ""}</Muted>
+                <Muted>Üretim adımları ({productionSteps.length}){productionOrderLabel ? ` · ${productionOrderLabel}` : ""}</Muted>
                 {productionSteps.map((st, i) => (
                   <Text key={`${st.no || i}-${st.name}`} style={{ fontSize: 12, color: colors.text }}>
                     <Text style={{ fontWeight: "700" }}>{st.no || i + 1}. {st.name}</Text>
