@@ -460,7 +460,7 @@ COLLECTIONS = {
     "work_orders": {
         "scope": SCOPE_TENANT,
         "description": "İş emri / istasyon adımları.",
-        "keys": ("_id", "company_id", "order_id", "station", "status", "assigned_to"),
+        "keys": ("_id", "company_id", "order_id", "station", "status", "assigned_to", "job_file_name", "recipe_name"),
         "refs": ("production_orders._id", "employees._id"),
     },
     # --- Entegrasyon / iletişim ---
