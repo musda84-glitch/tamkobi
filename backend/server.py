@@ -12234,9 +12234,11 @@ async def update_recipe(recipe_id: str, req: Dict[str, Any]):
     r = await db.recipes.find_one({"_id": recipe_id})
     if not r:
         raise HTTPException(status_code=404, detail="Reçete bulunamadı.")
-    allowed = {k: v for k, v in req.items() if k in {"name", "code", "finished_product_id", "finished_product_name", "target_quantity", "unit", "materials", "steps", "labor_cost", "overhead_cost", "notes", "is_active", "contact_id", "contact_name", "job_file_name", "one_time"}}
-    steps_changed = "steps" in allowed or "materials" in allowed
-    if steps_changed:
+    allowed = {k: v for k, v in req.items() if k in {"name", "code", "finished_product_id", "finished_product_name", "target_quantity", "unit", "materials", "steps", "labor_cost", "overhead_cost", "notes", "is_active", "contact_id", "contact_name", "job_file_name", "one_time", "group_same_station"}}
+    if "group_same_station" in allowed:
+        allowed["group_same_station"] = bool(allowed["group_same_station"])
+    steps_changed = "steps" in allowed or "materials" in allowed or "group_same_station" in allowed
+    if "steps" in allowed or "materials" in allowed:
         allowed = _normalize_recipe_steps_payload(dict(allowed))
     merged = {**r, **allowed}
     await _fill_material_costs(merged.get("materials", []))

@@ -2,13 +2,14 @@ import React, { useEffect, useState } from "react";
 import { useEscape } from "../utils/useEscape";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Plus, Trash2, BookOpen, ListOrdered, ImagePlus } from "lucide-react";
+import { X, Plus, Trash2, BookOpen, ListOrdered, ImagePlus, ArrowDownUp } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { SearchSelect } from "./SearchSelect";
 import { formatTrAmount } from "../utils/money";
 import { normalizeWorkParks, normalizeWorkshopZones, stationNamesFromParks, zoneNamesFromList } from "../utils/workParks";
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
+import { sameStationOrderHint } from "../utils/recipeStationOrder";
 
 const fmt = (n) => formatTrAmount((n || 0));
 
@@ -179,10 +180,12 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
     contact_name: recipe?.contact_name || "",
     job_file_name: recipe?.job_file_name || "",
     one_time: !!recipe?.one_time,
+    group_same_station: !!recipe?.group_same_station,
   });
   const [steps, setSteps] = useState(normalizeSteps(recipe?.steps));
   const updStep = (i, patch) => setSteps(steps.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
   const [mats, setMats] = useState(() => materialsFromRecipe(recipe));
+  const stationOrderHint = sameStationOrderHint(mats, steps, !!f.group_same_station);
   const upd = (i, patch) => setMats(mats.map((m, idx) => (idx === i ? { ...m, ...patch } : m)));
   const updMatStep = (mi, si, patch) => {
     const cur = mats[mi]?.steps || [];
@@ -277,6 +280,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
       labor_cost: Number(f.labor_cost),
       overhead_cost: Number(f.overhead_cost),
       one_time: !!f.one_time,
+      group_same_station: !!f.group_same_station,
       materials: matsWithSteps,
     };
     try {
@@ -297,7 +301,7 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
           <div><label className="block font-semibold mb-1">Reçete Adı</label><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Standart üretim" className={cls} data-testid="recipe-name" /></div>
           <div className="col-span-2"><label className="block font-semibold mb-1">Müşteri (Cari)</label><SearchSelect value={f.contact_id} options={contacts} placeholder="Cari ara…" getLabel={(c) => c.name} getSub={(c) => [c.phone, c.tax_number_or_id].filter(Boolean).join(" · ")} onChange={pickContact} testId="recipe-contact" /></div>
           <div className="col-span-2"><label className="block font-semibold mb-1">İş dosyası adı</label><input value={f.job_file_name} onChange={(e) => setF({ ...f, job_file_name: e.target.value })} placeholder="Örn. AHM-2026-014 / Villa mutfak" className={cls} data-testid="recipe-job-file" /></div>
-          <div className="col-span-2 sm:col-span-4">
+          <div className="col-span-2 sm:col-span-4 space-y-2">
             <label className="flex items-start gap-2 cursor-pointer select-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 hover:bg-slate-100/80" data-testid="recipe-one-time-wrap">
               <input
                 type="checkbox"
@@ -311,8 +315,40 @@ export const RecipeModal = ({ companyId, products, recipe, presetProductId, onCl
                 <span className="block text-[11px] text-slate-500 font-normal mt-0.5">İşaretlenirse bu reçeteyle üretim tamamlandığında reçete otomatik silinir.</span>
               </span>
             </label>
+            <label className="flex items-start gap-2 cursor-pointer select-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 hover:bg-slate-100/80" data-testid="recipe-group-station-wrap">
+              <input
+                type="checkbox"
+                checked={!!f.group_same_station}
+                onChange={(e) => setF({ ...f, group_same_station: e.target.checked })}
+                className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                data-testid="recipe-group-same-station"
+              />
+              <span>
+                <span className="block font-semibold text-slate-800">Aynı istasyonu peşi sıra işle</span>
+                <span className="block text-[11px] text-slate-500 font-normal mt-0.5">Açıkken atölye iş emirleri istasyona göre gruplanır (ör. tüm HOLZHER kesimleri ardışık).</span>
+              </span>
+            </label>
           </div>
         </div>
+        {stationOrderHint && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2 text-amber-900" data-testid="recipe-station-order-hint">
+            <div className="flex-1 text-[11px] leading-snug">
+              <span className="font-bold">Öneri: </span>
+              {stationOrderHint.message}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setF((prev) => ({ ...prev, group_same_station: true }));
+                toast.success("Peşi sıra istasyon sıralaması açıldı. Kaydedince atölyede uygulanır.");
+              }}
+              className="shrink-0 inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[11px]"
+              data-testid="recipe-station-order-apply"
+            >
+              <ArrowDownUp className="w-3.5 h-3.5" /> Peşi sıra uygula
+            </button>
+          </div>
+        )}
         <div>
           <div className="flex items-center justify-between mb-1"><span className="font-bold text-slate-800">Hammaddeler / Bileşenler</span><button onClick={() => setMats([...mats, emptyMat()])} className="flex items-center gap-1 text-emerald-700 font-semibold" data-testid="recipe-add-material"><Plus className="w-3.5 h-3.5" /> Hammadde Ekle</button></div>
           <div className="grid grid-cols-12 gap-1 px-1 text-[10px] uppercase font-semibold text-slate-400"><div className="col-span-4">Hammadde</div><div className="col-span-2 text-center">Miktar</div><div className="col-span-1 text-center">Fire %</div><div className="col-span-3 text-right">Birim Maliyet / KDV</div><div className="col-span-2 text-right">Tutar</div></div>

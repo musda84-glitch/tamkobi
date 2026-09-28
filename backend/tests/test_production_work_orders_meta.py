@@ -68,6 +68,32 @@ def test_flatten_keeps_station_only_step():
     assert flat[0]["station"] == "CNC OEMAK"
 
 
+def test_flatten_group_same_station_batches():
+    from production_work_orders import group_steps_by_station
+
+    recipe = {
+        "group_same_station": True,
+        "materials": [
+            {
+                "product_name": "MDF",
+                "steps": [
+                    {"name": "Kesim", "station": "HOLZHER"},
+                    {"name": "Delik", "station": "OMAKSAN"},
+                ],
+            },
+            {
+                "product_name": "Kapak",
+                "steps": [{"name": "Kesim", "station": "HOLZHER"}],
+            },
+        ],
+        "steps": [],
+    }
+    flat = flatten_recipe_steps(recipe)
+    assert [s["station"] for s in flat] == ["HOLZHER", "HOLZHER", "OMAKSAN"]
+    assert [s.get("material_name") for s in flat] == ["MDF", "Kapak", "MDF"]
+    assert group_steps_by_station([{"station": "A"}, {"station": "B"}, {"station": "A"}])[0]["station"] == "A"
+
+
 def test_enrich_work_order_row_fills_missing():
     row = {"station": None, "order_code": "URT-1"}
     enrich_work_order_row(row, {"job_file_name": "DOSYA-1", "recipe_name": "Reçete A"})
