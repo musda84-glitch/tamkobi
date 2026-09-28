@@ -568,7 +568,17 @@ export default function ProductionPage() {
         </div>
       )}
 
-      {recipeModal && <RecipeModal companyId={companyId} products={products} recipe={recipeModal.recipe} presetProductId={recipeModal.presetProductId} onClose={() => setRecipeModal(null)} onSaved={load} />}
+      {recipeModal && (
+        <RecipeModal
+          key={recipeModal.recipe?.id || recipeModal.presetProductId || "new-recipe"}
+          companyId={companyId}
+          products={products}
+          recipe={recipeModal.recipe}
+          presetProductId={recipeModal.presetProductId}
+          onClose={() => setRecipeModal(null)}
+          onSaved={load}
+        />
+      )}
       {orderModal && <ProductionOrderModal companyId={companyId} product={orderModal === true ? null : orderModal} recipes={orderModal === true ? recipes.filter((r) => r.is_active !== false) : null} onClose={() => setOrderModal(false)} onCreated={() => { load(); setParams({ tab: "orders" }); }} />}
       {orderMissingView && (
         <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setOrderMissingView(null)} data-testid="order-missing-modal-backdrop">

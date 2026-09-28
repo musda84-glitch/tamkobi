@@ -58,6 +58,16 @@ def test_flatten_recipe_steps_default_uretim():
     assert flatten_recipe_steps({"materials": [{"product_name": "X", "steps": []}], "steps": []})[0]["name"] == "Üretim"
 
 
+def test_flatten_keeps_station_only_step():
+    from production_work_orders import normalize_step
+
+    assert normalize_step({"name": "", "station": "CNC OEMAK"})["name"] == "CNC OEMAK"
+    flat = flatten_recipe_steps({"steps": [{"name": "", "station": "CNC OEMAK", "duration_min": 12}]})
+    assert len(flat) == 1
+    assert flat[0]["name"] == "CNC OEMAK"
+    assert flat[0]["station"] == "CNC OEMAK"
+
+
 def test_enrich_work_order_row_fills_missing():
     row = {"station": None, "order_code": "URT-1"}
     enrich_work_order_row(row, {"job_file_name": "DOSYA-1", "recipe_name": "Reçete A"})

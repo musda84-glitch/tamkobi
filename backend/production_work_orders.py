@@ -63,19 +63,27 @@ def sanitize_step_images(raw: Any, limit: int = 12) -> List[str]:
     return out
 
 
-def _normalize_step(st: Any) -> Optional[Dict[str, Any]]:
+def normalize_step(st: Any) -> Optional[Dict[str, Any]]:
+    """Adım adı (bölüm) boşsa istasyon adını kullan — sessizce düşmesin."""
     if not isinstance(st, dict):
         return None
     name = str(st.get("name") or "").strip()
+    station = str(st.get("station") or "").strip()
+    if not name and station:
+        name = station
     if not name:
         return None
     return {
         "no": st.get("no", 0),
         "name": name,
-        "station": str(st.get("station") or "").strip(),
+        "station": station,
         "duration_min": st.get("duration_min", 0) or 0,
         "images": sanitize_step_images(st.get("images")),
     }
+
+
+# geriye dönük
+_normalize_step = normalize_step
 
 
 def flatten_recipe_steps(recipe: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
