@@ -49,8 +49,8 @@ import {
 } from "lucide-react";
 import { CURRENCIES, fmtMoney, moneySuffix } from "../utils/money";
 import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi } from "../utils/stockUnits";
-import {
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
