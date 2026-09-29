@@ -309,8 +309,15 @@ export default function ShopFloorPage() {
           <ul className="space-y-0.5">
             {w.materials.map((m, i) => (
               <li key={m.product_id || i} className="flex justify-between gap-2 text-slate-600">
-                <span className="truncate min-w-0">{m.product_name}</span>
-                <span className="shrink-0 font-semibold text-slate-900">{formatTrQty(m.needed)} {m.unit}</span>
+                <span className="min-w-0 truncate">
+                  {m.product_name}
+                  {(m.stock_note || m.note) ? (
+                    <span className="block text-[10px] text-amber-800 font-semibold truncate" title={m.stock_note || m.note} data-testid={`wo-mat-note-${w.order_code}-${w.step_no}-${i}`}>
+                      Sipariş stok notu · {m.stock_note || m.note}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="shrink-0 font-semibold text-slate-900 self-start">{formatTrQty(m.needed)} {m.unit}</span>
               </li>
             ))}
           </ul>

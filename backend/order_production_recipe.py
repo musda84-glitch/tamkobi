@@ -88,6 +88,7 @@ def producible_order_lines(
             "product_name": name,
             "quantity": qty,
             "unit": unit,
+            "note": str(it.get("note") or it.get("line_note") or it.get("stock_note") or "").strip()[:500],
         })
     return out
 
@@ -97,6 +98,7 @@ def build_order_recipe_payload(
     lines: List[Dict[str, Any]],
     *,
     company_id: Optional[str] = None,
+    default_station: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Tüm sipariş kalemlerini tek reçetede topla (kalem başına Üretim adımı)."""
     if not lines:
@@ -105,10 +107,15 @@ def build_order_recipe_payload(
     order_number = str(order.get("order_number") or order.get("held_label") or "").strip() or "Sipariş"
     customer = str(order.get("customer_name") or "").strip()
     cid = str(order.get("contact_id") or "").strip() or None
+    station = str(default_station or "").strip()
     materials: List[Dict[str, Any]] = []
     for line in lines:
         prod = line.get("product") or {}
-        materials.append({
+        stock_note = str(line.get("note") or "").strip()[:500]
+        step_note_parts = [f"{line['quantity']:g}× {line['product_name']}"]
+        if stock_note:
+            step_note_parts.append(stock_note)
+        mat: Dict[str, Any] = {
             "product_id": line["product_id"],
             "product_name": line["product_name"],
             "quantity": float(line["quantity"]),
@@ -122,11 +129,15 @@ def build_order_recipe_payload(
             "steps": [{
                 "no": 1,
                 "name": "Üretim",
-                "station": "",
+                "station": station,
                 "duration_min": 0,
-                "note": f"{line['quantity']:g}× {line['product_name']}",
+                "note": " · ".join(step_note_parts),
             }],
-        })
+        }
+        if stock_note:
+            mat["note"] = stock_note
+            mat["stock_note"] = stock_note
+        materials.append(mat)
     notes_parts = [f"Sipariş {order_number}"]
     if customer:
         notes_parts.append(customer)
@@ -193,12 +204,43 @@ def recipe_mongo_doc(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def summarize_lines(lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [
-        {
+    out = []
+    for ln in lines:
+        row = {
             "product_id": ln["product_id"],
             "product_name": ln["product_name"],
             "quantity": ln["quantity"],
             "unit": ln.get("unit") or "Adet",
         }
-        for ln in lines
-    ]
+        note = str(ln.get("note") or "").strip()
+        if note:
+            row["note"] = note
+        out.append(row)
+    return out
+
+
+def apply_station_to_recipe_materials(recipe: Dict[str, Any], station: str) -> Dict[str, Any]:
+    """Seçilen istasyonu reçete malzeme adımlarına yaz (yeniden kullanımda da)."""
+    st = str(station or "").strip()
+    if not st or not isinstance(recipe, dict):
+        return recipe
+    mats = []
+    for m in recipe.get("materials") or []:
+        if not isinstance(m, dict):
+            mats.append(m)
+            continue
+        row = dict(m)
+        steps = []
+        for step in row.get("steps") or []:
+            if not isinstance(step, dict):
+                steps.append(step)
+                continue
+            s = dict(step)
+            if not str(s.get("station") or "").strip():
+                s["station"] = st
+            steps.append(s)
+        if steps:
+            row["steps"] = steps
+        mats.append(row)
+    recipe["materials"] = mats
+    return recipe
