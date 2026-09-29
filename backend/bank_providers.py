@@ -30,7 +30,7 @@ PROVIDERS = {
         "token_path": "/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
-        "hint": "API Market: Müşteri Id/Secret + Api Anahtarı + RSA-SHA256 PEM. Bağlantı testi client_credentials (scope=public). Hesap hareketi (portal Accounts V3): GET /v3/accounts/{ekNo}/transactions (+ RSA Signature). Liste: GET /v3/accounts. v4/v1 fallback. Müşteri yetkili Access Token (Authorization Code + accounts) önerilir. Sandbox: prep-gateway / prep-identity; Canlı: gateway / identity.",
+        "hint": "API Market: Müşteri Id/Secret + Api Anahtarı + RSA-SHA256 PEM. Bağlantı testi client_credentials (scope=public). Hesap hareketi (Postman Account Transaction v3): GET /v3/accounts/{ekNo}/transactions (+ RSA Signature; token scope=public loans accounts transfers cards digital_payments). Liste: GET /v3/accounts. Müşteri yetkili Access Token (Authorization Code + accounts) önerilir. Sandbox: prep-gateway / prep-identity; Canlı: gateway / identity.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -520,19 +520,17 @@ def normalize_kuveyt_connection_secrets(conn: dict) -> dict:
     return out
 
 
-# Postman "13. Account Transactions v4" token body scope
+# Postman "1. Account Transaction v3" token body scope
 _KUVEYT_POSTMAN_TX_SCOPE = "public loans accounts transfers cards digital_payments"
 
 
 def _kuveyt_scope_candidates(conn: dict) -> List[str]:
     """Official Python/JS samples: client_credentials uses scope=public first.
 
-    Hesap hareketleri (accounts) genelde authorization_code ister; CC için public dene.
-    Postman Account Transactions v4 koleksiyonu geniş scope listesi kullanır.
+    Bağlantı testi / genel CC için public önce. Hesap hareketi ayrı aday listesi kullanır.
     """
     out: List[str] = []
     custom = (conn.get("scope") or "").strip()
-    # Prefer public for CC even if user typed accounts — try custom after public if custom ≠ public
     for s in (
         "public",
         custom,
@@ -540,6 +538,26 @@ def _kuveyt_scope_candidates(conn: dict) -> List[str]:
         "accounts",
         "accounts public",
         "public accounts",
+        "",
+    ):
+        if s is None:
+            continue
+        s = str(s).strip()
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def _kuveyt_tx_scope_candidates(conn: dict) -> List[str]:
+    """Postman Account Transaction v3: token body scope listesi önce."""
+    out: List[str] = []
+    custom = (conn.get("scope") or "").strip()
+    for s in (
+        _KUVEYT_POSTMAN_TX_SCOPE,
+        custom,
+        "public",
+        "accounts",
+        "accounts public",
         "",
     ):
         if s is None:
@@ -666,12 +684,13 @@ async def _kuveyt_post_token(
     return None, last_err, last_code
 
 
-async def _kuveyt_access_token(conn: dict) -> str:
+async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -> str:
     """Kuveyt Identity (2026 OIDC): POST {prep-identity|identity}/connect/token.
 
     - Discovery: /connect/token (eski /api/connect/token yeni host’ta 404).
     - Auth: client_secret_post önce, sonra client_secret_basic.
     - invalid_client → yanlış secret veya Canlı/Sandbox kimlik karışması.
+    - scopes: verilirse (hareket için Postman v3 listesi) o sırayla dene; yoksa public önce.
     """
     client_id = _kuveyt_normalize_secret(_plain_secret(conn, "client_id"))
     client_secret = _kuveyt_normalize_secret(_plain_secret(conn, "client_secret"))
@@ -686,10 +705,11 @@ async def _kuveyt_access_token(conn: dict) -> str:
     last_err = "Token uç noktası yanıt vermedi."
     primary_err = ""
     saw_invalid_client = False
+    scope_list = list(scopes) if scopes is not None else _kuveyt_scope_candidates(conn)
     async with httpx.AsyncClient(timeout=25) as client:
         for url in _kuveyt_token_urls(conn):
             stop_scopes = False
-            for scope in _kuveyt_scope_candidates(conn):
+            for scope in scope_list:
                 if stop_scopes:
                     break
                 token, err, code = await _kuveyt_post_token(client, url, client_id, client_secret, scope)
@@ -806,6 +826,7 @@ async def _kuveyt_account_bearer(conn: dict) -> tuple:
     """Hesap API’si için bearer: önce kullanıcı (auth code) access_token, sonra CC.
 
     Returns (token, kind) where kind is 'user' | 'cc'.
+    CC token Postman Account Transaction v3 scope listesiyle alınır.
     """
     stored = _plain_secret(conn, "access_token")
     if stored:
@@ -815,7 +836,7 @@ async def _kuveyt_account_bearer(conn: dict) -> tuple:
         refreshed = await _kuveyt_refresh_user_token(conn)
         if refreshed:
             return refreshed, "user"
-    cc = await _kuveyt_access_token(conn)
+    cc = await _kuveyt_access_token(conn, scopes=_kuveyt_tx_scope_candidates(conn))
     return cc, "cc"
 
 
@@ -2234,13 +2255,14 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
 
 
 async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
-    """API Market Hesap İşlem: GET /v3/accounts/{suffix}/transactions + RSA Signature.
+    """Postman Account Transaction v3: GET /v3/accounts/{ekNo}/transactions + RSA Signature.
 
-    Portal Accounts ürünü (V3):
-      GET /v3/accounts , GET /v3/accounts/{suffix} ,
-      GET /v3/accounts/{suffix}/transactions ,
-      POST /v3/accounts/transactions/receipts (makbuz — sync’te kullanılmaz).
-    Fallbacks: Postman v4, ardından v1. Authorization Code + accounts tercih edilir.
+    Portal/Postman:
+      POST {prep-}identity/connect/token (client_credentials, Postman scope)
+      GET  {prep-}gateway/v3/accounts/{suffix}/transactions
+           Authorization: Bearer …  Signature: RSA-SHA256(token[+?query])
+           Opsiyonel query: beginDate, endDate, itemCount
+    Fallback: Account List V3 (yalnızca bakiye), ardından v4/v1 path’ler.
     """
     pem = _kuveyt_private_key_pem(conn)
     if not pem:
@@ -2260,94 +2282,28 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     saw_ok_empty = False
     detail = ""
 
-    # Portal/Postman: no-query first; also beginDate/endDate and startDate/endDate.
+    # Postman v3: no-query first; then beginDate/endDate (itemCount opsiyonel, örnekte kapalı)
     ranges = [
         {},
         {"beginDate": start_d, "endDate": end_d},
-        {"startDate": start_d, "endDate": end_d},
     ]
     ek_list = _kuveyt_account_suffix_candidates(conn)
-    ek = ek_list[0] if ek_list else ""
-    ident: Dict[str, str] = {}
-    if ek:
-        ident["accountSuffix"] = ek
-    if account:
-        if account.upper().startswith("TR"):
-            ident["iban"] = account.upper()
-        else:
-            ident["accountNumber"] = account
-    cust = (conn.get("customer_number") or "").strip()
-    if cust:
-        ident["customerNumber"] = cust
-
-    param_sets: List[Dict[str, str]] = []
-    for rng in ranges:
-        param_sets.append(dict(rng))
-        if not rng:
-            continue
-        for keys in (
-            ("accountSuffix",),
-            ("accountNumber",),
-            ("iban",),
-            ("accountSuffix", "iban"),
-            ("accountNumber", "iban"),
-            ("customerNumber", "accountSuffix"),
-        ):
-            extra = {k: ident[k] for k in keys if k in ident and ident[k]}
-            if extra:
-                param_sets.append({**rng, **extra})
-    seen = set()
-    uniq: List[Dict[str, str]] = []
-    for p in param_sets:
-        key = json.dumps(p, sort_keys=True)
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append(p)
-
     paths = _kuveyt_tx_paths(conn)
 
     async with httpx.AsyncClient(timeout=45) as client:
+        # Postman disableCookies: Identity cookie’si Gateway’e taşınmasın
+        client.cookies.clear()
+
         async def _get(path: str, params: Optional[Dict[str, str]] = None):
+            client.cookies.clear()
             qs_params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
             headers = _kuveyt_headers(token, conn, params=qs_params or None)
             url = f"{base}{path}" + _kuveyt_query_string(qs_params)
             return await client.get(url, headers=headers)
 
-        # Hesap listesi / tek hesap — bakiye (portal Account List V3 önce)
-        for acc_path in _kuveyt_account_list_paths(conn)[:6]:
-            resp = await _get(acc_path)
-            detail = f"GET {acc_path} HTTP {resp.status_code}: {_api_error_detail(resp)}"
-            if resp.status_code in (401, 403):
-                saw_auth = True
-                best_err = detail
-                break
-            if resp.status_code == 404:
-                saw_404 = True
-                best_err = detail
-                continue
-            if resp.status_code >= 400:
-                best_err = detail
-                continue
-            try:
-                data = resp.json()
-            except Exception:
-                data = None
-            if data is not None:
-                bal = _extract_balance(data, prefer_iban=account)
-                if bal is not None:
-                    balance = bal
-                rows = _normalize_tx_rows(data)
-                if rows:
-                    return {"transactions": rows, "balance": balance, "access_token": None}
-            # 200 list/detail without tx rows — keep balance, continue to tx paths
-            if balance is not None or acc_path.rstrip("/").endswith("/accounts"):
-                break
-        else:
-            pass
-
+        # Postman v3 önce: GET /v3/accounts/{ekNo}/transactions
         for path in paths:
-            for params in uniq[:12]:
+            for params in ranges:
                 resp = await _get(path, params)
                 qs_label = ",".join(f"{k}={v}" for k, v in params.items()) or "no-query"
                 detail = (
@@ -2379,6 +2335,30 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
             if saw_auth:
                 break
 
+        # Bakiye için Account List V3 (hareket uydurma / erken return yok)
+        if not saw_auth:
+            for acc_path in _kuveyt_account_list_paths(conn)[:4]:
+                resp = await _get(acc_path)
+                detail = f"GET {acc_path} HTTP {resp.status_code}: {_api_error_detail(resp)}"
+                if resp.status_code in (401, 403):
+                    saw_auth = True
+                    best_err = detail
+                    break
+                if resp.status_code == 404:
+                    saw_404 = True
+                    continue
+                if resp.status_code >= 400:
+                    best_err = best_err or detail
+                    continue
+                try:
+                    data = resp.json()
+                except Exception:
+                    continue
+                bal = _extract_balance(data, prefer_iban=account)
+                if bal is not None:
+                    balance = bal
+                    break
+
     if saw_ok_empty or balance is not None:
         return {"transactions": [], "balance": balance, "access_token": None}
 
@@ -2391,11 +2371,11 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
             "yapıştırılmalı. Uygulamaya Accounts (V3) ürününün tanımlı olduğundan emin olun."
         )
         if token_kind == "cc":
-            hint += " (Şu an client_credentials token kullanıldı.)"
+            hint += " (Şu an client_credentials token kullanıldı — Postman Account Transaction v3 scope.)"
     elif saw_404:
         hint = (
-            " Gateway 404: GET /v3/accounts/{ekNo}/transactions (Account Transactions V3) deneyin; "
-            "Hesap No’ya ek no (örn. 5) veya IBAN yazın — müşteri numarasını path’e koymayın."
+            " Gateway 404: GET /v3/accounts/{ekNo}/transactions (Account Transaction v3) deneyin; "
+            "Hesap No’ya ek no (örn. 6) veya IBAN yazın — müşteri numarasını path’e koymayın."
         )
     elif not account and not ek_list:
         hint = " Düzenle → Hesap No/IBAN alanına Kuveyt ek no veya IBAN girin."

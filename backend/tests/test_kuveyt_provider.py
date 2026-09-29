@@ -136,6 +136,30 @@ def test_kuveyt_scope_includes_postman_tx_v4():
     assert "accounts" in bp._KUVEYT_POSTMAN_TX_SCOPE
 
 
+def test_kuveyt_postman_account_transaction_v3_fixture():
+    """Yüklenen Postman koleksiyonu token + GET /v3/accounts/*/transactions."""
+    import json
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[1] / "fixtures/kuveyt/account_transaction_v3.postman_collection.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["info"]["name"] == "1. Account Transaction v3"
+    items = {it["name"]: it["request"] for it in data["item"]}
+    token = items["Token"]
+    assert token["method"] == "POST"
+    assert token["url"]["raw"] == "https://prep-identity.kuveytturk.com.tr/connect/token"
+    body = {x["key"]: x["value"] for x in token["body"]["urlencoded"]}
+    assert body["grant_type"] == "client_credentials"
+    assert body["scope"] == bp._KUVEYT_POSTMAN_TX_SCOPE
+    tx = items["Account Transaction v3 - v3/accounts/*/transactions"]
+    assert tx["method"] == "GET"
+    assert tx["url"]["raw"] == "https://prep-gateway.kuveytturk.com.tr/v3/accounts/6/transactions"
+    headers = {h["key"]: h["value"] for h in tx["header"]}
+    assert headers["Authorization"].startswith("Bearer ")
+    assert "Signature" in headers
+    qkeys = {q["key"] for q in tx["url"].get("query") or []}
+    assert {"beginDate", "endDate", "itemCount"} <= qkeys
+
+
 def test_has_credentials_kuveyt_client_pair():
     assert not bp.has_credentials({"provider": "kuveytturk"})
     assert bp.has_credentials({"provider": "kuveytturk", "client_id": "a", "client_secret": "b"})
@@ -249,6 +273,12 @@ def test_kuveyt_scope_candidates_prefer_public():
     # CC için public önce; özel scope ikinci sırada denenir
     assert bp._kuveyt_scope_candidates({"scope": "payments cards"})[0] == "public"
     assert "payments cards" in bp._kuveyt_scope_candidates({"scope": "payments cards"})
+
+
+def test_kuveyt_tx_scope_candidates_prefer_postman_v3():
+    assert bp._kuveyt_tx_scope_candidates({})[0] == bp._KUVEYT_POSTMAN_TX_SCOPE
+    assert "public" in bp._kuveyt_tx_scope_candidates({})
+    assert bp._KUVEYT_POSTMAN_TX_SCOPE == "public loans accounts transfers cards digital_payments"
 
 
 def test_kuveyt_token_auth_attempts_body_then_basic():
@@ -489,17 +519,12 @@ def test_fetch_kuveyt_signed_transactions():
     conn = {
         "provider": "kuveytturk", "mode": "live",
         "client_id": "cid", "client_secret": "sec", "private_key": pem,
-        "bank_account_number": "12345678",
+        "bank_account_number": "6",
     }
     token_resp = MagicMock()
     token_resp.status_code = 200
     token_resp.content = b'{"access_token":"tokBBB"}'
     token_resp.json.return_value = {"access_token": "tokBBB"}
-
-    empty_accounts = MagicMock()
-    empty_accounts.status_code = 200
-    empty_accounts.text = "{}"
-    empty_accounts.json.return_value = {}
 
     tx_resp = MagicMock()
     tx_resp.status_code = 200
@@ -513,8 +538,9 @@ def test_fetch_kuveyt_signed_transactions():
     }
 
     mock_client = AsyncMock()
+    mock_client.cookies = MagicMock()
     mock_client.post = AsyncMock(return_value=token_resp)
-    mock_client.get = AsyncMock(side_effect=[empty_accounts, tx_resp])
+    mock_client.get = AsyncMock(side_effect=[tx_resp])
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -527,15 +553,15 @@ def test_fetch_kuveyt_signed_transactions():
     assert out["transactions"][0]["external_id"] == "KT1"
     assert out["transactions"][0]["amount"] == 150.25
     assert out["balance"] == 8800.5
+    # Token: Postman v3 scope önce
+    post_kwargs = mock_client.post.await_args.kwargs
+    assert post_kwargs["data"].get("scope") == bp._KUVEYT_POSTMAN_TX_SCOPE
     get_calls = mock_client.get.await_args_list
-    assert "/v3/accounts" in get_calls[0].args[0]
-    tx_url = get_calls[1].args[0]
-    assert "/v3/accounts/" in tx_url and "/transactions" in tx_url
-    assert "accounttransactions" not in tx_url
-    # First tx attempt is no-query
+    tx_url = get_calls[0].args[0]
+    assert tx_url == "https://gateway.kuveytturk.com.tr/v3/accounts/6/transactions"
     assert "beginDate=" not in tx_url
-    assert get_calls[1].kwargs["headers"]["Signature"]
-    assert get_calls[1].kwargs["headers"]["Authorization"] == "Bearer tokBBB"
+    assert get_calls[0].kwargs["headers"]["Signature"]
+    assert get_calls[0].kwargs["headers"]["Authorization"] == "Bearer tokBBB"
 
 
 def test_fetch_kuveyt_accepts_empty_200_transactions():
@@ -551,19 +577,15 @@ def test_fetch_kuveyt_accepts_empty_200_transactions():
     token_resp.content = b'{"access_token":"tok"}'
     token_resp.json.return_value = {"access_token": "tok"}
 
-    empty_accounts = MagicMock()
-    empty_accounts.status_code = 200
-    empty_accounts.text = "{}"
-    empty_accounts.json.return_value = {}
-
     empty_tx = MagicMock()
     empty_tx.status_code = 200
     empty_tx.text = '{"transactions":[]}'
     empty_tx.json.return_value = {"transactions": []}
 
     mock_client = AsyncMock()
+    mock_client.cookies = MagicMock()
     mock_client.post = AsyncMock(return_value=token_resp)
-    mock_client.get = AsyncMock(side_effect=[empty_accounts, empty_tx])
+    mock_client.get = AsyncMock(side_effect=[empty_tx])
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -575,3 +597,4 @@ def test_fetch_kuveyt_accepts_empty_200_transactions():
     assert out["transactions"] == []
     urls = [c.args[0] for c in mock_client.get.await_args_list]
     assert all("accounttransactions" not in u for u in urls)
+    assert any("/v3/accounts/" in u and "/transactions" in u for u in urls)
