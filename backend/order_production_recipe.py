@@ -219,8 +219,17 @@ def summarize_lines(lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def apply_station_to_recipe_materials(recipe: Dict[str, Any], station: str) -> Dict[str, Any]:
-    """Seçilen istasyonu reçete malzeme adımlarına yaz (yeniden kullanımda da)."""
+def apply_station_to_recipe_materials(
+    recipe: Dict[str, Any],
+    station: str,
+    *,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Seçilen istasyonu reçete malzeme adımlarına yaz.
+
+    force=True: sipariş→üretim emri — tüm adımlara yazılır (UI taahhüdü).
+    force=False: yalnızca boş istasyon doldurulur.
+    """
     st = str(station or "").strip()
     if not st or not isinstance(recipe, dict):
         return recipe
@@ -236,11 +245,23 @@ def apply_station_to_recipe_materials(recipe: Dict[str, Any], station: str) -> D
                 steps.append(step)
                 continue
             s = dict(step)
-            if not str(s.get("station") or "").strip():
+            if force or not str(s.get("station") or "").strip():
                 s["station"] = st
             steps.append(s)
         if steps:
             row["steps"] = steps
         mats.append(row)
     recipe["materials"] = mats
+    # Genel (malzeme dışı) adımlar
+    top_steps = []
+    for step in recipe.get("steps") or []:
+        if not isinstance(step, dict):
+            top_steps.append(step)
+            continue
+        s = dict(step)
+        if force or not str(s.get("station") or "").strip():
+            s["station"] = st
+        top_steps.append(s)
+    if top_steps:
+        recipe["steps"] = top_steps
     return recipe

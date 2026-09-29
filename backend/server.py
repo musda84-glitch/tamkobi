@@ -12474,6 +12474,20 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
         default_station = str(req.get("station") or req.get("default_station") or "").strip()
 
         async def _open_po(recipe_doc: Dict[str, Any]) -> Dict[str, Any]:
+            # Seçilen istasyon reçete adımlarına yazılsın; yoksa resolve_step_station
+            # boş adımı ilk parkura çevirir ve kullanıcı seçimi kaybolur.
+            if default_station:
+                opr.apply_station_to_recipe_materials(recipe_doc, default_station, force=True)
+                rid = recipe_doc.get("_id") or recipe_doc.get("id")
+                if rid:
+                    await db.recipes.update_one(
+                        {"_id": rid},
+                        {"$set": {
+                            "materials": recipe_doc.get("materials") or [],
+                            "steps": recipe_doc.get("steps") or [],
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }},
+                    )
             out = await create_production_order({
                 "company_id": company_id,
                 "recipe_id": recipe_doc.get("_id") or recipe_doc.get("id"),
@@ -12488,21 +12502,27 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
             if default_station:
                 po_id = out.get("id") or out.get("_id") or out.get("order_id")
                 if po_id:
+                    # Tüm atölye kartlarına zorla yaz — resolve ilk parkuru basmış olsa bile.
                     await db.work_orders.update_many(
-                        {
-                            "order_id": po_id,
-                            "$or": [
-                                {"station": {"$in": ["", None, "Genel", "genel"]}},
-                                {"station": {"$exists": False}},
-                            ],
-                        },
+                        {"order_id": po_id},
                         {"$set": {"station": default_station}},
                     )
             return out
 
         if existing:
+            if default_station:
+                opr.apply_station_to_recipe_materials(existing, default_station, force=True)
             recipe_out = clean_doc(existing)
             po_out = await _open_po(existing) if create_po else None
+            if default_station and not create_po:
+                await db.recipes.update_one(
+                    {"_id": existing.get("_id") or existing.get("id")},
+                    {"$set": {
+                        "materials": existing.get("materials") or [],
+                        "steps": existing.get("steps") or [],
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }},
+                )
             return {
                 "status": "ok",
                 "reused": True,
