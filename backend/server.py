@@ -22,6 +22,7 @@ from mysql_store import MySQLClient, chunk_list
 from client_ip import request_ip
 import partner_pay
 from order_edit import order_edit_block_reason
+from b2b_catalog import b2b_catalog_mongo_filter
 
 from models import (
     User, UserResponse, Company, Contact, Product, ProductVariant,
@@ -3827,7 +3828,10 @@ def _b2b_sanitize_cart_lines(lines: list) -> list:
 async def _b2b_match_cart_items(company_id: str, lines: list) -> tuple:
     import difflib
     lines = _b2b_sanitize_cart_lines(lines)
-    prods = await db.products.find({"company_id": company_id, "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}, {"name": 1, "sku": 1, "barcode": 1}).to_list(5000)
+    prods = await db.products.find(
+        b2b_catalog_mongo_filter(company_id),
+        {"name": 1, "sku": 1, "barcode": 1},
+    ).to_list(5000)
     idx = {}
     for p in prods:
         for k in (p.get("sku"), p.get("barcode")):
@@ -4132,7 +4136,7 @@ async def b2b_portal(token: str):
     if not bs.get("enabled", True):
         raise HTTPException(status_code=404, detail="B2B portalı şu an kapalı.")
     disc = float(c.get("b2b_discount", 0) or bs.get("default_discount", 0) or 0)
-    prods = await db.products.find({"company_id": c["company_id"], "show_in_b2b": {"$ne": False}, "type": {"$ne": "raw_material"}}).to_list(5000)
+    prods = await db.products.find(b2b_catalog_mongo_filter(c["company_id"])).to_list(5000)
     products = [{"id": p["_id"], "name": p.get("name"), "sku": p.get("sku"), "barcode": p.get("barcode") or "", "category": p.get("category"), "unit": p.get("unit"), "image_url": p.get("image_url"), "list_price": p.get("sale_price", 0), "price": round(float(p.get("sale_price", 0)) * (1 - disc / 100), 2), "vat_rate": p.get("vat_rate", 20), "in_stock": (float(p.get("stock_quantity", 0)) > 0) if p.get("track_stock", True) else True, "stock_quantity": p.get("stock_quantity", 0) if p.get("track_stock", True) else None} for p in prods]
     products = [_b2b_catalog_product(p, disc) for p in prods]
     if not bs.get("show_prices", True):
@@ -4882,10 +4886,13 @@ async def list_products(
     """lite=1: teklif/yazdırma — maliyet geçmişi hesaplanmaz. ids=virgülle ürün id listesi."""
     query = {"company_id": company_id}
     if b2b_only:
-        query["show_in_b2b"] = {"$ne": False}
-        query["is_active"] = {"$ne": False}
-        query["type"] = {"$nin": ["raw_material", "service"]}
-        query["sale_price"] = {"$gt": 0}
+        query.update(
+            b2b_catalog_mongo_filter(
+                company_id or "comp_nexus_main_01",
+                require_active=True,
+                require_sale_price=True,
+            )
+        )
     if category and category != "all":
         query["category"] = category
     if type and type != "all":
