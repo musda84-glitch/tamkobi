@@ -81,6 +81,11 @@ def _variant_codes_for_line(it: dict, prod: Optional[dict]) -> List[str]:
     return extra
 
 
+def _line_stock_note(it: dict) -> Optional[str]:
+    note = str(it.get("note") or it.get("line_note") or "").strip()[:500]
+    return note or None
+
+
 async def _enrich_items(company_id: str, order_items: list) -> List[dict]:
     out = []
     for idx, it in enumerate(order_items or []):
@@ -96,7 +101,7 @@ async def _enrich_items(company_id: str, order_items: list) -> List[dict]:
             sku = (prod or {}).get("sku") or ""
         extra = _variant_codes_for_line(it, prod)
         ordered = float(it.get("quantity") or 0)
-        out.append({
+        row = {
             "line_index": idx,
             "product_id": pid or (prod or {}).get("_id"),
             "product_name": it.get("product_name") or it.get("name") or (prod or {}).get("name") or "Kalem",
@@ -106,8 +111,39 @@ async def _enrich_items(company_id: str, order_items: list) -> List[dict]:
             "ordered_qty": ordered,
             "picked_qty": 0.0,
             "image_url": it.get("image_url") or (prod or {}).get("image_url"),
-        })
+        }
+        note = _line_stock_note(it)
+        if note:
+            row["note"] = note
+        out.append(row)
     return out
+
+
+async def _sync_stock_notes(ses: dict, order: dict) -> dict:
+    """Backfill B2B sipariş stok notu onto existing pick lines that were opened before notes were copied."""
+    order_items = order.get("items") or []
+    items = ses.get("items") or []
+    if not items or not order_items:
+        return ses
+    changed = False
+    for i, line in enumerate(items):
+        if str(line.get("note") or "").strip():
+            continue
+        src = order_items[i] if i < len(order_items) else None
+        if not src:
+            continue
+        note = _line_stock_note(src)
+        if not note:
+            continue
+        line["note"] = note
+        changed = True
+    if changed:
+        await _db.order_pick_sessions.update_one(
+            {"_id": ses["_id"]},
+            {"$set": {"items": items, "updated_at": _now()}},
+        )
+        ses["items"] = items
+    return ses
 
 
 def _progress(items: list) -> dict:
@@ -126,7 +162,7 @@ async def _session_for(order: dict, create: bool = True) -> dict:
     sid_order = order["_id"]
     ses = await _db.order_pick_sessions.find_one({"order_id": sid_order, "status": {"$nin": ["shipped"]}})
     if ses:
-        return ses
+        return await _sync_stock_notes(ses, order)
     if not create:
         raise HTTPException(status_code=404, detail="Toplama oturumu yok.")
     items = await _enrich_items(order["company_id"], order.get("items") or [])

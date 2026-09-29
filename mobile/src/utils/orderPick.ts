@@ -9,6 +9,8 @@ export type PickLine = {
   ordered_qty?: number;
   picked_qty?: number;
   image_url?: string;
+  /** B2B sipariş stok notu (line note). */
+  note?: string;
 };
 
 export type PickProgress = { ordered?: number; picked?: number; missing_lines?: number; complete?: boolean };
