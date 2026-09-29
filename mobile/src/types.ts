@@ -197,6 +197,10 @@ export type Order = {
   customer_note?: string;
   order_note?: string;
   customer_notes?: string;
+  has_production_order?: boolean;
+  sent_to_production_at?: string;
+  production_recipe_id?: string;
+  production_order_id?: string;
   created_at?: string;
   label_printed_at?: string;
   form_printed_at?: string;

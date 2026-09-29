@@ -49,3 +49,30 @@ export function producibleLinesForOrder(ord, catalog = []) {
   });
   return out;
 }
+
+/** Üretim emri verilmiş sipariş — buton yeşil. */
+export function orderHasProductionOrder(ord) {
+  if (!ord) return false;
+  if (ord.has_production_order === true) return true;
+  if (
+    ord.has_production_order === false
+    && !ord.sent_to_production_at
+    && !ord.production_recipe_id
+    && !ord.production_order_id
+  ) {
+    return false;
+  }
+  return !!(ord.sent_to_production_at || ord.production_recipe_id || ord.production_order_id);
+}
+
+export function orderProduceButtonClass(ord) {
+  return orderHasProductionOrder(ord)
+    ? "p-1.5 rounded-lg text-emerald-800 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
+    : "p-1.5 rounded-lg text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100 disabled:opacity-50";
+}
+
+export function orderProduceButtonTitle(ord) {
+  return orderHasProductionOrder(ord)
+    ? "Üretime gönderildi — tekrar emir açılabilir"
+    : "Üretim emri ver — tüm ürünler için 1 reçete";
+}

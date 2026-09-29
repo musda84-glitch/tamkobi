@@ -12062,7 +12062,75 @@ async def list_orders(company_id: Optional[str] = "comp_nexus_main_01", status: 
     docs = clean_docs(orders)
     for o in docs:
         _decorate_b2b_held_order(o)
+    docs = await _enrich_orders_production_flags(docs)
     return _sort_b2b_cart_orders(docs)
+
+
+async def _enrich_orders_production_flags(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Liste: üretime gönderilmiş siparişlerde has_production_order=True (buton rengi)."""
+    if not docs:
+        return docs
+    need = [
+        o for o in docs
+        if not (o.get("sent_to_production_at") or o.get("production_recipe_id") or o.get("production_order_id"))
+    ]
+    for o in docs:
+        if o.get("sent_to_production_at") or o.get("production_recipe_id") or o.get("production_order_id"):
+            o["has_production_order"] = True
+    if not need:
+        return docs
+    oids = [str(o.get("id") or o.get("_id") or "").strip() for o in need]
+    oids = [x for x in oids if x]
+    nums = [str(o.get("order_number") or "").strip() for o in need if str(o.get("order_number") or "").strip()]
+    or_q: List[Dict[str, Any]] = []
+    if oids:
+        or_q.append({"sales_order_id": {"$in": oids}})
+    if nums:
+        or_q.append({"job_file_name": {"$in": nums}, "one_time": True})
+    if not or_q:
+        for o in need:
+            o["has_production_order"] = False
+        return docs
+    recipes = await db.recipes.find(
+        {"$or": or_q, "is_active": {"$ne": False}},
+        {"sales_order_id": 1, "job_file_name": 1, "_id": 1},
+    ).to_list(len(oids) + len(nums) + 50)
+    by_sid: Dict[str, Any] = {}
+    by_job: Dict[str, Any] = {}
+    for r in recipes:
+        sid = str(r.get("sales_order_id") or "").strip()
+        if sid and sid not in by_sid:
+            by_sid[sid] = r
+        jn = str(r.get("job_file_name") or "").strip()
+        if jn and jn not in by_job:
+            by_job[jn] = r
+    for o in need:
+        oid = str(o.get("id") or o.get("_id") or "").strip()
+        num = str(o.get("order_number") or "").strip()
+        rec = by_sid.get(oid) or (by_job.get(num) if num else None)
+        if rec:
+            o["has_production_order"] = True
+            rid = str(rec.get("_id") or rec.get("id") or "").strip()
+            if rid:
+                o["production_recipe_id"] = rid
+        else:
+            o["has_production_order"] = False
+    return docs
+
+
+async def _mark_sales_order_sent_to_production(
+    order_id: str,
+    *,
+    recipe_id: Optional[str] = None,
+    production_order_id: Optional[str] = None,
+) -> None:
+    if not order_id:
+        return
+    patch = opr.production_mark_for_order(
+        recipe_id=recipe_id,
+        production_order_id=production_order_id,
+    )
+    await db.orders.update_one({"_id": order_id}, {"$set": patch})
 
 @api_router.post("/orders")
 async def create_order(order: Order):
@@ -12526,6 +12594,11 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }},
                 )
+            await _mark_sales_order_sent_to_production(
+                real_oid,
+                recipe_id=existing.get("_id") or existing.get("id") or recipe_out.get("id"),
+                production_order_id=(po_out or {}).get("id") or (po_out or {}).get("_id"),
+            )
             return {
                 "status": "ok",
                 "reused": True,
@@ -12538,6 +12611,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                     + (f" İstasyon: {default_station}." if default_station else "")
                 ),
                 "station": default_station or None,
+                "has_production_order": True,
             }
         try:
             payload = opr.build_order_recipe_payload(
@@ -12556,6 +12630,11 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 pass
         recipe_out = clean_doc(dict(doc))
         po_out = await _open_po(doc) if create_po else None
+        await _mark_sales_order_sent_to_production(
+            real_oid,
+            recipe_id=doc.get("_id") or recipe_out.get("id"),
+            production_order_id=(po_out or {}).get("id") or (po_out or {}).get("_id"),
+        )
         return {
             "status": "ok",
             "reused": False,
@@ -12568,6 +12647,7 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 + (f" İstasyon: {default_station}." if default_station else "")
             ),
             "station": default_station or None,
+            "has_production_order": True,
         }
     except HTTPException:
         raise

@@ -865,11 +865,14 @@ export function OrderActions({
   });
   const primary = isCartOrder ? null : mobilePrimaryAction(order);
   const printTone = formPrinted ? "violet" : "slate";
+  const produceTone = (order.has_production_order || order.sent_to_production_at || order.production_recipe_id || order.production_order_id)
+    ? "emerald"
+    : "orange";
 
   const toolbar: ActionDef[] = isCartOrder
     ? [
         { key: "produce", label: "Eksik ürünleri üretime al", icon: "construct", tone: "orange", busyKey: "produce", testID: `order-produce-missing-${num}`, onPress: produceMissing },
-        { key: "produceRecipe", label: "Üretim emri ver", icon: "business", tone: "orange", busyKey: "produceRecipe", testID: `order-produce-btn-${num}`, onPress: produceOrderRecipe },
+        { key: "produceRecipe", label: produceTone === "emerald" ? "Üretime gönderildi" : "Üretim emri ver", icon: "business", tone: produceTone, busyKey: "produceRecipe", testID: `order-produce-btn-${num}`, onPress: produceOrderRecipe },
         { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm },
       ]
     : [
@@ -905,7 +908,7 @@ export function OrderActions({
     ...(showApprove
       ? [{ key: "approve", label: approveActionLabel(order), icon: "checkmark-circle" as const, tone: "emerald" as const, busyKey: "approve", testID: `order-approve-${oid}`, onPress: approve }]
       : []),
-    { key: "produceRecipe", label: "Üretim emri ver", icon: "business", tone: "orange", busyKey: "produceRecipe", testID: `order-produce-btn-${num}`, onPress: produceOrderRecipe },
+    { key: "produceRecipe", label: produceTone === "emerald" ? "Üretime gönderildi" : "Üretim emri ver", icon: "business", tone: produceTone as "emerald" | "orange", busyKey: "produceRecipe", testID: `order-produce-btn-${num}`, onPress: produceOrderRecipe },
     { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm },
     ...(showMoreActions
       ? [{ key: "more", label: "Diğer işlemler", icon: "ellipsis-vertical" as const, tone: "slate" as const, busyKey: "more", testID: `order-more-btn-${num}`, onPress: () => setMoreOpen(true) }]

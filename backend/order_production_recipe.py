@@ -265,3 +265,41 @@ def apply_station_to_recipe_materials(
     if top_steps:
         recipe["steps"] = top_steps
     return recipe
+
+
+def order_has_production(order: Optional[Dict[str, Any]] = None) -> bool:
+    """Sipariş üretime gönderildi mi (buton rengi / rozet)."""
+    o = order or {}
+    if o.get("has_production_order") is True:
+        return True
+    if o.get("has_production_order") is False and not (
+        o.get("sent_to_production_at") or o.get("production_recipe_id") or o.get("production_order_id")
+    ):
+        return False
+    return bool(
+        o.get("sent_to_production_at")
+        or o.get("production_recipe_id")
+        or o.get("production_order_id")
+    )
+
+
+def production_mark_for_order(
+    *,
+    recipe_id: Optional[str] = None,
+    production_order_id: Optional[str] = None,
+    now_iso: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Siparişe yazılacak üretim gönderildi alanları."""
+    now = now_iso or datetime.now(timezone.utc).isoformat()
+    patch: Dict[str, Any] = {
+        "sent_to_production_at": now,
+        "has_production_order": True,
+        "updated_at": now,
+    }
+    rid = str(recipe_id or "").strip()
+    if rid:
+        patch["production_recipe_id"] = rid
+    pid = str(production_order_id or "").strip()
+    if pid:
+        patch["production_order_id"] = pid
+    return patch
