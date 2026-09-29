@@ -1,7 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Image, Platform, Pressable, Share, Text, TextInput, View } from "react-native";
+import { Image } from "expo-image";
+import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { FlatList, Platform, Pressable, RefreshControl, Share, Text, TextInput, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BAiCartPanel } from "../components/b2b/B2BAiCartPanel";
@@ -15,9 +16,9 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
-import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, discardHeldCart, draftLineNote, formatCartSheetMeta, formatOrderItemLabel, heldCartTabs, heldCartsAsOrders, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart, type HeldCart } from "../utils/b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, cartQtyByProduct, discardHeldCart, formatCartSheetMeta, formatOrderItemLabel, heldCartTabs, heldCartsAsOrders, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty, type B2BCart, type HeldCart } from "../utils/b2bCart";
 import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
-import { applyB2BScan, canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bCatalog";
+import { applyB2BScan, canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus } from "../utils/b2bCatalog";
 import {
   addEditProduct,
   canCancelOrder,
@@ -50,18 +51,14 @@ const TABS: { id: TabId; label: string; flag?: keyof B2BPortal["settings"] }[] =
   { id: "installments", label: "Taksitlerim", flag: "show_installments" },
 ];
 
-function CatalogTile({
+const CatalogTile = memo(function CatalogTile({
   product: p,
   img,
   showPrices,
   showStock,
   allowOrders,
-  qty,
-  note,
   inCart,
   added,
-  onQty,
-  onNote,
   onAdd,
 }: {
   product: B2BProduct;
@@ -69,21 +66,24 @@ function CatalogTile({
   showPrices: boolean;
   showStock: boolean;
   allowOrders: boolean;
-  qty: string;
-  note: string;
   inCart: number;
   added: boolean;
-  onQty: (v: string) => void;
-  onNote: (v: string) => void;
-  onAdd: () => void;
+  onAdd: (product: B2BProduct, qty: number, note: string) => void;
 }) {
   const listCut = showPrices && hasListDiscount(p);
   const addOk = canAddProduct(p, showStock, allowOrders);
   const stockOut = p.in_stock === false;
+  const pid = p.id;
+  const [qty, setQty] = useState("1");
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    setQty("1");
+    setNote("");
+  }, [pid]);
   return (
-    <Card testID={`b2b-product-${p.id}`} style={{ flex: 1, padding: 10, gap: 8 }}>
+    <Card testID={`b2b-product-${pid}`} style={{ flex: 1, padding: 10, gap: 8 }}>
       <View
-        testID={`b2b-image-${p.id}`}
+        testID={`b2b-image-${pid}`}
         style={{
           aspectRatio: 1.5,
           borderRadius: 12,
@@ -94,13 +94,20 @@ function CatalogTile({
         }}
       >
         {img ? (
-          <Image source={{ uri: img }} style={{ width: "100%", height: "100%" }} resizeMode="contain" />
+          <Image
+            source={{ uri: img }}
+            style={{ width: "100%", height: "100%" }}
+            contentFit="contain"
+            recyclingKey={pid}
+            cachePolicy="memory-disk"
+            transition={0}
+          />
         ) : (
           <Ionicons name="cube-outline" size={28} color={colors.muted} />
         )}
         {inCart > 0 ? (
           <View
-            testID={`b2b-in-cart-${p.id}`}
+            testID={`b2b-in-cart-${pid}`}
             style={{
               position: "absolute",
               top: 6,
@@ -151,9 +158,9 @@ function CatalogTile({
           <View>
             <Text style={{ fontSize: 9, fontWeight: "700", color: colors.muted, marginBottom: 2 }}>SİPARİŞ STOK NOTU</Text>
             <TextInput
-              testID={`b2b-item-note-${p.id}`}
+              testID={`b2b-item-note-${pid}`}
               value={note}
-              onChangeText={onNote}
+              onChangeText={setNote}
               placeholder="Fişte stok açıklamasının altında basılır"
               placeholderTextColor={colors.muted}
               style={{
@@ -173,18 +180,18 @@ function CatalogTile({
             <View style={{ width: 48, borderWidth: 2, borderColor: colors.slate200, borderRadius: 12, backgroundColor: colors.slate50, paddingVertical: 2 }}>
               <Text style={{ fontSize: 8, fontWeight: "700", color: colors.muted, textAlign: "center" }}>Adet</Text>
               <TextInput
-                testID={`b2b-add-qty-${p.id}`}
+                testID={`b2b-add-qty-${pid}`}
                 value={qty}
                 keyboardType="number-pad"
-                onFocus={() => onQty(qtyDraftOnFocus())}
-                onBlur={() => onQty(qtyDraftOnBlur(qty))}
-                onChangeText={(v) => onQty(v.replace(/\D/g, ""))}
+                onFocus={() => setQty(qtyDraftOnFocus())}
+                onBlur={() => setQty(qtyDraftOnBlur(qty))}
+                onChangeText={(v) => setQty(v.replace(/\D/g, ""))}
                 style={{ textAlign: "center", fontWeight: "900", fontSize: 14, color: colors.text, paddingVertical: 2 }}
               />
             </View>
             <Pressable
-              testID={`b2b-add-${p.id}`}
-              onPress={onAdd}
+              testID={`b2b-add-${pid}`}
+              onPress={() => onAdd(p, parseDraftQty(qty), String(note || "").trim())}
               disabled={!addOk}
               style={{
                 flex: 1,
@@ -206,7 +213,7 @@ function CatalogTile({
       ) : null}
     </Card>
   );
-}
+});
 
 function Chip({ label, active, onPress, testID }: { label: string; active: boolean; onPress: () => void; testID?: string }) {
   return (
@@ -250,8 +257,6 @@ export function B2BPortalScreen() {
   const [cat, setCat] = useState("all");
   const [cart, setCart] = useState<B2BCart>({});
   const [heldCarts, setHeldCarts] = useState<HeldCart[]>([]);
-  const [draftQty, setDraftQty] = useState<Record<string, string>>({});
-  const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
   const [customerOrderNo, setCustomerOrderNo] = useState("");
   const [busy, setBusy] = useState(false);
@@ -346,8 +351,10 @@ export function B2BPortalScreen() {
   }, [data?.legal]);
 
   const products = data?.products || [];
+  const deferredQ = useDeferredValue(q);
   const catGroups = useMemo(() => categorySelectGroups(products), [products]);
-  const prods = useMemo(() => filterCatalog(products, q, cat), [products, q, cat]);
+  const prods = useMemo(() => filterCatalog(products, deferredQ, cat), [products, deferredQ, cat]);
+  const cartQtyMap = useMemo(() => cartQtyByProduct(cart), [cart]);
   const lines = useMemo(
     () =>
       Object.entries(cart)
@@ -376,23 +383,99 @@ export function B2BPortalScreen() {
   const heldTabs = useMemo(() => heldCartTabs(heldCarts, (data?.orders || []) as Array<Record<string, unknown>>), [heldCarts, data?.orders]);
   const ordersTabCount = heldRows.length;
 
-  const addProduct = (p: B2BProduct) => {
+  const addProduct = useCallback((p: B2BProduct, qty: number, lineNote: string) => {
     if (!canAddProduct(p, showStock, allowOrders)) return;
-    const qty = parseDraftQty(draftQty[p.id]);
-    setCart((c) => addCartLine(c, p.id, qty, String(draftLineNote(draftNotes, p.id) || "").trim()));
+    setCart((c) => addCartLine(c, p.id, qty, lineNote));
     setAddedId(p.id);
     if (addedTimer.current) clearTimeout(addedTimer.current);
     addedTimer.current = setTimeout(() => setAddedId(null), 1600);
     setMessage(`${p.name} sepete eklendi (${qty})`);
-  };
+  }, [allowOrders, showStock]);
+
+  const renderCatalogItem = useCallback(({ item: p }: { item: B2BProduct }) => (
+    <View style={{ flex: 1, paddingHorizontal: 4, paddingBottom: 8 }} testID={`b2b-catalog-cell-${p.id}`}>
+      <CatalogTile
+        product={p}
+        img={resolveMediaUrl(baseUrl, p.image_url)}
+        showPrices={showPrices}
+        showStock={showStock}
+        allowOrders={allowOrders}
+        inCart={cartQtyMap[p.id] || 0}
+        added={addedId === p.id}
+        onAdd={addProduct}
+      />
+    </View>
+  ), [addedId, allowOrders, baseUrl, cartQtyMap, showPrices, showStock, addProduct]);
+
+  const catalogKeyExtractor = useCallback((p: B2BProduct) => p.id, []);
+
+  const catalogHeader = useMemo(() => (
+    <View style={{ gap: 10, marginBottom: 8 }}>
+      {!allowOrders ? (
+        <Card testID="b2b-orders-closed">
+          <Text style={{ color: "#B45309", fontWeight: "700" }}>Bu portalda sipariş alımı kapalı. Ürünleri inceleyebilirsiniz.</Text>
+        </Card>
+      ) : null}
+      {allowAiCart && b2bToken ? (
+        <B2BAiCartPanel
+          client={client}
+          token={b2bToken}
+          products={products}
+          onApply={(sel) => {
+            setCart((c) => sel.reduce((n, i) => addCartLine(n, i.product_id, i.quantity, ""), c));
+            setMessage(`${sel.length} kalem sepete eklendi`);
+          }}
+        />
+      ) : null}
+      {catGroups.some((g) => g.label === "Kategoriler") ? (
+        <GroupedSelect
+          label="Kategori"
+          testID="b2b-cat"
+          value={cat}
+          onChange={setCat}
+          groups={catGroups}
+        />
+      ) : null}
+      <Row>
+        <TextInput
+          testID="b2b-search"
+          value={q}
+          onChangeText={setQ}
+          placeholder="Ürün, kod, barkod veya etiket ara"
+          placeholderTextColor={colors.muted}
+          autoCapitalize="none"
+          style={{
+            flex: 1,
+            borderWidth: 1,
+            borderColor: colors.border,
+            borderRadius: 12,
+            paddingHorizontal: 12,
+            paddingVertical: 12,
+            fontSize: 16,
+            color: colors.text,
+            backgroundColor: "#fff",
+          }}
+        />
+        <Pressable
+          testID="b2b-scan"
+          onPress={() => setScan(true)}
+          style={{ paddingHorizontal: 12, minHeight: 48, justifyContent: "center", alignItems: "center" }}
+        >
+          <Ionicons name="barcode-outline" size={26} color={colors.indigo} />
+          <Text style={{ color: colors.indigo, fontSize: 10, fontWeight: "800" }}>Okut</Text>
+        </Pressable>
+      </Row>
+    </View>
+  ), [allowAiCart, allowOrders, b2bToken, cat, catGroups, client, products, q]);
 
   const addFromScan = (code: string) => {
     const hit = applyB2BScan({ products, code, qty: scanQty, allowOrders, showStock });
     setScanStatus(hit.message);
     setQ(normalizeScanText(code));
     if (hit.action === "add" && hit.product) {
-      setCart((c) => addCartLine(c, hit.product.id, hit.qty, String(draftLineNote(draftNotes, hit.product.id) || "").trim()));
-      setAddedId(hit.product.id);
+      const product = hit.product;
+      setCart((c) => addCartLine(c, product.id, hit.qty, ""));
+      setAddedId(product.id);
       if (addedTimer.current) clearTimeout(addedTimer.current);
       addedTimer.current = setTimeout(() => setAddedId(null), 1600);
       setMessage(hit.message);
@@ -664,7 +747,8 @@ export function B2BPortalScreen() {
   return (
     <View style={{ flex: 1 }} testID="b2b-portal-root">
     <Screen
-      onRefresh={load}
+      scroll={tab !== "catalog"}
+      onRefresh={tab === "catalog" ? undefined : load}
       refreshing={refreshing}
       stickyTop={
         <View testID="b2b-portal-top" style={{ gap: 8 }}>
@@ -705,7 +789,7 @@ export function B2BPortalScreen() {
         </View>
       }
     >
-      <View testID="b2b-portal">
+      <View testID="b2b-portal" style={tab === "catalog" ? { flex: 1 } : undefined}>
         <ErrorBanner message={error} />
         {done ? (
           <Card testID="b2b-order-done">
@@ -738,84 +822,27 @@ export function B2BPortalScreen() {
         </Row>
 
         {tab === "catalog" ? (
-          <View>
-            {!allowOrders ? (
-              <Card testID="b2b-orders-closed">
-                <Text style={{ color: "#B45309", fontWeight: "700" }}>Bu portalda sipariş alımı kapalı. Ürünleri inceleyebilirsiniz.</Text>
-              </Card>
-            ) : null}
-            {allowAiCart && b2bToken ? (
-              <B2BAiCartPanel
-                client={client}
-                token={b2bToken}
-                products={products}
-                onApply={(sel) => {
-                  setCart((c) => sel.reduce((n, i) => addCartLine(n, i.product_id, i.quantity, ""), c));
-                  setMessage(`${sel.length} kalem sepete eklendi`);
-                }}
-              />
-            ) : null}
-            {catGroups.some((g) => g.label === "Kategoriler") ? (
-              <GroupedSelect
-                label="Kategori"
-                testID="b2b-cat"
-                value={cat}
-                onChange={setCat}
-                groups={catGroups}
-              />
-            ) : null}
-            <Row>
-              <TextInput
-                testID="b2b-search"
-                value={q}
-                onChangeText={setQ}
-                placeholder="Ürün, kod, barkod veya etiket ara"
-                placeholderTextColor={colors.muted}
-                autoCapitalize="none"
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderRadius: 12,
-                  paddingHorizontal: 12,
-                  paddingVertical: 12,
-                  fontSize: 16,
-                  color: colors.text,
-                  backgroundColor: "#fff",
-                }}
-              />
-              <Pressable
-                testID="b2b-scan"
-                onPress={() => setScan(true)}
-                style={{ paddingHorizontal: 12, minHeight: 48, justifyContent: "center", alignItems: "center" }}
-              >
-                <Ionicons name="barcode-outline" size={26} color={colors.indigo} />
-                <Text style={{ color: colors.indigo, fontSize: 10, fontWeight: "800" }}>Okut</Text>
-              </Pressable>
-            </Row>
-            {!prods.length ? <Empty icon="cube-outline" title="Ürün yok" hint={q ? "Aramayı daraltın." : "Katalog boş."} /> : (
-              <View testID="b2b-catalog-grid" style={{ flexDirection: "row", flexWrap: "wrap", marginHorizontal: -4 }}>
-                {prods.slice(0, 200).map((p) => (
-                  <View key={p.id} style={{ width: "50%", paddingHorizontal: 4, paddingBottom: 8 }}>
-                    <CatalogTile
-                      product={p}
-                      img={resolveMediaUrl(baseUrl, p.image_url)}
-                      showPrices={showPrices}
-                      showStock={showStock}
-                      allowOrders={allowOrders}
-                      qty={qtyDraftShown(draftQty, p.id)}
-                      note={draftLineNote(draftNotes, p.id)}
-                      inCart={productCartQty(cart, p.id)}
-                      added={addedId === p.id}
-                      onQty={(v) => setDraftQty((dq) => ({ ...dq, [p.id]: v }))}
-                      onNote={(v) => setDraftNotes((n) => ({ ...n, [p.id]: v }))}
-                      onAdd={() => addProduct(p)}
-                    />
-                  </View>
-                ))}
-              </View>
-            )}
-          </View>
+          <FlatList
+            testID="b2b-catalog-grid"
+            style={{ flex: 1 }}
+            data={prods}
+            keyExtractor={catalogKeyExtractor}
+            numColumns={2}
+            columnWrapperStyle={{ marginHorizontal: -4 }}
+            contentContainerStyle={{ paddingBottom: showCartBar ? 88 : 24 }}
+            initialNumToRender={8}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={40}
+            windowSize={5}
+            removeClippedSubviews={Platform.OS !== "web"}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            refreshControl={<RefreshControl refreshing={!!refreshing} onRefresh={load} />}
+            ListHeaderComponent={catalogHeader}
+            ListEmptyComponent={<Empty icon="cube-outline" title="Ürün yok" hint={q ? "Aramayı daraltın." : "Katalog boş."} />}
+            renderItem={renderCatalogItem}
+            extraData={addedId}
+          />
         ) : null}
 
         {tab === "orders" ? (

@@ -26,7 +26,7 @@ import { MonthField } from "./MonthField";
 import { ProductThumb } from "./ProductThumb";
 import { TimeField } from "./TimeField";
 
-export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshing, padded = true, stickyCompact = false, onScrollY }: {
+export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshing, padded = true, stickyCompact = false, onScrollY, scroll = true }: {
   children: React.ReactNode;
   stickyTop?: React.ReactNode;
   stickyBottom?: React.ReactNode;
@@ -35,37 +35,46 @@ export function Screen({ children, stickyTop, stickyBottom, onRefresh, refreshin
   padded?: boolean;
   stickyCompact?: boolean;
   onScrollY?: (y: number) => void;
+  /** false: dışarıda FlatList vb. kendi kaydırmasını kullanır (iç ScrollView yok). */
+  scroll?: boolean;
 }) {
-  const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll();
+  const { keyboardHeight, scrollRef, scrollProps } = useKeyboardAwareScroll(scroll);
   const bottom = contentBottomPad(SCREEN_BASE_PAD, keyboardHeight, Platform.OS);
+  const sticky = stickyTop ? (
+    <View
+      testID="screen-sticky-top"
+      style={[
+        styles.stickyTop,
+        padded && (stickyCompact ? styles.stickyPadCompact : styles.stickyPad),
+        stickyCompact ? { gap: 4 } : null,
+        Platform.OS === "web" ? { position: "sticky" as const, top: 0 } : null,
+      ]}
+    >
+      {stickyTop}
+    </View>
+  ) : null;
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      {stickyTop ? (
-        <View
-          testID="screen-sticky-top"
-          style={[
-            styles.stickyTop,
-            padded && (stickyCompact ? styles.stickyPadCompact : styles.stickyPad),
-            stickyCompact ? { gap: 4 } : null,
-            Platform.OS === "web" ? { position: "sticky" as const, top: 0 } : null,
-          ]}
+      {sticky}
+      {scroll ? (
+        <ScrollView
+          ref={scrollRef}
+          style={styles.flex}
+          contentContainerStyle={[styles.content, padded && styles.padded, { paddingBottom: bottom }]}
+          {...scrollProps}
+          onScroll={(e) => {
+            scrollProps.onScroll(e);
+            onScrollY?.(e.nativeEvent.contentOffset.y);
+          }}
+          refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} /> : undefined}
         >
-          {stickyTop}
+          {children}
+        </ScrollView>
+      ) : (
+        <View style={[styles.flex, padded && styles.paddedBody, { paddingBottom: stickyBottom ? 0 : bottom }]}>
+          {children}
         </View>
-      ) : null}
-      <ScrollView
-        ref={scrollRef}
-        style={styles.flex}
-        contentContainerStyle={[styles.content, padded && styles.padded, { paddingBottom: bottom }]}
-        {...scrollProps}
-        onScroll={(e) => {
-          scrollProps.onScroll(e);
-          onScrollY?.(e.nativeEvent.contentOffset.y);
-        }}
-        refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} /> : undefined}
-      >
-        {children}
-      </ScrollView>
+      )}
       {stickyBottom ? <View style={[styles.stickyBottom, padded && styles.stickyPadBottom]}>{stickyBottom}</View> : null}
     </KeyboardAvoidingView>
   );
@@ -329,6 +338,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: { flexGrow: 1 },
   padded: { padding: spacing.sm + 4, gap: spacing.sm + 2 },
+  paddedBody: { paddingHorizontal: spacing.sm + 4, paddingTop: spacing.sm + 4 },
   stickyTop: { backgroundColor: colors.background, zIndex: 20, borderBottomWidth: 1, borderBottomColor: colors.border, gap: 8 },
   stickyBottom: { backgroundColor: colors.background, zIndex: 20, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 },
   stickyPad: { paddingHorizontal: spacing.sm + 4, paddingTop: spacing.sm + 4, paddingBottom: spacing.xs },

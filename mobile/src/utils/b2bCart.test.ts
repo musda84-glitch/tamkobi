@@ -1,4 +1,4 @@
-import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, draftLineNote, formatCartSheetLine, formatCartSheetMeta, heldCartsAsOrders, holdActiveCart, lineKey, normalizeNote, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart } from "./b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, cartQtyByProduct, draftLineNote, formatCartSheetLine, formatCartSheetMeta, heldCartsAsOrders, holdActiveCart, lineKey, normalizeNote, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart } from "./b2bCart";
 
 describe("b2bCart", () => {
   test("same product + different notes stay separate lines", () => {
@@ -69,6 +69,7 @@ describe("b2bCart", () => {
     expect(productCartQty(cart, "prod_01")).toBe(3);
     expect(productCartQty(cart, "prod_02")).toBe(4);
     expect(productCartQty(cart, "prod_99")).toBe(0);
+    expect(cartQtyByProduct(cart)).toEqual({ prod_01: 3, prod_02: 4 });
   });
 
   test("flash banner goes from gray to green with a solid border", () => {

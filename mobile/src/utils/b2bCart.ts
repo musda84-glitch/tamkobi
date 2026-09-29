@@ -121,6 +121,17 @@ export function cartHasItems(cart: B2BCart | null | undefined): boolean {
   return Object.values(cart || {}).some((l) => (Number(l?.qty) || 0) > 0);
 }
 
+/** Sepetteki ürün id → toplam adet (not satırları toplanır). */
+export function cartQtyByProduct(cart: B2BCart | null | undefined): Record<string, number> {
+  const m: Record<string, number> = {};
+  for (const line of Object.values(cart || {})) {
+    const id = String(line?.productId || "");
+    if (!id) continue;
+    m[id] = (m[id] || 0) + (Number(line?.qty) || 0);
+  }
+  return m;
+}
+
 export function productCartQty(cart: B2BCart | null | undefined, productId: string): number {
   const id = String(productId || "");
   if (!id) return 0;
