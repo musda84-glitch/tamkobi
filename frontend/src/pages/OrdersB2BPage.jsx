@@ -491,7 +491,14 @@ export default function OrdersB2BPage() {
       toast.success(r.data.message || "Reçete ve üretim emri oluşturuldu.");
       loadData();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Reçete / üretim emri oluşturulamadı.");
+      const data = err.response?.data;
+      const raw = data?.detail ?? data?.message ?? data?.error;
+      let msg = "";
+      if (typeof raw === "string") msg = raw;
+      else if (Array.isArray(raw)) msg = raw.map((x) => x?.msg || x?.message || x?.detail || "").filter(Boolean).join(" ");
+      else if (raw && typeof raw === "object") msg = raw.msg || raw.message || "";
+      if (!msg && err.response?.status === 404) msg = "Sunucu bu işlemi henüz açmadı. Sayfayı yenileyip tekrar deneyin.";
+      toast.error(msg || "Reçete / üretim emri oluşturulamadı.");
     } finally {
       setProduceBusyId(null);
     }
