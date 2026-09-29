@@ -158,6 +158,18 @@ def test_apply_station_force_overwrites_all():
     assert recipe["steps"][0]["station"] == "PAKET YAPMA"
 
 
+def test_order_has_production_and_mark():
+    from order_production_recipe import order_has_production, production_mark_for_order
+    assert order_has_production({}) is False
+    assert order_has_production({"has_production_order": True}) is True
+    assert order_has_production({"sent_to_production_at": "2026-01-01"}) is True
+    patch = production_mark_for_order(recipe_id="r1", production_order_id="po1", now_iso="T0")
+    assert patch["has_production_order"] is True
+    assert patch["production_recipe_id"] == "r1"
+    assert patch["production_order_id"] == "po1"
+    assert patch["sent_to_production_at"] == "T0"
+
+
 def test_build_raises_without_lines():
     try:
         build_order_recipe_payload({"order_number": "X"}, [])

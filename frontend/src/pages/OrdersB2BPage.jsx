@@ -47,7 +47,7 @@ import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printO
 import { eBelgeMenuItems, orderCanIssueEFatura, orderEBelgeType } from "../utils/orderEBelge";
 import { orderMoreMenuItems, orderMoreMenuKind } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
-import { buildProduceFromOrderPayload, orderLineCanProduce, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
+import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
 import { backdropDismissProps } from "../utils/modalBackdrop";
@@ -145,16 +145,16 @@ function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side =
 function OrderProduceButton({ ord, catalog, onProduce, testSuffix = "", busy = false }) {
   const lines = producibleLinesForOrder(ord, catalog);
   if (!lines.length) return null;
-  const btnClass = "p-1.5 rounded-lg text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100 disabled:opacity-50";
   return (
     <button
       type="button"
       onClick={() => onProduce(ord)}
       disabled={busy}
-      className={btnClass}
-      title="Üretim emri ver — tüm ürünler için 1 reçete"
+      className={orderProduceButtonClass(ord)}
+      title={orderProduceButtonTitle(ord)}
       aria-label="Üretim"
       data-testid={`order-produce-btn${testSuffix}-${ord.order_number}`}
+      data-produced={orderHasProductionOrder(ord) ? "1" : "0"}
     >
       <Factory className="w-4 h-4" />
     </button>

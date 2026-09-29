@@ -1,4 +1,4 @@
-import { buildProduceFromOrderPayload, orderLineCanProduce, producibleLinesForOrder, resolveOrderLineProduct } from "./orderProduce";
+import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "./orderProduce";
 
 describe("orderProduce", () => {
   const catalog = [
@@ -66,5 +66,15 @@ describe("orderProduce", () => {
     );
     expect(lines).toHaveLength(2);
     expect(lines.map((l) => l.product.id)).toEqual(["p1", "p4"]);
+  });
+
+  it("detects production-sent orders for button color", () => {
+    expect(orderHasProductionOrder({})).toBe(false);
+    expect(orderHasProductionOrder({ has_production_order: true })).toBe(true);
+    expect(orderHasProductionOrder({ sent_to_production_at: "2026-01-01" })).toBe(true);
+    expect(orderHasProductionOrder({ production_recipe_id: "r1" })).toBe(true);
+    expect(orderProduceButtonClass({ has_production_order: true })).toContain("emerald");
+    expect(orderProduceButtonClass({})).toContain("amber");
+    expect(orderProduceButtonTitle({ has_production_order: true })).toMatch(/gönderildi/i);
   });
 });
