@@ -1,0 +1,114 @@
+{
+	"info": {
+		"_postman_id": "978b3f18-d5a3-4b4b-b9d0-44e86fa3c697",
+		"name": "1. Account Transaction v3",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Token",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "urlencoded",
+					"urlencoded": [
+						{
+							"key": "grant_type",
+							"value": "client_credentials",
+							"type": "default"
+						},
+						{
+							"key": "scope",
+							"value": "public loans accounts transfers cards digital_payments",
+							"type": "default"
+						},
+						{
+							"key": "client_id",
+							"value": "",
+							"type": "default"
+						},
+						{
+							"key": "client_secret",
+							"value": "",
+							"type": "default"
+						}
+					]
+				},
+				"url": {
+					"raw": "https://prep-identity.kuveytturk.com.tr/connect/token",
+					"protocol": "https",
+					"host": [
+						"prep-identity",
+						"kuveytturk",
+						"com",
+						"tr"
+					],
+					"path": [
+						"connect",
+						"token"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Account Transaction v3 - v3/accounts/*/transactions",
+			"protocolProfileBehavior": {
+				"disableCookies": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "Authorization",
+						"value": "Bearer {{access_token}}"
+					},
+					{
+						"key": "Signature",
+						"value": "{{signature}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "https://prep-gateway.kuveytturk.com.tr/v3/accounts/6/transactions",
+					"protocol": "https",
+					"host": [
+						"prep-gateway",
+						"kuveytturk",
+						"com",
+						"tr"
+					],
+					"path": [
+						"v3",
+						"accounts",
+						"6",
+						"transactions"
+					],
+					"query": [
+						{
+							"key": "beginDate",
+							"value": "2025-08-01",
+							"disabled": true
+						},
+						{
+							"key": "endDate",
+							"value": "2025-08-19",
+							"disabled": true
+						},
+						{
+							"key": "itemCount",
+							"value": "2",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
