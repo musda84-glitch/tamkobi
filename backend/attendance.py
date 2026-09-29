@@ -362,6 +362,45 @@ def geo_auto_action(
 MANAGER_TIME_EDIT_AUTO_AFTER = 3
 
 
+def _has_punch_time(v: Any) -> bool:
+    return bool(str(v or "").strip())
+
+
+def open_mesaim_session(rec: Optional[dict]) -> bool:
+    """Giriş var, çıkış yok → açık mesai (çıkış yapmamış)."""
+    row = rec or {}
+    return _has_punch_time(row.get("check_in")) and not _has_punch_time(row.get("check_out"))
+
+
+def presence_patch_from_attendance(rec: Optional[dict], now: Optional[str] = None) -> dict:
+    """Puantaj çıkışına göre anlık varlık: çıkış yazıldıysa dışarıda; silindiyse (girişli) içeride."""
+    now_iso = now or _now()
+    row = rec or {}
+    status = str(row.get("status") or "")
+    if status in ("absent", "leave") or not _has_punch_time(row.get("check_in")):
+        return {"location_last_inside": False}
+    if _has_punch_time(row.get("check_out")):
+        return {"location_last_inside": False, "location_left_at": now_iso}
+    return {"location_last_inside": True, "location_inside_at": now_iso}
+
+
+async def sync_employee_presence_from_attendance(
+    emp: dict,
+    rec: Optional[dict],
+    schedule: Optional[dict] = None,
+) -> Optional[dict]:
+    """Bugünkü puantaj çıkış/giriş durumunu personel varlık bayrağına yansıt."""
+    day = str((rec or {}).get("date") or "")[:10]
+    if not day or not emp or not emp.get("_id"):
+        return None
+    today = _today(schedule or {})
+    if day != today:
+        return None
+    patch = presence_patch_from_attendance(rec)
+    await _db.employees.update_one({"_id": emp["_id"]}, {"$set": patch})
+    return patch
+
+
 def manager_time_edit_doc(existing: Optional[dict], rec: Optional[dict], now: str) -> Optional[dict]:
     prev = existing or {}
     nxt = rec or {}
@@ -434,9 +473,12 @@ def apply_manager_time_edit_round(existing: Optional[dict], rec: Optional[dict],
 def manager_time_edit_result_message(round_info: Optional[dict]) -> str:
     info = round_info or {}
     field = info.get("field")
+    edit = info.get("edit") or {}
     if info.get("auto_confirm"):
         if field == "check_out":
-            return "Çıkış saati kaydedildi (personel onayı gerekmez)."
+            if not _has_punch_time(edit.get("check_out")):
+                return "Çıkış saati kaldırıldı; personel çıkış yapmamış gibi işlenir (onay gerekmez)."
+            return "Çıkış saati kaydedildi; personel çıkış yapmış gibi işlenir (onay gerekmez)."
         if field == "check_in":
             return "Giriş saati kaydedildi (personel onayı gerekmez)."
         return "Saat kaydedildi (personel onayı gerekmez)."
@@ -1887,9 +1929,15 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
         assigned_ot = max(0.0, _as_float(patch.get("assigned_overtime_hours"), 0.0))
     else:
         assigned_ot = assigned_overtime_hours(existing)
+    next_in = patch.get("check_in", existing.get("check_in"))
+    next_out = patch.get("check_out", existing.get("check_out"))
+    if isinstance(next_in, str) and not next_in.strip():
+        next_in = None
+    if isinstance(next_out, str) and not next_out.strip():
+        next_out = None
     rec = {"company_id": employee["company_id"], "employee_id": employee["_id"], "employee_name": employee["full_name"], "date": date,
-           "status": patch.get("status") or ("present" if (patch.get("check_in") or patch.get("check_out")) else existing.get("status")) or "present",
-           "check_in": patch.get("check_in", existing.get("check_in")), "check_out": patch.get("check_out", existing.get("check_out")),
+           "status": patch.get("status") or ("present" if (next_in or next_out) else existing.get("status")) or "present",
+           "check_in": next_in, "check_out": next_out,
            "note": patch.get("note", existing.get("note", "")), "source": source,
            "assigned_overtime_hours": assigned_ot}
     if rec["status"] in ("absent", "leave"):
@@ -1943,7 +1991,17 @@ async def apply_day(employee: dict, date: str, patch: Dict[str, Any], source: st
                 official=True,
             ))
         saved = await _db.attendance.find_one({"employee_id": employee["_id"], "date": date})
-    return _clean(saved or rec)
+    final = saved or rec
+    # Çıkış saati yazılınca/silinince sistem çıkış yapmış / yapmamış gibi işlesin.
+    if (
+        open_mesaim_session(existing) != open_mesaim_session(final)
+        or _has_punch_time(existing.get("check_out")) != _has_punch_time(final.get("check_out"))
+    ):
+        try:
+            await sync_employee_presence_from_attendance(employee, final, schedule)
+        except Exception:
+            pass
+    return _clean(final)
 
 
 def summarize(rows: list) -> dict:
