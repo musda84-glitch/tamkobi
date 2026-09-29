@@ -1,4 +1,4 @@
-import { code128Svg } from "./code128";
+import { barcodeSvgForLabel } from "./barcodeSvg";
 import type { PickLine } from "./orderPick";
 
 export const PRODUCT_LABEL_PX = { width: 142, height: 85 };
@@ -60,7 +60,7 @@ export function productLabelCss(size = PRODUCT_LABEL_SIZE): string {
 export function productLabelCardHtml(job: PickLabelJob, companyName?: string): string {
   const code = job.code;
   const barcode = code
-    ? `<div class="bc">${code128Svg(code, { height: 28, moduleWidth: 1.15, margin: 2, displayValue: true, fontSize: 8 })}</div>`
+    ? `<div class="bc">${barcodeSvgForLabel(code, { w: 46, h: 12, showText: true })}</div>`
     : `<div class="miss">Barkod yok</div>`;
   return `<div class="label" data-testid="pick-product-label">
     ${companyName ? `<div class="co">${esc(companyName)}</div>` : ""}
