@@ -1,4 +1,4 @@
-import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, formatCartSheetLine, formatCartSheetMeta, heldCartsAsOrders, holdActiveCart, lineKey, normalizeNote, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart } from "./b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, draftLineNote, formatCartSheetLine, formatCartSheetMeta, heldCartsAsOrders, holdActiveCart, lineKey, normalizeNote, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart } from "./b2bCart";
 
 describe("b2bCart", () => {
   test("same product + different notes stay separate lines", () => {
@@ -40,6 +40,13 @@ describe("b2bCart", () => {
     const key = lineKey("prod_01", "x");
     const cart = setCartLineQty({ [key]: { productId: "prod_01", qty: 2, note: "x" } }, key, 0);
     expect(cart[key]).toBeUndefined();
+  });
+
+  test("draftLineNote stays empty until the user types", () => {
+    expect(draftLineNote({}, "p1")).toBe("");
+    expect(draftLineNote({ p1: "özel kesim" }, "p1")).toBe("özel kesim");
+    expect(draftLineNote({ p1: "" }, "p1")).toBe("");
+    expect(draftLineNote(null, "p1")).toBe("");
   });
 
   test("normalizeNote trims and caps length", () => {
