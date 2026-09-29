@@ -15,6 +15,13 @@ describe("permissions", () => {
     expect(feature({ role: "sales" }, "order_more_actions")).toBe(true);
   });
 
+  it("hides prices when view_prices is false for staff roles", () => {
+    expect(feature({ role: "personel", features: { view_prices: false } }, "view_prices")).toBe(false);
+    expect(feature({ role: "production", features: { view_prices: false } }, "view_prices")).toBe(false);
+    expect(feature({ role: "production", features: { view_prices: true } }, "view_prices")).toBe(true);
+    expect(feature({ role: "admin", features: { view_prices: false } }, "view_prices")).toBe(true);
+  });
+
   it("inherits missing cheque permission from banking", () => {
     const cashier = { role: "sales", permissions: { "/banking": "edit" } };
     expect(can(cashier, "/cheques", "edit")).toBe(true);

@@ -132,6 +132,9 @@ def feature_default(code: str, key: str) -> bool:
         return True
     if key in ("account_companies", "export_personal_data") and code == "personel":
         return False
+    # Personel / üretim: fiyatlar varsayılan kapalı (atölye ve saha operasyonları).
+    if key == "view_prices" and code in ("personel", "production"):
+        return False
     return FEATURE_DEFAULTS.get(key, True)
 
 
@@ -143,17 +146,42 @@ def role_features(role: dict) -> Dict[str, bool]:
     return {k: bool(f.get(k, feature_default(code, k))) for k, _, _ in FEATURES}
 
 
-MONEY_KEYS = {"sale_price", "purchase_price", "unit_price", "price", "list_price", "local_price", "local_total", "fx_rate", "total", "grand_total", "subtotal", "vat_total", "total_amount", "amount", "paid_amount", "balance", "current_balance", "revenue", "net_profit", "gross_profit",
+MONEY_KEYS = {"sale_price", "purchase_price", "unit_price", "unit_price_incl", "price", "list_price", "local_price", "local_total", "fx_rate", "total", "total_incl", "grand_total", "subtotal", "vat_total", "total_amount", "amount", "paid_amount", "balance", "current_balance", "revenue", "net_profit", "gross_profit",
               "commission", "commission_vat", "service_fee", "cargo_fee", "product_cost", "cost", "fees", "deductions", "net", "gross", "salary", "payroll_salary", "net_salary", "gross_salary", "second_salary", "credit_limit", "discount_total", "vat_amount", "price_diff",
               "cost_price", "last_purchase_price", "avg_purchase_price", "card_purchase_price", "margin_pct", "profit", "monthly_payment", "principal", "remaining", "line_total", "opening_balance", "budget", "spent", "overtime_pay", "hourly_rate", "total_revenue", "total_expense", "net_cash", "receivables", "payables", "sale_price_incl_vat", "total_bank_balance", "total_receivables", "total_payables", "total_stock_value", "monthly_sales", "monthly_expenses", "gelir", "gider",
               "cost_price", "last_purchase_price", "avg_purchase_price", "card_purchase_price", "margin_pct", "profit", "monthly_payment", "principal", "remaining", "line_total", "opening_balance", "budget", "spent", "overtime_pay", "hourly_rate", "total_revenue", "total_expense", "net_cash", "receivables", "payables", "sale_price_incl_vat", "total_bank_balance", "total_receivables", "total_payables", "total_stock_value", "monthly_sales", "monthly_expenses", "gelir", "gider", "cheque_bond_balance", "portfolio", "issued_open", "due_this_week", "overdue_received", "overdue_issued", "meal_allowance", "transport_allowance", "unpaid_payroll", "unpaid_expenses", "meal_due", "transport_due", "bonus_pending", "advances",
               "cost_price", "margin_pct", "profit", "monthly_payment", "principal", "remaining", "line_total", "opening_balance", "budget", "spent", "overtime_pay", "hourly_rate", "total_revenue", "total_expense", "net_cash", "receivables", "payables", "sale_price_incl_vat", "total_bank_balance", "total_receivables", "total_payables", "total_stock_value", "monthly_sales", "monthly_expenses", "gelir", "gider", "meal_allowance", "transport_allowance", "unpaid_payroll", "unpaid_expenses", "meal_due", "transport_due", "bonus_pending", "advances",
-              "value", "incoming", "outgoing", "collections", "payments", "not_due", "overdue", "payable", "receivable", "deductible", "calculated", "vat", "week", "today", "month_total", "yearly", "cash", "bank", "pos", "kdv", "ciro", "kar", "profit_amount", "spent_amount", "limit", "avg_order", "average"}
+              "value", "incoming", "outgoing", "collections", "payments", "not_due", "overdue", "payable", "receivable", "deductible", "calculated", "vat", "week", "today", "month_total", "yearly", "cash", "bank", "pos", "kdv", "ciro", "kar", "profit_amount", "spent_amount", "limit", "avg_order", "average",
+              "unit_cost", "total_cost", "material_cost", "estimated_total_cost", "total_estimated_cost", "sale_price_excl_vat", "list_price_incl", "b2b_price", "wholesale_price"}
+
+
+def _money_scalar(v) -> bool:
+    """True when value looks like a numeric money amount (not bool)."""
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, (int, float)):
+        return True
+    try:
+        from decimal import Decimal
+        if isinstance(v, Decimal):
+            return True
+    except Exception:
+        pass
+    if isinstance(v, str):
+        s = v.strip().replace(" ", "").replace(",", ".")
+        if not s:
+            return False
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+    return False
 
 
 def mask_money(obj):
     if isinstance(obj, dict):
-        return {k: (0 if (k in MONEY_KEYS and isinstance(v, (int, float)) and not isinstance(v, bool)) else mask_money(v)) for k, v in obj.items()}
+        return {k: (0 if (k in MONEY_KEYS and _money_scalar(v)) else mask_money(v)) for k, v in obj.items()}
     if isinstance(obj, list):
         return [mask_money(x) for x in obj]
     return obj
