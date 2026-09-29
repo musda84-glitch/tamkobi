@@ -44,7 +44,8 @@ function confirmAction(title: string, msg: string, onYes: () => void) {
 }
 
 export function InvoiceDetailScreen() {
-  const { client, companyId, can, activeCompany } = useAuth();
+  const { client, companyId, can, activeCompany, feature } = useAuth();
+  const showPrices = feature("view_prices");
   const canEdit = can("/invoices", "edit");
   const canDelete = can("/invoices", "delete");
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -262,8 +263,12 @@ export function InvoiceDetailScreen() {
           {inv.payment_status ? <Badge label={statusTr(inv.payment_status)} tone={inv.payment_status === "paid" ? "green" : "amber"} /> : null}
           {inv.trade_kind ? <Badge label={tradeKindTr(inv.trade_kind)} tone="indigo" /> : null}
         </Row>
-        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, marginTop: 8 }} testID="inv-header-total">{fmtMoney(totals.grandTotal, inv.currency)}</Text>
-        <Muted>Ödenen {fmtMoney(inv.paid_amount, inv.currency)} · kalan {fmtMoney(leftover, inv.currency)} · vade {fmtDate(inv.due_date)}</Muted>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text, marginTop: 8 }} testID="inv-header-total">{showPrices ? fmtMoney(totals.grandTotal, inv.currency) : "—"}</Text>
+        {showPrices ? (
+          <Muted>Ödenen {fmtMoney(inv.paid_amount, inv.currency)} · kalan {fmtMoney(leftover, inv.currency)} · vade {fmtDate(inv.due_date)}</Muted>
+        ) : (
+          <Muted>Vade {fmtDate(inv.due_date)}</Muted>
+        )}
         {inv.gib_status ? <Muted>GİB: {inv.gib_status}{inv.gib_tracking_id ? ` · ${inv.gib_tracking_id}` : ""}</Muted> : null}
         {inv.project_number ? <Muted>Proje {inv.project_number}</Muted> : null}
       </Card>
@@ -273,8 +278,10 @@ export function InvoiceDetailScreen() {
         const row = (
           <ListRow
             title={String(it.product_name || it.name || "Kalem")}
-            subtitle={`${it.quantity} ${String(it.unit || "")} × ${fmtMoney(it.unit_price, inv.currency)} · KDV %${it.vat_rate ?? 0}${it.discount_rate ? ` · %${it.discount_rate} isk.` : ""}`}
-            right={fmtMoney(it.total_incl || it.total, inv.currency)}
+            subtitle={showPrices
+              ? `${it.quantity} ${String(it.unit || "")} × ${fmtMoney(it.unit_price, inv.currency)} · KDV %${it.vat_rate ?? 0}${it.discount_rate ? ` · %${it.discount_rate} isk.` : ""}`
+              : `${it.quantity} ${String(it.unit || "")}${it.vat_rate != null ? ` · KDV %${it.vat_rate}` : ""}`}
+            right={showPrices ? fmtMoney(it.total_incl || it.total, inv.currency) : undefined}
             image={lineItemImage(it as Record<string, unknown>, catalog)}
           />
         );

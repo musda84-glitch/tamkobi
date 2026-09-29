@@ -18,7 +18,7 @@ import { pickLineNote } from "../utils/orderPick";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 
 export function OrderDetailScreen() {
-  const { client, companyId, can } = useAuth();
+  const { client, companyId, can, feature } = useAuth();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +26,7 @@ export function OrderDetailScreen() {
   const [catalog, setCatalog] = useState<Record<string, Product>>({});
   const [openRow, setOpenRow] = useState<string | null>(null);
   const canEditItems = (can("/orders", "edit") || can("/saha", "edit")) && canStaffEditOrder(order);
+  const showPrices = feature("view_prices");
 
   const load = useCallback(async () => {
     try {
@@ -114,21 +115,23 @@ export function OrderDetailScreen() {
         {order.marketplace_status ? <Badge label={marketplaceStatusTr(order.marketplace_status)} tone="slate" /> : null}
         {order.cargo_carrier_name || order.cargo_carrier ? <Badge label={String(order.cargo_carrier_name || order.cargo_carrier)} tone="teal" /> : null}
         {order.cargo_tracking_number ? <Badge label={order.cargo_tracking_number} tone="green" /> : null}
-        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(order.grand_total || order.total_amount)}</Text>
+        {showPrices ? (
+          <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{fmtMoney(order.grand_total || order.total_amount)}</Text>
+        ) : null}
         {order.shipping_address ? <Muted>{order.shipping_address} {order.city || ""}</Muted> : null}
         {order.notes ? <Muted>{order.notes}</Muted> : null}
       </Card>
       {canEditItems ? <Muted>Kalemi silmek için satırı sola kaydırın.</Muted> : null}
       {(order.items || []).map((it, i) => {
         const stockNote = pickLineNote(it as { note?: string; line_note?: string; stock_note?: string; notes?: string });
-        const qtyLine = `${it.quantity} × ${fmtMoney(it.unit_price)}`;
+        const qtyLine = showPrices ? `${it.quantity} × ${fmtMoney(it.unit_price)}` : String(it.quantity ?? "");
         const row = (
           <ListRow
             testID={canEditItems ? undefined : `order-item-${i}`}
             title={String(it.product_name || it.name || "Kalem")}
             subtitle={stockNote ? `${qtyLine}\nSipariş stok notu · ${stockNote}` : qtyLine}
             titleLines={2}
-            right={fmtMoney(it.total_incl || it.total)}
+            right={showPrices ? fmtMoney(it.total_incl || it.total) : undefined}
             image={lineItemImage(it, catalog)}
           />
         );

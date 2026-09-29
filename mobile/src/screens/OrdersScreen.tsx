@@ -21,7 +21,8 @@ import {
 } from "../utils/orderListFilter";
 
 export function OrdersScreen() {
-  const { client, companyId } = useAuth();
+  const { client, companyId, feature } = useAuth();
+  const showPrices = feature("view_prices");
   const [rows, setRows] = useState<Order[]>([]);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<OrderListFilter>(ORDER_LIST_FILTER_DEFAULT);
@@ -83,7 +84,7 @@ export function OrdersScreen() {
             title={held ? String((o as { held_label?: string }).held_label || o.order_number) : orderNumberLabel(o)}
             subtitle={[o.customer_name, o.marketplace_status ? marketplaceStatusTr(o.marketplace_status) : null, statusTr(o.order_status), fmtDate(o.order_date)].filter(Boolean).join(" · ")}
             leading={<ChannelLogo channel={o.channel} testID={`order-channel-${idOf(o)}`} />}
-            right={fmtMoney(o.grand_total || o.total_amount)}
+            right={showPrices ? fmtMoney(o.grand_total || o.total_amount) : undefined}
             onPress={() => go("OrderDetail", { id: idOf(o) })}
           />
           {invLabel && invTone && !held ? (

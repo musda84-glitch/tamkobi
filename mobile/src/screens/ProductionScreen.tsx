@@ -25,8 +25,9 @@ import {
 type Tab = "orders" | "recipes";
 
 export function ProductionScreen() {
-  const { client, companyId, can } = useAuth();
+  const { client, companyId, can, feature } = useAuth();
   const canEdit = can("/production", "edit");
+  const showPrices = feature("view_prices");
   const [tab, setTab] = useState<Tab>("orders");
   const [filter, setFilter] = useState<"open" | "all" | "planned" | "in_production" | "completed">("open");
   const [orders, setOrders] = useState<ProductionOrder[]>([]);
@@ -260,7 +261,7 @@ export function ProductionScreen() {
                 </Row>
                 <Muted>
                   Plan {formatBomQty(o.planned_quantity)} {o.unit || ""} · üretilen {formatBomQty(o.completed_quantity)} · kalan {formatBomQty(remaining)}
-                  {o.estimated_total_cost != null ? ` · ~${fmtMoney(o.estimated_total_cost)}` : ""}
+                  {showPrices && o.estimated_total_cost != null ? ` · ~${fmtMoney(o.estimated_total_cost)}` : ""}
                 </Muted>
                 {(o.shortages || []).length > 0 && o.status !== "completed" ? (
                   <Text style={{ color: "#BE123C", fontWeight: "700", fontSize: 12 }}>{(o.shortages || []).length} hammadde eksik</Text>
@@ -304,7 +305,7 @@ export function ProductionScreen() {
                   <Text style={{ fontWeight: "800", color: colors.text }} numberOfLines={2}>{r.name || "Reçete"}</Text>
                   <Muted>
                     {r.finished_product_name || "Mamul"} · {formatBomQty(r.target_quantity)} {r.unit || "Adet"}
-                    {r.unit_cost != null ? ` · birim ${fmtMoney(r.unit_cost)}` : ""}
+                    {showPrices && r.unit_cost != null ? ` · birim ${fmtMoney(r.unit_cost)}` : ""}
                   </Muted>
                   {r.contact_name || r.job_file_name ? (
                     <Muted>{[r.contact_name ? `Müşteri: ${r.contact_name}` : null, r.job_file_name ? `İş: ${r.job_file_name}` : null].filter(Boolean).join(" · ")}</Muted>
@@ -387,7 +388,7 @@ export function ProductionScreen() {
         {req?.rows?.length ? (
           <View testID="prod-order-requirements" style={{ borderRadius: 12, borderWidth: 1, borderColor: colors.border, padding: 10, gap: 6 }}>
             <Text style={{ fontWeight: "800", color: colors.text }}>Hammadde ihtiyacı</Text>
-            {req.estimated_total_cost != null ? <Muted>Tahmini maliyet {fmtMoney(req.estimated_total_cost)}</Muted> : null}
+            {showPrices && req.estimated_total_cost != null ? <Muted>Tahmini maliyet {fmtMoney(req.estimated_total_cost)}</Muted> : null}
             {req.rows.map((row) => (
               <Row key={row.product_id} style={{ justifyContent: "space-between", gap: 8 }}>
                 <Text style={{ flex: 1, fontSize: 12, color: colors.muted }} numberOfLines={1}>{row.product_name}</Text>
