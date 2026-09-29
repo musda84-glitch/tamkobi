@@ -10,8 +10,7 @@ import { typeface } from "@/theme/softFont";
 import { resolveMediaUrl } from "@/utils/media";
 import { showFinanceSubstituteTabs, showSelfPersonnelTabs } from "@/utils/permissions";
 import { Ionicons } from "@expo/vector-icons";
-import { Tabs, useRouter } from "expo-router";
-import { useEffect } from "react";
+import { Tabs } from "expo-router";
 import { Text } from "react-native";
 
 function tabIconColor(color: unknown): string {
@@ -21,21 +20,16 @@ function tabIconColor(color: unknown): string {
 export default function TabsLayout() {
   const { can, moduleOn, user, activeCompany, license, baseUrl } = useAuth();
   const { unread } = useBadges();
-  const { locked, ready } = useMesaimGate();
-  const router = useRouter();
+  const { locked } = useMesaimGate();
   const show = (path: string) => can(path) && moduleOn(path);
   const selfTabs = showSelfPersonnelTabs(user, license);
   const financeTabs = showFinanceSubstituteTabs(user);
   const homeBadge = unread > 99 ? "99+" : unread > 0 ? unread : undefined;
   const onlyMesaim = locked && selfTabs;
 
-  useEffect(() => {
-    if (!ready || !onlyMesaim) return;
-    router.replace("/mesai");
-  }, [onlyMesaim, ready, router]);
-
   return (
     <Tabs
+      initialRouteName="index"
       screenOptions={({ route }) => ({
         headerTitleStyle: { color: colors.text, ...typeface("800") },
         tabBarActiveTintColor: colors.primary,
@@ -55,7 +49,7 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: "Özet",
-          href: onlyMesaim ? null : undefined,
+          href: undefined,
           headerTitleAlign: "left",
           headerTitle: () => (
             <HomeHeaderTitle
@@ -64,7 +58,7 @@ export default function TabsLayout() {
               logoUrl={resolveMediaUrl(baseUrl, activeCompany?.logo_url)}
             />
           ),
-          tabBarBadge: onlyMesaim ? undefined : homeBadge,
+          tabBarBadge: homeBadge,
           tabBarBadgeStyle: { backgroundColor: colors.danger, color: "#fff", fontSize: 10, fontWeight: "800" },
           tabBarIcon: ({ color, size }) => <Ionicons name="grid" color={tabIconColor(color)} size={size} />,
         }}

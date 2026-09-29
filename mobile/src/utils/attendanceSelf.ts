@@ -48,8 +48,8 @@ export function hasOpenMesaimSession(today?: { check_in?: string | null; check_o
 }
 
 /**
- * Çıkış yapıldıysa (veya henüz giriş yoksa) bir sonraki girişe kadar yalnızca Mesaim.
- * Yönetici / admin kilitlenmez.
+ * Çıkış yapıldıysa (veya henüz giriş yoksa) bir sonraki girişe kadar diğer modüller kilitli.
+ * Özet ve Mesaim her zaman açık kalır. Yönetici / admin kilitlenmez.
  */
 export function mesaimExclusiveUntilCheckIn(
   user?: { role?: string | null; employee_id?: string | null } | null,
@@ -59,6 +59,21 @@ export function mesaimExclusiveUntilCheckIn(
   const role = String(user.role || "");
   if (role === "admin" || role === "manager") return false;
   return !hasOpenMesaimSession(today);
+}
+
+/** Kilitliyken Özet (/) ve Mesaim serbest; diğer rotalar Özet'e düşer. */
+export function mesaimLockAllowsPath(pathname?: string | null): boolean {
+  const path = String(pathname || "").split("?")[0] || "/";
+  if (path === "/" || path === "/index") return true;
+  if (path === "/mesai" || path.startsWith("/mesai/")) return true;
+  // Login / hesap akışları kilit dışı
+  if (path === "/login" || path.startsWith("/login")) return true;
+  return false;
+}
+
+/** Kilitliyken yasaklı rotadan dönülecek ana ekran: her zaman Özet. */
+export function mesaimLockHomePath(): string {
+  return "/";
 }
 
 export function checkInOnceHint(checkIn?: string | null): string {
