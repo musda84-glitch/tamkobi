@@ -366,6 +366,12 @@ export default function OrderPickKioskPage() {
               <div className="min-w-0 flex-1">
                 <div className="font-bold text-slate-900 leading-tight">{it.product_name}</div>
                 <div className="text-[11px] text-slate-500 font-mono">{it.sku || it.barcode || "—"}</div>
+                {it.note ? (
+                  <div className="text-[11px] text-amber-800 mt-0.5 leading-snug" data-testid={`pick-line-note-${idx}`}>
+                    <span className="font-semibold text-slate-500">Sipariş stok notu · </span>
+                    {it.note}
+                  </div>
+                ) : null}
                 <div className="h-1.5 bg-slate-100 rounded-full mt-1 overflow-hidden"><div className={`h-1.5 ${warnLine ? "bg-rose-500" : done ? "bg-emerald-500" : "bg-amber-400"}`} style={{ width: `${it.ordered_qty ? Math.min(100, (it.picked_qty / it.ordered_qty) * 100) : 0}%` }} /></div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
