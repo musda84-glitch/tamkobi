@@ -159,7 +159,7 @@ export function RadialQuickMenu({ companyId }) {
       const item = byPath[slot];
       if (!item) return;
       if (slot === "/ai-advisor" && !addonOn("ai.advisor")) return;
-      if (slot === "/support" && !addonOn("support.tickets")) return;
+      if (slot === "/support" && (!addonOn("support.tickets") || !can("/support") || !moduleOn("/support"))) return;
       list.push({
         id: slot,
         label: item.label.length > 14 ? item.label.slice(0, 12) + "…" : item.label,

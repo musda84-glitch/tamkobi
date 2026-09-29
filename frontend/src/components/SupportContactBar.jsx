@@ -4,20 +4,22 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { HeaderFxRates } from "./HeaderFxRates";
 import { GlobalSearch } from "./HeaderQuickActions";
-import { personelCanUseErpShortcuts, personelMenuPathAllowed } from "../utils/selfPersonnelNav";
+import { personelCanUseErpShortcuts } from "../utils/selfPersonnelNav";
+import { supportContactAllowed, supportTicketsAllowed } from "../utils/supportAccess";
 
 /**
  * Utility strip under the main header: FX rates, global search, support contact.
- * Keeps the sticky header lean while preserving one-click access.
+ * Destek bölümü rolde /support kapalıysa veya paket/eklenti yoksa gizlenir.
  */
 export const SupportContactBar = ({ companyId }) => {
-  const { license, addonOn, user } = useAuth();
+  const { license, addonOn, user, can, moduleOn } = useAuth();
   const erpOk = personelCanUseErpShortcuts(user);
-  const tickets = addonOn?.("support.tickets") && personelMenuPathAllowed("/support", user);
-  const contact = addonOn?.("support.contact");
-  const s = license?.support;
-  const hasContact = contact && s && (s.email || s.phone);
+  const tickets = supportTicketsAllowed({ user, can, moduleOn, addonOn });
+  const hasContact = supportContactAllowed({
+    user, can, moduleOn, addonOn, support: license?.support,
+  });
   const showSupport = tickets || hasContact;
+  const s = license?.support;
   const href = s?.email
     ? `mailto:${s.email}?subject=${encodeURIComponent("Destek talebi")}`
     : (s?.phone ? `tel:${s.phone}` : null);

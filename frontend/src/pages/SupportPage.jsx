@@ -219,7 +219,7 @@ const DeletionConfirmPanel = ({ companyId, canEdit }) => {
 };
 
 export default function SupportPage() {
-  const { activeCompany, addonOn, user } = useAuth();
+  const { activeCompany, addonOn, user, can, moduleOn } = useAuth();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const canEdit = user?.role === "admin";
   const [meta, setMeta] = useState({ statuses: [], categories: [], priorities: [] });
