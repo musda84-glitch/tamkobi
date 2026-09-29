@@ -29,7 +29,7 @@ import { LocationConsentCard } from "../components/LocationConsentCard";
 import { locationConsentAccepted, locationConsentPayload, locationUnavailablePayload, type LocationConsent, type LocationSignal } from "../utils/locationConsent";
 import { syncLocationBackground } from "../utils/locationBackgroundSync";
 import { selfLeavePayload, validateSelfLeave } from "../utils/personnel";
-import { mesaimGeoHeaderLine, workplaceHasCoords, type Workplace } from "../utils/workplace";
+import { mesaimGeoHeaderLine, checkInHasGeoTarget, type Workplace } from "../utils/workplace";
 
 type LocationTracking = {
   enabled?: boolean;
@@ -167,6 +167,7 @@ export function AttendanceScreen() {
     const geo = mesaimGeoHeaderLine({
       workplace: placeWp,
       location: data?.location,
+      companyLocation: data?.company_location,
       requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
     });
     navigation.setOptions({
@@ -175,7 +176,7 @@ export function AttendanceScreen() {
         <MesaimHeaderTitle place={geo.place} status={geo.status} on={geo.on} />
       ),
     });
-  }, [navigation, data?.workplace, data?.location, data?.schedule?.require_geo]);
+  }, [navigation, data?.workplace, data?.location, data?.company_location, data?.schedule?.require_geo]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -226,7 +227,11 @@ export function AttendanceScreen() {
     try {
       let extra: { latitude?: number; longitude?: number; accuracy_m?: number; time?: string } = {};
       if (time) extra.time = time;
-      const hasTarget = workplaceHasCoords(data?.workplace) || workplaceHasCoords(data?.location);
+      const hasTarget = checkInHasGeoTarget({
+        workplace: data?.workplace,
+        location: data?.location,
+        companyLocation: data?.company_location,
+      });
       const geoMode = selfAttendanceGeoMode(action, {
         hasTarget,
         requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,

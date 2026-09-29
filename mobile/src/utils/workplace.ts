@@ -30,13 +30,52 @@ export function workplaceHasCoords(w?: Workplace | null): boolean {
   return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
 }
 
-/** Mesaim kartı: konumlu giriş politikası (iş yeri koordinatı + require_geo). */
-export function mesaimGeoInOn(opts?: { workplace?: Workplace | null; requireGeo?: boolean } | null): boolean {
-  if (!opts?.workplace || !workplaceHasCoords(opts.workplace)) return false;
-  return opts.requireGeo !== false;
+/** Firma konumu kaydını Workplace şekline çevir (giriş OR hedefi). */
+export function companyLocationAsWorkplace(loc?: Record<string, unknown> | null): Workplace | null {
+  if (!loc) return null;
+  const lat = Number(loc.latitude);
+  const lng = Number(loc.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return null;
+  return {
+    kind: "company",
+    label: String(loc.label || "Firma"),
+    latitude: lat,
+    longitude: lng,
+    radius_m: Number(loc.radius_m) || 300,
+    has_coords: true,
+  };
 }
 
-export function mesaimGeoInLabel(opts?: { workplace?: Workplace | null; requireGeo?: boolean } | null): string {
+/** Giriş için en az bir geçerli hedef var mı: görev yeri veya firma. */
+export function checkInHasGeoTarget(opts?: {
+  workplace?: Workplace | null;
+  location?: Workplace | null;
+  companyLocation?: Record<string, unknown> | null;
+} | null): boolean {
+  return (
+    workplaceHasCoords(opts?.workplace) ||
+    workplaceHasCoords(opts?.location) ||
+    workplaceHasCoords(companyLocationAsWorkplace(opts?.companyLocation))
+  );
+}
+
+/** Mesaim kartı: konumlu giriş politikası (görev veya firma koordinatı + require_geo). */
+export function mesaimGeoInOn(opts?: {
+  workplace?: Workplace | null;
+  companyLocation?: Record<string, unknown> | null;
+  requireGeo?: boolean;
+} | null): boolean {
+  const has =
+    workplaceHasCoords(opts?.workplace) || workplaceHasCoords(companyLocationAsWorkplace(opts?.companyLocation));
+  if (!has) return false;
+  return opts?.requireGeo !== false;
+}
+
+export function mesaimGeoInLabel(opts?: {
+  workplace?: Workplace | null;
+  companyLocation?: Record<string, unknown> | null;
+  requireGeo?: boolean;
+} | null): string {
   return mesaimGeoInOn(opts) ? "Konumlu giriş açık" : "Konumlu giriş kapalı";
 }
 
@@ -44,16 +83,21 @@ export function mesaimGeoInLabel(opts?: { workplace?: Workplace | null; requireG
 export function mesaimGeoHeaderLine(opts?: {
   workplace?: Workplace | null;
   location?: { radius_m?: number; kind?: string; label?: string } | null;
+  companyLocation?: Record<string, unknown> | null;
   requireGeo?: boolean;
 } | null): { title: string; place: string; status: string; on: boolean } {
   const placeWp = opts?.workplace || null;
-  const on = mesaimGeoInOn({ workplace: placeWp, requireGeo: opts?.requireGeo });
+  const on = mesaimGeoInOn({
+    workplace: placeWp,
+    companyLocation: opts?.companyLocation,
+    requireGeo: opts?.requireGeo,
+  });
   const status = on ? "Giriş açık" : "Giriş kapalı";
   if (placeWp?.kind === "task") {
     const short = workplaceShort(placeWp) || placeWp.task_title || "Dış görev";
     return { title: "Mesaim", place: short, status, on };
   }
-  const radius = placeWp?.radius_m || opts?.location?.radius_m;
+  const radius = placeWp?.radius_m || opts?.location?.radius_m || Number(opts?.companyLocation?.radius_m) || undefined;
   const place = radius ? `Firma · ${radius} m` : "Firma konumu";
   return { title: "Mesaim", place, status, on };
 }
@@ -66,9 +110,9 @@ export function workplaceHint(w?: Workplace | null, requireGeo = true): string {
   if (w.kind === "task") {
     if (w.has_coords) {
       const radius = w.radius_m || 300;
-      return `Dış görev: ${place}${daysPart} · görev yeri iş yeri${requireGeo ? ` · girişte ${radius} m` : ""}`;
+      return `Dış görev: ${place}${daysPart} · giriş firma veya görev yeri${requireGeo ? ` · ${radius} m` : ""}`;
     }
-    return `Dış görev: ${place}${daysPart} · görev yeri iş yeri (konum yok — konumsuz giriş)`;
+    return `Dış görev: ${place}${daysPart} · görev konumu yok — firma yerinde giriş mümkün`;
   }
   const radius = w.radius_m ? ` · ${w.radius_m} m` : "";
   return `Firma konumu${radius}${requireGeo ? " (yalnızca girişte)" : ""}`;
