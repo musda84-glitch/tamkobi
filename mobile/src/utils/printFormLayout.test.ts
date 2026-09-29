@@ -5,6 +5,7 @@ import {
   printDiscountLabel,
   printNetAmount,
   printQtyLabel,
+  printQtyTotalLabel,
   printShelfLabel,
   printVatLines,
   vatRateLabel,
@@ -22,6 +23,12 @@ describe("printFormLayout", () => {
     expect(printQtyLabel(1, "Adet")).toBe("1 ad");
     expect(printQtyLabel(2, "")).toBe("2 ad");
     expect(printQtyLabel(3, "kg")).toBe("3 kg");
+  });
+
+  it("sums line quantities for Toplam Miktar", () => {
+    expect(printQtyTotalLabel([{ quantity: 2, unit: "kg" }, { quantity: 1.5, unit: "kg" }])).toBe("Toplam Miktar: 3,50 kg");
+    expect(printQtyTotalLabel([{ quantity: 1, unit: "ad" }, { quantity: 2, unit: "kg" }])).toBe("Toplam Miktar: 3");
+    expect(printQtyTotalLabel([{ quantity: 10, unit: "Adet" }, { quantity: 5, unit: "Adet" }])).toBe("Toplam Miktar: 15 ad");
   });
 
   it("groups VAT by rate and prefers the document vat total", () => {

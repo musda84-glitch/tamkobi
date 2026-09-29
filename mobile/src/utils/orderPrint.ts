@@ -8,6 +8,7 @@ import {
   printDiscountLabel,
   printNetAmount,
   printQtyLabel,
+  printQtyTotalLabel,
   printShelfLabel,
   printVatLines,
   vatRateLabel,
@@ -46,6 +47,7 @@ export type PrintTemplate = {
   hide_all_prices?: boolean;
   show_item_notes?: boolean;
   show_order_notes?: boolean;
+  show_qty_total?: boolean;
 };
 
 export type PrintProduct = Pick<Product, "barcode" | "sku" | "thumbnail_url" | "image_url" | "images"> & {
@@ -448,6 +450,9 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const notesBox = tpl.show_order_notes !== false && orderNotes.length
     ? `<div style="margin-top:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px;color:#334155;white-space:pre-wrap"><b>Sipariş Notu:</b> ${esc(orderNotes.join(" • "))}</div>`
     : "";
+  const qtyTotalBox = tpl.show_qty_total && items.length
+    ? `<div data-print-qty-total style="margin-top:8px;text-align:right;font-size:14px;font-weight:800;color:#1e293b">${esc(printQtyTotalLabel(items))}</div>`
+    : "";
   const extraNotes = (order.notes || extras.terms)
     ? `<div style="margin-top:24px;color:#475569;white-space:pre-wrap">${order.notes ? esc(order.notes) : ""}${extras.terms ? `<div style="margin-top:8px"><b>Şartlar:</b> ${esc(extras.terms)}</div>` : ""}</div>`
     : "";
@@ -492,6 +497,7 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
         </div>
         ${itemsTable}
         ${notesBox}
+        ${qtyTotalBox}
         ${totals}
         ${plan}
         ${extraNotes}

@@ -1,5 +1,7 @@
 /** Order and quote print forms share one line table (shelf, barcode, discount, VAT-incl.). */
 
+import { formatTrAmount } from "./money";
+
 export const isOrderQuotePrint = (docType: string | undefined): boolean =>
   docType === "order" || docType === "quote";
 
@@ -12,6 +14,29 @@ export const printQtyLabel = (quantity: unknown, unit: unknown): string => {
   const raw = String(unit || "").trim();
   const u = !raw || /^adet$/i.test(raw) ? "ad" : raw;
   return `${q} ${u}`.trim();
+};
+
+/** Sum of line quantities; if all lines share one unit, include it in the label. */
+export const printQtyTotal = (items: Array<{ quantity?: unknown; unit?: unknown } | null | undefined> = []) => {
+  const list = Array.isArray(items) ? items : [];
+  const total = round2(list.reduce((sum, it) => sum + (Number(it?.quantity) || 0), 0));
+  const units = [
+    ...new Set(
+      list.map((it) => {
+        const raw = String(it?.unit || "").trim();
+        return !raw || /^adet$/i.test(raw) ? "ad" : raw;
+      }),
+    ),
+  ];
+  return { total, unit: units.length === 1 ? units[0] : "" };
+};
+
+export const printQtyTotalLabel = (
+  items: Array<{ quantity?: unknown; unit?: unknown } | null | undefined> = [],
+): string => {
+  const { total, unit } = printQtyTotal(items);
+  const qty = Number.isInteger(total) ? String(total) : formatTrAmount(total);
+  return unit ? `Toplam Miktar: ${qty} ${unit}` : `Toplam Miktar: ${qty}`;
 };
 
 export const printShelfLabel = (it: Record<string, unknown> = {}, prod: Record<string, unknown> = {}): string => {
