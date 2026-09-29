@@ -316,13 +316,20 @@ export function ProductionScreen() {
                 >
                   <Text style={{ fontSize: 11, fontWeight: "800", color: colors.text }}>BOM · Hammaddeler ({mats.length})</Text>
                   {mats.length ? mats.slice(0, 6).map((m, i) => (
-                    <Row key={`${m.product_id || i}`} style={{ justifyContent: "space-between", gap: 8 }}>
-                      <Text style={{ flex: 1, fontSize: 12, color: colors.muted }} numberOfLines={1}>{m.product_name || "Hammadde"}</Text>
-                      <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
-                        {formatBomQty(m.quantity)} {m.unit || ""}
-                        {m.wastage_percent ? ` (+%${m.wastage_percent})` : ""}
-                      </Text>
-                    </Row>
+                    <View key={`${m.product_id || i}`} style={{ gap: 2 }}>
+                      <Row style={{ justifyContent: "space-between", gap: 8 }}>
+                        <Text style={{ flex: 1, fontSize: 12, color: colors.muted }} numberOfLines={1}>{m.product_name || "Hammadde"}</Text>
+                        <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
+                          {formatBomQty(m.quantity)} {m.unit || ""}
+                          {m.wastage_percent ? ` (+%${m.wastage_percent})` : ""}
+                        </Text>
+                      </Row>
+                      {String((m as { stock_note?: string; note?: string }).stock_note || (m as { note?: string }).note || "").trim() ? (
+                        <Text style={{ fontSize: 11, fontWeight: "700", color: "#92400E" }} numberOfLines={1}>
+                          Sipariş stok notu · {String((m as { stock_note?: string; note?: string }).stock_note || (m as { note?: string }).note).trim()}
+                        </Text>
+                      ) : null}
+                    </View>
                   )) : <Muted>Hammadde satırı yok</Muted>}
                   {mats.length > 6 ? <Muted>+{mats.length - 6} kalem daha</Muted> : null}
                 </View>
