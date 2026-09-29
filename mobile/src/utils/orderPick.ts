@@ -59,6 +59,8 @@ export type PickSession = {
   items?: PickLine[];
   progress?: PickProgress;
   order_status?: string;
+  channel?: string;
+  can_mark_delivered?: boolean;
   shipping_address?: string;
   customer_phone?: string;
   message?: string;
@@ -75,6 +77,7 @@ export const PICK_STATUS_TR: Record<string, string> = {
   ready: "Hazır",
   partial: "Kısmi",
   shipped: "Sevk edildi",
+  delivered: "Teslim edildi",
 };
 
 export function pickStatusTr(v?: string | null): string {
@@ -83,7 +86,8 @@ export function pickStatusTr(v?: string | null): string {
 }
 
 export function pickStatusTone(v?: string | null): "slate" | "amber" | "green" | "indigo" {
-  if (v === "shipped") return "green";
+  if (v === "delivered") return "green";
+  if (v === "shipped") return "indigo";
   if (v === "ready") return "indigo";
   if (v === "picking" || v === "partial") return "amber";
   return "slate";
@@ -119,14 +123,30 @@ export function canShip(progress?: PickProgress | null): boolean {
   return !!progress?.complete;
 }
 
-const DONE_SEVK = new Set(["shipped", "completed", "cancelled", "returned", "partially_returned", "delivered"]);
+const DELIVERABLE_CHANNELS = new Set(["b2b", "manual", "saha", ""]);
 
-/** Toplanmamış / sevk edilmemiş sipariş. */
-export function isPendingSevk(row?: { pick_status?: string; order_status?: string } | null): boolean {
+/** B2B / panel: sevk sonrası Teslim edildi. */
+export function canMarkDeliveredFromPick(
+  session?: { can_mark_delivered?: boolean; channel?: string; order_status?: string } | null,
+): boolean {
+  if (!session) return false;
+  if (session.can_mark_delivered === true) return true;
+  if (session.can_mark_delivered === false) return false;
+  const ch = String(session.channel || "manual").trim().toLowerCase();
+  if (!DELIVERABLE_CHANNELS.has(ch)) return false;
+  return String(session.order_status || "").toLowerCase() === "shipped";
+}
+
+const DONE_SEVK = new Set(["completed", "cancelled", "returned", "partially_returned", "delivered"]);
+
+/** Toplanmamış / sevk edilmemiş sipariş (sevk edilmiş B2B teslim bekleyen listede kalır). */
+export function isPendingSevk(row?: { pick_status?: string; order_status?: string; can_mark_delivered?: boolean; channel?: string } | null): boolean {
   if (!row) return false;
+  if (canMarkDeliveredFromPick(row)) return true;
   const pick = String(row.pick_status || "").toLowerCase();
   const order = String(row.order_status || "").toLowerCase();
   if (DONE_SEVK.has(pick) || DONE_SEVK.has(order)) return false;
+  if (pick === "shipped" || order === "shipped") return false;
   return true;
 }
 

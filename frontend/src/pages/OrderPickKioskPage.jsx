@@ -8,6 +8,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { notifyDataChanged } from "../utils/dataRefresh";
 
 import { PickLabelPrintHost } from "../components/PickLabelPrintHost";
+import { canMarkDeliveredFromPick } from "../utils/pickDeliver";
 import { pickLineNote } from "../utils/pickLineNote";
 import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import {
@@ -80,6 +81,7 @@ const ST = {
   ready: ["Hazır", "bg-emerald-50 text-emerald-700"],
   partial: ["Kısmi", "bg-violet-50 text-violet-700"],
   shipped: ["Sevk", "bg-slate-900 text-white"],
+  delivered: ["Teslim", "bg-emerald-700 text-white"],
 };
 
 export default function OrderPickKioskPage() {
@@ -269,7 +271,14 @@ export default function OrderPickKioskPage() {
           toast.error(r.data.draft_invoice_error, { duration: 7000 });
         }
       }
-      if (path === "complete") { back(); }
+      if (path === "complete") {
+        // B2B/panel: sevk sonrası Teslim edildi butonu için oturumda kal.
+        if (body?.mode === "ship" && canMarkDeliveredFromPick(r.data)) {
+          setSes(r.data);
+          return r.data;
+        }
+        back();
+      }
       return r.data;
     } catch (e) {
       const d = e.response?.data?.detail;
@@ -279,6 +288,7 @@ export default function OrderPickKioskPage() {
 
   const prog = ses?.progress || {};
   const pct = prog.ordered ? Math.round((prog.picked / prog.ordered) * 100) : 0;
+  const awaitDeliver = canMarkDeliveredFromPick(ses);
 
   if (!ses) {
     return (
@@ -334,6 +344,7 @@ export default function OrderPickKioskPage() {
           <Printer className="w-4 h-4" /> Etiket yazdır
         </button>
       </div>
+      {!awaitDeliver ? (
       <form className="bg-white border-b p-3 flex gap-2 print:hidden" onSubmit={(e) => { e.preventDefault(); scan(); }}>
         <input ref={inputRef} value={code} onChange={(e) => setCode(e.target.value)} onFocus={unlockOverscanAudio} placeholder="Barkod / SKU okutun veya yazın" autoComplete="off" inputMode="text" className="flex-1 text-lg font-mono border-2 border-slate-300 rounded-xl px-3 py-3" data-testid="pick-scan-input" />
         <input
@@ -349,6 +360,11 @@ export default function OrderPickKioskPage() {
         <ScanButton onScan={(t) => scan(t)} continuous title="Sipariş barkodu" label="Kamera" className="!py-3" />
         <button type="submit" disabled={busy} className="px-4 bg-emerald-600 text-white rounded-xl font-bold" data-testid="pick-scan-btn">Okut</button>
       </form>
+      ) : (
+        <div className="bg-emerald-50 border-b border-emerald-200 px-4 py-3 text-sm font-semibold text-emerald-900 print:hidden" data-testid="pick-await-deliver-hint">
+          Sipariş sevk edildi. Teslimatı onaylamak için «Teslim edildi»ye basın.
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto p-3 space-y-2 print:hidden">
         {(ses.items || []).map((it, idx) => {
           const done = isLineComplete(it);
@@ -418,12 +434,26 @@ export default function OrderPickKioskPage() {
         })}
       </div>
       <div className="bg-white border-t p-3 grid grid-cols-2 sm:grid-cols-4 gap-2 print:hidden">
-        <button disabled={busy} onClick={() => act("notify-missing", {}, "Bildirildi")} className="py-3 rounded-xl bg-amber-50 text-amber-900 font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-notify-missing"><Bell className="w-4 h-4" /> Eksikleri bildir</button>
-        <button disabled={busy} onClick={() => act("to-production", {}, "Üretime alındı")} className="py-3 rounded-xl bg-indigo-50 text-indigo-900 font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-to-production"><Factory className="w-4 h-4" /> Üretime al</button>
-        <button disabled={busy} onClick={() => act("complete", { mode: "partial" }, "Kısmi teslim")} className="py-3 rounded-xl bg-violet-600 text-white font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-partial"><Package className="w-4 h-4" /> Kısmi teslim</button>
-        <button disabled={busy} onClick={() => act("complete", { mode: prog.complete ? "ship" : "ready" })} className="py-3 rounded-xl bg-slate-900 text-white font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-complete">
-          {prog.complete ? <><Truck className="w-4 h-4" /> Sevk et</> : <><CheckCircle2 className="w-4 h-4" /> Hazır</>}
-        </button>
+        {awaitDeliver ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => act("complete", { mode: "deliver" }, "Teslim edildi")}
+            className="col-span-2 sm:col-span-4 py-3 rounded-xl bg-emerald-700 text-white font-bold text-sm flex items-center justify-center gap-1.5"
+            data-testid="pick-deliver"
+          >
+            <CheckCircle2 className="w-4 h-4" /> Teslim edildi
+          </button>
+        ) : (
+          <>
+            <button disabled={busy} onClick={() => act("notify-missing", {}, "Bildirildi")} className="py-3 rounded-xl bg-amber-50 text-amber-900 font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-notify-missing"><Bell className="w-4 h-4" /> Eksikleri bildir</button>
+            <button disabled={busy} onClick={() => act("to-production", {}, "Üretime alındı")} className="py-3 rounded-xl bg-indigo-50 text-indigo-900 font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-to-production"><Factory className="w-4 h-4" /> Üretime al</button>
+            <button disabled={busy} onClick={() => act("complete", { mode: "partial" }, "Kısmi teslim")} className="py-3 rounded-xl bg-violet-600 text-white font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-partial"><Package className="w-4 h-4" /> Kısmi teslim</button>
+            <button disabled={busy} onClick={() => act("complete", { mode: prog.complete ? "ship" : "ready" })} className="py-3 rounded-xl bg-slate-900 text-white font-bold text-sm flex items-center justify-center gap-1.5" data-testid="pick-complete">
+              {prog.complete ? <><Truck className="w-4 h-4" /> Sevk et</> : <><CheckCircle2 className="w-4 h-4" /> Hazır</>}
+            </button>
+          </>
+        )}
       </div>
       <button type="button" onClick={() => navigate("/orders")} className="sr-only">siparişler</button>
       <PickLabelPrintHost

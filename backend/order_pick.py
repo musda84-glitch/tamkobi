@@ -14,7 +14,32 @@ _push_order_to_shopphp = None
 _create_draft_invoice_for_order = None
 
 PICKABLE = {"pending", "approved", "preparing", "new"}
-DONE_PICK = {"shipped", "completed", "cancelled", "returned", "partially_returned"}
+# Sevk sonrası B2B/panel siparişlerde «Teslim edildi» için shipped açık kalır.
+PICK_CLOSED = {"completed", "cancelled", "returned", "partially_returned", "delivered"}
+DONE_PICK = PICK_CLOSED | {"shipped"}
+# Panel + B2B (+ saha); pazaryeri kanalları hariç.
+DELIVERABLE_CHANNELS = frozenset({"b2b", "manual", "saha", ""})
+
+
+def can_mark_delivered(order: Optional[dict] = None) -> bool:
+    """B2B / panel siparişlerinde sevk sonrası Teslim edildi butonu."""
+    o = order or {}
+    ch = str(o.get("channel") or "manual").strip().lower()
+    if ch not in DELIVERABLE_CHANNELS:
+        return False
+    status = str(o.get("order_status") or "").strip().lower()
+    return status == "shipped"
+
+
+def is_pick_session_closed(order: Optional[dict] = None) -> bool:
+    """Toplama oturumu açılamaz (teslim / iptal / iade / pazaryeri sevk)."""
+    o = order or {}
+    status = str(o.get("order_status") or "").strip().lower()
+    if status in PICK_CLOSED:
+        return True
+    if status == "shipped" and not can_mark_delivered(o):
+        return True
+    return False
 
 
 def init(db, deps: Optional[dict] = None):
@@ -260,12 +285,21 @@ def _progress(items: list) -> dict:
 
 
 async def _session_for(order: dict, create: bool = True) -> dict:
+    """Açık oturumu getir; yoksa oluştur. Sevk edilmiş B2B/panel için son oturumu aç."""
     sid_order = order["_id"]
-    ses = await _db.order_pick_sessions.find_one({"order_id": sid_order, "status": {"$nin": ["shipped"]}})
+    shipped = str(order.get("order_status") or "") == "shipped"
+    ses = await _db.order_pick_sessions.find_one(
+        {"order_id": sid_order, "status": {"$nin": ["shipped", "delivered"]}},
+    )
+    if not ses and shipped and can_mark_delivered(order):
+        ses = await _db.order_pick_sessions.find_one(
+            {"order_id": sid_order},
+            sort=[("updated_at", -1), ("created_at", -1)],
+        )
     if ses:
         ses = await _sync_stock_notes(ses, order)
         return await _sync_product_label_fields(ses)
-    if not create:
+    if shipped or not create:
         raise HTTPException(status_code=404, detail="Toplama oturumu yok.")
     items = await _enrich_items(order["company_id"], order.get("items") or [])
     ses = {
@@ -291,17 +325,34 @@ def _public(ses: dict, order: Optional[dict] = None) -> dict:
     d["progress"] = _progress(ses.get("items") or [])
     if order:
         d["order_status"] = order.get("order_status")
+        d["channel"] = order.get("channel") or "manual"
         d["shipping_address"] = order.get("shipping_address")
         d["customer_phone"] = order.get("customer_phone")
+        d["can_mark_delivered"] = can_mark_delivered(order)
     return d
 
 
 @router.get("/order-picks")
 async def list_pickable(company_id: Optional[str] = "comp_nexus_main_01"):
-    orders = await _db.orders.find({"company_id": company_id, "order_status": {"$in": list(PICKABLE)}}).sort("order_date", -1).to_list(200)
+    """Toplanacak siparişler + sevk edilmiş B2B/panel (Teslim edildi bekleyen)."""
+    orders = await _db.orders.find({
+        "company_id": company_id,
+        "$or": [
+            {"order_status": {"$in": list(PICKABLE)}},
+            {"order_status": "shipped", "channel": {"$in": ["b2b", "manual", "saha"]}},
+            {"order_status": "shipped", "channel": {"$in": [None, ""]}},
+            {"order_status": "shipped", "channel": {"$exists": False}},
+        ],
+    }).sort("order_date", -1).to_list(300)
+    by_id = {}
+    for o in orders:
+        by_id[o["_id"]] = o
+    orders = list(by_id.values())[:200]
     sessions = {s["order_id"]: s for s in await _db.order_pick_sessions.find({"company_id": company_id, "order_id": {"$in": [o["_id"] for o in orders]}}).to_list(200)}
     rows = []
     for o in orders:
+        if is_pick_session_closed(o) and not can_mark_delivered(o):
+            continue
         ses = sessions.get(o["_id"])
         items = (ses or {}).get("items") or []
         prog = _progress(items) if items else {"ordered": sum(float(i.get("quantity") or 0) for i in o.get("items") or []), "picked": 0, "missing_lines": len(o.get("items") or []), "complete": False}
@@ -311,10 +362,12 @@ async def list_pickable(company_id: Optional[str] = "comp_nexus_main_01"):
             "customer_name": o.get("customer_name"),
             "city": o.get("city"),
             "order_status": o.get("order_status"),
+            "channel": o.get("channel") or "manual",
             "pick_status": (ses or {}).get("status") or o.get("pick_status") or "idle",
             "item_count": len(o.get("items") or []),
             "progress": prog,
             "order_date": o.get("order_date"),
+            "can_mark_delivered": can_mark_delivered(o),
         })
     return rows
 
@@ -324,7 +377,7 @@ async def open_pick(order_id: str):
     o = await _db.orders.find_one({"_id": order_id})
     if not o:
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
-    if o.get("order_status") in DONE_PICK:
+    if is_pick_session_closed(o):
         raise HTTPException(status_code=400, detail="Bu sipariş sevk/iptal durumunda, toplanamaz.")
     ses = await _session_for(o, create=True)
     return _public(ses, o)
@@ -555,12 +608,38 @@ async def send_missing_to_production(order_id: str):
 @router.post("/order-picks/{order_id}/complete")
 async def complete_pick(order_id: str, req: Dict[str, Any] = None):
     req = req or {}
-    mode = (req.get("mode") or "ready").strip()  # ready | partial | ship
-    if mode not in ("ready", "partial", "ship"):
-        raise HTTPException(status_code=400, detail="mode ready, partial veya ship olmalı.")
+    mode = (req.get("mode") or "ready").strip()  # ready | partial | ship | deliver
+    if mode not in ("ready", "partial", "ship", "deliver"):
+        raise HTTPException(status_code=400, detail="mode ready, partial, ship veya deliver olmalı.")
     o = await _db.orders.find_one({"_id": order_id})
     if not o:
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+
+    if mode == "deliver":
+        if not can_mark_delivered(o):
+            raise HTTPException(
+                status_code=400,
+                detail="Teslim edildi yalnızca B2B / panel siparişlerinde ve sevk sonrası kullanılabilir.",
+            )
+        ses = await _session_for(o, create=False)
+        now = _now()
+        await _db.order_pick_sessions.update_one(
+            {"_id": ses["_id"]},
+            {"$set": {"status": "delivered", "delivered_at": now, "updated_at": now, "complete_mode": "deliver"}},
+        )
+        await _db.orders.update_one(
+            {"_id": order_id},
+            {"$set": {"pick_status": "delivered", "order_status": "delivered", "delivered_at": now}},
+        )
+        updated = await _db.orders.find_one({"_id": order_id}) or {**o, "order_status": "delivered"}
+        if _push_order_to_shopphp:
+            try:
+                await _push_order_to_shopphp(updated, reason="status")
+            except Exception:
+                pass
+        ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"]}) or ses
+        return {**_public(ses, updated), "message": "Sipariş teslim edildi."}
+
     ses = await _session_for(o, create=True)
     prog = _progress(ses["items"])
     if mode == "ship" and not prog["complete"] and not req.get("force"):
@@ -608,6 +687,8 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None):
         draft = {"_id": updated.get("invoice_id"), "invoice_number": updated.get("invoice_number")}
     elif mode == "ship" and draft_error:
         msg = f"Sipariş sevk edildi · {draft_error}"
+    # Refresh session status for public payload
+    ses = await _db.order_pick_sessions.find_one({"_id": ses["_id"]}) or ses
     out = {**_public(ses, updated), "message": msg}
     if draft:
         out["draft_invoice_id"] = draft.get("_id")

@@ -12,6 +12,7 @@ import { colors } from "../theme";
 import { idOf } from "../utils/money";
 import {
   adjustPayload,
+  canMarkDeliveredFromPick,
   canShip,
   lineRemaining,
   parsePickedQtyDraft,
@@ -116,6 +117,14 @@ export function SevkPickScreen() {
       const r = await post<PickSession & { message?: string }>(client, `/order-picks/${id}/${path}`, body);
       setMessage(r?.message || fallback);
       setError(null);
+      if (path === "complete" && body?.mode === "deliver") {
+        go("Sevk");
+        return;
+      }
+      if (path === "complete" && body?.mode === "ship" && canMarkDeliveredFromPick(r)) {
+        setSession(r);
+        return;
+      }
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, fallback));
@@ -143,8 +152,8 @@ export function SevkPickScreen() {
     }
   };
 
-  const complete = (mode: "ready" | "partial" | "ship") => {
-    const titles = { ready: "Hazır işaretle", partial: "Kısmi teslim", ship: "Sevk et" } as const;
+  const complete = (mode: "ready" | "partial" | "ship" | "deliver") => {
+    const titles = { ready: "Hazır işaretle", partial: "Kısmi teslim", ship: "Sevk et", deliver: "Teslim edildi" } as const;
     confirmAction(titles[mode], `${session?.order_number || "Sipariş"} için ${titles[mode].toLowerCase()} işlemi yapılsın mı?`, () => {
       runAction("complete", { mode }, "İşlem tamamlanamadı.");
     });
@@ -153,6 +162,7 @@ export function SevkPickScreen() {
   const items = session?.items || [];
   const percent = pickPercent(session?.progress);
   const shipReady = canShip(session?.progress);
+  const awaitDeliver = canMarkDeliveredFromPick(session);
 
   return (
     <Screen onRefresh={load}>
@@ -169,7 +179,7 @@ export function SevkPickScreen() {
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
 
-      {canEdit ? (
+      {canEdit && !awaitDeliver ? (
         <Card testID="sevk-scan-card">
           <Field
             label="Barkod / SKU"
@@ -300,7 +310,16 @@ export function SevkPickScreen() {
           testID="sevk-print-labels"
         />
       ) : null}
-      {canEdit && items.length ? (
+      {canEdit && items.length && awaitDeliver ? (
+        <PrimaryButton
+          title="Teslim edildi"
+          color={colors.primary}
+          loading={busy}
+          testID="sevk-deliver"
+          onPress={() => complete("deliver")}
+        />
+      ) : null}
+      {canEdit && items.length && !awaitDeliver ? (
         <ActionTiles
           columns={4}
           items={[
@@ -312,7 +331,8 @@ export function SevkPickScreen() {
           ]}
         />
       ) : null}
-      {!shipReady && items.length ? <Muted>Tam sevk için tüm kalemler okutulmalı; eksik varsa kısmi teslim kullanın.</Muted> : null}
+      {!awaitDeliver && !shipReady && items.length ? <Muted>Tam sevk için tüm kalemler okutulmalı; eksik varsa kısmi teslim kullanın.</Muted> : null}
+      {awaitDeliver ? <Muted>Sipariş sevk edildi. Teslimatı onaylamak için Teslim edildi’ye basın.</Muted> : null}
       {session?.draft_invoice_number ? (
         <PrimaryButton
           title={`Taslak fatura ${session.draft_invoice_number}`}
