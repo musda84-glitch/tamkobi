@@ -7,6 +7,7 @@ import { statusTr } from "../utils/labels";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { pickLineNote } from "../utils/pickLineNote";
+import { printQtyTotalLabel } from "../utils/printFormLayout";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 
@@ -26,6 +27,7 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
   const items = order.items || [];
   const custNo = (order.customer_order_number || "").trim();
   const orderNote = String(order.notes || order.note || "").trim();
+  const qtyTotalLabel = printQtyTotalLabel(items);
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" {...backdropDismissProps(onClose)}>
       <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none my-6" onClick={(e) => e.stopPropagation()} data-testid="b2b-order-preview">
@@ -86,7 +88,12 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
               <b>Sipariş notu:</b> {orderNote}
             </div>
           ) : null}
-          <div className="flex justify-end"><div className="font-black text-sm">Toplam {fmt(order.grand_total ?? order.total_amount)} ₺</div></div>
+          <div className="flex justify-end">
+            <div className="text-right space-y-0.5" data-testid="b2b-preview-totals">
+              <div className="text-slate-600 font-semibold" data-testid="b2b-preview-qty-total">{qtyTotalLabel}</div>
+              <div className="font-black text-sm">Toplam {fmt(order.grand_total ?? order.total_amount)} ₺</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
