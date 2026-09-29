@@ -597,7 +597,7 @@ export function B2BPortalScreen() {
       const res = await put<{ message?: string }>(
         { ...client, token: null },
         `/public/b2b/${b2bToken}/orders/${idOf(edit)}`,
-        { items: editLines.map((l) => ({ product_id: l.product_id, quantity: l.quantity })), note: editNote }
+        { items: editLines.map((l) => ({ product_id: l.product_id, quantity: l.quantity, note: l.note || "" })), note: editNote }
       );
       setMessage(res.message || "Sipariş güncellendi.");
       setEdit(null);
@@ -1110,17 +1110,18 @@ export function B2BPortalScreen() {
       </B2BSheet>
 
       <B2BSheet visible={!!edit} title="Siparişi düzenle" subtitle={edit?.order_number} onClose={() => setEdit(null)} testID="b2b-edit-order-modal">
-        {editLines.map((l) => (
-          <Row key={l.product_id} testID={`b2b-edit-line-${l.sku || l.product_id}`}>
+        {editLines.map((l, idx) => (
+          <Row key={`${l.product_id}-${l.note || ""}-${idx}`} testID={`b2b-edit-line-${l.sku || l.product_id}`}>
             <View style={{ flex: 1 }}>
               <Text style={{ fontWeight: "800" }}>{l.product_name}</Text>
               <Muted>{fmtMoney(l.unit_price)}</Muted>
+              {l.note ? <Muted testID={`b2b-edit-line-note-${l.sku}`}>Sipariş stok notu · {l.note}</Muted> : null}
             </View>
-            <Pressable testID={`b2b-edit-dec-${l.sku}`} onPress={() => setEditLines((ls) => setEditQty(ls, l.product_id, l.quantity - 1))}>
+            <Pressable testID={`b2b-edit-dec-${l.sku}`} onPress={() => setEditLines((ls) => setEditQty(ls, idx, l.quantity - 1))}>
               <Ionicons name="remove-circle" size={24} color={colors.muted} />
             </Pressable>
             <Text style={{ fontWeight: "800", width: 28, textAlign: "center" }}>{l.quantity}</Text>
-            <Pressable testID={`b2b-edit-inc-${l.sku}`} onPress={() => setEditLines((ls) => setEditQty(ls, l.product_id, l.quantity + 1))}>
+            <Pressable testID={`b2b-edit-inc-${l.sku}`} onPress={() => setEditLines((ls) => setEditQty(ls, idx, l.quantity + 1))}>
               <Ionicons name="add-circle" size={24} color={colors.primary} />
             </Pressable>
           </Row>

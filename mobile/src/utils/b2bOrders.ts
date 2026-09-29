@@ -61,7 +61,7 @@ export function installmentDueText(row: { due_date?: string; is_overdue?: boolea
   return `Vade ${due}`;
 }
 
-export type EditLine = { product_id: string; product_name: string; sku?: string; quantity: number; unit_price?: number };
+export type EditLine = { product_id: string; product_name: string; sku?: string; quantity: number; unit_price?: number; note?: string };
 
 export function editLinesFromOrder(items?: Array<Record<string, unknown>> | null): EditLine[] {
   return (items || []).map((i) => ({
@@ -70,21 +70,22 @@ export function editLinesFromOrder(items?: Array<Record<string, unknown>> | null
     sku: i.sku ? String(i.sku) : undefined,
     quantity: Number(i.quantity) || 0,
     unit_price: Number(i.unit_price) || 0,
+    note: String(i.note || i.line_note || "").trim(),
   })).filter((l) => l.product_id && l.quantity > 0);
 }
 
-export function setEditQty(lines: EditLine[], productId: string, qty: number): EditLine[] {
+export function setEditQty(lines: EditLine[], index: number, qty: number): EditLine[] {
   const q = Number(qty) || 0;
-  return lines.map((l) => (l.product_id === productId ? { ...l, quantity: q } : l)).filter((l) => l.quantity > 0);
+  return lines.map((l, i) => (i === index ? { ...l, quantity: q } : l)).filter((l) => l.quantity > 0);
 }
 
 export function addEditProduct(
   lines: EditLine[],
   p: { id: string; name: string; sku?: string; price?: number | null }
 ): EditLine[] {
-  const hit = lines.find((l) => l.product_id === p.id);
-  if (hit) return lines.map((l) => (l.product_id === p.id ? { ...l, quantity: l.quantity + 1 } : l));
-  return [...lines, { product_id: p.id, product_name: p.name, sku: p.sku, quantity: 1, unit_price: Number(p.price) || 0 }];
+  const hit = lines.find((l) => l.product_id === p.id && !String(l.note || "").trim());
+  if (hit) return lines.map((l) => (l === hit ? { ...l, quantity: l.quantity + 1 } : l));
+  return [...lines, { product_id: p.id, product_name: p.name, sku: p.sku, quantity: 1, unit_price: Number(p.price) || 0, note: "" }];
 }
 
 export function previewLineCode(

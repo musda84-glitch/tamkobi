@@ -36,11 +36,14 @@ describe("money leftovers", () => {
 
 describe("edit lines", () => {
   it("adds, increments and drops zero qty", () => {
-    let lines = editLinesFromOrder([{ product_id: "a", product_name: "A", quantity: 2, unit_price: 10 }]);
+    let lines = editLinesFromOrder([{ product_id: "a", product_name: "A", quantity: 2, unit_price: 10, note: "özel" }]);
+    expect(lines[0].note).toBe("özel");
     lines = addEditProduct(lines, { id: "b", name: "B", price: 5 });
     lines = addEditProduct(lines, { id: "a", name: "A" });
-    expect(lines.find((l) => l.product_id === "a")?.quantity).toBe(3);
-    expect(setEditQty(lines, "b", 0).map((l) => l.product_id)).toEqual(["a"]);
+    expect(lines.find((l) => l.product_id === "a" && l.note === "özel")?.quantity).toBe(2);
+    expect(lines.find((l) => l.product_id === "a" && !l.note)?.quantity).toBe(1);
+    const bIdx = lines.findIndex((l) => l.product_id === "b");
+    expect(setEditQty(lines, bIdx, 0).map((l) => l.product_id)).toEqual(["a", "a"]);
   });
 });
 
