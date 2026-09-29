@@ -606,10 +606,11 @@ function presenceInside(opts: {
   location_inside_at?: string | null;
   today?: PresenceToday | null;
 }): boolean | null {
+  const today = opts.today;
+  // Resmi çıkış saati (yönetici düzeltmesi dahil) canlı konum bayrağından üstündür.
+  if (today?.check_out) return false;
   if (opts.location_last_inside === true) return true;
   if (opts.location_last_inside === false) return false;
-  const today = opts.today;
-  if (today?.check_out) return false;
   if (today?.location_exit_request?.status === "pending") return false;
   if (today?.location_left_at) return false;
   if (opts.location_last_ok === false) return null;

@@ -9,6 +9,8 @@ from attendance import (
     manager_time_edit_doc,
     manager_time_edit_result_message,
     manager_time_edit_skips_employee,
+    open_mesaim_session,
+    presence_patch_from_attendance,
     self_checkout_unlocked,
 )
 
@@ -90,9 +92,32 @@ def test_manager_check_out_skips_employee_approval():
     assert first["edit"]["pending_employee"] is False
     assert first["edit"]["auto_confirmed"] is True
     assert first["field"] == "check_out"
-    assert "Çıkış saati kaydedildi" in manager_time_edit_result_message(first)
-    assert "onayı gerekmez" in manager_time_edit_result_message(first)
+    assert "çıkış yapmış gibi" in manager_time_edit_result_message(first)
+    assert "onay gerekmez" in manager_time_edit_result_message(first)
     assert manager_time_edit_skips_employee(3) is True
+    cleared = apply_manager_time_edit_round(
+        {"check_in": "09:00", "check_out": "18:00"},
+        {"check_in": "09:00", "check_out": None},
+        "t2",
+        "check_out",
+    )
+    assert "çıkış yapmamış gibi" in manager_time_edit_result_message(cleared)
+
+
+def test_presence_follows_manager_checkout_state():
+    """Yönetici çıkış yazınca dışarıda; silince açık mesai / içeride."""
+    assert open_mesaim_session({"check_in": "09:00"}) is True
+    assert open_mesaim_session({"check_in": "09:00", "check_out": "18:00"}) is False
+    assert open_mesaim_session({"check_in": "09:00", "check_out": ""}) is True
+    assert open_mesaim_session({"check_out": "18:00"}) is False
+    out = presence_patch_from_attendance({"check_in": "09:00", "check_out": "17:45"}, "t1")
+    assert out == {"location_last_inside": False, "location_left_at": "t1"}
+    open_sess = presence_patch_from_attendance({"check_in": "09:00", "check_out": None}, "t2")
+    assert open_sess == {"location_last_inside": True, "location_inside_at": "t2"}
+    cleared = presence_patch_from_attendance({"check_in": "09:00", "check_out": ""}, "t3")
+    assert cleared == {"location_last_inside": True, "location_inside_at": "t3"}
+    absent = presence_patch_from_attendance({"status": "absent", "check_in": None, "check_out": None}, "t4")
+    assert absent == {"location_last_inside": False}
 
 
 def test_time_edit_reject_restores_previous():

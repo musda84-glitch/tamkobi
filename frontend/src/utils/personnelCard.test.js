@@ -42,6 +42,11 @@ describe("personnelCard", () => {
     });
     expect(employeePresenceChip({ status: "active", location_last_inside: true, workplace: { kind: "task" } }).label).toBe("Dış Görev Yerinde");
     expect(employeePresenceChip({ status: "active", location_last_inside: false }).label).toBe("Şuan Dışarıda");
+    expect(employeePresenceChip({
+      status: "active",
+      location_last_inside: true,
+      today: { check_in: "09:00", check_out: "17:45" },
+    }).label).toBe("Şuan Dışarıda");
     expect(employeePresenceChip({ status: "terminated", location_last_inside: true })).toBeNull();
     expect(employeePresenceChip({ status: "active", location_last_ok: false })).toBeNull();
   });

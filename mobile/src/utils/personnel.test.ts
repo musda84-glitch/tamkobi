@@ -219,6 +219,10 @@ describe("employee draft", () => {
     expect(employeePresenceChip({ location_last_inside: false })).toMatchObject({
       label: "Şuan Dışarıda", border: "#FDBA74",
     });
+    expect(employeePresenceChip({
+      location_last_inside: true,
+      today: { check_in: "09:00", check_out: "17:45" },
+    })?.label).toBe("Şuan Dışarıda");
     expect(employeePresenceChip({ status: "terminated", location_last_inside: true })).toBeNull();
     expect(employeePresenceChip({ today: { check_in: "08:30", location_inside_at: "2026-09-25T05:30:00Z" } })?.key).toBe("work");
     expect(requestKindLabel("early_leave")).toBe("Erken çıkış");
