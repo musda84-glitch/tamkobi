@@ -1,4 +1,6 @@
 from attendance import (
+    check_in_geo_targets,
+    classify_self_punch_geo_any,
     geo_target,
     pick_field_assignment,
     task_is_field,
@@ -146,3 +148,52 @@ def test_project_radius_overrides_company():
 def test_no_workplace():
     assert workplace_payload(None, None) is None
     assert pick_field_assignment([], "2026-09-22") is None
+
+
+def test_check_in_accepts_company_or_task_site():
+    company = {"latitude": 41.0, "longitude": 29.0, "radius_m": 200, "label": "Merkez"}
+    assignment = {
+        "id": "t1", "title": "Montaj", "project_name": "Villa",
+        "latitude": 40.1, "longitude": 32.9, "radius_m": 300,
+    }
+    workplace = workplace_payload(company, assignment)
+    targets = check_in_geo_targets(company, workplace)
+    assert len(targets) == 2
+    assert {t["kind"] for t in targets} == {"task", "company"}
+
+    at_office = classify_self_punch_geo_any(targets, 41.0003, 29.0002)
+    assert at_office["verdict"] == "onsite"
+    assert at_office["matched"]["kind"] == "company"
+
+    at_site = classify_self_punch_geo_any(targets, 40.1002, 32.9001)
+    assert at_site["verdict"] == "onsite"
+    assert at_site["matched"]["kind"] == "task"
+
+    far = classify_self_punch_geo_any(targets, 39.0, 35.0)
+    assert far["verdict"] == "offsite"
+    assert " / " in far["place"]
+
+
+def test_check_in_field_without_coords_still_allows_company():
+    company = {"latitude": 41.0, "longitude": 29.0, "radius_m": 300, "label": "Ofis"}
+    workplace = workplace_payload(company, {"id": "t2", "title": "Keşif", "project_name": "Saha"})
+    assert geo_target(workplace) is None
+    targets = check_in_geo_targets(company, workplace)
+    assert len(targets) == 1
+    assert targets[0]["kind"] == "company"
+    assert classify_self_punch_geo_any(targets, 41.0001, 29.0001)["verdict"] == "onsite"
+
+
+def test_check_in_office_duty_stays_company_only():
+    from attendance import resolve_workplace
+
+    company = {"latitude": 41.0, "longitude": 29.0, "radius_m": 200, "label": "Merkez"}
+    field = {
+        "id": "t1", "title": "Montaj", "kind": "field", "project_status": "active",
+        "latitude": 40.1, "longitude": 32.9, "project_name": "Villa",
+    }
+    workplace = resolve_workplace(company, [field], "2026-09-22", {"kind": "office", "task_id": "ot1"})
+    targets = check_in_geo_targets(company, workplace)
+    assert len(targets) == 1
+    assert targets[0]["kind"] == "company"
+    assert classify_self_punch_geo_any(targets, 40.1, 32.9)["verdict"] == "offsite"

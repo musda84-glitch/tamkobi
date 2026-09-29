@@ -45,6 +45,8 @@ def test_check_in_offsite_blocks_without_manager_request():
     assert missing and "Konum alınamadı" in missing
     assert check_in_geo_block_detail(classify_self_punch_geo(LOC, 41.0005, 29.0005)) is None
     assert check_in_geo_block_detail({"verdict": "skip"}) is None
+    either = check_in_geo_block_detail({"verdict": "offsite", "place": "Merkez / Villa", "distance_m": 1200})
+    assert either and "Firma veya görev yeri" in either
 
 
 def test_geo_confirm_labels():

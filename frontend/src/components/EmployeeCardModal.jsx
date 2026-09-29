@@ -492,7 +492,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
             )}
             {tab === "attendance" && (
               <div className="space-y-3" data-testid="emp-attendance">
-                {card.workplace?.kind === "task" ? <div className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-att-workplace">Dış görev: {workplaceShort(card.workplace)} — giriş/çıkış görev yerinden</div> : null}
+                {card.workplace?.kind === "task" ? <div className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg p-2" data-testid="emp-att-workplace">Dış görev: {workplaceShort(card.workplace)} — giriş firma veya görev yerinden</div> : null}
                 {isDailyWage(e) ? <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2" data-testid="emp-att-yevmiye">Yevmiye hak ediş: {card.attendance.days_present || 0} gün × {fmt(e.daily_wage)} ₺ = {fmt(periodWage(e, card.attendance.days_present))} ₺</div> : null}
                 <EmployeePuantajPanel
                   employeeId={id}

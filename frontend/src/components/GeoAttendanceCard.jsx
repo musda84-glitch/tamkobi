@@ -130,7 +130,7 @@ export const GeoAttendanceCard = ({ companyId, onChanged }) => {
         <div className="text-xs text-slate-300 mt-1">
           {st?.company_location || st?.location ? <span className="inline-flex items-center gap-1"><MapPin className="w-3 h-3 text-emerald-400" /> Firma konumu tanımlı · yarıçap {(st.company_location || st.location).radius_m} m</span> : <span className="text-amber-300">Firma konumu henüz tanımlı değil.</span>}
           {st?.employee ? <span className="ml-2">· {st.employee.full_name}</span> : <span className="ml-2 text-amber-300">· Kullanıcınız bir personel kartına bağlı değil</span>}
-          {st?.workplace?.kind === "task" ? <div className="mt-1 text-indigo-200" data-testid="geo-workplace">Dış görev: {st.workplace.task_title}{st.workplace.project_name ? ` · ${st.workplace.project_name}` : ""} — giriş görev yerinden</div> : null}
+          {st?.workplace?.kind === "task" ? <div className="mt-1 text-indigo-200" data-testid="geo-workplace">Dış görev: {st.workplace.task_title}{st.workplace.project_name ? ` · ${st.workplace.project_name}` : ""} — giriş firma veya görev yerinden</div> : null}
         </div>
         {consentOk && <div className="mt-1.5"><LocationSignal signal={liveSignal} className="text-white/90" testId="geo-signal" /></div>}
         {t && <div className="text-xs mt-1.5 flex gap-3" data-testid="geo-today"><span>Giriş: <b className="text-emerald-300">{t.check_in || "—"}</b></span><span>Çıkış: <b className="text-rose-300">{t.check_out || "—"}</b></span>{t.hours ? <span>Süre: <b>{t.hours} sa</b></span> : null}{t.overtime_hours ? <span className="text-indigo-300">+{t.overtime_hours} sa mesai</span> : null}</div>}

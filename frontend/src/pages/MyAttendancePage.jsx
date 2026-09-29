@@ -8,7 +8,7 @@ import { getPos } from "../components/GeoAttendanceCard";
 import { MyLeavePanel } from "../components/MyLeavePanel";
 import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, checkInAlreadyDone, checkInOnceHint, geoConfirmHint, habitLabel, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimInSubtitle, mesaimLongDate, mesaimOutInfoLines, mesaimScheduleLine, mesaimShowsDayLeaveInsteadOfIntraday, resolveMesaimTodayHours, resolveNowHm, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock } from "../utils/attendanceSelf";
 import { intradayLeaveMinutes, intradayLeavePayload, validateIntradayLeave } from "../utils/intradayLeave";
-import { mesaimGeoHeaderLine, workplaceHasCoords } from "../utils/workplace";
+import { mesaimGeoHeaderLine, checkInHasGeoTarget } from "../utils/workplace";
 import { yevmiyeStatusLine } from "../utils/personnelWage";
 import { fmtDmy } from "../utils/dateFormat";
 import { LocationConsentCard } from "../components/LocationConsentCard";
@@ -127,7 +127,11 @@ export default function MyAttendancePage() {
     setBusy(action);
     try {
       let coords = {};
-      const hasTarget = workplaceHasCoords(data?.workplace) || workplaceHasCoords(data?.location);
+      const hasTarget = checkInHasGeoTarget({
+        workplace: data?.workplace,
+        location: data?.location,
+        companyLocation: data?.company_location,
+      });
       const geoMode = selfAttendanceGeoMode(action, {
         hasTarget,
         requireGeo: data?.workplace?.kind === "task" || data?.schedule?.require_geo !== false,
@@ -267,6 +271,7 @@ export default function MyAttendancePage() {
   const geoHeader = mesaimGeoHeaderLine({
     workplace: data.workplace || data.location,
     location: data.location,
+    companyLocation: data.company_location,
     requireGeo: data.workplace?.kind === "task" || sch?.require_geo !== false,
   });
   const outInfo = mesaimOutInfoLines({

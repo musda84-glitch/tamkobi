@@ -1522,6 +1522,58 @@ def geo_target(workplace: Optional[dict]) -> Optional[dict]:
     return None
 
 
+def check_in_geo_targets(company_loc: Optional[dict], workplace: Optional[dict]) -> list:
+    """Mesaim giriş: firma ve (varsa) görev yeri — ikisinden biri yeter.
+
+    İç görev (workplace=company) yalnız firma. Dış görevde görev yeri + firma OR.
+    Görev yerinin koordinatı yoksa firma çemberi kullanılır.
+    """
+    company = geo_target(workplace_payload(company_loc, None))
+    wp = workplace if isinstance(workplace, dict) else None
+    if not wp:
+        return [company] if company else []
+    if wp.get("kind") == "company":
+        return [company] if company else ([wp] if geo_target(wp) else [])
+    task = geo_target(wp) if wp.get("kind") == "task" else None
+    out: list = []
+    seen: set = set()
+
+    def _add(row: Optional[dict]) -> None:
+        if not row:
+            return
+        key = (round(float(row["latitude"]), 6), round(float(row["longitude"]), 6), str(row.get("kind") or ""))
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(row)
+
+    _add(task)
+    _add(company)
+    return out
+
+
+def classify_self_punch_geo_any(targets: Optional[list], lat: Optional[float], lng: Optional[float]) -> dict:
+    """Birden fazla hedefte OR: herhangi birinde onsite yeterli."""
+    rows = [t for t in (targets or []) if t and t.get("latitude") is not None and t.get("longitude") is not None]
+    if not rows:
+        return {"verdict": "skip", "distance_m": None, "radius_m": None, "place": "", "matched": None}
+    places = " / ".join(dict.fromkeys(workplace_place_label(t) for t in rows))
+    if lat is None or lng is None:
+        try:
+            radius = float(rows[0].get("radius_m") or 300)
+        except (TypeError, ValueError):
+            radius = 300.0
+        return {"verdict": "location_off", "distance_m": None, "radius_m": radius, "place": places, "matched": None}
+    best_off: Optional[dict] = None
+    for t in rows:
+        v = classify_self_punch_geo(t, lat, lng)
+        if v.get("verdict") == "onsite":
+            return {**v, "matched": t}
+        if best_off is None or (v.get("distance_m") or 1e18) < (best_off.get("distance_m") or 1e18):
+            best_off = {**v, "place": places, "matched": None}
+    return best_off or {"verdict": "offsite", "distance_m": None, "radius_m": None, "place": places, "matched": None}
+
+
 def workplace_place_label(loc: Optional[dict]) -> str:
     if not loc:
         return "iş yeri"
@@ -1581,6 +1633,8 @@ def check_in_geo_block_detail(verdict: Optional[dict]) -> Optional[str]:
             dist_bit = f" ({int(dist)} m)"
     except (TypeError, ValueError):
         dist_bit = ""
+    if " / " in place:
+        return f"Firma veya görev yeri içinde değilsiniz{dist_bit}. Giriş yapılamaz."
     return f"{place} içinde değilsiniz{dist_bit}. Giriş yapılamaz."
 
 
@@ -2371,22 +2425,22 @@ async def self_attendance(req: Dict[str, Any], request: Request):
     company = await _db.companies.find_one({"_id": emp["company_id"]}) or {}
     schedule = merge_schedule(company, emp)
     workplace = await workplace_for_employee(emp, company)
-    loc = geo_target(workplace)
-    lt = normalize_location_tracking(emp.get("location_tracking"))
-    active_lt = location_mode_for(lt, workplace)
-    # Giriş geo: hedef varsa zorunlu (konum takibi kapalı olsa da).
+    targets = check_in_geo_targets(company.get("location"), workplace)
+    # Giriş geo: firma veya görev yerinden biri — hedef varsa zorunlu (konum takibi kapalı olsa da).
     if workplace and workplace.get("kind") == "task":
-        enforce_geo = True
+        enforce_geo = bool(targets)
     else:
-        enforce_geo = bool(schedule.get("require_geo", True)) and bool(loc)
+        enforce_geo = bool(schedule.get("require_geo", True)) and bool(targets)
     lat, lng, acc = parse_self_coords(req)
-    verdict = classify_self_punch_geo(loc, lat, lng)
+    verdict = classify_self_punch_geo_any(targets, lat, lng)
+    matched = verdict.get("matched") if isinstance(verdict, dict) else None
+    loc = matched or (targets[0] if targets else None)
     geo = None
     if verdict["verdict"] == "onsite" and lat is not None and lng is not None:
         geo = {
             "latitude": lat, "longitude": lng, "distance_m": verdict["distance_m"],
             "accuracy_m": acc or 0, "at": _now(), "enforced": bool(enforce_geo),
-            "workplace_kind": (loc or {}).get("kind"),
+            "workplace_kind": (matched or loc or {}).get("kind"),
         }
     today = _today(schedule)
     now_s = now_hm(schedule)
@@ -2450,8 +2504,9 @@ async def self_attendance(req: Dict[str, Any], request: Request):
             await notify_managers(emp["company_id"], "attendance_late", f"Geç giriş: {emp['full_name']}",
                                   f"{emp['full_name']} bugün {clock} saatinde giriş yaptı — mesai başlangıcına ({sched_start}) göre {rec['late_minutes']} dk geç.", dedupe_key=f"late:{emp['_id']}:{today}")
     if geo and geo.get("distance_m") is not None:
-        place = workplace_place_label(workplace if workplace and workplace.get("kind") == "task" else (loc or workplace))
-        kind = (workplace or loc or {}).get("kind")
+        punch_place = matched or loc or workplace
+        place = workplace_place_label(punch_place)
+        kind = (punch_place or {}).get("kind")
         if kind == "task":
             msg += f" (dış görev yeri {place} · {geo['distance_m']} m)"
         else:

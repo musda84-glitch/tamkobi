@@ -12,9 +12,35 @@ export function workplaceHasCoords(w) {
   return Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0);
 }
 
-/** Mesaim kartı: konumlu giriş politikası (iş yeri koordinatı + require_geo). */
-export function mesaimGeoInOn({ workplace, requireGeo } = {}) {
-  if (!workplace || !workplaceHasCoords(workplace)) return false;
+/** Firma konumu kaydını Workplace şekline çevir (giriş OR hedefi). */
+export function companyLocationAsWorkplace(loc) {
+  if (!loc) return null;
+  const lat = Number(loc.latitude);
+  const lng = Number(loc.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return null;
+  return {
+    kind: "company",
+    label: loc.label || "Firma",
+    latitude: lat,
+    longitude: lng,
+    radius_m: Number(loc.radius_m) || 300,
+    has_coords: true,
+  };
+}
+
+/** Giriş için en az bir geçerli hedef var mı: görev yeri veya firma. */
+export function checkInHasGeoTarget({ workplace, location, companyLocation } = {}) {
+  return (
+    workplaceHasCoords(workplace) ||
+    workplaceHasCoords(location) ||
+    workplaceHasCoords(companyLocationAsWorkplace(companyLocation))
+  );
+}
+
+/** Mesaim kartı: konumlu giriş politikası (görev veya firma koordinatı + require_geo). */
+export function mesaimGeoInOn({ workplace, companyLocation, requireGeo } = {}) {
+  const has = workplaceHasCoords(workplace) || workplaceHasCoords(companyLocationAsWorkplace(companyLocation));
+  if (!has) return false;
   return requireGeo !== false;
 }
 
@@ -25,13 +51,17 @@ export function mesaimGeoInLabel(opts = {}) {
 /** Üst bar için kısa konum satırı (Mesaim header). */
 export function mesaimGeoHeaderLine(opts = {}) {
   const placeWp = opts.workplace || null;
-  const on = mesaimGeoInOn({ workplace: placeWp, requireGeo: opts.requireGeo });
+  const on = mesaimGeoInOn({
+    workplace: placeWp,
+    companyLocation: opts.companyLocation,
+    requireGeo: opts.requireGeo,
+  });
   const status = on ? "Giriş açık" : "Giriş kapalı";
   if (placeWp?.kind === "task") {
     const short = workplaceShort(placeWp) || placeWp.task_title || "Dış görev";
     return { title: "Mesaim", place: short, status, on };
   }
-  const radius = placeWp?.radius_m || opts.location?.radius_m;
+  const radius = placeWp?.radius_m || opts.location?.radius_m || Number(opts.companyLocation?.radius_m) || undefined;
   const place = radius ? `Firma · ${radius} m` : "Firma konumu";
   return { title: "Mesaim", place, status, on };
 }
@@ -44,9 +74,9 @@ export function workplaceHint(w, requireGeo = true) {
   if (w.kind === "task") {
     if (w.has_coords) {
       const radius = w.radius_m || 300;
-      return `Dış görev: ${place}${daysPart} · görev yeri iş yeri${requireGeo ? ` · girişte ${radius} m` : ""}`;
+      return `Dış görev: ${place}${daysPart} · giriş firma veya görev yeri${requireGeo ? ` · ${radius} m` : ""}`;
     }
-    return `Dış görev: ${place}${daysPart} · görev yeri iş yeri (konum yok — konumsuz giriş)`;
+    return `Dış görev: ${place}${daysPart} · görev konumu yok — firma yerinde giriş mümkün`;
   }
   const radius = w.radius_m ? ` · ${w.radius_m} m` : "";
   return `Firma konumu${radius}${requireGeo ? " (yalnızca girişte)" : ""}`;
