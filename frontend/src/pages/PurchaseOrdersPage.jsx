@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ShoppingCart, RefreshCw, Trash2, FileText, Send, PackageCheck, X } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 
@@ -89,6 +90,9 @@ export default function PurchaseOrdersPage() {
   };
 
   const visible = rows.filter((r) => !filter || r.order_status === filter);
+  const { visible: pagedOrders, hasMore: poHasMore, sentinelRef: poSentinelRef } = useInfiniteRows(visible, {
+    resetKey: filter || "all",
+  });
 
   return (
     <div className="space-y-6" data-testid="purchase-orders-page">
@@ -133,8 +137,8 @@ export default function PurchaseOrdersPage() {
       ) : (
         <>
           <div className="md:hidden space-y-3">
-            {visible.map((o) => (
-              <div key={o.id} className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs" data-testid={`po-card-${o.order_number}`}>
+            {pagedOrders.map((o) => (
+              <div key={o.id} className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs [content-visibility:auto] [contain-intrinsic-size:auto_120px]" data-testid={`po-card-${o.order_number}`}>
                 <div className="flex justify-between gap-2 items-start">
                   <div>
                     <div className="font-mono font-bold">{o.order_number}</div>
@@ -161,8 +165,8 @@ export default function PurchaseOrdersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {visible.map((o) => (
-                  <tr key={o.id} data-testid={`po-row-${o.order_number}`}>
+                {pagedOrders.map((o) => (
+                  <tr key={o.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_56px]" data-testid={`po-row-${o.order_number}`}>
                     <td className="px-4 py-2">
                       <div className="font-mono font-bold">{o.order_number}</div>
                       <div className="text-slate-400">{(o.order_date || "").slice(0, 10)}</div>
@@ -183,6 +187,11 @@ export default function PurchaseOrdersPage() {
               </tbody>
             </table>
           </div>
+          {poHasMore && (
+            <div ref={poSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="po-load-more">
+              Daha fazla sipariş yükleniyor…
+            </div>
+          )}
         </>
       )}
     </div>

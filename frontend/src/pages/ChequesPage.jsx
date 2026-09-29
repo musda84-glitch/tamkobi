@@ -13,6 +13,7 @@ import { fmtDate, formatTrAmount } from "../utils/money";
 import { compressImageFile } from "../utils/compressImage";
 import { applyChequeScan, CHEQUE_SCAN_IDLE_HINT, chequeScanHint } from "../utils/chequeScan";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -289,6 +290,9 @@ export default function ChequesPage() {
 
   const s = data.summary;
   const rows = tab === "overdue" ? data.cheques.filter((r) => r.overdue) : data.cheques;
+  const { visible: pagedCheques, hasMore: chequesHasMore, sentinelRef: chequesSentinelRef } = useInfiniteRows(rows, {
+    resetKey: `${tab}|${q}`,
+  });
   const COLS = [
     { key: "number", label: "No" },
     { label: "Tür", value: (r) => `${DIR[r.direction] || r.direction} ${INST[r.instrument] || r.instrument}` },
@@ -349,8 +353,8 @@ export default function ChequesPage() {
               {rows.length === 0 && (
                 <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400" data-testid="cheques-empty">Kayıt yok. “Yeni Giriş” ile alınan veya verilen çek/senet ekleyin.</td></tr>
               )}
-              {rows.map((r) => (
-                <tr key={r.id} className={r.overdue ? "bg-rose-50/40" : ""} data-testid={`cheque-row-${r.id}`}>
+              {pagedCheques.map((r) => (
+                <tr key={r.id} className={`${r.overdue ? "bg-rose-50/40" : ""} [content-visibility:auto] [contain-intrinsic-size:auto_44px]`} data-testid={`cheque-row-${r.id}`}>
                   <td className="px-3 py-2 font-mono font-semibold text-slate-800">{r.number}</td>
                   <td className="px-3 py-2">
                     <span className={`inline-flex items-center gap-1 ${r.direction === "received" ? "text-emerald-700" : "text-rose-700"}`}>
@@ -390,6 +394,11 @@ export default function ChequesPage() {
               ))}
             </tbody>
           </table>
+          {chequesHasMore && (
+            <div ref={chequesSentinelRef} className="px-3 py-3 text-center text-[11px] text-slate-400 border-t border-slate-100" data-testid="cheques-load-more">
+              Daha fazla çek/senet yükleniyor…
+            </div>
+          )}
         </div>
       </div>
       <p className="text-[11px] text-slate-400 flex items-center gap-1"><Landmark className="w-3 h-3" /> Tahsil alınan çekleri kasaya/bankaya yatırır; ödeme verilen çekin bedelini hesaptan düşer. Ciro, çeki başka bir cariye (tedarikçi ödemesi) devreder.</p>

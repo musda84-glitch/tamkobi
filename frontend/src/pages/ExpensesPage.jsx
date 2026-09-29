@@ -15,6 +15,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseScanHint } from "../utils/expenseScan";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
@@ -199,6 +200,9 @@ export default function ExpensesPage() {
   const refreshLoadSilent = useCallback(() => load({ silent: true }), [load]);
   useDataRefresh(refreshLoadSilent, { companyId, scopes: ["cash", "expenses", "contacts"] });
   const rows = useMemo(() => { const c = { date_desc: (a, b) => b.date.localeCompare(a.date), date_asc: (a, b) => a.date.localeCompare(b.date), amount_desc: (a, b) => b.total - a.total, amount_asc: (a, b) => a.total - b.total, category: (a, b) => a.category.localeCompare(b.category, "tr") }[filters.sort]; return [...data.expenses].sort(c); }, [data.expenses, filters.sort]);
+  const { visible: pagedRows, hasMore: expensesHasMore, sentinelRef: expensesSentinelRef } = useInfiniteRows(rows, {
+    resetKey: `${filters.q}|${filters.category}|${filters.status}|${filters.from}|${filters.to}|${filters.sort}`,
+  });
   const s = data.summary;
   const del = async (x) => { if (!window.confirm(`${x.expense_number} silinsin mi?`)) return; try { const r = await axios.delete(`${API_URL}/expenses/${x.id}`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
   const pay = async () => { try { await axios.post(`${API_URL}/expenses/${payFor.id}/pay`, { ...splitPaymentTarget(payAcc) }); toast.success("Masraf ödendi, kasa/banka hareketi oluşturuldu."); setPayFor(null); await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
@@ -239,8 +243,8 @@ export default function ExpensesPage() {
           <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold"><tr><th className="px-4 py-3">Masraf No / Tarih</th><th className="px-4 py-3">Kategori</th><th className="px-4 py-3">Açıklama</th><th className="px-4 py-3">Tedarikçi / Personel</th><th className="px-4 py-3 text-right">Net / KDV</th><th className="px-4 py-3 text-right">Toplam</th><th className="px-4 py-3">Ödeme</th><th className="px-4 py-3 text-center">İşlemler</th></tr></thead>
           <tbody className="divide-y divide-slate-100">
             {rows.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="exp-empty">Bu filtrede masraf yok. "Yeni Masraf" ile ekleyin.</td></tr>}
-            {rows.map((x) => (
-              <tr key={x.id} className="hover:bg-slate-50/70" data-testid={`exp-row-${x.expense_number}`}>
+            {pagedRows.map((x) => (
+              <tr key={x.id} className="hover:bg-slate-50/70 [content-visibility:auto] [contain-intrinsic-size:auto_48px]" data-testid={`exp-row-${x.expense_number}`}>
                 <td className="px-4 py-2.5"><div className="font-mono font-semibold text-slate-900">{x.expense_number}</div><div className="text-slate-400">{x.date}{x.is_recurring && <span className="ml-1 text-[9px] bg-violet-100 text-violet-700 px-1 rounded" title={`Sonraki: ${x.next_date}`}>AYLIK</span>}</div></td>
                 <td className="px-4 py-2.5"><span className="bg-slate-100 px-2 py-0.5 rounded-md font-semibold">{x.category}</span></td>
                 <td className="px-4 py-2.5 text-slate-800 max-w-[260px]"><div className="truncate" title={x.description}>{x.description}</div>{x.document_no && <div className="text-[10px] text-slate-400">Belge: {x.document_no}</div>}</td>
@@ -267,6 +271,11 @@ export default function ExpensesPage() {
             ))}
           </tbody>
         </table>
+        {expensesHasMore && (
+          <div ref={expensesSentinelRef} className="px-4 py-3 text-center text-[11px] text-slate-400 border-t border-slate-100" data-testid="expenses-load-more">
+            Daha fazla masraf yükleniyor…
+          </div>
+        )}
       </div>
       {modal && <ExpenseModal companyId={companyId} initial={modal} categories={categories} accounts={accounts} contacts={contacts} employees={employees} projects={projects} onClose={() => setModal(null)} onSaved={load} />}
       {payFor && (
