@@ -1,5 +1,7 @@
 from work_parks import (
     append_office_task_photo,
+    assigned_task_trash_doc,
+    assigned_task_trash_label,
     clear_duty_if_task,
     find_office_task,
     find_office_task_type,
@@ -15,6 +17,8 @@ from work_parks import (
     office_assignment_view,
     office_task_row,
     office_task_types_for_company,
+    remove_office_task,
+    remove_project_task,
     station_names_from_parks,
     zone_names_from_list,
 )
@@ -89,6 +93,37 @@ def test_mark_office_task_done():
     missing, none = mark_office_task_done(tasks, "other")
     assert none is None
     assert missing[0]["id"] == "ot_kesim"
+
+
+def test_remove_done_task_and_trash_doc():
+    emp = {"_id": "e1", "full_name": "Ali", "company_id": "c1"}
+    open_row = office_task_row(emp, {"id": "cnc", "name": "CNC OEMAK"}, "kesim yap", "ot_kesim")
+    done = {**open_row, "done": True, "status": "completed"}
+    other = {**open_row, "id": "ot_open", "done": False, "status": None}
+    kept, found = remove_office_task([done, other], "ot_kesim")
+    assert found["done"] is True
+    assert [t["id"] for t in kept] == ["ot_open"]
+    rows = [
+        {"id": "t1", "assignee_id": "e1", "title": "Delik", "done": True},
+        {"id": "t2", "assignee_id": "e1", "title": "Açık", "done": False},
+        {"id": "t1", "assignee_id": "e2", "title": "Başka", "done": True},
+    ]
+    proj_kept, proj_found = remove_project_task(rows, "t1", "e1")
+    assert proj_found["title"] == "Delik"
+    assert [(t["id"], t["assignee_id"]) for t in proj_kept] == [("t2", "e1"), ("t1", "e2")]
+    doc = assigned_task_trash_doc(emp, done, source="office")
+    assert doc["_id"] == "ot_kesim"
+    assert doc["source"] == "office"
+    assert doc["task"]["done"] is True
+    assert "Ali" in assigned_task_trash_label(emp, done)
+    proj_doc = assigned_task_trash_doc(
+        emp,
+        rows[0],
+        source="project",
+        project={"_id": "p1", "project_number": "PRJ-1", "name": "Villa", "company_id": "c1"},
+    )
+    assert proj_doc["project_id"] == "p1"
+    assert proj_doc["source"] == "project"
 
 
 def test_mark_project_task_done_and_clear_duty():

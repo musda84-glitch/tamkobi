@@ -20,7 +20,7 @@ import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
 import { employeePayActionTitle, isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
 import { workplaceHint, workplaceShort } from "../utils/workplace";
-import { dutyFromCurrent, pendingDutyPhotoCount } from "../utils/assignedDuty";
+import { archivedAssignedDuties, dutyFromCurrent, openAssignedDuties, pendingDutyPhotoCount } from "../utils/assignedDuty";
 import { AssignedDutyCard } from "./AssignedDutyCard";
 import { StaffMessagesPanel } from "./StaffMessagesPanel";
 import { backdropDismissProps } from "../utils/modalBackdrop";
@@ -185,6 +185,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const [termOk, setTermOk] = useState(false);
   const [termDate, setTermDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [busyTerm, setBusyTerm] = useState(false);
+  const [showArchivedDuties, setShowArchivedDuties] = useState(false);
+  const [trashDutiesBusy, setTrashDutiesBusy] = useState(false);
   useEscape(() => {
     if (quickPay) return;
     if (termOpen) { setTermOpen(false); setTermOk(false); return; }
@@ -385,7 +387,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                   <Stat label="İşten Ayrılma" value={formatTrDate(e.end_date)} sub={e.status === "terminated" ? "İşten çıkarıldı" : undefined} testid="emp-stat-end" />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-slate-700"><div><b>Telefon:</b> {e.phone || "-"}</div><div><b>E-posta:</b> {e.email || "-"}</div><div><b>Durum:</b> {empStatusLabel(e.status)}</div><div><b>Sistem kullanıcısı:</b> {card.user ? card.user.email : "Yok"}</div></div>
-                {card.workplace?.kind === "task" || (card.tasks || []).some((t) => !t.done) ? (
+                {card.workplace?.kind === "task" || (card.tasks || []).some((t) => !t.done) || archivedAssignedDuties(card.tasks).length > 0 ? (
                   <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-3 text-indigo-900 space-y-1.5" data-testid="emp-card-workplace">
                     <div className="font-bold">Görev / çalıştığı yer</div>
                     {card.workplace?.kind === "task" ? (
@@ -395,17 +397,34 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                       </>
                     ) : null}
                     {(() => {
+                      const openTasks = openAssignedDuties(card.tasks);
+                      const restDone = archivedAssignedDuties(card.tasks);
                       const currentDuty = dutyFromCurrent({
-                        tasks: card.tasks,
+                        tasks: openTasks,
                         current: card.workplace?.kind === "task"
                           ? { id: card.workplace.task_id, title: card.workplace.task_title, project: [card.workplace.project_number, card.workplace.project_name].filter(Boolean).join(" · ") }
-                          : (card.tasks || []).find((t) => !t.done) || null,
+                          : openTasks[0] || null,
                         workplace: card.workplace,
                       });
-                      const restOpen = (card.tasks || []).filter((t) => !t.done && (!currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)));
-                      const restDone = (card.tasks || []).filter((t) => t.done && (!currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title)));
-                      const rest = [...restOpen, ...restDone];
-                      if (!currentDuty && !rest.length && !pendingDutyPhotoCount(card.tasks)) return null;
+                      const currentOpen = currentDuty && !currentDuty.done ? currentDuty : null;
+                      const restOpen = openTasks.filter((t) => !currentOpen || (t.id || t.title) !== (currentOpen.id || currentOpen.title));
+                      if (!currentOpen && !restOpen.length && !restDone.length && !pendingDutyPhotoCount(card.tasks)) return null;
+                      const trashCompleted = async () => {
+                        if (!restDone.length || trashDutiesBusy) return;
+                        if (!window.confirm(`${restDone.length} tamamlanan görev çöp kutusuna taşınsın mı? 30 gün içinde Çöp Kutusu’ndan geri getirilebilir.`)) return;
+                        setTrashDutiesBusy(true);
+                        try {
+                          const r = await axios.post(`${API_URL}/personnel/employees/${id}/tasks/trash-completed`, {}, { withCredentials: true });
+                          toast.success(r.data?.message || "Tamamlananlar çöpe taşındı.");
+                          setShowArchivedDuties(false);
+                          await reload();
+                          onChanged?.();
+                        } catch (err) {
+                          toast.error(err.response?.data?.detail || "Çöpe taşınamadı.");
+                        } finally {
+                          setTrashDutiesBusy(false);
+                        }
+                      };
                       return (
                       <div className="space-y-2" data-testid="emp-card-tasks">
                         {pendingDutyPhotoCount(card.tasks) ? (
@@ -413,11 +432,11 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                             {pendingDutyPhotoCount(card.tasks)} iş fotoğrafı müşteri onayı bekliyor
                           </div>
                         ) : null}
-                        {currentDuty ? (
+                        {currentOpen ? (
                           <div data-testid="emp-card-current-duty">
                             <div className="text-[10px] font-bold uppercase tracking-wide text-indigo-600 mb-1">Şu anda yaptığı iş</div>
                             <AssignedDutyCard
-                              duty={currentDuty}
+                              duty={currentOpen}
                               reviewPhotos
                               onChanged={() => reload()}
                               testId="emp-card-current-card"
@@ -436,8 +455,34 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                         ))}
                         {restDone.length ? (
                           <div className="space-y-2" data-testid="emp-card-done-tasks">
-                            <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Yapılan görevler ({restDone.length})</div>
-                            {restDone.slice(0, 8).map((t, i) => (
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                                {showArchivedDuties ? `Arşiv · ${restDone.length} tamamlanan` : `Tamamlananlar arşivde (${restDone.length})`}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setShowArchivedDuties((v) => !v)}
+                                  className="text-[10px] font-bold text-emerald-700 hover:underline"
+                                  data-testid="emp-card-archive-toggle"
+                                >
+                                  {showArchivedDuties ? "Gizle" : `Arşiv (${restDone.length})`}
+                                </button>
+                                {showArchivedDuties ? (
+                                  <button
+                                    type="button"
+                                    onClick={trashCompleted}
+                                    disabled={trashDutiesBusy}
+                                    className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-600 hover:text-rose-800 disabled:opacity-60"
+                                    data-testid="emp-card-trash-done"
+                                  >
+                                    {trashDutiesBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                                    Çöpe taşı
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                            {showArchivedDuties ? restDone.slice(0, 8).map((t, i) => (
                               <AssignedDutyCard
                                 key={t.id || i}
                                 duty={t}
@@ -446,7 +491,11 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                                 reviewPhotos
                                 onChanged={() => reload()}
                               />
-                            ))}
+                            )) : (
+                              <div className="text-[11px] text-slate-500" data-testid="emp-card-done-hidden">
+                                Yapılan görevler gizli — Arşiv’den bakın, sonra çöp kutusuna taşıyın.
+                              </div>
+                            )}
                           </div>
                         ) : null}
                       </div>

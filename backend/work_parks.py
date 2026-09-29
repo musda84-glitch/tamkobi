@@ -224,6 +224,75 @@ def mark_office_task_done(tasks: Any, task_id: str) -> tuple[list, Optional[dict
     return out, found
 
 
+def remove_office_task(tasks: Any, task_id: str) -> tuple[list, Optional[dict]]:
+    """Tamamlanan iç görevi listeden çıkar (çöp kutusuna taşırken)."""
+    tid = str(task_id or "")
+    out: list = []
+    found: Optional[dict] = None
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        if tid and str(t.get("id") or "") == tid:
+            found = t
+            continue
+        out.append(t)
+    return out, found
+
+
+def remove_project_task(tasks: Any, task_id: str, emp_id: str) -> tuple[list, Optional[dict]]:
+    """Personelin tamamlanan proje görev satırını çıkar."""
+    tid = str(task_id or "")
+    eid = str(emp_id or "")
+    out: list = []
+    found: Optional[dict] = None
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        same = tid and str(t.get("id") or t.get("_id") or "") == tid
+        mine = not eid or str(t.get("assignee_id") or "") == eid
+        if same and mine:
+            found = t
+            continue
+        out.append(t)
+    return out, found
+
+
+def assigned_task_trash_label(emp: Optional[dict], task: Optional[dict]) -> str:
+    name = (emp or {}).get("full_name") or (emp or {}).get("name") or "Personel"
+    title = (task or {}).get("title") or (task or {}).get("task_type_name") or (task or {}).get("park_name") or "Görev"
+    return f"{name} · {title}"
+
+
+def assigned_task_trash_doc(
+    emp: dict,
+    task: dict,
+    *,
+    source: str,
+    project: Optional[dict] = None,
+) -> dict:
+    """Çöp kutusu belgesi — geri getirince personel/proje görevine yazılır."""
+    tid = str(task.get("id") or task.get("_id") or "") or f"at_{uuid.uuid4().hex[:10]}"
+    emp_id = emp.get("_id") or emp.get("id")
+    row = {k: v for k, v in (task or {}).items() if k != "_id"}
+    row["id"] = tid
+    doc: dict = {
+        "_id": tid,
+        "company_id": emp.get("company_id") or (project or {}).get("company_id"),
+        "employee_id": emp_id,
+        "employee_name": emp.get("full_name") or emp.get("name") or "",
+        "source": source if source in ("office", "project") else "office",
+        "title": row.get("title") or row.get("task_type_name") or row.get("park_name") or "Görev",
+        "task": row,
+        "done": True,
+        "status": row.get("status") or "completed",
+    }
+    if project:
+        doc["project_id"] = project.get("_id") or project.get("id")
+        doc["project_number"] = project.get("project_number")
+        doc["project_name"] = project.get("name")
+    return doc
+
+
 def preserve_other_assignees(previous: Any, incoming: Any) -> list:
     """Aynı iş ikinci kişiye verilince ilk personelin satırı durur; yeni kişiye kopya açılır."""
     prev_by_id: dict = {}

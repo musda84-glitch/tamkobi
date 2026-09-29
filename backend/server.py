@@ -15020,6 +15020,78 @@ async def complete_my_assigned_task(task_id: str, user: dict = Depends(get_curre
     raise HTTPException(status_code=404, detail="Görev bulunamadı.")
 
 
+@api_router.post("/personnel/employees/{emp_id}/tasks/trash-completed")
+async def trash_completed_employee_tasks(emp_id: str):
+    """Personel kartı: tamamlanan (arşiv) görevleri çöp kutusuna taşı — 30 gün geri alınabilir."""
+    import work_parks as wp
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    now = datetime.now(timezone.utc).isoformat()
+    company_id = emp.get("company_id")
+    trashed_ids: set = set()
+    count = 0
+
+    kept_office: list = []
+    for t in (emp.get("office_tasks") or []):
+        if not isinstance(t, dict):
+            continue
+        if wp.is_assignment_done(t):
+            doc = wp.assigned_task_trash_doc(emp, t, source="office")
+            await trash.stash(
+                "assigned_tasks",
+                doc,
+                "assigned_task",
+                wp.assigned_task_trash_label(emp, t),
+                note="Tamamlanan iç görev · personel kartı",
+            )
+            trashed_ids.add(str(t.get("id") or ""))
+            count += 1
+        else:
+            kept_office.append(t)
+
+    async for proj in db.projects.find(
+        {"company_id": company_id, "tasks.assignee_id": emp_id},
+        {"tasks": 1, "name": 1, "project_number": 1, "company_id": 1},
+    ):
+        kept_proj: list = []
+        changed = False
+        for t in (proj.get("tasks") or []):
+            if not isinstance(t, dict):
+                continue
+            mine = str(t.get("assignee_id") or "") == str(emp_id)
+            if mine and wp.is_assignment_done(t):
+                doc = wp.assigned_task_trash_doc(emp, t, source="project", project=proj)
+                await trash.stash(
+                    "assigned_tasks",
+                    doc,
+                    "assigned_task",
+                    wp.assigned_task_trash_label(emp, t),
+                    note=f"Tamamlanan proje görevi · {proj.get('project_number') or proj.get('name') or ''}".strip(),
+                )
+                trashed_ids.add(str(t.get("id") or t.get("_id") or ""))
+                count += 1
+                changed = True
+            else:
+                kept_proj.append(t)
+        if changed:
+            await db.projects.update_one(
+                {"_id": proj["_id"]},
+                {"$set": {"tasks": kept_proj, "updated_at": now}},
+            )
+
+    patch: Dict[str, Any] = {"office_tasks": kept_office, "updated_at": now}
+    duty = emp.get("active_duty")
+    if isinstance(duty, dict) and str(duty.get("task_id") or "") in trashed_ids:
+        patch["active_duty"] = None
+    await db.employees.update_one({"_id": emp_id}, {"$set": patch})
+    return {
+        "status": "success",
+        "count": count,
+        "message": f"{count} tamamlanan görev çöp kutusuna taşındı." if count else "Taşınacak tamamlanan görev yok.",
+    }
+
+
 async def _find_assigned_project(company_id: str, emp_id: str, task_id: str):
     tid = str(task_id or "")
     async for proj in db.projects.find(
@@ -16158,7 +16230,39 @@ async def _restore_invoice(doc, _related):
                 }},
             )
 
-for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("expense", _restore_expense), ("recipe", _restore_recipe), ("cheque", cheques.restore_cheque), ("invoice", _restore_invoice)):
+
+async def _restore_assigned_task(doc, _related):
+    """Personel görevini çöp kutusundan iç görev / proje görevine geri yaz."""
+    import work_parks as wp
+    task = dict(doc.get("task") or {})
+    tid = str(task.get("id") or doc.get("_id") or "")
+    if tid:
+        task["id"] = tid
+    emp_id = doc.get("employee_id")
+    source = doc.get("source") or "office"
+    now = datetime.now(timezone.utc).isoformat()
+    if source == "project":
+        proj_id = doc.get("project_id")
+        proj = await db.projects.find_one({"_id": proj_id}) if proj_id else None
+        if not proj:
+            raise HTTPException(status_code=400, detail="Proje bulunamadı; görev geri getirilemez.")
+        tasks = list(proj.get("tasks") or [])
+        if not any(str(t.get("id") or t.get("_id") or "") == tid for t in tasks if isinstance(t, dict)):
+            tasks.append(task)
+            await db.projects.update_one({"_id": proj_id}, {"$set": {"tasks": tasks, "updated_at": now}})
+    else:
+        emp = await db.employees.find_one({"_id": emp_id}) if emp_id else None
+        if not emp:
+            raise HTTPException(status_code=400, detail="Personel bulunamadı; görev geri getirilemez.")
+        office = list(emp.get("office_tasks") or [])
+        if not wp.find_office_task(office, tid):
+            office.append(task)
+            await db.employees.update_one({"_id": emp_id}, {"$set": {"office_tasks": office, "updated_at": now}})
+    # Geçici koleksiyon satırını temizle — asıl yer personel/proje
+    await db.assigned_tasks.delete_one({"_id": doc.get("_id")})
+
+
+for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("expense", _restore_expense), ("recipe", _restore_recipe), ("cheque", cheques.restore_cheque), ("invoice", _restore_invoice), ("assigned_task", _restore_assigned_task)):
     trash.register_hook(_t, _fn)
 
 app.include_router(api_router)

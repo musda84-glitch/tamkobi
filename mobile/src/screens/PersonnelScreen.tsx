@@ -170,7 +170,7 @@ import { fmtMoney, idOf, todayIso } from "../utils/money";
 import { findOfficeTaskType, officeTaskPayload, officeTaskTypeSelectGroups, validateOfficeTaskAssign, type OfficeTaskType } from "../utils/workParks";
 import { fmtDmy } from "../utils/calendar";
 import { fieldWorkplaceFromProjects, workplaceHint, workplaceShort, type Workplace } from "../utils/workplace";
-import { dutyFromCurrent, pendingDutyPhotoCount, type AssignedDuty } from "../utils/assignedDuty";
+import { archivedAssignedDuties, dutyFromCurrent, openAssignedDuties, pendingDutyPhotoCount, type AssignedDuty } from "../utils/assignedDuty";
 
 type Tab = "payroll" | "attendance" | "leaves" | "extras";
 
@@ -378,6 +378,8 @@ export function PersonnelScreen() {
   const [msgBody, setMsgBody] = useState("");
   const [msgBusy, setMsgBusy] = useState(false);
   const [dutiesEmp, setDutiesEmp] = useState<Employee | null>(null);
+  const [showArchivedDuties, setShowArchivedDuties] = useState(false);
+  const [trashDutiesBusy, setTrashDutiesBusy] = useState(false);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -2506,17 +2508,20 @@ export function PersonnelScreen() {
         visible={!!dutiesEmp}
         title="Atanan görevler"
         subtitle={dutiesEmp ? dutiesEmp.full_name : undefined}
-        onClose={() => setDutiesEmp(null)}
+        onClose={() => { setDutiesEmp(null); setShowArchivedDuties(false); }}
         testID="emp-duties-sheet"
       >
         {dutiesEmp ? (() => {
           const board = employeeDutyBoard(dutiesEmp, cards[idOf(dutiesEmp)]);
           const dutyRows = (cards[idOf(dutiesEmp)]?.tasks || []) as AssignedDuty[];
+          const openRows = openAssignedDuties(dutyRows);
+          const doneRows = archivedAssignedDuties(dutyRows);
           const currentDuty = dutyFromCurrent({
-            tasks: dutyRows,
+            tasks: openRows,
             current: board.current,
             workplace: dutiesEmp.workplace || cards[idOf(dutiesEmp)]?.workplace,
           });
+          const currentOpen = currentDuty && !currentDuty.done ? currentDuty : null;
           const pendingPhotos = pendingDutyPhotoCount(dutyRows);
           const patchDuty = (next?: AssignedDuty) => {
             if (!next?.id) return;
@@ -2532,6 +2537,43 @@ export function PersonnelScreen() {
               };
             });
           };
+          const trashCompleted = () => {
+            if (!doneRows.length || trashDutiesBusy || !client) return;
+            confirmAction(
+              "Çöpe taşı",
+              `${doneRows.length} tamamlanan görev çöp kutusuna taşınsın mı? 30 gün içinde geri getirilebilir.`,
+              () => {
+                void (async () => {
+                  setTrashDutiesBusy(true);
+                  try {
+                    await post(
+                      client,
+                      `/personnel/employees/${idOf(dutiesEmp)}/tasks/trash-completed`,
+                      {},
+                    );
+                    setShowArchivedDuties(false);
+                    setCards((prev) => {
+                      const eid = idOf(dutiesEmp);
+                      const card = prev[eid] || {};
+                      return {
+                        ...prev,
+                        [eid]: {
+                          ...card,
+                          tasks: openAssignedDuties(card.tasks || []),
+                        },
+                      };
+                    });
+                    await load();
+                  } catch (err) {
+                    setError(apiErrorMessage(err, "Çöpe taşınamadı."));
+                  } finally {
+                    setTrashDutiesBusy(false);
+                  }
+                })();
+              },
+              "Çöpe taşı",
+            );
+          };
           return (
             <View testID={`emp-duties-board-${idOf(dutiesEmp)}`} style={{ gap: 10 }}>
               <View
@@ -2539,18 +2581,18 @@ export function PersonnelScreen() {
                 style={{
                   padding: 12,
                   borderRadius: 12,
-                  backgroundColor: board.current ? "#EEF2FF" : colors.slate50,
+                  backgroundColor: currentOpen ? "#EEF2FF" : colors.slate50,
                   borderWidth: 1,
-                  borderColor: board.current ? "#C7D2FE" : colors.border,
+                  borderColor: currentOpen ? "#C7D2FE" : colors.border,
                   gap: 4,
                 }}
               >
                 <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 12 }}>Şu anda yaptığı iş</Text>
-                {currentDuty ? (
+                {currentOpen ? (
                   <>
                     {board.currentHint ? <Muted testID="emp-duties-current-hint">{board.currentHint}</Muted> : null}
                     <AssignedDutyCard
-                      duty={currentDuty}
+                      duty={currentOpen}
                       reviewPhotos
                       onChanged={patchDuty}
                       testID="emp-duties-current-card"
@@ -2563,9 +2605,9 @@ export function PersonnelScreen() {
                   <Muted testID="emp-duties-photo-pending">{pendingPhotos} iş fotoğrafı müşteri onayı bekliyor</Muted>
                 ) : null}
               </View>
-              {dutyRows.filter((t) => !t.done && (!currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title))).length ? (
+              {openRows.filter((t) => !currentOpen || (t.id || t.title) !== (currentOpen.id || currentOpen.title)).length ? (
                 <View testID="emp-duties-cards" style={{ gap: 8 }}>
-                  {dutyRows.filter((t) => !t.done && (!currentDuty || (t.id || t.title) !== (currentDuty.id || currentDuty.title))).map((t, i) => (
+                  {openRows.filter((t) => !currentOpen || (t.id || t.title) !== (currentOpen.id || currentOpen.title)).map((t, i) => (
                     <AssignedDutyCard
                       key={t.id || String(i)}
                       duty={t}
@@ -2576,27 +2618,29 @@ export function PersonnelScreen() {
                     />
                   ))}
                 </View>
-              ) : board.open.filter((t) => !t.current).length ? (
-                <View testID="emp-duties-open" style={{ gap: 8 }}>
-                  <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Diğer açık görevler ({board.open.filter((t) => !t.current).length})</Text>
-                  {board.open.filter((t) => !t.current).map((t) => (
-                    <View
-                      key={t.id || t.title}
-                      testID={`emp-duties-open-${t.id || t.title}`}
-                      style={{ padding: 10, borderRadius: 12, backgroundColor: colors.slate50, borderWidth: 1, borderColor: colors.border, gap: 2 }}
-                    >
-                      <Text style={{ fontWeight: "700", color: colors.text }}>{t.title}</Text>
-                      {t.lines.map((line) => (
-                        <Muted key={line}>{line}</Muted>
-                      ))}
-                    </View>
-                  ))}
-                </View>
               ) : null}
-              {board.done.length ? (
+              {doneRows.length ? (
                 <View testID="emp-duties-done" style={{ gap: 8 }}>
-                  <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>Yapılan görevler ({board.done.length})</Text>
-                  {dutyRows.filter((t) => t.done).map((t, i) => (
+                  <Row style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                    <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }}>
+                      {showArchivedDuties ? `Arşiv · ${doneRows.length} tamamlanan` : `Tamamlananlar arşivde (${doneRows.length})`}
+                    </Text>
+                    <Row style={{ gap: 8, alignItems: "center" }}>
+                      <Pressable onPress={() => setShowArchivedDuties((v) => !v)} testID="emp-duties-archive-toggle">
+                        <Text style={{ fontWeight: "700", color: "#059669", fontSize: 12 }}>
+                          {showArchivedDuties ? "Gizle" : `Arşiv (${doneRows.length})`}
+                        </Text>
+                      </Pressable>
+                      {showArchivedDuties ? (
+                        <Pressable onPress={trashCompleted} disabled={trashDutiesBusy} testID="emp-duties-trash-done">
+                          <Text style={{ fontWeight: "700", color: colors.danger, fontSize: 12 }}>
+                            {trashDutiesBusy ? "Taşınıyor…" : "Çöpe taşı"}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </Row>
+                  </Row>
+                  {showArchivedDuties ? doneRows.map((t, i) => (
                     <AssignedDutyCard
                       key={t.id || String(i)}
                       duty={t}
@@ -2605,7 +2649,9 @@ export function PersonnelScreen() {
                       reviewPhotos
                       onChanged={patchDuty}
                     />
-                  ))}
+                  )) : (
+                    <Muted testID="emp-duties-done-hidden">Yapılan görevler gizli — Arşiv’den bakın, sonra çöp kutusuna taşıyın.</Muted>
+                  )}
                 </View>
               ) : null}
               {canEdit ? (
@@ -2616,6 +2662,7 @@ export function PersonnelScreen() {
                   onPress={() => {
                     const emp = dutiesEmp;
                     setDutiesEmp(null);
+                    setShowArchivedDuties(false);
                     if (emp) openTaskAssign(emp);
                   }}
                 />
