@@ -6,6 +6,8 @@ def test_feature_keys_include_account_and_export():
     keys = {k for k, _, _ in rbac.FEATURES}
     assert "account_companies" in keys
     assert "export_personal_data" in keys
+    assert "sevk_open_order" in keys
+    assert "sevk_draft_invoice" in keys
 
 
 def test_personel_defaults_hide_companies_and_export():

@@ -28,11 +28,14 @@ import {
 } from "../utils/orderPick";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import { printPickProductLabels } from "../utils/pickLabelPrint";
+import { canSevkDraftInvoice, canSevkOpenOrder } from "../utils/permissions";
 import { ProgressBar } from "./SevkScreen";
 
 export function SevkPickScreen() {
-  const { client, can, activeCompany } = useAuth();
+  const { client, can, user, activeCompany } = useAuth();
   const canEdit = can("/sevk", "edit");
+  const showOpenOrder = canSevkOpenOrder(user);
+  const showDraftInvoice = canSevkDraftInvoice(user);
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const [session, setSession] = useState<PickSession | null>(null);
   const [code, setCode] = useState("");
@@ -333,7 +336,7 @@ export function SevkPickScreen() {
       ) : null}
       {!awaitDeliver && !shipReady && items.length ? <Muted>Tam sevk için tüm kalemler okutulmalı; eksik varsa kısmi teslim kullanın.</Muted> : null}
       {awaitDeliver ? <Muted>Sipariş sevk edildi. Teslimatı onaylamak için Teslim edildi’ye basın.</Muted> : null}
-      {session?.draft_invoice_number ? (
+      {showDraftInvoice && session?.draft_invoice_number ? (
         <PrimaryButton
           title={`Taslak fatura ${session.draft_invoice_number}`}
           color={colors.secondary}
@@ -341,7 +344,7 @@ export function SevkPickScreen() {
           onPress={() => go("Invoices")}
         />
       ) : null}
-      {session?.order_id ? (
+      {showOpenOrder && session?.order_id ? (
         <PrimaryButton title="Siparişi aç" color={colors.secondary} testID="sevk-open-order" onPress={() => go("OrderDetail", { id: session.order_id || idOf(session) })} />
       ) : null}
 

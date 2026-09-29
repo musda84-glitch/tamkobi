@@ -105,6 +105,16 @@ export function canOpenStockCard(user: SessionUser): boolean {
   return can(user, "/stock", "edit");
 }
 
+/** Sevk: Siparişi aç — özellik + Siparişler modül yetkisi. */
+export function canSevkOpenOrder(user: SessionUser): boolean {
+  return feature(user, "sevk_open_order") && can(user, "/orders");
+}
+
+/** Sevk: Taslak fatura — özellik + Faturalar modül yetkisi. */
+export function canSevkDraftInvoice(user: SessionUser): boolean {
+  return feature(user, "sevk_draft_invoice") && can(user, "/invoices");
+}
+
 /** Daha fazla listesi: ayarlar/bildirim herkese; Personel & Bordro yalnız /personnel yetkisinde. */
 export function isMoreLinkVisible(link: { path: string }, user: SessionUser, license: License): boolean {
   if (link.path === "/" || link.path === "/settings") return true;
