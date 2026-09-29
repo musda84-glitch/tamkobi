@@ -11,6 +11,7 @@ export type ActionTile = {
   icon: keyof typeof Ionicons.glyphMap;
   tone?: QuickTone;
   onPress: () => void;
+  onLongPress?: () => void;
   busy?: boolean;
   disabled?: boolean;
   badge?: string;
@@ -40,6 +41,8 @@ export function ActionTiles({
             key={item.key}
             testID={item.testID}
             onPress={item.onPress}
+            onLongPress={item.onLongPress}
+            delayLongPress={420}
             disabled={item.disabled || item.busy}
             style={({ pressed }) => ({
               width,
