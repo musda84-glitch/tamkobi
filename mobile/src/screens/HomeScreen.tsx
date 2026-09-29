@@ -16,16 +16,20 @@ import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow, visibleHomeTasks } from "../utils/dashboard";
 import { requestConfirm } from "../utils/confirmDialog";
 import {
+  HOME_QUICK_EXTRA_KEY,
   HOME_QUICK_HIDDEN_KEY,
-  filterHiddenQuickTiles,
+  filterHomeQuickTiles,
   hideQuickTile,
+  parseExtraTileIds,
   parseHiddenTileIds,
+  removeExtraTile,
+  serializeExtraTileIds,
   serializeHiddenTileIds,
 } from "../utils/homeQuickHidden";
 import { fmtMoney, idOf } from "../utils/money";
 import { latestNotifications, notificationDeletePath, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
 import { hasSelfPersonnelRecord, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile } from "../utils/permissions";
-import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles } from "../utils/quickMenu";
+import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
 
 export function HomeScreen() {
   const { client, companyId, user, license } = useAuth();
@@ -37,6 +41,7 @@ export function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+  const [extraIds, setExtraIds] = useState<string[]>([]);
 
   const showFinance = showHomeFinanceSummary(user);
   const showRefresh = showHomeRefreshTile(user);
@@ -47,24 +52,32 @@ export function HomeScreen() {
     () => splitNotificationsTile(visibleQuickTiles(user, license)),
     [user, license]
   );
-  const visibleTiles = useMemo(() => filterHiddenQuickTiles(tiles, hiddenIds), [tiles, hiddenIds]);
+  const visibleTiles = useMemo(() => filterHomeQuickTiles(tiles, hiddenIds, extraIds), [tiles, hiddenIds, extraIds]);
 
   const badges = useMemo(() => tileBadges(notes, { ...live, my_tasks: openTasks }), [notes, live, openTasks]);
 
-  const persistHidden = useCallback(async (next: string[]) => {
-    setHiddenIds(next);
-    await AsyncStorage.setItem(HOME_QUICK_HIDDEN_KEY, serializeHiddenTileIds(next)).catch(() => null);
+  const persistHomePrefs = useCallback(async (hidden: string[], extras: string[]) => {
+    setHiddenIds(hidden);
+    setExtraIds(extras);
+    await Promise.all([
+      AsyncStorage.setItem(HOME_QUICK_HIDDEN_KEY, serializeHiddenTileIds(hidden)).catch(() => null),
+      AsyncStorage.setItem(HOME_QUICK_EXTRA_KEY, serializeExtraTileIds(extras)).catch(() => null),
+    ]);
   }, []);
 
-  const askHideTile = useCallback(async (tileId: string, label: string) => {
+  const askHideTile = useCallback(async (tile: QuickTile) => {
     const ok = await requestConfirm(
       "Karo gizlensin mi?",
-      `"${label}" ana ekrandan kaldırılsın. Daha menüsünden tekrar ekleyebilirsiniz.`,
+      `"${tile.label}" ana ekrandan kaldırılsın. Daha menüsünden tekrar ekleyebilirsiniz.`,
       "Gizle",
     );
     if (!ok) return;
-    await persistHidden(hideQuickTile(hiddenIds, tileId));
-  }, [hiddenIds, persistHidden]);
+    if (tile.optIn) {
+      await persistHomePrefs(hiddenIds, removeExtraTile(extraIds, tile.id));
+    } else {
+      await persistHomePrefs(hideQuickTile(hiddenIds, tile.id), extraIds);
+    }
+  }, [extraIds, hiddenIds, persistHomePrefs]);
 
   const quickItems: ActionTile[] = useMemo(
     () => visibleTiles.map((tile) => ({
@@ -75,7 +88,7 @@ export function HomeScreen() {
       badge: badges[tile.id],
       testID: `home-quick-${tile.id}`,
       onPress: () => goHref(tile.href),
-      onLongPress: () => { void askHideTile(tile.id, tile.label); },
+      onLongPress: () => { void askHideTile(tile); },
     })),
     [visibleTiles, badges, askHideTile]
   );
@@ -114,9 +127,13 @@ export function HomeScreen() {
   }, [client, companyId, refreshBadges, showFinance, user]);
 
   useFocusEffect(useCallback(() => {
-    AsyncStorage.getItem(HOME_QUICK_HIDDEN_KEY)
-      .then((raw) => setHiddenIds(parseHiddenTileIds(raw)))
-      .catch(() => setHiddenIds([]));
+    Promise.all([
+      AsyncStorage.getItem(HOME_QUICK_HIDDEN_KEY).catch(() => null),
+      AsyncStorage.getItem(HOME_QUICK_EXTRA_KEY).catch(() => null),
+    ]).then(([hiddenRaw, extraRaw]) => {
+      setHiddenIds(parseHiddenTileIds(hiddenRaw));
+      setExtraIds(parseExtraTileIds(extraRaw));
+    });
     load();
   }, [load]));
 

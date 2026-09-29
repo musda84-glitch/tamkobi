@@ -17,11 +17,14 @@ export type QuickTile = {
   needsEdit?: boolean;
   /** Personel kartı bağlı kullanıcılara özel (atanan görevler). */
   self?: boolean;
+  /** Varsayılan ana ekranda yok; Daha → Ekle ile eklenir. */
+  optIn?: boolean;
 };
 
 /**
  * Web hızlı menüdeki işlemler + mevcut mobil modüller.
- * Sekme çubuğundaki (Saha, Mesaim, Personelim) ve hesap menüsündeki (Ayarlar) girişler burada tekrarlanmaz.
+ * Sekme çubuğundaki (Saha, Mesaim, Personelim) girişler burada tekrarlanmaz.
+ * optIn karolar varsayılan ana ekranda yok; Daha menüsünden eklenir.
  */
 export const QUICK_TILES: QuickTile[] = [
   { id: "invoices", label: "Faturalar", path: "/invoices", href: "/invoices", icon: "document-text", tone: "emerald" },
@@ -40,8 +43,12 @@ export const QUICK_TILES: QuickTile[] = [
   { id: "sevk", label: "Sipariş Hazırla", path: "/sevk", href: "/sevk", icon: "cube", tone: "teal" },
   { id: "vehicles", label: "Araçlarım", path: "/vehicles", href: "/vehicles", icon: "car", tone: "slate" },
   { id: "atolye", label: "Atölye Ekranı", path: "/atolye", href: "/atolye", icon: "build", tone: "orange" },
+  { id: "sayim", label: "Stok Sayımı", path: "/sayim", href: "/sayim", icon: "clipboard", tone: "amber", optIn: true },
+  { id: "production", label: "Üretim & Reçete", path: "/production", href: "/production", icon: "git-network", tone: "violet", optIn: true },
+  { id: "installments", label: "Taksitler", path: "/installments", href: "/installments", icon: "calendar", tone: "sky", optIn: true },
   { id: "my_tasks", label: "Görevlerim", path: "/personelim", href: "/personelim?tab=gorevler", icon: "checkbox", tone: "indigo", self: true },
   { id: "personnel", label: "Personel", path: "/personnel", href: "/personnel", icon: "people-circle", tone: "violet" },
+  { id: "settings", label: "Ayarlar", path: "/settings", href: "/settings", icon: "settings", tone: "slate", always: true, optIn: true },
   { id: "notifications", label: "Bildirimler", path: "/", href: "/notifications", icon: "notifications", tone: "rose", always: true },
 ];
 
