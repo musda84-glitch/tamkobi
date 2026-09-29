@@ -3,6 +3,7 @@ import {
   canShip,
   lineRemaining,
   parsePickedQtyDraft,
+  pickLineNote,
   pickPercent,
   pickStatusTone,
   pickStatusTr,
@@ -21,6 +22,13 @@ describe("orderPick", () => {
     expect(pickStatusTone("shipped")).toBe("green");
     expect(pickStatusTone("partial")).toBe("amber");
     expect(pickStatusTone("idle")).toBe("slate");
+  });
+
+  it("reads sipariş stok notu aliases like web pick lines", () => {
+    expect(pickLineNote({ note: "  330x480 mm  " })).toBe("330x480 mm");
+    expect(pickLineNote({ line_note: "panel" })).toBe("panel");
+    expect(pickLineNote({ stock_note: "kesim" })).toBe("kesim");
+    expect(pickLineNote({})).toBe("");
   });
 
   it("turns progress into a percent and summary", () => {
