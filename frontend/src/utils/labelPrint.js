@@ -98,7 +98,10 @@ export function buildLabelPrintDocument({ html, tpl, page, baseHref }) {
 html,body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000}
 .grid{display:grid;grid-template-columns:repeat(${cols},${w}mm);gap:${gap}mm}
 .lbl{width:${w}mm;height:${h}mm;position:relative;overflow:hidden;${isA4 ? "" : "page-break-after:always;"}break-inside:avoid;background:#fff}
-svg{display:block}
+svg{display:block;overflow:visible}
 img{-webkit-print-color-adjust:exact;print-color-adjust:exact;image-rendering:crisp-edges}
+[data-label-box],[data-label-line]{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+[data-label-box] rect{stroke:#000!important;fill:none!important}
+[data-label-line]{background:#000!important}
 </style></head><body><div class="grid">${body}</div></body></html>`;
 }

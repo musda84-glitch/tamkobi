@@ -12,6 +12,7 @@ import { productLabelImageUrl } from "../utils/productImages";
 import { LABEL_DESIGN_FIELDS, LABEL_TAG_PALETTE, labelFieldValue } from "../utils/labelDesignFields";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { buildLabelPrintDocument, embedLabelImages } from "../utils/labelPrint";
+import { LABEL_BOX_DEFAULT_STROKE_MM, labelLineThicknessMm, labelStrokePx } from "../utils/labelBoxStroke";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
@@ -91,8 +92,52 @@ const printLabelJobs = async (tpl, jobs, page, sourceId) => {
 
 const valueOf = (el, p, company) => labelFieldValue(el, p, company);
 
+/** Termal: CSS border yerine SVG stroke (içeride, min kalınlık). */
+const LabelBox = ({ el, scale }) => {
+  const w = Math.max(1, el.w * PX * scale);
+  const h = Math.max(1, el.h * PX * scale);
+  const sw = labelStrokePx(el.border ?? LABEL_BOX_DEFAULT_STROKE_MM, scale, PX);
+  const maxR = Math.max(0, Math.min(w, h) / 2 - sw / 2);
+  const rx = Math.min(Math.max(0, (el.radius || 0) * PX * scale), maxR);
+  return (
+    <svg
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      style={{ display: "block", width: "100%", height: "100%", overflow: "visible" }}
+      data-label-box="1"
+      aria-hidden="true"
+    >
+      <rect
+        x={sw / 2}
+        y={sw / 2}
+        width={Math.max(0, w - sw)}
+        height={Math.max(0, h - sw)}
+        fill="none"
+        stroke="#000000"
+        strokeWidth={sw}
+        rx={rx}
+        ry={rx}
+        shapeRendering={rx > 0 ? "geometricPrecision" : "crispEdges"}
+      />
+    </svg>
+  );
+};
+
 const Element = ({ el, p, company, scale, selected, onSelect, onMove }) => {
-  const st = { position: "absolute", left: el.x * PX * scale, top: el.y * PX * scale, width: el.w * PX * scale, height: el.h * PX * scale, transform: el.rotate ? `rotate(${el.rotate}deg)` : undefined, outline: selected ? "1.5px solid #6366f1" : undefined, cursor: "move", overflow: "hidden", boxSizing: "border-box" };
+  const isStroke = el.type === "box" || el.type === "line";
+  const st = {
+    position: "absolute",
+    left: el.x * PX * scale,
+    top: el.y * PX * scale,
+    width: el.w * PX * scale,
+    height: (el.type === "line" ? labelLineThicknessMm(el.h) : el.h) * PX * scale,
+    transform: el.rotate ? `rotate(${el.rotate}deg)` : undefined,
+    outline: selected ? "1.5px solid #6366f1" : undefined,
+    cursor: "move",
+    overflow: isStroke ? "visible" : "hidden",
+    boxSizing: "border-box",
+  };
   const code = p ? (p.barcode || p.sku || "0000000000000") : "8680001234011";
   const down = (e) => { e.stopPropagation(); onSelect(el.id); const sx = e.clientX, sy = e.clientY, ox = el.x, oy = el.y; const mv = (ev) => onMove(el.id, ox + (ev.clientX - sx) / PX / scale, oy + (ev.clientY - sy) / PX / scale); const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up); };
   let body = null;
@@ -100,8 +145,8 @@ const Element = ({ el, p, company, scale, selected, onSelect, onMove }) => {
   else if (el.type === "qr") body = <QRCodeSVG value={code} size={Math.min(el.w, el.h) * PX * scale} level="M" />;
   else if (el.type === "logo") body = company?.logo_url ? <img src={resolveImageUrl(company.logo_url)} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">LOGO</div>;
   else if (el.type === "image") body = p?.image_url ? <img src={resolveImageUrl(p.image_url)} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">GÖRSEL</div>;
-  else if (el.type === "line") body = <div style={{ width: "100%", height: "100%", background: "#000" }} />;
-  else if (el.type === "box") body = <div style={{ width: "100%", height: "100%", border: `${(el.border || 0.3) * PX * scale}px solid #000`, borderRadius: (el.radius || 0) * PX * scale }} />;
+  else if (el.type === "line") body = <div data-label-line="1" style={{ width: "100%", height: "100%", background: "#000000", WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }} />;
+  else if (el.type === "box") body = <LabelBox el={el} scale={scale} />;
   else body = <div style={{ fontSize: (el.font || 10) * scale * 1.33, fontWeight: el.bold ? 700 : 400, fontStyle: el.italic ? "italic" : undefined, textAlign: el.align || "left", lineHeight: 1.1, fontFamily: el.mono ? "monospace" : "Arial, sans-serif", width: "100%", height: "100%", display: "flex", alignItems: el.valign === "middle" ? "center" : "flex-start", justifyContent: el.align === "center" ? "center" : el.align === "right" ? "flex-end" : "flex-start", whiteSpace: el.wrap === false ? "nowrap" : "normal", wordBreak: "break-word" }}>{valueOf(el, p, company)}</div>;
   return <div style={st} onMouseDown={onSelect ? down : undefined} data-testid={`label-el-${el.id}`}>{body}</div>;
 };
@@ -161,10 +206,12 @@ export const LabelDesigner = ({ companyId, products, company }) => {
   const updEl = (id, patch) => upd({ elements: tpl.elements.map((e) => (e.id === id ? { ...e, ...patch } : e)) });
   const move = (id, x, y) => updEl(id, { x: Math.max(0, Math.round(x * 2) / 2), y: Math.max(0, Math.round(y * 2) / 2) });
   const addEl = (type, extras = {}) => {
-    const base = { id: uid(), type, x: 2, y: 2, w: type === "line" ? 40 : 30, h: type === "line" ? 0.4 : type === "barcode" ? 14 : type === "field" ? 6 : 15 };
+    const base = { id: uid(), type, x: 2, y: 2, w: type === "line" ? 40 : 30, h: type === "line" ? 0.5 : type === "barcode" ? 14 : type === "field" ? 6 : 15 };
     const el = type === "field"
       ? { ...base, field: "text", text: "Metin", font: 10, align: "left", ...extras }
-      : type === "barcode" ? { ...base, showText: true, ...extras } : { ...base, ...extras };
+      : type === "barcode" ? { ...base, showText: true, ...extras }
+      : type === "box" ? { ...base, border: LABEL_BOX_DEFAULT_STROKE_MM, radius: 0, ...extras }
+      : { ...base, ...extras };
     upd({ elements: [...tpl.elements, el] });
     setSelId(el.id);
   };
@@ -219,7 +266,7 @@ export const LabelDesigner = ({ companyId, products, company }) => {
                 <Prop label="Hizalama"><select value={sel.align || "left"} onChange={(e) => updEl(sel.id, { align: e.target.value })} className="bg-slate-50 border rounded-lg p-1 w-24"><option value="left">Sol</option><option value="center">Orta</option><option value="right">Sağ</option></select></Prop>
                 <div className="flex gap-3 py-0.5"><label className="flex items-center gap-1"><input type="checkbox" checked={!!sel.bold} onChange={(e) => updEl(sel.id, { bold: e.target.checked })} data-testid="label-prop-bold" /> Kalın</label><label className="flex items-center gap-1"><input type="checkbox" checked={!!sel.italic} onChange={(e) => updEl(sel.id, { italic: e.target.checked })} /> İtalik</label><label className="flex items-center gap-1"><input type="checkbox" checked={!!sel.mono} onChange={(e) => updEl(sel.id, { mono: e.target.checked })} /> Mono</label><label className="flex items-center gap-1"><input type="checkbox" checked={sel.wrap !== false} onChange={(e) => updEl(sel.id, { wrap: e.target.checked })} /> Satır kır</label></div></>}
               {sel.type === "barcode" && <label className="flex items-center gap-1 py-0.5"><input type="checkbox" checked={sel.showText !== false} onChange={(e) => updEl(sel.id, { showText: e.target.checked })} data-testid="label-prop-showtext" /> Barkod numarasını yaz</label>}
-              {sel.type === "box" && <><Prop label="Kenar (mm)"><input type="number" step="0.1" value={sel.border ?? 0.3} onChange={(e) => updEl(sel.id, { border: Number(e.target.value) })} className={num} /></Prop><Prop label="Köşe (mm)"><input type="number" step="0.5" value={sel.radius ?? 0} onChange={(e) => updEl(sel.id, { radius: Number(e.target.value) })} className={num} /></Prop></>}
+              {sel.type === "box" && <><Prop label="Kenar (mm)"><input type="number" step="0.1" min="0.5" value={sel.border ?? LABEL_BOX_DEFAULT_STROKE_MM} onChange={(e) => updEl(sel.id, { border: Math.max(0.5, Number(e.target.value) || 0.5) })} className={num} /></Prop><Prop label="Köşe (mm)"><input type="number" step="0.5" value={sel.radius ?? 0} onChange={(e) => updEl(sel.id, { radius: Number(e.target.value) })} className={num} /></Prop></>}
               <div className="grid grid-cols-2 gap-1 pt-1 border-t mt-1">{[["x", "X mm"], ["y", "Y mm"], ["w", "Genişlik"], ["h", "Yükseklik"], ["rotate", "Döndür °"]].map(([k, l]) => <Prop key={k} label={l}><input type="number" step={k === "rotate" ? 90 : 0.5} value={sel[k] ?? 0} onChange={(e) => updEl(sel.id, { [k]: Number(e.target.value) })} className={num} data-testid={`label-prop-${k}`} /></Prop>)}</div>
             </>)}
           </div>
