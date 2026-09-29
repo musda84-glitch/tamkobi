@@ -12471,9 +12471,10 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
         create_po = req.get("create_production_order", True) is not False
         planned_qty = opr._safe_float(req.get("planned_quantity"), 1.0) or 1.0
         planned_date = req.get("planned_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        default_station = str(req.get("station") or req.get("default_station") or "").strip()
 
         async def _open_po(recipe_doc: Dict[str, Any]) -> Dict[str, Any]:
-            return await create_production_order({
+            out = await create_production_order({
                 "company_id": company_id,
                 "recipe_id": recipe_doc.get("_id") or recipe_doc.get("id"),
                 "finished_product_id": recipe_doc.get("finished_product_id"),
@@ -12484,6 +12485,20 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 "allow_without_recipe": True,
                 "notes": recipe_doc.get("notes") or f"Sipariş {order.get('order_number')}",
             })
+            if default_station:
+                po_id = out.get("id") or out.get("_id") or out.get("order_id")
+                if po_id:
+                    await db.work_orders.update_many(
+                        {
+                            "order_id": po_id,
+                            "$or": [
+                                {"station": {"$in": ["", None, "Genel", "genel"]}},
+                                {"station": {"$exists": False}},
+                            ],
+                        },
+                        {"$set": {"station": default_station}},
+                    )
+            return out
 
         if existing:
             recipe_out = clean_doc(existing)
@@ -12500,7 +12515,9 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 ),
             }
         try:
-            payload = opr.build_order_recipe_payload(order, lines, company_id=company_id)
+            payload = opr.build_order_recipe_payload(
+                order, lines, company_id=company_id, default_station=default_station or None,
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         doc = _normalize_recipe_steps_payload(opr.recipe_mongo_doc(payload))

@@ -193,6 +193,10 @@ def recipe_materials_for_qty(
             "unit": conv["unit"],
             "needed": needed,
         }
+        stock_note = str(m.get("stock_note") or m.get("note") or "").strip()
+        if stock_note:
+            row["note"] = stock_note
+            row["stock_note"] = stock_note
         if conv.get("coverage_applied"):
             row["content_needed"] = conv.get("content_needed")
             row["content_unit"] = conv.get("content_unit")

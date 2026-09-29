@@ -49,6 +49,7 @@ import { orderMoreMenuItems, orderMoreMenuKind } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import { buildProduceFromOrderPayload, orderLineCanProduce, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
+import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import {
   DropdownMenu,
@@ -458,6 +459,7 @@ export default function OrdersB2BPage() {
   const [expandedItems, setExpandedItems] = useState(null);
   const [produceFromOrder, setProduceFromOrder] = useState(null);
   const [produceBusyId, setProduceBusyId] = useState(null);
+  const [produceRecipeOrd, setProduceRecipeOrd] = useState(null);
   const productCatalog = allProducts.length ? allProducts : products;
   const openProduceForLine = (ord, it, idx) => {
     const p = resolveOrderLineProduct(it, productCatalog);
@@ -473,22 +475,23 @@ export default function OrdersB2BPage() {
     if (!payload) return;
     setProduceFromOrder({ product: payload, order: ord, lineIndex: idx });
   };
-  const openProduceForOrder = async (ord) => {
-    const oid = ord?.id || ord?._id;
-    if (!oid) return;
+  const openProduceForOrder = (ord) => {
     const lines = producibleLinesForOrder(ord, productCatalog);
     if (!lines.length) {
       toast.error("Bu siparişte üretilebilir ürün yok.");
       return;
     }
-    const label = ord.held_label || ord.order_number || "Sipariş";
-    if (!window.confirm(
-      `${label} için tüm ürünlerden (${lines.length} kalem) 1 reçete ve üretim emri oluşturulsun mu?`,
-    )) return;
+    setProduceRecipeOrd(ord);
+  };
+  const submitProduceRecipe = async (station) => {
+    const ord = produceRecipeOrd;
+    const oid = ord?.id || ord?._id;
+    if (!oid) return;
     setProduceBusyId(oid);
     try {
-      const r = await axios.post(`${API_URL}/orders/${oid}/production-recipe`, {});
+      const r = await axios.post(`${API_URL}/orders/${oid}/production-recipe`, { station });
       toast.success(r.data.message || "Reçete ve üretim emri oluşturuldu.");
+      setProduceRecipeOrd(null);
       loadData();
     } catch (err) {
       const data = err.response?.data;
@@ -965,6 +968,16 @@ export default function OrdersB2BPage() {
           source="sales_order"
           onClose={() => setProduceFromOrder(null)}
           onCreated={() => setProduceFromOrder(null)}
+        />
+      )}
+      {produceRecipeOrd && (
+        <OrderProduceRecipeModal
+          order={produceRecipeOrd}
+          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          lineCount={producibleLinesForOrder(produceRecipeOrd, productCatalog).length}
+          busy={produceBusyId === (produceRecipeOrd.id || produceRecipeOrd._id)}
+          onClose={() => !produceBusyId && setProduceRecipeOrd(null)}
+          onConfirm={submitProduceRecipe}
         />
       )}
       {autoShip && <AutoShipModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAutoShip(false)} onDone={loadData} />}

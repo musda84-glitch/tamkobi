@@ -107,6 +107,42 @@ def test_build_one_recipe_for_all_products():
     ]
 
 
+def test_producible_lines_carry_stock_note():
+    order = {
+        "_id": "o3",
+        "order_number": "B2B-20",
+        "items": [
+            {"product_id": "p1", "product_name": "MDF", "quantity": 10, "note": "CEVİZ / DRA-CVZ"},
+            {"product_id": "p2", "product_name": "Kapı", "quantity": 1, "line_note": "beyaz"},
+        ],
+    }
+    catalog = [
+        {"_id": "p1", "name": "MDF", "type": "product", "unit": "Adet"},
+        {"_id": "p2", "name": "Kapı", "type": "product", "unit": "Adet"},
+    ]
+    lines = producible_order_lines(order, catalog)
+    assert lines[0]["note"] == "CEVİZ / DRA-CVZ"
+    assert lines[1]["note"] == "beyaz"
+    payload = build_order_recipe_payload(order, lines, company_id="c", default_station="CNC")
+    assert payload["materials"][0]["stock_note"] == "CEVİZ / DRA-CVZ"
+    assert "CEVİZ / DRA-CVZ" in payload["materials"][0]["steps"][0]["note"]
+    assert payload["materials"][0]["steps"][0]["station"] == "CNC"
+    assert payload["materials"][1]["steps"][0]["station"] == "CNC"
+
+
+def test_apply_station_fills_empty_only():
+    from order_production_recipe import apply_station_to_recipe_materials
+    recipe = {
+        "materials": [
+            {"steps": [{"name": "Üretim", "station": ""}]},
+            {"steps": [{"name": "Kesim", "station": "Pres"}]},
+        ],
+    }
+    apply_station_to_recipe_materials(recipe, "CNC")
+    assert recipe["materials"][0]["steps"][0]["station"] == "CNC"
+    assert recipe["materials"][1]["steps"][0]["station"] == "Pres"
+
+
 def test_build_raises_without_lines():
     try:
         build_order_recipe_payload({"order_number": "X"}, [])

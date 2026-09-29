@@ -124,6 +124,9 @@ export function OrderActions({
   const [cargoOpen, setCargoOpen] = useState(false);
   const [cargoMode, setCargoMode] = useState<"ship" | "change">("ship");
   const [moreOpen, setMoreOpen] = useState(false);
+  const [produceOpen, setProduceOpen] = useState(false);
+  const [stations, setStations] = useState<string[]>([]);
+  const [produceStation, setProduceStation] = useState("");
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnReason, setReturnReason] = useState("");
   const [notifyOpen, setNotifyOpen] = useState(false);
@@ -313,28 +316,34 @@ export function OrderActions({
   };
 
   const produceOrderRecipe = () => {
-    const items = Array.isArray(order.items) ? order.items : [];
-    const producible = items.filter((it) => {
-      const t = String((it as { type?: string }).type || "product");
-      return t !== "service" && t !== "raw_material";
-    });
-    const n = producible.length || items.length || 0;
-    confirmAction(
-      "Üretim emri ver",
-      `${order.held_label || order.order_number || "Sipariş"} için tüm ürünlerden (${n || "?"} kalem) 1 reçete ve üretim emri oluşturulsun mu?`,
-      async () => {
-        setBusy("produceRecipe");
-        try {
-          const r = await post<{ message?: string }>(client, `/orders/${oid}/production-recipe`, {});
-          onMessage?.(r.message || "Reçete ve üretim emri oluşturuldu.");
-          onChanged?.();
-        } catch (err) {
-          onError?.(apiErrorMessage(err, "Reçete / üretim emri oluşturulamadı."));
-        } finally {
-          setBusy(null);
-        }
-      },
-    );
+    setProduceStation("");
+    setProduceOpen(true);
+    get<string[]>(client, "/production/work-orders/stations", { company_id: companyId })
+      .then((list) => {
+        const rows = Array.isArray(list) ? list.map((s) => String(s || "").trim()).filter(Boolean) : [];
+        setStations(rows);
+        if (rows.length === 1) setProduceStation(rows[0]);
+      })
+      .catch(() => setStations([]));
+  };
+
+  const submitProduceRecipe = async () => {
+    const station = String(produceStation || "").trim();
+    if (!station) {
+      onError?.("İstasyon seçin.");
+      return;
+    }
+    setBusy("produceRecipe");
+    try {
+      const r = await post<{ message?: string }>(client, `/orders/${oid}/production-recipe`, { station });
+      onMessage?.(r.message || "Reçete ve üretim emri oluşturuldu.");
+      setProduceOpen(false);
+      onChanged?.();
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "Reçete / üretim emri oluşturulamadı."));
+    } finally {
+      setBusy(null);
+    }
   };
 
   const createDraftInvoice = () => {
@@ -911,6 +920,39 @@ export function OrderActions({
         ))}
       </View>
       {busy ? <Muted>Hazırlanıyor…</Muted> : null}
+
+      <B2BSheet
+        visible={produceOpen}
+        title="Üretim emri ver"
+        subtitle={`${order.held_label || order.order_number || "Sipariş"} · istasyon seçin`}
+        onClose={() => !busy && setProduceOpen(false)}
+        testID={`order-produce-recipe-sheet-${num}`}
+      >
+        {stations.length > 0 ? (
+          <GroupedSelect
+            value={produceStation}
+            onChange={setProduceStation}
+            groups={[{ label: "İstasyonlar", options: stations.map((s) => ({ value: s, label: s })) }]}
+            emptyLabel="İstasyon seçin"
+          />
+        ) : (
+          <Field
+            label="İstasyon"
+            value={produceStation}
+            onChangeText={setProduceStation}
+            placeholder="Örn. CNC, Kesim, Montaj"
+            testID={`order-produce-station-input-${num}`}
+          />
+        )}
+        <View style={{ height: 10 }} />
+        <PrimaryButton
+          title="Emri oluştur"
+          testID={`order-produce-recipe-submit-${num}`}
+          loading={busy === "produceRecipe"}
+          disabled={!!busy || !String(produceStation || "").trim()}
+          onPress={submitProduceRecipe}
+        />
+      </B2BSheet>
 
       <B2BSheet
         visible={moreOpen}

@@ -114,12 +114,23 @@ function WoCard({
         >
           <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>Hammaddeler</Text>
           {(w.materials || []).map((m, i) => (
-            <Row key={m.product_id || String(i)} style={{ justifyContent: "space-between", gap: 8 }}>
-              <Text style={{ flex: 1, fontSize: 12, color: colors.muted }} numberOfLines={1}>{m.product_name || "Hammadde"}</Text>
-              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
-                {formatQty(roundNeededQty(Number(m.needed), m.unit))} {m.unit || ""}
-              </Text>
-            </Row>
+            <View key={m.product_id || String(i)} style={{ gap: 2 }}>
+              <Row style={{ justifyContent: "space-between", gap: 8 }}>
+                <Text style={{ flex: 1, fontSize: 12, color: colors.muted }} numberOfLines={2}>{m.product_name || "Hammadde"}</Text>
+                <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
+                  {formatQty(roundNeededQty(Number(m.needed), m.unit))} {m.unit || ""}
+                </Text>
+              </Row>
+              {String(m.stock_note || m.note || "").trim() ? (
+                <Text
+                  testID={`wo-mat-note-${key}-${i}`}
+                  style={{ fontSize: 11, fontWeight: "700", color: "#92400E" }}
+                  numberOfLines={2}
+                >
+                  Sipariş stok notu · {String(m.stock_note || m.note).trim()}
+                </Text>
+              ) : null}
+            </View>
           ))}
         </View>
       ) : null}
