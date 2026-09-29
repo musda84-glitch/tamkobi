@@ -12,9 +12,9 @@ RETENTION_DAYS = 30
 
 TYPE_LABELS = {"contact": "Cari Hesap", "product": "Ürün / Stok Kartı", "order": "Sipariş", "purchase_order": "Verilen Sipariş", "quote": "Teklif", "project": "Proje", "survey": "Keşif", "expense": "Masraf", "loan": "Kredi", "cheque": "Çek / Senet",
                "bank_transaction": "Banka / Kasa Hareketi", "bank_account": "Banka / Kasa Hesabı", "partner": "Ortak", "partner_transaction": "Ortak Hareketi", "leave": "İzin Talebi", "bonus": "Prim / Avans / 2. Maaş",
-               "employee": "Personel", "recipe": "Reçete (BOM)", "production_order": "Üretim Emri", "work_order": "İş Emri (Atölye)", "stock_count": "Stok Sayımı", "shift": "Vardiya", "shift_template": "Vardiya Şablonu", "trade_file": "İthalat / İhracat Dosyası", "invoice": "Fatura"}
+               "employee": "Personel", "recipe": "Reçete (BOM)", "production_order": "Üretim Emri", "work_order": "İş Emri (Atölye)", "stock_count": "Stok Sayımı", "shift": "Vardiya", "shift_template": "Vardiya Şablonu", "trade_file": "İthalat / İhracat Dosyası", "invoice": "Fatura", "vehicle": "Araç"}
 PREVIEW_FIELDS = ("name", "full_name", "customer_name", "contact_name", "partner_name", "employee_name", "product_name", "sku", "barcode", "order_number", "order_code", "quote_number", "project_number", "survey_number", "expense_number",
-                  "invoice_number", "description", "category", "amount", "total", "total_amount", "grand_total", "stock_quantity", "sale_price", "status", "order_status", "payment_status", "date", "order_date", "start_date", "end_date", "channel", "type", "step_name", "station", "job_file_name")
+                  "invoice_number", "description", "category", "amount", "total", "total_amount", "grand_total", "stock_quantity", "sale_price", "status", "order_status", "payment_status", "date", "order_date", "start_date", "end_date", "channel", "type", "step_name", "station", "job_file_name", "plate", "brand", "model", "year")
 
 
 def init(db):

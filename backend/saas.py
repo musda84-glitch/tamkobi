@@ -32,7 +32,7 @@ CATEGORIES = {
     "/contacts": "Muhasebe", "/installments": "Muhasebe",
     "/banking": "Finans", "/expenses": "Finans", "/loans": "Finans", "/cheques": "Finans",
     "/reports": "Raporlama", "/accountant": "Raporlama",
-    "/stock": "Stok & Depo", "/purchase-orders": "Stok & Depo", "/sayim": "Stok & Depo", "/sevk": "Stok & Depo", "/warehouses": "Stok & Depo",
+    "/stock": "Stok & Depo", "/purchase-orders": "Stok & Depo", "/sayim": "Stok & Depo", "/sevk": "Stok & Depo", "/warehouses": "Stok & Depo", "/vehicles": "Stok & Depo",
     "/production": "Üretim", "/atolye": "Üretim",
     "/quotes": "Satış", "/projects": "Satış", "/surveys": "Satış", "/orders": "Satış", "/hizli-satis": "Satış", "/b2b-yonetim": "Satış", "/saha": "Satış",
     "/ecommerce": "E-Ticaret", "/cargo": "E-Ticaret",
@@ -45,12 +45,12 @@ DESCRIPTIONS = dict(getattr(rbac, "MODULE_HELP", {}) or {})
 
 _STARTER = ["/invoices", "/edoc-inbox", "/dis-ticaret", "/dispatches", "/contacts", "/b2b-yonetim", "/banking", "/expenses", "/stock", "/purchase-orders", "/sayim", "/reports"]
 _STANDARD = _STARTER + ["/installments", "/loans", "/cheques", "/quotes", "/projects", "/surveys", "/orders", "/hizli-satis", "/saha", "/sevk", "/communication", "/support", "/accountant"]
-_PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/personnel", "/mesai", "/ai-advisor", "/production", "/atolye"]
+_PRO = _STANDARD + ["/ecommerce", "/cargo", "/warehouses", "/vehicles", "/personnel", "/mesai", "/ai-advisor", "/production", "/atolye"]
 _ALL = [k for k, _ in rbac.MODULES if k not in CORE_MODULES]
 DEFAULT_MODULE_PRICES = {
     "/invoices": 249, "/dispatches": 99, "/contacts": 129, "/installments": 79, "/reports": 99,
     "/banking": 129, "/expenses": 79, "/loans": 79, "/stock": 129, "/purchase-orders": 79, "/projects": 129,
-    "/ecommerce": 249, "/cargo": 129, "/orders": 129, "/hizli-satis": 99, "/warehouses": 99, "/production": 199,
+    "/ecommerce": 249, "/cargo": 129, "/orders": 129, "/hizli-satis": 99, "/warehouses": 99, "/vehicles": 49, "/production": 199,
     "/atolye": 99, "/personnel": 159, "/communication": 99, "/support": 0, "/ai-advisor": 129, "/accountant": 99, "/edoc-inbox": 0, "/dis-ticaret": 0, "/b2b-yonetim": 0, "/sayim": 0, "/saha": 0, "/sevk": 0, "/mesai": 0, "/cheques": 79, "/quotes": 79, "/surveys": 0,
 }
 CUSTOM_PLAN_ID = "plan_custom"

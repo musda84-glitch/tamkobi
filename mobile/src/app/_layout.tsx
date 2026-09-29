@@ -58,6 +58,9 @@ function RootStack() {
         <Stack.Screen name="orders/edit/[id]" options={{ title: "Siparişi düzenle" }} />
         <Stack.Screen name="sevk/index" options={{ title: "Depo Sevkiyat" }} />
         <Stack.Screen name="sevk/[id]" options={{ title: "Sipariş topla" }} />
+        <Stack.Screen name="vehicles/index" options={{ title: "Araçlarım" }} />
+        <Stack.Screen name="vehicles/new" options={{ title: "Yeni araç" }} />
+        <Stack.Screen name="vehicles/[id]" options={{ title: "Araç" }} />
         <Stack.Screen name="atolye/index" options={{ title: "Üretim Atölye" }} />
         <Stack.Screen name="production/index" options={{ title: "Üretim & Reçete (BOM)" }} />
         <Stack.Screen name="orders/[id]" options={{ title: "Sipariş" }} />

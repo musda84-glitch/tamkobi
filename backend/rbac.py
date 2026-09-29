@@ -45,7 +45,8 @@ MODULES = [
     ("/saha", "Saha Sipariş"),
     ("/sevk", "Depo Sevkiyatı"),
     ("/warehouses", "Depo & Transfer"),
-    ("/production", "Üretim & Reçete"),
+    ("/vehicles", "Araçlarım"),
+    ("/production", "Üretim & Reçete (BOM)"),
     ("/atolye", "Atölye Ekranı"),
     ("/personnel", "Personel & Bordro"),
     ("/mesai", "Mesaim"),
@@ -84,6 +85,7 @@ MODULE_HELP = {
     "/saha": "Tablet/mobil saha siparişi ve müşteri ziyareti.",
     "/sevk": "Depo sevkiyat kiosk, sipariş toplama (web + mobil sevk).",
     "/warehouses": "Çoklu depo, transfer ve stok lokasyonları.",
+    "/vehicles": "Şirket araçları (plaka, marka/model, durum); web + mobil filo listesi.",
     "/production": "Reçete (BOM), üretim emirleri ve eksik malzeme planı.",
     "/atolye": "Tablet/mobil atölye ekranı, iş emri ve PIN ile operatör.",
     "/personnel": "İK: personel kartı, bordro, vardiya, izin (yönetici).",
@@ -170,7 +172,7 @@ DEFAULT_ROLES = [
         "/cheques": "edit", "/quotes": "edit", "/projects": "edit", "/surveys": "edit",
         "/orders": "edit", "/cargo": "edit", "/communication": "edit", "/support": "edit",
         "/reports": "edit", "/purchase-orders": "view", "/stock": "view", "/sayim": "view",
-        "/warehouses": "view", "/production": "view", "/atolye": "view", "/ecommerce": "view",
+        "/warehouses": "view", "/vehicles": "edit", "/production": "view", "/atolye": "view", "/ecommerce": "view",
         "/saha": "view", "/sevk": "view", "/hizli-satis": "view", "/loans": "view",
         "/dis-ticaret": "view", "/ai-advisor": "view", "/trash": "view",
         "/settings": "none", "/accountant": "none",
@@ -191,13 +193,14 @@ DEFAULT_ROLES = [
         "/": "view", "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit",
         "/contacts": "edit", "/b2b-yonetim": "edit", "/quotes": "edit", "/projects": "edit", "/surveys": "edit",
         "/orders": "edit", "/hizli-satis": "edit", "/saha": "edit", "/stock": "view", "/purchase-orders": "view",
-        "/installments": "view", "/sevk": "view", "/communication": "edit", "/support": "edit",
+        "/installments": "view", "/sevk": "view", "/vehicles": "view", "/communication": "edit", "/support": "edit",
         "/ecommerce": "view", "/cargo": "edit", "/mesai": "view", "/reports": "view",
         "/banking": "view", "/cheques": "view", "/expenses": "view",
     }},
     {"code": "warehouse", "name": "Depo", "is_system": True, "permissions": {
         **_all("none"),
         "/": "view", "/stock": "edit", "/purchase-orders": "edit", "/sayim": "edit", "/warehouses": "edit",
+        "/vehicles": "edit",
         "/orders": "edit", "/sevk": "edit", "/cargo": "edit", "/dispatches": "edit", "/contacts": "view",
         "/mesai": "view", "/support": "view", "/production": "view", "/atolye": "view",
     }},
@@ -258,7 +261,7 @@ FORCE_SYSTEM_PERMISSIONS = {
 API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production", "/production"), ("/api/invoices", "/invoices"), ("/api/einvoice", "/invoices"), ("/api/gib", "/invoices"),
                   ("/api/contacts", "/contacts"), ("/api/installments", "/installments"), ("/api/reports", "/reports"), ("/api/banking", "/banking"), ("/api/expenses", "/expenses"), ("/api/loans", "/loans"), ("/api/cheques", "/cheques"), ("/api/products", "/stock"),
                   ("/api/purchase-orders", "/purchase-orders"), ("/api/warehouses/stock-counts", "/sayim"), ("/api/warehouses", "/warehouses"), ("/api/quotes", "/quotes"), ("/api/projects", "/projects"), ("/api/surveys", "/surveys"), ("/api/integrations/ecommerce", "/ecommerce"),
-                  ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/order-picks", "/sevk"), ("/api/orders", "/orders"), ("/api/pos", "/hizli-satis"), ("/api/stock-lots", "/stock"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
+                  ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/order-picks", "/sevk"), ("/api/orders", "/orders"), ("/api/vehicles", "/vehicles"), ("/api/pos", "/hizli-satis"), ("/api/stock-lots", "/stock"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/fx", "/settings"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
                   ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/edoc-inbox"), ("/api/trade-files", "/dis-ticaret"), ("/api/support", "/support"), ("/api/trash", "/trash"), ("/api/dashboard", "/"), ("/api/sync", "/")]
 SKIP_PREFIXES = ("/api/auth", "/api/setup", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/version", "/api/mobile", "/api/system", "/api/license", "/api/payments", "/api/webhook", "/api/personnel/me", "/api/personnel/messages", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/geo", "/api/personnel/attendance/early-leave-request", "/api/personnel/attendance/intraday-leave-request", "/api/personnel/leaves/self", "/api/personnel/leaves/me", "/api/personnel/bonuses/self")
@@ -311,6 +314,7 @@ def backfill_permissions(perms: Optional[Dict[str, str]]) -> Dict[str, str]:
     p.setdefault("/sayim", "none")
     p.setdefault("/saha", p.get("/orders", "none"))
     p.setdefault("/sevk", "none")
+    p.setdefault("/vehicles", p.get("/warehouses", "none"))
     p.setdefault("/mesai", "none")
     p.setdefault("/support", p.get("/communication", "none"))
     p.setdefault("/purchase-orders", p.get("/stock", "none"))

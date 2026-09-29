@@ -191,6 +191,12 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "name", "code", "is_default"),
         "refs": ("companies._id",),
     },
+    "vehicles": {
+        "scope": SCOPE_TENANT,
+        "description": "Şirket filo araçları (plaka, marka/model).",
+        "keys": ("_id", "company_id", "plate", "plate_key", "brand", "model", "year", "color", "status", "notes"),
+        "refs": ("companies._id",),
+    },
     "warehouse_transfers": {
         "scope": SCOPE_TENANT,
         "description": "Depolar arası transfer fişleri.",

@@ -50,6 +50,20 @@ def test_purchase_orders_api_maps_to_own_module():
     assert any(prefix == "/api/purchase-orders" and mod == "/purchase-orders" for prefix, mod in API_MODULE_MAP)
 
 
+def test_vehicles_module_registered():
+    keys = {k for k, _ in MODULES}
+    assert "/vehicles" in keys
+    assert CATEGORIES.get("/vehicles") == "Stok & Depo"
+    assert "/vehicles" in DESCRIPTIONS
+    assert "/vehicles" in DEFAULT_MODULE_PRICES
+    assert module_for_path("/api/vehicles") == "/vehicles"
+    assert module_for_path("/api/vehicles/abc") == "/vehicles"
+    by_code = {r["code"]: r for r in DEFAULT_ROLES}
+    assert by_code["warehouse"]["permissions"].get("/vehicles") == "edit"
+    assert by_code["manager"]["permissions"].get("/vehicles") == "edit"
+    assert "/vehicles" not in PANEL_MODULE_FROM
+
+
 def test_default_roles_cover_support_and_finance():
     by_code = {r["code"]: r for r in DEFAULT_ROLES}
     assert by_code["accountant"]["permissions"].get("/expenses") == "edit"

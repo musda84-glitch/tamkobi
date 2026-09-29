@@ -17,6 +17,7 @@ const LIST_STACK_ROOTS = new Set([
   "banking",
   "cheques",
   "expenses",
+  "vehicles",
   "quotes",
   "projects",
   "surveys",
