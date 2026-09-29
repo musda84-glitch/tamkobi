@@ -3,6 +3,7 @@ from order_production_recipe import (
     build_order_recipe_payload,
     producible_order_lines,
     product_can_produce,
+    recipe_mongo_doc,
     resolve_order_line_product,
     summarize_lines,
 )
@@ -46,6 +47,27 @@ def test_producible_lines_skip_service_and_raw():
     assert len(lines) == 1
     assert lines[0]["product_name"] == "Raf"
     assert lines[0]["quantity"] == 2.0
+
+
+def test_producible_lines_without_catalog_uses_order_items():
+    order = {
+        "_id": "o2",
+        "order_number": "B2B-14",
+        "items": [
+            {"product_id": "p1", "product_name": "Kapı", "quantity": 2},
+            {"product_name": "Masa", "quantity": 1},
+            {"product_id": "s1", "product_name": "Montaj", "type": "service", "quantity": 1},
+        ],
+    }
+    lines = producible_order_lines(order, [])
+    assert [l["product_name"] for l in lines] == ["Kapı", "Masa"]
+    payload = build_order_recipe_payload(order, lines, company_id="c")
+    doc = recipe_mongo_doc(payload)
+    assert doc["one_time"] is True
+    assert doc["sales_order_id"] == "o2"
+    assert doc["code"].startswith("BOM-")
+    assert len(doc["materials"]) == 2
+    assert doc["_id"]
 
 
 def test_build_one_recipe_for_all_products():
