@@ -267,6 +267,54 @@ def apply_station_to_recipe_materials(
     return recipe
 
 
+def apply_stock_notes_to_recipe_materials(
+    recipe: Dict[str, Any],
+    lines: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Sipariş kalemlerindeki stok notunu reçete malzemelerine yaz (yeniden kullanımda da)."""
+    if not isinstance(recipe, dict):
+        return recipe
+    by_pid: Dict[str, Dict[str, Any]] = {}
+    for line in lines or []:
+        if not isinstance(line, dict):
+            continue
+        pid = str(line.get("product_id") or "").strip()
+        if pid and pid not in by_pid:
+            by_pid[pid] = line
+    mats = []
+    for m in recipe.get("materials") or []:
+        if not isinstance(m, dict):
+            mats.append(m)
+            continue
+        row = dict(m)
+        pid = str(row.get("product_id") or "").strip()
+        line = by_pid.get(pid) or {}
+        stock_note = str(line.get("note") or row.get("stock_note") or row.get("note") or "").strip()[:500]
+        if stock_note:
+            row["note"] = stock_note
+            row["stock_note"] = stock_note
+            steps = []
+            for step in row.get("steps") or []:
+                if not isinstance(step, dict):
+                    steps.append(step)
+                    continue
+                s = dict(step)
+                qty = row.get("quantity")
+                try:
+                    qty_s = f"{float(qty):g}"
+                except (TypeError, ValueError):
+                    qty_s = str(qty or "").strip() or "1"
+                pname = str(row.get("product_name") or "").strip() or "Ürün"
+                base = f"{qty_s}× {pname}"
+                s["note"] = f"{base} · {stock_note}" if stock_note else base
+                steps.append(s)
+            if steps:
+                row["steps"] = steps
+        mats.append(row)
+    recipe["materials"] = mats
+    return recipe
+
+
 def order_has_production(order: Optional[Dict[str, Any]] = None) -> bool:
     """Sipariş üretime gönderildi mi (buton rengi / rozet)."""
     o = order or {}

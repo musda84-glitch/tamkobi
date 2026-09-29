@@ -170,6 +170,34 @@ def test_order_has_production_and_mark():
     assert patch["sent_to_production_at"] == "T0"
 
 
+def test_apply_stock_notes_to_recipe_materials():
+    from order_production_recipe import apply_stock_notes_to_recipe_materials
+    recipe = {
+        "materials": [
+            {
+                "product_id": "p1",
+                "product_name": "MDF",
+                "quantity": 10,
+                "steps": [{"name": "Üretim", "station": "CNC", "note": "10× MDF"}],
+            },
+            {
+                "product_id": "p2",
+                "product_name": "Kapı",
+                "quantity": 1,
+                "steps": [{"name": "Üretim", "station": "", "note": "1× Kapı"}],
+            },
+        ],
+    }
+    lines = [
+        {"product_id": "p1", "note": "2,7 mm 210x170 Tek Yüz Beyaz Mdf"},
+        {"product_id": "p2", "note": ""},
+    ]
+    apply_stock_notes_to_recipe_materials(recipe, lines)
+    assert recipe["materials"][0]["stock_note"] == "2,7 mm 210x170 Tek Yüz Beyaz Mdf"
+    assert "2,7 mm 210x170" in recipe["materials"][0]["steps"][0]["note"]
+    assert recipe["materials"][1].get("stock_note") in (None, "")
+
+
 def test_build_raises_without_lines():
     try:
         build_order_recipe_payload({"order_number": "X"}, [])

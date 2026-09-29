@@ -12581,19 +12581,20 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
             return out
 
         if existing:
+            opr.apply_stock_notes_to_recipe_materials(existing, lines)
             if default_station:
                 opr.apply_station_to_recipe_materials(existing, default_station, force=True)
+            # Stok notu / istasyon güncellemesi reçeteye yazılsın (yeniden kullanım).
+            await db.recipes.update_one(
+                {"_id": existing.get("_id") or existing.get("id")},
+                {"$set": {
+                    "materials": existing.get("materials") or [],
+                    "steps": existing.get("steps") or [],
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }},
+            )
             recipe_out = clean_doc(existing)
             po_out = await _open_po(existing) if create_po else None
-            if default_station and not create_po:
-                await db.recipes.update_one(
-                    {"_id": existing.get("_id") or existing.get("id")},
-                    {"$set": {
-                        "materials": existing.get("materials") or [],
-                        "steps": existing.get("steps") or [],
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }},
-                )
             await _mark_sales_order_sent_to_production(
                 real_oid,
                 recipe_id=existing.get("_id") or existing.get("id") or recipe_out.get("id"),

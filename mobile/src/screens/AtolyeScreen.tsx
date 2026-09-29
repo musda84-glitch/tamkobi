@@ -113,25 +113,35 @@ function WoCard({
           style={{ borderWidth: 1, borderColor: "#F1F5F9", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8, gap: 4 }}
         >
           <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>Hammaddeler</Text>
-          {(w.materials || []).map((m, i) => (
-            <View key={m.product_id || String(i)} style={{ gap: 2 }}>
+          {(w.materials || []).map((m, i) => {
+            const stockNote = String(m.stock_note || m.note || "").trim();
+            const pname = String(m.product_name || "").trim();
+            const noteIsExtra = !!(
+              stockNote
+              && stockNote.toLocaleLowerCase("tr") !== pname.toLocaleLowerCase("tr")
+            );
+            return (
+            <View key={m.product_id || String(i)} style={{ gap: 2 }} testID={`wo-mat-row-${key}-${i}`}>
               <Row style={{ justifyContent: "space-between", gap: 8 }}>
-                <Text style={{ flex: 1, fontSize: 12, color: colors.muted }} numberOfLines={2}>{m.product_name || "Hammadde"}</Text>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text
+                    style={{ fontSize: 12, fontWeight: stockNote ? "700" : "400", color: stockNote ? colors.text : colors.muted }}
+                    numberOfLines={3}
+                    testID={stockNote ? `wo-mat-note-${key}-${i}` : undefined}
+                  >
+                    {stockNote || pname || "Hammadde"}
+                  </Text>
+                  {noteIsExtra && pname ? (
+                    <Text style={{ fontSize: 11, color: colors.muted }} numberOfLines={1}>{pname}</Text>
+                  ) : null}
+                </View>
                 <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text }}>
                   {formatQty(roundNeededQty(Number(m.needed), m.unit))} {m.unit || ""}
                 </Text>
               </Row>
-              {String(m.stock_note || m.note || "").trim() ? (
-                <Text
-                  testID={`wo-mat-note-${key}-${i}`}
-                  style={{ fontSize: 11, fontWeight: "700", color: "#92400E" }}
-                  numberOfLines={2}
-                >
-                  Sipariş stok notu · {String(m.stock_note || m.note).trim()}
-                </Text>
-              ) : null}
             </View>
-          ))}
+            );
+          })}
         </View>
       ) : null}
       {imgs.length > 0 ? (

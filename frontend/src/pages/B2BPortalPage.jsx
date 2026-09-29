@@ -130,14 +130,16 @@ export default function B2BPortalPage() {
   const addWithQty = (p) => {
     if (!allowOrders) return;
     const qty = Math.max(1, parseInt(String(draftQty[p.id] ?? "1"), 10) || 1);
-    setCart((c) => addCartLine(c, p.id, qty, draftNotes[p.id] || ""));
+    const typed = draftNotes[p.id] !== undefined ? draftNotes[p.id] : (p.name || "");
+    setCart((c) => addCartLine(c, p.id, qty, String(typed || "").trim()));
   };
   const addFromScan = (code) => {
     const hit = applyB2BScan({ products: data.products, code, qty: scanQty, allowOrders, showStock });
     setQ(String(code || "").trim());
     setScanStatus(hit.message);
     if (hit.action === "add" && hit.product) {
-      setCart((c) => addCartLine(c, hit.product.id, hit.qty, draftNotes[hit.product.id] || ""));
+      const typed = draftNotes[hit.product.id] !== undefined ? draftNotes[hit.product.id] : (hit.product.name || "");
+      setCart((c) => addCartLine(c, hit.product.id, hit.qty, String(typed || "").trim()));
       toast.success(hit.message);
       return;
     }
@@ -463,7 +465,7 @@ export default function B2BPortalPage() {
                           <span className="block text-[9px] font-semibold text-slate-500 mb-0.5">Sipariş stok notu</span>
                           <textarea
                             rows={1}
-                            value={draftNotes[p.id] || ""}
+                            value={draftNotes[p.id] !== undefined ? draftNotes[p.id] : (p.name || "")}
                             onChange={(e) => setDraftNotes((n) => ({ ...n, [p.id]: e.target.value }))}
                             placeholder="Fişte stok açıklamasının altında basılır"
                             className="w-full min-h-[2rem] border rounded-lg px-2 py-1 text-[10px] text-slate-700 resize-none bg-slate-50"
