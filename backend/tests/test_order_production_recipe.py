@@ -143,6 +143,21 @@ def test_apply_station_fills_empty_only():
     assert recipe["materials"][1]["steps"][0]["station"] == "Pres"
 
 
+def test_apply_station_force_overwrites_all():
+    from order_production_recipe import apply_station_to_recipe_materials
+    recipe = {
+        "materials": [
+            {"steps": [{"name": "Üretim", "station": ""}]},
+            {"steps": [{"name": "Kesim", "station": "Pres"}]},
+        ],
+        "steps": [{"name": "Paket", "station": "Depo"}],
+    }
+    apply_station_to_recipe_materials(recipe, "PAKET YAPMA", force=True)
+    assert recipe["materials"][0]["steps"][0]["station"] == "PAKET YAPMA"
+    assert recipe["materials"][1]["steps"][0]["station"] == "PAKET YAPMA"
+    assert recipe["steps"][0]["station"] == "PAKET YAPMA"
+
+
 def test_build_raises_without_lines():
     try:
         build_order_recipe_payload({"order_number": "X"}, [])

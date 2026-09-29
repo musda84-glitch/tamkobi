@@ -335,8 +335,11 @@ export function OrderActions({
     }
     setBusy("produceRecipe");
     try {
-      const r = await post<{ message?: string }>(client, `/orders/${oid}/production-recipe`, { station });
-      onMessage?.(r.message || "Reçete ve üretim emri oluşturuldu.");
+      const r = await post<{ message?: string; station?: string }>(client, `/orders/${oid}/production-recipe`, {
+        station,
+        default_station: station,
+      });
+      onMessage?.(r.message || `Reçete ve üretim emri oluşturuldu (${station}).`);
       setProduceOpen(false);
       onChanged?.();
     } catch (err) {

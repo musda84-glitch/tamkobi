@@ -12474,6 +12474,20 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
         default_station = str(req.get("station") or req.get("default_station") or "").strip()
 
         async def _open_po(recipe_doc: Dict[str, Any]) -> Dict[str, Any]:
+            # Seçilen istasyon reçete adımlarına yazılsın; yoksa resolve_step_station
+            # boş adımı ilk parkura çevirir ve kullanıcı seçimi kaybolur.
+            if default_station:
+                opr.apply_station_to_recipe_materials(recipe_doc, default_station, force=True)
+                rid = recipe_doc.get("_id") or recipe_doc.get("id")
+                if rid:
+                    await db.recipes.update_one(
+                        {"_id": rid},
+                        {"$set": {
+                            "materials": recipe_doc.get("materials") or [],
+                            "steps": recipe_doc.get("steps") or [],
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }},
+                    )
             out = await create_production_order({
                 "company_id": company_id,
                 "recipe_id": recipe_doc.get("_id") or recipe_doc.get("id"),
@@ -12484,25 +12498,34 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 "source": "sales_order",
                 "allow_without_recipe": True,
                 "notes": recipe_doc.get("notes") or f"Sipariş {order.get('order_number')}",
+                "station": default_station or None,
+                "default_station": default_station or None,
             })
             if default_station:
                 po_id = out.get("id") or out.get("_id") or out.get("order_id")
                 if po_id:
+                    # Tüm atölye kartlarına zorla yaz — resolve ilk parkuru basmış olsa bile.
                     await db.work_orders.update_many(
-                        {
-                            "order_id": po_id,
-                            "$or": [
-                                {"station": {"$in": ["", None, "Genel", "genel"]}},
-                                {"station": {"$exists": False}},
-                            ],
-                        },
+                        {"order_id": po_id},
                         {"$set": {"station": default_station}},
                     )
+                out["station"] = default_station
             return out
 
         if existing:
+            if default_station:
+                opr.apply_station_to_recipe_materials(existing, default_station, force=True)
             recipe_out = clean_doc(existing)
             po_out = await _open_po(existing) if create_po else None
+            if default_station and not create_po:
+                await db.recipes.update_one(
+                    {"_id": existing.get("_id") or existing.get("id")},
+                    {"$set": {
+                        "materials": existing.get("materials") or [],
+                        "steps": existing.get("steps") or [],
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }},
+                )
             return {
                 "status": "ok",
                 "reused": True,
@@ -12512,7 +12535,9 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
                 "message": (
                     f"Mevcut reçete kullanıldı ({recipe_out.get('code')})"
                     + (f"; {po_out.get('order_code')} üretim emri açıldı." if po_out else ".")
+                    + (f" İstasyon: {default_station}." if default_station else "")
                 ),
+                "station": default_station or None,
             }
         try:
             payload = opr.build_order_recipe_payload(
@@ -12540,7 +12565,9 @@ async def create_production_recipe_from_order(order_id: str, req: Optional[Dict[
             "message": (
                 f"1 reçete oluşturuldu ({recipe_out.get('code')}, {len(lines)} ürün)"
                 + (f"; {po_out.get('order_code')} üretim emri açıldı." if po_out else ".")
+                + (f" İstasyon: {default_station}." if default_station else "")
             ),
+            "station": default_station or None,
         }
     except HTTPException:
         raise
@@ -13248,7 +13275,12 @@ async def create_production_order(req: Dict[str, Any]):
         doc = order.to_mongo()
         doc["needs_recipe"] = True
         await db.production_orders.insert_one(doc)
-        await _generate_work_orders(doc, {"unit": prod.get("unit") or "Adet", "steps": [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0}]})
+        station_override = str(req.get("station") or req.get("default_station") or "").strip() or None
+        await _generate_work_orders(
+            doc,
+            {"unit": prod.get("unit") or "Adet", "steps": [{"no": 1, "name": "Üretim", "station": "", "duration_min": 0}]},
+            station_override=station_override,
+        )
         return {**clean_doc(doc), "requirements": [], "needs_recipe": True, "message": f"{order.order_code} üretim emri oluşturuldu (reçetesiz)."}
     rows = await _requirements(recipe, qty)
     shortages = [x for x in rows if x["shortage"] > 0]
@@ -13261,11 +13293,17 @@ async def create_production_order(req: Dict[str, Any]):
                             planned_date=req.get("planned_date"), source=req.get("source", "manual"), notes=req.get("notes"), shortages=shortages)
     doc = order.to_mongo()
     await db.production_orders.insert_one(doc)
-    await _generate_work_orders(doc, recipe)
+    station_override = str(req.get("station") or req.get("default_station") or "").strip() or None
+    await _generate_work_orders(doc, recipe, station_override=station_override)
     return {**clean_doc(doc), "requirements": rows, "message": f"{order.order_code} üretim emri oluşturuldu." + (f" ⚠ {len(shortages)} hammaddede eksik var." if shortages else "")}
 
 # ---- İş Emirleri (atölye / tablet ekranı)
-async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any], force: bool = False):
+async def _generate_work_orders(
+    order: Dict[str, Any],
+    recipe: Dict[str, Any],
+    force: bool = False,
+    station_override: Optional[str] = None,
+):
     """Reçete adımlarından iş emri oluştur. force=True: başlamamış emirleri silip yeniden kur."""
     existing = await db.work_orders.count_documents({"order_id": order["_id"]})
     if existing and not force:
@@ -13284,8 +13322,9 @@ async def _generate_work_orders(order: Dict[str, Any], recipe: Dict[str, Any], f
     now = datetime.now(timezone.utc).isoformat()
     job_meta = pwo.recipe_job_fields(recipe)
     docs = []
+    forced = str(station_override or "").strip() or None
     for idx, st in enumerate(steps):
-        station = wp.resolve_step_station(st, parks)
+        station = wp.resolve_work_order_station(st, parks, override=forced)
         docs.append({"_id": str(uuid.uuid4()), "company_id": order["company_id"], "order_id": order["_id"], "order_code": order.get("order_code"), "product_name": order.get("finished_product_name"),
                      "planned_quantity": order.get("planned_quantity"), "unit": recipe.get("unit", "Adet"), "planned_date": order.get("planned_date"), "notes": order.get("notes"),
                      "step_no": idx + 1, "original_step_no": idx + 1, "step_count": len(steps), "step_name": pwo.work_order_step_label(st, idx), "station": station, "duration_min": st.get("duration_min", 0),

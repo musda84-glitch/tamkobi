@@ -1,5 +1,5 @@
 """İş emri istasyonu Firma Ayarları → Parkurlar listesinden çözülür."""
-from work_parks import resolve_step_station, station_names_from_parks
+from work_parks import resolve_step_station, resolve_work_order_station, station_names_from_parks
 
 
 def test_station_names_from_parks():
@@ -27,3 +27,17 @@ def test_resolve_falls_back_to_first_park_instead_of_genel():
 def test_resolve_genel_when_no_parks():
     assert resolve_step_station({"name": "Üretim", "station": ""}, []) == "Genel"
     assert resolve_step_station({"station": "Genel"}, None) == "Genel"
+
+
+def test_resolve_work_order_station_override_beats_first_park():
+    parks = [{"name": "CNC OEMAK"}, {"name": "PAKET YAPMA"}]
+    # Boş adım normalde ilk parkura düşer; override seçimi korur.
+    assert resolve_work_order_station({"name": "Üretim", "station": ""}, parks) == "CNC OEMAK"
+    assert (
+        resolve_work_order_station(
+            {"name": "Üretim", "station": ""},
+            parks,
+            override="PAKET YAPMA",
+        )
+        == "PAKET YAPMA"
+    )
