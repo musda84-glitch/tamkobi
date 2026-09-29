@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
@@ -13,6 +14,14 @@ import { goHref } from "../nav";
 import { colors } from "../theme";
 import type { DashboardStats, Notification, Overview } from "../types";
 import { monthlySalesRow, netProfitRow, visibleHomeTasks } from "../utils/dashboard";
+import { requestConfirm } from "../utils/confirmDialog";
+import {
+  HOME_QUICK_HIDDEN_KEY,
+  filterHiddenQuickTiles,
+  hideQuickTile,
+  parseHiddenTileIds,
+  serializeHiddenTileIds,
+} from "../utils/homeQuickHidden";
 import { fmtMoney, idOf } from "../utils/money";
 import { latestNotifications, notificationDeletePath, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
 import { hasSelfPersonnelRecord, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile } from "../utils/permissions";
@@ -27,6 +36,7 @@ export function HomeScreen() {
   const [openTasks, setOpenTasks] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [hiddenIds, setHiddenIds] = useState<string[]>([]);
 
   const showFinance = showHomeFinanceSummary(user);
   const showRefresh = showHomeRefreshTile(user);
@@ -37,11 +47,27 @@ export function HomeScreen() {
     () => splitNotificationsTile(visibleQuickTiles(user, license)),
     [user, license]
   );
+  const visibleTiles = useMemo(() => filterHiddenQuickTiles(tiles, hiddenIds), [tiles, hiddenIds]);
 
   const badges = useMemo(() => tileBadges(notes, { ...live, my_tasks: openTasks }), [notes, live, openTasks]);
 
+  const persistHidden = useCallback(async (next: string[]) => {
+    setHiddenIds(next);
+    await AsyncStorage.setItem(HOME_QUICK_HIDDEN_KEY, serializeHiddenTileIds(next)).catch(() => null);
+  }, []);
+
+  const askHideTile = useCallback(async (tileId: string, label: string) => {
+    const ok = await requestConfirm(
+      "Karo gizlensin mi?",
+      `"${label}" ana ekrandan kaldırılsın. Daha menüsünden tekrar ekleyebilirsiniz.`,
+      "Gizle",
+    );
+    if (!ok) return;
+    await persistHidden(hideQuickTile(hiddenIds, tileId));
+  }, [hiddenIds, persistHidden]);
+
   const quickItems: ActionTile[] = useMemo(
-    () => tiles.map((tile) => ({
+    () => visibleTiles.map((tile) => ({
       key: tile.id,
       label: tile.label,
       icon: tile.icon as ActionTile["icon"],
@@ -49,8 +75,9 @@ export function HomeScreen() {
       badge: badges[tile.id],
       testID: `home-quick-${tile.id}`,
       onPress: () => goHref(tile.href),
+      onLongPress: () => { void askHideTile(tile.id, tile.label); },
     })),
-    [tiles, badges]
+    [visibleTiles, badges, askHideTile]
   );
 
   const load = useCallback(async () => {
@@ -86,7 +113,12 @@ export function HomeScreen() {
     }
   }, [client, companyId, refreshBadges, showFinance, user]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    AsyncStorage.getItem(HOME_QUICK_HIDDEN_KEY)
+      .then((raw) => setHiddenIds(parseHiddenTileIds(raw)))
+      .catch(() => setHiddenIds([]));
+    load();
+  }, [load]));
 
   const openNotification = useCallback((n: Notification) => {
     const id = idOf(n);
