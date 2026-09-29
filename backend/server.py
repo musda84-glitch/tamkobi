@@ -14900,7 +14900,7 @@ async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Reques
         raise HTTPException(status_code=400, detail="Bu personelin zaten bir sistem kullanıcısı var.")
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Bu e-posta ile kullanıcı zaten var.")
-    role = req.get("role") or "sales"
+    role = rbac.normalize_role_code(req.get("role") or "sales")
     await rbac.ensure_roles(emp["company_id"])
     if not await db.roles.find_one({"company_id": emp["company_id"], "code": role}):
         raise HTTPException(status_code=400, detail="Geçersiz rol.")
