@@ -141,58 +141,22 @@ function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side =
 }
 
 /** Sipariş satırı → üretim emri (tek ürün doğrudan, çoklu seçici). */
-function OrderProduceButton({ ord, catalog, onProduce, testSuffix = "" }) {
+function OrderProduceButton({ ord, catalog, onProduce, testSuffix = "", busy = false }) {
   const lines = producibleLinesForOrder(ord, catalog);
   if (!lines.length) return null;
-  const btnClass = "p-1.5 rounded-lg text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100";
-  if (lines.length === 1) {
-    return (
-      <button
-        type="button"
-        onClick={() => onProduce(ord, lines[0])}
-        className={btnClass}
-        title="Üretim emri ver"
-        aria-label="Üretim"
-        data-testid={`order-produce-btn${testSuffix}-${ord.order_number}`}
-      >
-        <Factory className="w-4 h-4" />
-      </button>
-    );
-  }
+  const btnClass = "p-1.5 rounded-lg text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100 disabled:opacity-50";
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className={btnClass}
-          title="Üretim emri ver"
-          aria-label="Üretim"
-          data-testid={`order-produce-btn${testSuffix}-${ord.order_number}`}
-        >
-          <Factory className="w-4 h-4" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        sideOffset={8}
-        collisionPadding={24}
-        className="z-[80] w-64 rounded-xl p-1.5 shadow-lg"
-        data-testid={`order-produce-menu${testSuffix}-${ord.order_number}`}
-      >
-        <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">Üretilecek ürün</div>
-        {lines.map((line) => (
-          <DropdownMenuItem
-            key={`${line.product.id}-${line.idx}`}
-            onSelect={() => onProduce(ord, line)}
-            className="gap-2 text-xs font-medium"
-            data-testid={`order-produce-pick${testSuffix}-${ord.order_number}-${line.idx}`}
-          >
-            <Factory className="w-3.5 h-3.5 shrink-0 text-amber-700" />
-            <span className="truncate">{line.label}</span>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <button
+      type="button"
+      onClick={() => onProduce(ord)}
+      disabled={busy}
+      className={btnClass}
+      title="Üretim emri ver — tüm ürünler için 1 reçete"
+      aria-label="Üretim"
+      data-testid={`order-produce-btn${testSuffix}-${ord.order_number}`}
+    >
+      <Factory className="w-4 h-4" />
+    </button>
   );
 }
 
@@ -493,6 +457,7 @@ export default function OrdersB2BPage() {
 
   const [expandedItems, setExpandedItems] = useState(null);
   const [produceFromOrder, setProduceFromOrder] = useState(null);
+  const [produceBusyId, setProduceBusyId] = useState(null);
   const productCatalog = allProducts.length ? allProducts : products;
   const openProduceForLine = (ord, it, idx) => {
     const p = resolveOrderLineProduct(it, productCatalog);
@@ -508,21 +473,28 @@ export default function OrdersB2BPage() {
     if (!payload) return;
     setProduceFromOrder({ product: payload, order: ord, lineIndex: idx });
   };
-  const openProduceForOrder = (ord, line) => {
-    if (line?.product) {
-      setProduceFromOrder({ product: line.product, order: ord, lineIndex: line.idx });
-      return;
-    }
+  const openProduceForOrder = async (ord) => {
+    const oid = ord?.id || ord?._id;
+    if (!oid) return;
     const lines = producibleLinesForOrder(ord, productCatalog);
     if (!lines.length) {
       toast.error("Bu siparişte üretilebilir ürün yok.");
       return;
     }
-    if (lines.length === 1) {
-      setProduceFromOrder({ product: lines[0].product, order: ord, lineIndex: lines[0].idx });
-      return;
+    const label = ord.held_label || ord.order_number || "Sipariş";
+    if (!window.confirm(
+      `${label} için tüm ürünlerden (${lines.length} kalem) 1 reçete ve üretim emri oluşturulsun mu?`,
+    )) return;
+    setProduceBusyId(oid);
+    try {
+      const r = await axios.post(`${API_URL}/orders/${oid}/production-recipe`, {});
+      toast.success(r.data.message || "Reçete ve üretim emri oluşturuldu.");
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Reçete / üretim emri oluşturulamadı.");
+    } finally {
+      setProduceBusyId(null);
     }
-    setProduceFromOrder({ product: lines[0].product, order: ord, lineIndex: lines[0].idx, choices: lines });
   };
   const handleConvertToInvoice = async (orderId, eType) => {
     try {
@@ -1100,7 +1072,7 @@ export default function OrdersB2BPage() {
                       >
                         <Printer className="w-4 h-4" />
                       </button>
-                      <OrderProduceButton ord={ord} catalog={productCatalog} onProduce={openProduceForOrder} testSuffix="-mobile" />
+                      <OrderProduceButton ord={ord} catalog={productCatalog} onProduce={openProduceForOrder} testSuffix="-mobile" busy={produceBusyId === (ord.id || ord._id)} />
                       {showMoreActions ? (
                         <OrderMoreMenuButton
                           ord={ord}
@@ -1357,7 +1329,7 @@ export default function OrdersB2BPage() {
                         >
                           <Printer className="w-4 h-4" />
                         </button>
-                        <OrderProduceButton ord={ord} catalog={productCatalog} onProduce={openProduceForOrder} />
+                        <OrderProduceButton ord={ord} catalog={productCatalog} onProduce={openProduceForOrder} busy={produceBusyId === (ord.id || ord._id)} />
                         {showMoreActions ? (
                           <OrderMoreMenuButton
                             ord={ord}

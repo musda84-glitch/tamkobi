@@ -83,6 +83,7 @@ import cheques
 import fx
 import attendance
 import production_work_orders as pwo
+import order_production_recipe as opr
 import work_order_trash_requests as wo_trash_req
 import shopfloor_pause as sfp
 import location_consent
@@ -12394,6 +12395,118 @@ async def create_recipe(recipe: Recipe):
     await db.recipes.insert_one(doc)
     await db.products.update_one({"_id": recipe.finished_product_id}, {"$set": {"has_recipe": True}})
     return clean_doc(doc)
+
+
+@api_router.post("/orders/{order_id}/production-recipe")
+async def create_production_recipe_from_order(order_id: str, req: Dict[str, Any] = None):
+    """Siparişteki tüm üretilebilir ürünler için tek seferlik 1 reçete + üretim emri."""
+    req = req or {}
+    order = await db.orders.find_one({"_id": order_id})
+    if not order:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    company_id = order.get("company_id") or req.get("company_id") or "comp_nexus_main_01"
+    items = order.get("items") if isinstance(order.get("items"), list) else []
+    pids = list({
+        str(it.get("product_id") or it.get("productId"))
+        for it in items if isinstance(it, dict) and (it.get("product_id") or it.get("productId"))
+    })
+    skus = list({
+        str(it.get("sku") or "").strip()
+        for it in items if isinstance(it, dict) and str(it.get("sku") or "").strip()
+    })
+    catalog: List[Dict[str, Any]] = []
+    if pids:
+        catalog.extend(await db.products.find({"_id": {"$in": pids}}).to_list(len(pids) + 10))
+    if skus:
+        found_ids = {str(p.get("_id")) for p in catalog}
+        extra = await db.products.find({"company_id": company_id, "sku": {"$in": skus}}).to_list(len(skus) + 10)
+        for p in extra:
+            if str(p.get("_id")) not in found_ids:
+                catalog.append(p)
+                found_ids.add(str(p.get("_id")))
+    lines = opr.producible_order_lines(order, catalog)
+    if not lines:
+        raise HTTPException(status_code=400, detail="Bu siparişte üretilebilir ürün yok.")
+    # Aynı sipariş için daha önce oluşturulmuş tek seferlik reçete varsa onu kullan
+    existing = await db.recipes.find_one({
+        "company_id": company_id,
+        "sales_order_id": order_id,
+        "is_active": {"$ne": False},
+    })
+    order_number = str(order.get("order_number") or "").strip()
+    if not existing and order_number:
+        existing = await db.recipes.find_one({
+            "company_id": company_id,
+            "job_file_name": order_number,
+            "one_time": True,
+            "is_active": {"$ne": False},
+        })
+    create_po = req.get("create_production_order", True) is not False
+    if existing:
+        recipe_out = clean_doc(existing)
+        po_out = None
+        if create_po:
+            po_out = await create_production_order({
+                "company_id": company_id,
+                "recipe_id": existing["_id"],
+                "planned_quantity": float(req.get("planned_quantity") or 1),
+                "planned_date": req.get("planned_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "source": "sales_order",
+                "notes": existing.get("notes") or f"Sipariş {order.get('order_number')}",
+            })
+        return {
+            "status": "ok",
+            "reused": True,
+            "recipe": recipe_out,
+            "production_order": po_out,
+            "lines": opr.summarize_lines(lines),
+            "message": (
+                f"Mevcut reçete kullanıldı ({recipe_out.get('code')})"
+                + (f"; {po_out.get('order_code')} üretim emri açıldı." if po_out else ".")
+            ),
+        }
+    try:
+        payload = opr.build_order_recipe_payload(order, lines, company_id=company_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    sales_order_id = payload.pop("sales_order_id", None)
+    sales_order_number = payload.pop("sales_order_number", None)
+    known = set(Recipe.model_fields.keys())
+    recipe = Recipe(**{k: v for k, v in payload.items() if k in known})
+    if not recipe.code:
+        recipe.code = f"BOM-{str(uuid.uuid4().int)[:6]}"
+    doc = _normalize_recipe_steps_payload(recipe.to_mongo())
+    if sales_order_id:
+        doc["sales_order_id"] = sales_order_id
+    if sales_order_number:
+        doc["sales_order_number"] = sales_order_number
+    await _fill_material_costs(doc.get("materials") or [])
+    doc.update(_recipe_costs(doc))
+    await db.recipes.insert_one(doc)
+    if doc.get("finished_product_id"):
+        await db.products.update_one({"_id": doc["finished_product_id"]}, {"$set": {"has_recipe": True}})
+    recipe_out = clean_doc(doc)
+    po_out = None
+    if create_po:
+        po_out = await create_production_order({
+            "company_id": company_id,
+            "recipe_id": doc["_id"],
+            "planned_quantity": float(req.get("planned_quantity") or 1),
+            "planned_date": req.get("planned_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "source": "sales_order",
+            "notes": doc.get("notes") or f"Sipariş {order.get('order_number')}",
+        })
+    return {
+        "status": "ok",
+        "reused": False,
+        "recipe": recipe_out,
+        "production_order": po_out,
+        "lines": opr.summarize_lines(lines),
+        "message": (
+            f"1 reçete oluşturuldu ({recipe_out.get('code')}, {len(lines)} ürün)"
+            + (f"; {po_out.get('order_code')} üretim emri açıldı." if po_out else ".")
+        ),
+    }
 
 
 @api_router.post("/production/recipes/{recipe_id}/copy")

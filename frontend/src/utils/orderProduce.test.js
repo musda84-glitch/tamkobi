@@ -47,4 +47,24 @@ describe("orderProduce", () => {
     expect(lines[0].label).toContain("Duvar Rafı");
     expect(lines[0].product._planQty).toBe(2);
   });
+
+  it("lists all producible products for one combined recipe", () => {
+    const catalog2 = [
+      ...catalog,
+      { id: "p4", sku: "TBL", name: "Masa", type: "product", stock_quantity: 0 },
+    ];
+    const lines = producibleLinesForOrder(
+      {
+        order_number: "B2B-14",
+        items: [
+          { product_id: "p1", quantity: 2, product_name: "Duvar Rafı" },
+          { product_id: "p4", quantity: 1, product_name: "Masa" },
+          { product_id: "p3", quantity: 1, product_name: "Montaj" },
+        ],
+      },
+      catalog2,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines.map((l) => l.product.id)).toEqual(["p1", "p4"]);
+  });
 });
