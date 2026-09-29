@@ -42,6 +42,7 @@ import {
   ScrollText,
   Headset,
   ShieldCheck,
+  Car,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ContactForm } from "./ContactForm";
@@ -77,6 +78,7 @@ const PATH_ICONS = {
   "/saha": Smartphone,
   "/sevk": ClipboardList,
   "/warehouses": Building2,
+  "/vehicles": Car,
   "/production": Factory,
   "/personnel": UserCheck,
   "/personelim": UserRound,

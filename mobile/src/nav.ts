@@ -140,6 +140,12 @@ export function go(name: string, params?: Record<string, unknown>) {
       });
     case "ExpenseDetail":
       return router.push({ pathname: "/expenses/[id]", params: { id: String(params?.id || "") } });
+    case "Vehicles":
+      return router.push("/vehicles");
+    case "VehicleNew":
+      return router.push("/vehicles/new");
+    case "VehicleDetail":
+      return router.push({ pathname: "/vehicles/[id]", params: { id: String(params?.id || "") } });
     case "Quotes":
       return router.push("/quotes");
     case "QuoteNew":

@@ -50,6 +50,7 @@ export const AuthProvider = ({ children }) => {
     { label: "Saha Sipariş", path: "/saha", badge: "Tablet" },
     { label: "Depo Sevkiyatı", path: "/sevk", badge: "Tablet" },
     { label: "Depo & Transfer", path: "/warehouses" },
+    { label: "Araçlarım", path: "/vehicles", badge: "Filo" },
     { label: "Üretim & Reçete (BOM)", path: "/production" },
     { label: "Üretim Ekranı (Atölye)", path: "/atolye", badge: "Tablet" },
     { label: "Personel & Bordro", path: "/personnel" },

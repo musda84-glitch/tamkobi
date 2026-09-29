@@ -94,6 +94,7 @@ describe("visibleQuickTiles", () => {
       pay: "Tahsilat & Ödeme",
       cheques: "Çek",
       sevk: "Sipariş Hazırla",
+      vehicles: "Araçlarım",
       atolye: "Atölye Ekranı",
       personnel: "Personel",
       edoc: "Gelen e-Fatura",
@@ -129,9 +130,15 @@ describe("visibleQuickTiles", () => {
     expect(visibleQuickTiles({ role: "admin" }, null).map((t) => t.id)).not.toContain("my_tasks");
   });
 
-  it("places Atölye Ekranı after Sevkiyat and gates it on /atolye", () => {
+  it("places Araçlarım after Sevkiyat and Atölye after vehicles", () => {
     const ids = QUICK_TILES.map((t) => t.id);
-    expect(ids.indexOf("atolye")).toBe(ids.indexOf("sevk") + 1);
+    expect(ids.indexOf("vehicles")).toBe(ids.indexOf("sevk") + 1);
+    expect(ids.indexOf("atolye")).toBe(ids.indexOf("vehicles") + 1);
+    expect(QUICK_TILES.find((t) => t.id === "vehicles")).toMatchObject({
+      label: "Araçlarım",
+      path: "/vehicles",
+      href: "/vehicles",
+    });
     expect(QUICK_TILES.find((t) => t.id === "atolye")).toMatchObject({
       label: "Atölye Ekranı",
       path: "/atolye",
@@ -147,6 +154,13 @@ describe("visibleQuickTiles", () => {
     const accountant = { role: "accountant", permissions: { "/atolye": "none" } };
     expect(visibleQuickTiles(accountant, null).map((t) => t.id)).not.toContain("atolye");
     expect(visibleQuickTiles({ role: "admin" }, { modules: { "/atolye": false } }).map((t) => t.id)).not.toContain("atolye");
+  });
+
+  it("gates Araçlarım on the /vehicles module", () => {
+    const warehouse = { role: "warehouse", permissions: { "/vehicles": "edit" } };
+    expect(visibleQuickTiles(warehouse, null).map((t) => t.id)).toContain("vehicles");
+    expect(visibleQuickTiles({ role: "admin" }, { modules: { "/vehicles": false } }).map((t) => t.id)).not.toContain("vehicles");
+    expect(resolveMobilePath("/vehicles")).toBe("/vehicles");
   });
 
 });

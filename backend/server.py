@@ -75,6 +75,7 @@ import cargo_providers
 import cargo_label
 import rbac
 import expenses
+import vehicles
 import contact_payments
 import finance
 import fx
@@ -15929,6 +15930,7 @@ data_sync.init(db)
 rbac.set_license_guard(saas.guard)
 demo.init(db)
 expenses.init(db)
+vehicles.init(db)
 fx.init(db)
 finance.init(db)
 cheques.init(db)
@@ -16001,6 +16003,7 @@ app.include_router(setup_install.router)
 app.include_router(db_admin.router)
 app.include_router(rbac.router)
 app.include_router(expenses.router)
+app.include_router(vehicles.router)
 app.include_router(fx.router)
 app.include_router(finance.router)
 app.include_router(cheques.router)

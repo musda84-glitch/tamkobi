@@ -42,6 +42,7 @@ const PATH_GROUP = {
   "/stock": "stok",
   "/purchase-orders": "stok",
   "/warehouses": "stok",
+  "/vehicles": "stok",
   "/sayim": "stok",
   "/sevk": "stok",
   "/production": "uretim",

@@ -49,6 +49,7 @@ const InviteAcceptPage = page(() => import("./pages/InviteAcceptPage"));
 const ExpensesPage = page(() => import("./pages/ExpensesPage"));
 const LoansPage = page(() => import("./pages/LoansPage"));
 const ChequesPage = page(() => import("./pages/ChequesPage"));
+const VehiclesPage = page(() => import("./pages/VehiclesPage"));
 const TrashPage = page(() => import("./pages/TrashPage"));
 const EdocInboxPage = page(() => import("./pages/EdocInboxPage"));
 const SupportPage = page(() => import("./pages/SupportPage"));
@@ -114,6 +115,7 @@ export default function App() {
                   <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
                   <Route path="/saha" element={<FieldSalesPage />} />
                   <Route path="/warehouses" element={<WarehousePage />} />
+                  <Route path="/vehicles" element={<VehiclesPage />} />
                   <Route path="/production" element={<ProductionPage />} />
                   <Route path="/personnel" element={<PersonnelPage />} />
                   <Route path="/personelim" element={<MyPersonnelPage />} />
