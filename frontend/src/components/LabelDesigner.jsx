@@ -11,6 +11,7 @@ import { useEscape } from "../utils/useEscape";
 import { productLabelImageUrl } from "../utils/productImages";
 import { LABEL_DESIGN_FIELDS, LABEL_TAG_PALETTE, labelFieldValue } from "../utils/labelDesignFields";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { buildLabelPrintDocument, embedLabelImages } from "../utils/labelPrint";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
@@ -65,16 +66,27 @@ const cardPrintTargets = (product) => {
   return [main, ...variants];
 };
 
-const printLabelJobs = (tpl, jobs, page, sourceId) => {
+const printLabelJobs = async (tpl, jobs, page, sourceId) => {
   if (!jobs.length) { toast.error("Yazdırılacak etiket yok."); return; }
+  const source = document.getElementById(sourceId);
+  if (!source) { toast.error("Yazdırma kaynağı bulunamadı."); return; }
+  try {
+    await embedLabelImages(source, { baseHref: window.location.href });
+  } catch { /* absolute URL fallback in document builder */ }
   const win = window.open("", "_blank", "width=900,height=700");
   if (!win) { toast.error("Yazdırma penceresi açılamadı — tarayıcı pop-up engelini kontrol edin."); return; }
-  const isA4 = page.mode === "a4";
-  const cols = isA4 ? Math.max(1, Number(page.cols) || 1) : 1;
-  const gap = Number(page.gap_mm) || 0;
-  const html = document.getElementById(sourceId)?.innerHTML || "";
-  win.document.write(`<html><head><title>Etiketler</title><style>@page{size:${isA4 ? "A4" : `${tpl.width_mm}mm ${tpl.height_mm}mm`};margin:${isA4 ? "8mm" : "0"}}body{margin:0;font-family:Arial,sans-serif}.grid{display:grid;grid-template-columns:repeat(${cols},${tpl.width_mm}mm);gap:${gap}mm}.lbl{width:${tpl.width_mm}mm;height:${tpl.height_mm}mm;position:relative;overflow:hidden;${isA4 ? "" : "page-break-after:always;"}break-inside:avoid;background:#fff}svg{display:block}</style></head><body><div class="grid">${html}</div><script>setTimeout(()=>{window.print();},400)</script></body></html>`);
+  const html = buildLabelPrintDocument({
+    html: source.innerHTML || "",
+    tpl,
+    page,
+    baseHref: `${window.location.origin}/`,
+  });
+  win.document.open();
+  win.document.write(html);
   win.document.close();
+  const trigger = () => { try { win.focus(); win.print(); } catch { /* ignore */ } };
+  // Görseller data-URL; kısa gecikme layout için yeterli
+  setTimeout(trigger, 350);
 };
 
 const valueOf = (el, p, company) => labelFieldValue(el, p, company);
@@ -87,7 +99,7 @@ const Element = ({ el, p, company, scale, selected, onSelect, onMove }) => {
   if (el.type === "barcode") body = <div style={{ transform: `scale(${scale})`, transformOrigin: "top left", width: el.w * PX, height: el.h * PX, display: "flex", alignItems: "center", justifyContent: "center" }}><Barcode value={code} height={Math.max(10, el.h * PX - (el.showText === false ? 2 : 14))} width={Math.max(0.8, Math.min(3, (el.w * PX) / 110))} fontSize={el.showText === false ? 0 : 10} /></div>;
   else if (el.type === "qr") body = <QRCodeSVG value={code} size={Math.min(el.w, el.h) * PX * scale} level="M" />;
   else if (el.type === "logo") body = company?.logo_url ? <img src={resolveImageUrl(company.logo_url)} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">LOGO</div>;
-  else if (el.type === "image") body = p?.image_url ? <img src={resolveImageUrl(p.image_url)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">GÖRSEL</div>;
+  else if (el.type === "image") body = p?.image_url ? <img src={resolveImageUrl(p.image_url)} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <div className="w-full h-full bg-slate-100 text-[8px] text-slate-400 flex items-center justify-center">GÖRSEL</div>;
   else if (el.type === "line") body = <div style={{ width: "100%", height: "100%", background: "#000" }} />;
   else if (el.type === "box") body = <div style={{ width: "100%", height: "100%", border: `${(el.border || 0.3) * PX * scale}px solid #000`, borderRadius: (el.radius || 0) * PX * scale }} />;
   else body = <div style={{ fontSize: (el.font || 10) * scale * 1.33, fontWeight: el.bold ? 700 : 400, fontStyle: el.italic ? "italic" : undefined, textAlign: el.align || "left", lineHeight: 1.1, fontFamily: el.mono ? "monospace" : "Arial, sans-serif", width: "100%", height: "100%", display: "flex", alignItems: el.valign === "middle" ? "center" : "flex-start", justifyContent: el.align === "center" ? "center" : el.align === "right" ? "flex-end" : "flex-start", whiteSpace: el.wrap === false ? "nowrap" : "normal", wordBreak: "break-word" }}>{valueOf(el, p, company)}</div>;
@@ -124,7 +136,7 @@ const PrintModal = ({ tpl, products, company, onClose, initialSel = {}, template
             <input type="number" min="0" value={sel[id] || ""} onChange={(e) => setSel({ ...sel, [id]: Number(e.target.value) })} placeholder="adet" className="w-16 border rounded-lg p-1 text-right" data-testid={`label-qty-${p.sku || id}`} />
             <button onClick={() => setSel({ ...sel, [id]: Math.max(1, Math.round(Number(p.stock_quantity) || 1)) })} className="px-2 py-1 border rounded-lg text-[10px]" title="Stok adedi kadar">stok</button></div>); })}</div>
         <div className="flex flex-wrap gap-2 bg-slate-50 p-3 rounded-xl overflow-x-auto" data-testid="label-preview-strip">{jobs.slice(0, 6).map((p, i) => <div key={i} className="shadow border"><LabelCanvas tpl={tpl} product={p} company={company} scale={0.6} /></div>)}{jobs.length > 6 && <div className="self-center text-slate-400">+{jobs.length - 6} daha</div>}</div>
-        <div id="label-print-source" className="hidden">{jobs.map((p, i) => <div key={i} className="lbl"><LabelCanvas tpl={tpl} product={p} company={company} scale={1} /></div>)}</div>
+        <div id="label-print-source" className="fixed left-[-10000px] top-0 opacity-0 pointer-events-none" aria-hidden="true">{jobs.map((p, i) => <div key={i} className="lbl"><LabelCanvas tpl={tpl} product={p} company={company} scale={1} /></div>)}</div>
       </div>
     </div>
   );
@@ -340,7 +352,7 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
         <div className="bg-slate-50 p-4 rounded-xl flex justify-center overflow-x-auto" data-testid="label-quick-preview">
           <div className="shadow border bg-white"><LabelCanvas tpl={tpl} product={target} company={company} scale={tpl.width_mm >= 80 ? 1.4 : 2} /></div>
         </div>
-        <div id="label-quick-print-source" className="hidden">{jobs.map((p, i) => <div key={i} className="lbl"><LabelCanvas tpl={tpl} product={p} company={company} scale={1} /></div>)}</div>
+        <div id="label-quick-print-source" className="fixed left-[-10000px] top-0 opacity-0 pointer-events-none" aria-hidden="true">{jobs.map((p, i) => <div key={i} className="lbl"><LabelCanvas tpl={tpl} product={p} company={company} scale={1} /></div>)}</div>
       </div>
     </div>
   );
