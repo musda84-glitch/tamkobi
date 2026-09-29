@@ -487,10 +487,18 @@ export default function OrdersB2BPage() {
     const ord = produceRecipeOrd;
     const oid = ord?.id || ord?._id;
     if (!oid) return;
+    const st = String(station || "").trim();
+    if (!st) {
+      toast.error("İstasyon seçin.");
+      return;
+    }
     setProduceBusyId(oid);
     try {
-      const r = await axios.post(`${API_URL}/orders/${oid}/production-recipe`, { station });
-      toast.success(r.data.message || "Reçete ve üretim emri oluşturuldu.");
+      const r = await axios.post(`${API_URL}/orders/${oid}/production-recipe`, {
+        station: st,
+        default_station: st,
+      });
+      toast.success(r.data.message || `Reçete ve üretim emri oluşturuldu (${st}).`);
       setProduceRecipeOrd(null);
       loadData();
     } catch (err) {

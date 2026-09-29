@@ -146,6 +146,20 @@ def resolve_step_station(step: Optional[dict] = None, parks: Any = None, *, fall
     return chosen or fallback
 
 
+def resolve_work_order_station(
+    step: Optional[dict] = None,
+    parks: Any = None,
+    *,
+    override: Optional[str] = None,
+    fallback: str = "Genel",
+) -> str:
+    """Sipariş→üretim emri: override varsa onu kullan; yoksa resolve_step_station."""
+    forced = str(override or "").strip()
+    if forced:
+        return forced
+    return resolve_step_station(step, parks, fallback=fallback)
+
+
 def find_named(items: list, item_id: Optional[str]) -> Optional[dict]:
     pid = str(item_id or "")
     for p in items or []:
