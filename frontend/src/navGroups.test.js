@@ -1,5 +1,5 @@
 
-import { SYSTEM_NAV_GROUPS, groupSystemSections } from "./navGroups";
+import { SYSTEM_NAV_GROUPS, groupSystemSections, nextAccordionOpen } from "./navGroups";
 
 const sections = (...paths) => paths.map((path) => ({ path, label: path }));
 
@@ -26,4 +26,11 @@ test("hiçbir gruba yazılmamış bölüm kaybolmaz, sonda Diğer'de görünür"
 test("bölüm listesi boşken menü de boştur", () => {
   expect(groupSystemSections([])).toEqual([]);
   expect(groupSystemSections(undefined)).toEqual([]);
+});
+
+test("paket başlığı açılınca diğerleri kapanır, aynı başlık tekrar kapanır", () => {
+  expect(nextAccordionOpen(["finans", "raporlama"], "satis")).toEqual(["satis"]);
+  expect(nextAccordionOpen(["raporlama"], "raporlama")).toEqual([]);
+  expect(nextAccordionOpen([], "muhasebe")).toEqual(["muhasebe"]);
+  expect(nextAccordionOpen(null, "ik")).toEqual(["ik"]);
 });

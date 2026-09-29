@@ -2,13 +2,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
-import { groupIdOf, groupMenuItems } from "../navGroups";
+import { groupIdOf, groupMenuItems, nextAccordionOpen } from "../navGroups";
 
-const OPEN_KEY = "nav_groups_open_v3";
+const OPEN_KEY = "nav_groups_open_v4";
 
 function loadOpen() {
   try {
     const raw = JSON.parse(localStorage.getItem(OPEN_KEY) || "null");
+    if (Array.isArray(raw) && raw.length) return [raw[raw.length - 1]];
     if (Array.isArray(raw)) return raw;
   } catch { /* ignore */ }
   return null;
@@ -24,15 +25,15 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
 
   useEffect(() => {
     if (open == null && groups.length) {
-      setOpen(groups.map((g) => g.id));
+      const labeled = groups.filter((g) => g.label).map((g) => g.id);
+      const pick = (activeGroup && labeled.includes(activeGroup)) ? activeGroup : labeled[0];
+      setOpen(pick ? [pick] : []);
     }
-  }, [groups, open]);
+  }, [groups, open, activeGroup]);
 
   useEffect(() => {
     if (open == null) return;
-    if (activeGroup && !open.includes(activeGroup)) {
-      setOpen((prev) => [...prev, activeGroup]);
-    }
+    if (activeGroup) setOpen([activeGroup]);
   }, [activeGroup]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -41,10 +42,7 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
   }, [open]);
 
   const toggle = (id) => {
-    setOpen((prev) => {
-      const cur = prev || groups.map((g) => g.id);
-      return cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
-    });
+    setOpen((prev) => nextAccordionOpen(prev, id));
   };
 
   const linkClass = (item, isActive) =>

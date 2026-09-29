@@ -63,6 +63,14 @@ export function groupIdOf(path) {
   return PATH_GROUP[path] || "sistem";
 }
 
+/** Sol menü paket başlıkları: birini açınca diğerleri kapanır (akordeon). */
+export function nextAccordionOpen(prev, id) {
+  if (!id) return Array.isArray(prev) ? prev : [];
+  const cur = Array.isArray(prev) ? prev : [];
+  if (cur.length === 1 && cur[0] === id) return [];
+  return [id];
+}
+
 export function groupMenuItems(items) {
   const buckets = Object.fromEntries(NAV_GROUPS.map((g) => [g.id, []]));
   for (const item of items || []) {
