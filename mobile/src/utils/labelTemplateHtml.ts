@@ -1,4 +1,4 @@
-import { code128Svg } from "./code128";
+import { barcodeSvgForLabel } from "./barcodeSvg";
 import { absolutizeLabelUrl } from "./labelMedia";
 import { formatTrAmount, moneySuffix } from "./money";
 import { qrSvg } from "./qrSvg";
@@ -100,7 +100,7 @@ function renderElement(
   if (type === "barcode") {
     const showText = el.showText !== false;
     const svg = code
-      ? code128Svg(code, { height: 28, moduleWidth: 1.15, margin: 2, displayValue: showText, fontSize: 8 })
+      ? barcodeSvgForLabel(code, { w: Number(el.w) || 40, h: Number(el.h) || 14, showText })
       : `<div style="font-size:6pt;color:#be123c;font-weight:700">Barkod yok</div>`;
     return `<div style="${style};display:flex;align-items:center;justify-content:center">${svg}</div>`;
   }
