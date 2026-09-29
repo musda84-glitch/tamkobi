@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
 import { groupIdOf, groupMenuItems, nextAccordionOpen } from "../navGroups";
+import { iconForNavGroup } from "../navGroupIcons";
 
 const OPEN_KEY = "nav_groups_open_v4";
 
@@ -166,30 +167,54 @@ export default function AppSidebarNav({ items, collapsed = false, onNavigate, on
             </div>
           );
         }
+        const GroupIcon = iconForNavGroup(g.id);
         return (
           <div
             key={g.id}
-            className={`rounded-lg border overflow-hidden ${
-              groupActive ? "border-emerald-800/60 bg-slate-800/40" : "border-slate-800 bg-slate-800/20"
+            className={`rounded-lg border overflow-hidden transition-colors ${
+              groupActive ? "border-emerald-700/70 bg-slate-800/50" : "border-slate-800 bg-slate-800/20"
             }`}
             data-testid={`nav-group-${g.id}`}
           >
             <button
               type="button"
               onClick={() => toggle(g.id)}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition ${
-                groupActive ? "text-emerald-300" : "text-slate-500 hover:text-slate-300"
+              className={`group/navhdr w-full flex items-center justify-between gap-2 px-2.5 py-2 text-[13px] font-bold uppercase tracking-wide transition ${
+                groupActive ? "text-emerald-300" : "text-slate-400 hover:text-slate-200"
               }`}
               data-testid={`nav-group-toggle-${g.id}`}
               aria-expanded={isOpen}
             >
-              <span>{g.label}</span>
-              <span className="flex items-center gap-1 font-mono font-semibold normal-case tracking-normal text-slate-500">
+              <span className="flex items-center gap-2 min-w-0">
+                <span
+                  className={`relative flex items-center justify-center w-7 h-7 rounded-lg shrink-0 transition-all duration-300 ${
+                    isOpen || groupActive
+                      ? "bg-emerald-500/20 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.35)]"
+                      : "bg-slate-900/70 text-slate-400 group-hover/navhdr:bg-slate-700/80 group-hover/navhdr:text-slate-200"
+                  }`}
+                  data-testid={`nav-group-icon-${g.id}`}
+                >
+                  <GroupIcon
+                    className={`w-[1.05rem] h-[1.05rem] transition-transform duration-300 ${
+                      isOpen ? "nav-group-icon-live" : "group-hover/navhdr:scale-110"
+                    }`}
+                    aria-hidden
+                  />
+                </span>
+                <span className="truncate leading-tight">{g.label}</span>
+              </span>
+              <span
+                className={`flex items-center gap-1.5 font-mono text-[11px] font-semibold normal-case tracking-normal shrink-0 ${
+                  groupActive ? "text-emerald-400/90" : "text-slate-500"
+                }`}
+              >
                 {g.items.length}
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? "rotate-0" : "-rotate-90"}`} />
+                <ChevronDown
+                  className={`w-4 h-4 transition-transform duration-300 ${isOpen ? "rotate-0" : "-rotate-90"}`}
+                />
               </span>
             </button>
-            {isOpen && <div className="px-1 pb-1 space-y-0.5">{g.items.map(renderItem)}</div>}
+            {isOpen && <div className="px-1 pb-1.5 space-y-0.5">{g.items.map(renderItem)}</div>}
           </div>
         );
       })}

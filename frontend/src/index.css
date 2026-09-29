@@ -164,3 +164,23 @@ code {
   height: 2rem !important;
   max-width: 7rem !important;
 }
+
+@keyframes nav-group-icon-bob {
+  0%,
+  100% {
+    transform: translateY(0) scale(1.05);
+  }
+  50% {
+    transform: translateY(-1.5px) scale(1.08);
+  }
+}
+
+.nav-group-icon-live {
+  animation: nav-group-icon-bob 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-group-icon-live {
+    animation: none;
+  }
+}
