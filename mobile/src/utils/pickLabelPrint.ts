@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import { get } from "../api/client";
 import type { ApiClient } from "../api/client";
+import { embedLabelHtmlImages } from "./labelMedia";
 import { htmlToPdfFile, printHtmlNative } from "./nativePrint";
 import { safePrintFilename } from "./orderPrint";
 import type { PickLine } from "./orderPick";
@@ -60,22 +61,33 @@ async function loadTemplates(client: ApiClient, companyId?: string): Promise<Lab
   }
 }
 
+export type PrintPickLabelCompany = {
+  name?: string | null;
+  logo_url?: string | null;
+  id?: string;
+  _id?: string;
+} | null | undefined;
+
 /** Stok kartı etiket şablonu (yoksa varsayılan) ile sevkiyat ürün etiketi yazdır. */
 export async function printPickProductLabels(
   items: Array<PickLine | null | undefined> | null | undefined,
-  companyName?: string,
+  company?: PrintPickLabelCompany | string,
   orderNumber?: string,
   opts?: { client?: ApiClient; companyId?: string },
 ): Promise<{ count: number; ok: boolean }> {
   const lines = (items || []).filter(Boolean) as PickLine[];
   if (!lines.length) return { count: 0, ok: false };
 
+  const companyObj: PrintPickLabelCompany = typeof company === "string"
+    ? { name: company }
+    : company;
   const builtins = builtinLabelTemplates();
   const saved = opts?.client
-    ? await loadTemplates(opts.client, opts.companyId)
+    ? await loadTemplates(opts.client, opts.companyId || companyObj?.id || companyObj?._id || undefined)
     : [];
+  const mediaBase = opts?.client?.baseUrl || "";
+  const token = opts?.client?.token || null;
 
-  const company = companyName ? { name: companyName } : undefined;
   const jobs: Array<{ tpl: LabelTemplateLike; product: NonNullable<ReturnType<typeof pickLineToLabelProduct>> }> = [];
   for (const line of lines) {
     const product = pickLineToLabelProduct(line as Record<string, unknown>);
@@ -97,10 +109,24 @@ export async function printPickProductLabels(
 
   const title = `Ürün etiketleri ${orderNumber || ""}`.trim();
   const filename = `etiket-${safePrintFilename(orderNumber, "urun")}.pdf`;
+  const printCompany = companyObj?.name || companyObj?.logo_url
+    ? { name: companyObj?.name || undefined, logo_url: companyObj?.logo_url || undefined }
+    : undefined;
   let anyOk = false;
 
   for (const group of bySize.values()) {
-    const { html, widthMm, heightMm } = templateLabelDocumentHtml(title, group, company, Platform.OS === "web");
+    let { html, widthMm, heightMm } = templateLabelDocumentHtml(
+      title,
+      group,
+      printCompany,
+      Platform.OS === "web",
+      { mediaBase },
+    );
+    try {
+      html = await embedLabelHtmlImages(html, mediaBase, token);
+    } catch {
+      /* absolute URL fallback */
+    }
     const px = { width: mmToPx(widthMm), height: mmToPx(heightMm) };
     if (Platform.OS === "web") {
       if (printHtmlWeb(html)) anyOk = true;

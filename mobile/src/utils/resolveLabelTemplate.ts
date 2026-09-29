@@ -38,7 +38,13 @@ export function pickLineToLabelProduct(line: Record<string, unknown> | null | un
   if (!line) return null;
   const name = String(line.product_name || line.name || "Ürün").trim() || "Ürün";
   const id = String(line.product_id || line.id || line._id || name);
-  const image = String(line.label_image_url || line.image_url || "");
+  const image = String(
+    line.label_image_url
+    || line.image_url
+    || line.thumbnail_url
+    || line.print_image_url
+    || "",
+  ).trim();
   return {
     id,
     _id: id,
@@ -53,7 +59,7 @@ export function pickLineToLabelProduct(line: Record<string, unknown> | null | un
     category: line.category as string | undefined,
     unit: line.unit as string | undefined,
     image_url: image,
-    label_image_url: String(line.label_image_url || image),
+    label_image_url: String(line.label_image_url || image).trim(),
     label_template_id: (line.label_template_id as string) || null,
   };
 }
