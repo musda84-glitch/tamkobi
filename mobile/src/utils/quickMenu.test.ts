@@ -31,11 +31,12 @@ describe("visibleQuickTiles", () => {
     expect(ids).toContain("notifications");
   });
 
-  it("keeps tab bar and account menu entries out of the quick menu", () => {
+  it("keeps tab bar entries out of the quick menu; settings is opt-in only", () => {
     const ids = QUICK_TILES.map((t) => t.id);
-    for (const id of ["saha", "mesai", "personelim", "settings", "search"]) {
+    for (const id of ["saha", "mesai", "personelim", "search"]) {
       expect(ids).not.toContain(id);
     }
+    expect(QUICK_TILES.find((t) => t.id === "settings")).toMatchObject({ optIn: true });
     expect(ids).toContain("banking");
     expect(ids).toContain("pay");
   });
@@ -56,13 +57,13 @@ describe("visibleQuickTiles", () => {
     expect(visibleQuickTiles(cashier, null).map((t) => t.id)).toContain("pay");
   });
 
-  it("leaves installments to the cheques screen and the more menu", () => {
-    expect(QUICK_TILES.map((t) => t.id)).not.toContain("installments");
+  it("offers installments / stock count / production as opt-in home tiles", () => {
+    const byId = Object.fromEntries(QUICK_TILES.map((t) => [t.id, t]));
+    expect(byId.installments).toMatchObject({ optIn: true, href: "/installments" });
+    expect(byId.sayim).toMatchObject({ optIn: true, href: "/sayim" });
+    expect(byId.production).toMatchObject({ optIn: true, href: "/production" });
+    expect(byId.settings).toMatchObject({ optIn: true, href: "/settings" });
     expect(resolveMobilePath("/installments")).toBe("/installments");
-  });
-
-  it("leaves stock count to the more menu", () => {
-    expect(QUICK_TILES.map((t) => t.id)).not.toContain("sayim");
     expect(resolveMobilePath("/sayim")).toBe("/sayim");
   });
 
@@ -116,9 +117,9 @@ describe("visibleQuickTiles", () => {
     expect(visibleQuickTiles({ role: "admin" }, { modules: { "/edoc-inbox": false } }).map((t) => t.id)).not.toContain("edoc");
   });
 
-  it("places Görevlerim after Atölye for linked staff", () => {
+  it("places Görevlerim after opt-in production tiles for linked staff", () => {
     const ids = QUICK_TILES.map((t) => t.id);
-    expect(ids.indexOf("my_tasks")).toBe(ids.indexOf("atolye") + 1);
+    expect(ids.indexOf("my_tasks")).toBe(ids.indexOf("installments") + 1);
     expect(QUICK_TILES.find((t) => t.id === "my_tasks")).toMatchObject({
       label: "Görevlerim",
       href: "/personelim?tab=gorevler",

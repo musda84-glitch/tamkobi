@@ -8,14 +8,19 @@ import { Screen } from "../components/kit";
 import { go } from "../nav";
 import { colors } from "../theme";
 import {
+  HOME_QUICK_EXTRA_KEY,
   HOME_QUICK_HIDDEN_KEY,
-  hiddenQuickTilesToRestore,
+  MORE_SCREEN_TO_TILE,
+  addExtraTile,
+  isTileOnHome,
+  parseExtraTileIds,
   parseHiddenTileIds,
   restoreQuickTile,
+  serializeExtraTileIds,
   serializeHiddenTileIds,
 } from "../utils/homeQuickHidden";
 import { isMoreLinkVisible } from "../utils/permissions";
-import { QUICK_TONE_COLORS, visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
+import { visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
 
 const LINKS = [
   { title: "Benim Sayfam", path: "/personelim", screen: "Personelim", icon: "person" as const },
@@ -45,95 +50,50 @@ export function MoreScreen() {
   const { user, license, activeCompany, logout } = useAuth();
   const links = LINKS.filter((l) => isMoreLinkVisible(l, user, license));
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
-  const allowedTiles = useMemo(() => visibleQuickTiles(user, license).filter((t) => t.id !== "notifications"), [user, license]);
-  const restoreTiles = useMemo(
-    () => hiddenQuickTilesToRestore(allowedTiles, hiddenIds),
-    [allowedTiles, hiddenIds],
-  );
+  const [extraIds, setExtraIds] = useState<string[]>([]);
+  const tileById = useMemo(() => {
+    const map = new Map<string, QuickTile>();
+    for (const t of visibleQuickTiles(user, license)) map.set(t.id, t);
+    return map;
+  }, [user, license]);
 
   useFocusEffect(useCallback(() => {
-    AsyncStorage.getItem(HOME_QUICK_HIDDEN_KEY)
-      .then((raw) => setHiddenIds(parseHiddenTileIds(raw)))
-      .catch(() => setHiddenIds([]));
+    Promise.all([
+      AsyncStorage.getItem(HOME_QUICK_HIDDEN_KEY).catch(() => null),
+      AsyncStorage.getItem(HOME_QUICK_EXTRA_KEY).catch(() => null),
+    ]).then(([hiddenRaw, extraRaw]) => {
+      setHiddenIds(parseHiddenTileIds(hiddenRaw));
+      setExtraIds(parseExtraTileIds(extraRaw));
+    });
   }, []));
 
-  const restoreTile = useCallback(async (tile: QuickTile) => {
-    const next = restoreQuickTile(hiddenIds, tile.id);
-    setHiddenIds(next);
-    await AsyncStorage.setItem(HOME_QUICK_HIDDEN_KEY, serializeHiddenTileIds(next)).catch(() => null);
-  }, [hiddenIds]);
+  const addToHome = useCallback(async (tile: QuickTile) => {
+    if (tile.optIn) {
+      const nextExtras = addExtraTile(extraIds, tile.id);
+      setExtraIds(nextExtras);
+      await AsyncStorage.setItem(HOME_QUICK_EXTRA_KEY, serializeExtraTileIds(nextExtras)).catch(() => null);
+      return;
+    }
+    const nextHidden = restoreQuickTile(hiddenIds, tile.id);
+    setHiddenIds(nextHidden);
+    await AsyncStorage.setItem(HOME_QUICK_HIDDEN_KEY, serializeHiddenTileIds(nextHidden)).catch(() => null);
+  }, [extraIds, hiddenIds]);
+
+  const addableCount = links.filter((l) => {
+    const tid = MORE_SCREEN_TO_TILE[l.screen];
+    const tile = tid ? tileById.get(tid) : null;
+    return tile && !isTileOnHome(tile, hiddenIds, extraIds);
+  }).length;
 
   return (
     <Screen padded={false}>
       <Text
         style={{ fontSize: 11, color: colors.muted, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6 }}
-        numberOfLines={1}
+        numberOfLines={2}
       >
         {[user?.email, activeCompany?.name].filter(Boolean).join(" · ")}
+        {addableCount ? `\nAna ekranda olmayanlar → sağdaki Ekle` : ""}
       </Text>
-      {restoreTiles.length ? (
-        <View style={{ marginBottom: 10 }} testID="more-restore-quick">
-          <Text
-            style={{
-              fontSize: 11,
-              fontWeight: "800",
-              color: colors.muted,
-              textTransform: "uppercase",
-              letterSpacing: 0.4,
-              paddingHorizontal: 16,
-              paddingBottom: 6,
-            }}
-          >
-            Ana ekrana ekle
-          </Text>
-          <View
-            style={{
-              backgroundColor: colors.surface,
-              borderTopWidth: 1,
-              borderBottomWidth: 1,
-              borderColor: colors.border,
-            }}
-          >
-            {restoreTiles.map((tile, i) => {
-              const tone = QUICK_TONE_COLORS[tile.tone] || QUICK_TONE_COLORS.slate;
-              return (
-                <Pressable
-                  key={tile.id}
-                  onPress={() => { void restoreTile(tile); }}
-                  testID={`more-restore-${tile.id}`}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    minHeight: 44,
-                    paddingHorizontal: 16,
-                    borderTopWidth: i ? 1 : 0,
-                    borderTopColor: colors.slate100,
-                    gap: 10,
-                  }}
-                >
-                  <View
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 8,
-                      backgroundColor: tone.solid,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Ionicons name={tile.icon as keyof typeof Ionicons.glyphMap} size={15} color="#fff" />
-                  </View>
-                  <Text style={{ flex: 1, fontWeight: "700", color: colors.text, fontSize: 14 }}>{tile.label}</Text>
-                  <Text style={{ fontWeight: "800", color: colors.primary, fontSize: 12 }}>Ekle</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Text style={{ fontSize: 11, color: colors.muted, paddingHorizontal: 16, paddingTop: 6 }}>
-            Gizlenen karolar burada. Ana ekranda basılı tutarak tekrar gizleyebilirsiniz.
-          </Text>
-        </View>
-      ) : null}
       <View
         testID="more-menu-list"
         style={{
@@ -143,25 +103,52 @@ export function MoreScreen() {
           borderColor: colors.border,
         }}
       >
-        {links.map((l, i) => (
-          <Pressable
-            key={l.screen}
-            onPress={() => go(l.screen)}
-            testID={`more-link-${l.screen}`}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              minHeight: 40,
-              paddingHorizontal: 16,
-              borderTopWidth: i ? 1 : 0,
-              borderTopColor: colors.slate100,
-            }}
-          >
-            <Ionicons name={l.icon} size={16} color={colors.primary} style={{ width: 22 }} />
-            <Text style={{ flex: 1, fontWeight: "600", color: colors.text, fontSize: 14 }}>{l.title}</Text>
-            <Ionicons name="chevron-forward" size={14} color={colors.muted} />
-          </Pressable>
-        ))}
+        {links.map((l, i) => {
+          const tileId = MORE_SCREEN_TO_TILE[l.screen];
+          const tile = tileId ? tileById.get(tileId) : undefined;
+          const canAdd = !!tile && !isTileOnHome(tile, hiddenIds, extraIds);
+          return (
+            <Pressable
+              key={l.screen}
+              onPress={() => go(l.screen)}
+              testID={`more-link-${l.screen}`}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                minHeight: 44,
+                paddingHorizontal: 16,
+                borderTopWidth: i ? 1 : 0,
+                borderTopColor: colors.slate100,
+                gap: 8,
+              }}
+            >
+              <Ionicons name={l.icon} size={16} color={colors.primary} style={{ width: 22 }} />
+              <Text style={{ flex: 1, fontWeight: "600", color: colors.text, fontSize: 14 }}>{l.title}</Text>
+              {canAdd ? (
+                <Pressable
+                  onPress={(e) => {
+                    e?.stopPropagation?.();
+                    void addToHome(tile!);
+                  }}
+                  hitSlop={8}
+                  testID={`more-add-home-${l.screen}`}
+                  style={{
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 8,
+                    backgroundColor: "#ECFDF5",
+                    borderWidth: 1,
+                    borderColor: "#A7F3D0",
+                  }}
+                >
+                  <Text style={{ fontWeight: "800", color: colors.primary, fontSize: 12 }}>Ekle</Text>
+                </Pressable>
+              ) : (
+                <Ionicons name="chevron-forward" size={14} color={colors.muted} />
+              )}
+            </Pressable>
+          );
+        })}
       </View>
       <Pressable onPress={() => logout()} testID="logout-btn" style={{ minHeight: 40, alignItems: "center", justifyContent: "center" }}>
         <Text style={{ fontWeight: "700", color: colors.danger, fontSize: 13 }}>Çıkış yap</Text>
