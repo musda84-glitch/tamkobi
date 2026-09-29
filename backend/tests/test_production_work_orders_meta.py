@@ -324,6 +324,7 @@ def test_work_order_trash_label_and_note():
     assert "CNC" in work_order_trash_note(wo)
     assert "AHM-014" in work_order_trash_note(wo)
     assert TYPE_LABELS["work_order"] == "İş Emri (Atölye)"
+    assert TYPE_LABELS["assigned_task"] == "Personel Görevi"
 
 
 def test_production_order_trash_block_and_label():
