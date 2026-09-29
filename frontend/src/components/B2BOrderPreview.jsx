@@ -1,4 +1,3 @@
-
 import React from "react";
 import { Eye, Printer, X, Package } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -7,6 +6,7 @@ import { Barcode } from "./BarcodeLabelPrint";
 import { statusTr } from "../utils/labels";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { pickLineNote } from "../utils/pickLineNote";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 
@@ -25,6 +25,7 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
   if (!order) return null;
   const items = order.items || [];
   const custNo = (order.customer_order_number || "").trim();
+  const orderNote = String(order.notes || order.note || "").trim();
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" {...backdropDismissProps(onClose)}>
       <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none my-6" onClick={(e) => e.stopPropagation()} data-testid="b2b-order-preview">
@@ -53,6 +54,7 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
               const img = lineImage(it, products);
               const code = lineCode(it, products);
               const sku = String(it.sku || "").trim();
+              const stockNote = pickLineNote(it);
               return (
                 <div key={it.product_id || i} className="p-3 flex gap-3 items-start bg-white" data-testid={`b2b-preview-line-${i}`}>
                   <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg border bg-slate-50 overflow-hidden shrink-0 flex items-center justify-center">
@@ -62,6 +64,12 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
                     <div className="font-bold text-slate-900 leading-tight">{it.product_name}</div>
                     <div className="text-slate-500 mt-0.5">{it.quantity} {it.unit || "Adet"}{it.unit_price != null ? ` · ${fmt(it.unit_price)} ₺` : ""}</div>
                     {sku && sku !== code && <div className="text-[10px] text-slate-400 font-mono mt-0.5">SKU {sku}</div>}
+                    {stockNote ? (
+                      <div className="mt-1 px-2 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-snug whitespace-pre-wrap" data-testid={`b2b-preview-line-note-${i}`}>
+                        <span className="font-semibold text-amber-700/80">Sipariş stok notu · </span>
+                        {stockNote}
+                      </div>
+                    ) : null}
                     <div className="mt-1 font-semibold">{fmt(it.total)} ₺</div>
                   </div>
                   {code ? (
@@ -73,6 +81,11 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
               );
             })}
           </div>
+          {orderNote ? (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-700 whitespace-pre-wrap" data-testid="b2b-preview-order-note">
+              <b>Sipariş notu:</b> {orderNote}
+            </div>
+          ) : null}
           <div className="flex justify-end"><div className="font-black text-sm">Toplam {fmt(order.grand_total ?? order.total_amount)} ₺</div></div>
         </div>
       </div>
