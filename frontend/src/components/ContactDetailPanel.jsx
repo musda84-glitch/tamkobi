@@ -54,7 +54,7 @@ function mailDeliveryBadge(m) {
   return { text: "Gönderildi", cls: "text-emerald-700 bg-emerald-50" };
 }
 
-const ORDER_STATUS_OPTIONS = [["pending", "Beklemede"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["shipped", "Kargolandı"], ["completed", "Tamamlandı"], ["returned", "İade Edildi"], ["partially_returned", "Kısmi İade"]];
+const ORDER_STATUS_OPTIONS = [["pending", "Beklemede"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["shipped", "Kargolandı"], ["completed", "Teslim edildi"], ["returned", "İade Edildi"], ["partially_returned", "Kısmi İade"]];
 
 function chequeReceipt(ch) {
   const kind = ch.instrument === "promissory" ? "Senet" : "Çek";
