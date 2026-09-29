@@ -9,6 +9,16 @@ export type PickLine = {
   ordered_qty?: number;
   picked_qty?: number;
   image_url?: string;
+  label_image_url?: string;
+  /** Stok kartına atanmış etiket şablonu. */
+  label_template_id?: string | null;
+  sale_price?: number;
+  vat_rate?: number;
+  currency?: string;
+  price_includes_vat?: boolean;
+  tags?: string[];
+  category?: string;
+  unit?: string;
   /** B2B sipariş stok notu (line note). */
   note?: string;
   line_note?: string;

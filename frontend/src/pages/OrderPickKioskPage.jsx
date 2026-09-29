@@ -7,8 +7,7 @@ import { ScanButton } from "../components/CameraScanner";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { notifyDataChanged } from "../utils/dataRefresh";
 
-import { Barcode } from "../components/BarcodeLabelPrint";
-import { expandPickLabelJobs } from "../utils/pickLabels";
+import { PickLabelPrintHost } from "../components/PickLabelPrintHost";
 import { pickLineNote } from "../utils/pickLineNote";
 import { parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 import {
@@ -96,7 +95,7 @@ export default function OrderPickKioskPage() {
   const [qtyDrafts, setQtyDrafts] = useState({});
   const [scanQty, setScanQty] = useState("1");
   const [overscanFlash, setOverscanFlash] = useState(null);
-  const [labelJobs, setLabelJobs] = useState(null);
+  const [labelPrintReq, setLabelPrintReq] = useState(null);
   const inputRef = useRef(null);
   const overscanTimer = useRef(null);
   const qtyCancelRef = useRef(false);
@@ -152,11 +151,9 @@ export default function OrderPickKioskPage() {
   const back = () => { setSes(null); setParams({}, { replace: true }); loadList(); };
 
   const printLabels = (items) => {
-    const jobs = expandPickLabelJobs(items);
-    if (!jobs.length) { toast.error("Yazdırılacak etiket yok."); return; }
-    setLabelJobs(jobs);
-    toast.success(`${jobs.length} ürün etiketi yazdırmaya gönderildi.`);
-    setTimeout(() => window.print(), 250);
+    const list = (items || []).filter(Boolean);
+    if (!list.length) { toast.error("Yazdırılacak etiket yok."); return; }
+    setLabelPrintReq({ id: Date.now(), items: list });
   };
 
   const scan = async (raw) => {
@@ -429,19 +426,12 @@ export default function OrderPickKioskPage() {
         </button>
       </div>
       <button type="button" onClick={() => navigate("/orders")} className="sr-only">siparişler</button>
-      {labelJobs?.length ? (
-        <div id="pick-label-print" className="hidden print:block bg-white text-slate-900" data-testid="pick-label-print">
-          <style>{`@page{size:50mm 30mm;margin:0}.pick-product-label{width:50mm;height:30mm;box-sizing:border-box;padding:1.4mm 1.6mm;page-break-after:always;overflow:hidden;display:flex;flex-direction:column;gap:0.5mm}`}</style>
-          {labelJobs.map((job, i) => (
-            <div key={`${job.code || job.sku || job.name}-${i}`} className="pick-product-label" data-testid="pick-product-label">
-              {activeCompany?.name ? <div className="text-[7px] font-extrabold uppercase tracking-wide text-slate-500 truncate">{activeCompany.name}</div> : null}
-              <div className="text-[10px] font-extrabold leading-tight line-clamp-2">{job.name}</div>
-              {job.sku ? <div className="font-mono text-[8px] text-slate-600">{job.sku}</div> : null}
-              {job.code ? <div className="mt-auto"><Barcode value={job.code} height={28} width={1.15} fontSize={8} /></div> : <div className="text-[8px] font-bold text-rose-700">Barkod yok</div>}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      <PickLabelPrintHost
+        companyId={companyId}
+        company={activeCompany}
+        printRequest={labelPrintReq}
+        onDone={() => setLabelPrintReq(null)}
+      />
     </div>
   );
 }

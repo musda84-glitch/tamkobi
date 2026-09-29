@@ -127,7 +127,10 @@ export function SevkPickScreen() {
   const printLabels = async (lines: PickLine[]) => {
     setBusy(true);
     try {
-      const res = await printPickProductLabels(lines, activeCompany?.name, session?.order_number);
+      const res = await printPickProductLabels(lines, activeCompany?.name, session?.order_number, {
+        client,
+        companyId: idOf(activeCompany) || undefined,
+      });
       if (!res.count) setError("Yazdırılacak etiket yok.");
       else if (res.ok) {
         setMessage(`${res.count} ürün etiketi yazdırmaya gönderildi.`);

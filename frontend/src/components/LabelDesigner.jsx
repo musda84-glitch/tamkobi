@@ -13,6 +13,7 @@ import { LABEL_DESIGN_FIELDS, LABEL_TAG_PALETTE, labelFieldValue } from "../util
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { buildLabelPrintDocument, embedLabelImages } from "../utils/labelPrint";
 import { LABEL_BOX_DEFAULT_STROKE_MM, LABEL_BOX_MIN_STROKE_MM, labelLineThicknessMm, labelStrokePx } from "../utils/labelBoxStroke";
+import { resolveLabelTemplate } from "../utils/resolveLabelTemplate";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
@@ -47,6 +48,8 @@ const builtinTemplates = () => BUILTIN_SIZES.map(([w, h]) => ({
   name: `Hazır ${w}×${h} mm`,
   is_builtin: true,
 }));
+
+export { builtinTemplates, resolveLabelTemplate };
 
 const cardPrintTargets = (product) => {
   if (!product) return [];
@@ -290,21 +293,14 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
     axios.get(`${API_URL}/label-templates?company_id=${companyId}`).then((r) => {
       const list = Array.isArray(r.data) ? r.data : [];
       setSaved(list);
-      const assigned = product?.label_template_id
-        ? list.find((t) => t.id === product.label_template_id || t._id === product.label_template_id)
-        : null;
-      const pick = assigned
-        || list.find((t) => t.is_default)
-        || list[0]
-        || builtins.find((t) => t.id === "builtin-50x30")
-        || builtins[0];
+      const pick = resolveLabelTemplate(list, product, builtins);
       setTpl(pick);
       setPage(pick?.page || { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
     }).catch(() => {
       setSaved([]);
-      const pick = builtins.find((t) => t.id === "builtin-50x30") || builtins[0];
+      const pick = resolveLabelTemplate([], product, builtins);
       setTpl(pick);
-      setPage(pick.page || { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
+      setPage(pick?.page || { mode: "thermal", cols: 1, rows: 1, gap_mm: 2 });
     });
   }, [companyId, builtins, product?.label_template_id]);
 
@@ -404,3 +400,5 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
     </div>
   );
 };
+
+export { printLabelJobs };
