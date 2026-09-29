@@ -9,6 +9,7 @@ import {
   cargoSelectGroups,
   defaultShipCarrier,
   FALLBACK_CARGO_CATALOG,
+  canWarehouseShip,
   isWarehouseShipped,
   mergeShipCarriers,
   shipCreateConfirm,
@@ -95,6 +96,11 @@ describe("orderCargo", () => {
     expect(isWarehouseShipped({ cargo_carrier: "warehouse" })).toBe(true);
     expect(isWarehouseShipped({ cargo_tracking_number: "DEPO-B2B-1" })).toBe(true);
     expect(isWarehouseShipped({ cargo_tracking_number: "YK-1" })).toBe(false);
+    expect(canWarehouseShip({ order_status: "approved" })).toBe(true);
+    expect(canWarehouseShip({ order_status: "delivered" })).toBe(false);
+    expect(canWarehouseShip({ order_status: "completed" })).toBe(false);
+    expect(canWarehouseShip({ order_status: "cancelled" })).toBe(false);
+    expect(canWarehouseShip({ warehouse_shipped: true })).toBe(false);
     const text = warehouseShipConfirm({
       order_number: "B2B-2026-0014",
       customer_name: "Ersay",

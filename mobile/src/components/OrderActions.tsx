@@ -20,6 +20,7 @@ import {
   defaultShipCarrier,
   FALLBACK_CARGO_CATALOG,
   isWarehouseShipped,
+  canWarehouseShip,
   mergeShipCarriers,
   shipCreateConfirm,
   warehouseShipConfirm,
@@ -630,6 +631,10 @@ export function OrderActions({
       onError?.("Bu sipariş zaten depodan sevk edildi.");
       return;
     }
+    if (!canWarehouseShip(order)) {
+      onError?.("Teslim, tamamlanmış, iptal veya iade sipariş depodan sevk edilemez.");
+      return;
+    }
     confirmAction("Depodan sevk", warehouseShipConfirm(order), async () => {
       setBusy("warehouse");
       try {
@@ -978,7 +983,7 @@ export function OrderActions({
               title="Depodan sevk edildi"
               testID={`order-warehouse-ship-${num}`}
               loading={busy === "warehouse"}
-              disabled={!!busy || isWarehouseShipped(order)}
+              disabled={!!busy || !canWarehouseShip(order)}
               color={colors.primary}
               onPress={shipFromWarehouse}
             />

@@ -135,6 +135,20 @@ export function shipCreateConfirm(
 export const WAREHOUSE_SHIP_CODE = "warehouse";
 export const WAREHOUSE_SHIP_NAME = "Depodan sevk edildi";
 
+/** Teslim/tamamlandı ve iptal/iade — depodan sevk "shipped"e geri almaz. */
+export const WAREHOUSE_SHIP_CLOSED = new Set([
+  "cancelled",
+  "canceled",
+  "returned",
+  "partially_returned",
+  "delivered",
+  "completed",
+]);
+
+export function isWarehouseShipClosed(order?: Pick<Order, "order_status"> | null): boolean {
+  return WAREHOUSE_SHIP_CLOSED.has(String(order?.order_status || "").toLowerCase());
+}
+
 export function isWarehouseShipped(order?: Pick<Order, "cargo_carrier" | "cargo_tracking_number"> & {
   warehouse_shipped?: boolean;
   ship_method?: string;
@@ -143,6 +157,16 @@ export function isWarehouseShipped(order?: Pick<Order, "cargo_carrier" | "cargo_
   if (order.warehouse_shipped || String(order.ship_method || "") === WAREHOUSE_SHIP_CODE) return true;
   if (String(order.cargo_carrier || "").toLowerCase() === WAREHOUSE_SHIP_CODE) return true;
   return String(order.cargo_tracking_number || "").toUpperCase().startsWith("DEPO-");
+}
+
+export function canWarehouseShip(order?: Pick<Order, "order_status" | "cargo_carrier" | "cargo_tracking_number"> & {
+  warehouse_shipped?: boolean;
+  ship_method?: string;
+} | null): boolean {
+  if (!order) return false;
+  if (isWarehouseShipClosed(order)) return false;
+  if (isWarehouseShipped(order)) return false;
+  return true;
 }
 
 export function warehouseShipConfirm(order: Pick<Order, "order_number" | "customer_name" | "city">): string {

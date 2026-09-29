@@ -1,4 +1,6 @@
 import {
+  canWarehouseShip,
+  isWarehouseShipClosed,
   isWarehouseShipped,
   warehouseShipConfirm,
   warehouseShipPath,
@@ -13,6 +15,15 @@ test("isWarehouseShipped: flags, carrier, DEPO tracking", () => {
   expect(isWarehouseShipped({ cargo_carrier: "warehouse" })).toBe(true);
   expect(isWarehouseShipped({ cargo_tracking_number: "DEPO-B2B-1" })).toBe(true);
   expect(isWarehouseShipped({ cargo_tracking_number: "YK-1" })).toBe(false);
+});
+
+test("canWarehouseShip blocks delivered/completed and cancel/return", () => {
+  expect(canWarehouseShip({ order_status: "approved" })).toBe(true);
+  expect(isWarehouseShipClosed({ order_status: "delivered" })).toBe(true);
+  expect(canWarehouseShip({ order_status: "delivered" })).toBe(false);
+  expect(canWarehouseShip({ order_status: "completed" })).toBe(false);
+  expect(canWarehouseShip({ order_status: "cancelled" })).toBe(false);
+  expect(canWarehouseShip({ warehouse_shipped: true })).toBe(false);
 });
 
 test("confirm copy and path", () => {

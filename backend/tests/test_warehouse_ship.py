@@ -21,6 +21,8 @@ def test_tracking_and_flags():
 def test_can_warehouse_ship_states():
     assert ws.can_warehouse_ship({"order_status": "approved"})[0] == "ok"
     assert ws.can_warehouse_ship({"order_status": "cancelled"})[0] == "closed"
+    assert ws.can_warehouse_ship({"order_status": "delivered"})[0] == "closed"
+    assert ws.can_warehouse_ship({"order_status": "completed"})[0] == "closed"
     assert ws.can_warehouse_ship({"warehouse_shipped": True})[0] == "exists"
     assert ws.can_warehouse_ship({"cargo_tracking_number": "ARAS-1"})[0] == "cargo"
 
@@ -85,6 +87,18 @@ def test_apply_warehouse_ship_rejects_closed():
     )
     assert out["status"] == "closed"
     assert "iptal" in out["message"].lower() or "iade" in out["message"].lower()
+
+
+def test_apply_warehouse_ship_rejects_delivered():
+    mock_db = MagicMock()
+    mock_db.orders.find_one = AsyncMock(return_value={
+        "_id": "x", "order_number": "B2B-9", "order_status": "delivered",
+    })
+    out = asyncio.get_event_loop().run_until_complete(
+        ws.apply_warehouse_ship(mock_db, "x", "2026-09-29T12:00:00+00:00")
+    )
+    assert out["status"] == "closed"
+    mock_db.orders.update_one.assert_not_called()
 
 
 def test_apply_warehouse_ship_exists():

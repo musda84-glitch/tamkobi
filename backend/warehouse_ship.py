@@ -5,7 +5,15 @@ from typing import Any, Dict, Optional, Tuple
 
 WAREHOUSE_CARRIER = "warehouse"
 WAREHOUSE_CARRIER_NAME = "Depodan sevk"
-CLOSED_STATUSES = frozenset({"cancelled", "canceled", "returned", "partially_returned"})
+# İptal/iade ve teslim/tamamlandı — depodan sevk bunları "shipped"e geri almamalı.
+CLOSED_STATUSES = frozenset({
+    "cancelled",
+    "canceled",
+    "returned",
+    "partially_returned",
+    "delivered",
+    "completed",
+})
 
 
 def tracking_number(order_number: Optional[str] = None) -> str:
@@ -43,7 +51,7 @@ def can_warehouse_ship(order: Optional[Dict[str, Any]] = None) -> Tuple[str, str
     """ok | exists | closed | cargo — UI/API karar kodu."""
     o = order or {}
     if is_closed(o):
-        return "closed", "İptal veya iade sipariş depodan sevk edilemez."
+        return "closed", "Teslim, tamamlanmış, iptal veya iade sipariş depodan sevk edilemez."
     if is_warehouse_shipped(o):
         return "exists", "Bu sipariş zaten depodan sevk edildi."
     if has_external_cargo(o):
