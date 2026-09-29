@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import warehouse_ship as ws
 
@@ -35,9 +35,7 @@ def test_order_set_fields_marks_shipped():
     assert fields["ship_method"] == "warehouse"
 
 
-def test_warehouse_ship_endpoint_updates_order():
-    import server
-
+def test_apply_warehouse_ship_updates_order():
     order = {
         "_id": "ord_wh_1",
         "company_id": "c1",
@@ -54,11 +52,18 @@ def test_warehouse_ship_endpoint_updates_order():
     ])
     mock_db.orders.update_one = AsyncMock()
     draft = {"_id": "inv_1", "invoice_number": "NX1"}
+    create_draft = AsyncMock(return_value=draft)
+    push = AsyncMock()
 
-    with patch.object(server, "db", mock_db), patch.object(
-        server, "_create_draft_invoice_for_order", AsyncMock(return_value=draft)
-    ), patch.object(server, "_push_order_to_shopphp", AsyncMock()):
-        out = asyncio.get_event_loop().run_until_complete(server.warehouse_ship_order("ord_wh_1", {}))
+    out = asyncio.get_event_loop().run_until_complete(
+        ws.apply_warehouse_ship(
+            mock_db,
+            "ord_wh_1",
+            "2026-09-29T12:00:00+00:00",
+            create_draft=create_draft,
+            push_shopphp=push,
+        )
+    )
 
     assert out["status"] == "success"
     assert "depodan sevk" in out["message"].lower()
@@ -67,30 +72,36 @@ def test_warehouse_ship_endpoint_updates_order():
     assert set_doc["warehouse_shipped"] is True
     assert set_doc["cargo_carrier"] == "warehouse"
     assert set_doc["cargo_tracking_number"].startswith("DEPO-")
+    assert out["draft_invoice_number"] == "NX1"
+    create_draft.assert_awaited_once()
+    push.assert_awaited_once()
 
 
-def test_warehouse_ship_endpoint_rejects_closed():
-    import server
-    from fastapi import HTTPException
-
+def test_apply_warehouse_ship_rejects_closed():
     mock_db = MagicMock()
     mock_db.orders.find_one = AsyncMock(return_value={"_id": "x", "order_status": "cancelled"})
-    with patch.object(server, "db", mock_db):
-        try:
-            asyncio.get_event_loop().run_until_complete(server.warehouse_ship_order("x", {}))
-            raise AssertionError("expected HTTPException")
-        except HTTPException as exc:
-            assert exc.status_code == 400
-            assert "iptal" in str(exc.detail).lower() or "iade" in str(exc.detail).lower()
+    out = asyncio.get_event_loop().run_until_complete(
+        ws.apply_warehouse_ship(mock_db, "x", "2026-09-29T12:00:00+00:00")
+    )
+    assert out["status"] == "closed"
+    assert "iptal" in out["message"].lower() or "iade" in out["message"].lower()
 
 
-def test_warehouse_ship_endpoint_exists():
-    import server
-
+def test_apply_warehouse_ship_exists():
     mock_db = MagicMock()
     mock_db.orders.find_one = AsyncMock(return_value={
         "_id": "x", "order_number": "B2B-1", "order_status": "shipped", "warehouse_shipped": True,
     })
-    with patch.object(server, "db", mock_db):
-        out = asyncio.get_event_loop().run_until_complete(server.warehouse_ship_order("x", {}))
+    out = asyncio.get_event_loop().run_until_complete(
+        ws.apply_warehouse_ship(mock_db, "x", "2026-09-29T12:00:00+00:00")
+    )
     assert out["status"] == "exists"
+
+
+def test_apply_warehouse_ship_not_found():
+    mock_db = MagicMock()
+    mock_db.orders.find_one = AsyncMock(return_value=None)
+    out = asyncio.get_event_loop().run_until_complete(
+        ws.apply_warehouse_ship(mock_db, "missing", "2026-09-29T12:00:00+00:00")
+    )
+    assert out["status"] == "not_found"
