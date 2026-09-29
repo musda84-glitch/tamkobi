@@ -25,6 +25,7 @@ import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
 import { employeePayActionTitle, isDailyWage, payrollWageLine, totalMonthlyLoad, yevmiyeDaysOf } from "../utils/personnelWage";
 import { BLOOD_TYPE_OPTIONS, hasExtraEmployeeDetails, MARITAL_STATUS_OPTIONS } from "../utils/employeeDetails";
 import { workplaceShort } from "../utils/workplace";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
 import {
   UserCheck,
@@ -652,6 +653,12 @@ export default function PersonnelPage() {
 
   const totalMonthlyPayroll = totalMonthlyLoad(employees);
   const hasDaily = employees.some(isDailyWage);
+  const { visible: pagedEmployees, hasMore: employeesHasMore, sentinelRef: employeesSentinelRef } = useInfiniteRows(employees, {
+    resetKey: employees.length,
+  });
+  const { visible: pagedPayrolls, hasMore: payrollsHasMore, sentinelRef: payrollsSentinelRef } = useInfiniteRows(payrolls, {
+    resetKey: payrolls.length,
+  });
 
   return (
     <div className="space-y-6" data-testid="personnel-page">
@@ -705,13 +712,13 @@ export default function PersonnelPage() {
       {tab === "payroll" && (<>
       {/* Employees Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        {employees.map((emp) => {
+        {pagedEmployees.map((emp) => {
             const empKey = empIdOf(emp);
             const empReqs = requestsFor(emp);
             return (
           <div
             key={empKey}
-            className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm space-y-3 flex flex-col justify-between"
+            className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm space-y-3 flex flex-col justify-between [content-visibility:auto] [contain-intrinsic-size:auto_420px]"
             data-testid={`employee-card-${emp.tc_kimlik}`}
           >
             <div className="space-y-2">
@@ -1027,6 +1034,11 @@ export default function PersonnelPage() {
             );
           })}
       </div>
+      {employeesHasMore && (
+        <div ref={employeesSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="personnel-load-more">
+          Daha fazla personel yükleniyor…
+        </div>
+      )}
 
       {/* Payrolls Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden space-y-3 p-5">
@@ -1050,8 +1062,8 @@ export default function PersonnelPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {payrolls.map((p) => (
-                <tr key={p.id || p._id} className="hover:bg-slate-50/70 transition">
+              {pagedPayrolls.map((p) => (
+                <tr key={p.id || p._id} className="hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_48px]">
                   <td className="px-4 py-2.5">
                     <div className="font-bold text-slate-900">{p.employee_name}{isDailyWage(p) ? <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">Yevmiye</span> : null}</div>
                     <div className="text-slate-400 text-[11px] font-mono">{p.period} Dönemi</div>
@@ -1095,6 +1107,11 @@ export default function PersonnelPage() {
             </tbody>
           </table>
         </div>
+        {payrollsHasMore && (
+          <div ref={payrollsSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="payrolls-load-more">
+            Daha fazla bordro yükleniyor…
+          </div>
+        )}
       </div>
 
       </>)}

@@ -8,6 +8,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { InstallmentRows } from "../components/InstallmentPlanModal";
 import { QuickMessageModal } from "../components/QuickMessageModal";
 import { formatTrAmount } from "../utils/money";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const FILTERS = [["pending", "Bekleyen"], ["overdue", "Vadesi Geçen"], ["receivable", "Alacak (Satış)"], ["payable", "Borç (Alış)"], ["paid", "Ödenen"], ["all", "Tümü"]];
@@ -33,6 +34,10 @@ export default function InstallmentsPage() {
   useEffect(() => { load(); }, [load]);
 
   const grouped = rows.reduce((acc, r) => { const k = r.invoice_id || `bal-${r.contact_id}`; (acc[k] = acc[k] || []).push(r); return acc; }, {});
+  const groupEntries = Object.entries(grouped);
+  const { visible: pagedGroups, hasMore: instHasMore, sentinelRef: instSentinelRef } = useInfiniteRows(groupEntries, {
+    resetKey: filter,
+  });
   const Card = ({ icon: Icon, label, value, sub, tone, testId }) => (
     <div className={`bg-white rounded-2xl border p-4 flex items-center gap-3 ${tone}`} data-testid={testId}><div className="p-2 rounded-xl bg-slate-50"><Icon className="w-5 h-5" /></div><div><div className="text-[10px] uppercase font-semibold text-slate-400">{label}</div><div className="text-lg font-bold text-slate-900">{value}</div>{sub && <div className="text-[11px] text-slate-500">{sub}</div>}</div></div>
   );
@@ -52,14 +57,14 @@ export default function InstallmentsPage() {
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs overflow-x-auto">
         {FILTERS.map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap transition ${filter === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`inst-filter-${k}`}>{l}</button>)}
       </div>
-      {Object.keys(grouped).length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-xs text-slate-400" data-testid="inst-empty"><CalendarClock className="w-8 h-8 mx-auto mb-2 text-slate-300" />Bu filtrede taksit yok. Faturalar sayfasında satırdaki ⋮ menüden "Taksitlendir" ile plan oluşturabilirsiniz.</div>}
+      {groupEntries.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-xs text-slate-400" data-testid="inst-empty"><CalendarClock className="w-8 h-8 mx-auto mb-2 text-slate-300" />Bu filtrede taksit yok. Faturalar sayfasında satırdaki ⋮ menüden "Taksitlendir" ile plan oluşturabilirsiniz.</div>}
       <div className="space-y-3">
-        {Object.entries(grouped).map(([invId, list]) => {
+        {pagedGroups.map(([invId, list]) => {
           const f = list[0];
           const c = contacts.find((x) => x.id === f.contact_id) || {};
           const remaining = list.reduce((s, r) => s + r.amount - (r.paid_amount || 0), 0);
           return (
-            <div key={invId} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-2" data-testid={`inst-group-${f.invoice_number}`}>
+            <div key={invId} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-2 [content-visibility:auto] [contain-intrinsic-size:auto_140px]" data-testid={`inst-group-${f.invoice_number}`}>
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${f.direction === "receivable" ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"}`}>{f.direction === "receivable" ? "ALACAK" : "BORÇ"}</span>
                 <button onClick={() => navigate(f.invoice_id ? `/invoices?contact_id=${f.contact_id}` : `/contacts?contact_id=${f.contact_id}`)} className="font-mono font-bold text-slate-900 hover:underline flex items-center gap-1" data-testid={`inst-invoice-link-${f.invoice_number}`}><FileText className="w-3.5 h-3.5 text-slate-400" /> {f.invoice_number}</button>
@@ -72,6 +77,11 @@ export default function InstallmentsPage() {
             </div>
           );
         })}
+        {instHasMore && (
+          <div ref={instSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="installments-load-more">
+            Daha fazla taksit yükleniyor…
+          </div>
+        )}
       </div>
       {remind && <QuickMessageModal companyId={companyId} recipient={{ contact_id: remind.inst.contact_id, name: remind.inst.contact_name, phone: remind.contact.phone, email: remind.contact.email }} defaultSubject={`Taksit Hatırlatması - ${remind.inst.invoice_number}`} defaultMessage={`Sayın ${remind.inst.contact_name}, ${remind.inst.invoice_number} nolu faturanızın ${remind.inst.label} (${fmt(remind.inst.amount)} ₺) vadesi ${remind.inst.due_date} tarihidir. Ödemeniz için teşekkür ederiz.`} context="installment" refId={remind.inst.id} onClose={() => setRemind(null)} />}
     </div>

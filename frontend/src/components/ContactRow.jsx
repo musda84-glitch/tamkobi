@@ -18,7 +18,7 @@ const balanceNote = (contact, link) => {
   return `Sayın ${contact.name}, ${new Date().toLocaleDateString("tr-TR")} tarihi itibarıyla cari bakiyeniz ${money(Math.abs(bal))} ₺ ${side} olarak görünmektedir.${link ? ` Ekstre: ${link}` : ""}`;
 };
 
-export const ContactRow = ({ contact, flag, onOpen, onEdit, onMessage, onStatement, onLocation }) => {
+export const ContactRow = React.memo(({ contact, flag, onOpen, onEdit, onMessage, onStatement, onLocation }) => {
   const tid = contact.tax_number_or_id;
   const bal = Number(contact.balance) || 0;
   const { activeCompany } = useAuth();
@@ -88,7 +88,7 @@ export const ContactRow = ({ contact, flag, onOpen, onEdit, onMessage, onStateme
     }
   };
   return (
-    <div className={`bg-white rounded-xl border border-slate-200/90 shadow-sm hover:shadow-md hover:border-emerald-200 transition grid grid-cols-12 gap-3 items-center px-4 py-3 ${menu ? "relative z-20" : ""}`} data-testid={`contact-card-${tid}`}>
+    <div className={`bg-white rounded-xl border border-slate-200/90 shadow-sm hover:shadow-md hover:border-emerald-200 transition grid grid-cols-12 gap-3 items-center px-4 py-3 [content-visibility:auto] [contain-intrinsic-size:auto_88px] ${menu ? "relative z-20" : ""}`} data-testid={`contact-card-${tid}`}>
       <div className="col-span-12 md:col-span-3 flex items-center gap-3 min-w-0">
         <div className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center font-black text-sm overflow-hidden ${contact.type === "customer" ? "bg-blue-50 text-blue-700" : contact.type === "supplier" ? "bg-amber-50 text-amber-700" : "bg-violet-50 text-violet-700"}`}>{contact.logo_url ? <img src={resolveImageUrl(contact.logo_url)} alt="" className="w-full h-full object-contain bg-white" /> : (contact.name?.slice(0, 2).toUpperCase())}</div>
         <div className="min-w-0">
@@ -153,4 +153,4 @@ export const ContactRow = ({ contact, flag, onOpen, onEdit, onMessage, onStateme
       )}
     </div>
   );
-};
+});

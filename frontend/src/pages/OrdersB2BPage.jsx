@@ -51,6 +51,7 @@ import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProd
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -427,6 +428,13 @@ export default function OrdersB2BPage() {
     </th>
   );
   const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + (Number(o.total_amount) || 0), 0), [visibleOrders]);
+  const ordersListResetKey = useMemo(
+    () => `${customerFilter || ""}|${JSON.stringify(ordF)}|${sort.key}|${sort.dir}`,
+    [customerFilter, ordF, sort.key, sort.dir],
+  );
+  const { visible: pagedOrders, hasMore: ordersHasMore, sentinelRef: ordersSentinelRef } = useInfiniteRows(visibleOrders, {
+    resetKey: ordersListResetKey,
+  });
   const [products, setProducts] = useState([]);
   const [allProducts, setAllProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -1002,12 +1010,12 @@ export default function OrdersB2BPage() {
               Filtreye uyan sipariş yok.
             </div>
           )}
-          {visibleOrders.map((ord) => {
+          {pagedOrders.map((ord) => {
             const primary = mobilePrimaryAction(ord);
             return (
               <div
                 key={ord.id || ord._id || ord.order_number}
-                className={`bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50" : ""}`}
+                className={`bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs [content-visibility:auto] [contain-intrinsic-size:auto_120px] ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50" : ""}`}
                 data-testid={`order-card-mobile-${ord.order_number}`}
               >
                 <div className="flex justify-between gap-2 items-start">
@@ -1146,8 +1154,8 @@ export default function OrdersB2BPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-empty">Filtreye uyan sipariş yok.</td></tr>}
-                {visibleOrders.map((ord) => (
-                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""} ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50/90" : ""}`} data-testid={`order-row-${ord.order_number}`}>
+                {pagedOrders.map((ord) => (
+                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_64px] ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""} ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50/90" : ""}`} data-testid={`order-row-${ord.order_number}`}>
                     <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(ord.id)} onChange={() => toggleSel(ord.id)} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
                     <td className="px-4 py-3 font-medium overflow-hidden" data-testid={`order-no-cell-${ord.order_number}`}>
                       <div className="font-bold text-slate-900 font-mono">{ord.held_label || ord.order_number}</div>
@@ -1381,6 +1389,11 @@ export default function OrdersB2BPage() {
             </table>
           </div>
         </div>
+        {ordersHasMore && (
+          <div ref={ordersSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="orders-load-more">
+            Daha fazla sipariş yükleniyor…
+          </div>
+        )}
       </>) : null}
     </div>
   );

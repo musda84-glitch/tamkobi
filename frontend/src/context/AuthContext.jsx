@@ -1,5 +1,4 @@
-
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { API_URL } from "../api/client";
@@ -14,6 +13,45 @@ const AuthContext = createContext(null);
 export { API_URL, BACKEND_URL } from "../api/client";
 axios.defaults.withCredentials = true;
 
+const BASE_MENU = [
+  { label: "Genel Bakış", path: "/panel" },
+  { label: "Faturalar", path: "/invoices", badge: "GİB" },
+  { label: "İthalat / İhracat", path: "/dis-ticaret", badge: "Gümrük" },
+  { label: "Gelen e-Belgeler", path: "/edoc-inbox", badge: "Kutu" },
+  { label: "İrsaliyeler", path: "/dispatches", badge: "e-İrsaliye" },
+  { label: "Masraflar", path: "/expenses", badge: "Gider" },
+  { label: "Krediler", path: "/loans", badge: "Banka" },
+  { label: "Çek / Senet", path: "/cheques", badge: "Vade" },
+  { label: "Cari Hesaplar", path: "/contacts" },
+  { label: "Taksitler", path: "/installments", badge: "Vade" },
+  { label: "Raporlar", path: "/reports", badge: "Excel" },
+  { label: "Banka & Kasa & POS", path: "/banking" },
+  { label: "Stoklar & Ürünler", path: "/stock", badge: "Barkod" },
+  { label: "Verilen Siparişler", path: "/purchase-orders", badge: "Alış" },
+  { label: "Hızlı Satış", path: "/hizli-satis", badge: "POS" },
+  { label: "Stok Sayımı (Tablet)", path: "/sayim", badge: "Sayım" },
+  { label: "Teklifler", path: "/quotes" },
+  { label: "Projeler", path: "/projects" },
+  { label: "Keşifler", path: "/surveys" },
+  { label: "E-Ticaret Entegrasyon", path: "/ecommerce", badge: "Trendyol" },
+  { label: "Kargo Entegrasyon", path: "/cargo", badge: "Yurtiçi" },
+  { label: "Siparişler", path: "/orders", badge: "B2B" },
+  { label: "Saha Sipariş", path: "/saha", badge: "Tablet" },
+  { label: "Depo Sevkiyatı", path: "/sevk", badge: "Tablet" },
+  { label: "Depo & Transfer", path: "/warehouses" },
+  { label: "Araçlarım", path: "/vehicles", badge: "Filo" },
+  { label: "Üretim & Reçete (BOM)", path: "/production" },
+  { label: "Üretim Ekranı (Atölye)", path: "/atolye", badge: "Tablet" },
+  { label: "Personel & Bordro", path: "/personnel" },
+  { label: "Benim Sayfam", path: "/personelim", badge: "Self" },
+  { label: "Mesaim", path: "/mesai", badge: "Puantaj" },
+  { label: "İletişim: Mail & SMS", path: "/communication", badge: "SMS" },
+  { label: "TamKobi AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
+  { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
+  { label: "Destek", path: "/support", badge: "Talep" },
+  { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
+];
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [license, setLicense] = useState(null);
@@ -24,73 +62,40 @@ export const AuthProvider = ({ children }) => {
   const [moduleOrder, setModuleOrder] = useState(() => { try { return JSON.parse(localStorage.getItem("module_order") || "[]"); } catch { return []; } });
   const [radialSlots, setRadialSlots] = useState(() => loadRadialSlots());
 
-  const BASE_MENU = [
-    { label: "Genel Bakış", path: "/panel" },
-    { label: "Faturalar", path: "/invoices", badge: "GİB" },
-    { label: "İthalat / İhracat", path: "/dis-ticaret", badge: "Gümrük" },
-    { label: "Gelen e-Belgeler", path: "/edoc-inbox", badge: "Kutu" },
-    { label: "İrsaliyeler", path: "/dispatches", badge: "e-İrsaliye" },
-    { label: "Masraflar", path: "/expenses", badge: "Gider" },
-    { label: "Krediler", path: "/loans", badge: "Banka" },
-    { label: "Çek / Senet", path: "/cheques", badge: "Vade" },
-    { label: "Cari Hesaplar", path: "/contacts" },
-    { label: "Taksitler", path: "/installments", badge: "Vade" },
-    { label: "Raporlar", path: "/reports", badge: "Excel" },
-    { label: "Banka & Kasa & POS", path: "/banking" },
-    { label: "Stoklar & Ürünler", path: "/stock", badge: "Barkod" },
-    { label: "Verilen Siparişler", path: "/purchase-orders", badge: "Alış" },
-    { label: "Hızlı Satış", path: "/hizli-satis", badge: "POS" },
-    { label: "Stok Sayımı (Tablet)", path: "/sayim", badge: "Sayım" },
-    { label: "Teklifler", path: "/quotes" },
-    { label: "Projeler", path: "/projects" },
-    { label: "Keşifler", path: "/surveys" },
-    { label: "E-Ticaret Entegrasyon", path: "/ecommerce", badge: "Trendyol" },
-    { label: "Kargo Entegrasyon", path: "/cargo", badge: "Yurtiçi" },
-    { label: "Siparişler", path: "/orders", badge: "B2B" },
-    { label: "Saha Sipariş", path: "/saha", badge: "Tablet" },
-    { label: "Depo Sevkiyatı", path: "/sevk", badge: "Tablet" },
-    { label: "Depo & Transfer", path: "/warehouses" },
-    { label: "Araçlarım", path: "/vehicles", badge: "Filo" },
-    { label: "Üretim & Reçete (BOM)", path: "/production" },
-    { label: "Üretim Ekranı (Atölye)", path: "/atolye", badge: "Tablet" },
-    { label: "Personel & Bordro", path: "/personnel" },
-    { label: "Benim Sayfam", path: "/personelim", badge: "Self" },
-    { label: "Mesaim", path: "/mesai", badge: "Puantaj" },
-    { label: "İletişim: Mail & SMS", path: "/communication", badge: "SMS" },
-    { label: "TamKobi AI Danışman", path: "/ai-advisor", badge: "GPT-5.4", isAi: true },
-    { label: "Mali Müşavir Paneli", path: "/accountant", badge: "KDV" },
-    { label: "Destek", path: "/support", badge: "Talep" },
-    { label: "Çöp Kutusu", path: "/trash", badge: "30 gün" },
-  ];
   const permPath = authPermPath;
-  const can = (path, level = "view") => canAccessPath(user, path, level, permPath);
-  const feature = (key) => isFeatureEnabled(user, key);
-  const moduleOn = (path) => isModuleEnabled(user, license, path, permPath);
-  const addonOn = (key) => isAddonEnabled(user, license, key);
-  const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path) && selfPersonnelNavAllowed(m.path, user) && personelMenuPathAllowed(m.path, user) && (m.path !== "/ai-advisor" || addonOn("ai.advisor")) && (m.path !== "/support" || addonOn("support.tickets")));
-  const rank = (path) => {
-    const i = moduleOrder.indexOf(path);
-    if (i !== -1 || moduleOrder.length === 0) return i === -1 ? BASE_MENU.findIndex((m) => m.path === path) : i;
-    const bi = BASE_MENU.findIndex((m) => m.path === path);
-    for (let k = bi - 1; k >= 0; k--) { const j = moduleOrder.indexOf(BASE_MENU[k].path); if (j !== -1) return j + 0.5 + bi / 1000; }
-    return -0.5 + bi / 1000;
-  };
-  // Empty until session user exists — prevents full BASE_MENU flash while /auth/me is in flight.
-  const menuItems = user ? BASE_MENU.filter(visible).sort((a, b) => rank(a.path) - rank(b.path)) : [];
+  const can = useCallback((path, level = "view") => canAccessPath(user, path, level, permPath), [user]);
+  const feature = useCallback((key) => isFeatureEnabled(user, key), [user]);
+  const moduleOn = useCallback((path) => isModuleEnabled(user, license, path, permPath), [user, license]);
+  const addonOn = useCallback((key) => isAddonEnabled(user, license, key), [user, license]);
 
-  const persistOrder = async (order) => {
+  const menuItems = useMemo(() => {
+    if (!user) return [];
+    const visible = (m) => (m.isSystem ? !!user?.is_super_admin : can(m.path) && moduleOn(m.path) && selfPersonnelNavAllowed(m.path, user) && personelMenuPathAllowed(m.path, user) && (m.path !== "/ai-advisor" || addonOn("ai.advisor")) && (m.path !== "/support" || addonOn("support.tickets")));
+    const rank = (path) => {
+      const i = moduleOrder.indexOf(path);
+      if (i !== -1 || moduleOrder.length === 0) return i === -1 ? BASE_MENU.findIndex((m) => m.path === path) : i;
+      const bi = BASE_MENU.findIndex((m) => m.path === path);
+      for (let k = bi - 1; k >= 0; k--) { const j = moduleOrder.indexOf(BASE_MENU[k].path); if (j !== -1) return j + 0.5 + bi / 1000; }
+      return -0.5 + bi / 1000;
+    };
+    return BASE_MENU.filter(visible).sort((a, b) => rank(a.path) - rank(b.path));
+  }, [user, moduleOrder, can, moduleOn, addonOn]);
+
+  const persistOrder = useCallback(async (order) => {
     setModuleOrder(order);
     localStorage.setItem("module_order", JSON.stringify(order));
     try { await axios.put(`${API_URL}/auth/me/preferences`, { module_order: order }, { withCredentials: true }); } catch { /* offline */ }
-  };
-  const moveModule = (from, to) => {
+  }, []);
+
+  const moveModule = useCallback((from, to) => {
     if (to < 0 || to >= menuItems.length) return;
     const paths = menuItems.map((m) => m.path);
     const [moved] = paths.splice(from, 1);
     paths.splice(to, 0, moved);
     persistOrder(paths);
-  };
-  const moveModulePath = (fromPath, toPath) => {
+  }, [menuItems, persistOrder]);
+
+  const moveModulePath = useCallback((fromPath, toPath) => {
     if (groupIdOf(fromPath) !== groupIdOf(toPath)) return;
     const paths = menuItems.map((m) => m.path);
     const from = paths.indexOf(fromPath);
@@ -99,21 +104,19 @@ export const AuthProvider = ({ children }) => {
     const [moved] = paths.splice(from, 1);
     paths.splice(to, 0, moved);
     persistOrder(paths);
-  };
-  const resetModuleOrder = () => persistOrder([]);
+  }, [menuItems, persistOrder]);
 
-  const persistRadialSlots = async (slots) => {
+  const resetModuleOrder = useCallback(() => persistOrder([]), [persistOrder]);
+
+  const persistRadialSlots = useCallback(async (slots) => {
     const normalized = saveRadialSlotsLocal(slots);
     setRadialSlots(normalized);
     try { await axios.put(`${API_URL}/auth/me/preferences`, { radial_slots: normalized }, { withCredentials: true }); } catch { /* offline */ }
-  };
-  const resetRadialSlots = () => persistRadialSlots(normalizeRadialSlots(null));
-
-  useEffect(() => {
-    checkAuth();
   }, []);
 
-  const checkAuth = async () => {
+  const resetRadialSlots = useCallback(() => persistRadialSlots(normalizeRadialSlots(null)), [persistRadialSlots]);
+
+  const checkAuth = useCallback(async () => {
     try {
       const res = await axios.get(`${API_URL}/auth/me`, { withCredentials: true });
       if (!res.data?.authenticated || !res.data.user) {
@@ -154,9 +157,13 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const login = async (email, password, remember = true) => {
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
+
+  const login = useCallback(async (email, password, remember = true) => {
     try {
       const res = await axios.post(`${API_URL}/auth/login`, { email, password, remember: !!remember }, { withCredentials: true });
       setUser(res.data.user);
@@ -176,9 +183,9 @@ export const AuthProvider = ({ children }) => {
       toast.error(msg);
       return false;
     }
-  };
+  }, []);
 
-  const switchCompany = async (companyId) => {
+  const switchCompany = useCallback(async (companyId) => {
     try {
       await axios.post(`${API_URL}/auth/switch-company`, { company_id: companyId }, { withCredentials: true });
       const comp = companies.find(c => (c.id === companyId || c._id === companyId));
@@ -191,9 +198,9 @@ export const AuthProvider = ({ children }) => {
     } catch (err) {
       toast.error("Şirket değiştirilemedi.");
     }
-  };
+  }, [companies]);
 
-  const logout = async (to = "/login") => {
+  const logout = useCallback(async (to = "/login") => {
     try {
       await axios.post(`${API_URL}/auth/logout`, {}, { withCredentials: true });
     } catch (e) {}
@@ -205,7 +212,16 @@ export const AuthProvider = ({ children }) => {
     setPriceDecimals(2);
     toast.info("Oturum kapatıldı.");
     window.location.href = typeof to === "string" ? to : "/login";
-  };
+  }, []);
+
+  const refreshLicense = useCallback(async (cid) => {
+    try {
+      const l = await axios.get(`${API_URL}/license/me`, {
+        params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" },
+      });
+      setLicense(l.data);
+    } catch { /* ignore */ }
+  }, [activeCompany]);
 
   useEffect(() => {
     const onCompany = (ev) => {
@@ -223,8 +239,57 @@ export const AuthProvider = ({ children }) => {
     return () => window.removeEventListener("tamkobi-company-updated", onCompany);
   }, []);
 
+  const value = useMemo(() => ({
+    user,
+    authenticated,
+    companies,
+    activeCompany,
+    switchCompany,
+    login,
+    logout,
+    loading,
+    menuItems,
+    moveModule,
+    moveModulePath,
+    resetModuleOrder,
+    radialSlots,
+    persistRadialSlots,
+    resetRadialSlots,
+    can,
+    permPath,
+    feature,
+    license,
+    moduleOn,
+    addonOn,
+    reloadSession: checkAuth,
+    refreshLicense,
+  }), [
+    user,
+    authenticated,
+    companies,
+    activeCompany,
+    switchCompany,
+    login,
+    logout,
+    loading,
+    menuItems,
+    moveModule,
+    moveModulePath,
+    resetModuleOrder,
+    radialSlots,
+    persistRadialSlots,
+    resetRadialSlots,
+    can,
+    feature,
+    license,
+    moduleOn,
+    addonOn,
+    checkAuth,
+    refreshLicense,
+  ]);
+
   return (
-    <AuthContext.Provider value={{ user, authenticated, companies, activeCompany, switchCompany, login, logout, loading, menuItems, moveModule, moveModulePath, resetModuleOrder, radialSlots, persistRadialSlots, resetRadialSlots, can, permPath, feature, license, moduleOn, addonOn, reloadSession: checkAuth, refreshLicense: async (cid) => { try { const l = await axios.get(`${API_URL}/license/me`, { params: { company_id: cid || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01" } }); setLicense(l.data); } catch { /* ignore */ } } }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

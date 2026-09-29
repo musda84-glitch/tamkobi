@@ -14,6 +14,7 @@ import { TxRowMenu } from "../components/TxRowMenu";
 import { PaymentTargetSelect } from "../components/PaymentTargetSelect";
 
 import { formatTrAmount } from "../utils/money";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import {
   Landmark,
   Wallet,
@@ -293,6 +294,9 @@ export default function BankingPage() {
   const simulatedVisible = visibleTx.filter((tx) => tx.source === "bank_sync" && tx.is_simulated);
   const txInflow = visibleTx.filter(tx => tx.type === 'inflow' || (tx.type === 'transfer' && tx.target_account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
   const txOutflow = visibleTx.filter(tx => tx.type === 'outflow' || (tx.type === 'transfer' && tx.account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
+  const { visible: pagedTx, hasMore: txHasMore, sentinelRef: txSentinelRef } = useInfiniteRows(visibleTx, {
+    resetKey: `${selectedAccountId || ""}|${selectedGroup || ""}`,
+  });
 
   const clearSimulated = async () => {
     if (!simulatedVisible.length) {
@@ -569,8 +573,8 @@ export default function BankingPage() {
                   <td colSpan={6} className="px-4 py-6 text-center text-slate-400">{selectedAccount ? 'Bu hesaba ait hareket bulunmuyor.' : 'Henüz finansal hareket kaydı bulunmuyor.'}</td>
                 </tr>
               ) : (
-                visibleTx.map((tx) => (
-                  <tr key={tx.id || tx._id} className="hover:bg-slate-50/70 transition" data-testid={`tx-row-${tx.id || tx._id}`}>
+                pagedTx.map((tx) => (
+                  <tr key={tx.id || tx._id} className="hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_40px]" data-testid={`tx-row-${tx.id || tx._id}`}>
                     <td className="px-4 py-2.5 text-slate-500 font-mono">{tx.date}</td>
                     <td className="px-4 py-2.5 font-semibold text-slate-900">{tx.account_name}</td>
                     <td className="px-4 py-2.5">
@@ -596,6 +600,11 @@ export default function BankingPage() {
             </tbody>
           </table>
         </div>
+        {txHasMore && (
+          <div ref={txSentinelRef} className="pt-2 text-center text-[11px] text-slate-400" data-testid="transactions-load-more">
+            Daha fazla hareket yükleniyor…
+          </div>
+        )}
       </div>
       {printTx && (
         <AccountStatementPrint

@@ -27,6 +27,7 @@ import { fmtDate, formatTrAmount } from "../utils/money";
 import { workMapsLink } from "../utils/mapsLink";
 import { addressToggleLabel, shouldCollapseAddress } from "../utils/addressToggle";
 import { DEFAULT_LOCATION_RADIUS_M, LOCATION_RADIUS_OPTIONS, normalizeRadiusM } from "../utils/locationRadius";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -670,6 +671,15 @@ export default function ProjectsPage({ section } = {}) {
   const visibleProjects = showCompletedProjects ? projects : activeProjects;
   const visibleQuotes = onlyPending ? pendingQuotes : quotes;
   const visibleSurveys = onlyPending ? pendingSurveys : surveys;
+  const { visible: pagedQuotes, hasMore: quotesHasMore, sentinelRef: quotesSentinelRef } = useInfiniteRows(visibleQuotes, {
+    resetKey: `q|${onlyPending}|${visibleQuotes.length}`,
+  });
+  const { visible: pagedProjects, hasMore: projectsHasMore, sentinelRef: projectsSentinelRef } = useInfiniteRows(visibleProjects, {
+    resetKey: `p|${showCompletedProjects}|${visibleProjects.length}`,
+  });
+  const { visible: pagedSurveys, hasMore: surveysHasMore, sentinelRef: surveysSentinelRef } = useInfiniteRows(visibleSurveys, {
+    resetKey: `s|${onlyPending}|${visibleSurveys.length}`,
+  });
   const hiddenCount = tab === "quotes" ? quotes.length - pendingQuotes.length : tab === "surveys" ? surveys.length - pendingSurveys.length : 0;
   const TABS = [["quotes", "Teklifler", FileSignature, visibleQuotes.length], ["projects", "Projeler", Briefcase, visibleProjects.length], ["surveys", "Keşifler", Ruler, visibleSurveys.length]];
   const kind = tab === "quotes" ? "quote" : tab === "projects" ? "project" : "survey";
@@ -735,8 +745,8 @@ export default function ProjectsPage({ section } = {}) {
         <>
           {visibleQuotes.length === 0 && <div className="text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl">{onlyPending && quotes.length ? "Bekleyen teklif yok — filtreyi kapatarak tümünü görebilirsiniz." : "Henüz teklif yok."}</div>}
           <div className="md:hidden space-y-3">
-            {visibleQuotes.map((q) => (
-              <div key={q.id} className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs" data-testid={`quote-row-${q.quote_number}`}>
+            {pagedQuotes.map((q) => (
+              <div key={q.id} className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs [content-visibility:auto] [contain-intrinsic-size:auto_140px]" data-testid={`quote-row-${q.quote_number}`}>
                 <div className="flex justify-between gap-2 items-start">
                   <div className="min-w-0"><div className="font-mono font-bold text-slate-900">{q.quote_number}</div><div className="text-slate-500 truncate">{q.title} • {fmtDate(q.issue_date)}</div><div className="font-semibold mt-0.5">{q.contact_name || "—"}</div></div>
                   <div className="text-right shrink-0 space-y-0.5">
@@ -769,8 +779,8 @@ export default function ProjectsPage({ section } = {}) {
           <div className="hidden md:block bg-white rounded-2xl border border-slate-200 overflow-x-auto"><table className="min-w-[960px] w-full text-left text-xs">
             <thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Teklif</th><th className="px-4 py-2">Cari</th><th className="px-4 py-2">Görseller</th><th className="px-4 py-2 text-right">Tutar</th><th className="px-4 py-2">Durum</th><th className="px-4 py-2 text-right">İşlem</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {visibleQuotes.map((q) => (
-                <tr key={q.id} data-testid={`quote-row-desk-${q.quote_number}`}>
+              {pagedQuotes.map((q) => (
+                <tr key={q.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_56px]" data-testid={`quote-row-desk-${q.quote_number}`}>
                   <td className="px-4 py-2"><div className="font-mono font-bold text-slate-900">{q.quote_number}</div><div className="text-slate-500">{q.title} • {fmtDate(q.issue_date)}{q.valid_until && ` → ${fmtDate(q.valid_until)}`}</div></td>
                   <td className="px-4 py-2 font-semibold">{q.contact_name || "—"}</td>
                   <td className="px-4 py-2"><ImageStrip entity="quote" doc={q} onUpdated={load} /></td>
@@ -800,6 +810,11 @@ export default function ProjectsPage({ section } = {}) {
                 </tr>
               ))}
             </tbody></table></div>
+          {quotesHasMore && (
+            <div ref={quotesSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="quotes-load-more">
+              Daha fazla teklif yükleniyor…
+            </div>
+          )}
         </>
       )}
 
@@ -812,10 +827,10 @@ export default function ProjectsPage({ section } = {}) {
                 : "Henüz proje yok."}
             </div>
           )}
-          {visibleProjects.map((p) => (
+          {pagedProjects.map((p) => (
             <div
               key={p.id}
-              className={`bg-white border rounded-2xl p-4 space-y-2 text-xs transition ring-offset-2 ${isCompletedProject(p) ? "border-emerald-200" : "border-slate-200"} ${focusFlash && focusFlash === String(p.project_number || p.id || p._id) ? "ring-2 ring-emerald-500 border-emerald-400 shadow-md" : ""}`}
+              className={`bg-white border rounded-2xl p-4 space-y-2 text-xs transition ring-offset-2 [content-visibility:auto] [contain-intrinsic-size:auto_280px] ${isCompletedProject(p) ? "border-emerald-200" : "border-slate-200"} ${focusFlash && focusFlash === String(p.project_number || p.id || p._id) ? "ring-2 ring-emerald-500 border-emerald-400 shadow-md" : ""}`}
               data-testid={`project-card-${p.project_number}`}
             >
               <div className="flex justify-between items-start"><div><div className="font-mono text-[10px] text-slate-400">{p.project_number}{p.quote_number ? ` · ${p.quote_number}` : ""}</div><div className="font-bold text-slate-900 text-sm">{p.name}</div><div className="text-slate-500">{p.contact_name || "—"}{p.address && (!shouldCollapseAddress(p.address) || openAddr[p.id]) ? ` • ${p.address}` : ""}{shouldCollapseAddress(p.address) ? <button type="button" onClick={() => setOpenAddr((s) => ({ ...s, [p.id]: !s[p.id] }))} className="ml-1 text-emerald-700 font-semibold" data-testid={`project-addr-toggle-${p.id}`}>{addressToggleLabel(!!openAddr[p.id])}</button> : null}</div></div><Badge s={p.status} map={projectStatusMap} /></div>
@@ -954,13 +969,18 @@ export default function ProjectsPage({ section } = {}) {
           ))}
         </div>
       )}
+      {!listLoading && tab === "projects" && projectsHasMore && (
+        <div ref={projectsSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="projects-load-more">
+          Daha fazla proje yükleniyor…
+        </div>
+      )}
 
       {!listLoading && tab === "surveys" && (
         <>
           {visibleSurveys.length === 0 && <div className="text-center text-xs text-slate-400 py-8 bg-white border border-dashed rounded-2xl">{onlyPending && surveys.length ? "Planlanan keşif yok — filtreyi kapatarak tümünü görebilirsiniz." : "Henüz keşif yok."}</div>}
           <div className="md:hidden space-y-3">
-            {visibleSurveys.map((s) => (
-              <div key={s.id} className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs" data-testid={`survey-row-${s.survey_number}`}>
+            {pagedSurveys.map((s) => (
+              <div key={s.id} className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2 text-xs [content-visibility:auto] [contain-intrinsic-size:auto_160px]" data-testid={`survey-row-${s.survey_number}`}>
                 <div className="flex justify-between gap-2 items-start">
                   <div className="min-w-0"><div className="font-mono font-bold">{s.survey_number}</div><div className="text-slate-500">{s.survey_date}{s.assigned_to ? ` • ${s.assigned_to}` : ""}</div><div className="font-semibold mt-0.5">{s.contact_name || "—"}</div><div className="text-slate-500 truncate">{s.address}{workMapsLink(s) ? <> · <a href={workMapsLink(s)} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold" data-testid={`survey-maps-${s.id}`}>Konuma Git</a></> : null}</div></div>
                   <Badge s={s.status} />
@@ -978,8 +998,8 @@ export default function ProjectsPage({ section } = {}) {
           <div className="hidden md:block bg-white rounded-2xl border border-slate-200 overflow-x-auto"><table className="min-w-[720px] w-full text-left text-xs">
             <thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Keşif</th><th className="px-4 py-2">Cari / Adres</th><th className="px-4 py-2">Ölçüler</th><th className="px-4 py-2">Görseller</th><th className="px-4 py-2">Durum</th><th className="px-4 py-2"></th></tr></thead>
             <tbody className="divide-y divide-slate-100">
-              {visibleSurveys.map((s) => (
-                <tr key={s.id} data-testid={`survey-row-desk-${s.survey_number}`}>
+              {pagedSurveys.map((s) => (
+                <tr key={s.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_56px]" data-testid={`survey-row-desk-${s.survey_number}`}>
                   <td className="px-4 py-2"><div className="font-mono font-bold">{s.survey_number}</div><div className="text-slate-500">{s.survey_date} {s.assigned_to && `• ${s.assigned_to}`}</div></td>
                   <td className="px-4 py-2"><div className="font-semibold">{s.contact_name || "—"}</div><div className="text-slate-500">{s.address} {workMapsLink(s) ? <a href={workMapsLink(s)} target="_blank" rel="noreferrer" className="text-rose-600 font-semibold" data-testid={`survey-maps-desk-${s.id}`}>• Konuma Git</a> : null}</div>{s.notes && <div className="text-slate-400 italic">{s.notes}</div>}</td>
                   <td className="px-4 py-2 text-slate-600">{(s.measurements || []).map((m, i) => <div key={i}>{m.name}: {m.quantity} {m.unit}</div>)}</td>
@@ -993,6 +1013,11 @@ export default function ProjectsPage({ section } = {}) {
                 </tr>
               ))}
             </tbody></table></div>
+          {surveysHasMore && (
+            <div ref={surveysSentinelRef} className="py-3 text-center text-[11px] text-slate-400" data-testid="surveys-load-more">
+              Daha fazla keşif yükleniyor…
+            </div>
+          )}
         </>
       )}
 
