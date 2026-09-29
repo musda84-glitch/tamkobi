@@ -13491,6 +13491,7 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
     products_by_id = {p["_id"]: p for p in mat_products}
     persist_station: list = []
     persist_images: list = []
+    persist_step_note: list = []
     for r in rows:
         o = by_order.get(r.get("order_id")) or {}
         recipe = by_recipe.get(o.get("recipe_id")) or {}
@@ -13516,9 +13517,24 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
         had_images_key = "images" in r
         if step and not had_images_key:
             meta["images"] = pwo.sanitize_step_images(step.get("images"))
-        if step and not str(r.get("step_note") or "").strip():
+        preferred_note = pwo.preferred_atolye_step_note(
+            wo_note=r.get("step_note"),
+            recipe_step_note=(step or {}).get("note") if step else "",
+            materials=meta.get("materials"),
+            material_name=r.get("material_name") or (step or {}).get("material_name"),
+        )
+        if preferred_note:
+            meta["step_note"] = preferred_note
+            meta["force_step_note"] = True
+        elif step and not str(r.get("step_note") or "").strip():
             meta["step_note"] = str(step.get("note") or "").strip()
+        prev_note = str(r.get("step_note") or "").strip()
         pwo.enrich_work_order_row(r, meta)
+        new_note = str(r.get("step_note") or "").strip()
+        if new_note and new_note != prev_note and r.get("status") in ("ready", "waiting", "in_progress", "paused"):
+            wid = r.get("id") or r.get("_id")
+            if wid:
+                persist_step_note.append((wid, new_note))
         plan = pwo.resolve_work_order_finish_plan(r, meta.get("materials"))
         r["finish_qty"] = plan["qty"]
         r["finish_unit"] = plan["unit"]
@@ -13536,6 +13552,9 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
     for wo_id, station in persist_station:
         if wo_id:
             await db.work_orders.update_one({"_id": wo_id}, {"$set": {"station": station}})
+    for wo_id, note in persist_step_note:
+        if wo_id:
+            await db.work_orders.update_one({"_id": wo_id}, {"$set": {"step_note": note}})
     for wo_id, imgs in persist_images:
         if wo_id:
             await db.work_orders.update_one({"_id": wo_id}, {"$set": {"images": imgs}})
