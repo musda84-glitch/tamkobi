@@ -272,6 +272,8 @@ export type Product = {
   gtip?: string | null;
   origin_country?: string | null;
   manufacturer_code?: string | null;
+  label_template_id?: string | null;
+  label_image_url?: string | null;
 };
 
 export type Notification = {

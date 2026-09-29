@@ -22,6 +22,53 @@ def test_enrich_items_copies_line_note():
     assert items[0]["ordered_qty"] == 40
 
 
+def test_enrich_items_copies_label_template_id():
+    import order_pick as op
+
+    db = MagicMock()
+    db.products.find_one = AsyncMock(return_value={
+        "_id": "p1",
+        "name": "MDF",
+        "sku": "MDF3MM",
+        "barcode": "8691",
+        "image_url": None,
+        "label_template_id": "tpl_50x30",
+        "sale_price": 120,
+        "vat_rate": 20,
+    })
+    op.init(db, {})
+
+    items = asyncio.run(op._enrich_items("c1", [
+        {"product_id": "p1", "product_name": "MDF", "quantity": 2},
+    ]))
+
+    assert items[0]["label_template_id"] == "tpl_50x30"
+    assert items[0]["sale_price"] == 120
+    assert items[0]["vat_rate"] == 20
+
+
+def test_sync_product_label_fields_refreshes_template():
+    import order_pick as op
+
+    ses = {
+        "_id": "ses1",
+        "items": [
+            {"line_index": 0, "product_id": "p1", "ordered_qty": 2, "picked_qty": 0, "product_name": "MDF"},
+        ],
+    }
+    db = MagicMock()
+    db.products.find_one = AsyncMock(return_value={
+        "_id": "p1", "name": "MDF", "label_template_id": "tpl_stock", "sale_price": 50,
+    })
+    db.order_pick_sessions.update_one = AsyncMock()
+    op.init(db, {})
+
+    out = asyncio.run(op._sync_product_label_fields(ses))
+    assert out["items"][0]["label_template_id"] == "tpl_stock"
+    assert out["items"][0]["sale_price"] == 50
+    db.order_pick_sessions.update_one.assert_awaited()
+
+
 def test_sync_stock_notes_backfills_existing_session():
     import order_pick as op
 

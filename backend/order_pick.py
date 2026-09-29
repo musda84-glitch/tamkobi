@@ -163,11 +163,64 @@ async def _enrich_items(company_id: str, order_items: list) -> List[dict]:
             "picked_qty": 0.0,
             "image_url": it.get("image_url") or (prod or {}).get("image_url"),
         }
+        if prod:
+            tpl_id = str(prod.get("label_template_id") or "").strip()
+            if tpl_id:
+                row["label_template_id"] = tpl_id
+            for key in (
+                "sale_price", "vat_rate", "currency", "price_includes_vat",
+                "tags", "category", "unit", "label_image_url",
+            ):
+                if prod.get(key) is not None:
+                    row[key] = prod.get(key)
         note = _line_stock_note(it)
         if note:
             row["note"] = note
         out.append(row)
     return out
+
+
+async def _sync_product_label_fields(ses: dict) -> dict:
+    """Stok kartındaki etiket şablonu / fiyat alanlarını toplama satırına yaz."""
+    items = list(ses.get("items") or [])
+    if not items:
+        return ses
+    changed = False
+    for line in items:
+        if not isinstance(line, dict):
+            continue
+        pid = line.get("product_id")
+        prod = await _db.products.find_one({"_id": pid}) if pid else None
+        if not prod:
+            continue
+        tpl_id = str(prod.get("label_template_id") or "").strip() or None
+        if (line.get("label_template_id") or None) != tpl_id:
+            if tpl_id:
+                line["label_template_id"] = tpl_id
+            elif "label_template_id" in line:
+                del line["label_template_id"]
+            changed = True
+        for key in (
+            "sale_price", "vat_rate", "currency", "price_includes_vat",
+            "tags", "category", "unit", "label_image_url", "image_url",
+        ):
+            val = prod.get(key)
+            if val is None:
+                continue
+            if line.get(key) != val:
+                line[key] = val
+                changed = True
+        name = str(prod.get("name") or "").strip()
+        if name and not str(line.get("product_name") or "").strip():
+            line["product_name"] = name
+            changed = True
+    if changed:
+        await _db.order_pick_sessions.update_one(
+            {"_id": ses["_id"]},
+            {"$set": {"items": items, "updated_at": _now()}},
+        )
+        ses["items"] = items
+    return ses
 
 
 async def _sync_stock_notes(ses: dict, order: dict) -> dict:
@@ -210,7 +263,8 @@ async def _session_for(order: dict, create: bool = True) -> dict:
     sid_order = order["_id"]
     ses = await _db.order_pick_sessions.find_one({"order_id": sid_order, "status": {"$nin": ["shipped"]}})
     if ses:
-        return await _sync_stock_notes(ses, order)
+        ses = await _sync_stock_notes(ses, order)
+        return await _sync_product_label_fields(ses)
     if not create:
         raise HTTPException(status_code=404, detail="Toplama oturumu yok.")
     items = await _enrich_items(order["company_id"], order.get("items") or [])

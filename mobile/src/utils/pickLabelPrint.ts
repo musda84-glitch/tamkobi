@@ -1,17 +1,24 @@
 import { Platform } from "react-native";
+import { get } from "../api/client";
+import type { ApiClient } from "../api/client";
 import { htmlToPdfFile, printHtmlNative } from "./nativePrint";
 import { safePrintFilename } from "./orderPrint";
-import {
-  PRODUCT_LABEL_PX,
-  expandPickLabelJobs,
-  productLabelDocumentHtml,
-  type PickLabelJob,
-} from "./pickLabels";
 import type { PickLine } from "./orderPick";
+import { labelCopyCount } from "./pickLabels";
+import {
+  builtinLabelTemplates,
+  pickLineToLabelProduct,
+  resolveLabelTemplate,
+  type LabelTemplateLike,
+} from "./resolveLabelTemplate";
+import { templateLabelDocumentHtml } from "./labelTemplateHtml";
 
-function printProductLabelWeb(title: string, jobs: PickLabelJob[], companyName?: string): boolean {
+function mmToPx(mm: number): number {
+  return Math.max(40, Math.round(mm * 3.78));
+}
+
+function printHtmlWeb(html: string): boolean {
   if (typeof document === "undefined") return false;
-  const html = productLabelDocumentHtml(title, jobs, companyName, true);
   if (typeof window !== "undefined" && typeof window.open === "function") {
     try {
       const w = window.open("", "_blank", "width=520,height=420");
@@ -42,28 +49,77 @@ function printProductLabelWeb(title: string, jobs: PickLabelJob[], companyName?:
   return true;
 }
 
+async function loadTemplates(client: ApiClient, companyId?: string): Promise<LabelTemplateLike[]> {
+  try {
+    const list = await get<LabelTemplateLike[]>(client, "/label-templates", {
+      company_id: companyId || "comp_nexus_main_01",
+    });
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Stok kartı etiket şablonu (yoksa varsayılan) ile sevkiyat ürün etiketi yazdır. */
 export async function printPickProductLabels(
   items: Array<PickLine | null | undefined> | null | undefined,
   companyName?: string,
   orderNumber?: string,
+  opts?: { client?: ApiClient; companyId?: string },
 ): Promise<{ count: number; ok: boolean }> {
-  const jobs = expandPickLabelJobs(items);
+  const lines = (items || []).filter(Boolean) as PickLine[];
+  if (!lines.length) return { count: 0, ok: false };
+
+  const builtins = builtinLabelTemplates();
+  const saved = opts?.client
+    ? await loadTemplates(opts.client, opts.companyId)
+    : [];
+
+  const company = companyName ? { name: companyName } : undefined;
+  const jobs: Array<{ tpl: LabelTemplateLike; product: NonNullable<ReturnType<typeof pickLineToLabelProduct>> }> = [];
+  for (const line of lines) {
+    const product = pickLineToLabelProduct(line as Record<string, unknown>);
+    if (!product) continue;
+    const tpl = resolveLabelTemplate(saved, product, builtins);
+    if (!tpl) continue;
+    const copies = labelCopyCount(line);
+    for (let i = 0; i < copies; i += 1) jobs.push({ tpl, product });
+  }
   if (!jobs.length) return { count: 0, ok: false };
+
+  // Aynı boyutta grupla (termal @page tek boyut)
+  const bySize = new Map<string, typeof jobs>();
+  for (const job of jobs) {
+    const key = `${Number(job.tpl.width_mm) || 50}x${Number(job.tpl.height_mm) || 30}`;
+    if (!bySize.has(key)) bySize.set(key, []);
+    bySize.get(key)!.push(job);
+  }
+
   const title = `Ürün etiketleri ${orderNumber || ""}`.trim();
   const filename = `etiket-${safePrintFilename(orderNumber, "urun")}.pdf`;
-  if (Platform.OS === "web") {
-    return { count: jobs.length, ok: printProductLabelWeb(title, jobs, companyName) };
+  let anyOk = false;
+
+  for (const group of bySize.values()) {
+    const { html, widthMm, heightMm } = templateLabelDocumentHtml(title, group, company, Platform.OS === "web");
+    const px = { width: mmToPx(widthMm), height: mmToPx(heightMm) };
+    if (Platform.OS === "web") {
+      if (printHtmlWeb(html)) anyOk = true;
+      continue;
+    }
+    try {
+      if (await printHtmlNative(html, px)) {
+        anyOk = true;
+        continue;
+      }
+    } catch {
+      /* PDF */
+    }
+    try {
+      if (await htmlToPdfFile(html, filename, px)) anyOk = true;
+    } catch {
+      /* fail */
+    }
   }
-  const document = productLabelDocumentHtml(title, jobs, companyName);
-  try {
-    if (await printHtmlNative(document, PRODUCT_LABEL_PX)) return { count: jobs.length, ok: true };
-  } catch {
-    /* PDF */
-  }
-  try {
-    if (await htmlToPdfFile(document, filename, PRODUCT_LABEL_PX)) return { count: jobs.length, ok: true };
-  } catch {
-    /* fail */
-  }
-  return { count: jobs.length, ok: false };
+
+  return { count: jobs.length, ok: anyOk };
 }
