@@ -219,7 +219,7 @@ const DeletionConfirmPanel = ({ companyId, canEdit }) => {
 };
 
 export default function SupportPage() {
-  const { activeCompany, addonOn, user } = useAuth();
+  const { activeCompany, addonOn, user, can, moduleOn } = useAuth();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const canEdit = user?.role === "admin";
   const [meta, setMeta] = useState({ statuses: [], categories: [], priorities: [] });
@@ -269,8 +269,8 @@ export default function SupportPage() {
     } catch (e) { toast.error(e.response?.data?.detail || "Kapatılamadı."); } finally { setBusy(""); }
   };
 
-  if (!addonOn("support.tickets")) {
-    return <div className="bg-white border rounded-2xl p-10 text-center text-slate-500" data-testid="support-disabled">Destek talepleri bu şirket için kapalı.</div>;
+  if (!addonOn("support.tickets") || !can("/support") || !moduleOn("/support")) {
+    return <div className="bg-white border rounded-2xl p-10 text-center text-slate-500" data-testid="support-disabled">Destek talepleri bu şirket / rol için kapalı.</div>;
   }
 
   return (
