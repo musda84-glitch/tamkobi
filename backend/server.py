@@ -2494,6 +2494,9 @@ async def switch_company(req: Dict[str, str], user: dict = Depends(get_current_u
         raise HTTPException(status_code=400, detail="Şirket ID gereklidir.")
     if new_comp_id not in (user.get("company_ids") or []):
         raise HTTPException(status_code=403, detail="Bu şirket hesabına erişiminiz yok.")
+    role_doc = await rbac.role_for(user)
+    if not rbac.role_features(role_doc).get("account_companies", True):
+        raise HTTPException(status_code=403, detail="Rolünüz şirket değiştirme yetkisine sahip değil.")
     await db.users.update_one({"email": user["email"]}, {"$set": {"active_company_id": new_comp_id}})
     return {"status": "success", "active_company_id": new_comp_id}
 

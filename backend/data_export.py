@@ -188,17 +188,32 @@ async def _safe_find(coll, query, limit=500) -> list:
 
 
 def personel_blocked(user: Optional[dict] = None) -> bool:
-    """Personel rolü şirket/fatura paketini indiremez."""
+    """Legacy: Personel rolü şirket/fatura paketini indiremez."""
     return str((user or {}).get("role") or "").strip().lower() == "personel"
+
+
+def export_blocked(user: Optional[dict] = None, features: Optional[dict] = None) -> bool:
+    """Block ZIP export when role feature export_personal_data is off (personel defaults off)."""
+    feats = features if features is not None else (user or {}).get("features")
+    if isinstance(feats, dict) and "export_personal_data" in feats:
+        return not bool(feats.get("export_personal_data"))
+    return personel_blocked(user)
 
 
 @router.get("/me/data-export")
 async def export_my_data(request: Request, company_id: Optional[str] = None):
     user = await _token_user(request)
-    if personel_blocked(user):
+    feats = None
+    try:
+        import rbac
+        role = await rbac.role_for(user)
+        feats = rbac.role_features(role)
+    except Exception:
+        feats = user.get("features")
+    if export_blocked(user, feats):
         raise HTTPException(
             status_code=403,
-            detail="Personel rolü kişisel veri ZIP indirme ve şirket verisi dışa aktarımı yapamaz.",
+            detail="Rolünüz kişisel veri ZIP indirme yetkisine sahip değil.",
         )
     uid = str(user.get("id") or user.get("_id"))
     cids = [c for c in (user.get("company_ids") or []) if c]

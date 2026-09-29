@@ -41,6 +41,8 @@ describe("authAccess fail-closed", () => {
 
   test("feature / module / addon fail closed without user", () => {
     expect(isFeatureEnabled(null, "header_invoice")).toBe(false);
+    expect(isFeatureEnabled({ role: "personel", features: { account_companies: false } }, "account_companies")).toBe(false);
+    expect(isFeatureEnabled({ role: "personel", features: { export_personal_data: true } }, "export_personal_data")).toBe(true);
     expect(isModuleEnabled(null, { modules: { "/orders": true } }, "/orders")).toBe(false);
     expect(isAddonEnabled(null, { addons: { "ai.advisor": true } }, "ai.advisor")).toBe(false);
   });

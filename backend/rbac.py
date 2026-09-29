@@ -118,7 +118,29 @@ FEATURES = [
     ("header_ai", "Üst bar: AI asistan", "Web üst çubuğundaki AI Danışman kısayolu (lisans eklentisi de gerekir)."),
     ("order_cargo_label", "Sipariş: Kargo etiketi", "Sipariş satırındaki Kargo etiketi (yazdır) butonu. Kapalıysa web + mobil gizlenir; Kargola butonu etkilenmez."),
     ("order_more_actions", "Sipariş: Diğer işlemler", "Sipariş satırındaki Diğer işlemler (⋯) menüsü. Kapalıysa web + mobil gizlenir."),
+    ("account_companies", "Hesap: Şirketlerim", "Sol menü Hesap açılır listesindeki Şirketlerim alanı ve şirket değiştirme. Kapalıysa personel yalnız aktif firmayı görür; şirket listesi/geçiş gizlenir."),
+    ("export_personal_data", "Kişisel verilerimi ZIP indir", "Kenar çubuğundaki kişisel veri ZIP indirme ve Hesap → Profil veri dışa aktarımı. Kapalıysa buton gizlenir; API de engeller."),
 ]
+FEATURE_DEFAULTS: Dict[str, bool] = {k: True for k, _, _ in FEATURES}
+
+
+def feature_default(code: str, key: str) -> bool:
+    """Per-role defaults when a feature key was never saved on the role doc."""
+    if code == "admin":
+        return True
+    if key in ("account_companies", "export_personal_data") and code == "personel":
+        return False
+    return FEATURE_DEFAULTS.get(key, True)
+
+
+def role_features(role: dict) -> Dict[str, bool]:
+    code = role.get("code") or ""
+    if code == "admin":
+        return {k: True for k, _, _ in FEATURES}
+    f = role.get("features") or {}
+    return {k: bool(f.get(k, feature_default(code, k))) for k, _, _ in FEATURES}
+
+
 MONEY_KEYS = {"sale_price", "purchase_price", "unit_price", "price", "list_price", "local_price", "local_total", "fx_rate", "total", "grand_total", "subtotal", "vat_total", "total_amount", "amount", "paid_amount", "balance", "current_balance", "revenue", "net_profit", "gross_profit",
               "commission", "commission_vat", "service_fee", "cargo_fee", "product_cost", "cost", "fees", "deductions", "net", "gross", "salary", "payroll_salary", "net_salary", "gross_salary", "second_salary", "credit_limit", "discount_total", "vat_amount", "price_diff",
               "cost_price", "last_purchase_price", "avg_purchase_price", "card_purchase_price", "margin_pct", "profit", "monthly_payment", "principal", "remaining", "line_total", "opening_balance", "budget", "spent", "overtime_pay", "hourly_rate", "total_revenue", "total_expense", "net_cash", "receivables", "payables", "sale_price_incl_vat", "total_bank_balance", "total_receivables", "total_payables", "total_stock_value", "monthly_sales", "monthly_expenses", "gelir", "gider",
@@ -134,12 +156,6 @@ def mask_money(obj):
         return [mask_money(x) for x in obj]
     return obj
 
-
-def role_features(role: dict) -> Dict[str, bool]:
-    if role.get("code") == "admin":
-        return {k: True for k, _, _ in FEATURES}
-    f = role.get("features") or {}
-    return {k: bool(f.get(k, True)) for k, _, _ in FEATURES}
 
 def _all(level: str) -> Dict[str, str]:
     return {m: level for m, _ in MODULES}
@@ -567,7 +583,7 @@ async def create_role(req: Dict[str, Any]):
         "name": name,
         "is_system": False,
         "permissions": perms,
-        "features": {k: bool((req.get("features") or {}).get(k, True)) for k, _, _ in FEATURES},
+        "features": {k: bool((req.get("features") or {}).get(k, feature_default(code, k))) for k, _, _ in FEATURES},
         "perm_levels_v2": True,
         "created_at": _now(),
     }

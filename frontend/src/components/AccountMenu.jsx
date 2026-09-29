@@ -8,7 +8,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { isPersonelRole, personelCanManageCompany } from "../utils/selfPersonnelNav";
 
 export const AccountMenu = () => {
-  const { companies, activeCompany, switchCompany, reloadSession, user, license } = useAuth();
+  const { companies, activeCompany, switchCompany, reloadSession, user, license, feature } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -19,6 +19,7 @@ export const AccountMenu = () => {
   const cid = activeCompany?.id || activeCompany?._id;
   const canManageCo = personelCanManageCompany(user);
   const staffOnly = isPersonelRole(user);
+  const canCompanies = feature ? feature("account_companies") : true;
   useEffect(() => {
     const close = (e) => { if (box.current && !box.current.contains(e.target)) { setOpen(false); setAdding(false); } };
     document.addEventListener("mousedown", close);
@@ -65,8 +66,8 @@ export const AccountMenu = () => {
   const canAdmin = canManageCo && (!user?.role || user.role === "admin" || user?.is_super_admin);
   const salesOn = canManageCo && !!license?.gib_credits_sales;
   const multiCompany = mine.length > 1;
-  // Personel + tek şirket: mobildeki gibi hesap yönetimi yok — yalnız firma adı
-  const staffStatic = staffOnly && !multiCompany;
+  // Rol özelliği kapalıysa veya personel + tek şirket: yalnız firma adı (Şirketlerim yok)
+  const staffStatic = !canCompanies || (staffOnly && !multiCompany);
   return (
     <div className="px-3.5 py-3 border-b border-slate-800/60 relative" ref={box} data-testid="account-menu">
       {staffStatic ? (
@@ -94,9 +95,9 @@ export const AccountMenu = () => {
       )}
       {open && !staffStatic && (
         <div className="absolute top-[4.5rem] left-3 right-3 bg-slate-800 border border-slate-700 rounded-xl shadow-xl py-1 z-50 text-xs" data-testid="account-menu-panel">
-          {(!staffOnly || multiCompany) ? (
+          {canCompanies ? (
             <>
-              <div className="px-3 py-1.5 text-[10px] text-slate-400 font-semibold uppercase">Şirketlerim</div>
+              <div className="px-3 py-1.5 text-[10px] text-slate-400 font-semibold uppercase" data-testid="account-companies-heading">Şirketlerim</div>
               {mine.length === 0 && <div className="px-3 py-2 text-slate-500">Bu hesapta şirket yok.</div>}
               {mine.map((c) => {
                 const id = c.id || c._id;

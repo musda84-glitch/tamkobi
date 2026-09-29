@@ -20,6 +20,16 @@ def test_personel_blocked():
     assert de.personel_blocked({}) is False
 
 
+def test_export_blocked_respects_feature():
+    assert de.export_blocked({"role": "personel"}, {"export_personal_data": False}) is True
+    assert de.export_blocked({"role": "personel"}, {"export_personal_data": True}) is False
+    assert de.export_blocked({"role": "manager"}, {"export_personal_data": False}) is True
+    assert de.export_blocked({"role": "manager"}, {"export_personal_data": True}) is False
+    # No features map → legacy personel block
+    assert de.export_blocked({"role": "personel"}) is True
+    assert de.export_blocked({"role": "accountant"}) is False
+
+
 def test_export_rejects_personel_role():
     async def run():
         req = MagicMock()
@@ -29,7 +39,24 @@ def test_export_rejects_personel_role():
                 assert False, "expected 403"
             except HTTPException as e:
                 assert e.status_code == 403
-                assert "Personel" in e.detail
+
+    asyncio.run(run())
+
+
+def test_export_blocked_with_features_on_user():
+    """When rbac.role_for fails, fall back to user.features."""
+    async def run():
+        req = MagicMock()
+        user = {"role": "sales", "id": "u3", "features": {"export_personal_data": False}}
+        fake_rbac = MagicMock()
+        fake_rbac.role_for = AsyncMock(side_effect=RuntimeError("no db"))
+        with patch.object(de, "_token_user", AsyncMock(return_value=user)):
+            with patch.dict("sys.modules", {"rbac": fake_rbac}):
+                try:
+                    await de.export_my_data(req)
+                    assert False, "expected 403"
+                except HTTPException as e:
+                    assert e.status_code == 403
 
     asyncio.run(run())
 
