@@ -297,8 +297,8 @@ export default function ShopFloorPage() {
           <div className="flex items-center gap-1.5 min-w-0"><FileText className="w-3.5 h-3.5 shrink-0 text-slate-400" /><span className="truncate">İş dosyası: <span className="font-semibold text-slate-900">{w.job_file_name || "—"}</span></span></div>
           {String(w.step_note || "").trim() ? (
             <div className="flex items-start gap-1.5 min-w-0 w-full max-w-full" data-testid={`wo-step-note-${w.order_code}-${w.step_no}`}>
-              <span className="shrink-0 text-slate-400">Not:</span>
-              <span className="min-w-0 flex-1 font-semibold text-slate-900 whitespace-pre-wrap break-all [overflow-wrap:anywhere]">{String(w.step_note).trim()}</span>
+              <span className="shrink-0 text-slate-400">Sipariş stok notu:</span>
+              <span className="min-w-0 flex-1 font-semibold text-amber-900 whitespace-pre-wrap break-all [overflow-wrap:anywhere]">{String(w.step_note).trim()}</span>
             </div>
           ) : null}
         </div>

@@ -77,6 +77,36 @@ def test_enrich_fills_step_note():
     assert row["step_note"] == "Kenar bant beyaz"
 
 
+def test_enrich_force_step_note_overwrites_stale_qty():
+    row = {"order_code": "URT-1", "step_note": "10× 2,7 mm 210x170 Tek Yüz Beyaz Mdf"}
+    enrich_work_order_row(
+        row,
+        {"step_note": "2,7 mm 210x170 Tek Yüz Beyaz Mdf", "force_step_note": True},
+    )
+    assert row["step_note"] == "2,7 mm 210x170 Tek Yüz Beyaz Mdf"
+
+
+def test_preferred_atolye_step_note_prefers_stock_then_description():
+    from production_work_orders import preferred_atolye_step_note
+
+    assert preferred_atolye_step_note(
+        wo_note="10× MDF",
+        recipe_step_note="10× MDF",
+        materials=[{"product_name": "MDF", "stock_note": "CEVİZ / DRA-CVZ"}],
+    ) == "CEVİZ / DRA-CVZ"
+    assert preferred_atolye_step_note(
+        wo_note="10× 2,7 mm 210x170 Tek Yüz Beyaz Mdf",
+        recipe_step_note="10× 2,7 mm 210x170 Tek Yüz Beyaz Mdf",
+        materials=[{"product_name": "2,7 mm 210x170 Tek Yüz Beyaz Mdf", "needed": 10}],
+        material_name="2,7 mm 210x170 Tek Yüz Beyaz Mdf",
+    ) == "2,7 mm 210x170 Tek Yüz Beyaz Mdf"
+    assert preferred_atolye_step_note(
+        wo_note="",
+        recipe_step_note="özel kesim",
+        materials=[{"product_name": "MDF"}],
+    ) == "özel kesim"
+
+
 def test_flatten_keeps_station_only_step():
     from production_work_orders import normalize_step
 

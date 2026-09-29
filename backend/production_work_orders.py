@@ -1,5 +1,6 @@
 """Atölye iş emri yardımcıları — reçeteden istasyon / iş dosyası / hammadde alanları."""
 import math
+import re
 from typing import Any, Dict, List, Optional
 
 # Sayılabilir birimler: 2.857 Adet olmaz → yukarı yuvarla (plaka / vida / paket).
@@ -524,6 +525,48 @@ def customer_work_order_steps(work_orders: Optional[List[Dict[str, Any]]] = None
     return out
 
 
+def _looks_like_qty_times_label(note: str) -> bool:
+    """Eski Atölye notu: '10× Ürün adı' / '10x Ürün'."""
+    s = str(note or "").strip()
+    if not s:
+        return False
+    return bool(re.match(r"^\d+([.,]\d+)?\s*[×xX]\s+\S", s))
+
+
+def preferred_atolye_step_note(
+    *,
+    wo_note: Any = "",
+    recipe_step_note: Any = "",
+    materials: Optional[List[Dict[str, Any]]] = None,
+    material_name: Any = "",
+) -> str:
+    """Atölye Not: B2B sipariş stok notu / stok açıklaması; eski 10× ad yedeğini düş."""
+    mats = [m for m in (materials or []) if isinstance(m, dict)]
+    for m in mats:
+        sn = str(m.get("stock_note") or m.get("note") or "").strip()
+        if sn:
+            return sn[:500]
+    mname = str(material_name or "").strip()
+    if not mname:
+        for m in mats:
+            mname = str(m.get("product_name") or "").strip()
+            if mname:
+                break
+    rs = str(recipe_step_note or "").strip()
+    wo = str(wo_note or "").strip()
+    for candidate in (rs, wo):
+        if not candidate:
+            continue
+        if mname and _looks_like_qty_times_label(candidate):
+            # '10× 2,7 mm … Mdf' → stok açıklaması (ürün adı)
+            return mname[:500]
+        if not _looks_like_qty_times_label(candidate):
+            return candidate[:500]
+    if mname and (not wo or _looks_like_qty_times_label(wo)):
+        return mname[:500]
+    return (rs or wo)[:500]
+
+
 def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Liste yanıtında eksik job_file_name / recipe_name / station / images / materials / step_note doldur."""
     m = meta or {}
@@ -543,7 +586,9 @@ def enrich_work_order_row(row: Dict[str, Any], meta: Optional[Dict[str, Any]] = 
         row["images"] = list(m["images"])
     elif "images" not in row:
         row["images"] = []
-    if not str(row.get("step_note") or "").strip() and m.get("step_note") is not None:
+    if m.get("force_step_note") and m.get("step_note") is not None:
+        row["step_note"] = m.get("step_note") or ""
+    elif not str(row.get("step_note") or "").strip() and m.get("step_note") is not None:
         row["step_note"] = m.get("step_note") or ""
     elif "step_note" not in row:
         row["step_note"] = ""
