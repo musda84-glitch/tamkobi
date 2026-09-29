@@ -1090,20 +1090,27 @@ export function B2BPortalScreen() {
             <Muted>{fmtDate(preview.order_date)} · {statusTr(preview.order_status)}</Muted>
             {preview.customer_order_number ? <Text testID="b2b-preview-customer-order-no" style={{ fontWeight: "700" }}>Sizin no {preview.customer_order_number}</Text> : null}
             {(preview.items || []).map((it, i) => {
-              const rec = it as { product_id?: string; product_name?: string; quantity?: number; unit?: string; unit_price?: number; total?: number; image_url?: string; sku?: string; barcode?: string };
+              const rec = it as { product_id?: string; product_name?: string; quantity?: number; unit?: string; unit_price?: number; total?: number; image_url?: string; sku?: string; barcode?: string; note?: string; line_note?: string };
               const img = resolveMediaUrl(baseUrl, previewLineImage(rec, products));
               const code = previewLineCode(rec, products);
+              const stockNote = String(rec.note || rec.line_note || "").trim();
               return (
                 <Row key={String(rec.product_id || i)} testID={`b2b-preview-line-${i}`}>
                   {img ? <Image source={{ uri: img }} style={{ width: 48, height: 48, borderRadius: 8 }} /> : <Ionicons name="cube-outline" size={24} color={colors.muted} />}
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontWeight: "800" }}>{rec.product_name}</Text>
                     <Muted>{rec.quantity} {rec.unit || "Adet"}{rec.unit_price != null ? ` · ${fmtMoney(rec.unit_price)}` : ""}{code ? ` · ${code}` : ""}</Muted>
+                    {stockNote ? (
+                      <Text style={{ fontSize: 12, fontWeight: "700", color: "#92400e", marginTop: 2 }} testID={`b2b-preview-line-note-${i}`}>
+                        Sipariş stok notu · {stockNote}
+                      </Text>
+                    ) : null}
                   </View>
                   <Text style={{ fontWeight: "800" }}>{fmtMoney(rec.total)}</Text>
                 </Row>
               );
             })}
+            {preview.notes ? <Muted testID="b2b-preview-order-note">Sipariş notu: {preview.notes}</Muted> : null}
             <Text style={{ fontWeight: "900", textAlign: "right" }}>Toplam {fmtMoney(b2bOrderGross(preview))}</Text>
           </View>
         ) : null}
