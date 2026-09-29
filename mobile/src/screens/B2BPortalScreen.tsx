@@ -376,7 +376,7 @@ export function B2BPortalScreen() {
   const addProduct = (p: B2BProduct) => {
     if (!canAddProduct(p, showStock, allowOrders)) return;
     const qty = parseDraftQty(draftQty[p.id]);
-    setCart((c) => addCartLine(c, p.id, qty, draftNotes[p.id] || ""));
+    setCart((c) => addCartLine(c, p.id, qty, String((draftNotes[p.id] !== undefined ? draftNotes[p.id] : p.name) || "").trim()));
     setAddedId(p.id);
     if (addedTimer.current) clearTimeout(addedTimer.current);
     addedTimer.current = setTimeout(() => setAddedId(null), 1600);
@@ -388,7 +388,7 @@ export function B2BPortalScreen() {
     setScanStatus(hit.message);
     setQ(normalizeScanText(code));
     if (hit.action === "add" && hit.product) {
-      setCart((c) => addCartLine(c, hit.product.id, hit.qty, draftNotes[hit.product.id] || ""));
+      setCart((c) => addCartLine(c, hit.product.id, hit.qty, String((draftNotes[hit.product.id] !== undefined ? draftNotes[hit.product.id] : hit.product.name) || "").trim()));
       setAddedId(hit.product.id);
       if (addedTimer.current) clearTimeout(addedTimer.current);
       addedTimer.current = setTimeout(() => setAddedId(null), 1600);
@@ -799,7 +799,7 @@ export function B2BPortalScreen() {
                       showStock={showStock}
                       allowOrders={allowOrders}
                       qty={qtyDraftShown(draftQty, p.id)}
-                      note={draftNotes[p.id] || ""}
+                      note={draftNotes[p.id] !== undefined ? draftNotes[p.id] : (p.name || "")}
                       inCart={productCartQty(cart, p.id)}
                       added={addedId === p.id}
                       onQty={(v) => setDraftQty((dq) => ({ ...dq, [p.id]: v }))}

@@ -307,19 +307,33 @@ export default function ShopFloorPage() {
         <div className="text-xs border border-slate-100 rounded-xl px-2.5 py-2 space-y-1" data-testid={`wo-materials-${w.order_code}-${w.step_no}`}>
           <div className="font-semibold text-slate-700">Hammaddeler</div>
           <ul className="space-y-0.5">
-            {w.materials.map((m, i) => (
-              <li key={m.product_id || i} className="flex justify-between gap-2 text-slate-600">
-                <span className="min-w-0 truncate">
-                  {m.product_name}
-                  {(m.stock_note || m.note) ? (
-                    <span className="block text-[10px] text-amber-800 font-semibold truncate" title={m.stock_note || m.note} data-testid={`wo-mat-note-${w.order_code}-${w.step_no}-${i}`}>
-                      Sipariş stok notu · {m.stock_note || m.note}
-                    </span>
-                  ) : null}
+            {w.materials.map((m, i) => {
+              const stockNote = String(m.stock_note || m.note || "").trim();
+              const pname = String(m.product_name || "").trim();
+              const noteIsExtra = !!(
+                stockNote
+                && stockNote.toLocaleLowerCase("tr") !== pname.toLocaleLowerCase("tr")
+              );
+              return (
+              <li key={m.product_id || i} className="flex justify-between gap-2 text-slate-600" data-testid={`wo-mat-row-${w.order_code}-${w.step_no}-${i}`}>
+                <span className="min-w-0">
+                  {stockNote ? (
+                    <>
+                      <span className="font-semibold text-slate-900 whitespace-pre-wrap break-words" data-testid={`wo-mat-note-${w.order_code}-${w.step_no}-${i}`}>
+                        {stockNote}
+                      </span>
+                      {noteIsExtra && pname ? (
+                        <span className="block text-[10px] text-slate-500 truncate" title={pname}>{pname}</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    pname || "Hammadde"
+                  )}
                 </span>
                 <span className="shrink-0 font-semibold text-slate-900 self-start">{formatTrQty(m.needed)} {m.unit}</span>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       )}
