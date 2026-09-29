@@ -1,6 +1,6 @@
 export const STATUS_TR = {
   draft: "Taslak", sent: "Gönderildi", accepted: "Kabul Edildi", rejected: "Reddedildi", pending: "Beklemede", approved: "Onaylandı", cancelled: "İptal",
-  paid: "Ödendi", unpaid: "Ödenmedi", partially_paid: "Kısmi Ödendi", partial: "Kısmi", overdue: "Vadesi Geçti", completed: "Tamamlandı", active: "Aktif", inactive: "Pasif",
+  paid: "Ödendi", unpaid: "Ödenmedi", partially_paid: "Kısmi Ödendi", partial: "Kısmi", overdue: "Vadesi Geçti", completed: "Teslim edildi", active: "Aktif", inactive: "Pasif",
   planned: "Planlandı", done: "Yapıldı", quoted: "Teklif Verildi", planning: "Planlama", on_hold: "Beklemede", new: "Yeni", preparing: "Hazırlanıyor", shipped: "Kargolandı",
   delivered: "Teslim Edildi", returned: "İade Edildi", partially_returned: "Kısmi İade", in_transit: "Yolda", created: "Oluşturuldu", simulated: "Simüle", failed: "Hata",
   logged: "Kaydedildi", read: "Okundu", queued: "Sırada", connected: "Bağlı", disconnected: "Bağlı Değil", configured: "Yapılandırıldı", not_configured: "Yapılandırılmadı",

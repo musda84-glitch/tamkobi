@@ -12,6 +12,7 @@ describe("orderStatusBadgeClass", () => {
   it("statusTr still maps labels", () => {
     expect(statusTr("pending")).toBe("Beklemede");
     expect(statusTr("shipped")).toBe("Kargolandı");
+    expect(statusTr("completed")).toBe("Teslim edildi");
   });
 
   it("marketplaceStatusTr maps Trendyol English statuses to Turkish", () => {

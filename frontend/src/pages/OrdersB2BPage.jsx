@@ -1227,7 +1227,7 @@ export default function OrdersB2BPage() {
                         <option value="approved">Onaylandı</option>
                         <option value="preparing">Hazırlanıyor</option>
                         <option value="shipped">Kargolandı</option>
-                        <option value="completed">Tamamlandı</option>
+                        <option value="completed">Teslim edildi</option>
                         <option value="returned">İade Edildi</option>
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}

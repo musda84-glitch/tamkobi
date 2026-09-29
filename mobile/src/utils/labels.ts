@@ -11,7 +11,7 @@ export const STATUS_TR: Record<string, string> = {
   unpaid: "Ödenmedi",
   partially_paid: "Kısmi Ödendi",
   overdue: "Vadesi Geçti",
-  completed: "Tamamlandı",
+  completed: "Teslim edildi",
   preparing: "Hazırlanıyor",
   shipped: "Kargolandı",
   delivered: "Teslim Edildi",
