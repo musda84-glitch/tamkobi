@@ -12,7 +12,7 @@ import { productLabelImageUrl } from "../utils/productImages";
 import { LABEL_DESIGN_FIELDS, LABEL_TAG_PALETTE, labelFieldValue } from "../utils/labelDesignFields";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { buildLabelPrintDocument, embedLabelImages } from "../utils/labelPrint";
-import { LABEL_BOX_DEFAULT_STROKE_MM, labelLineThicknessMm, labelStrokePx } from "../utils/labelBoxStroke";
+import { LABEL_BOX_DEFAULT_STROKE_MM, LABEL_BOX_MIN_STROKE_MM, labelLineThicknessMm, labelStrokePx } from "../utils/labelBoxStroke";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
 const SIZES = [[100, 30], [100, 50], [50, 30], [60, 40], [100, 150]];
@@ -266,7 +266,7 @@ export const LabelDesigner = ({ companyId, products, company }) => {
                 <Prop label="Hizalama"><select value={sel.align || "left"} onChange={(e) => updEl(sel.id, { align: e.target.value })} className="bg-slate-50 border rounded-lg p-1 w-24"><option value="left">Sol</option><option value="center">Orta</option><option value="right">Sağ</option></select></Prop>
                 <div className="flex gap-3 py-0.5"><label className="flex items-center gap-1"><input type="checkbox" checked={!!sel.bold} onChange={(e) => updEl(sel.id, { bold: e.target.checked })} data-testid="label-prop-bold" /> Kalın</label><label className="flex items-center gap-1"><input type="checkbox" checked={!!sel.italic} onChange={(e) => updEl(sel.id, { italic: e.target.checked })} /> İtalik</label><label className="flex items-center gap-1"><input type="checkbox" checked={!!sel.mono} onChange={(e) => updEl(sel.id, { mono: e.target.checked })} /> Mono</label><label className="flex items-center gap-1"><input type="checkbox" checked={sel.wrap !== false} onChange={(e) => updEl(sel.id, { wrap: e.target.checked })} /> Satır kır</label></div></>}
               {sel.type === "barcode" && <label className="flex items-center gap-1 py-0.5"><input type="checkbox" checked={sel.showText !== false} onChange={(e) => updEl(sel.id, { showText: e.target.checked })} data-testid="label-prop-showtext" /> Barkod numarasını yaz</label>}
-              {sel.type === "box" && <><Prop label="Kenar (mm)"><input type="number" step="0.1" min="0.5" value={sel.border ?? LABEL_BOX_DEFAULT_STROKE_MM} onChange={(e) => updEl(sel.id, { border: Math.max(0.5, Number(e.target.value) || 0.5) })} className={num} /></Prop><Prop label="Köşe (mm)"><input type="number" step="0.5" value={sel.radius ?? 0} onChange={(e) => updEl(sel.id, { radius: Number(e.target.value) })} className={num} /></Prop></>}
+              {sel.type === "box" && <><Prop label="Kenar (mm)"><input type="number" step="0.1" min={LABEL_BOX_MIN_STROKE_MM} value={sel.border ?? LABEL_BOX_DEFAULT_STROKE_MM} onChange={(e) => updEl(sel.id, { border: Math.max(LABEL_BOX_MIN_STROKE_MM, Number(e.target.value) || LABEL_BOX_MIN_STROKE_MM) })} className={num} data-testid="label-prop-border" /></Prop><Prop label="Köşe (mm)"><input type="number" step="0.5" value={sel.radius ?? 0} onChange={(e) => updEl(sel.id, { radius: Number(e.target.value) })} className={num} /></Prop></>}
               <div className="grid grid-cols-2 gap-1 pt-1 border-t mt-1">{[["x", "X mm"], ["y", "Y mm"], ["w", "Genişlik"], ["h", "Yükseklik"], ["rotate", "Döndür °"]].map(([k, l]) => <Prop key={k} label={l}><input type="number" step={k === "rotate" ? 90 : 0.5} value={sel[k] ?? 0} onChange={(e) => updEl(sel.id, { [k]: Number(e.target.value) })} className={num} data-testid={`label-prop-${k}`} /></Prop>)}</div>
             </>)}
           </div>

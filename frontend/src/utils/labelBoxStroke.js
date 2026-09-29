@@ -1,8 +1,9 @@
-/** Termal etiket: CSS border ~0.5px yazıcıda kırık/silik çıkar; min kalınlık + SVG stroke. */
+/** Termal etiket: CSS border yerine SVG stroke; ince kenar (0.1 mm+) serbest. */
 
 export const LABEL_BOX_DEFAULT_STROKE_MM = 0.5;
-export const LABEL_BOX_MIN_STROKE_MM = 0.5;
-export const LABEL_LINE_MIN_MM = 0.5;
+/** Kullanıcı daha ince çizebilir; 0.1 mm ≈ termal 203dpi'de ~1 nokta. */
+export const LABEL_BOX_MIN_STROKE_MM = 0.1;
+export const LABEL_LINE_MIN_MM = 0.1;
 /** Ekran/yazdırma: 1 mm ≈ 3.78 CSS px @96dpi */
 export const LABEL_PX_PER_MM = 3.78;
 
