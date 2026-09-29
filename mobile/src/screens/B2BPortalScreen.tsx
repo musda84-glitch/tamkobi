@@ -5,6 +5,7 @@ import { Image, Platform, Pressable, Share, Text, TextInput, View } from "react-
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BAiCartPanel } from "../components/b2b/B2BAiCartPanel";
+import { B2BMobileCartBar } from "../components/b2b/B2BMobileCartBar";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { B2BTopBar } from "../components/b2b/B2BTopBar";
 import { B2BTrackingCard } from "../components/b2b/B2BTrackingCard";
@@ -658,8 +659,10 @@ export function B2BPortalScreen() {
   const logo = resolveMediaUrl(baseUrl, data?.company?.logo_url);
   const bal = data?.contact?.balance || 0;
   const inStockProducts = products.filter((p) => p.in_stock !== false);
+  const showCartBar = allowOrders && (count > 0 || heldTabs.length > 0);
 
   return (
+    <View style={{ flex: 1 }} testID="b2b-portal-root">
     <Screen
       onRefresh={load}
       refreshing={refreshing}
@@ -933,6 +936,8 @@ export function B2BPortalScreen() {
           </View>
         ) : null}
 
+        {showCartBar ? <View testID="b2b-cart-bar-spacer" style={{ height: 72 }} /> : null}
+
       </View>
 
       <B2BSheet visible={cartOpen} title={`Sepet · ${count} kalem`} onClose={() => setCartOpen(false)} testID="b2b-cart">
@@ -1171,5 +1176,15 @@ export function B2BPortalScreen() {
         <Text style={{ color: colors.text, fontSize: 13, lineHeight: 20 }}>{legal?.text}</Text>
       </B2BSheet>
     </Screen>
+    {showCartBar ? (
+      <B2BMobileCartBar
+        count={count}
+        total={cartTotal}
+        heldCount={heldTabs.length}
+        showPrices={showPrices}
+        onPress={() => setCartOpen(true)}
+      />
+    ) : null}
+    </View>
   );
 }
