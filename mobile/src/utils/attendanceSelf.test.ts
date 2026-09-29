@@ -1,4 +1,4 @@
-import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, hasOpenMesaimSession, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimExclusiveUntilCheckIn, mesaimInSubtitle, mesaimLongDate, mesaimOutInfoLines, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimShowsDayLeaveInsteadOfIntraday, mesaimWorkDaysLine, resolveMesaimTodayHours, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
+import { attendanceCalendarDate, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInBlockedHint, checkInOffsiteBlocked, checkoutConfirmMessage, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, geoConfirmPending, habitLabel, hasOpenMesaimSession, managerTimeEditHint, mesaimDateHolidaySuffix, mesaimEarlyArrivalLine, mesaimExclusiveUntilCheckIn, mesaimInSubtitle, mesaimLockAllowsPath, mesaimLockHomePath, mesaimLongDate, mesaimOutInfoLines, mesaimOutSubtitle, mesaimPunchEditHint, mesaimPunchNowLabel, mesaimPunchOpensEditor, mesaimScheduleLine, mesaimShowsDayLeaveInsteadOfIntraday, mesaimWorkDaysLine, resolveMesaimTodayHours, selfAttendanceGeoMode, selfCheckoutLockedHint, selfCheckoutUnlocked, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "./attendanceSelf";
 
 describe("early leave request", () => {
   it("requires a reason and optional HH:MM", () => {
@@ -53,6 +53,16 @@ describe("mesaimExclusiveUntilCheckIn", () => {
     expect(mesaimExclusiveUntilCheckIn({ role: "admin", employee_id: "e1" }, { check_out: "17:00" })).toBe(false);
     expect(mesaimExclusiveUntilCheckIn({ role: "manager", employee_id: "e1" }, {})).toBe(false);
     expect(mesaimExclusiveUntilCheckIn({ role: "personel" }, { check_out: "17:00" })).toBe(false);
+  });
+
+  it("keeps Özet and Mesaim open while locking other paths to home", () => {
+    expect(mesaimLockHomePath()).toBe("/");
+    expect(mesaimLockAllowsPath("/")).toBe(true);
+    expect(mesaimLockAllowsPath("/mesai")).toBe(true);
+    expect(mesaimLockAllowsPath("/mesai/x")).toBe(true);
+    expect(mesaimLockAllowsPath("/saha")).toBe(false);
+    expect(mesaimLockAllowsPath("/stok")).toBe(false);
+    expect(mesaimLockAllowsPath("/daha")).toBe(false);
   });
 });
 

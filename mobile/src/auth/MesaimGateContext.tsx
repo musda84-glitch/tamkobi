@@ -25,7 +25,7 @@ type MeLite = {
   today?: TodayPunch;
 };
 
-/** Personel çıkış sonrası / giriş öncesi yalnızca Mesaim erişimi. */
+/** Personel çıkış sonrası / giriş öncesi: Özet + Mesaim; diğer modüller kilitli. */
 export function MesaimGateProvider({ children }: { children: React.ReactNode }) {
   const { client, companyId, token, sessionKind, user } = useAuth();
   const [today, setToday] = useState<TodayPunch>(null);

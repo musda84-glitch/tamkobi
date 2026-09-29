@@ -1,6 +1,6 @@
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
-import { useNavigation } from "expo-router";
+import { useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Platform, Text, View } from "react-native";
 import { del, get, post, upload } from "../api/client";
@@ -12,7 +12,7 @@ import { Card, ErrorBanner, Field, Muted, PrimaryButton, Row, Screen } from "../
 import { MesaimHeaderTitle } from "../components/MesaimHeaderTitle";
 import { MesaimTodayCard } from "../components/MesaimTodayCard";
 import { colors } from "../theme";
-import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
+import { ATTENDANCE_DAY_WATCH_MS, CHECKOUT_UNLOCK_WATCH_MS, attendanceCalendarMonth, attendanceDisputePayload, attendanceDisputeStatus, canRequestAttendanceFix, checkInAlreadyDone, checkInOnceHint, earlyLeaveApproved, earlyLeavePayload, geoConfirmHint, managerTimeEditHint, mesaimLockHomePath, selfAttendanceGeoMode, shouldReloadAttendanceDay, shouldWatchCheckoutUnlock, validateAttendanceDispute, validateEarlyLeave, validateIntradayLeave, intradayLeavePayload } from "../utils/attendanceSelf";
 import { resolveNowHm } from "../utils/clock";
 import { fmtDmy, normalizeYmd } from "../utils/calendar";
 import { compressPickerAsset } from "../utils/compressUploadImage";
@@ -123,6 +123,7 @@ export function AttendanceScreen() {
   const { client, companyId } = useAuth();
   const { refresh: refreshMesaimGate } = useMesaimGate();
   const navigation = useNavigation();
+  const router = useRouter();
   const [data, setData] = useState<AttendancePayload | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -249,6 +250,8 @@ export function AttendanceScreen() {
       const r = await post<{ message?: string }>(client, "/personnel/attendance/self", { action, ...extra });
       setMessage(r.message || "Kaydedildi.");
       await load();
+      // Mesai girişi sonrası ana ekran: Özet
+      router.replace(mesaimLockHomePath());
     } catch (err) {
       setError(apiErrorMessage(err, "İşlem başarısız."));
     } finally {
