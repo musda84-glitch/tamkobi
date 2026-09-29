@@ -2,10 +2,31 @@ export const WAREHOUSE_SHIP_CODE = "warehouse";
 export const WAREHOUSE_SHIP_NAME = "Depodan sevk edildi";
 export const WAREHOUSE_SHIP_HINT = "Kargo firması olmadan depodan teslim veya kendi araç ile sevk. Sipariş sevk edildi durumuna geçer.";
 
+/** Teslim/tamamlandı ve iptal/iade — depodan sevk "shipped"e geri almaz. */
+export const WAREHOUSE_SHIP_CLOSED = new Set([
+  "cancelled",
+  "canceled",
+  "returned",
+  "partially_returned",
+  "delivered",
+  "completed",
+]);
+
+export function isWarehouseShipClosed(ord = {}) {
+  return WAREHOUSE_SHIP_CLOSED.has(String(ord.order_status || "").toLowerCase());
+}
+
 export function isWarehouseShipped(ord = {}) {
   if (ord.warehouse_shipped || String(ord.ship_method || "") === WAREHOUSE_SHIP_CODE) return true;
   if (String(ord.cargo_carrier || "").toLowerCase() === WAREHOUSE_SHIP_CODE) return true;
   return String(ord.cargo_tracking_number || "").toUpperCase().startsWith("DEPO-");
+}
+
+/** UI: buton aktif mi (backend can_warehouse_ship ile uyumlu). */
+export function canWarehouseShip(ord = {}) {
+  if (isWarehouseShipClosed(ord)) return false;
+  if (isWarehouseShipped(ord)) return false;
+  return true;
 }
 
 export function warehouseShipConfirm(order = {}) {

@@ -6,7 +6,7 @@ import { X, Truck, Loader2, Plug, Package, Warehouse } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { ShipmentPackageFields, packageDefaultsFromOrder, packagePayload } from "./ShipmentPackageFields";
 import { backdropDismissProps } from "../utils/modalBackdrop";
-import { isWarehouseShipped, WAREHOUSE_SHIP_HINT, WAREHOUSE_SHIP_NAME, warehouseShipPath } from "../utils/warehouseShip";
+import { canWarehouseShip, isWarehouseShipClosed, isWarehouseShipped, WAREHOUSE_SHIP_HINT, WAREHOUSE_SHIP_NAME, warehouseShipPath } from "../utils/warehouseShip";
 
 /** Carrier-agnostic shipment create modal with package/desi fields. */
 export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
@@ -49,6 +49,8 @@ export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
 
   const oid = order.id || order._id;
   const alreadyWarehouse = isWarehouseShipped(order);
+  const terminalClosed = isWarehouseShipClosed(order);
+  const warehouseAllowed = canWarehouseShip(order);
 
   const submit = async () => {
     if (!carrier) { toast.error("Kargo firması seçin."); return; }
@@ -76,6 +78,7 @@ export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
 
   const shipFromWarehouse = async () => {
     if (alreadyWarehouse) { toast.info("Bu sipariş zaten depodan sevk edildi."); return; }
+    if (terminalClosed) { toast.error("Teslim, tamamlanmış, iptal veya iade sipariş depodan sevk edilemez."); return; }
     setBusy(true);
     try {
       const r = await axios.post(`${API_URL}${warehouseShipPath(oid)}`, { company_id: companyId });
@@ -100,18 +103,24 @@ export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
           <button onClick={onClose} className="text-slate-400" data-testid="create-shipment-close"><X className="w-5 h-5" /></button>
         </div>
 
-        <div className={`rounded-xl border-2 p-3 ${alreadyWarehouse ? "border-emerald-300 bg-emerald-50" : "border-emerald-200 bg-emerald-50/80"}`} data-testid="warehouse-ship-option">
+        <div className={`rounded-xl border-2 p-3 ${alreadyWarehouse ? "border-emerald-300 bg-emerald-50" : terminalClosed ? "border-slate-200 bg-slate-50" : "border-emerald-200 bg-emerald-50/80"}`} data-testid="warehouse-ship-option">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="font-bold text-emerald-950 flex items-center gap-1.5">
                 <Warehouse className="w-4 h-4 text-emerald-700 shrink-0" /> {WAREHOUSE_SHIP_NAME}
               </div>
-              <p className="text-[10px] text-emerald-800/90 mt-0.5 leading-snug">{alreadyWarehouse ? "Bu sipariş depodan sevk edildi olarak işaretli." : WAREHOUSE_SHIP_HINT}</p>
+              <p className="text-[10px] text-emerald-800/90 mt-0.5 leading-snug">
+                {alreadyWarehouse
+                  ? "Bu sipariş depodan sevk edildi olarak işaretli."
+                  : terminalClosed
+                    ? "Teslim, tamamlanmış, iptal veya iade sipariş depodan sevk edilemez."
+                    : WAREHOUSE_SHIP_HINT}
+              </p>
             </div>
             <button
               type="button"
               onClick={shipFromWarehouse}
-              disabled={busy || alreadyWarehouse}
+              disabled={busy || !warehouseAllowed}
               className="shrink-0 flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold disabled:opacity-50"
               data-testid="warehouse-ship-submit"
             >
@@ -148,7 +157,7 @@ export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
           <button
             type="button"
             onClick={shipFromWarehouse}
-            disabled={busy || alreadyWarehouse}
+            disabled={busy || !warehouseAllowed}
             className="flex items-center gap-1 px-3 py-1.5 border border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg font-semibold disabled:opacity-50"
             data-testid="warehouse-ship-footer"
           >
