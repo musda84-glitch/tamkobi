@@ -9,8 +9,11 @@ import {
   cargoSelectGroups,
   defaultShipCarrier,
   FALLBACK_CARGO_CATALOG,
+  isWarehouseShipped,
   mergeShipCarriers,
   shipCreateConfirm,
+  warehouseShipConfirm,
+  warehouseShipPath,
 } from "./orderCargo";
 
 describe("orderCargo", () => {
@@ -85,5 +88,21 @@ describe("orderCargo", () => {
     expect(text).toContain("B2B-2026-0009 kargolansın mı?");
     expect(text).toContain("Nexus • İstanbul");
     expect(text).toContain("Firma: Yurtiçi Kargo");
+  });
+
+  it("warehouse ship confirm and flags", () => {
+    expect(isWarehouseShipped({ warehouse_shipped: true })).toBe(true);
+    expect(isWarehouseShipped({ cargo_carrier: "warehouse" })).toBe(true);
+    expect(isWarehouseShipped({ cargo_tracking_number: "DEPO-B2B-1" })).toBe(true);
+    expect(isWarehouseShipped({ cargo_tracking_number: "YK-1" })).toBe(false);
+    const text = warehouseShipConfirm({
+      order_number: "B2B-2026-0014",
+      customer_name: "Ersay",
+      city: "İstanbul",
+    });
+    expect(text).toContain("B2B-2026-0014");
+    expect(text).toContain("Ersay • İstanbul");
+    expect(text).toMatch(/depodan sevk/);
+    expect(warehouseShipPath("ord_1")).toBe("/orders/ord_1/warehouse-ship");
   });
 });

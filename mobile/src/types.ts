@@ -186,6 +186,8 @@ export type Order = {
   cargo_label_url?: string;
   cargo_tracking_url?: string;
   cargo_shipment_id?: string;
+  warehouse_shipped?: boolean;
+  ship_method?: string;
   payment_type?: string;
   currency?: string;
   subtotal?: number;

@@ -1,0 +1,25 @@
+import {
+  isWarehouseShipped,
+  warehouseShipConfirm,
+  warehouseShipPath,
+  WAREHOUSE_SHIP_NAME,
+} from "./warehouseShip";
+
+test("isWarehouseShipped: flags, carrier, DEPO tracking", () => {
+  expect(isWarehouseShipped({})).toBe(false);
+  expect(isWarehouseShipped({ order_status: "shipped" })).toBe(false);
+  expect(isWarehouseShipped({ warehouse_shipped: true })).toBe(true);
+  expect(isWarehouseShipped({ ship_method: "warehouse" })).toBe(true);
+  expect(isWarehouseShipped({ cargo_carrier: "warehouse" })).toBe(true);
+  expect(isWarehouseShipped({ cargo_tracking_number: "DEPO-B2B-1" })).toBe(true);
+  expect(isWarehouseShipped({ cargo_tracking_number: "YK-1" })).toBe(false);
+});
+
+test("confirm copy and path", () => {
+  expect(WAREHOUSE_SHIP_NAME).toMatch(/Depodan sevk/);
+  const text = warehouseShipConfirm({ order_number: "B2B-2026-0014", customer_name: "Ersay", city: "İstanbul" });
+  expect(text).toContain("B2B-2026-0014");
+  expect(text).toContain("Ersay • İstanbul");
+  expect(text).toMatch(/sevk edildi/);
+  expect(warehouseShipPath("ord_1")).toBe("/orders/ord_1/warehouse-ship");
+});
