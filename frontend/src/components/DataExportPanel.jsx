@@ -4,12 +4,10 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Download, Loader2, FileArchive } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { isFeatureEnabled } from "../utils/authAccess";
 
-/** Personel rolü ZIP indirme / şirket verisi dışa aktarımı yapamaz. */
-export const canExportPersonalData = (user) => {
-  if (!user) return false;
-  return String(user.role || "").trim().toLowerCase() !== "personel";
-};
+/** Role feature export_personal_data (personel defaults off). */
+export const canExportPersonalData = (user) => isFeatureEnabled(user, "export_personal_data");
 
 export const downloadPersonalDataZip = async (companyId) => {
   const r = await axios.get(`${API_URL}/me/data-export`, {
