@@ -5,6 +5,14 @@ export function normalizeNote(note) {
   return String(note || "").trim().slice(0, 500);
 }
 
+/** Katalog kartı stok notu: yazılmadıysa boş (ürün adı ile doldurulmaz). */
+export function draftLineNote(draftNotes, productId) {
+  const id = String(productId || "");
+  if (!id || !draftNotes || typeof draftNotes !== "object") return "";
+  if (draftNotes[id] === undefined) return "";
+  return String(draftNotes[id] ?? "");
+}
+
 export function lineKey(productId, note) {
   return `${productId}${NOTE_SEP}${normalizeNote(note)}`;
 }

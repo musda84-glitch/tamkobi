@@ -9,7 +9,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
 import { B2BAiCart } from "../components/B2BAiCart";
 import { ScanButton } from "../components/CameraScanner";
-import { addCartLine, cartHasItems, discardHeldCart, heldCartTabs, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
+import { addCartLine, cartHasItems, discardHeldCart, draftLineNote, heldCartTabs, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
 import { applyB2BScan, matchesB2BQuery, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bSearch";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
@@ -130,7 +130,7 @@ export default function B2BPortalPage() {
   const addWithQty = (p) => {
     if (!allowOrders) return;
     const qty = Math.max(1, parseInt(String(draftQty[p.id] ?? "1"), 10) || 1);
-    const typed = draftNotes[p.id] !== undefined ? draftNotes[p.id] : (p.name || "");
+    const typed = draftLineNote(draftNotes, p.id);
     setCart((c) => addCartLine(c, p.id, qty, String(typed || "").trim()));
   };
   const addFromScan = (code) => {
@@ -138,7 +138,7 @@ export default function B2BPortalPage() {
     setQ(String(code || "").trim());
     setScanStatus(hit.message);
     if (hit.action === "add" && hit.product) {
-      const typed = draftNotes[hit.product.id] !== undefined ? draftNotes[hit.product.id] : (hit.product.name || "");
+      const typed = draftLineNote(draftNotes, hit.product.id);
       setCart((c) => addCartLine(c, hit.product.id, hit.qty, String(typed || "").trim()));
       toast.success(hit.message);
       return;
@@ -465,7 +465,7 @@ export default function B2BPortalPage() {
                           <span className="block text-[9px] font-semibold text-slate-500 mb-0.5">Sipariş stok notu</span>
                           <textarea
                             rows={1}
-                            value={draftNotes[p.id] !== undefined ? draftNotes[p.id] : (p.name || "")}
+                            value={draftLineNote(draftNotes, p.id)}
                             onChange={(e) => setDraftNotes((n) => ({ ...n, [p.id]: e.target.value }))}
                             placeholder="Fişte stok açıklamasının altında basılır"
                             className="w-full min-h-[2rem] border rounded-lg px-2 py-1 text-[10px] text-slate-700 resize-none bg-slate-50"

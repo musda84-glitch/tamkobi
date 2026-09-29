@@ -15,7 +15,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
-import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, discardHeldCart, formatCartSheetMeta, formatOrderItemLabel, heldCartTabs, heldCartsAsOrders, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart, type HeldCart } from "../utils/b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, discardHeldCart, draftLineNote, formatCartSheetMeta, formatOrderItemLabel, heldCartTabs, heldCartsAsOrders, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart, type HeldCart } from "../utils/b2bCart";
 import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
 import { applyB2BScan, canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "../utils/b2bCatalog";
 import {
@@ -379,7 +379,7 @@ export function B2BPortalScreen() {
   const addProduct = (p: B2BProduct) => {
     if (!canAddProduct(p, showStock, allowOrders)) return;
     const qty = parseDraftQty(draftQty[p.id]);
-    setCart((c) => addCartLine(c, p.id, qty, String((draftNotes[p.id] !== undefined ? draftNotes[p.id] : p.name) || "").trim()));
+    setCart((c) => addCartLine(c, p.id, qty, String(draftLineNote(draftNotes, p.id) || "").trim()));
     setAddedId(p.id);
     if (addedTimer.current) clearTimeout(addedTimer.current);
     addedTimer.current = setTimeout(() => setAddedId(null), 1600);
@@ -391,7 +391,7 @@ export function B2BPortalScreen() {
     setScanStatus(hit.message);
     setQ(normalizeScanText(code));
     if (hit.action === "add" && hit.product) {
-      setCart((c) => addCartLine(c, hit.product.id, hit.qty, String((draftNotes[hit.product.id] !== undefined ? draftNotes[hit.product.id] : hit.product.name) || "").trim()));
+      setCart((c) => addCartLine(c, hit.product.id, hit.qty, String(draftLineNote(draftNotes, hit.product.id) || "").trim()));
       setAddedId(hit.product.id);
       if (addedTimer.current) clearTimeout(addedTimer.current);
       addedTimer.current = setTimeout(() => setAddedId(null), 1600);
@@ -804,7 +804,7 @@ export function B2BPortalScreen() {
                       showStock={showStock}
                       allowOrders={allowOrders}
                       qty={qtyDraftShown(draftQty, p.id)}
-                      note={draftNotes[p.id] !== undefined ? draftNotes[p.id] : (p.name || "")}
+                      note={draftLineNote(draftNotes, p.id)}
                       inCart={productCartQty(cart, p.id)}
                       added={addedId === p.id}
                       onQty={(v) => setDraftQty((dq) => ({ ...dq, [p.id]: v }))}

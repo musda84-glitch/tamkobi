@@ -1,6 +1,6 @@
 
 import { describe, expect, it } from "vitest";
-import { addCartLine, cartHasItems, heldCartsAsOrders, holdActiveCart, lineKey, mergePortalOrderLists, normalizeNote, parseStoredCart, resumeHeldCart, setCartLineQty } from "./b2bCart";
+import { addCartLine, cartHasItems, draftLineNote, heldCartsAsOrders, holdActiveCart, lineKey, mergePortalOrderLists, normalizeNote, parseStoredCart, resumeHeldCart, setCartLineQty } from "./b2bCart";
 
 describe("b2bCart", () => {
   it("same product + different notes stay separate lines", () => {
@@ -46,6 +46,13 @@ describe("b2bCart", () => {
   it("normalizeNote trims and caps length", () => {
     expect(normalizeNote("  ab  ")).toBe("ab");
     expect(normalizeNote("x".repeat(600)).length).toBe(500);
+  });
+
+  it("draftLineNote stays empty until the user types", () => {
+    expect(draftLineNote({}, "p1")).toBe("");
+    expect(draftLineNote({ p1: "özel kesim" }, "p1")).toBe("özel kesim");
+    expect(draftLineNote({ p1: "" }, "p1")).toBe("");
+    expect(draftLineNote(null, "p1")).toBe("");
   });
 
   it("hold / resume / view-only order rows", () => {
