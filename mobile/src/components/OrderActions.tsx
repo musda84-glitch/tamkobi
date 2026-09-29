@@ -308,6 +308,31 @@ export function OrderActions({
     );
   };
 
+  const produceOrderRecipe = () => {
+    const items = Array.isArray(order.items) ? order.items : [];
+    const producible = items.filter((it) => {
+      const t = String((it as { type?: string }).type || "product");
+      return t !== "service" && t !== "raw_material";
+    });
+    const n = producible.length || items.length || 0;
+    confirmAction(
+      "Üretim emri ver",
+      `${order.held_label || order.order_number || "Sipariş"} için tüm ürünlerden (${n || "?"} kalem) 1 reçete ve üretim emri oluşturulsun mu?`,
+      async () => {
+        setBusy("produceRecipe");
+        try {
+          const r = await post<{ message?: string }>(client, `/orders/${oid}/production-recipe`, {});
+          onMessage?.(r.message || "Reçete ve üretim emri oluşturuldu.");
+          onChanged?.();
+        } catch (err) {
+          onError?.(apiErrorMessage(err, "Reçete / üretim emri oluşturulamadı."));
+        } finally {
+          setBusy(null);
+        }
+      },
+    );
+  };
+
   const createDraftInvoice = () => {
     confirmAction(
       "Taslak fatura",
@@ -804,6 +829,7 @@ export function OrderActions({
   const toolbar: ActionDef[] = isCartOrder
     ? [
         { key: "produce", label: "Eksik ürünleri üretime al", icon: "construct", tone: "orange", busyKey: "produce", testID: `order-produce-missing-${num}`, onPress: produceMissing },
+        { key: "produceRecipe", label: "Üretim emri ver", icon: "business", tone: "orange", busyKey: "produceRecipe", testID: `order-produce-btn-${num}`, onPress: produceOrderRecipe },
         { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm },
       ]
     : [
@@ -839,6 +865,7 @@ export function OrderActions({
     ...(showApprove
       ? [{ key: "approve", label: approveActionLabel(order), icon: "checkmark-circle" as const, tone: "emerald" as const, busyKey: "approve", testID: `order-approve-${oid}`, onPress: approve }]
       : []),
+    { key: "produceRecipe", label: "Üretim emri ver", icon: "business", tone: "orange", busyKey: "produceRecipe", testID: `order-produce-btn-${num}`, onPress: produceOrderRecipe },
     { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm },
     ...(showMoreActions
       ? [{ key: "more", label: "Diğer işlemler", icon: "ellipsis-vertical" as const, tone: "slate" as const, busyKey: "more", testID: `order-more-btn-${num}`, onPress: () => setMoreOpen(true) }]
