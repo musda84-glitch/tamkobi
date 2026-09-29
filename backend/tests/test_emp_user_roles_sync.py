@@ -16,8 +16,10 @@ def _run(coro):
 
 def test_default_roles_cover_user_tab_labels():
     names = {r["name"] for r in DEFAULT_ROLES}
-    for expected in ("Personel", "Mali Müşavir", "Üretim", "Depo", "Satış", "Muhasebe", "Yönetici"):
+    for expected in ("Personel", "Mali Müşavir", "Üretim", "Depo", "Satış", "Muhasebe", "Yönetici", "Müdür"):
         assert expected in names
+    codes = {r["code"] for r in DEFAULT_ROLES}
+    assert codes == {"admin", "manager", "accountant", "sales", "warehouse", "production", "personel", "advisor"}
 
 
 def test_personnel_role_options_route_registered():

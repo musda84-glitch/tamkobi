@@ -146,6 +146,19 @@ def _all(level: str) -> Dict[str, str]:
 
 DEFAULT_ROLES = [
     {"code": "admin", "name": "Yönetici", "is_system": True, "permissions": _all("delete")},
+    {"code": "manager", "name": "Müdür", "is_system": True, "permissions": {
+        **_all("view"),
+        "/personnel": "edit", "/mesai": "edit",
+        "/invoices": "edit", "/edoc-inbox": "edit", "/dispatches": "edit", "/contacts": "edit",
+        "/b2b-yonetim": "edit", "/installments": "edit", "/banking": "edit", "/expenses": "edit",
+        "/cheques": "edit", "/quotes": "edit", "/projects": "edit", "/surveys": "edit",
+        "/orders": "edit", "/cargo": "edit", "/communication": "edit", "/support": "edit",
+        "/reports": "edit", "/purchase-orders": "view", "/stock": "view", "/sayim": "view",
+        "/warehouses": "view", "/production": "view", "/atolye": "view", "/ecommerce": "view",
+        "/saha": "view", "/sevk": "view", "/hizli-satis": "view", "/loans": "view",
+        "/dis-ticaret": "view", "/ai-advisor": "view", "/trash": "view",
+        "/settings": "none", "/accountant": "none",
+    }},
     {"code": "accountant", "name": "Muhasebe", "is_system": True, "permissions": {
         **_all("view"),
         "/invoices": "edit", "/edoc-inbox": "edit", "/dis-ticaret": "edit", "/dispatches": "edit",
@@ -190,6 +203,34 @@ DEFAULT_ROLES = [
         "/personnel": "view", "/mesai": "view", "/support": "view", "/trash": "view",
     }},
 ]
+
+# Bildirim / UI etiketleri — sistem rolleri + eski owner takma adı.
+SYSTEM_ROLE_LABELS = {
+    "admin": "Yönetici",
+    "owner": "Yönetici",
+    "manager": "Müdür",
+    "accountant": "Muhasebe",
+    "sales": "Satış",
+    "warehouse": "Depo",
+    "production": "Üretim",
+    "personel": "Personel",
+    "advisor": "Mali Müşavir",
+}
+
+
+def normalize_role_code(code: Optional[str]) -> str:
+    """Sahip (owner) eski kayıtlarda admin ile eşdeğerdir."""
+    raw = str(code or "admin").strip().lower()
+    if raw in ("owner", "yönetici", "yonetici"):
+        return "admin"
+    if raw in ("müdür", "mudur"):
+        return "manager"
+    return raw or "admin"
+
+
+def role_label(code: Optional[str]) -> str:
+    key = normalize_role_code(code)
+    return SYSTEM_ROLE_LABELS.get(key) or SYSTEM_ROLE_LABELS.get(str(code or "").strip().lower()) or (code or "rol")
 
 # Sistem rollerinde stok kartı yalnızca depo / yönetici. Personel ve üretim giremez.
 FORCE_SYSTEM_PERMISSIONS = {
@@ -321,18 +362,28 @@ async def ensure_roles(company_id: str):
 
 
 async def role_for(user: dict, company_id: Optional[str] = None) -> Dict[str, Any]:
-    code = user.get("role", "admin")
+    code = normalize_role_code(user.get("role", "admin"))
     cid = company_id or user.get("active_company_id") or "comp_nexus_main_01"
     await ensure_roles(cid)
-    r = await _db.roles.find_one({"company_id": cid, "code": code}) or await _db.roles.find_one({"company_id": cid, "code": "admin"})
+    r = await _db.roles.find_one({"company_id": cid, "code": code})
+    if not r:
+        # Bilinmeyen kod admin yetkisi almasın; en kısıtlı sistem rolüne düş.
+        r = await _db.roles.find_one({"company_id": cid, "code": "personel"})
     if r:
         r["permissions"] = backfill_permissions(r.get("permissions"))
         if r.get("is_system"):
             r["permissions"] = apply_forced_system_permissions(r.get("code"), r["permissions"])
         if r.get("code") == "admin":
             r["permissions"] = _all("delete")
-    return r or {"code": "admin", "name": "Yönetici", "permissions": _all("delete")}
-
+        return r
+    return {
+        "code": "personel",
+        "name": "Personel",
+        "permissions": apply_forced_system_permissions(
+            "personel",
+            backfill_permissions({"/": "view", "/mesai": "edit", "/atolye": "edit", "/support": "view"}),
+        ),
+    }
 
 def module_for_path(path: str) -> Optional[str]:
     best = None
@@ -578,9 +629,10 @@ async def list_users(company_id: str = "comp_nexus_main_01"):
 
     def _enrich(row: dict) -> dict:
         eid = row.get("employee_id")
+        code = row.get("role")
         return {
             **row,
-            "role_name": names.get(row.get("role"), row.get("role")),
+            "role_name": names.get(code) or role_label(code),
             "employee_name": emp_names.get(str(eid), "") if eid else "",
         }
 
@@ -603,8 +655,21 @@ async def update_user(user_id: str, req: Dict[str, Any]):
     if u.get("is_super_admin"):
         raise HTTPException(status_code=400, detail="Platform yöneticileri şirket kullanıcı listesinden düzenlenemez.")
     upd = {k: req[k] for k in ("name", "role", "is_active", "phone", "employee_id") if k in req}
-    if "role" in upd and u.get("email") == "admin@nexus.com" and upd["role"] != "admin":
-        raise HTTPException(status_code=400, detail="Ana yönetici hesabının rolü değiştirilemez.")
+    if "role" in upd:
+        role_code = normalize_role_code(upd["role"])
+        upd["role"] = role_code
+        company_id = str(
+            req.get("company_id")
+            or u.get("active_company_id")
+            or ((u.get("company_ids") or [None])[0])
+            or ""
+        ).strip()
+        if company_id:
+            await ensure_roles(company_id)
+            if not await _db.roles.find_one({"company_id": company_id, "code": role_code}):
+                raise HTTPException(status_code=400, detail="Geçersiz rol.")
+        if u.get("email") == "admin@nexus.com" and role_code != "admin":
+            raise HTTPException(status_code=400, detail="Ana yönetici hesabının rolü değiştirilemez.")
     if req.get("password"):
         if len(req["password"]) < 6:
             raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
@@ -650,6 +715,7 @@ async def create_company_user(req: Dict[str, Any]):
     await ensure_roles(company_id)
     import saas
     await saas.check_user_limit(company_id)
+    role = normalize_role_code(role)
     if not await _db.roles.find_one({"company_id": company_id, "code": role}):
         raise HTTPException(status_code=400, detail="Geçersiz rol.")
     user_id = f"usr_{uuid.uuid4().hex[:8]}"
@@ -693,7 +759,7 @@ async def invite_user(req: Dict[str, Any], request: Request):
         raise HTTPException(status_code=400, detail="SMS / WhatsApp için telefon numarası gerekli.")
     if await _db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Bu e-posta ile kayıtlı kullanıcı zaten var.")
-    role = req.get("role") or "sales"
+    role = normalize_role_code(req.get("role") or "sales")
     await ensure_roles(company_id)
     import saas
     await saas.check_user_limit(company_id)

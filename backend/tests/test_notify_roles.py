@@ -28,9 +28,12 @@ def test_roles_for_known_types():
     assert "accountant" in roles_for_type("geo_confirm_request")
     assert roles_for_type("geo_confirm_decision") == []
     assert "accountant" in roles_for_type("bank_sync")
+    assert "manager" in roles_for_type("early_leave_request")
+    assert "accountant" in roles_for_type("early_leave_request")
     assert roles_for_type("task_assigned") == []
     assert roles_for_type("unknown_type") == ["admin"]
     assert role_label("warehouse") == "Depo"
+    assert role_label("manager") == "Müdür"
 
 
 def test_admin_sees_all():

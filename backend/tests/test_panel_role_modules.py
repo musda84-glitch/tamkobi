@@ -81,6 +81,19 @@ def test_warehouse_and_production_role_matrix():
     assert by_code["personel"]["permissions"].get("/communication") == "view"
 
 
+def test_manager_role_covers_approvals_and_ops():
+    by_code = {r["code"]: r for r in DEFAULT_ROLES}
+    mgr = by_code["manager"]
+    assert mgr["name"] == "Müdür"
+    perms = mgr["permissions"]
+    assert perms.get("/personnel") == "edit"
+    assert perms.get("/mesai") == "edit"
+    assert perms.get("/banking") == "edit"
+    assert perms.get("/orders") == "edit"
+    assert perms.get("/settings") == "none"
+    assert perms.get("/stock") == "view"
+
+
 def test_personel_and_production_cannot_open_stock_cards():
     by_code = {r["code"]: r for r in DEFAULT_ROLES}
     assert by_code["production"]["permissions"].get("/stock", "none") == "none"

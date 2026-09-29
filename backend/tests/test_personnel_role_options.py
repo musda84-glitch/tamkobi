@@ -12,6 +12,7 @@ def test_default_roles_have_names_for_position():
     assert "Üretim" in names
     assert "Satış" in names
     assert "Personel" in names
+    assert "Müdür" in names
 
 
 def test_role_options_route_registered():
