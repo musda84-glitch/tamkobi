@@ -19,8 +19,11 @@ import {
   cargoSelectGroups,
   defaultShipCarrier,
   FALLBACK_CARGO_CATALOG,
+  isWarehouseShipped,
   mergeShipCarriers,
   shipCreateConfirm,
+  warehouseShipConfirm,
+  warehouseShipPath,
   type CargoCatalogItem,
   type CargoIntegrationItem,
 } from "../utils/orderCargo";
@@ -616,6 +619,26 @@ export function OrderActions({
         onChanged?.();
       } catch (err) {
         onError?.(apiErrorMessage(err, "Kargo kaydı oluşturulamadı."));
+        } finally {
+          setBusy(null);
+        }
+      });
+  };
+
+  const shipFromWarehouse = () => {
+    if (isWarehouseShipped(order)) {
+      onError?.("Bu sipariş zaten depodan sevk edildi.");
+      return;
+    }
+    confirmAction("Depodan sevk", warehouseShipConfirm(order), async () => {
+      setBusy("warehouse");
+      try {
+        const r = await post<{ message?: string }>(client, warehouseShipPath(oid), { company_id: companyId });
+        onMessage?.(r.message || "Sipariş depodan sevk edildi.");
+        setCargoOpen(false);
+        onChanged?.();
+      } catch (err) {
+        onError?.(apiErrorMessage(err, "Depodan sevk kaydedilemedi."));
       } finally {
         setBusy(null);
       }
@@ -940,13 +963,26 @@ export function OrderActions({
         />
         <View style={{ height: 10 }} />
         {cargoMode === "ship" ? (
-          <PrimaryButton
-            title="Kargola"
-            testID={`order-ship-submit-${num}`}
-            loading={busy === "cargo"}
-            disabled={!carrier || !!busy}
-            onPress={() => createShipment(carrier)}
-          />
+          <>
+            <PrimaryButton
+              title="Kargola"
+              testID={`order-ship-submit-${num}`}
+              loading={busy === "cargo"}
+              disabled={!carrier || !!busy}
+              onPress={() => createShipment(carrier)}
+            />
+            <View style={{ height: 8 }} />
+            <Muted>Kargo firması yoksa depodan teslim / kendi araç ile sevk edin.</Muted>
+            <View style={{ height: 8 }} />
+            <PrimaryButton
+              title="Depodan sevk edildi"
+              testID={`order-warehouse-ship-${num}`}
+              loading={busy === "warehouse"}
+              disabled={!!busy || isWarehouseShipped(order)}
+              color={colors.primary}
+              onPress={shipFromWarehouse}
+            />
+          </>
         ) : (
           <PrimaryButton
             title="Pazaryerine kaydet"

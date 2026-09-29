@@ -1,7 +1,9 @@
 /** Sipariş satırı aksiyon butonları: yazdırıldı / sevk edildi görünümü */
+import { isWarehouseShipped } from "./warehouseShip";
 
 export function orderIsShipped(ord = {}) {
   if (ord.cargo_tracking_number) return true;
+  if (isWarehouseShipped(ord)) return true;
   const s = String(ord.order_status || "").toLowerCase();
   return ["shipped", "completed", "delivered", "in_transit"].includes(s);
 }
@@ -25,6 +27,7 @@ export function printOrderButtonClass(ord = {}) {
 }
 
 export function cargoActionTitle(ord = {}) {
+  if (isWarehouseShipped(ord)) return "Depodan sevk edildi";
   if (ord.cargo_tracking_number) {
     return `Sevk edildi · ${ord.cargo_tracking_number}${ord.label_printed_at ? " · etiket yazdırıldı" : ""}`;
   }

@@ -84,6 +84,7 @@ import fx
 import attendance
 import production_work_orders as pwo
 import order_production_recipe as opr
+import warehouse_ship as wship
 import work_order_trash_requests as wo_trash_req
 import shopfloor_pause as sfp
 import location_consent
@@ -9913,6 +9914,7 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
     term_days = int(contact.get("payment_term_days") or 14)
     note_src = {
         "ship": "sevkiyatında",
+        "warehouse_ship": "depo sevkiyatında",
         "approve": "onayında",
         "convert": "Faturala ile",
         "intake": "alışında",
@@ -10110,6 +10112,25 @@ async def create_dispatch(order_id: str):
     await db.invoices.insert_one(doc)
     await db.orders.update_one({"_id": order_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
     return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} e-İrsaliye taslağı oluşturuldu."}
+
+
+@api_router.post("/orders/{order_id}/warehouse-ship")
+async def warehouse_ship_order(order_id: str, req: Optional[Dict[str, Any]] = Body(default=None)):
+    """Kargo firması olmadan depodan sevk edildi olarak işaretle."""
+    req = req or {}
+    out = await wship.apply_warehouse_ship(
+        db,
+        order_id,
+        datetime.now(timezone.utc).isoformat(),
+        create_draft=_create_draft_invoice_for_order,
+        push_shopphp=_push_order_to_shopphp,
+    )
+    status = out.get("status")
+    if status == "not_found":
+        raise HTTPException(status_code=404, detail=out.get("message") or "Sipariş bulunamadı.")
+    if status in ("closed", "cargo"):
+        raise HTTPException(status_code=400, detail=out.get("message") or "Depodan sevk edilemedi.")
+    return out
 
 # ----------------- PERSONEL PUANTAJ -----------------
 @api_router.get("/personnel/attendance")

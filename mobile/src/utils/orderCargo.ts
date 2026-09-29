@@ -132,6 +132,31 @@ export function shipCreateConfirm(
   ].filter(Boolean).join("\n");
 }
 
+export const WAREHOUSE_SHIP_CODE = "warehouse";
+export const WAREHOUSE_SHIP_NAME = "Depodan sevk edildi";
+
+export function isWarehouseShipped(order?: Pick<Order, "cargo_carrier" | "cargo_tracking_number"> & {
+  warehouse_shipped?: boolean;
+  ship_method?: string;
+} | null): boolean {
+  if (!order) return false;
+  if (order.warehouse_shipped || String(order.ship_method || "") === WAREHOUSE_SHIP_CODE) return true;
+  if (String(order.cargo_carrier || "").toLowerCase() === WAREHOUSE_SHIP_CODE) return true;
+  return String(order.cargo_tracking_number || "").toUpperCase().startsWith("DEPO-");
+}
+
+export function warehouseShipConfirm(order: Pick<Order, "order_number" | "customer_name" | "city">): string {
+  return [
+    `${order.order_number || "Sipariş"} depodan sevk edildi olarak işaretlensin mi?`,
+    [order.customer_name, order.city].filter(Boolean).join(" • "),
+    "Kargo kaydı oluşturulmaz; sipariş sevk edildi durumuna geçer.",
+  ].filter(Boolean).join("\n");
+}
+
+export function warehouseShipPath(orderId: string): string {
+  return `/orders/${orderId}/warehouse-ship`;
+}
+
 export function cargoSelectGroups(
   items: CargoCatalogItem[],
   current?: string,

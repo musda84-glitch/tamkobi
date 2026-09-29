@@ -11,6 +11,7 @@ test("orderIsShipped: tracking or status", () => {
   expect(orderIsShipped({})).toBe(false);
   expect(orderIsShipped({ cargo_tracking_number: "TK123" })).toBe(true);
   expect(orderIsShipped({ order_status: "shipped" })).toBe(true);
+  expect(orderIsShipped({ warehouse_shipped: true })).toBe(true);
   expect(orderIsShipped({ order_status: "pending" })).toBe(false);
 });
 
@@ -26,5 +27,7 @@ test("titles reflect done state", () => {
   expect(printOrderTitle({ form_printed_at: "2026-09-23T10:00:00Z" })).toMatch(/yazdırıldı/i);
   expect(cargoActionTitle({})).toBe("Kargola");
   expect(cargoActionTitle({ cargo_tracking_number: "ABC" })).toMatch(/Sevk edildi/);
+  expect(cargoActionTitle({ warehouse_shipped: true })).toBe("Depodan sevk edildi");
+  expect(cargoActionTitle({ cargo_tracking_number: "DEPO-B2B-1", cargo_carrier: "warehouse" })).toBe("Depodan sevk edildi");
   expect(orderFormPrinted({ form_printed_at: "x" })).toBe(true);
 });
