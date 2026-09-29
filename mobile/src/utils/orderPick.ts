@@ -11,7 +11,17 @@ export type PickLine = {
   image_url?: string;
   /** B2B sipariş stok notu (line note). */
   note?: string;
+  line_note?: string;
+  stock_note?: string;
+  notes?: string;
 };
+
+/** B2B "Sipariş stok notu" — web pickLineNote ile aynı alias'lar. */
+export function pickLineNote(it?: PickLine | Record<string, unknown> | null): string {
+  if (!it) return "";
+  const row = it as Record<string, unknown>;
+  return String(row.note || row.line_note || row.stock_note || row.notes || "").trim();
+}
 
 export type PickProgress = { ordered?: number; picked?: number; missing_lines?: number; complete?: boolean };
 

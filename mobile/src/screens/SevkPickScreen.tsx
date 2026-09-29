@@ -15,6 +15,7 @@ import {
   canShip,
   lineRemaining,
   parsePickedQtyDraft,
+  pickLineNote,
   pickPercent,
   pickStatusTone,
   pickStatusTr,
@@ -224,10 +225,23 @@ export function SevkPickScreen() {
               <Text style={{ fontWeight: "800", color: done ? colors.primary : colors.danger }}>{picked}/{ordered}</Text>
             </Row>
             <Muted>{[line.sku, line.barcode].filter(Boolean).join(" · ") || "Kod yok"}{done ? "" : ` · ${lineRemaining(line)} kaldı`}</Muted>
-            {line.note ? (
-              <Text style={{ fontSize: 12, fontWeight: "700", color: "#92400e", marginTop: 4, backgroundColor: "#fffbeb", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, overflow: "hidden" }} testID={`sevk-line-note-${line.line_index ?? idx}`}>
-                Sipariş stok notu · {line.note}
-              </Text>
+            {pickLineNote(line) ? (
+              <View
+                style={{
+                  marginTop: 6,
+                  paddingHorizontal: 8,
+                  paddingVertical: 6,
+                  borderRadius: 8,
+                  backgroundColor: "#fffbeb",
+                  borderWidth: 1,
+                  borderColor: "#fde68a",
+                }}
+                testID={`sevk-line-note-${line.line_index ?? idx}`}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "700", color: "#92400e", lineHeight: 16 }}>
+                  Sipariş stok notu · {pickLineNote(line)}
+                </Text>
+              </View>
             ) : null}
             {canEdit ? (
               <Row>

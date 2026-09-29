@@ -14,6 +14,7 @@ import { channelTr, orderNumberLabel, statusTr, marketplaceStatusTr } from "../u
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { canStaffEditOrder, cartFromOrderItems, orderUpdatePayload, removeOrderLine } from "../utils/orderEdit";
 import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
+import { pickLineNote } from "../utils/orderPick";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 
 export function OrderDetailScreen() {
@@ -119,11 +120,14 @@ export function OrderDetailScreen() {
       </Card>
       {canEditItems ? <Muted>Kalemi silmek için satırı sola kaydırın.</Muted> : null}
       {(order.items || []).map((it, i) => {
+        const stockNote = pickLineNote(it as { note?: string; line_note?: string; stock_note?: string; notes?: string });
+        const qtyLine = `${it.quantity} × ${fmtMoney(it.unit_price)}`;
         const row = (
           <ListRow
             testID={canEditItems ? undefined : `order-item-${i}`}
             title={String(it.product_name || it.name || "Kalem")}
-            subtitle={`${it.quantity} × ${fmtMoney(it.unit_price)}`}
+            subtitle={stockNote ? `${qtyLine}\nSipariş stok notu · ${stockNote}` : qtyLine}
+            titleLines={2}
             right={fmtMoney(it.total_incl || it.total)}
             image={lineItemImage(it, catalog)}
           />
