@@ -112,9 +112,11 @@ def build_order_recipe_payload(
     for line in lines:
         prod = line.get("product") or {}
         stock_note = str(line.get("note") or "").strip()[:500]
-        step_note_parts = [f"{line['quantity']:g}× {line['product_name']}"]
+        # Atölye «Not:» alanında B2B sipariş stok açıklaması görünsün.
         if stock_note:
-            step_note_parts.append(stock_note)
+            step_note = stock_note
+        else:
+            step_note = f"{line['quantity']:g}× {line['product_name']}"
         mat: Dict[str, Any] = {
             "product_id": line["product_id"],
             "product_name": line["product_name"],
@@ -131,7 +133,7 @@ def build_order_recipe_payload(
                 "name": "Üretim",
                 "station": station,
                 "duration_min": 0,
-                "note": " · ".join(step_note_parts),
+                "note": step_note,
             }],
         }
         if stock_note:
@@ -306,7 +308,8 @@ def apply_stock_notes_to_recipe_materials(
                     qty_s = str(qty or "").strip() or "1"
                 pname = str(row.get("product_name") or "").strip() or "Ürün"
                 base = f"{qty_s}× {pname}"
-                s["note"] = f"{base} · {stock_note}" if stock_note else base
+                # Atölye Not: B2B stok açıklamasını göster.
+                s["note"] = stock_note or base
                 steps.append(s)
             if steps:
                 row["steps"] = steps

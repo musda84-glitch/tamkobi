@@ -125,7 +125,8 @@ def test_producible_lines_carry_stock_note():
     assert lines[1]["note"] == "beyaz"
     payload = build_order_recipe_payload(order, lines, company_id="c", default_station="CNC")
     assert payload["materials"][0]["stock_note"] == "CEVİZ / DRA-CVZ"
-    assert "CEVİZ / DRA-CVZ" in payload["materials"][0]["steps"][0]["note"]
+    assert payload["materials"][0]["steps"][0]["note"] == "CEVİZ / DRA-CVZ"
+    assert payload["materials"][1]["steps"][0]["note"] == "beyaz"
     assert payload["materials"][0]["steps"][0]["station"] == "CNC"
     assert payload["materials"][1]["steps"][0]["station"] == "CNC"
 
@@ -194,7 +195,7 @@ def test_apply_stock_notes_to_recipe_materials():
     ]
     apply_stock_notes_to_recipe_materials(recipe, lines)
     assert recipe["materials"][0]["stock_note"] == "2,7 mm 210x170 Tek Yüz Beyaz Mdf"
-    assert "2,7 mm 210x170" in recipe["materials"][0]["steps"][0]["note"]
+    assert recipe["materials"][0]["steps"][0]["note"] == "2,7 mm 210x170 Tek Yüz Beyaz Mdf"
     assert recipe["materials"][1].get("stock_note") in (None, "")
 
 
