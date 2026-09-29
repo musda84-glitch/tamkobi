@@ -136,7 +136,7 @@ export function SevkPickScreen() {
   const printLabels = async (lines: PickLine[]) => {
     setBusy(true);
     try {
-      const res = await printPickProductLabels(lines, activeCompany?.name, session?.order_number, {
+      const res = await printPickProductLabels(lines, activeCompany, session?.order_number, {
         client,
         companyId: idOf(activeCompany) || undefined,
       });

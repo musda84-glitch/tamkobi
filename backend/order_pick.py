@@ -186,7 +186,12 @@ async def _enrich_items(company_id: str, order_items: list) -> List[dict]:
             "codes": [c for c in {barcode, sku, *extra} if c],
             "ordered_qty": ordered,
             "picked_qty": 0.0,
-            "image_url": it.get("image_url") or (prod or {}).get("image_url"),
+            "image_url": (
+                it.get("image_url")
+                or (prod or {}).get("label_image_url")
+                or (prod or {}).get("image_url")
+                or (prod or {}).get("thumbnail_url")
+            ),
         }
         if prod:
             tpl_id = str(prod.get("label_template_id") or "").strip()

@@ -1,5 +1,7 @@
 import { code128Svg } from "./code128";
+import { absolutizeLabelUrl } from "./labelMedia";
 import { formatTrAmount, moneySuffix } from "./money";
+import { qrSvg } from "./qrSvg";
 import type { LabelTemplateLike } from "./resolveLabelTemplate";
 
 type LabelProduct = {
@@ -14,9 +16,14 @@ type LabelProduct = {
   category?: string;
   variant_name?: string;
   image_url?: string;
+  label_image_url?: string;
 };
 
 type CompanyLike = { name?: string; logo_url?: string } | null | undefined;
+
+export type LabelRenderOpts = {
+  mediaBase?: string | null;
+};
 
 function esc(value: unknown): string {
   return String(value ?? "")
@@ -77,10 +84,15 @@ function elStyle(el: Record<string, unknown>): string {
   ].filter(Boolean).join(";");
 }
 
+function productImageUrl(product: LabelProduct | null | undefined): string {
+  return String(product?.label_image_url || product?.image_url || "").trim();
+}
+
 function renderElement(
   el: Record<string, unknown>,
   product: LabelProduct,
   company?: CompanyLike,
+  opts?: LabelRenderOpts,
 ): string {
   const type = String(el.type || "");
   const code = String(product.barcode || product.sku || "").trim();
@@ -93,8 +105,10 @@ function renderElement(
     return `<div style="${style};display:flex;align-items:center;justify-content:center">${svg}</div>`;
   }
   if (type === "qr") {
-    // QR lib yok — barkod metni yedek
-    return `<div style="${style};font-size:6pt;display:flex;align-items:center;justify-content:center;word-break:break-all">${esc(code || "QR")}</div>`;
+    const mm = Math.min(Number(el.w) || 15, Number(el.h) || 15);
+    const px = Math.max(48, Math.round(mm * 3.78));
+    const svg = qrSvg(code, px);
+    return `<div style="${style};display:flex;align-items:center;justify-content:center">${svg}</div>`;
   }
   if (type === "line") {
     return `<div style="${style};background:#000"></div>`;
@@ -103,9 +117,10 @@ function renderElement(
     return `<div style="${style};border:0.2mm solid #000"></div>`;
   }
   if (type === "logo" || type === "image") {
-    const url = type === "logo" ? company?.logo_url : product.image_url;
+    const raw = type === "logo" ? company?.logo_url : productImageUrl(product);
+    const url = absolutizeLabelUrl(raw, opts?.mediaBase);
     if (url) {
-      return `<div style="${style}"><img src="${esc(url)}" alt="" style="width:100%;height:100%;object-fit:contain"/></div>`;
+      return `<div style="${style}"><img src="${esc(url)}" alt="" style="width:100%;height:100%;object-fit:contain;-webkit-print-color-adjust:exact;print-color-adjust:exact"/></div>`;
     }
     return `<div style="${style};background:#f1f5f9;font-size:5pt;color:#94a3b8;display:flex;align-items:center;justify-content:center">${type === "logo" ? "LOGO" : "GÖRSEL"}</div>`;
   }
@@ -123,11 +138,12 @@ export function templateLabelCardHtml(
   tpl: LabelTemplateLike,
   product: LabelProduct,
   company?: CompanyLike,
+  opts?: LabelRenderOpts,
 ): string {
   const w = Number(tpl.width_mm) || 50;
   const h = Number(tpl.height_mm) || 30;
   const els = Array.isArray(tpl.elements) ? tpl.elements : [];
-  const body = els.map((el) => renderElement(el as Record<string, unknown>, product, company)).join("");
+  const body = els.map((el) => renderElement(el as Record<string, unknown>, product, company, opts)).join("");
   return `<div class="label" data-testid="pick-product-label" style="width:${w}mm;height:${h}mm;position:relative;overflow:hidden;box-sizing:border-box;background:#fff;page-break-after:always">${body}</div>`;
 }
 
@@ -136,6 +152,7 @@ export function templateLabelDocumentHtml(
   jobs: Array<{ tpl: LabelTemplateLike; product: LabelProduct }>,
   company?: CompanyLike,
   autoPrint = false,
+  opts?: LabelRenderOpts,
 ): { html: string; widthMm: number; heightMm: number } {
   const first = jobs[0]?.tpl;
   const widthMm = Number(first?.width_mm) || 50;
@@ -143,12 +160,17 @@ export function templateLabelDocumentHtml(
   const script = autoPrint
     ? `<script>window.onload=function(){setTimeout(function(){window.print()},300)}</script>`
     : "";
-  const cards = jobs.map((j) => templateLabelCardHtml(j.tpl, j.product, company)).join("");
-  const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)}</title>
+  const baseHref = opts?.mediaBase
+    ? `<base href="${esc(String(opts.mediaBase).replace(/\/?$/, "/"))}">`
+    : "";
+  const cards = jobs.map((j) => templateLabelCardHtml(j.tpl, j.product, company, opts)).join("");
+  const html = `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${esc(title)}</title>${baseHref}
 <style>
 @page{size:${widthMm}mm ${heightMm}mm;margin:0}
 html,body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;color:#0f172a;background:#fff}
 .label{margin:0 auto}
+img{-webkit-print-color-adjust:exact;print-color-adjust:exact;image-rendering:crisp-edges}
+svg{display:block;overflow:visible}
 @media print{body{background:#fff}}
 </style></head><body>${cards}${script}</body></html>`;
   return { html, widthMm, heightMm };

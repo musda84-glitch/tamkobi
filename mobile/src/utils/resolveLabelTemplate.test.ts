@@ -20,9 +20,13 @@ describe("resolveLabelTemplate (mobile)", () => {
       product_name: "MDF",
       label_template_id: "tpl_stock",
       barcode: "869",
+      label_image_url: "/api/files/label.jpg",
+      image_url: "/api/files/cover.jpg",
     });
     expect(p?.label_template_id).toBe("tpl_stock");
     expect(p?.name).toBe("MDF");
+    expect(p?.image_url).toBe("/api/files/label.jpg");
+    expect(p?.label_image_url).toBe("/api/files/label.jpg");
   });
 
   it("renders template card with product name", () => {
@@ -39,5 +43,27 @@ describe("resolveLabelTemplate (mobile)", () => {
     expect(html).toContain("Vida");
     expect(html).toContain("<svg");
     expect(labelFieldValue({ field: "sku" }, { name: "X", sku: "ABC" })).toBe("ABC");
+  });
+
+  it("renders QR svg and absolute product image", () => {
+    const tpl = {
+      id: "t2",
+      width_mm: 60,
+      height_mm: 40,
+      elements: [
+        { id: "q", type: "qr", x: 2, y: 2, w: 16, h: 16 },
+        { id: "i", type: "image", x: 22, y: 2, w: 16, h: 16 },
+      ],
+    };
+    const html = templateLabelCardHtml(
+      tpl,
+      { name: "Raf", barcode: "8690001928371", image_url: "/api/files/raf.jpg" },
+      { name: "Matek", logo_url: "/api/files/logo.png" },
+      { mediaBase: "https://tamkobi.com" },
+    );
+    expect(html).toContain('viewBox="0 0');
+    expect(html).toContain("shape-rendering=\"crispEdges\"");
+    expect(html).toContain('src="https://tamkobi.com/api/files/raf.jpg"');
+    expect(html).not.toContain(">QR<");
   });
 });
