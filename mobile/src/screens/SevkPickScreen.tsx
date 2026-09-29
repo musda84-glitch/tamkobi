@@ -225,7 +225,7 @@ export function SevkPickScreen() {
             </Row>
             <Muted>{[line.sku, line.barcode].filter(Boolean).join(" · ") || "Kod yok"}{done ? "" : ` · ${lineRemaining(line)} kaldı`}</Muted>
             {line.note ? (
-              <Text style={{ fontSize: 12, fontWeight: "700", color: "#92400e", marginTop: 2 }} testID={`sevk-line-note-${line.line_index ?? idx}`}>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: "#92400e", marginTop: 4, backgroundColor: "#fffbeb", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, overflow: "hidden" }} testID={`sevk-line-note-${line.line_index ?? idx}`}>
                 Sipariş stok notu · {line.note}
               </Text>
             ) : null}

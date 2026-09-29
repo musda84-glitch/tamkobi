@@ -64,3 +64,37 @@ def test_sync_stock_notes_keeps_existing_note():
     out = asyncio.run(op._sync_stock_notes(ses, order))
     assert out["items"][0]["note"] == "eski"
     db.order_pick_sessions.update_one.assert_not_called()
+
+
+def test_sync_stock_notes_uses_line_index_when_order_differs():
+    import order_pick as op
+
+    order = {
+        "_id": "ord1",
+        "items": [
+            {"product_id": "p0", "quantity": 1},
+            {"product_id": "p1", "quantity": 40, "note": "tek yüz beyaz"},
+        ],
+    }
+    ses = {
+        "_id": "ses1",
+        # Pick row 0 points at order line_index 1 (MDF)
+        "items": [{"line_index": 1, "product_id": "p1", "ordered_qty": 40, "picked_qty": 0}],
+    }
+    db = MagicMock()
+    db.order_pick_sessions.update_one = AsyncMock()
+    op.init(db, {})
+
+    out = asyncio.run(op._sync_stock_notes(ses, order))
+    assert out["items"][0]["note"] == "tek yüz beyaz"
+
+
+def test_public_overlays_note_from_order():
+    import order_pick as op
+
+    order = {"_id": "ord1", "items": [{"product_id": "p1", "quantity": 40, "stock_note": "  panel kesim  "}]}
+    ses = {"_id": "ses1", "items": [{"line_index": 0, "product_id": "p1", "ordered_qty": 40, "picked_qty": 0}]}
+    op.init(MagicMock(), {})
+
+    pub = op._public(ses, order)
+    assert pub["items"][0]["note"] == "panel kesim"

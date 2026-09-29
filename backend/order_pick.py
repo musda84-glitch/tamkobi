@@ -81,9 +81,60 @@ def _variant_codes_for_line(it: dict, prod: Optional[dict]) -> List[str]:
     return extra
 
 
-def _line_stock_note(it: dict) -> Optional[str]:
-    note = str(it.get("note") or it.get("line_note") or "").strip()[:500]
+def _line_stock_note(it: Optional[dict]) -> Optional[str]:
+    if not it:
+        return None
+    note = str(
+        it.get("note")
+        or it.get("line_note")
+        or it.get("stock_note")
+        or it.get("notes")
+        or ""
+    ).strip()[:500]
     return note or None
+
+
+def _order_item_for_pick_line(line: dict, idx: int, order_items: list) -> Optional[dict]:
+    """Resolve the B2B/order line that owns this pick row (line_index first, then array index / unique product)."""
+    if not order_items:
+        return None
+    li = line.get("line_index")
+    if li is not None:
+        try:
+            i = int(li)
+            if 0 <= i < len(order_items):
+                return order_items[i]
+        except (TypeError, ValueError):
+            pass
+    if 0 <= idx < len(order_items):
+        return order_items[idx]
+    pid = str(line.get("product_id") or "")
+    if pid:
+        matches = [it for it in order_items if str(it.get("product_id") or "") == pid]
+        if len(matches) == 1:
+            return matches[0]
+    return None
+
+
+def _overlay_stock_notes(ses: dict, order: Optional[dict]) -> dict:
+    """Ensure response items carry sipariş stok notu even if session rows were created before notes existed."""
+    if not order:
+        return ses
+    order_items = order.get("items") or []
+    items = ses.get("items") or []
+    if not items or not order_items:
+        return ses
+    out = []
+    for i, line in enumerate(items):
+        row = dict(line)
+        if not str(row.get("note") or "").strip():
+            note = _line_stock_note(_order_item_for_pick_line(row, i, order_items))
+            if note:
+                row["note"] = note
+        out.append(row)
+    ses = dict(ses)
+    ses["items"] = out
+    return ses
 
 
 async def _enrich_items(company_id: str, order_items: list) -> List[dict]:
@@ -129,10 +180,7 @@ async def _sync_stock_notes(ses: dict, order: dict) -> dict:
     for i, line in enumerate(items):
         if str(line.get("note") or "").strip():
             continue
-        src = order_items[i] if i < len(order_items) else None
-        if not src:
-            continue
-        note = _line_stock_note(src)
+        note = _line_stock_note(_order_item_for_pick_line(line, i, order_items))
         if not note:
             continue
         line["note"] = note
@@ -184,6 +232,7 @@ async def _session_for(order: dict, create: bool = True) -> dict:
 
 
 def _public(ses: dict, order: Optional[dict] = None) -> dict:
+    ses = _overlay_stock_notes(ses, order)
     d = _clean(ses)
     d["progress"] = _progress(ses.get("items") or [])
     if order:
