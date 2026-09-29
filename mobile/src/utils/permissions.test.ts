@@ -1,4 +1,4 @@
-import { can, canOpenStockCard, feature, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showSelfPersonnelTabs, visibleModules } from "./permissions";
+import { can, canOpenStockCard, canSevkDraftInvoice, canSevkOpenOrder, feature, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showSelfPersonnelTabs, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
@@ -13,6 +13,26 @@ describe("permissions", () => {
     expect(feature({ role: "sales", features: { order_more_actions: true } }, "order_more_actions")).toBe(true);
     expect(feature({ role: "personel", features: {} }, "order_cargo_label")).toBe(true);
     expect(feature({ role: "sales" }, "order_more_actions")).toBe(true);
+  });
+
+  it("gates sevk Siparişi aç / Taslak fatura by feature and module", () => {
+    const sales = {
+      role: "sales",
+      permissions: { "/orders": "edit", "/invoices": "edit", "/sevk": "view" },
+      features: { sevk_open_order: true, sevk_draft_invoice: true },
+    };
+    expect(canSevkOpenOrder(sales)).toBe(true);
+    expect(canSevkDraftInvoice(sales)).toBe(true);
+    expect(canSevkOpenOrder({ ...sales, features: { ...sales.features, sevk_open_order: false } })).toBe(false);
+    expect(canSevkDraftInvoice({ ...sales, features: { ...sales.features, sevk_draft_invoice: false } })).toBe(false);
+    const warehouse = {
+      role: "warehouse",
+      permissions: { "/orders": "edit", "/invoices": "none", "/sevk": "edit" },
+      features: { sevk_open_order: true, sevk_draft_invoice: true },
+    };
+    expect(canSevkOpenOrder(warehouse)).toBe(true);
+    expect(canSevkDraftInvoice(warehouse)).toBe(false);
+    expect(canSevkOpenOrder({ role: "admin", permissions: { "/orders": "none" } })).toBe(true);
   });
 
   it("hides prices when view_prices is false for staff roles", () => {
