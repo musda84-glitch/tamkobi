@@ -120,8 +120,8 @@ FEATURES = [
     ("header_ai", "Üst bar: AI asistan", "Web üst çubuğundaki AI Danışman kısayolu (lisans eklentisi de gerekir)."),
     ("order_cargo_label", "Sipariş: Kargo etiketi", "Sipariş satırındaki Kargo etiketi (yazdır) butonu. Kapalıysa web + mobil gizlenir; Kargola butonu etkilenmez."),
     ("order_more_actions", "Sipariş: Diğer işlemler", "Sipariş satırındaki Diğer işlemler (⋯) menüsü. Kapalıysa web + mobil gizlenir."),
-    ("sevk_open_order", "Sevk: Siparişi aç", "Depo sevkiyat toplama ekranındaki Siparişi aç butonu. Kapalıysa gizlenir; Siparişler modül yetkisi de gerekir."),
-    ("sevk_draft_invoice", "Sevk: Taslak fatura", "Depo sevkiyat toplama ekranındaki Taslak fatura butonu. Kapalıysa gizlenir; Faturalar modül yetkisi de gerekir."),
+    ("sevk_open_order", "Sevk: Siparişi aç", "Mobil Depo Sevkiyat toplama ekranındaki Siparişi aç butonu. Kapalıysa mobilde gizlenir; Siparişler modül yetkisi de gerekir."),
+    ("sevk_draft_invoice", "Sevk: Taslak fatura", "Mobil Depo Sevkiyat toplama ekranındaki Taslak fatura butonu. Kapalıysa mobilde gizlenir; Faturalar modül yetkisi de gerekir."),
     ("account_companies", "Hesap: Şirketlerim", "Sol menü Hesap açılır listesindeki Şirketlerim alanı ve şirket değiştirme. Kapalıysa personel yalnız aktif firmayı görür; şirket listesi/geçiş gizlenir."),
     ("export_personal_data", "Kişisel verilerimi ZIP indir", "Kenar çubuğundaki kişisel veri ZIP indirme ve Hesap → Profil veri dışa aktarımı. Kapalıysa buton gizlenir; API de engeller."),
 ]
