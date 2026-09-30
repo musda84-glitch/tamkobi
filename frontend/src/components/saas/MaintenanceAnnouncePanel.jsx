@@ -10,6 +10,7 @@ import {
   pickVisibleNotice,
   toDatetimeLocalValue,
 } from "../../utils/platformNotices";
+import { impersonateRedirect } from "../../utils/impersonateRedirect";
 
 const emptyAnnounce = () => ({
   title: "",
@@ -251,7 +252,7 @@ export function MaintenanceAnnouncePanel() {
     try {
       const res = await axios.post(`${API_URL}/system/companies/${cid}/impersonate`, {});
       toast.success(res.data.message || "Demo paneline giriliyor…");
-      window.location.href = "/";
+      window.location.href = impersonateRedirect(res.data);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Şirket paneline girilemedi. Gizlilik kapalı olabilir.");
     } finally {

@@ -16,7 +16,7 @@ from fastapi.responses import PlainTextResponse
 import comm_service
 import saas
 import saas_billing
-from auth_utils import get_jwt_secret, JWT_ALGORITHM, get_user_from_token
+from auth_utils import get_jwt_secret, JWT_ALGORITHM, get_user_from_token, session_token
 from client_ip import request_ip
 
 router = APIRouter(prefix="/api")
@@ -67,7 +67,13 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
     import support_access
     if not await _addons.is_on(company_id, "support.impersonate"):
         raise HTTPException(status_code=403, detail="Bu müşteri için 'şirket olarak gir' destek aracı kapalı.")
-    target = await _db.users.find_one({"company_ids": company_id, "role": "admin", "is_active": {"$ne": False}}) or await _db.users.find_one({"company_ids": company_id})
+    # Tenant kullanıcıları: platform süper adminleri şirket koltuğu sayılmaz.
+    target = (
+        await _db.users.find_one({**saas.tenant_user_query(company_id), "role": "admin", "is_active": {"$ne": False}})
+        or await _db.users.find_one({**saas.tenant_user_query(company_id), "is_active": {"$ne": False}})
+        or await _db.users.find_one({"company_ids": company_id, "role": "admin", "is_active": {"$ne": False}})
+        or await _db.users.find_one({"company_ids": company_id, "is_active": {"$ne": False}})
+    )
     if not target:
         raise HTTPException(status_code=400, detail="Bu şirkette giriş yapılabilecek kullanıcı yok.")
     company = await _db.companies.find_one({"_id": company_id}) or {}
@@ -94,9 +100,12 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
         "exp": now + timedelta(hours=2),
     }
     token = jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
-    current = request.cookies.get("access_token") or request.headers.get("Authorization", "")[7:]
-    response.set_cookie(key="sa_return", value=current, httponly=True, max_age=7200, path="/")
-    response.set_cookie(key="access_token", value=token, httponly=True, max_age=7200, path="/")
+    current = session_token(request) or ""
+    if not current:
+        raise HTTPException(status_code=401, detail="Sistem paneli oturumu bulunamadı; tekrar giriş yapın.")
+    cookie_kw = {"httponly": True, "samesite": "lax", "max_age": 7200, "path": "/"}
+    response.set_cookie(key="sa_return", value=current, **cookie_kw)
+    response.set_cookie(key="access_token", value=token, **cookie_kw)
     await _db.users.update_one({"_id": target["_id"]}, {"$set": {"active_company_id": company_id}})
     await _db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": company_id, "user_id": admin.get("id") or admin.get("_id"), "user_name": admin.get("name"), "method": "IMPERSONATE", "path": f"/system/companies/{company_id}/impersonate", "module": "/settings", "status": 200, "target_user": target["email"], "created_at": _now()})
     return {
@@ -107,6 +116,7 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
         "session_id": session["_id"],
         "started_at": session["started_at"],
         "expires_at": session["expires_at"],
+        "redirect": "/panel",
     }
 
 
@@ -173,7 +183,7 @@ async def impersonate_exit(request: Request, response: Response):
     except HTTPException:
         response.delete_cookie("sa_return", path="/"); response.delete_cookie("access_token", path="/")
         raise HTTPException(status_code=401, detail="Panel oturumunuz süresi dolmuş; lütfen panele tekrar giriş yapın.")
-    response.set_cookie(key="access_token", value=back, httponly=True, max_age=86400 * 7, path="/")
+    response.set_cookie(key="access_token", value=back, httponly=True, samesite="lax", max_age=86400 * 7, path="/")
     response.delete_cookie("sa_return", path="/")
     return {"status": "success", "redirect": "/sistem/sirketler"}
 

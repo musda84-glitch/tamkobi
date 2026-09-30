@@ -58,6 +58,7 @@ class TestImpersonation:
         assert r.status_code == 200, r.text[:200]
         data = r.json()
         assert "message" in data and data.get("company_name")
+        assert data.get("redirect") == "/panel", data
         # new access_token cookie set
         assert s.cookies.get("access_token") is not None
         assert s.cookies.get("sa_return") is not None
