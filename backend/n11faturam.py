@@ -135,6 +135,13 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
         buyer_tax = "11111111111"
     buyer_scheme = "VKN" if len(buyer_tax) == 10 else "TCKN"
     buyer_name = (contact or {}).get("name") or invoice.get("contact_name") or "Nihai Tüketici"
+    buyer_email = (
+        (contact or {}).get("email")
+        or invoice.get("contact_email")
+        or invoice.get("buyer_email")
+        or ""
+    ).strip()
+    contact_for_party = {**(contact or {}), "email": buyer_email}
 
     def party(tax: str, scheme: str, name: str, src: dict) -> str:
         street = _esc(src.get("address") or "")
@@ -194,6 +201,34 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
     <cac:Price><cbc:PriceAmount currencyID="{currency}">{_money(price)}</cbc:PriceAmount></cac:Price>
   </cac:InvoiceLine>""")
 
+    archive_refs = ""
+    if e_type == "e_archive" or profile == "EARSIVFATURA":
+        # GİB e-Arşiv zorunlu: GONDERIMSEKLI (ELEKTRONIK|KAGIT). İşNet Xml gönderiminde yoksa reddeder.
+        # ELEKTRONIK için alıcı e-posta zorunlu; yoksa KAGIT.
+        send_type = str(invoice.get("earchive_send_type") or invoice.get("sending_type") or "").strip().upper()
+        if send_type not in ("ELEKTRONIK", "KAGIT"):
+            send_type = "ELEKTRONIK" if buyer_email else "KAGIT"
+        if send_type == "ELEKTRONIK" and not buyer_email:
+            send_type = "KAGIT"
+        internet = str(invoice.get("internet_sale") or "HAYIR").strip().upper()
+        if internet not in ("EVET", "HAYIR"):
+            internet = "HAYIR"
+        send_ref_id = str(uuid.uuid4())
+        net_ref_id = str(uuid.uuid4())
+        archive_refs = f"""
+  <cac:AdditionalDocumentReference>
+    <cbc:ID>{send_ref_id}</cbc:ID>
+    <cbc:IssueDate>{issue}</cbc:IssueDate>
+    <cbc:DocumentType>GONDERIMSEKLI</cbc:DocumentType>
+    <cbc:DocumentDescription>{send_type}</cbc:DocumentDescription>
+  </cac:AdditionalDocumentReference>
+  <cac:AdditionalDocumentReference>
+    <cbc:ID>{net_ref_id}</cbc:ID>
+    <cbc:IssueDate>{issue}</cbc:IssueDate>
+    <cbc:DocumentType>INTERNETSATISI</cbc:DocumentType>
+    <cbc:DocumentDescription>{internet}</cbc:DocumentDescription>
+  </cac:AdditionalDocumentReference>"""
+
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
          xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
@@ -209,9 +244,10 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
   {f"<cbc:Note>{_esc(notes)}</cbc:Note>" if notes else ""}
   <cbc:DocumentCurrencyCode>{_esc(currency)}</cbc:DocumentCurrencyCode>
   <cbc:LineCountNumeric>{len(items)}</cbc:LineCountNumeric>
+  {archive_refs}
   <cac:OrderReference><cbc:ID>{_esc(invoice.get("order_number") or invoice.get("invoice_number") or inv_id)}</cbc:ID></cac:OrderReference>
   <cac:AccountingSupplierParty>{party(seller_tax, seller_scheme, company.get("name") or "Satıcı", company)}</cac:AccountingSupplierParty>
-  <cac:AccountingCustomerParty>{party(buyer_tax, buyer_scheme, buyer_name, contact or {})}</cac:AccountingCustomerParty>
+  <cac:AccountingCustomerParty>{party(buyer_tax, buyer_scheme, buyer_name, contact_for_party)}</cac:AccountingCustomerParty>
   <cac:PaymentMeans>
     <cbc:PaymentMeansCode>1</cbc:PaymentMeansCode>
     <cbc:PaymentDueDate>{due}</cbc:PaymentDueDate>
