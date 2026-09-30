@@ -88,15 +88,17 @@ def test_login_401_raises():
 
 
 def test_isnet_payload_fields_documented_in_server_source():
-    """server.EINVOICE_PROVIDERS['isnet'] IP–VKN alanları (tam import ortam bağımlılığı olmadan)."""
+    """server.EINVOICE_PROVIDERS['isnet'] alanları (tam import ortam bağımlılığı olmadan)."""
     from pathlib import Path
 
     src = Path(__file__).resolve().parents[1] / "server.py"
     text = src.read_text(encoding="utf-8")
     assert '"isnet"' in text
     assert "company_tax_id" in text
-    assert "efaturadestek@nettefatura.com.tr" in text
-    assert "IP–VKN" in text or "IP-VKN" in text
+    assert "NetteFatura-API" in text
+    # Kullanıcı ayarlarında SOAP/portal test ipuçları gösterilmez
+    assert "einvoiceservicetest.isnet.net.tr" not in text
+    assert "efaturadestek@nettefatura.com.tr" not in text
 
 
 def test_company_tax_code_and_soap_serialize():

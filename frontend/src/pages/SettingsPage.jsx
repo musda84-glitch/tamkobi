@@ -103,7 +103,6 @@ const EInvoiceSettings = ({ companyId }) => {
         <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs max-w-xl" data-testid="einvoice-assigned-provider">
           <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Atanan entegratör</div>
           <div className="text-sm font-bold text-slate-900 mt-0.5">{s.provider_name || "İşNet Net-e Fatura — SOAP API"}</div>
-          {s.hint ? <p className="text-[11px] text-slate-500 mt-1">{s.hint}</p> : null}
         </div>
         <IsnetIntegrationPanel companyId={companyId} />
       </div>
@@ -115,7 +114,6 @@ const EInvoiceSettings = ({ companyId }) => {
         <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs max-w-xl" data-testid="einvoice-assigned-provider">
           <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Atanan entegratör</div>
           <div className="text-sm font-bold text-slate-900 mt-0.5">{s.provider_name || "İşNet Net-e Fatura — Web Portal"}</div>
-          {s.hint ? <p className="text-[11px] text-slate-500 mt-1">{s.hint}</p> : null}
         </div>
         <IsnetPortalPanel companyId={companyId} />
       </div>
