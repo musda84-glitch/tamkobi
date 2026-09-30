@@ -210,8 +210,10 @@ export function orderMoreMenuItems(ord, opts = {}) {
   if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
   else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems();
-  else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
-  else items = defaultMoreItems(ord, opts);
+  else if (kind === "panel_invoiced") {
+    // Faturalaştı: E-Fatura Oluştur + kargo (Excel/PDF yok — referans menü)
+    return { kind, items: panelInvoicedMoreItems() };
+  } else items = defaultMoreItems(ord, opts);
   const allowDelete = opts.canDelete !== false;
   if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];
   return { kind, items: [...items, ...orderDownloadMoreItems()] };

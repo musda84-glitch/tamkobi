@@ -62,10 +62,10 @@ export function ElektronikFaturaOnayModal({
       data-testid="efatura-onay-modal"
     >
       <div
-        className="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200"
+        className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between bg-sky-800 px-4 py-3">
+        <div className="flex items-center justify-between bg-sky-800 px-4 py-3 rounded-t-2xl">
           <h3 className="text-sm font-bold text-white" data-testid="efatura-onay-title">
             Elektronik Fatura Onayı
           </h3>
@@ -97,7 +97,7 @@ export function ElektronikFaturaOnayModal({
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50/80">
+        <div className="relative flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50/80 rounded-b-2xl overflow-visible">
           <button
             type="button"
             onClick={onClose}
@@ -126,7 +126,7 @@ export function ElektronikFaturaOnayModal({
               </button>
               {menuOpen && (
                 <div
-                  className="absolute right-0 bottom-full mb-1.5 w-56 bg-white border border-slate-200 rounded-xl p-1.5 shadow-lg z-10"
+                  className="absolute right-0 top-full mt-1.5 w-56 bg-white border border-slate-200 rounded-xl p-1.5 shadow-lg z-10"
                   role="menu"
                   data-testid="efatura-onay-scenario-menu"
                 >
