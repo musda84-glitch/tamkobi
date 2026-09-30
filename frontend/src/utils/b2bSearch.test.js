@@ -6,7 +6,7 @@ describe("qty draft focus", () => {
     expect(qtyDraftShown({ p1: "" }, "p1")).toBe("");
     expect(qtyDraftShown({ p1: "12" }, "p1")).toBe("12");
     expect(qtyDraftOnFocus()).toBe("");
-    expect(qtyDraftAfterAdd()).toBe("");
+    expect(qtyDraftAfterAdd()).toBe("1");
     expect(qtyDraftOnBlur("")).toBe("1");
     expect(qtyDraftOnBlur("8")).toBe("8");
   });
