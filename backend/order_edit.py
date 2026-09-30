@@ -37,11 +37,15 @@ def _issued_edocument(doc: Optional[Mapping[str, Any]]) -> bool:
     if e_type == "paper" or e_type not in E_DOCUMENT_TYPES:
         return False
     state = str(doc.get("einvoice_state") or "").lower()
+    if state == "error":
+        return False
     if state in E_ISSUED_STATES:
         return True
     if doc.get("gib_tracking_id"):
         return True
     gs = str(doc.get("gib_status") or "")
+    if re.match(r"^\s*hata\s*:", gs, re.I):
+        return False
     if gs in GIB_ISSUED_STATUSES:
         return True
     # "Onaylandı" panel onayıdır; GİB iletimi değildir.

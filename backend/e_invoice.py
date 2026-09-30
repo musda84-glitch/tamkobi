@@ -447,21 +447,39 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             )
             raise HTTPException(status_code=502, detail=f"Entegratör gönderimi başarısız: {e}") from e
 
-        tracking = (sent.get("ettn") or sent.get("invoice_id") or "").strip()
-        if not tracking:
-            await _db.invoices.update_one(
-                {"_id": invoice_id},
-                {"$set": {
-                    "einvoice_state": "error",
-                    "gib_status": "Hata: Entegratör ETTN/fatura no döndürmedi",
-                    "gib_error": "missing_ettn",
-                    "error_at": _now(),
-                }},
-            )
-            raise HTTPException(
-                status_code=502,
-                detail=f"{label} ETTN/fatura numarası döndürmedi — NetteFatura/GİB kaydı doğrulanamadı.",
-            )
+        tracking = (sent.get("ettn") or "").strip()
+        # İşNet: yalnızca UUID ETTN — yerel fatura no ile sahte «iletildi» yok
+        if provider in ("isnet", "isnet_portal"):
+            if not isnet.is_ettn_uuid(tracking):
+                await _db.invoices.update_one(
+                    {"_id": invoice_id},
+                    {"$set": {
+                        "einvoice_state": "error",
+                        "gib_status": "Hata: İşNet geçerli ETTN (UUID) döndürmedi",
+                        "gib_error": "missing_or_invalid_ettn",
+                        "error_at": _now(),
+                    }},
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"{label} geçerli ETTN (UUID) döndürmedi — NetteFatura/GİB kaydı doğrulanamadı.",
+                )
+        else:
+            tracking = (tracking or (sent.get("invoice_id") or "").strip()).strip()
+            if not tracking:
+                await _db.invoices.update_one(
+                    {"_id": invoice_id},
+                    {"$set": {
+                        "einvoice_state": "error",
+                        "gib_status": "Hata: Entegratör ETTN/fatura no döndürmedi",
+                        "gib_error": "missing_ettn",
+                        "error_at": _now(),
+                    }},
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"{label} ETTN/fatura numarası döndürmedi — NetteFatura/GİB kaydı doğrulanamadı.",
+                )
 
         remaining = None
         if consume:

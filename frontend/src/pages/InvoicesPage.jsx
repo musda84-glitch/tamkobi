@@ -695,15 +695,28 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         const incoming = isIncomingPurchaseInvoice(inv);
                         const pending = isIncomingPurchasePending(inv);
                         const resp = incomingPurchaseResponse(inv);
-                        const cls = resp === "rejected" || inv.status === "cancelled"
+                        const gs = String(inv.gib_status || "");
+                        const isErr =
+                          inv.einvoice_state === "error" ||
+                          /^\s*hata\s*:/i.test(gs) ||
+                          resp === "rejected" ||
+                          inv.status === "cancelled";
+                        const cls = isErr
                           ? "bg-rose-50 text-rose-700"
                           : incoming && pending
                             ? "bg-amber-50 text-amber-800"
                             : "bg-emerald-50 text-emerald-700";
+                        const Icon = isErr ? XCircle : CheckCircle2;
+                        const label =
+                          isErr && gs.length > 96 ? `${gs.slice(0, 93)}…` : gs || "Taslak";
                         return (
-                      <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${cls}`} data-testid={`inv-gib-badge-${inv.invoice_number}`}>
-                        <CheckCircle2 className="w-3 h-3" />
-                        {inv.gib_status || 'Taslak'}
+                      <span
+                        className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full max-w-full ${cls}`}
+                        title={gs || undefined}
+                        data-testid={`inv-gib-badge-${inv.invoice_number}`}
+                      >
+                        <Icon className="w-3 h-3 shrink-0" />
+                        <span className="min-w-0 break-words">{label}</span>
                       </span>
                         );
                       })()}

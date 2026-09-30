@@ -24,6 +24,18 @@ def test_issued_earchive_blocks_edit():
     assert order_edit_block_reason(order, invoice) == "E-belge kesilmiş sipariş düzenlenemez."
 
 
+def test_hata_gib_status_with_iletildi_does_not_block_edit():
+    """Hata: ... iletildi metni GİB kesilmiş sayılmamalı."""
+    order = {"order_status": "approved", "is_invoiced": True, "invoice_id": "inv_err"}
+    invoice = {
+        "status": "approved",
+        "e_type": "e_archive",
+        "einvoice_state": "error",
+        "gib_status": "Hata: İşNet ETTN döndürmedi — fatura NetteFatura'ya düşmemiş olabilir. Fatura İşNet'e iletildi.",
+    }
+    assert order_edit_block_reason(order, invoice) is None
+
+
 def test_paper_invoice_does_not_block_edit():
     order = {"order_status": "approved", "is_invoiced": True, "invoice_id": "inv_p"}
     invoice = {"status": "approved", "e_type": "paper"}
