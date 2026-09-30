@@ -791,6 +791,129 @@ async def get_document_viewer_link(
     return {"html_url": html, "pdf_url": pdf, "url": url}
 
 
+def extract_viewer_key(key_or_url: str) -> str:
+    """DocumentViewer HtmlUrl/PdfUrl içinden key= parametresini ayıkla."""
+    raw = (key_or_url or "").strip()
+    if not raw:
+        return ""
+    if "key=" in raw:
+        try:
+            from urllib.parse import urlparse, parse_qs, unquote
+
+            parsed = urlparse(raw if "://" in raw else f"https://x.local/{raw.lstrip('/')}")
+            qs = parse_qs(parsed.query)
+            if qs.get("key"):
+                return unquote(qs["key"][0])
+        except Exception:
+            pass
+        m = re.search(r"[?&]key=([^&]+)", raw)
+        if m:
+            try:
+                from urllib.parse import unquote
+
+                return unquote(m.group(1))
+            except Exception:
+                return m.group(1)
+    try:
+        from urllib.parse import unquote
+
+        return unquote(raw)
+    except Exception:
+        return raw
+
+
+async def download_invoice_pdf(
+    settings: dict,
+    ettn: str,
+    *,
+    e_type: str = "e_archive",
+    invoice_number: str = "",
+    viewer_url: str = "",
+) -> bytes:
+    """İşNet Invoice/GetInvoicePdf — resmi e-Arşiv/e-Fatura PDF (NetteFatura-API)."""
+    key_src = (viewer_url or "").strip()
+    if not key_src:
+        link = await get_document_viewer_link(
+            settings, ettn, e_type=e_type, invoice_number=invoice_number
+        )
+        key_src = link.get("url") or ""
+    key = extract_viewer_key(key_src)
+    if not key:
+        raise HTTPException(status_code=404, detail="İşNet PDF anahtarı (key) bulunamadı.")
+    url = f"{api_base(settings)}/api/Invoice/GetInvoicePdf?key={key}"
+    try:
+        async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
+            r = await client.get(
+                url,
+                headers={
+                    "Accept": "application/pdf, application/octet-stream, */*",
+                    "User-Agent": "TamKobi-Isnet-Client",
+                },
+            )
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"İşNet PDF indirilemedi: {e}") from e
+    if r.status_code >= 400 or not r.content:
+        raise HTTPException(
+            status_code=502,
+            detail=f"İşNet PDF HTTP {r.status_code}: {(r.text or '')[:200]}",
+        )
+    ctype = (r.headers.get("content-type") or "").lower()
+    if "pdf" not in ctype and not r.content.startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=502,
+            detail="İşNet PDF yanıtı geçersiz (PDF değil). Fatura NetteFatura'da henüz hazır olmayabilir.",
+        )
+    return bytes(r.content)
+
+
+async def download_invoice_xml(
+    settings: dict,
+    ettn: str,
+    *,
+    e_type: str = "e_archive",
+    invoice_number: str = "",
+    viewer_url: str = "",
+) -> bytes:
+    """İşNet DocumentViewer/DownloadXml — resmi UBL-TR (NetteFatura-API)."""
+    key_src = (viewer_url or "").strip()
+    if not key_src:
+        link = await get_document_viewer_link(
+            settings, ettn, e_type=e_type, invoice_number=invoice_number
+        )
+        key_src = link.get("url") or ""
+    key = extract_viewer_key(key_src)
+    if not key:
+        raise HTTPException(status_code=404, detail="İşNet XML anahtarı (key) bulunamadı.")
+    from urllib.parse import quote
+
+    url = f"{portal_url(settings).rstrip('/')}/DocumentViewer/DownloadXml?key={quote(key, safe='')}"
+    try:
+        async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
+            r = await client.get(
+                url,
+                headers={
+                    "Accept": "text/xml, application/xml, application/octet-stream, */*",
+                    "User-Agent": "TamKobi-Isnet-Client",
+                },
+            )
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"İşNet XML indirilemedi: {e}") from e
+    if r.status_code >= 400 or not r.content:
+        raise HTTPException(
+            status_code=502,
+            detail=f"İşNet XML HTTP {r.status_code}: {(r.text or '')[:200]}",
+        )
+    text = r.content
+    # Bazen zip/html döner
+    head = text[:200].lstrip()
+    if head.startswith(b"<") or b"Invoice" in head[:500]:
+        return bytes(text)
+    raise HTTPException(
+        status_code=502,
+        detail="İşNet XML yanıtı UBL değil. Fatura NetteFatura'da henüz hazır olmayabilir.",
+    )
+
+
 def _decode_xml_payload(payload: str) -> Optional[bytes]:
     if not payload:
         return None

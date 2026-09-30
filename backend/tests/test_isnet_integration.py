@@ -314,7 +314,7 @@ def test_get_document_viewer_link_reads_html_url():
     body = ET.fromstring(
         "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
         "<ein:IsSucceded>true</ein:IsSucceded>"
-        "<ein:HtmlUrl>https://view.example/doc?key=abc</ein:HtmlUrl>"
+        "<ein:HtmlUrl>https://view.example/doc?key=abc%2Fdef</ein:HtmlUrl>"
         "<ein:PdfUrl>https://view.example/pdf?key=abc</ein:PdfUrl>"
         "</Body>"
     )
@@ -324,6 +324,35 @@ def test_get_document_viewer_link_reads_html_url():
         )
     assert info["url"].startswith("https://view.example/doc")
     assert mock_call.await_args.kwargs["action"] == "GetDocumentViewerLink"
+    assert isnet.extract_viewer_key(info["url"]) == "abc/def"
+
+
+def test_download_invoice_pdf_uses_get_invoice_pdf_api():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    pdf_bytes = b"%PDF-1.4 fake"
+
+    class _Resp:
+        status_code = 200
+        content = pdf_bytes
+        text = ""
+        headers = {"content-type": "application/pdf"}
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(return_value=_Resp())
+
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(return_value={"url": "https://portal/x?key=tok123", "html_url": "https://portal/x?key=tok123", "pdf_url": ""}),
+    ), patch("isnet.httpx.AsyncClient", return_value=mock_client):
+        data = asyncio.get_event_loop().run_until_complete(
+            isnet.download_invoice_pdf(settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        )
+    assert data.startswith(b"%PDF")
+    called_url = mock_client.get.await_args.args[0]
+    assert "GetInvoicePdf" in called_url
+    assert "tok123" in called_url
 
 
 def test_endpoints_match_official_isnet_docs():
