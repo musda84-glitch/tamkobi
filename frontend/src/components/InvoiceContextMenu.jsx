@@ -72,12 +72,24 @@ export function canDeleteInvoice(inv) {
   return true;
 }
 
-/** Taslak ve kağıt kayıtlar henüz GİB e-belgesi değildir; menüden kesilebilir. */
+/** Satış taslak/kağıt kesilebilir. Alış faturaları GİB'e kesilmez (satıcı keser). */
 export function canIssueInvoice(inv) {
-  if (!inv || isIncomingPurchaseInvoice(inv)) return false;
+  if (!inv) return false;
+  if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return false;
   if (inv.status === "cancelled" || inv.invoice_type === "dispatch" || inv.e_type === "expense_slip") return false;
   if (inv.status === "draft" || inv.e_type === "paper") return true;
   return !isGibIssued(inv);
+}
+
+/** Alış veya GİB'e kesilmiş satış: PDF/XML indirilebilir. */
+export function canDownloadGibDocuments(inv) {
+  if (!inv) return false;
+  if (inv.status === "cancelled") return false;
+  const et = inv.e_type || "";
+  if (et === "paper" || et === "expense_slip" || et === "e_dispatch") return false;
+  if (!["e_invoice", "e_archive", "e_export"].includes(et)) return false;
+  if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return true;
+  return isGibIssued(inv);
 }
 
 /** Keep a fixed menu inside the viewport. Tall menus scroll instead of running off the bottom. */
@@ -228,13 +240,15 @@ export const InvoiceContextMenu = (props) => {
   const pending = isIncomingPurchasePending(inv);
   const issued = isGibIssued(inv);
   const canIssue = canIssueInvoice(inv);
+  const isPurchase = inv.invoice_type === "purchase";
+  const showGibDownloads = canDownloadGibDocuments(inv);
   const deletable = canDeleteInvoice(inv);
   const editable = canEditInvoice(inv);
   const cancellable = canCancelInvoice(inv);
   const slipable = canIssueExpenseSlip(inv);
   const copyable = onCopy && canCopyInvoice(inv);
   const paid = invoiceHasPayment(inv);
-  const showIssuedActions = issued && !incoming;
+  const showIssuedActions = issued && !incoming && !isPurchase;
   const gibType = suggestedIssueTypeFromGib(gibLookup);
   const gibSub = gibBusy
     ? "GİB mükellef sorgulanıyor…"
@@ -280,6 +294,42 @@ export const InvoiceContextMenu = (props) => {
             Gelen e-fatura — kesilmez. Durum: <span className="font-semibold text-slate-700">{inv.gib_status || incomingPurchaseResponse(inv)}</span>
           </div>
         )
+      ) : isPurchase ? (
+        <div className="border-b border-slate-100 pb-1" data-testid="ctx-purchase-actions">
+          {onEdit && editable && (
+            <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
+          )}
+          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-indigo-700">GİB BELGELERİ</div>
+          <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-purchase-no-issue-note">
+            Alış faturası GİB&apos;e kesilmez; satıcı keser. PDF / XML indirin.
+          </p>
+          <Item
+            icon={Download}
+            color="text-indigo-600"
+            label="PDF İndir"
+            sub="GİB / entegratör e-belge PDF"
+            onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf?require_integrator=1`, "_blank")}
+            testId="ctx-download-pdf"
+          />
+          <Item
+            icon={FileCode2}
+            color="text-indigo-600"
+            label="XML İndir"
+            sub="GİB UBL-TR"
+            onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/xml`, "_blank")}
+            testId="ctx-download-xml"
+          />
+          {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
+            <Item
+              icon={ExternalLink}
+              color="text-emerald-600"
+              label="Resmi GİB Belgesi"
+              sub="Entegratör görüntüleme linki"
+              onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/gib-document`, "_blank")}
+              testId="ctx-gib-doc-url"
+            />
+          )}
+        </div>
       ) : canIssue ? (
         <div className="border-b border-slate-100 pb-1">
           {onEdit && editable && (
@@ -343,11 +393,29 @@ export const InvoiceContextMenu = (props) => {
           ))}
         </div>
       )}
-      {issued && inv.e_type !== "paper" && inv.e_type !== "expense_slip" && (
+      {!isPurchase && showGibDownloads && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-edoc-downloads">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
           <Item icon={FileCode2} color="text-indigo-600" label="UBL XML İndir" sub="Entegratör GİB UBL-TR" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/xml`, "_blank")} testId="ctx-download-xml" />
           <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Entegratör e-belge PDF" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf?require_integrator=1`, "_blank")} testId="ctx-download-pdf" />
+          {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
+            <Item
+              icon={ExternalLink}
+              color="text-emerald-600"
+              label="Resmi GİB Belgesi"
+              sub="Entegratör görüntüleme linki"
+              onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/gib-document`, "_blank")}
+              testId="ctx-gib-doc-url"
+            />
+          )}
+        </div>
+      )}
+      {/* Gelen alış: onay/red altında da PDF/XML */}
+      {incoming && showGibDownloads && (
+        <div className="border-b border-slate-100 pb-1" data-testid="ctx-incoming-edoc-downloads">
+          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-indigo-700">GİB BELGELERİ</div>
+          <Item icon={Download} color="text-indigo-600" label="PDF İndir" sub="GİB / entegratör e-belge PDF" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf?require_integrator=1`, "_blank")} testId="ctx-download-pdf" />
+          <Item icon={FileCode2} color="text-indigo-600" label="XML İndir" sub="GİB UBL-TR" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/xml`, "_blank")} testId="ctx-download-xml" />
           {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
             <Item
               icon={ExternalLink}
