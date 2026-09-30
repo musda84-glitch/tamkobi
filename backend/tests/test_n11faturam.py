@@ -122,6 +122,15 @@ class TestN11FaturamUnit:
         assert root is not None
         xml2, _, _ = n11faturam.build_ubl({**inv, "e_type": "e_archive", "contact_tax_id": ""}, company, {"name": "Ali Veli"})
         assert "EARSIVFATURA" in xml2 and "11111111111" in xml2
+        assert "GONDERIMSEKLI" in xml2 and "KAGIT" in xml2  # e-posta yok → KAGIT
+        xml3, _, _ = n11faturam.build_ubl(
+            {**inv, "e_type": "e_archive"},
+            company,
+            {"name": "Ali Veli", "tax_number_or_id": "11111111111", "email": "ali@example.com"},
+        )
+        assert "GONDERIMSEKLI" in xml3 and "ELEKTRONIK" in xml3 and "INTERNETSATISI" in xml3
+        assert "ali@example.com" in xml3
+        assert "GONDERIMSEKLI" not in xml  # e-Fatura profilinde yok
 
     def test_parse_ticket_and_send(self):
         assert n11faturam.parse_ticket(_ticket_xml()) == "TICKET-ABC"

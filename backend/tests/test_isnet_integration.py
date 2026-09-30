@@ -151,6 +151,47 @@ def test_send_archive_invoice_xml_requires_ettn():
     assert "ETTN" in e.value.detail
 
 
+def test_soap_call_surfaces_result_failed():
+    """İşNet Result=Failed + ErrorMessage → kullanıcıya net hata (ETTN yok mesajı değil)."""
+    settings = {"mode": "test"}
+    fault_xml = (
+        '<?xml version="1.0"?>'
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">'
+        "<s:Body>"
+        '<SendArchiveInvoiceXmlResponse xmlns="http://tempuri.org/">'
+        '<SendArchiveInvoiceXmlResult xmlns:a="http://schemas.datacontract.org/2004/07/EInvoice.Service.Model">'
+        "<a:ErrorMessage>gönderim şekli geçersiz</a:ErrorMessage>"
+        "<a:Result>Failed</a:Result>"
+        "<a:ArchiveInvoices/>"
+        "</SendArchiveInvoiceXmlResult>"
+        "</SendArchiveInvoiceXmlResponse>"
+        "</s:Body></s:Envelope>"
+    )
+
+    class _Resp:
+        status_code = 200
+        text = fault_xml
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=_Resp())
+
+    with patch("isnet.httpx.AsyncClient", return_value=mock_client):
+        with pytest.raises(HTTPException) as e:
+            asyncio.get_event_loop().run_until_complete(
+                isnet._soap_call(
+                    settings,
+                    endpoint=isnet.TEST_SOAP,
+                    action="SendArchiveInvoiceXml",
+                    service_interface="IInvoiceService",
+                    request={"CompanyTaxCode": "4810173324"},
+                )
+            )
+    assert e.value.status_code == 400
+    assert "gönderim şekli" in e.value.detail
+
+
 def test_send_archive_invoice_xml_ok_with_ettn():
     settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
     body = ET.fromstring(

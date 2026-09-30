@@ -412,9 +412,17 @@ async def _soap_call(
             status_code=502, detail=f"İşNet SOAP Fault ({action}): {fault or 'bilinmeyen'}"
         )
     success = _find_text(body, "IsSucceded", "IsSucceeded", "Success", "IsSuccess").lower()
-    msg = _find_text(body, "Message", "ErrorMessage", "Error")
-    if success in ("false", "0"):
-        raise HTTPException(status_code=400, detail=msg or f"İşNet {action} başarısız.")
+    result = _find_text(body, "Result", "State", "Status").strip()
+    msg = (
+        _find_text(body, "ErrorMessage", "Error")
+        or _find_text(body, "Message")
+        or ""
+    )
+    if success in ("false", "0") or result.lower() in ("failed", "error", "false"):
+        raise HTTPException(
+            status_code=400,
+            detail=msg or f"İşNet {action} başarısız{f' ({result})' if result else ''}.",
+        )
     return body
 
 
