@@ -29,25 +29,31 @@ describe("orderMoreMenu", () => {
     expect(orderHasEInvoiceIssued({ channel: "trendyol", is_invoiced: true, e_type: "e_archive" })).toBe(true);
   });
 
-  it("invoice badge: taslak sarı → faturalaştı yeşil → faturalaşmış e-fatura/e-arşiv kırmızı", () => {
+  it("invoice badge: taslak sarı → faturalaştı yeşil → faturalaşmış e-fatura/e-arşiv kırmızı bilgi", () => {
     expect(orderInvoiceBadge({ invoice_id: "i1", is_invoiced: false })).toEqual(
-      expect.objectContaining({ label: "Taslak", testId: "draft" }),
+      expect.objectContaining({ label: "Taslak", testId: "draft", interactive: true }),
     );
     expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_archive" })).toEqual(
-      expect.objectContaining({ label: "Faturalaştı", testId: "invoiced" }),
+      expect.objectContaining({ label: "Faturalaştı", testId: "invoiced", interactive: true }),
     );
     expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_archive", einvoice_state: "sent" })).toEqual(
       expect.objectContaining({
-        label: "Faturalaşmış E-Arşiv",
+        label: "Faturalaşmış (E-Arşiv)",
+        line1: "Faturalaşmış",
+        line2: "(E-Arşiv)",
         testId: "ebelge-earsiv",
-        className: expect.stringContaining("rose"),
+        interactive: false,
+        className: expect.stringContaining("rose-600"),
       }),
     );
     expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_invoice", einvoice_state: "sent" })).toEqual(
       expect.objectContaining({
-        label: "Faturalaşmış E-Fatura",
+        label: "Faturalaşmış (E-Fatura)",
+        line1: "Faturalaşmış",
+        line2: "(E-Fatura)",
         testId: "ebelge-efatura",
-        className: expect.stringContaining("rose"),
+        interactive: false,
+        className: expect.stringContaining("rose-600"),
       }),
     );
   });
