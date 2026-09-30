@@ -268,22 +268,27 @@ class TestFinalizeAndTrack:
         assert e_invoice.state_to_track_status("sent") == "SENT"
 
         fake_db = MagicMock()
-        inv = {"_id": "inv_x", "company_id": "c1", "invoice_number": "NX99", "grand_total": 120.5, "gib_scenario": "TICARIFATURA"}
+        inv = {"_id": "inv_x", "company_id": "c1", "invoice_number": "NX99", "grand_total": 120.5, "gib_scenario": "TICARIFATURA", "e_type": "e_archive"}
         fake_db.invoices.find_one = AsyncMock(return_value=inv)
+        fake_db.orders.update_one = AsyncMock()
         fake_db.e_invoices.find_one = AsyncMock(return_value=None)
         fake_db.e_invoices.update_one = AsyncMock()
         e_invoice.init(fake_db)
 
         async def _run():
             out = await e_invoice.finalize_create_result(
-                {"status": "success", "einvoice_state": "sent", "gib_uuid": "U-1"},
+                {"status": "success", "einvoice_state": "sent", "gib_uuid": "U-1", "e_type": "e_archive"},
                 "inv_x",
                 order_id="ord1",
                 company_id="c1",
             )
             assert out["invoice_number"] == "NX99"
             assert out["company_id"] == "c1"
+            assert out["e_type"] == "e_archive"
             fake_db.e_invoices.update_one.assert_awaited()
+            patch_set = fake_db.orders.update_one.await_args[0][1]["$set"]
+            assert patch_set["einvoice_state"] == "sent"
+            assert patch_set["e_type"] == "e_archive"
             return out
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())

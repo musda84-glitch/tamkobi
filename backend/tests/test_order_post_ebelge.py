@@ -42,22 +42,56 @@ def test_finalize_create_result_sets_order_invoiced():
     import e_invoice as ei
 
     db = MagicMock()
-    db.invoices.find_one = AsyncMock(return_value={"_id": "inv_2", "invoice_number": "SF-002", "order_id": "ord_2", "company_id": "co"})
+    db.invoices.find_one = AsyncMock(return_value={
+        "_id": "inv_2",
+        "invoice_number": "SF-002",
+        "order_id": "ord_2",
+        "company_id": "co",
+        "e_type": "e_invoice",
+        "einvoice_state": "sent",
+    })
     db.orders.update_one = AsyncMock()
     db.e_invoices.update_one = AsyncMock()
 
     async def run():
         with patch.object(ei, "_db", db), patch.object(ei, "record_e_invoice", AsyncMock()):
             out = await ei.finalize_create_result(
-                {"status": "success", "message": "ok"},
+                {"status": "success", "message": "ok", "e_type": "e_invoice", "einvoice_state": "sent"},
                 "inv_2",
                 order_id="ord_2",
                 company_id="co",
             )
             assert out["invoice_id"] == "inv_2"
+            assert out["e_type"] == "e_invoice"
             db.orders.update_one.assert_awaited()
             args = db.orders.update_one.await_args[0]
             assert args[0] == {"_id": "ord_2"}
-            assert args[1]["$set"]["is_invoiced"] is True
+            order_set = args[1]["$set"]
+            assert order_set["is_invoiced"] is True
+            assert order_set["e_type"] == "e_invoice"
+            assert order_set["invoice_e_type"] == "e_invoice"
+            assert order_set["einvoice_state"] == "sent"
+
+    asyncio.run(run())
+
+
+def test_finalize_create_result_defaults_earsiv_when_type_missing():
+    import e_invoice as ei
+
+    db = MagicMock()
+    db.invoices.find_one = AsyncMock(return_value={"_id": "inv_3", "invoice_number": "SF-003", "order_id": "ord_3", "company_id": "co"})
+    db.orders.update_one = AsyncMock()
+    db.e_invoices.update_one = AsyncMock()
+
+    async def run():
+        with patch.object(ei, "_db", db), patch.object(ei, "record_e_invoice", AsyncMock()):
+            await ei.finalize_create_result(
+                {"status": "success", "einvoice_state": "queued"},
+                "inv_3",
+                order_id="ord_3",
+            )
+            order_set = db.orders.update_one.await_args[0][1]["$set"]
+            assert order_set["e_type"] == "e_archive"
+            assert order_set["einvoice_state"] == "queued"
 
     asyncio.run(run())

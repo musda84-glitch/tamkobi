@@ -228,15 +228,22 @@ async def finalize_create_result(
     out.setdefault("message", out.get("message") or "Fatura GİB sistemine başarıyla iletildi.")
     oid = order_id or inv.get("order_id")
     if oid and out.get("status") != "error":
+        e_type = out.get("e_type") or inv.get("e_type") or "e_archive"
+        einvoice_state = out.get("einvoice_state") or inv.get("einvoice_state") or "sent"
         await _db.orders.update_one(
             {"_id": oid},
             {"$set": {
                 "is_invoiced": True,
                 "invoice_id": invoice_id,
                 "invoice_number": inv.get("invoice_number"),
+                # Sipariş listesi rozeti: Faturalaşmış (E-Fatura|E-Arşiv) — kırmızı bilgi
+                "e_type": e_type,
+                "invoice_e_type": e_type,
+                "einvoice_state": einvoice_state,
             }},
         )
         out.setdefault("order_id", oid)
+        out.setdefault("e_type", e_type)
     await record_e_invoice(
         company_id=out.get("company_id"),
         invoice_id=invoice_id,
