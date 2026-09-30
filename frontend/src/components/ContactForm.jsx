@@ -1,15 +1,14 @@
-
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Save, Loader2, User, Receipt, MapPin, Wallet, ShoppingCart, StickyNote, Upload, Image as ImageIcon } from "lucide-react";
+import { X, Save, Loader2, User, Receipt, MapPin, Wallet, ShoppingCart, StickyNote, Upload, Image as ImageIcon, ShieldCheck, RefreshCw, FlaskConical } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { GibContactLookup } from "./GibContactLookup";
-import { gibLookupToContactPatch } from "../utils/gibContactFill";
+import { gibLookupToContactPatch, gibMukellefLabel, isCompleteTaxId, digitsTaxId } from "../utils/gibContactFill";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30";
 const TABS = [["general", "Genel", User], ["tax", "Vergi & e-Fatura", Receipt], ["address", "Adres & Konum", MapPin], ["finance", "Finans & Vade", Wallet], ["b2b", "B2B Portal", ShoppingCart], ["notes", "Notlar & Etiket", StickyNote]];
@@ -33,23 +32,102 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const [tab, setTab] = useState("general");
   const [f, setF] = useState({ ...EMPTY, ...(contact || {}), ...b2bSettingsFromContact(contact), b2b_password: "", tags: contact?.tags || [] });
   const [busy, setBusy] = useState(false);
+  const [gibBusy, setGibBusy] = useState(false);
+  const [gibMeta, setGibMeta] = useState(null);
+  const lastGibTax = useRef("");
   const set = (k) => (e) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.type === "number" ? Number(e.target.value) : e.target.value });
-  const applyGib = (res) => {
+
+  const applyGib = useCallback((res, { switchTab = true } = {}) => {
+    if (!res) return;
     setF((prev) => ({ ...prev, ...gibLookupToContactPatch(res, prev) }));
-    if (tab === "general") setTab("tax");
+    setGibMeta(res);
+    lastGibTax.current = String(res.tax_id || "");
+    if (switchTab) setTab((t) => (t === "general" ? "tax" : t));
+  }, []);
+
+  const fetchGibMukellef = useCallback(async (rawTax, { quiet = false, switchTab = false, force = false } = {}) => {
+    const tid = digitsTaxId(rawTax);
+    if (!isCompleteTaxId(tid)) return null;
+    if (!force && tid === lastGibTax.current && gibMeta?.tax_id === tid) return gibMeta;
+    setGibBusy(true);
+    try {
+      const r = await axios.get(`${API_URL}/gib/lookup`, { params: { tax_id: tid, company_id: companyId } });
+      applyGib(r.data, { switchTab });
+      if (!quiet) toast.success(r.data.message || "GİB mükellefiyeti güncellendi.");
+      return r.data;
+    } catch (err) {
+      if (!quiet) toast.error(err.response?.data?.detail || "GİB sorgusu başarısız.");
+      return null;
+    } finally {
+      setGibBusy(false);
+    }
+  }, [applyGib, companyId, gibMeta]);
+
+  const onTaxIdChange = (e) => {
+    const tid = digitsTaxId(e.target.value);
+    setF((prev) => ({ ...prev, tax_number_or_id: tid }));
+    if (tid !== lastGibTax.current) setGibMeta(null);
   };
+
+  const onTaxIdBlur = () => {
+    if (isCompleteTaxId(f.tax_number_or_id)) fetchGibMukellef(f.tax_number_or_id, { quiet: true });
+  };
+
+  useEffect(() => {
+    const tid = digitsTaxId(f.tax_number_or_id);
+    if (!isCompleteTaxId(tid) || tid === lastGibTax.current) return undefined;
+    const t = setTimeout(() => fetchGibMukellef(tid, { quiet: true }), 450);
+    return () => clearTimeout(t);
+  }, [f.tax_number_or_id, fetchGibMukellef]);
+
   const F = (k, l, type = "text", extra = {}) => <div className={extra.span ? "sm:col-span-2" : ""}><label className="block font-semibold text-slate-700 mb-1">{l}</label><input type={type} value={f[k] ?? ""} onChange={set(k)} placeholder={extra.ph || ""} className={inp} data-testid={`cf-${k}`} /></div>;
   const S = (k, l, opts) => <div><label className="block font-semibold text-slate-700 mb-1">{l}</label><select value={f[k] ?? ""} onChange={set(k)} className={inp} data-testid={`cf-${k}`}>{opts.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>;
   const C = (k, l) => <label className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 cursor-pointer"><input type="checkbox" checked={!!f[k]} onChange={set(k)} data-testid={`cf-${k}`} /><span className="font-semibold text-slate-700">{l}</span></label>;
+
+  const mukellef = gibMukellefLabel(!!f.is_e_invoice_user);
+  const mukellefTone = mukellef.tone === "emerald"
+    ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+    : "bg-blue-50 text-blue-800 border-blue-200";
+
   const gibBlock = (
     <div className="sm:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 space-y-1.5" data-testid="cf-gib-block">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] font-bold text-emerald-900">GİB’den cari çağır</p>
-        <span className="text-[10px] text-emerald-700/80">VKN/TCKN → ünvan & e-Fatura durumu</span>
+        <span className="text-[10px] text-emerald-700/80">VKN/TCKN → ünvan & e-Fatura / e-Arşiv</span>
       </div>
-      <GibContactLookup companyId={companyId} onApply={applyGib} />
+      <GibContactLookup companyId={companyId} onApply={(res) => applyGib(res, { switchTab: true })} />
     </div>
   );
+
+  const mukellefBlock = (
+    <div className={`sm:col-span-2 rounded-xl border px-3 py-2.5 space-y-1 ${mukellefTone}`} data-testid="cf-gib-mukellef">
+      <div className="flex flex-wrap items-center gap-2">
+        <ShieldCheck className="w-4 h-4 shrink-0" />
+        <span className="font-bold text-xs" data-testid="cf-is_e_invoice_user">{mukellef.title}</span>
+        {gibBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" data-testid="cf-gib-busy" />}
+        {gibMeta?.source === "simulated" && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 rounded-md px-1.5 py-0.5">
+            <FlaskConical className="w-3 h-3" /> SİMÜLE
+          </span>
+        )}
+        {gibMeta?.source && gibMeta.source !== "simulated" && (
+          <span className="text-[10px] font-semibold opacity-80">Kaynak: {gibMeta.source}</span>
+        )}
+        <button
+          type="button"
+          onClick={() => fetchGibMukellef(f.tax_number_or_id, { quiet: false, force: true })}
+          disabled={gibBusy || !isCompleteTaxId(f.tax_number_or_id)}
+          className="ml-auto inline-flex items-center gap-1 text-[10px] font-bold underline disabled:opacity-40"
+          data-testid="cf-gib-refresh"
+        >
+          <RefreshCw className={`w-3 h-3 ${gibBusy ? "animate-spin" : ""}`} /> GİB’den yenile
+        </button>
+      </div>
+      <p className="text-[11px] opacity-90">{mukellef.hint} Mükellefiyet entegratör üzerinden GİB’den otomatik gelir; elle işaretlenmez.</p>
+      <input type="checkbox" className="sr-only" checked={!!f.is_e_invoice_user} readOnly data-testid="cf-is_e_invoice_user-check" tabIndex={-1} aria-hidden />
+    </div>
+  );
+
   const uploadLogo = async (e) => {
     const raw = e.target.files?.[0];
     e.target.value = "";
@@ -66,14 +144,22 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
       toast.error(err.response?.data?.detail || "Logo yüklenemedi.");
     }
   };
+
   const save = async (e) => {
     e.preventDefault();
     if (!f.name || !f.tax_number_or_id) { setTab("general"); return toast.error("Cari adı ve VKN/TCKN zorunludur."); }
     setBusy(true);
     try {
+      let mukellefRes = gibMeta;
+      if (isCompleteTaxId(f.tax_number_or_id)) {
+        mukellefRes = await fetchGibMukellef(f.tax_number_or_id, { quiet: true, force: true }) || gibMeta;
+      }
       const payload = { ...f, tags: Array.isArray(f.tags) ? f.tags : String(f.tags).split(",").map((t) => t.trim()).filter(Boolean) };
+      if (mukellefRes?.tax_id === digitsTaxId(payload.tax_number_or_id)) {
+        payload.is_e_invoice_user = !!mukellefRes.is_e_invoice_user;
+        if (mukellefRes.alias) payload.e_invoice_alias = mukellefRes.alias;
+      }
       if (!payload.b2b_password) delete payload.b2b_password;
-      // UI-only B2B feature fields → API settings payload
       const b2bSettings = {
         allow_orders: !!payload.b2b_allow_orders,
         show_prices: !!payload.b2b_show_prices,
@@ -101,8 +187,7 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
       onSaved?.(r.data);
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
-  // Portal to body: header uses sticky + backdrop-blur, which traps position:fixed
-  // and clips the modal when opened from HeaderQuickActions ("Yeni Cari").
+
   return createPortal(
     <div className="fixed inset-0 z-[90] bg-slate-900/60 backdrop-blur-sm overflow-y-auto overscroll-contain" {...backdropDismissProps(onClose)} data-testid="contact-form-overlay">
       <div className="min-h-full flex items-start justify-center p-4 sm:p-6">
@@ -131,9 +216,22 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
           </div>}
           {tab === "tax" && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {gibBlock}
-            {F("tax_number_or_id", "VKN / TCKN *", "text", { ph: "10 veya 11 hane" })}{F("tax_office", "Vergi Dairesi")}
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">VKN / TCKN *</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={f.tax_number_or_id ?? ""}
+                onChange={onTaxIdChange}
+                onBlur={onTaxIdBlur}
+                placeholder="10 veya 11 hane — çıkınca GİB sorgulanır"
+                className={inp}
+                data-testid="cf-tax_number_or_id"
+              />
+            </div>
+            {F("tax_office", "Vergi Dairesi")}
             {F("e_invoice_alias", "GİB PK Etiketi", "text", { span: true, ph: "urn:mail:…@…" })}
-            <div className="sm:col-span-2">{C("is_e_invoice_user", "e-Fatura mükellefi (GİB kayıtlı) — faturalar e-Fatura olarak kesilir, değilse e-Arşiv")}</div>
+            {mukellefBlock}
             {S("currency", "Para Birimi", [["TRY", "₺ TRY"], ["USD", "$ USD"], ["EUR", "€ EUR"], ["GBP", "£ GBP"]])}{S("payment_method", "Varsayılan Ödeme Şekli", [["", "—"], ["cash", "Nakit"], ["transfer", "Havale/EFT"], ["card", "Kredi Kartı"], ["check", "Çek"], ["note", "Senet"], ["open_account", "Açık Hesap"]])}
           </div>}
           {tab === "address" && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -164,7 +262,7 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
             <div><label className="block font-semibold text-slate-700 mb-1">Notlar</label><textarea rows={5} value={f.notes || ""} onChange={set("notes")} className={inp} data-testid="cf-notes" /></div>
           </div>}
         </div>
-        <div className="flex justify-end gap-2 px-6 py-4 border-t shrink-0"><button type="button" onClick={onClose} className="px-4 py-2 border rounded-xl text-slate-600">İptal</button><button type="submit" disabled={busy} className="px-5 py-2 bg-emerald-600 text-white rounded-xl font-semibold flex items-center gap-1.5 disabled:opacity-60" data-testid="cf-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {contact?.id ? "Güncelle" : "Kaydet"}</button></div>
+        <div className="flex justify-end gap-2 px-6 py-4 border-t shrink-0"><button type="button" onClick={onClose} className="px-4 py-2 border rounded-xl text-slate-600">İptal</button><button type="submit" disabled={busy || gibBusy} className="px-5 py-2 bg-emerald-600 text-white rounded-xl font-semibold flex items-center gap-1.5 disabled:opacity-60" data-testid="cf-save">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {contact?.id ? "Güncelle" : "Kaydet"}</button></div>
       </form>
       </div>
     </div>,
