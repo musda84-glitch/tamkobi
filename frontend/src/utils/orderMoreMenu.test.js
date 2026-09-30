@@ -7,7 +7,6 @@ import {
   orderMoreMenuKind,
   orderMoreMenuItems,
   integrationEInvoiceMoreItems,
-  panelEInvoiceMoreItems,
 } from "./orderMoreMenu";
 
 describe("orderMoreMenu", () => {
@@ -116,16 +115,34 @@ describe("orderMoreMenu", () => {
     }).items.map((i) => i.label)[0]).toBe("E-Fatura Oluştur");
   });
 
-  it("B2B + GİB e-belge uses panel e-invoice ops menu on web and mobile", () => {
+  it("B2B + GİB e-belge uses panel e-invoice ops menu (E-Arşiv etiketleri)", () => {
     const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent", order_number: "B2B-2026-0009" };
     expect(orderMoreMenuKind(ord)).toBe("panel_einvoice");
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label).slice(0, -2)).toEqual(panelEInvoiceMoreItems().map((i) => i.label));
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Mini E-Arşiv Yazdır (10X15cm)");
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("E-Fatura XML'i İndir");
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Siparişi Excel İndir");
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Siparişi PDF İndir");
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("E-Belge Kes");
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Navlungo Siparişi Oluştur");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
+      "Mini E-Arşiv Yazdır (10X15cm)",
+      "Mini E-Arşiv Yazdır (8X20cm)",
+      "Mini Kargo Etiketi Yazdır",
+      "Mini Kargo Etiketi Yazdır 10X10",
+      "E-Arşiv Yazdır & Gönder",
+      "Kargola",
+      "E-Arşiv XML'i İndir",
+    ]);
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("E-Fatura Oluştur");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Siparişi Excel İndir");
+  });
+
+  it("B2B + GİB e-fatura uses E-Fatura labeled ops menu", () => {
+    const ord = { channel: "b2b", is_invoiced: true, e_type: "e_invoice", einvoice_state: "sent", order_number: "B2B-2026-0025" };
+    expect(orderMoreMenuKind(ord)).toBe("panel_einvoice");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
+      "Mini E-Fatura Yazdır (10X15cm)",
+      "Mini E-Fatura Yazdır (8X20cm)",
+      "Mini Kargo Etiketi Yazdır",
+      "Mini Kargo Etiketi Yazdır 10X10",
+      "E-Fatura Yazdır & Gönder",
+      "Kargola",
+      "E-Fatura XML'i İndir",
+    ]);
   });
 
   it("held / active cart menus expose no more-menu actions", () => {

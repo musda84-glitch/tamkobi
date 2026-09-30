@@ -147,19 +147,18 @@ export function panelDraftMoreItems() {
   ];
 }
 
-/** B2B / panel — GİB e-fatura / e-arşiv kesilmiş işlem menüsü. */
-export function panelEInvoiceMoreItems() {
+/** B2B / panel — GİB e-fatura / e-arşiv kesilmiş işlem menüsü (onay sonrası). */
+export function panelEInvoiceMoreItems(ord) {
+  const kind = orderEBelgeKindLabel(ord); // E-Fatura | E-Arşiv | E-Belge
+  const doc = kind === "E-Belge" ? "E-Fatura" : kind;
   return [
-    item("mini_10x15", "Mini E-Arşiv Yazdır (10X15cm)", FileText, { color: "text-sky-600" }),
-    item("mini_8x20", "Mini E-Arşiv Yazdır (8X20cm)", FileText, { color: "text-sky-600" }),
+    item("mini_10x15", `Mini ${doc} Yazdır (10X15cm)`, FileText, { color: "text-sky-600" }),
+    item("mini_8x20", `Mini ${doc} Yazdır (8X20cm)`, FileText, { color: "text-sky-600" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
-    item("earsiv_send", "E-Arşiv Yazdır & Gönder", Mail, { color: "text-emerald-600" }),
-    item("cargo_track_notify", "Kargo Takip Kodu Bildir", History, { color: "text-sky-500" }),
-    item("invoice_link", "Fatura Linki Gönder", Link2, { color: "text-rose-500" }),
-    item("xml", "E-Fatura XML'i İndir", Code2, { color: "text-sky-500" }),
-    item("invoice_date", "Fatura Tarihi Değiştir", History, { color: "text-amber-600" }),
+    item("earsiv_send", `${doc} Yazdır & Gönder`, Mail, { color: "text-emerald-600" }),
     item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
+    item("xml", `${doc} XML'i İndir`, Code2, { color: "text-sky-500" }),
   ];
 }
 
@@ -224,8 +223,11 @@ export function orderMoreMenuItems(ord, opts = {}) {
     // Aktif / bekleyen sepet: satırda Yazdır + Eksik ürünleri üretime al; menü boş
     return { kind, items: [] };
   }
-  if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
-  else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
+  if (kind === "panel_einvoice") {
+    // E-belge onayı sonrası: yazdır / kargo / XML (Excel/PDF yok — referans menü)
+    return { kind, items: panelEInvoiceMoreItems(ord) };
+  }
+  if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems();
   else if (kind === "panel_invoiced") {
     // Faturalaştı: E-Fatura Oluştur + kargo (Excel/PDF yok — referans menü)
