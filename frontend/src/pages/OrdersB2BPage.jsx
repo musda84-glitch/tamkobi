@@ -31,6 +31,7 @@ import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/Marke
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
 import { CargoLabel } from "../components/CargoLabel";
 import { ApproveOrderModal } from "../components/ApproveOrderModal";
+import { ElektronikFaturaOnayModal } from "../components/ElektronikFaturaOnayModal";
 import { CreateShipmentModal } from "../components/CreateShipmentModal";
 import { ChangeMarketplaceCargoModal } from "../components/ChangeMarketplaceCargoModal";
 import { channelTr, statusTr, orderStatusBadgeClass, marketplaceStatusTr } from "../utils/labels";
@@ -171,7 +172,7 @@ function mobilePrimaryAction(ord) {
   const kind = orderMoreMenuKind(ord);
   if (kind === "held_cart") return null;
   if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır", className: "bg-emerald-600 text-white" };
-  if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Belge Kes", className: "bg-rose-500 text-white" };
+  if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura Oluştur", className: "bg-rose-500 text-white" };
   if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv", className: "bg-sky-600 text-white" };
   if (kind === "integration_einvoice") return { id: "cargo_mini", label: "Etiket", className: "bg-sky-600 text-white" };
   return null;
@@ -193,6 +194,7 @@ export default function OrdersB2BPage() {
   const [dispatchDoc, setDispatchDoc] = useState(null);
   const [returnOrder, setReturnOrder] = useState(null);
   const [approveOrder, setApproveOrder] = useState(null);
+  const [eFaturaOrder, setEFaturaOrder] = useState(null);
   const [shipOrder, setShipOrder] = useState(null);
   const [cargoChangeOrder, setCargoChangeOrder] = useState(null);
   const [selected, setSelected] = useState([]);
@@ -581,8 +583,8 @@ export default function OrdersB2BPage() {
     }
   };
 
-  /** Diğer işlemler: e-belge (GİB). Mükellef değilse zorla e-arşiv. */
-  const handleEBelgeInvoice = async (ord, eType) => {
+  /** Diğer işlemler: e-belge (GİB). Mükellef değilse zorla e-arşiv. opts.scenario = TEMEL|TICARI. */
+  const handleEBelgeInvoice = async (ord, eType, opts = {}) => {
     const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
     const resolved = eType === "e_invoice" && orderEBelgeType(ord, contacts) !== "e_invoice"
       ? "e_archive"
@@ -591,7 +593,7 @@ export default function OrdersB2BPage() {
     if (resolved !== eType && eType === "e_invoice") {
       toast.message("Cari e-fatura mükellefi değil; E-Arşiv kesilecek.");
     }
-    if (!window.confirm(`${ord.order_number} için ${label} GİB'e iletilsin mi?`)) return;
+    if (!opts.skipConfirm && !window.confirm(`${ord.order_number} için ${label} GİB'e iletilsin mi?`)) return;
     try {
       let invoiceId = ord.invoice_id;
       if (!invoiceId) {
@@ -601,17 +603,21 @@ export default function OrdersB2BPage() {
         });
         invoiceId = draft.data?.invoice_id;
       }
+      const scenario = resolved === "e_invoice"
+        ? (opts.scenario === "TEMEL" ? "TEMEL" : "TICARI")
+        : undefined;
       const res = await axios.post(`${API_URL}/e-invoice/create`, {
         invoice_id: invoiceId || undefined,
         order_id: ord.id || ord._id,
         company_id: companyId,
         e_type: resolved,
-        scenario: resolved === "e_invoice" ? "TICARI" : undefined,
+        scenario,
       });
       toast.success(res.data.message || `${label} GİB'e iletildi.`);
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.detail || `${label} kesilemedi.`);
+      throw err;
     }
   };
 
@@ -640,7 +646,7 @@ export default function OrdersB2BPage() {
         await handleFaturalastir(ord);
         return;
       case "efatura_olustur":
-        await handleEBelgeInvoice(ord, orderEBelgeType(ord, contacts));
+        setEFaturaOrder(ord);
         return;
       case "invoice_date": {
         if (!ord.invoice_id) {
@@ -904,6 +910,17 @@ export default function OrdersB2BPage() {
         />
       )}
       {approveOrder && <ApproveOrderModal order={approveOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setApproveOrder(null)} onDone={loadData} />}
+      {eFaturaOrder && (
+        <ElektronikFaturaOnayModal
+          order={eFaturaOrder}
+          contacts={contacts}
+          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          onClose={() => setEFaturaOrder(null)}
+          onConfirm={async ({ eType, scenario }) => {
+            await handleEBelgeInvoice(eFaturaOrder, eType, { scenario, skipConfirm: true });
+          }}
+        />
+      )}
       {returnOrder && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"><div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs" data-testid="return-modal">
           <h3 className="text-sm font-bold">İade — {returnOrder.order_number}</h3><p className="text-slate-500">Tüm kalemler iade alınır, stok geri eklenir ve iade kaydı oluşturulur.</p>
@@ -1322,9 +1339,9 @@ export default function OrdersB2BPage() {
                             return (
                               <button
                                 type="button"
-                                onClick={() => handleEBelgeInvoice(ord, orderEBelgeType(ord, contacts))}
+                                onClick={() => setEFaturaOrder(ord)}
                                 className="inline-flex flex-col items-center justify-center px-1.5 py-0.5 rounded-lg text-[9px] font-bold leading-tight bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 max-w-[4.5rem]"
-                                title="Faturalaştı — tıkla: E-Belge Kes (GİB)"
+                                title="Faturalaştı — tıkla: E-Fatura Oluştur"
                                 data-testid={`invoiced-badge-${ord.order_number}`}
                               >
                                 Faturalaştı

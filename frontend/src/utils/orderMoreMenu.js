@@ -146,29 +146,15 @@ export function panelEInvoiceMoreItems() {
   ];
 }
 
-/** B2B / panel faturalaştıktan sonra — ⋮ içinde GİB e-fatura menüsü. */
-export function panelInvoicedMoreItems(ord, { eBelgeItems = [] } = {}) {
-  const gib = (eBelgeItems || []).map((eb) =>
-    item(`ebelge_${eb.eType}`, eb.label, Stamp, {
-      testId: `e-belge-${eb.testIdSuffix}`,
-      section: "GİB e-Fatura",
-      color: eb.eType === "e_invoice" ? "text-indigo-600" : "text-violet-600",
-      eType: eb.eType,
-    }),
-  );
-  if (!gib.length) {
-    gib.push(
-      item("efatura_olustur", "E-Belge Kes", Zap, {
-        color: "text-rose-500",
-        section: "GİB e-Fatura",
-      }),
-    );
-  }
+/**
+ * B2B / panel faturalaştıktan sonra (henüz GİB e-belgesi yok).
+ * «E-Fatura Oluştur» → Elektronik Fatura Onayı modalı (Temel/Ticari).
+ */
+export function panelInvoicedMoreItems() {
   return [
-    ...gib,
+    item("efatura_olustur", "E-Fatura Oluştur", Zap, { color: "text-rose-500", testId: "efatura-olustur" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
-    item("invoice_date", "Fatura Tarihi Değiştir", History, { color: "text-amber-600" }),
     item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
   ];
 }
@@ -224,7 +210,7 @@ export function orderMoreMenuItems(ord, opts = {}) {
   if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
   else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems();
-  else if (kind === "panel_invoiced") items = panelInvoicedMoreItems(ord, opts);
+  else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
   else items = defaultMoreItems(ord, opts);
   const allowDelete = opts.canDelete !== false;
   if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];

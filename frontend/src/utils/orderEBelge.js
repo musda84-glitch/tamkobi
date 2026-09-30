@@ -36,6 +36,13 @@ export function orderCanIssueEFatura(ord, contacts = []) {
   return orderEBelgeType(ord, contacts) === "e_invoice";
 }
 
+/** Elektronik Fatura Onayı modal metni. */
+export function efaturaOnayMessage(ord, contacts = []) {
+  return orderCanIssueEFatura(ord, contacts)
+    ? "Bu müşteri e-fatura mükellefidir, karşı tarafa e-fatura gönderilecek. Onaylıyor musunuz?"
+    : "Bu müşteri e-fatura mükellefi değildir, e-arşiv faturası oluşturulacak. Onaylıyor musunuz?";
+}
+
 export function eBelgeMenuItems(ord, contacts = []) {
   const type = orderEBelgeType(ord, contacts);
   if (type === "e_invoice") {
