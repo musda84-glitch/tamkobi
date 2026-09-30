@@ -185,8 +185,8 @@ def test_verify_outgoing_ok_via_viewer():
         AsyncMock(return_value={"url": "https://view.example/doc?key=abc", "html_url": "https://view.example/doc?key=abc", "pdf_url": ""}),
     ):
         info = asyncio.get_event_loop().run_until_complete(
-            isnet.verify_outgoing_in_portal(
-                settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", e_type="e_archive"
+            isnet.try_verify_outgoing_in_portal(
+                settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", e_type="e_archive", retries=1
             )
         )
     assert info["ok"] is True
@@ -204,16 +204,16 @@ def test_verify_outgoing_ok_via_search_when_viewer_missing():
         AsyncMock(return_value=[{"ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "invoice_id": "TA1"}]),
     ):
         info = asyncio.get_event_loop().run_until_complete(
-            isnet.verify_outgoing_in_portal(
-                settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", e_type="e_archive"
+            isnet.try_verify_outgoing_in_portal(
+                settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", e_type="e_archive", retries=1
             )
         )
     assert info["ok"] is True
     assert info["via"] == "search"
 
 
-def test_verify_outgoing_fails_when_not_in_portal():
-    """SOAP ETTN verse bile NetteFatura'da yoksa iletildi sayılmamalı."""
+def test_soft_verify_returns_false_when_not_in_portal():
+    """NetteFatura-API: portal anında boş olsa da soft verify hata fırlatmaz."""
     settings = {"company_tax_id": "4810173324", "mode": "test"}
     with patch(
         "isnet.get_document_viewer_link",
@@ -222,18 +222,16 @@ def test_verify_outgoing_fails_when_not_in_portal():
         "isnet.search_archive_invoice",
         AsyncMock(return_value=[]),
     ):
-        with pytest.raises(HTTPException) as e:
-            asyncio.get_event_loop().run_until_complete(
-                isnet.verify_outgoing_in_portal(
-                    settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", e_type="e_archive"
-                )
+        info = asyncio.get_event_loop().run_until_complete(
+            isnet.try_verify_outgoing_in_portal(
+                settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", e_type="e_archive", retries=1
             )
-    assert e.value.status_code == 502
-    assert "bulunamadı" in e.value.detail.lower() or "NetteFatura" in e.value.detail
+        )
+    assert info["ok"] is False
 
 
-def test_send_document_requires_portal_verify():
-    """SendArchiveInvoiceXml Success + ETTN → portal doğrulama zorunlu."""
+def test_send_document_accepts_soap_success_without_immediate_portal():
+    """WSDL/SDK: SendArchiveInvoiceXml Success+ETTN → iletildi; portal soft."""
     settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
     invoice = {"e_type": "e_archive", "invoice_number": "TA202600000095"}
     company = {"tax_number": "4810173324"}
@@ -251,18 +249,15 @@ def test_send_document_requires_portal_verify():
             "document_url": "",
         }),
     ), patch(
-        "isnet.verify_outgoing_in_portal",
-        AsyncMock(side_effect=HTTPException(
-            status_code=502,
-            detail="İşNet SOAP ETTN döndürdü ancak fatura NetteFatura test/canlı portalında bulunamadı.",
-        )),
+        "isnet.try_verify_outgoing_in_portal",
+        AsyncMock(return_value={"ok": False, "document_url": "", "via": ""}),
     ):
-        with pytest.raises(HTTPException) as e:
-            asyncio.get_event_loop().run_until_complete(
-                isnet.send_document(settings, "", invoice, contact, company)
-            )
-    assert e.value.status_code == 502
-    assert "NetteFatura" in e.value.detail
+        sent = asyncio.get_event_loop().run_until_complete(
+            isnet.send_document(settings, "", invoice, contact, company)
+        )
+    assert sent["ettn"].startswith("aaaaaaaa")
+    assert sent["verified"] is False
+    assert sent["invoice_id"] == "TA202600000095"
 
 
 def test_soap_call_surfaces_result_failed():

@@ -4,12 +4,18 @@ Resmi sözleşme (İşNet / NetteFatura):
   InvoiceService + AddressBookService — kimlik doğrulama IP–VKN (CompanyTaxCode).
   SOAP tarafında kullanıcı adı / şifre gerekmez.
   Canlı IP kaydı: efaturadestek@nettefatura.com.tr
+  WSDL (test): …/InvoiceService.svc?wsdl · AddressBookService.svc?wsdl
+
+Gönderim başarı ölçütü (NetteFatura-API / WSDL ile aynı):
+  SendArchiveInvoiceXml / SendInvoiceXml → satır IsSucceded + geçerli ETTN (UUID).
+  GetDocumentViewerLink / Search* portal indeksi gecikebilir; soft verify, gönderimi engellemez.
 
 İsteğe bağlı:
   Portal REST (einvoiceapi) — Account/Login (kullanıcı/şifre) yalnızca ek kontrol için.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import re
@@ -740,21 +746,30 @@ async def send_document(
         is_earchive=(e_type == "e_archive"),
     )
     seller = re.sub(r"\D", "", str((company or {}).get("tax_number") or ""))
-    # Yalnızca SOAP'ın döndürdüğü ETTN — yerel UBL UUID ile sahte «iletildi» yok
+    # NetteFatura-API / WSDL: başarı = satır IsSucceded + geçerli ETTN (UUID).
+    # GetDocumentViewerLink / Search anında hazır olmayabilir — soft verify.
     uuid_out = (info.get("ettn") or "").strip()
     if not is_ettn_uuid(uuid_out):
         raise HTTPException(
             status_code=502,
             detail="İşNet geçerli ETTN (UUID) döndürmedi — NetteFatura/GİB kaydı doğrulanamadı.",
         )
-    inv_no = (info.get("invoice_id") or inv_id or invoice.get("invoice_number") or "").strip()
-    # SOAP Success + ETTN yetmez: NetteFatura'da gerçekten görünür mü doğrula
-    verified = await verify_outgoing_in_portal(
+    # Yalnızca SOAP'ın verdiği fatura no (yerel TA no ile portal arama yanıltmasın)
+    soap_inv_no = (info.get("invoice_id") or "").strip()
+    inv_no = soap_inv_no or (inv_id or invoice.get("invoice_number") or "").strip()
+    verified = await try_verify_outgoing_in_portal(
         merged,
         uuid_out,
         e_type=e_type,
-        invoice_number=inv_no,
+        invoice_number=soap_inv_no,
+        retries=3,
     )
+    if not verified.get("ok"):
+        logger.info(
+            "isnet soft-verify pending ettn=%s inv=%s — SOAP Success kabul (SDK ile aynı)",
+            uuid_out,
+            soap_inv_no or inv_no,
+        )
     return {
         "ettn": uuid_out,
         "invoice_id": inv_no,
@@ -763,7 +778,8 @@ async def send_document(
         "description": info.get("message") or "",
         "provider": "isnet",
         "seller_tax": seller,
-        "verified": True,
+        "verified": bool(verified.get("ok")),
+        "verify_via": verified.get("via") or "",
     }
 
 
@@ -782,17 +798,20 @@ async def search_archive_invoice(
             status_code=400, detail="İşNet arşiv arama için şirket VKN (company_tax_id) gerekli."
         )
     end = datetime.now(timezone.utc)
-    start = end - timedelta(days=14)
+    start = end - timedelta(days=90)
     req: Dict[str, Any] = {
         **req_base,
         "MinInvoiceDate": (min_date or start.strftime("%Y-%m-%d")),
         "MaxInvoiceDate": (max_date or end.strftime("%Y-%m-%d")),
-        "PagingRequest": {"PageNumber": 1, "RecordsPerPage": 20},
+        "PagingRequest": {"PageNumber": 1, "RecordsPerPage": 50},
+        # NetteFatura-API varsayılan ResultSet ile uyum
         "ResultSet": {
-            "IsAdditionalTaxIncluded": False,
-            "IsInvoiceDetailIncluded": False,
+            "IsAdditionalTaxIncluded": True,
+            "IsArchiveIncluded": True,
+            "IsInvoiceDetailIncluded": True,
+            "IsHtmlIncluded": True,
+            "IsPdfIncluded": True,
             "IsXMLIncluded": False,
-            "IsPdfIncluded": False,
         },
     }
     if ettn:
@@ -808,7 +827,7 @@ async def search_archive_invoice(
         timeout=60.0,
     )
     out: List[Dict[str, Any]] = []
-    for inv in _find_all(body, "ArchiveInvoice", "ArchiveInvoiceInfo", "Invoice"):
+    for inv in _find_all(body, "ArchiveInvoice", "ArchiveInvoiceInfo", "Invoice", "ArchiveInvoiceReturn"):
         out.append(
             {
                 "ettn": _find_text(inv, "ETTN", "Ettn", "UUID", "InvoiceETTN"),
@@ -834,17 +853,17 @@ async def search_outgoing_invoice(
             status_code=400, detail="İşNet giden fatura arama için şirket VKN (company_tax_id) gerekli."
         )
     end = datetime.now(timezone.utc)
-    start = end - timedelta(days=14)
+    start = end - timedelta(days=90)
     req: Dict[str, Any] = {
         **req_base,
         "InvoiceDirection": "Outgoing",
         "MinInvoiceDate": (min_date or start.strftime("%Y-%m-%d")),
         "MaxInvoiceDate": (max_date or end.strftime("%Y-%m-%d")),
-        "PagingRequest": {"PageNumber": 1, "RecordsPerPage": 20},
+        "PagingRequest": {"PageNumber": 1, "RecordsPerPage": 50},
         "ResultSet": {
-            "IsAdditionalTaxIncluded": False,
-            "IsArchiveIncluded": False,
-            "IsInvoiceDetailIncluded": False,
+            "IsAdditionalTaxIncluded": True,
+            "IsArchiveIncluded": True,
+            "IsInvoiceDetailIncluded": True,
             "IsXMLIncluded": False,
         },
     }
@@ -872,6 +891,66 @@ async def search_outgoing_invoice(
     return out
 
 
+async def try_verify_outgoing_in_portal(
+    settings: dict,
+    ettn: str,
+    *,
+    e_type: str = "e_archive",
+    invoice_number: str = "",
+    retries: int = 3,
+) -> Dict[str, Any]:
+    """NetteFatura-API ile uyum: viewer/search soft doğrulama; bulunamazsa hata fırlatmaz.
+
+    Send*Xml Success+ETTN yeterli kabul edilir; portal indeksi gecikebilir.
+    """
+    ettn = (ettn or "").strip()
+    if not is_ettn_uuid(ettn):
+        return {"ok": False, "document_url": "", "via": ""}
+
+    delays = (0.0, 0.8, 1.6)[: max(1, int(retries or 1))]
+    last_url = ""
+    for attempt, delay in enumerate(delays):
+        if delay:
+            await asyncio.sleep(delay)
+        # 1) GetDocumentViewerLink
+        try:
+            link = await get_document_viewer_link(
+                settings, ettn, e_type=e_type, invoice_number=invoice_number
+            )
+            last_url = (link.get("url") or link.get("html_url") or link.get("pdf_url") or "").strip()
+            if last_url:
+                return {"ok": True, "document_url": last_url, "via": "viewer", "attempt": attempt + 1}
+        except HTTPException as e:
+            logger.info("isnet soft-verify viewer miss ettn=%s try=%s: %s", ettn, attempt + 1, e.detail)
+
+        # 2) SearchArchiveInvoice / SearchInvoice
+        try:
+            if e_type == "e_archive":
+                rows = await search_archive_invoice(
+                    settings, ettn=ettn, invoice_number=invoice_number
+                )
+            else:
+                rows = await search_outgoing_invoice(
+                    settings, ettn=ettn, invoice_number=invoice_number
+                )
+            needle = ettn.lower()
+            for row in rows:
+                row_ettn = (row.get("ettn") or "").strip().lower()
+                row_no = (row.get("invoice_id") or "").strip()
+                if row_ettn == needle or (invoice_number and row_no == invoice_number):
+                    return {
+                        "ok": True,
+                        "document_url": last_url,
+                        "via": "search",
+                        "invoice_id": row_no,
+                        "attempt": attempt + 1,
+                    }
+        except HTTPException as e:
+            logger.info("isnet soft-verify search miss ettn=%s try=%s: %s", ettn, attempt + 1, e.detail)
+
+    return {"ok": False, "document_url": last_url, "via": ""}
+
+
 async def verify_outgoing_in_portal(
     settings: dict,
     ettn: str,
@@ -879,63 +958,18 @@ async def verify_outgoing_in_portal(
     e_type: str = "e_archive",
     invoice_number: str = "",
 ) -> Dict[str, Any]:
-    """Send*Xml sonrası NetteFatura'da fatura görünür mü — GetDocumentViewerLink + Search.
-
-    SOAP Success + ETTN echo yetmez; test portalında görünmeyen faturalar «iletildi» yazılmasın.
-    """
-    ettn = (ettn or "").strip()
-    if not is_ettn_uuid(ettn):
-        raise HTTPException(
-            status_code=502,
-            detail="İşNet ETTN doğrulanamadı — NetteFatura kaydı yok.",
-        )
-    document_url = ""
-    # 1) Görüntüleme linki — portalda kayıt varsa HTML/PDF URL döner
-    try:
-        link = await get_document_viewer_link(
-            settings, ettn, e_type=e_type, invoice_number=invoice_number
-        )
-        document_url = (link.get("url") or link.get("html_url") or link.get("pdf_url") or "").strip()
-        if document_url:
-            return {"ok": True, "document_url": document_url, "via": "viewer"}
-    except HTTPException as e:
-        logger.info("isnet verify viewer miss ettn=%s: %s", ettn, e.detail)
-
-    # 2) Arama API — ETTN ile listede var mı
-    try:
-        if e_type == "e_archive":
-            rows = await search_archive_invoice(
-                settings, ettn=ettn, invoice_number=invoice_number
-            )
-        else:
-            rows = await search_outgoing_invoice(
-                settings, ettn=ettn, invoice_number=invoice_number
-            )
-        needle = ettn.lower()
-        for row in rows:
-            if (row.get("ettn") or "").strip().lower() == needle:
-                return {
-                    "ok": True,
-                    "document_url": document_url,
-                    "via": "search",
-                    "invoice_id": row.get("invoice_id") or "",
-                }
-            if invoice_number and (row.get("invoice_id") or "").strip() == invoice_number:
-                return {
-                    "ok": True,
-                    "document_url": document_url,
-                    "via": "search_number",
-                    "invoice_id": row.get("invoice_id") or "",
-                }
-    except HTTPException as e:
-        logger.info("isnet verify search miss ettn=%s: %s", ettn, e.detail)
-
+    """Sıkı doğrulama (PDF/yeniden gönderim). Soft sonucu yoksa 502."""
+    info = await try_verify_outgoing_in_portal(
+        settings, ettn, e_type=e_type, invoice_number=invoice_number, retries=2
+    )
+    if info.get("ok"):
+        return info
     raise HTTPException(
         status_code=502,
         detail=(
-            "İşNet SOAP ETTN döndürdü ancak fatura NetteFatura test/canlı portalında bulunamadı. "
-            "Gönderim tamamlanmamış — «GİB'e iletildi» yazılmadı. "
-            "Ayarlar → e-Fatura: mod (test/canlı) ve VKN eşleşmesini kontrol edin."
+            "İşNet ETTN ile NetteFatura portalında fatura bulunamadı. "
+            "Gönderim SOAP Success olsa bile görüntüleme henüz hazır olmayabilir; "
+            "birkaç saniye sonra PDF/GİB belgesi deneyin."
         ),
     )
 
