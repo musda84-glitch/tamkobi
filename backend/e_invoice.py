@@ -395,7 +395,32 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
     consume = _deps.get("consume_credits")
 
     provider = settings.get("provider") or ""
-    if provider in ("n11faturam", "isnet", "isnet_portal") and settings.get("status") == "configured" and et in ("e_invoice", "e_archive"):
+    live_providers = ("n11faturam", "isnet", "isnet_portal")
+    if provider in live_providers and et in ("e_invoice", "e_archive"):
+        if settings.get("status") != "configured":
+            labels = {
+                "n11faturam": "n11 Faturam",
+                "isnet": "İşNet SOAP API",
+                "isnet_portal": "İşNet Web Portal",
+            }
+            label = labels.get(provider, provider)
+            await _db.invoices.update_one(
+                {"_id": invoice_id},
+                {"$set": {
+                    "einvoice_state": "error",
+                    "gib_status": f"Hata: {label} yapılandırılmamış",
+                    "gib_error": "integrator_not_configured",
+                    "error_at": _now(),
+                }},
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{label} seçili ama bağlantı yapılandırılmamış / test edilmemiş. "
+                    "Ayarlar → e-Fatura entegrasyonundan kaydedip test edin; "
+                    "simüle GİB gönderimi yapılmaz."
+                ),
+            )
         if not password_fn:
             raise HTTPException(status_code=500, detail="e-Fatura şifre çözücü yapılandırılmamış.")
         pwd = password_fn(settings)
@@ -422,10 +447,25 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             )
             raise HTTPException(status_code=502, detail=f"Entegratör gönderimi başarısız: {e}") from e
 
+        tracking = (sent.get("ettn") or sent.get("invoice_id") or "").strip()
+        if not tracking:
+            await _db.invoices.update_one(
+                {"_id": invoice_id},
+                {"$set": {
+                    "einvoice_state": "error",
+                    "gib_status": "Hata: Entegratör ETTN/fatura no döndürmedi",
+                    "gib_error": "missing_ettn",
+                    "error_at": _now(),
+                }},
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=f"{label} ETTN/fatura numarası döndürmedi — NetteFatura/GİB kaydı doğrulanamadı.",
+            )
+
         remaining = None
         if consume:
             remaining = await consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
-        tracking = sent.get("ettn") or sent.get("invoice_id")
         patch = {
             "status": "approved",
             "einvoice_state": "sent",

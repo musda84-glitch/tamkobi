@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import xml.etree.ElementTree as ET
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -113,14 +114,86 @@ def test_company_tax_code_and_soap_serialize():
     )
     assert "<ein:CompanyTaxCode>1234567890</ein:CompanyTaxCode>" in xml
     assert "<ein:CompanyVendorNumber>42</ein:CompanyVendorNumber>" in xml
-    assert "<ein:Invoice>" in xml  # NetteFatura-API ARRAY_ITEM_NAME_MAP: Invoices -> Invoice
-    assert "InvoiceXml" not in xml
+    # Resmi SendInvoiceXml örneği: Invoices → InvoiceXml (Invoice yapısal SendInvoice içindir)
+    assert "<ein:InvoiceXml>" in xml
+    assert "<ein:Invoice>" not in xml
     assert "ReceiverTag" in xml
+    archive_xml = isnet._serialize_ein(
+        {
+            "CompanyTaxCode": "1234567890",
+            "ArchiveInvoices": [{"ArchiveInvoiceContent": "QQ=="}],
+        }
+    )
+    assert "<ein:ArchiveInvoiceXml>" in archive_xml
+    assert "<ein:ArchiveInvoice>" not in archive_xml
+    assert "ArchiveInvoiceContent" in archive_xml
 
 
 def test_address_book_url_follows_mode():
     assert "AddressBookService" in isnet.address_book_url({"mode": "test"})
     assert isnet.address_book_url({"mode": "live"}) == isnet.LIVE_ADDRESS_BOOK
+
+
+def test_send_archive_invoice_xml_requires_ettn():
+    """Yanlış dizi sarmalayıcı / boş cevap → ETTN yoksa sent sayılmamalı."""
+    settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
+
+    empty = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>true</ein:IsSucceded><ein:Message>OK</ein:Message></Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=empty)):
+        with pytest.raises(HTTPException) as e:
+            asyncio.get_event_loop().run_until_complete(
+                isnet.send_invoice_xml(settings, ubl_xml="<Invoice/>", is_earchive=True)
+            )
+    assert e.value.status_code == 502
+    assert "ETTN" in e.value.detail
+
+
+def test_send_archive_invoice_xml_ok_with_ettn():
+    settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "<ein:ArchiveInvoiceResult>"
+        "<ein:ETTN>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</ein:ETTN>"
+        "<ein:ArchiveInvoiceNumber>TA202600000095</ein:ArchiveInvoiceNumber>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "</ein:ArchiveInvoiceResult></Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)) as mock_call:
+        info = asyncio.get_event_loop().run_until_complete(
+            isnet.send_invoice_xml(settings, ubl_xml="<Invoice/>", is_earchive=True)
+        )
+    assert info["ettn"].startswith("aaaaaaaa")
+    assert info["invoice_id"] == "TA202600000095"
+    kwargs = mock_call.await_args.kwargs
+    assert kwargs["action"] == "SendArchiveInvoiceXml"
+    req = kwargs["request"]
+    assert "ArchiveInvoices" in req
+    # serialize uses ArchiveInvoiceXml wrapper
+    xml = isnet._serialize_ein(req)
+    assert "<ein:ArchiveInvoiceXml>" in xml
+
+
+def test_send_invoice_xml_rejects_failed_row():
+    settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "<ein:InvoiceResult>"
+        "<ein:IsSucceded>false</ein:IsSucceded>"
+        "<ein:Message>Şema hatası</ein:Message>"
+        "</ein:InvoiceResult></Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)):
+        with pytest.raises(HTTPException) as e:
+            asyncio.get_event_loop().run_until_complete(
+                isnet.send_invoice_xml(settings, ubl_xml="<Invoice/>", is_earchive=False)
+            )
+    assert e.value.status_code == 400
+    assert "Şema" in e.value.detail
 
 
 def test_endpoints_match_official_isnet_docs():
