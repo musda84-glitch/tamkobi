@@ -45,7 +45,7 @@ import { orderEditBlockedReason } from "../utils/orderEdit";
 import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
 import { eBelgeMenuItems, orderCanIssueEFatura, orderEBelgeType } from "../utils/orderEBelge";
-import { orderMoreMenuItems, orderMoreMenuKind } from "../utils/orderMoreMenu";
+import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
@@ -171,7 +171,7 @@ function mobilePrimaryAction(ord) {
   const kind = orderMoreMenuKind(ord);
   if (kind === "held_cart") return null;
   if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır", className: "bg-emerald-600 text-white" };
-  if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura", className: "bg-rose-500 text-white" };
+  if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Belge Kes", className: "bg-rose-500 text-white" };
   if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv", className: "bg-sky-600 text-white" };
   if (kind === "integration_einvoice") return { id: "cargo_mini", label: "Etiket", className: "bg-sky-600 text-white" };
   return null;
@@ -536,6 +536,34 @@ export default function OrdersB2BPage() {
     }
   };
 
+  /** Faturalaştır → cariye işlenmiş fatura (yeşil). E-belge ayrıca kesilir. */
+  const handleFaturalastir = async (ord) => {
+    if (ord.is_invoiced) {
+      toast.info("Sipariş zaten cariye faturalaştı.");
+      return;
+    }
+    try {
+      let invoiceId = ord.invoice_id;
+      if (!invoiceId) {
+        const draft = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/convert-to-invoice`, {
+          e_type: orderEBelgeType(ord, contacts) || "e_archive",
+          as_draft: true,
+        });
+        invoiceId = draft.data?.invoice_id;
+        if (!invoiceId) {
+          toast.error("Fatura oluşturulamadı.");
+          return;
+        }
+      }
+      if (!window.confirm(`${ord.order_number} cariye faturalaşsın mı?\nCari bakiyesi ve stok işlenecek.`)) return;
+      const res = await axios.post(`${API_URL}/invoices/${invoiceId}/approve`);
+      toast.success(res.data.message || "Faturalaştı — cari bakiyesi işlendi.");
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Faturalaştırılamadı.");
+    }
+  };
+
   /** Taslak faturayı onayla → cari bakiyesi + stok işlenir (yeşil badge). */
   const handlePostDraftInvoice = async (ord) => {
     const invoiceId = ord.invoice_id;
@@ -546,7 +574,7 @@ export default function OrdersB2BPage() {
     if (!window.confirm(`${ord.order_number} taslak faturası onaylansın mı?\nCari bakiyesi ve stok işlenecek.`)) return;
     try {
       const res = await axios.post(`${API_URL}/invoices/${invoiceId}/approve`);
-      toast.success(res.data.message || "Fatura onaylandı; cari bakiyesi işlendi.");
+      toast.success(res.data.message || "Faturalaştı — cari bakiyesi işlendi.");
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Fatura onaylanamadı.");
@@ -609,13 +637,7 @@ export default function OrdersB2BPage() {
     }
     switch (actionId) {
       case "faturalastir":
-        if (ord.invoice_id && !ord.is_invoiced) {
-          await handlePostDraftInvoice(ord);
-        } else if (!ord.is_invoiced) {
-          await handleConvertToInvoice(ord.id || ord._id, orderEBelgeType(ord, contacts));
-        } else {
-          toast.info("Sipariş zaten faturalanmış.");
-        }
+        await handleFaturalastir(ord);
         return;
       case "efatura_olustur":
         await handleEBelgeInvoice(ord, orderEBelgeType(ord, contacts));
@@ -1283,19 +1305,47 @@ export default function OrdersB2BPage() {
                         ) : (
                           <>
                         {!ord.is_invoiced && !ord.invoice_id && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
-                        {!ord.is_invoiced ? (
-                          ord.invoice_id ? (
-                            <button
-                              type="button"
-                              onClick={() => handlePostDraftInvoice(ord)}
-                              className="p-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-sm border border-amber-600"
-                              title={`Taslağı onayla (cari bakiyeye işle)${ord.invoice_number ? `: ${ord.invoice_number}` : ""}`}
-                              aria-label="Faturala"
-                              data-testid={`convert-inv-btn-${ord.order_number}`}
-                            >
-                              <FileText className="w-4 h-4" />
-                            </button>
-                          ) : (
+                        {(() => {
+                          const invBadge = orderInvoiceBadge(ord);
+                          if (orderHasEInvoiceIssued(ord)) {
+                            return (
+                              <span
+                                className={`inline-flex items-center px-1.5 py-1 rounded-lg text-[9px] font-bold border leading-tight max-w-[4.5rem] ${invBadge.className}`}
+                                title={invBadge.label}
+                                data-testid={`invoiced-badge-${ord.order_number}`}
+                              >
+                                {invBadge.label}
+                              </span>
+                            );
+                          }
+                          if (ord.is_invoiced) {
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handleEBelgeInvoice(ord, orderEBelgeType(ord, contacts))}
+                                className="inline-flex flex-col items-center justify-center px-1.5 py-0.5 rounded-lg text-[9px] font-bold leading-tight bg-emerald-100 text-emerald-800 border border-emerald-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 max-w-[4.5rem]"
+                                title="Faturalaştı — tıkla: E-Belge Kes (GİB)"
+                                data-testid={`invoiced-badge-${ord.order_number}`}
+                              >
+                                Faturalaştı
+                              </button>
+                            );
+                          }
+                          if (ord.invoice_id) {
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handlePostDraftInvoice(ord)}
+                                className="p-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-sm border border-amber-600"
+                                title={`Taslak — cariye faturalaştırmak için tıkla${ord.invoice_number ? `: ${ord.invoice_number}` : ""}`}
+                                aria-label="Faturalaştır"
+                                data-testid={`convert-inv-btn-${ord.order_number}`}
+                              >
+                                <FileText className="w-4 h-4" />
+                              </button>
+                            );
+                          }
+                          return (
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <button
@@ -1310,6 +1360,14 @@ export default function OrdersB2BPage() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" sideOffset={8} collisionPadding={24} className="z-[80] w-56 rounded-xl p-1.5 shadow-lg" data-testid={`inv-type-chooser-${ord.order_number}`}>
                               <div className="px-2 py-1 text-[10px] font-bold text-emerald-700 uppercase">GİB e-belge işlemleri</div>
+                              <DropdownMenuItem
+                                onSelect={() => handleFaturalastir(ord)}
+                                className="flex-col items-start gap-0 py-1.5"
+                                data-testid={`inv-faturalastir-${ord.order_number}`}
+                              >
+                                <span className="text-xs font-semibold text-slate-800">Faturalaştır</span>
+                                <span className="text-[10px] text-slate-400">Cariye işle · yeşil Faturalaştı</span>
+                              </DropdownMenuItem>
                               {orderCanIssueEFatura(ord, contacts) && (
                                 <DropdownMenuItem
                                   onSelect={() => handleEBelgeInvoice(ord, "e_invoice")}
@@ -1344,7 +1402,7 @@ export default function OrdersB2BPage() {
                                   data-testid={`inv-draft-e_invoice-${ord.order_number}`}
                                 >
                                   <span className="text-xs font-semibold text-slate-800">E-Fatura taslağı</span>
-                                  <span className="text-[10px] text-slate-400">GİB&apos;e göndermeden kaydet</span>
+                                  <span className="text-[10px] text-slate-400">Sarı · sonra Faturalaştır</span>
                                 </DropdownMenuItem>
                               )}
                               <DropdownMenuItem
@@ -1353,7 +1411,7 @@ export default function OrdersB2BPage() {
                                 data-testid={`inv-draft-e_archive-${ord.order_number}`}
                               >
                                 <span className="text-xs font-semibold text-slate-800">E-Arşiv taslağı</span>
-                                <span className="text-[10px] text-slate-400">GİB&apos;e göndermeden kaydet</span>
+                                <span className="text-[10px] text-slate-400">Sarı · sonra Faturalaştır</span>
                               </DropdownMenuItem>
                               {ord.order_status === "pending" && (
                                 <DropdownMenuItem onSelect={() => setApproveOrder(ord)} className="border-t mt-1 rounded-lg font-semibold text-emerald-700" data-testid={`inv-chooser-approve-${ord.order_number}`}>
@@ -1362,12 +1420,8 @@ export default function OrdersB2BPage() {
                               )}
                             </DropdownMenuContent>
                           </DropdownMenu>
-                          )
-                        ) : (
-                          <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700" title="Faturalandı" aria-label="Faturalandı" data-testid={`invoiced-badge-${ord.order_number}`}>
-                            <CheckCircle2 className="w-4 h-4" />
-                          </span>
-                        )}
+                          );
+                        })()}
 
                         {!ord.cargo_tracking_number ? (
                           <button

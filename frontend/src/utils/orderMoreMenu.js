@@ -36,7 +36,9 @@ export function isPanelOrder(ord) {
 
 /**
  * E-fatura / e-arşiv GİB üzerinden kesilmiş mi?
- * Kağıt fatura sayılmaz.
+ * Panelde yalnızca gerçek GİB gönderimi (einvoice_state) sayılır;
+ * cariye faturalaşma (is_invoiced) tek başına e-belge değildir.
+ * Pazaryeri siparişlerinde faturalı e-belge tipi = kesilmiş kabul edilir.
  */
 export function orderHasEInvoiceIssued(ord) {
   if (!ord) return false;
@@ -44,9 +46,37 @@ export function orderHasEInvoiceIssued(ord) {
   if (state === "sent" || state === "queued" || state === "accepted") return true;
   const eType = String(ord.e_type || ord.invoice_e_type || "").toLowerCase();
   if (eType === "paper" || eType === "expense_slip") return false;
-  if (ord.is_invoiced && (!eType || ["e_invoice", "e_archive", "e_export"].includes(eType))) return true;
-  if (ord.invoice_id && ["e_invoice", "e_archive", "e_export"].includes(eType) && ord.is_invoiced) return true;
+  if (isIntegrationOrder(ord) && ord.is_invoiced && ["e_invoice", "e_archive", "e_export"].includes(eType)) {
+    return true;
+  }
   return false;
+}
+
+/** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil) → e-belge gönderildi (kırmızı). */
+export function orderInvoiceBadge(ord) {
+  if (!ord) return null;
+  if (orderHasEInvoiceIssued(ord)) {
+    return {
+      label: "E-belge gönderildi",
+      className: "bg-rose-100 text-rose-800 border-rose-200",
+      testId: "ebelge",
+    };
+  }
+  if (ord.is_invoiced) {
+    return {
+      label: "Faturalaştı",
+      className: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      testId: "invoiced",
+    };
+  }
+  if (ord.invoice_id) {
+    return {
+      label: "Taslak",
+      className: "bg-amber-100 text-amber-800 border-amber-200",
+      testId: "draft",
+    };
+  }
+  return null;
 }
 
 /** Menü kimliği: panel_einvoice | integration_einvoice | panel_draft | panel_invoiced | held_cart | default */
@@ -54,7 +84,7 @@ export function orderMoreMenuKind(ord) {
   if (ord?.is_held_cart || ord?.order_status === "held_cart" || ord?.is_active_cart || ord?.order_status === "active_cart") return "held_cart";
   if (isPanelOrder(ord) && orderHasEInvoiceIssued(ord)) return "panel_einvoice";
   if (isIntegrationOrder(ord) && orderHasEInvoiceIssued(ord)) return "integration_einvoice";
-  // Panel: kağıt / taslak fatura — henüz GİB e-belgesi yok
+  // Panel: cariye faturalaştı, henüz GİB e-belgesi yok → e-belge kes
   if (isPanelOrder(ord) && ord?.is_invoiced) return "panel_invoiced";
   if (isPanelOrder(ord) && !ord?.is_invoiced) return "panel_draft";
   return "default";
@@ -116,10 +146,26 @@ export function panelEInvoiceMoreItems() {
   ];
 }
 
-/** B2B / panel faturalaştıktan sonra (E-Fatura Oluştur menüsü). */
-export function panelInvoicedMoreItems() {
+/** B2B / panel faturalaştıktan sonra — ⋮ içinde GİB e-fatura menüsü. */
+export function panelInvoicedMoreItems(ord, { eBelgeItems = [] } = {}) {
+  const gib = (eBelgeItems || []).map((eb) =>
+    item(`ebelge_${eb.eType}`, eb.label, Stamp, {
+      testId: `e-belge-${eb.testIdSuffix}`,
+      section: "GİB e-Fatura",
+      color: eb.eType === "e_invoice" ? "text-indigo-600" : "text-violet-600",
+      eType: eb.eType,
+    }),
+  );
+  if (!gib.length) {
+    gib.push(
+      item("efatura_olustur", "E-Belge Kes", Zap, {
+        color: "text-rose-500",
+        section: "GİB e-Fatura",
+      }),
+    );
+  }
   return [
-    item("efatura_olustur", "E-Fatura Oluştur", Zap, { color: "text-rose-500" }),
+    ...gib,
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
     item("invoice_date", "Fatura Tarihi Değiştir", History, { color: "text-amber-600" }),
@@ -178,7 +224,7 @@ export function orderMoreMenuItems(ord, opts = {}) {
   if (kind === "panel_einvoice") items = panelEInvoiceMoreItems();
   else if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems();
-  else if (kind === "panel_invoiced") items = panelInvoicedMoreItems();
+  else if (kind === "panel_invoiced") items = panelInvoicedMoreItems(ord, opts);
   else items = defaultMoreItems(ord, opts);
   const allowDelete = opts.canDelete !== false;
   if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];

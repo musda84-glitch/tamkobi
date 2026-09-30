@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@jest/globals";
 import {
   isIntegrationOrder,
   isPanelOrder,
   orderHasEInvoiceIssued,
+  orderInvoiceBadge,
   orderMoreMenuKind,
   orderMoreMenuItems,
   integrationEInvoiceMoreItems,
@@ -19,11 +20,25 @@ describe("orderMoreMenu", () => {
     expect(isPanelOrder({})).toBe(true);
   });
 
-  it("detects e-invoice issued", () => {
-    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "e_archive" })).toBe(true);
+  it("detects e-invoice issued only after GİB send on panel", () => {
+    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "e_archive", channel: "b2b" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "e_archive", channel: "b2b", einvoice_state: "sent" })).toBe(true);
     expect(orderHasEInvoiceIssued({ einvoice_state: "sent" })).toBe(true);
-    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "paper" })).toBe(false);
+    expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "paper", channel: "b2b" })).toBe(false);
     expect(orderHasEInvoiceIssued({ invoice_id: "x", is_invoiced: false })).toBe(false);
+    expect(orderHasEInvoiceIssued({ channel: "trendyol", is_invoiced: true, e_type: "e_archive" })).toBe(true);
+  });
+
+  it("invoice badge: taslak sarı → faturalaştı yeşil → e-belge kırmızı", () => {
+    expect(orderInvoiceBadge({ invoice_id: "i1", is_invoiced: false })).toEqual(
+      expect.objectContaining({ label: "Taslak", testId: "draft" }),
+    );
+    expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_archive" })).toEqual(
+      expect.objectContaining({ label: "Faturalaştı", testId: "invoiced" }),
+    );
+    expect(orderInvoiceBadge({ is_invoiced: true, channel: "b2b", e_type: "e_archive", einvoice_state: "sent" })).toEqual(
+      expect.objectContaining({ label: "E-belge gönderildi", testId: "ebelge" }),
+    );
   });
 
   it("integration + e-invoice uses marketplace fulfillment menu", () => {
@@ -37,7 +52,6 @@ describe("orderMoreMenu", () => {
     expect(labels).toContain("Kargola");
     expect(labels).not.toContain("Navlungo Siparişi Oluştur");
     expect(labels).toContain("Pazaryeri Kargo Firmasını Değiştir");
-    expect(labels).not.toContain("Paketli Siparişin Kargo Firmasını Değiştir");
     expect(labels).toContain("Siparişi Excel İndir");
     expect(labels).toContain("Siparişi PDF İndir");
   });
@@ -64,11 +78,18 @@ describe("orderMoreMenu", () => {
     expect(orderMoreMenuItems(ord).items.map((i) => i.id)).toContain("faturalastir");
   });
 
-  it("panel invoiced shows E-Fatura Oluştur menu", () => {
-    const ord = { channel: "b2b", is_invoiced: true, e_type: "paper", order_number: "B2B-2" };
+  it("panel invoiced (cari) shows GİB e-Fatura menu inside ⋮", () => {
+    const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", order_number: "B2B-2" };
     expect(orderMoreMenuKind(ord)).toBe("panel_invoiced");
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
-      "E-Fatura Oluştur",
+    const { items } = orderMoreMenuItems(ord, {
+      eBelgeItems: [
+        { eType: "e_invoice", label: "E-Fatura kes (GİB)", testIdSuffix: "efatura" },
+        { eType: "e_archive", label: "E-Arşiv kes (GİB)", testIdSuffix: "earsiv" },
+      ],
+    });
+    expect(items.map((i) => i.label)).toEqual([
+      "E-Fatura kes (GİB)",
+      "E-Arşiv kes (GİB)",
       "Mini Kargo Etiketi Yazdır",
       "Mini Kargo Etiketi Yazdır 10X10",
       "Fatura Tarihi Değiştir",
@@ -76,17 +97,26 @@ describe("orderMoreMenu", () => {
       "Siparişi Excel İndir",
       "Siparişi PDF İndir",
     ]);
+    expect(items.filter((i) => i.section === "GİB e-Fatura").map((i) => i.eType)).toEqual([
+      "e_invoice",
+      "e_archive",
+    ]);
+  });
+
+  it("panel invoiced without eBelgeItems falls back to E-Belge Kes", () => {
+    const ord = { channel: "b2b", is_invoiced: true, e_type: "paper", order_number: "B2B-3" };
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)[0]).toBe("E-Belge Kes");
   });
 
   it("B2B + GİB e-belge uses panel e-invoice ops menu on web and mobile", () => {
-    const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", order_number: "B2B-2026-0009" };
+    const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent", order_number: "B2B-2026-0009" };
     expect(orderMoreMenuKind(ord)).toBe("panel_einvoice");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label).slice(0, -2)).toEqual(panelEInvoiceMoreItems().map((i) => i.label));
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Mini E-Arşiv Yazdır (10X15cm)");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("E-Fatura XML'i İndir");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Siparişi Excel İndir");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toContain("Siparişi PDF İndir");
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("E-Fatura Oluştur");
+    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("E-Belge Kes");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Navlungo Siparişi Oluştur");
   });
 
