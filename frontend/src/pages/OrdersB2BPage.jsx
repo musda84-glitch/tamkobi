@@ -240,7 +240,7 @@ export default function OrdersB2BPage() {
         const channels = Array.isArray(r.data) ? r.data : [];
         let synced = 0;
         for (const c of channels) {
-          try { await axios.post(`${API_URL}/integrations/ecommerce/${c.id || c._id}/sync-now`); synced++; }
+          try { await axios.post(`${API_URL}/integrations/ecommerce/${c.id || c._id}/sync-now`, null, { timeout: 120000 }); synced++; }
           catch { /* kanal kapalıysa liste yine yenilenir */ }
         }
         await loadData();

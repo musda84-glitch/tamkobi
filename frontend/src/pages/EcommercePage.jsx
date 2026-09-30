@@ -65,11 +65,19 @@ export default function EcommercePage() {
   const handleSyncNow = async (channelId) => {
     try {
       setSyncingId(channelId);
-      const res = await axios.post(`${API_URL}/integrations/ecommerce/${channelId}/sync-now`);
+      const res = await axios.post(
+        `${API_URL}/integrations/ecommerce/${channelId}/sync-now`,
+        null,
+        { timeout: 120000 }
+      );
       toast.success(res.data.message);
+      if (res.data?.warnings?.length) {
+        toast.message(res.data.warnings.slice(0, 2).join(" · "));
+      }
       loadIntegrations();
     } catch (err) {
-      toast.error("Senkronizasyon sırasında hata oluştu.");
+      const detail = err.response?.data?.detail || err.message || "Senkronizasyon sırasında hata oluştu.";
+      toast.error(typeof detail === "string" ? detail : "Senkronizasyon sırasında hata oluştu.");
     } finally {
       setSyncingId(null);
     }
