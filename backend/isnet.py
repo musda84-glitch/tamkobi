@@ -980,15 +980,17 @@ async def get_document_viewer_link(
     *,
     e_type: str = "e_archive",
     invoice_number: str = "",
+    direction: str = "Outgoing",
 ) -> Dict[str, str]:
     """GetDocumentViewerLink — NetteFatura-API invoice.getDocumentViewerLink()."""
     ettn = (ettn or "").strip()
     if not ettn:
         raise HTTPException(status_code=400, detail="ETTN gerekli.")
+    direction = "Incoming" if str(direction or "").lower().startswith("in") else "Outgoing"
     req = {
         **_company_request(settings),
         "Ettn": ettn,
-        "InvoiceDirection": "Outgoing",
+        "InvoiceDirection": direction,
         "InvoiceDocumentType": "EArchiveInvoice" if e_type == "e_archive" else "EInvoice",
     }
     if invoice_number:
@@ -1055,12 +1057,17 @@ async def download_invoice_pdf(
     e_type: str = "e_archive",
     invoice_number: str = "",
     viewer_url: str = "",
+    direction: str = "Outgoing",
 ) -> bytes:
     """İşNet Invoice/GetInvoicePdf — resmi e-Arşiv/e-Fatura PDF (NetteFatura-API)."""
     key_src = (viewer_url or "").strip()
     if not key_src:
         link = await get_document_viewer_link(
-            settings, ettn, e_type=e_type, invoice_number=invoice_number
+            settings,
+            ettn,
+            e_type=e_type,
+            invoice_number=invoice_number,
+            direction=direction,
         )
         key_src = link.get("url") or ""
     key = extract_viewer_key(key_src)
@@ -1099,12 +1106,17 @@ async def download_invoice_xml(
     e_type: str = "e_archive",
     invoice_number: str = "",
     viewer_url: str = "",
+    direction: str = "Outgoing",
 ) -> bytes:
     """İşNet DocumentViewer/DownloadXml — resmi UBL-TR (NetteFatura-API)."""
     key_src = (viewer_url or "").strip()
     if not key_src:
         link = await get_document_viewer_link(
-            settings, ettn, e_type=e_type, invoice_number=invoice_number
+            settings,
+            ettn,
+            e_type=e_type,
+            invoice_number=invoice_number,
+            direction=direction,
         )
         key_src = link.get("url") or ""
     key = extract_viewer_key(key_src)

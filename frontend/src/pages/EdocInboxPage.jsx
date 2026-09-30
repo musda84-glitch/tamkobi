@@ -3,7 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import {
   Inbox, Upload, CheckCircle2, XCircle, UserPlus, PackagePlus, Loader2, Link2,
-  RefreshCw, AlertTriangle, FileCode2, Trash2, X, Download,
+  RefreshCw, AlertTriangle, FileCode2, Trash2, X, Download, FileText,
 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
@@ -130,6 +130,70 @@ export default function EdocInboxPage() {
       setXml(r.data.xml);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Ham XML alınamadı.");
+    }
+  };
+
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadXmlFile = async () => {
+    if (!sel?.id) return;
+    setBusy("dl-xml");
+    try {
+      const r = await axios.get(`${API_URL}/edocs/inbox/${sel.id}/xml/download`, {
+        params: { company_id: companyId },
+        responseType: "blob",
+      });
+      downloadBlob(r.data, `${sel.number || sel.id}.xml`);
+      toast.success("XML indirildi.");
+    } catch (e) {
+      let detail = "XML indirilemedi.";
+      try {
+        if (e.response?.data instanceof Blob) {
+          const t = await e.response.data.text();
+          detail = JSON.parse(t).detail || detail;
+        } else if (e.response?.data?.detail) detail = e.response.data.detail;
+      } catch { /* keep */ }
+      toast.error(detail);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const downloadPdfFile = async () => {
+    if (!sel?.id) return;
+    setBusy("dl-pdf");
+    try {
+      const r = await axios.get(`${API_URL}/edocs/inbox/${sel.id}/pdf`, {
+        params: { company_id: companyId },
+        responseType: "blob",
+      });
+      const ctype = String(r.headers["content-type"] || "");
+      if (!ctype.includes("pdf") && !(r.data instanceof Blob && r.data.type === "application/pdf")) {
+        const t = await r.data.text();
+        let detail = "PDF alınamadı.";
+        try { detail = JSON.parse(t).detail || detail; } catch { /* keep */ }
+        throw new Error(detail);
+      }
+      downloadBlob(r.data, `${sel.number || sel.id}.pdf`);
+      toast.success("PDF indirildi.");
+    } catch (e) {
+      let detail = e.message || "PDF indirilemedi.";
+      try {
+        if (e.response?.data instanceof Blob) {
+          const t = await e.response.data.text();
+          detail = JSON.parse(t).detail || detail;
+        } else if (e.response?.data?.detail) detail = e.response.data.detail;
+      } catch { /* keep */ }
+      toast.error(detail);
+    } finally {
+      setBusy("");
     }
   };
 
@@ -261,13 +325,35 @@ export default function EdocInboxPage() {
                   <div className="text-sm font-bold text-slate-900">{sel.kind === "dispatch" ? "Gelen e-İrsaliye" : "Gelen e-Fatura"} {sel.number}</div>
                   <div className="text-slate-500">{fmtDate(sel.issue_date)} · {sourceLabel(sel.source, integrator)} · {sel.profile || ""} {sel.type_code || ""}</div>
                 </div>
-                <div className="text-right">
+                <div className="text-right space-y-1">
                   <div className="text-lg font-bold text-slate-900">{fmt(sel.grand_total)} ₺</div>
                   <div className="text-[10px] text-slate-500">Matrah {fmt(sel.subtotal)} · KDV {fmt(sel.vat_total)}</div>
                   {sel.source !== "ai_pdf" && (
-                    <button type="button" onClick={showXml} className="mt-1 text-[10px] text-indigo-600 font-semibold inline-flex items-center gap-1" data-testid="edoc-show-xml">
-                      <FileCode2 className="w-3 h-3" /> Ham XML
-                    </button>
+                    <div className="flex flex-wrap justify-end gap-1.5 pt-1" data-testid="edoc-download-actions">
+                      <button
+                        type="button"
+                        onClick={downloadPdfFile}
+                        disabled={busy === "dl-pdf" || busy === "dl-xml"}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-semibold hover:bg-indigo-700 disabled:opacity-50"
+                        data-testid="edoc-download-pdf"
+                      >
+                        {busy === "dl-pdf" ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
+                        PDF İndir
+                      </button>
+                      <button
+                        type="button"
+                        onClick={downloadXmlFile}
+                        disabled={busy === "dl-pdf" || busy === "dl-xml"}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-indigo-200 text-indigo-700 text-[10px] font-semibold hover:bg-indigo-50 disabled:opacity-50"
+                        data-testid="edoc-download-xml"
+                      >
+                        {busy === "dl-xml" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                        XML İndir
+                      </button>
+                      <button type="button" onClick={showXml} className="inline-flex items-center gap-1 px-2 py-1 text-[10px] text-slate-500 font-semibold hover:text-indigo-600" data-testid="edoc-show-xml">
+                        <FileCode2 className="w-3 h-3" /> Ham XML
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
