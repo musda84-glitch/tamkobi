@@ -726,13 +726,11 @@ EINVOICE_PROVIDERS = {
         "name": "İşNet Net-e Fatura — SOAP API (NetteFatura-API)",
         "fields": ["company_tax_id", "alias", "corporate_code"],
         "docs": "https://github.com/EfeSorogluu/NetteFatura-API",
-        "hint": "Resmi SOAP: kimlik doğrulama IP–VKN (şifre yok). Test SOAP: einvoiceservicetest.isnet.net.tr · Portal: efatura.isnet.net.tr (12345678901/1234 · VKN 4810173324 veya 1234567805). Canlı IP kaydı: efaturadestek@nettefatura.com.tr",
     },
     "isnet_portal": {
         "name": "İşNet Net-e Fatura — Web Portal (NetteFatura-Portal)",
         "fields": ["username", "password"],
         "docs": "https://github.com/EfeSorogluu/NetteFatura-Portal",
-        "hint": "NetteFatura web portalı (VKN/TCKN + portal şifresi). Statik IP / SOAP sözleşmesi olmadan. Gayriresmî portal otomasyonu: github.com/EfeSorogluu/NetteFatura-Portal · Canlı: nettefatura.isnet.net.tr",
     },
     "foriba": {"name": "Foriba (Sovos)", "fields": ["username", "password"], "docs": "https://www.sovos.com/tr/"},
     "elogo": {"name": "Logo e-Fatura / eLogo", "fields": ["username", "password"], "docs": "https://www.elogo.com.tr/"},
