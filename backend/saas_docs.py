@@ -147,33 +147,73 @@ def build_invoice_pdf(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
 
 
 @router.get("/invoices/{invoice_id}/pdf")
-async def invoice_pdf(invoice_id: str, download: bool = Query(False)):
+async def invoice_pdf(
+    invoice_id: str,
+    download: bool = Query(False),
+    require_integrator: bool = Query(False),
+):
     inv = await _db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     disp = "attachment" if download else "inline"
+    et = inv.get("e_type") or ""
+    gs = str(inv.get("gib_status") or "")
+    wants_integrator = (
+        et in ("e_invoice", "e_archive", "e_export")
+        and inv.get("status") != "draft"
+        and inv.get("einvoice_state") != "error"
+        and not re.match(r"^\s*hata\s*:", gs, re.I)
+        and (
+            inv.get("einvoice_state") in ("sent", "queued")
+            or inv.get("gib_uuid")
+            or inv.get("gib_tracking_id")
+            or bool(re.search(r"ileti|GİB'e|SOAP API|Web Portal|n11 Faturam", gs, re.I))
+        )
+    )
     # GİB'e iletilmiş e-belge: resmi entegratör PDF (İşNet GetInvoicePdf)
-    try:
-        import e_invoice
+    if wants_integrator or require_integrator:
+        try:
+            import e_invoice
 
-        remote = await e_invoice.fetch_integrator_pdf(invoice_id)
-        if remote:
-            return Response(
-                remote,
-                media_type="application/pdf",
-                headers={
-                    "Content-Disposition": f'{disp}; filename="{_pdf_filename(inv)}"',
-                    "X-Document-Source": "integrator",
-                },
-            )
-    except HTTPException:
-        raise
-    except Exception:
-        pass
+            remote = await e_invoice.fetch_integrator_pdf(invoice_id)
+            if remote:
+                return Response(
+                    remote,
+                    media_type="application/pdf",
+                    headers={
+                        "Content-Disposition": f'{disp}; filename="{_pdf_filename(inv)}"',
+                        "X-Document-Source": "integrator",
+                        "Access-Control-Expose-Headers": "X-Document-Source",
+                    },
+                )
+            if require_integrator or wants_integrator:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Entegratör e-Fatura/e-Arşiv PDF alınamadı. "
+                        "ETTN/İşNet kaydı yok veya NetteFatura'da belge görünmüyor."
+                    ),
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            if require_integrator or wants_integrator:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Entegratör PDF hatası: {e}",
+                ) from e
     seller = await _db.companies.find_one({"_id": inv["company_id"]}) or {}
     contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
     buyer = contact or {"name": inv.get("contact_name"), "tax_number_or_id": inv.get("contact_tax_id")}
-    return Response(build_invoice_pdf(inv, seller, buyer), media_type="application/pdf", headers={"Content-Disposition": f'{disp}; filename="{_pdf_filename(inv)}"'})
+    return Response(
+        build_invoice_pdf(inv, seller, buyer),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'{disp}; filename="{_pdf_filename(inv)}"',
+            "X-Document-Source": "local",
+            "Access-Control-Expose-Headers": "X-Document-Source",
+        },
+    )
 
 
 def _quote_pdf_filename(q: Dict[str, Any]) -> str:

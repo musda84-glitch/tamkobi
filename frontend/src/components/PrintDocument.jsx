@@ -5,10 +5,10 @@ import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix, formatTrAmount, fmtDate } from "../utils/money";
 import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
-import { shouldUseIntegratorPdf } from "../utils/printIntegratorPdf";
+import { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
 import { BarcodeRenderer } from "./BarcodeRenderer";
 
-export { shouldUseIntegratorPdf } from "../utils/printIntegratorPdf";
+export { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
 
 const pickItemImage = (it = {}, prod = {}) => (
   it.thumbnail_url || it.image_url
@@ -52,33 +52,98 @@ export const LAYOUTS = [
 
 function IntegratorPdfPrint({ doc, onClose, onPrinted }) {
   const invId = doc?.id || doc?._id;
-  const pdfUrl = `${API_URL}/invoices/${invId}/pdf`;
-  const kind = doc.e_type === "e_invoice" ? "e-Fatura" : doc.e_type === "e_export" ? "e-İhracat" : "e-Arşiv";
+  const kind = integratorPdfKindLabel(doc);
+  const [blobUrl, setBlobUrl] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = null;
+    setLoading(true);
+    setError("");
+    setBlobUrl(null);
+    (async () => {
+      try {
+        const r = await axios.get(`${API_URL}/invoices/${invId}/pdf`, {
+          responseType: "blob",
+          headers: { Accept: "application/pdf" },
+          params: { require_integrator: 1 },
+        });
+        const ctype = String(r.headers["content-type"] || "").toLowerCase();
+        const source = String(r.headers["x-document-source"] || "").toLowerCase();
+        if (source && source !== "integrator") {
+          throw new Error("Entegratör e-belge PDF gelmedi — yerel şablon kullanılmadı.");
+        }
+        if (!ctype.includes("pdf") && !(r.data instanceof Blob && r.data.type === "application/pdf")) {
+          // JSON hata gövdesi blob olarak gelebilir
+          let detail = "Entegratör PDF alınamadı.";
+          try {
+            const text = await r.data.text();
+            const j = JSON.parse(text);
+            detail = j.detail || detail;
+          } catch { /* keep */ }
+          throw new Error(detail);
+        }
+        objectUrl = URL.createObjectURL(r.data);
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setBlobUrl(objectUrl);
+      } catch (err) {
+        if (cancelled) return;
+        const detail =
+          err?.response?.data instanceof Blob
+            ? await err.response.data.text().then((t) => {
+                try { return JSON.parse(t).detail; } catch { return t; }
+              }).catch(() => null)
+            : err?.response?.data?.detail;
+        setError(String(detail || err?.message || "Entegratör e-Fatura/e-Arşiv PDF alınamadı."));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [invId]);
+
+  const printBlob = () => {
+    if (!blobUrl) return;
+    const w = window.open(blobUrl, "_blank");
+    if (w) {
+      try { w.addEventListener("load", () => { try { w.print(); } catch { /* ignore */ } }); } catch { /* ignore */ }
+    }
+    try { onPrinted?.(doc); } catch { /* ignore */ }
+  };
+
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static">
       <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none flex flex-col max-h-[95vh]" data-testid="print-document-integrator">
         <div className="flex items-center justify-between px-5 py-3 border-b no-print print:hidden shrink-0">
           <span className="text-xs font-bold text-slate-700">
             {kind} PDF — {doc.invoice_number || invId}
-            <span className="ml-2 font-normal text-slate-400">Entegratör belgesi</span>
+            <span className="ml-2 font-normal text-slate-400">Entegratör belgesi (GİB)</span>
           </span>
           <div className="flex items-center gap-2">
-            <a
-              href={pdfUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50"
-              data-testid="print-integrator-open-btn"
-            >
-              Yeni sekmede aç
-            </a>
+            {blobUrl && (
+              <a
+                href={blobUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50"
+                data-testid="print-integrator-open-btn"
+              >
+                Yeni sekmede aç
+              </a>
+            )}
             <button
               type="button"
-              onClick={() => {
-                window.open(pdfUrl, "_blank");
-                try { onPrinted?.(doc); } catch { /* ignore */ }
-              }}
-              className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold"
+              disabled={!blobUrl}
+              onClick={printBlob}
+              className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold disabled:opacity-50"
               data-testid="print-now-btn"
             >
               <Printer className="w-3.5 h-3.5" /> Yazdır
@@ -86,12 +151,29 @@ function IntegratorPdfPrint({ doc, onClose, onPrinted }) {
             <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="print-close-btn"><X className="w-5 h-5" /></button>
           </div>
         </div>
-        <iframe
-          title={`${kind} PDF`}
-          src={pdfUrl}
-          className="w-full flex-1 min-h-[75vh] border-0 rounded-b-2xl"
-          data-testid="print-integrator-pdf-frame"
-        />
+        {loading && (
+          <div className="flex-1 min-h-[40vh] flex items-center justify-center text-sm text-slate-500" data-testid="print-integrator-loading">
+            {kind} PDF entegratörden yükleniyor…
+          </div>
+        )}
+        {!loading && error && (
+          <div className="flex-1 min-h-[40vh] flex flex-col items-center justify-center gap-3 px-6 text-center" data-testid="print-integrator-error">
+            <p className="text-sm font-semibold text-rose-700">{error}</p>
+            <p className="text-xs text-slate-500 max-w-md">
+              GİB&apos;e iletilmiş {kind} belgesi entegratörden gelmediği için yerel şablon gösterilmedi.
+              Faturanın NetteFatura/İşNet ortamında göründüğünü kontrol edin.
+            </p>
+            <button type="button" onClick={onClose} className="px-4 py-2 border rounded-lg text-xs font-semibold">Kapat</button>
+          </div>
+        )}
+        {!loading && blobUrl && (
+          <iframe
+            title={`${kind} PDF`}
+            src={blobUrl}
+            className="w-full flex-1 min-h-[75vh] border-0 rounded-b-2xl"
+            data-testid="print-integrator-pdf-frame"
+          />
+        )}
       </div>
     </div>
   );
