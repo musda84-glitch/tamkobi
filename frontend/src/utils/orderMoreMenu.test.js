@@ -87,10 +87,9 @@ describe("orderMoreMenu", () => {
       "Mini Kargo Etiketi Yazdır",
       "Mini Kargo Etiketi Yazdır 10X10",
       "Kargola",
-      "Siparişi Excel İndir",
-      "Siparişi PDF İndir",
     ]);
     expect(items[0].id).toBe("efatura_olustur");
+    expect(items.map((i) => i.label)).not.toContain("Siparişi Excel İndir");
   });
 
   it("panel invoiced ignores eBelgeItems — tek E-Fatura Oluştur satırı", () => {
