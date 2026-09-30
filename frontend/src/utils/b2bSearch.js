@@ -20,9 +20,9 @@ export function qtyDraftOnFocus() {
   return "";
 }
 
-/** Ekle sonrası adet alanı sıfırlanır (boş). */
+/** Ekle sonrası adet alanı varsayılan 1. */
 export function qtyDraftAfterAdd() {
-  return "";
+  return "1";
 }
 
 export function qtyDraftOnBlur(raw) {
