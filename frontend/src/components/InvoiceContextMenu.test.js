@@ -8,6 +8,7 @@ import {
   suggestedIssueTypeFromGib,
   invoiceBuyerTaxId,
   shouldResolveIssueFromGib,
+  isGibIssued,
 } from "./InvoiceContextMenu";
 
 describe("placeContextMenu", () => {
@@ -48,6 +49,28 @@ describe("placeContextMenu", () => {
     expect(placed.top).toBe(8);
     expect(placed.maxHeight).toBe(720 - 16);
     expect(placed.top + placed.maxHeight).toBeLessThanOrEqual(720 - 8);
+  });
+});
+
+describe("isGibIssued", () => {
+  test("treats exact İşNet success status as issued", () => {
+    expect(isGibIssued({ gib_status: "İşNet SOAP API ile GİB'e iletildi" })).toBe(true);
+  });
+
+  test("does not treat Hata gib_status containing iletildi as issued", () => {
+    expect(
+      isGibIssued({
+        einvoice_state: "error",
+        gib_status:
+          "Hata: İşNet SendArchiveInvoiceXml ETTN döndürmedi — fatura NetteFatura'ya düşmemiş olabilir. Fatura İşNet'e iletildi.",
+      }),
+    ).toBe(false);
+    expect(
+      isGibIssued({
+        gib_status:
+          "Hata: İşNet SOAP ETTN döndürdü ancak fatura NetteFatura test/canlı portalında bulunamadı. Gönderim tamamlanmamış — «GİB'e iletildi» yazılmadı.",
+      }),
+    ).toBe(false);
   });
 });
 

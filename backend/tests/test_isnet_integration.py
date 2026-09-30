@@ -151,6 +151,120 @@ def test_send_archive_invoice_xml_requires_ettn():
     assert "ETTN" in e.value.detail
 
 
+def test_send_archive_rejects_non_uuid_ettn():
+    """Fatura no / rastgele metin ETTN sayılmaz — NetteFatura kaydı yok."""
+    settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "<ein:ArchiveInvoiceResult>"
+        "<ein:ETTN>TA202600000095</ein:ETTN>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "</ein:ArchiveInvoiceResult></Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)):
+        with pytest.raises(HTTPException) as e:
+            asyncio.get_event_loop().run_until_complete(
+                isnet.send_invoice_xml(settings, ubl_xml="<Invoice/>", is_earchive=True)
+            )
+    assert e.value.status_code == 502
+    assert "UUID" in e.value.detail or "ETTN" in e.value.detail
+
+
+def test_is_ettn_uuid():
+    assert isnet.is_ettn_uuid("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    assert not isnet.is_ettn_uuid("TA202600000095")
+    assert not isnet.is_ettn_uuid("")
+    assert not isnet.is_ettn_uuid(None)
+
+
+def test_verify_outgoing_ok_via_viewer():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(return_value={"url": "https://view.example/doc?key=abc", "html_url": "https://view.example/doc?key=abc", "pdf_url": ""}),
+    ):
+        info = asyncio.get_event_loop().run_until_complete(
+            isnet.verify_outgoing_in_portal(
+                settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", e_type="e_archive"
+            )
+        )
+    assert info["ok"] is True
+    assert info["via"] == "viewer"
+    assert "view.example" in info["document_url"]
+
+
+def test_verify_outgoing_ok_via_search_when_viewer_missing():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(side_effect=HTTPException(status_code=404, detail="link yok")),
+    ), patch(
+        "isnet.search_archive_invoice",
+        AsyncMock(return_value=[{"ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "invoice_id": "TA1"}]),
+    ):
+        info = asyncio.get_event_loop().run_until_complete(
+            isnet.verify_outgoing_in_portal(
+                settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", e_type="e_archive"
+            )
+        )
+    assert info["ok"] is True
+    assert info["via"] == "search"
+
+
+def test_verify_outgoing_fails_when_not_in_portal():
+    """SOAP ETTN verse bile NetteFatura'da yoksa iletildi sayılmamalı."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(side_effect=HTTPException(status_code=404, detail="link yok")),
+    ), patch(
+        "isnet.search_archive_invoice",
+        AsyncMock(return_value=[]),
+    ):
+        with pytest.raises(HTTPException) as e:
+            asyncio.get_event_loop().run_until_complete(
+                isnet.verify_outgoing_in_portal(
+                    settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", e_type="e_archive"
+                )
+            )
+    assert e.value.status_code == 502
+    assert "bulunamadı" in e.value.detail.lower() or "NetteFatura" in e.value.detail
+
+
+def test_send_document_requires_portal_verify():
+    """SendArchiveInvoiceXml Success + ETTN → portal doğrulama zorunlu."""
+    settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
+    invoice = {"e_type": "e_archive", "invoice_number": "TA202600000095"}
+    company = {"tax_number": "4810173324"}
+    contact = {"name": "Alıcı", "tax_number_or_id": "11111111111"}
+
+    with patch(
+        "n11faturam.build_ubl",
+        return_value=("<Invoice/>", "local-uuid", "TA202600000095"),
+    ), patch(
+        "isnet.send_invoice_xml",
+        AsyncMock(return_value={
+            "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "invoice_id": "TA202600000095",
+            "message": "OK",
+            "document_url": "",
+        }),
+    ), patch(
+        "isnet.verify_outgoing_in_portal",
+        AsyncMock(side_effect=HTTPException(
+            status_code=502,
+            detail="İşNet SOAP ETTN döndürdü ancak fatura NetteFatura test/canlı portalında bulunamadı.",
+        )),
+    ):
+        with pytest.raises(HTTPException) as e:
+            asyncio.get_event_loop().run_until_complete(
+                isnet.send_document(settings, "", invoice, contact, company)
+            )
+    assert e.value.status_code == 502
+    assert "NetteFatura" in e.value.detail
+
+
 def test_soap_call_surfaces_result_failed():
     """İşNet Result=Failed + ErrorMessage → kullanıcıya net hata (ETTN yok mesajı değil)."""
     settings = {"mode": "test"}
