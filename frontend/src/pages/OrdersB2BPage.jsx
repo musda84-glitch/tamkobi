@@ -1301,23 +1301,60 @@ export default function OrdersB2BPage() {
                               <button
                                 type="button"
                                 className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm"
-                                title="Taslak fatura oluştur"
-                                aria-label="Faturala"
+                                title="GİB e-belge işlemleri"
+                                aria-label="GİB e-belge işlemleri"
                                 data-testid={`convert-inv-btn-${ord.order_number}`}
                               >
                                 <FileText className="w-4 h-4" />
                               </button>
                             </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" sideOffset={8} collisionPadding={24} className="z-[80] w-52 rounded-xl p-1.5 shadow-lg" data-testid={`inv-type-chooser-${ord.order_number}`}>
-                              <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase">Taslak fatura türü</div>
-                              {[["e_invoice", "E-Fatura", "Mükellef alıcı"], ["e_archive", "E-Arşiv", "Nihai tüketici / pazaryeri"], ["paper", "Kağıt Fatura", "Matbu"]]
-                                .filter(([k]) => k !== "e_invoice" || orderCanIssueEFatura(ord, contacts))
-                                .map(([k, l, sub]) => (
-                                <DropdownMenuItem key={k} onSelect={() => handleConvertToInvoice(ord.id || ord._id, k)} className="flex-col items-start gap-0 py-1.5" data-testid={`inv-type-${k}-${ord.order_number}`}>
-                                  <span className="text-xs font-semibold text-slate-800">{l}</span>
-                                  <span className="text-[10px] text-slate-400">{sub}</span>
+                            <DropdownMenuContent align="end" sideOffset={8} collisionPadding={24} className="z-[80] w-56 rounded-xl p-1.5 shadow-lg" data-testid={`inv-type-chooser-${ord.order_number}`}>
+                              <div className="px-2 py-1 text-[10px] font-bold text-emerald-700 uppercase">GİB e-belge işlemleri</div>
+                              {orderCanIssueEFatura(ord, contacts) && (
+                                <DropdownMenuItem
+                                  onSelect={() => handleEBelgeInvoice(ord, "e_invoice")}
+                                  className="flex-col items-start gap-0 py-1.5"
+                                  data-testid={`inv-type-e_invoice-${ord.order_number}`}
+                                >
+                                  <span className="text-xs font-semibold text-slate-800">E-Fatura kes</span>
+                                  <span className="text-[10px] text-slate-400">Mükellef alıcı · GİB&apos;e iletilir</span>
                                 </DropdownMenuItem>
-                              ))}
+                              )}
+                              <DropdownMenuItem
+                                onSelect={() => handleEBelgeInvoice(ord, "e_archive")}
+                                className="flex-col items-start gap-0 py-1.5"
+                                data-testid={`inv-type-e_archive-${ord.order_number}`}
+                              >
+                                <span className="text-xs font-semibold text-slate-800">E-Arşiv kes</span>
+                                <span className="text-[10px] text-slate-400">Nihai tüketici / pazaryeri · GİB&apos;e iletilir</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() => handleConvertToInvoice(ord.id || ord._id, "paper")}
+                                className="flex-col items-start gap-0 py-1.5"
+                                data-testid={`inv-type-paper-${ord.order_number}`}
+                              >
+                                <span className="text-xs font-semibold text-slate-800">Kağıt Fatura</span>
+                                <span className="text-[10px] text-slate-400">Matbu taslak · GİB&apos;e gitmez</span>
+                              </DropdownMenuItem>
+                              <div className="px-2 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-400 uppercase border-t mt-1">Taslak kaydet</div>
+                              {orderCanIssueEFatura(ord, contacts) && (
+                                <DropdownMenuItem
+                                  onSelect={() => handleConvertToInvoice(ord.id || ord._id, "e_invoice")}
+                                  className="flex-col items-start gap-0 py-1.5"
+                                  data-testid={`inv-draft-e_invoice-${ord.order_number}`}
+                                >
+                                  <span className="text-xs font-semibold text-slate-800">E-Fatura taslağı</span>
+                                  <span className="text-[10px] text-slate-400">GİB&apos;e göndermeden kaydet</span>
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem
+                                onSelect={() => handleConvertToInvoice(ord.id || ord._id, "e_archive")}
+                                className="flex-col items-start gap-0 py-1.5"
+                                data-testid={`inv-draft-e_archive-${ord.order_number}`}
+                              >
+                                <span className="text-xs font-semibold text-slate-800">E-Arşiv taslağı</span>
+                                <span className="text-[10px] text-slate-400">GİB&apos;e göndermeden kaydet</span>
+                              </DropdownMenuItem>
                               {ord.order_status === "pending" && (
                                 <DropdownMenuItem onSelect={() => setApproveOrder(ord)} className="border-t mt-1 rounded-lg font-semibold text-emerald-700" data-testid={`inv-chooser-approve-${ord.order_number}`}>
                                   Önce Onayla + Kargo
