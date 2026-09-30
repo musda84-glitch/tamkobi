@@ -68,12 +68,14 @@ async def impersonate(company_id: str, request: Request, response: Response, adm
     if not await _addons.is_on(company_id, "support.impersonate"):
         raise HTTPException(status_code=403, detail="Bu müşteri için 'şirket olarak gir' destek aracı kapalı.")
     # Tenant kullanıcıları: platform süper adminleri şirket koltuğu sayılmaz.
-    target = (
-        await _db.users.find_one({**saas.tenant_user_query(company_id), "role": "admin", "is_active": {"$ne": False}})
-        or await _db.users.find_one({**saas.tenant_user_query(company_id), "is_active": {"$ne": False}})
-        or await _db.users.find_one({"company_ids": company_id, "role": "admin", "is_active": {"$ne": False}})
-        or await _db.users.find_one({"company_ids": company_id, "is_active": {"$ne": False}})
-    )
+    target = await saas.resolve_company_admin(company_id)
+    if target and target.get("is_active") is False:
+        target = None
+    if not target or not target.get("password_hash"):
+        target = (
+            await _db.users.find_one({**saas.tenant_user_query(company_id), "is_active": {"$ne": False}, "password_hash": {"$exists": True, "$nin": [None, ""]}})
+            or await _db.users.find_one({**saas.company_member_clause(company_id), "is_active": {"$ne": False}, "password_hash": {"$exists": True, "$nin": [None, ""]}})
+        )
     if not target:
         raise HTTPException(status_code=400, detail="Bu şirkette giriş yapılabilecek kullanıcı yok.")
     company = await _db.companies.find_one({"_id": company_id}) or {}

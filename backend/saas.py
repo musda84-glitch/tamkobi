@@ -462,9 +462,94 @@ async def guard(request: Request, user: Optional[dict], module: Optional[str]):
     return JSONResponse({"detail": msg, "code": "module_disabled", "module": module, "plan": lic["plan_name"], "status": lic["status"]}, status_code=403)
 
 
+# Ana yönetici rol kodları (eski owner / TR etiketleri dahil).
+ADMIN_ROLE_CODES = ("admin", "owner", "yönetici", "yonetici")
+
+
+def company_member_clause(company_id: str) -> dict:
+    """Üyelik: company_ids dizisi veya aktif şirket alanı."""
+    return {"$or": [{"company_ids": company_id}, {"active_company_id": company_id}]}
+
+
 def tenant_user_query(company_id: str) -> dict:
     """Company staff only — platform (super) admins are not tenant seats."""
-    return {"company_ids": company_id, "is_super_admin": {"$ne": True}}
+    return {"$and": [company_member_clause(company_id), {"is_super_admin": {"$ne": True}}]}
+
+
+def _member_brief(u: Optional[dict]) -> Optional[Dict[str, Any]]:
+    if not u:
+        return None
+    return {
+        "id": u.get("_id") or u.get("id"),
+        "name": u.get("name"),
+        "email": u.get("email"),
+        "phone": u.get("phone") or "",
+        "role": u.get("role") or "admin",
+        "role_label": rbac.role_label(u.get("role")),
+        "user_number": u.get("user_number"),
+        "is_active": u.get("is_active", True),
+        "is_super_admin": bool(u.get("is_super_admin")),
+        "is_platform": bool(u.get("is_super_admin")),
+        "last_login_at": u.get("last_login_at"),
+        "created_at": u.get("created_at"),
+        "company_ids": list(u.get("company_ids") or []),
+        "active_company_id": u.get("active_company_id"),
+        "has_password": bool(u.get("password_hash")),
+    }
+
+
+async def resolve_company_admin(company_id: str, company: Optional[dict] = None) -> Optional[dict]:
+    """Ana yöneticiyi geniş eşleşmeyle bul (rol takma adları, active_company_id, şirket e-postası)."""
+    proj = {
+        "email": 1, "name": 1, "phone": 1, "role": 1, "last_login_at": 1, "created_at": 1,
+        "is_active": 1, "is_super_admin": 1, "user_number": 1, "company_ids": 1,
+        "active_company_id": 1, "password_hash": 1,
+    }
+    admin = await _db.users.find_one(
+        {**tenant_user_query(company_id), "role": {"$in": list(ADMIN_ROLE_CODES)}},
+        proj,
+    )
+    if admin:
+        return admin
+    any_tenant = await _db.users.find(tenant_user_query(company_id), proj).sort("last_login_at", -1).to_list(1)
+    if any_tenant:
+        return any_tenant[0]
+    linked = await _db.users.find_one(
+        {**company_member_clause(company_id), "role": {"$in": list(ADMIN_ROLE_CODES)}},
+        proj,
+    )
+    if linked:
+        return linked
+    linked_any = await _db.users.find(company_member_clause(company_id), proj).sort("last_login_at", -1).to_list(1)
+    if linked_any:
+        return linked_any[0]
+    company = company or await _db.companies.find_one({"_id": company_id}) or {}
+    email = (company.get("email") or "").strip().lower()
+    if email and "@" in email:
+        by_email = await _db.users.find_one({"email": email}, proj)
+        if by_email:
+            return by_email
+    return None
+
+
+async def list_company_members(company_id: str, *, include_platform: bool = True) -> list:
+    """Sistem çekmecesi: şirket üyeleri (+ isteğe bağlı platform bağlantıları)."""
+    q = company_member_clause(company_id) if include_platform else tenant_user_query(company_id)
+    rows = await _db.users.find(q, {"password_hash": 1, "email": 1, "name": 1, "phone": 1, "role": 1, "last_login_at": 1, "created_at": 1, "is_active": 1, "is_super_admin": 1, "user_number": 1, "company_ids": 1, "active_company_id": 1}).sort("name", 1).to_list(200)
+    out = []
+    seen = set()
+    for u in rows:
+        brief = _member_brief(u)
+        if not brief or brief["id"] in seen:
+            continue
+        seen.add(brief["id"])
+        out.append(brief)
+    if not out:
+        admin = await resolve_company_admin(company_id)
+        brief = _member_brief(admin)
+        if brief and brief["id"] not in seen:
+            out.append(brief)
+    return out
 
 
 async def check_user_limit(company_id: str):
@@ -675,7 +760,7 @@ async def _usage(company_id: str) -> Dict[str, Any]:
 
 async def _company_row(c: dict) -> Dict[str, Any]:
     lic = await effective(c["_id"])
-    admin = await _db.users.find_one({**tenant_user_query(c["_id"]), "role": "admin"}, {"email": 1, "name": 1, "last_login_at": 1}) or await _db.users.find_one({"company_ids": c["_id"], "role": "admin"}, {"email": 1, "name": 1, "last_login_at": 1})
+    admin = await resolve_company_admin(c["_id"], c)
     lid = lic.get("license_id") or c["_id"]
     sibling_docs = await companies_on_license(lid)
     name_by_id = {s["_id"]: s.get("name") for s in sibling_docs}
@@ -689,7 +774,58 @@ async def _company_row(c: dict) -> Dict[str, Any]:
     einvoice = {"provider": ei.get("provider") or "", "status": ei.get("status") or "simulated", "mode": ei.get("mode") or "test", "username": ei.get("username") or "", "has_password": bool(ei.get("password_enc"))}
     # Alan yoksa (eski kayıt) açık; yeni şirketlerde False yazılır.
     allow_panel = True if "allow_platform_access" not in c else bool(c.get("allow_platform_access"))
-    return {"id": c["_id"], "name": c.get("name"), "tax_number": c.get("tax_number"), "city": c.get("city"), "phone": c.get("phone"), "email": c.get("email"), "created_at": c.get("created_at"), "license_id": lid, "parent_company_id": parent_id, "parent_company_name": parent_name, "is_primary": c["_id"] == lid, "license_companies": siblings, "protected": c["_id"] in PROTECTED_COMPANY_IDS, "allow_platform_access": allow_panel, "admin": {"email": admin.get("email"), "name": admin.get("name"), "last_login_at": admin.get("last_login_at")} if admin else None, "license": lic, "usage": await _usage(c["_id"]), "einvoice": einvoice}
+    usage = await _usage(c["_id"])
+    admin_brief = _member_brief(admin)
+    raw_lic = await _db.company_licenses.find_one({"_id": lid}, {"started_at": 1, "created_at": 1}) or {}
+    return {
+        "id": c["_id"],
+        "name": c.get("name"),
+        "tax_number": c.get("tax_number"),
+        "tax_office": c.get("tax_office") or "",
+        "address": c.get("address") or "",
+        "city": c.get("city"),
+        "phone": c.get("phone"),
+        "email": c.get("email"),
+        "currency": c.get("currency") or "TRY",
+        "created_at": c.get("created_at"),
+        "license_id": lid,
+        "parent_company_id": parent_id,
+        "parent_company_name": parent_name,
+        "is_primary": c["_id"] == lid,
+        "license_companies": siblings,
+        "protected": c["_id"] in PROTECTED_COMPANY_IDS,
+        "allow_platform_access": allow_panel,
+        "admin": admin_brief,
+        "membership": {
+            "plan_id": lic.get("plan_id"),
+            "plan_name": lic.get("plan_name"),
+            "plan_color": lic.get("plan_color"),
+            "status": lic.get("status"),
+            "status_label": lic.get("status_label"),
+            "billing_period": lic.get("billing_period") or "monthly",
+            "started_at": raw_lic.get("started_at") or raw_lic.get("created_at") or c.get("created_at"),
+            "trial_ends_at": lic.get("trial_ends_at"),
+            "expires_at": lic.get("expires_at"),
+            "days_left": lic.get("days_left"),
+            "notes": lic.get("notes") or "",
+            "user_limit": lic.get("user_limit") or 0,
+            "company_limit": lic.get("company_limit") or 0,
+            "product_limit": lic.get("product_limit") or 0,
+            "contact_limit": lic.get("contact_limit") or 0,
+            "storage_limit_mb": lic.get("storage_limit_mb") or 0,
+            "user_count": usage.get("users") or 0,
+            "company_count": lic.get("company_count") or len(siblings) or 1,
+            "product_count": usage.get("products") or 0,
+            "contact_count": usage.get("contacts") or 0,
+            "storage_bytes": usage.get("storage_bytes") or 0,
+            "invoice_count": usage.get("invoices") or 0,
+            "order_count": usage.get("orders") or 0,
+            "locked": bool(lic.get("locked")),
+        },
+        "license": lic,
+        "usage": usage,
+        "einvoice": einvoice,
+    }
 
 
 def _restore_active_status(lic: Optional[dict]) -> str:
@@ -885,10 +1021,122 @@ async def get_company(company_id: str, _: dict = Depends(require_super_admin)):
     if not c:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
     row = await _company_row(c)
-    row["users"] = [{"id": u["_id"], "name": u.get("name"), "email": u.get("email"), "role": u.get("role"), "is_active": u.get("is_active", True), "last_login_at": u.get("last_login_at")} for u in await _db.users.find(tenant_user_query(company_id), {"password_hash": 0}).to_list(200)]
+    members = await list_company_members(company_id, include_platform=False)
+    # Platform yöneticileri koltuk sayılmaz; yalnızca şirket personeli.
+    # Ana yönetici e-posta yedeklemesiyle bulunduysa listede yoksa ekle.
+    if row.get("admin") and row["admin"]["id"] not in {m["id"] for m in members}:
+        members = [row["admin"], *members]
+    row["users"] = members
     row["requests"] = [_clean(r) for r in await _db.upgrade_requests.find({"company_id": company_id}).sort("created_at", -1).to_list(20)]
     row["quota_usage"] = await quota_usage(company_id)
+    # Detayda lisans geneli kota (kardeş şirketler dahil) ile üyelik sayılarını güncelle.
+    qu = row["quota_usage"]
+    if row.get("membership"):
+        row["membership"] = {
+            **row["membership"],
+            "product_count": qu.get("product_count") or row["membership"].get("product_count") or 0,
+            "contact_count": qu.get("contact_count") or row["membership"].get("contact_count") or 0,
+            "storage_bytes": qu.get("storage_bytes") or row["membership"].get("storage_bytes") or 0,
+        }
     return row
+
+
+@router.post("/system/companies/{company_id}/send-password-reset")
+async def send_company_password_reset(company_id: str, req: Dict[str, Any], request: Request, _: dict = Depends(require_super_admin)):
+    """Sistem paneli: şirket ana kullanıcısına şifre sıfırlama e-postası gönder."""
+    import secrets
+    import password_reset
+    import platform_mail
+    import comm_service
+
+    if not await _db.companies.find_one({"_id": company_id}):
+        raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
+    user_id = (req.get("user_id") or "").strip()
+    email = (req.get("email") or "").strip().lower()
+    user = None
+    if user_id:
+        user = await _db.users.find_one({"_id": user_id})
+    elif email and "@" in email:
+        user = await _db.users.find_one({"email": email})
+    else:
+        user = await resolve_company_admin(company_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Şirket kullanıcısı bulunamadı.")
+    # Kullanıcı bu şirkete bağlı olmalı (veya e-posta şirketin kayıtlı e-postası).
+    linked = company_id in (user.get("company_ids") or []) or user.get("active_company_id") == company_id
+    company = await _db.companies.find_one({"_id": company_id}) or {}
+    if not linked and (user.get("email") or "").strip().lower() != (company.get("email") or "").strip().lower():
+        raise HTTPException(status_code=400, detail="Kullanıcı bu şirkete bağlı değil.")
+    if user.get("is_active") is False:
+        raise HTTPException(status_code=400, detail="Kullanıcı pasif; önce aktifleştirin.")
+    if not user.get("password_hash"):
+        raise HTTPException(status_code=400, detail="Kullanıcının şifre girişi yok.")
+    to = (user.get("email") or "").strip().lower()
+    if not to or "@" not in to:
+        raise HTTPException(status_code=400, detail="Kullanıcının e-posta adresi yok.")
+
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    await _db.password_resets.update_many(
+        {"user_id": user["_id"], "used_at": None},
+        {"$set": {"used_at": now.isoformat(), "revoked": True}},
+    )
+    await _db.password_resets.insert_one({
+        "_id": token,
+        "user_id": user["_id"],
+        "email": to,
+        "phone": user.get("phone") or "",
+        "channel": "email",
+        "company_id": company_id,
+        "next": "login",
+        "expires_at": (now + timedelta(hours=1)).isoformat(),
+        "used_at": None,
+        "created_at": now.isoformat(),
+        "requested_by": "system_panel",
+    })
+    st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
+    base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
+    if not base:
+        base = str(request.headers.get("origin") or "").rstrip("/")
+    link = password_reset.reset_link(base, token, "login")
+    brand = company.get("name") or "TamKobi"
+    subject = f"{brand} şifre sıfırlama"
+    body = (
+        f"Merhaba {user.get('name') or ''},\n"
+        f"Sistem yöneticiniz sizin için şifre sıfırlama bağlantısı oluşturdu. "
+        f"1 saat içinde kullanın:\n{link}\n"
+        "Bu isteği siz yapmadıysanız bu e-postayı yok sayın."
+    )
+    html = (
+        f"<p>Merhaba {user.get('name') or ''},</p>"
+        "<p>Sistem yöneticiniz sizin için şifre sıfırlama bağlantısı oluşturdu. Bağlantı 1 saat geçerlidir.</p>"
+        f"<p><a href='{link}' style='background:#059669;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold'>Şifreyi Sıfırla</a></p>"
+    )
+    mail_status, mail_detail = "skipped", "E-posta hesabı tanımlı değil."
+    try:
+        acc = await platform_mail.resolve_smtp_account("transactional") or await platform_mail.resolve_smtp_account("billing")
+        if not acc:
+            raise HTTPException(status_code=424, detail="Platform posta sunucusu yapılandırılmamış.")
+        await comm_service.smtp_send(acc, [to], subject, body, html=html)
+        mail_status, mail_detail = "sent", f"{to} adresine gönderildi."
+    except HTTPException as e:
+        mail_status = "failed" if getattr(e, "status_code", None) in (424, 502, 400) else "skipped"
+        mail_detail = str(e.detail)[:200]
+    except Exception as e:
+        mail_status, mail_detail = "failed", str(e)[:200]
+    if mail_status != "sent":
+        await _db.password_resets.update_one(
+            {"_id": token},
+            {"$set": {"used_at": now.isoformat(), "revoked": True, "mail_failed": True, "mail_error": mail_detail[:200]}},
+        )
+        raise HTTPException(status_code=400, detail=mail_detail or "Şifre sıfırlama e-postası gönderilemedi.")
+    return {
+        "status": "success",
+        "message": f"Şifre sıfırlama bağlantısı {password_reset.mask_email(to)} adresine gönderildi.",
+        "email": to,
+        "masked_email": password_reset.mask_email(to),
+        "mail_status": mail_status,
+    }
 
 
 @router.get("/system/quotas")

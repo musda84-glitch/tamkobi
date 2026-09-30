@@ -1,14 +1,17 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2, Link2 } from "lucide-react";
+import { X, Save, Loader2, CalendarPlus, Users, Check, Lock, Building2, Plus, Trash2, Power, FileCheck2, Link2, KeyRound, Mail, IdCard } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
-import { fmtDate, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
+import { fmtDate, fmtBytes, StatusBadge, PlanChip, Toggle, inputCls, groupByCategory, STATUS_LABELS } from "./saasUi";
 import { descendantIds, sortCompanyTree } from "../../utils/companyTree";
 import { backdropDismissProps } from "../../utils/modalBackdrop";
 import { AddonToggles } from "./AddonsPanel";
 
 const cred = { withCredentials: true };
+
+const limLabel = (n) => (!n ? "∞" : String(n));
+const billingLabel = (p) => (p === "yearly" ? "Yıllık" : "Aylık");
 
 export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = [], onClose, onChanged }) => {
   const [d, setD] = useState(null);
@@ -106,16 +109,78 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
       onClose();
     } catch (e) { toast.error(e.response?.data?.detail || "Şirket silinemedi."); } finally { setBusy(""); }
   };
+  const sendReset = async (user) => {
+    const email = user?.email || d.admin?.email;
+    if (!email) { toast.error("Sıfırlama için e-posta yok."); return; }
+    setBusy(`reset-${user?.id || "admin"}`);
+    try {
+      const r = await axios.post(`${API_URL}/system/companies/${companyId}/send-password-reset`, { user_id: user?.id || d.admin?.id, email }, cred);
+      toast.success(r.data?.message || "Şifre sıfırlama bağlantısı gönderildi.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Sıfırlama gönderilemedi."); } finally { setBusy(""); }
+  };
+  const mem = d.membership || {};
+  const admin = d.admin;
+  const users = d.users || [];
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" {...backdropDismissProps(onClose)}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-3xl bg-slate-50 h-full overflow-y-auto shadow-2xl text-xs" data-testid="company-license-drawer">
         <div className="sticky top-0 bg-white border-b px-5 py-3 flex items-center justify-between z-10 gap-3">
-          <div className="min-w-0"><div className="text-sm font-bold text-slate-900">{d.name}</div><div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5"><PlanChip name={lic.plan_name} color={lic.plan_color} /><StatusBadge status={lic.status} testId="drawer-status" /> · {d.admin?.email || "yönetici yok"} · {d.usage.users} kullanıcı · {d.usage.invoices} fatura · {d.usage.contacts} cari · {d.usage.products} ürün</div></div>
+          <div className="min-w-0"><div className="text-sm font-bold text-slate-900">{d.name}</div><div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5 flex-wrap"><PlanChip name={lic.plan_name} color={lic.plan_color} /><StatusBadge status={lic.status} testId="drawer-status" /> · <span data-testid="drawer-admin-email">{admin?.email || "yönetici yok"}</span> · {d.usage?.users ?? users.length} kullanıcı · {d.usage?.invoices ?? 0} fatura · {d.usage?.contacts ?? 0} cari · {d.usage?.products ?? 0} ürün</div></div>
           <div className="flex items-center gap-1.5 shrink-0">
             <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-800 rounded-lg" data-testid="drawer-close"><X className="w-4 h-4" /></button>
           </div>
         </div>
         <div className="p-5 space-y-5">
+          <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-membership">
+            <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><IdCard className="w-4 h-4 text-slate-400" /> Üyelik ve şirket bilgileri</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+              <div><span className="text-slate-500">Unvan</span><div className="font-semibold text-slate-800" data-testid="drawer-co-name">{d.name || "—"}</div></div>
+              <div><span className="text-slate-500">VKN</span><div className="font-semibold text-slate-800 font-mono" data-testid="drawer-co-tax">{d.tax_number || "—"}</div></div>
+              <div><span className="text-slate-500">Vergi dairesi</span><div className="font-semibold text-slate-800">{d.tax_office || "—"}</div></div>
+              <div><span className="text-slate-500">Şehir</span><div className="font-semibold text-slate-800">{d.city || "—"}</div></div>
+              <div><span className="text-slate-500">Telefon</span><div className="font-semibold text-slate-800">{d.phone || "—"}</div></div>
+              <div><span className="text-slate-500">Şirket e-posta</span><div className="font-semibold text-slate-800 break-all" data-testid="drawer-co-email">{d.email || "—"}</div></div>
+              <div className="sm:col-span-2"><span className="text-slate-500">Adres</span><div className="font-semibold text-slate-800">{d.address || "—"}</div></div>
+              <div><span className="text-slate-500">Kayıt</span><div className="font-semibold text-slate-800">{fmtDate(d.created_at)}</div></div>
+              <div><span className="text-slate-500">Para birimi</span><div className="font-semibold text-slate-800">{d.currency || "TRY"}</div></div>
+              <div><span className="text-slate-500">Paket</span><div className="font-semibold text-slate-800 flex items-center gap-1.5"><PlanChip name={mem.plan_name || lic.plan_name} color={mem.plan_color || lic.plan_color} /> <StatusBadge status={mem.status || lic.status} /></div></div>
+              <div><span className="text-slate-500">Faturalama</span><div className="font-semibold text-slate-800">{billingLabel(mem.billing_period || lic.billing_period)}</div></div>
+              <div><span className="text-slate-500">Üyelik başlangıç</span><div className="font-semibold text-slate-800">{fmtDate(mem.started_at)}</div></div>
+              <div><span className="text-slate-500">Bitiş</span><div className="font-semibold text-slate-800">{fmtDate(mem.trial_ends_at || mem.expires_at || lic.trial_ends_at || lic.expires_at)}{mem.days_left != null ? ` (${mem.days_left} gün)` : ""}</div></div>
+              <div><span className="text-slate-500">Kullanıcı</span><div className="font-semibold text-slate-800">{mem.user_count ?? d.usage?.users ?? 0}/{limLabel(mem.user_limit || lic.user_limit)}</div></div>
+              <div><span className="text-slate-500">Şirket / ürün / cari</span><div className="font-semibold text-slate-800">{mem.company_count ?? siblings.length}/{limLabel(mem.company_limit || lic.company_limit)} · {mem.product_count ?? d.usage?.products ?? 0}/{limLabel(mem.product_limit || lic.product_limit)} · {mem.contact_count ?? d.usage?.contacts ?? 0}/{limLabel(mem.contact_limit || lic.contact_limit)}</div></div>
+              <div><span className="text-slate-500">Depolama</span><div className="font-semibold text-slate-800">{fmtBytes(mem.storage_bytes ?? d.usage?.storage_bytes ?? 0)}{mem.storage_limit_mb || lic.storage_limit_mb ? ` / ${mem.storage_limit_mb || lic.storage_limit_mb} MB` : ""}</div></div>
+              <div><span className="text-slate-500">Fatura / sipariş</span><div className="font-semibold text-slate-800">{mem.invoice_count ?? d.usage?.invoices ?? 0} fatura · {mem.order_count ?? d.usage?.orders ?? 0} sipariş</div></div>
+              <div><span className="text-slate-500">Platform erişimi</span><div className="font-semibold text-slate-800">{d.allow_platform_access === false ? "Kapalı (gizlilik)" : "Açık"}</div></div>
+              {mem.notes || lic.notes ? <div className="sm:col-span-2"><span className="text-slate-500">Lisans notu</span><div className="font-semibold text-slate-800">{mem.notes || lic.notes}</div></div> : null}
+            </div>
+          </section>
+
+          <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="drawer-admin">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><Mail className="w-4 h-4 text-slate-400" /> Ana kullanıcı</h3>
+                <p className="text-[10px] text-slate-500 mt-0.5">Şirketin birincil yönetici hesabı. Şifre sıfırlama bağlantısı kayıtlı e-postaya gider.</p>
+              </div>
+              {admin?.email ? (
+                <button type="button" onClick={() => sendReset(admin)} disabled={!!busy} className="px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1 border border-amber-300 text-amber-900 bg-amber-50 hover:bg-amber-100 disabled:opacity-60" data-testid="drawer-admin-reset">
+                  {busy === `reset-${admin.id || "admin"}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />} Şifre sıfırlama gönder
+                </button>
+              ) : null}
+            </div>
+            {admin ? (
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-900" data-testid="drawer-admin-name">{admin.name || "—"}</div>
+                  <div className="text-[11px] text-slate-700 font-mono break-all" data-testid="drawer-admin-mail">{admin.email}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">{admin.role_label || admin.role || "admin"} · {admin.is_active === false ? "pasif" : "aktif"}{admin.is_platform ? " · platform" : ""} · son giriş {fmtDate(admin.last_login_at)}{admin.phone ? ` · ${admin.phone}` : ""}</div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2" data-testid="drawer-admin-missing">Bu şirkete bağlı yönetici hesabı bulunamadı. Şirket e-postası: {d.email || "—"}</p>
+            )}
+          </section>
+
           <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -248,10 +313,23 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
           </section>
 
           <section className="bg-white border border-slate-200 rounded-2xl p-4">
-            <h3 className="font-bold text-slate-900 text-sm mb-2 flex items-center gap-1.5"><Users className="w-4 h-4 text-slate-400" /> Şirket kullanıcıları ({d.users.length}{lic.user_limit ? `/${lic.user_limit}` : ""})</h3>
+            <h3 className="font-bold text-slate-900 text-sm mb-2 flex items-center gap-1.5"><Users className="w-4 h-4 text-slate-400" /> Şirket kullanıcıları ({users.length}{lic.user_limit ? `/${lic.user_limit}` : ""})</h3>
             <p className="text-[10px] text-slate-500 mb-2">Bu listedekiler müşteri şirketinin personelidir. Platform (panel) yöneticileri burada görünmez.</p>
-            <ul className="divide-y">{d.users.length === 0 ? <li className="py-2 text-slate-400">Şirket kullanıcısı yok.</li> : d.users.map((u) => <li key={u.id} className="py-1.5 flex items-center justify-between"><div><b className="text-slate-800">{u.name}</b> <span className="text-slate-500">{u.email}</span></div><div className="text-[10px] text-slate-500">{u.role} · {u.is_active ? "aktif" : "pasif"} · son giriş {fmtDate(u.last_login_at)}</div></li>)}</ul>
-            {d.requests.length > 0 && (<><h3 className="font-bold text-slate-900 text-sm mt-4 mb-2">Paket Talepleri</h3><ul className="divide-y">{d.requests.map((r) => <li key={r.id} className="py-1.5 flex items-center justify-between"><span>{r.plan_name} · {r.message}</span><span className={`text-[10px] font-semibold ${r.status === "pending" ? "text-amber-700" : r.status === "approved" ? "text-emerald-700" : "text-slate-400"}`}>{r.status} · {fmtDate(r.created_at)}</span></li>)}</ul></>)}
+            <ul className="divide-y">{users.length === 0 ? <li className="py-2 text-slate-400" data-testid="drawer-users-empty">Şirket kullanıcısı yok.</li> : users.map((u) => (
+              <li key={u.id} className="py-2 flex flex-wrap items-center justify-between gap-2" data-testid={`drawer-user-${u.id}`}>
+                <div className="min-w-0">
+                  <b className="text-slate-800">{u.name}</b>{" "}
+                  <span className="text-slate-600 font-mono break-all">{u.email}</span>
+                  <div className="text-[10px] text-slate-500">{u.role_label || u.role} · {u.is_active === false ? "pasif" : "aktif"}{u.is_platform ? " · platform" : ""} · son giriş {fmtDate(u.last_login_at)}</div>
+                </div>
+                {u.email && u.has_password !== false ? (
+                  <button type="button" onClick={() => sendReset(u)} disabled={!!busy} className="px-2.5 py-1 rounded-lg font-semibold inline-flex items-center gap-1 border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-60 shrink-0" data-testid={`drawer-user-reset-${u.id}`}>
+                    {busy === `reset-${u.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />} Sıfırla
+                  </button>
+                ) : null}
+              </li>
+            ))}</ul>
+            {(d.requests || []).length > 0 && (<><h3 className="font-bold text-slate-900 text-sm mt-4 mb-2">Paket Talepleri</h3><ul className="divide-y">{d.requests.map((r) => <li key={r.id} className="py-1.5 flex items-center justify-between"><span>{r.plan_name} · {r.message}</span><span className={`text-[10px] font-semibold ${r.status === "pending" ? "text-amber-700" : r.status === "approved" ? "text-emerald-700" : "text-slate-400"}`}>{r.status} · {fmtDate(r.created_at)}</span></li>)}</ul></>)}
           </section>
         </div>
       </div>
