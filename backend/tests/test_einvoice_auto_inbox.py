@@ -1,7 +1,8 @@
-"""e-Fatura gelen kutusu: otomatik çekim + XML/PDF içeri alma."""
+"""e-Fatura gelen kutusu: otomatik çekim; içeri alma varsayılan kapalı."""
 import asyncio
 import os
 import sys
+from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,23 +11,75 @@ from fastapi import HTTPException
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
+def _stub_emergent():
+    """Cloud VM'de emergentintegrations yoksa hafif stub."""
+    if "emergentintegrations" in sys.modules:
+        return
+    root = ModuleType("emergentintegrations")
+    llm = ModuleType("emergentintegrations.llm")
+    chat = ModuleType("emergentintegrations.llm.chat")
+
+    class LlmChat:
+        def __init__(self, *a, **k):
+            pass
+
+        async def send_message(self, *a, **k):
+            return ""
+
+    class UserMessage:
+        def __init__(self, *a, **k):
+            pass
+
+    chat.LlmChat = LlmChat
+    chat.UserMessage = UserMessage
+    payments = ModuleType("emergentintegrations.payments")
+    stripe_svc = ModuleType("emergentintegrations.payments.stripe")
+    stripe_checkout = ModuleType("emergentintegrations.payments.stripe.checkout")
+
+    class StripeCheckout:
+        def __init__(self, *a, **k):
+            pass
+
+    class CheckoutSessionRequest:
+        def __init__(self, *a, **k):
+            pass
+
+    class CheckoutSessionResponse:
+        def __init__(self, *a, **k):
+            pass
+
+    stripe_checkout.StripeCheckout = StripeCheckout
+    stripe_checkout.CheckoutSessionRequest = CheckoutSessionRequest
+    stripe_checkout.CheckoutSessionResponse = CheckoutSessionResponse
+    sys.modules["emergentintegrations"] = root
+    sys.modules["emergentintegrations.llm"] = llm
+    sys.modules["emergentintegrations.llm.chat"] = chat
+    sys.modules["emergentintegrations.payments"] = payments
+    sys.modules["emergentintegrations.payments.stripe"] = stripe_svc
+    sys.modules["emergentintegrations.payments.stripe.checkout"] = stripe_checkout
+
+
+_stub_emergent()
+
+
 class TestEinvoiceViewDefaults:
-    def test_auto_flags_default_true_when_missing(self):
+    def test_auto_pull_defaults_true_auto_process_defaults_false(self):
         import server
 
         view = server._einvoice_view("comp1", {"provider": "n11faturam", "status": "configured"})
         assert view["auto_pull"] is True
-        assert view["auto_process"] is True
+        # İçeri alma varsayılan kapalı — manuel onay / stok eşleme gerekir
+        assert view["auto_process"] is False
 
-    def test_auto_flags_respect_explicit_false(self):
+    def test_auto_flags_respect_explicit_values(self):
         import server
 
         view = server._einvoice_view(
             "comp1",
-            {"provider": "n11faturam", "status": "configured", "auto_pull": False, "auto_process": False},
+            {"provider": "n11faturam", "status": "configured", "auto_pull": False, "auto_process": True},
         )
         assert view["auto_pull"] is False
-        assert view["auto_process"] is False
+        assert view["auto_process"] is True
 
 
 class TestPullAndProcess:
@@ -68,7 +121,24 @@ class TestPullAndProcess:
         assert result["pulled"] == 1
         assert len(result["failed"]) == 1
 
-    def test_sync_also_processes_pending_by_default(self):
+    def test_sync_does_not_process_by_default(self):
+        """Varsayılan: çekim sonrası içeri alma yok — Bekleyen'de kalır."""
+        import server
+
+        settings = {"provider": "n11faturam", "status": "configured", "company_id": "comp1"}
+
+        async def _run():
+            with patch.object(server.db.einvoice_settings, "find_one", AsyncMock(return_value=settings)), patch.object(
+                server, "pull_einvoice_incoming", AsyncMock(return_value={"status": "success", "pulled": 1, "message": "1 alındı."})
+            ), patch.object(server.edocs, "process_pending_for_company", AsyncMock()) as proc:
+                result = await server.sync_einvoice_incoming(company_id="comp1", days=14)
+                proc.assert_not_called()
+                return result
+
+        result = asyncio.get_event_loop().run_until_complete(_run())
+        assert "processed" not in result
+
+    def test_sync_processes_when_setting_or_param_true(self):
         import server
 
         settings = {"provider": "n11faturam", "status": "configured", "auto_process": True, "company_id": "comp1"}
@@ -87,7 +157,7 @@ class TestPullAndProcess:
         assert result["processed"] == 2
         assert "içeri alındı" in result["message"]
 
-    def test_sync_can_skip_process(self):
+    def test_sync_can_force_skip_process_even_if_setting_on(self):
         import server
 
         settings = {"provider": "n11faturam", "status": "configured", "auto_process": True}
@@ -105,13 +175,14 @@ class TestPullAndProcess:
 
 
 class TestAutoLoopSkip:
-    def test_tick_skips_when_auto_pull_false(self):
+    def test_tick_skips_process_when_auto_process_false_or_missing(self):
         import server
 
         settings_list = [
             {"provider": "n11faturam", "status": "configured", "company_id": "c1", "auto_pull": False, "auto_process": True},
             {"provider": "n11faturam", "status": "configured", "company_id": "c2", "auto_pull": True, "auto_process": True},
             {"provider": "n11faturam", "status": "configured", "company_id": "c3", "auto_pull": True, "auto_process": False},
+            {"provider": "isnet", "status": "configured", "company_id": "c4", "auto_pull": True, "auto_process": True},
         ]
 
         class _Cursor:
@@ -140,5 +211,6 @@ class TestAutoLoopSkip:
 
         pulls, processes = asyncio.get_event_loop().run_until_complete(_once())
         assert "c1" not in pulls
-        assert pulls == ["c2", "c3"]
+        assert pulls == ["c2", "c3", "c4"]
+        # n11 + auto_process=True → c2; İşNet asla otomatik içeri alınmaz
         assert processes == ["c2"]

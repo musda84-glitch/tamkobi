@@ -764,9 +764,9 @@ def _einvoice_view(company_id: str, s: Optional[dict] = None) -> Dict[str, Any]:
         "has_password": bool(s.get("password_enc")),
         "has_api_key": bool(s.get("api_key_enc")),
         "status": s.get("status") or "simulated",
-        # n11 yapılandırıldığında varsayılan: gelen kutuyu periyodik çek + XML/PDF içeri al
+        # Gelen kutu: çekim varsayılan açık; içeri alma yalnızca manuel onay (stok/tedarikçi)
         "auto_pull": bool(s["auto_pull"]) if "auto_pull" in s else True,
-        "auto_process": bool(s["auto_process"]) if "auto_process" in s else True,
+        "auto_process": bool(s["auto_process"]) if "auto_process" in s else False,
         "last_inbox_sync_at": s.get("last_inbox_sync_at"),
         "last_inbox_sync_message": s.get("last_inbox_sync_message") or "",
         "updated_at": s.get("updated_at"),
@@ -956,6 +956,8 @@ async def isnet_save_settings(req: Dict[str, Any]):
         "alias": fields["alias"],
         "company_tax_id": tax,
         "company_vendor_number": fields.get("company_vendor_number") or "",
+        # Gelen belgeler Bekleyen'de kalsın — otomatik içeri alma kapalı
+        "auto_process": False,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "assigned_at": existing.get("assigned_at") or datetime.now(timezone.utc).isoformat(),
     }
@@ -1165,10 +1167,13 @@ async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Opti
 
 @api_router.post("/einvoice/incoming/sync")
 async def sync_einvoice_incoming(company_id: Optional[str] = "comp_nexus_main_01", days: int = 14, auto_process: Optional[bool] = None):
-    """Manuel gelen kutu çekimi. auto_process=true ise çekilen/bekleyen XML-PDF belgelerini de içeri alır."""
+    """Manuel gelen kutu çekimi. auto_process=true ise çekilen/bekleyen belgeleri de içeri alır.
+
+    Varsayılan: içeri alma kapalı — belgeler Bekleyen'de kalır; onay/stok eşleme gerekir.
+    """
     s = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
     result = await pull_einvoice_incoming(company_id, days=days, settings=s)
-    do_process = bool(auto_process) if auto_process is not None else bool(s.get("auto_process", True))
+    do_process = bool(auto_process) if auto_process is not None else bool(s.get("auto_process", False))
     if do_process:
         processed = await edocs.process_pending_for_company(company_id)
         result["processed"] = processed.get("processed", 0)
@@ -1180,7 +1185,7 @@ async def sync_einvoice_incoming(company_id: Optional[str] = "comp_nexus_main_01
 
 
 async def _run_einvoice_inbox_auto_tick() -> None:
-    """Tek tur: auto_pull açık n11 / İşNet (SOAP+Portal) şirketlerinde çek + (isteğe bağlı) içeri al."""
+    """Tek tur: auto_pull açık n11 / İşNet şirketlerinde çek; auto_process açıksa içeri al."""
     for s in await db.einvoice_settings.find({"provider": {"$in": ["n11faturam", "isnet", "isnet_portal"]}, "status": "configured"}).to_list(200):
         if not s.get("auto_pull", True):
             continue
@@ -1189,7 +1194,11 @@ async def _run_einvoice_inbox_auto_tick() -> None:
             continue
         try:
             await pull_einvoice_incoming(cid, days=14, settings=s)
-            if s.get("auto_process", True):
+            # İşNet: asla otomatik içeri alma (stok/tedarikçi onayı gerekir)
+            provider = (s.get("provider") or "").strip()
+            if provider in ("isnet", "isnet_portal"):
+                continue
+            if s.get("auto_process", False):
                 await edocs.process_pending_for_company(cid)
         except HTTPException as e:
             logger.warning("e-fatura otomatik gelen kutu atlandı %s: %s", cid, e.detail)
@@ -1198,7 +1207,7 @@ async def _run_einvoice_inbox_auto_tick() -> None:
 
 
 async def _einvoice_inbox_auto_loop(interval_s: int = 600):
-    """Yapılandırılmış n11 / İşNet şirketlerinde gelen kutuyu periyodik çeker ve XML/PDF belgelerini içeri alır."""
+    """Yapılandırılmış n11 / İşNet şirketlerinde gelen kutuyu periyodik çeker (içeri alma ayrı ayar)."""
     import asyncio as _a
     await _a.sleep(45)
     while True:
