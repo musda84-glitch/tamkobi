@@ -78,34 +78,26 @@ describe("orderMoreMenu", () => {
     expect(orderMoreMenuItems(ord).items.map((i) => i.id)).toContain("faturalastir");
   });
 
-  it("panel invoiced (cari) shows GİB e-Fatura menu inside ⋮", () => {
+  it("panel invoiced (cari) shows E-Fatura Oluştur + kargo menüsü", () => {
     const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", order_number: "B2B-2" };
     expect(orderMoreMenuKind(ord)).toBe("panel_invoiced");
-    const { items } = orderMoreMenuItems(ord, {
-      eBelgeItems: [
-        { eType: "e_invoice", label: "E-Fatura kes (GİB)", testIdSuffix: "efatura" },
-        { eType: "e_archive", label: "E-Arşiv kes (GİB)", testIdSuffix: "earsiv" },
-      ],
-    });
+    const { items } = orderMoreMenuItems(ord);
     expect(items.map((i) => i.label)).toEqual([
-      "E-Fatura kes (GİB)",
-      "E-Arşiv kes (GİB)",
+      "E-Fatura Oluştur",
       "Mini Kargo Etiketi Yazdır",
       "Mini Kargo Etiketi Yazdır 10X10",
-      "Fatura Tarihi Değiştir",
       "Kargola",
       "Siparişi Excel İndir",
       "Siparişi PDF İndir",
     ]);
-    expect(items.filter((i) => i.section === "GİB e-Fatura").map((i) => i.eType)).toEqual([
-      "e_invoice",
-      "e_archive",
-    ]);
+    expect(items[0].id).toBe("efatura_olustur");
   });
 
-  it("panel invoiced without eBelgeItems falls back to E-Belge Kes", () => {
+  it("panel invoiced ignores eBelgeItems — tek E-Fatura Oluştur satırı", () => {
     const ord = { channel: "b2b", is_invoiced: true, e_type: "paper", order_number: "B2B-3" };
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)[0]).toBe("E-Belge Kes");
+    expect(orderMoreMenuItems(ord, {
+      eBelgeItems: [{ eType: "e_invoice", label: "E-Fatura kes (GİB)", testIdSuffix: "efatura" }],
+    }).items.map((i) => i.label)[0]).toBe("E-Fatura Oluştur");
   });
 
   it("B2B + GİB e-belge uses panel e-invoice ops menu on web and mobile", () => {
