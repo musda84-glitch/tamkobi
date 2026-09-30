@@ -319,11 +319,101 @@ def _find_text(root: Optional[ET.Element], *names: str) -> str:
     return ""
 
 
+def _find_all_texts(root: Optional[ET.Element], *names: str) -> List[str]:
+    """Tüm eşleşen etiket metinleri (ilk değil) — iç içe Result=Failed kaçmasın."""
+    if root is None:
+        return []
+    wanted = {n.lower() for n in names}
+    out: List[str] = []
+    for el in root.iter():
+        if _local(el.tag).lower() in wanted and el.text and str(el.text).strip():
+            out.append(str(el.text).strip())
+    return out
+
+
 def _find_all(root: Optional[ET.Element], *names: str) -> List[ET.Element]:
     if root is None:
         return []
     wanted = {n.lower() for n in names}
     return [el for el in root.iter() if _local(el.tag).lower() in wanted]
+
+
+_FAIL_RESULTS = frozenset({"failed", "error", "false", "0"})
+
+
+def _is_fail_flag(value: str) -> bool:
+    return (value or "").strip().lower() in _FAIL_RESULTS
+
+
+def _row_failed(el: ET.Element) -> Optional[str]:
+    """InvoiceResult / ArchiveInvoiceReturn satırında başarısızlık mesajı (yoksa None)."""
+    ok = _find_text(el, "IsSucceded", "IsSucceeded", "IsSuccess", "Success")
+    result = _find_text(el, "Result")
+    if ok and _is_fail_flag(ok):
+        return (
+            _find_text(el, "ErrorMessage", "Error", "Message")
+            or f"İşNet satır sonucu başarısız ({ok})."
+        )
+    if result and _is_fail_flag(result):
+        return (
+            _find_text(el, "ErrorMessage", "Error", "Message")
+            or f"İşNet satır sonucu başarısız ({result})."
+        )
+    # ErrorMessage varken IsSucceded açıkça true değilse hata say
+    err = _find_text(el, "ErrorMessage", "Error")
+    if err and (not ok or _is_fail_flag(ok)):
+        return err
+    return None
+
+
+def _assert_soap_execution_ok(body: ET.Element, action: str) -> None:
+    """HTTP 200 + SOAP Body içinde Result=Failed / IsSucceded=false yakala.
+
+    Önemli: yalnızca ilk Result'a bakmak yetmez — dış Result=Success iken
+    iç ArchiveInvoiceReturn.Result=Failed kaçırılıp 'GİB'e iletildi' yazılabiliyordu.
+    """
+    fail_msgs: List[str] = []
+    for val in _find_all_texts(body, "Result"):
+        if _is_fail_flag(val):
+            fail_msgs.append(val)
+    for val in _find_all_texts(body, "IsSucceded", "IsSucceeded", "IsSuccess"):
+        if _is_fail_flag(val):
+            fail_msgs.append(val)
+    # Satır nesneleri (Send*Xml dönüşleri)
+    for row in _find_all(
+        body,
+        "InvoiceResult",
+        "ArchiveInvoiceResult",
+        "InvoiceResultItem",
+        "ArchiveInvoiceReturn",
+        "InvoiceReturn",
+    ):
+        row_err = _row_failed(row)
+        if row_err:
+            raise HTTPException(status_code=400, detail=row_err)
+
+    if fail_msgs:
+        msg = (
+            _find_text(body, "ErrorMessage", "Error")
+            or _find_text(body, "Message")
+            or ""
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=msg or f"İşNet {action} başarısız ({fail_msgs[0]}).",
+        )
+
+    # Üst düzey ErrorMessage + açık Success yoksa (yalnızca Failed senaryosu)
+    top_err = _find_text(body, "ErrorMessage")
+    if top_err:
+        results = [v.lower() for v in _find_all_texts(body, "Result")]
+        oks = [v.lower() for v in _find_all_texts(body, "IsSucceded", "IsSucceeded", "IsSuccess")]
+        if any(r in _FAIL_RESULTS for r in results) or any(o in _FAIL_RESULTS for o in oks):
+            raise HTTPException(status_code=400, detail=top_err)
+        if results and all(r not in ("success", "successful", "ok", "true", "1") for r in results):
+            raise HTTPException(status_code=400, detail=top_err)
+        if oks and all(o not in ("true", "1", "success") for o in oks):
+            raise HTTPException(status_code=400, detail=top_err)
 
 
 def _serialize_ein(obj: Any, parent: Optional[str] = None) -> str:
@@ -411,18 +501,7 @@ async def _soap_call(
         raise HTTPException(
             status_code=502, detail=f"İşNet SOAP Fault ({action}): {fault or 'bilinmeyen'}"
         )
-    success = _find_text(body, "IsSucceded", "IsSucceeded", "Success", "IsSuccess").lower()
-    result = _find_text(body, "Result", "State", "Status").strip()
-    msg = (
-        _find_text(body, "ErrorMessage", "Error")
-        or _find_text(body, "Message")
-        or ""
-    )
-    if success in ("false", "0") or result.lower() in ("failed", "error", "false"):
-        raise HTTPException(
-            status_code=400,
-            detail=msg or f"İşNet {action} başarısız{f' ({result})' if result else ''}.",
-        )
+    _assert_soap_execution_ok(body, action)
     return body
 
 
@@ -565,19 +644,37 @@ async def send_invoice_xml(
         request=request,
         timeout=90.0,
     )
-    # Satır sonucu: InvoiceResult / ArchiveInvoiceResult.IsSucceded
-    for result_el in _find_all(body, "InvoiceResult", "ArchiveInvoiceResult", "InvoiceResultItem"):
-        row_ok = _find_text(result_el, "IsSucceded", "IsSucceeded", "IsSuccess", "Success").lower()
-        if row_ok in ("false", "0"):
-            row_msg = (
-                _find_text(result_el, "Message", "ErrorMessage", "Error")
-                or _find_text(body, "Message")
-                or f"İşNet {action} satır sonucu başarısız."
+    # Satır sonucu: yalnızca başarılı satırdan ETTN al (Failed satırdaki UUID iletildi sayılmasın)
+    row_tags = (
+        "InvoiceResult",
+        "ArchiveInvoiceResult",
+        "InvoiceResultItem",
+        "ArchiveInvoiceReturn",
+        "InvoiceReturn",
+    )
+    ettn = ""
+    invoice_id = ""
+    message = ""
+    rows = _find_all(body, *row_tags)
+    if rows:
+        for result_el in rows:
+            row_err = _row_failed(result_el)
+            if row_err:
+                raise HTTPException(status_code=400, detail=row_err)
+            ettn = ettn or _find_text(result_el, "ETTN", "Ettn", "InvoiceETTN")
+            invoice_id = invoice_id or _find_text(
+                result_el, "InvoiceNumber", "InvoiceId", "DocumentId", "ArchiveInvoiceNumber"
             )
-            raise HTTPException(status_code=400, detail=row_msg)
-    ettn = _find_text(body, "ETTN", "Ettn", "UUID", "InvoiceETTN") or ""
-    invoice_id = _find_text(body, "InvoiceNumber", "InvoiceId", "DocumentId", "ArchiveInvoiceNumber") or ""
-    message = _find_text(body, "Message") or "Fatura İşNet'e iletildi."
+            message = message or _find_text(result_el, "Message")
+    else:
+        # Satır yoksa gövde düzeyi (eski yanıt şekli)
+        ettn = _find_text(body, "ETTN", "Ettn", "InvoiceETTN") or ""
+        invoice_id = (
+            _find_text(body, "InvoiceNumber", "InvoiceId", "DocumentId", "ArchiveInvoiceNumber") or ""
+        )
+        message = _find_text(body, "Message") or ""
+    if not message:
+        message = "Fatura İşNet'e iletildi."
     if not ettn:
         raise HTTPException(
             status_code=502,
@@ -615,7 +712,7 @@ async def send_document(
     try:
         import n11faturam
 
-        xml, ettn, inv_id = n11faturam.build_ubl(invoice, company or {}, contact)
+        xml, _local_ettn, inv_id = n11faturam.build_ubl(invoice, company or {}, contact)
     except Exception as e:
         logger.exception("isnet build_ubl")
         raise HTTPException(status_code=500, detail=f"UBL oluşturma hatası: {e}") from e
@@ -633,7 +730,13 @@ async def send_document(
         is_earchive=(e_type == "e_archive"),
     )
     seller = re.sub(r"\D", "", str((company or {}).get("tax_number") or ""))
-    uuid_out = info.get("ettn") or ettn
+    # Yalnızca SOAP'ın döndürdüğü ETTN — yerel UBL UUID ile sahte «iletildi» yok
+    uuid_out = (info.get("ettn") or "").strip()
+    if not uuid_out:
+        raise HTTPException(
+            status_code=502,
+            detail="İşNet ETTN döndürmedi — NetteFatura/GİB kaydı doğrulanamadı.",
+        )
     return {
         "ettn": uuid_out,
         "invoice_id": info.get("invoice_id") or inv_id,

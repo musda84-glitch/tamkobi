@@ -192,6 +192,78 @@ def test_soap_call_surfaces_result_failed():
     assert "gönderim şekli" in e.value.detail
 
 
+def test_nested_result_failed_not_masked_by_outer_success():
+    """Dış Result=Success + iç ArchiveInvoiceReturn.Result=Failed → hata (sahte iletildi yok)."""
+    settings = {"mode": "test"}
+    xml = (
+        '<?xml version="1.0"?>'
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">'
+        "<s:Body>"
+        '<SendArchiveInvoiceXmlResponse xmlns="http://tempuri.org/">'
+        '<SendArchiveInvoiceXmlResult xmlns:a="http://schemas.datacontract.org/2004/07/EInvoice.Service.Model">'
+        "<a:IsSucceded>true</a:IsSucceded>"
+        "<a:Result>Success</a:Result>"
+        "<a:ArchiveInvoices>"
+        "<a:ArchiveInvoiceReturn>"
+        "<a:ETTN>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</a:ETTN>"
+        "<a:ErrorMessage>şematron: GONDERIMSEKLI eksik</a:ErrorMessage>"
+        "<a:IsSucceded>false</a:IsSucceded>"
+        "<a:Result>Failed</a:Result>"
+        "</a:ArchiveInvoiceReturn>"
+        "</a:ArchiveInvoices>"
+        "</SendArchiveInvoiceXmlResult>"
+        "</SendArchiveInvoiceXmlResponse>"
+        "</s:Body></s:Envelope>"
+    )
+
+    class _Resp:
+        status_code = 200
+        text = xml
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=_Resp())
+
+    with patch("isnet.httpx.AsyncClient", return_value=mock_client):
+        with pytest.raises(HTTPException) as e:
+            asyncio.get_event_loop().run_until_complete(
+                isnet._soap_call(
+                    settings,
+                    endpoint=isnet.TEST_SOAP,
+                    action="SendArchiveInvoiceXml",
+                    service_interface="IInvoiceService",
+                    request={"CompanyTaxCode": "4810173324"},
+                )
+            )
+    assert e.value.status_code == 400
+    assert "GONDERIMSEKLI" in e.value.detail or "şematron" in e.value.detail.lower()
+
+
+def test_send_archive_rejects_failed_return_with_ettn():
+    """ArchiveInvoiceReturn IsSucceded=false + ETTN → iletildi sayılmamalı."""
+    settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "<ein:Result>Success</ein:Result>"
+        "<ein:ArchiveInvoiceReturn>"
+        "<ein:ETTN>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</ein:ETTN>"
+        "<ein:ArchiveInvoiceNumber>TA202600000095</ein:ArchiveInvoiceNumber>"
+        "<ein:IsSucceded>false</ein:IsSucceded>"
+        "<ein:ErrorMessage>posta kutusu bulunamadı</ein:ErrorMessage>"
+        "<ein:Result>Failed</ein:Result>"
+        "</ein:ArchiveInvoiceReturn></Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)):
+        with pytest.raises(HTTPException) as e:
+            asyncio.get_event_loop().run_until_complete(
+                isnet.send_invoice_xml(settings, ubl_xml="<Invoice/>", is_earchive=True)
+            )
+    assert e.value.status_code == 400
+    assert "posta kutusu" in e.value.detail
+
+
 def test_send_archive_invoice_xml_ok_with_ettn():
     settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
     body = ET.fromstring(
