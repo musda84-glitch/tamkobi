@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Loader2, Plug, Save } from "lucide-react";
+import { Inbox, Loader2, Plug, Save } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -116,7 +117,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
         </span>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => setTestMode(true)}
@@ -133,44 +134,14 @@ export default function IsnetIntegrationPanel({ companyId }) {
         >
           Canlı Ortam
         </button>
-      </div>
-
-      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 space-y-1 text-[10px] text-slate-600" data-testid="isnet-endpoints-hint">
-        <div>
-          InvoiceService:{" "}
-          <span className="font-mono break-all">
-            {testMode
-              ? "https://einvoiceservicetest.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
-              : "https://einvoiceservice.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"}
-          </span>
-        </div>
-        <div>
-          AddressBookService:{" "}
-          <span className="font-mono break-all">
-            {testMode
-              ? "https://einvoiceservicetest.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc"
-              : "https://einvoiceservice.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc"}
-          </span>
-        </div>
-        {testMode ? (
-          <div className="pt-1 border-t border-slate-200 text-amber-800" data-testid="isnet-test-portal-hint">
-            Test portal:{" "}
-            <a href="http://efatura.isnet.net.tr" target="_blank" rel="noreferrer" className="underline font-semibold">
-              efatura.isnet.net.tr
-            </a>
-            {" · "}User <span className="font-mono">12345678901</span> / Pass <span className="font-mono">1234</span>
-            {" · "}Firma VKN <span className="font-mono">4810173324</span> (isnet test) veya{" "}
-            <span className="font-mono">1234567805</span> (Test firma 05)
-          </div>
-        ) : (
-          <div className="pt-1 border-t border-slate-200 text-emerald-800" data-testid="isnet-live-ip-hint">
-            Canlıda firewall IP–VKN tanımı gerekir. Çıkış IP’nizi{" "}
-            <a href="mailto:efaturadestek@nettefatura.com.tr" className="underline font-semibold">
-              efaturadestek@nettefatura.com.tr
-            </a>{" "}
-            adresine iletin; ardından başarılı test XML’i ile canlı erişim açılır.
-          </div>
-        )}
+        <Link
+          to="/edoc-inbox"
+          className="ml-auto px-3 py-1.5 rounded-lg font-semibold border border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 inline-flex items-center gap-1.5"
+          data-testid="isnet-edoc-inbox-link"
+        >
+          <Inbox className="w-3.5 h-3.5" />
+          Gelen e-Belgeler
+        </Link>
       </div>
 
       <form onSubmit={handleSave} className="space-y-3">
