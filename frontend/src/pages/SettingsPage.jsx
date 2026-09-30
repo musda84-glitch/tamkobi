@@ -124,7 +124,7 @@ const EInvoiceSettings = ({ companyId }) => {
   const payload = () => ({
     company_id: companyId, mode: s.mode, username: s.username, api_url: s.api_url, alias: s.alias,
     corporate_code: s.corporate_code, password, api_key: apiKey,
-    auto_pull: s.auto_pull !== false, auto_process: s.auto_process !== false,
+    auto_pull: s.auto_pull !== false, auto_process: s.auto_process === true,
   });
   const save = async (e) => {
     e.preventDefault();
@@ -174,8 +174,14 @@ const EInvoiceSettings = ({ companyId }) => {
                 <span><span className="block font-semibold text-slate-800">Otomatik çekim</span><span className="block text-[10px] text-slate-500">Yaklaşık 10 dakikada bir n11 Faturam gelen kutusundan XML faturaları alır.</span></span>
               </label>
               <label className="flex items-start gap-2 cursor-pointer">
-                <input type="checkbox" checked={s.auto_process !== false} onChange={(e) => setS({ ...s, auto_process: e.target.checked })} className="mt-0.5 rounded" data-testid="einvoice-auto-process" />
-                <span><span className="block font-semibold text-slate-800">Otomatik içeri al</span><span className="block text-[10px] text-slate-500">Çekilen XML ve bekleyen PDF belgelerini alış faturasına dönüştürür (tedarikçi yoksa oluşturur).</span></span>
+                <input type="checkbox" checked={s.auto_process === true} onChange={(e) => setS({ ...s, auto_process: e.target.checked })} className="mt-0.5 rounded" data-testid="einvoice-auto-process" />
+                <span>
+                  <span className="block font-semibold text-slate-800">Otomatik içeri al (önerilmez)</span>
+                  <span className="block text-[10px] text-slate-500">
+                    Kapalı bırakın: belgeler Bekleyen&apos;de kalır; stok eşleme, tedarikçi kaydı ve Onayla ile içeri alınır.
+                    Açıkken onay/eşleme atlanır — alış faturası otomatik kesilir.
+                  </span>
+                </span>
               </label>
               {s.last_inbox_sync_at && (
                 <p className="text-[10px] text-slate-500" data-testid="einvoice-last-inbox-sync">

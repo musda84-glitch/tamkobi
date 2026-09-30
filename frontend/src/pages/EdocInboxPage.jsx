@@ -113,7 +113,8 @@ export default function EdocInboxPage() {
   };
 
   const pullInbox = () => act(() => axios.post(`${API_URL}/einvoice/incoming/sync`, null, {
-    params: { company_id: companyId, days: 14 },
+    // Çekim yalnızca Bekleyen'e yazar; onay/stok eşleme olmadan içeri alma yok
+    params: { company_id: companyId, days: 14, auto_process: false },
   }).then((r) => {
     setStatus("pending");
     setPullNote(r.data);
