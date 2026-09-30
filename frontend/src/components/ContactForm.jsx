@@ -8,10 +8,12 @@ import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { GibContactLookup } from "./GibContactLookup";
+import { gibLookupToContactPatch } from "../utils/gibContactFill";
 
 const inp = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30";
 const TABS = [["general", "Genel", User], ["tax", "Vergi & e-Fatura", Receipt], ["address", "Adres & Konum", MapPin], ["finance", "Finans & Vade", Wallet], ["b2b", "B2B Portal", ShoppingCart], ["notes", "Notlar & Etiket", StickyNote]];
-const EMPTY = { type: "customer", name: "", company_title: "", contact_person: "", contact_person_phone: "", tax_number_or_id: "", tax_office: "", is_e_invoice_user: false, email: "", phone: "", website: "", address: "", city: "İstanbul", district: "", location_url: "", credit_limit: 0, payment_term_days: 0, late_fee_rate: 0, default_discount: 0, currency: "TRY", payment_method: "", iban: "", bank_name: "", category: "Genel", sales_rep: "", risk_status: "normal", b2b_enabled: false, b2b_discount: 0, b2b_login_email: "", b2b_password: "", b2b_allow_orders: true, b2b_show_prices: true, b2b_show_stock: true, b2b_show_statement: true, b2b_show_installments: true, b2b_allow_ai_cart: true, b2b_min_order_amount: 0, b2b_welcome_note: "", sms_opt_in: true, email_opt_in: true, tags: [], notes: "", logo_url: "" };
+const EMPTY = { type: "customer", name: "", company_title: "", contact_person: "", contact_person_phone: "", tax_number_or_id: "", tax_office: "", is_e_invoice_user: false, e_invoice_alias: "", email: "", phone: "", website: "", address: "", city: "İstanbul", district: "", location_url: "", credit_limit: 0, payment_term_days: 0, late_fee_rate: 0, default_discount: 0, currency: "TRY", payment_method: "", iban: "", bank_name: "", category: "Genel", sales_rep: "", risk_status: "normal", b2b_enabled: false, b2b_discount: 0, b2b_login_email: "", b2b_password: "", b2b_allow_orders: true, b2b_show_prices: true, b2b_show_stock: true, b2b_show_statement: true, b2b_show_installments: true, b2b_allow_ai_cart: true, b2b_min_order_amount: 0, b2b_welcome_note: "", sms_opt_in: true, email_opt_in: true, tags: [], notes: "", logo_url: "" };
 
 const b2bSettingsFromContact = (contact) => {
   const s = contact?.b2b_portal_settings || {};
@@ -32,9 +34,22 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
   const [f, setF] = useState({ ...EMPTY, ...(contact || {}), ...b2bSettingsFromContact(contact), b2b_password: "", tags: contact?.tags || [] });
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.type === "number" ? Number(e.target.value) : e.target.value });
+  const applyGib = (res) => {
+    setF((prev) => ({ ...prev, ...gibLookupToContactPatch(res, prev) }));
+    if (tab === "general") setTab("tax");
+  };
   const F = (k, l, type = "text", extra = {}) => <div className={extra.span ? "sm:col-span-2" : ""}><label className="block font-semibold text-slate-700 mb-1">{l}</label><input type={type} value={f[k] ?? ""} onChange={set(k)} placeholder={extra.ph || ""} className={inp} data-testid={`cf-${k}`} /></div>;
   const S = (k, l, opts) => <div><label className="block font-semibold text-slate-700 mb-1">{l}</label><select value={f[k] ?? ""} onChange={set(k)} className={inp} data-testid={`cf-${k}`}>{opts.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></div>;
   const C = (k, l) => <label className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 cursor-pointer"><input type="checkbox" checked={!!f[k]} onChange={set(k)} data-testid={`cf-${k}`} /><span className="font-semibold text-slate-700">{l}</span></label>;
+  const gibBlock = (
+    <div className="sm:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50/40 p-3 space-y-1.5" data-testid="cf-gib-block">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-bold text-emerald-900">GİB’den cari çağır</p>
+        <span className="text-[10px] text-emerald-700/80">VKN/TCKN → ünvan & e-Fatura durumu</span>
+      </div>
+      <GibContactLookup companyId={companyId} onApply={applyGib} />
+    </div>
+  );
   const uploadLogo = async (e) => {
     const raw = e.target.files?.[0];
     e.target.value = "";
@@ -96,6 +111,7 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
         <div className="flex gap-1 px-6 pt-3 overflow-x-auto shrink-0">{TABS.map(([k, l, Icon]) => <button type="button" key={k} onClick={() => setTab(k)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${tab === k ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`} data-testid={`cf-tab-${k}`}><Icon className="w-3.5 h-3.5" />{l}</button>)}</div>
         <div className="p-6 overflow-y-auto text-xs space-y-3 flex-1 min-h-0">
           {tab === "general" && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {gibBlock}
             <div className="sm:col-span-2 flex items-center gap-4">
               <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0" data-testid="cf-logo-preview">
                 {f.logo_url ? <img src={resolveImageUrl(f.logo_url)} alt="cari logo" className="w-full h-full object-contain" /> : <ImageIcon className="w-8 h-8 text-slate-300" />}
@@ -114,7 +130,9 @@ export const ContactForm = ({ companyId, contact, onClose, onSaved }) => {
             <div className="sm:col-span-2 grid grid-cols-2 gap-2">{C("sms_opt_in", "SMS bildirimi alsın")}{C("email_opt_in", "E-posta bildirimi alsın")}</div>
           </div>}
           {tab === "tax" && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {gibBlock}
             {F("tax_number_or_id", "VKN / TCKN *", "text", { ph: "10 veya 11 hane" })}{F("tax_office", "Vergi Dairesi")}
+            {F("e_invoice_alias", "GİB PK Etiketi", "text", { span: true, ph: "urn:mail:…@…" })}
             <div className="sm:col-span-2">{C("is_e_invoice_user", "e-Fatura mükellefi (GİB kayıtlı) — faturalar e-Fatura olarak kesilir, değilse e-Arşiv")}</div>
             {S("currency", "Para Birimi", [["TRY", "₺ TRY"], ["USD", "$ USD"], ["EUR", "€ EUR"], ["GBP", "£ GBP"]])}{S("payment_method", "Varsayılan Ödeme Şekli", [["", "—"], ["cash", "Nakit"], ["transfer", "Havale/EFT"], ["card", "Kredi Kartı"], ["check", "Çek"], ["note", "Senet"], ["open_account", "Açık Hesap"]])}
           </div>}
