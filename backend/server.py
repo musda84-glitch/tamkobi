@@ -12164,7 +12164,23 @@ async def list_orders(company_id: Optional[str] = "comp_nexus_main_01", status: 
     for o in docs:
         _decorate_b2b_held_order(o)
     docs = await _enrich_orders_production_flags(docs)
+    docs = await _enrich_orders_invoice_ebelge(docs)
     return _sort_b2b_cart_orders(docs)
+
+
+async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Liste rozeti: fatura e_type / einvoice_state siparişe yansısın (Faturalaşmış E-Fatura/E-Arşiv)."""
+    from order_ebelge_enrich import enrich_orders_with_invoices
+
+    if not docs:
+        return docs
+    inv_ids = [o.get("invoice_id") for o in docs if o.get("invoice_id")]
+    inv_ids = list({i for i in inv_ids if i})
+    if not inv_ids:
+        return docs
+    invs = await db.invoices.find({"_id": {"$in": inv_ids}}, {"e_type": 1, "einvoice_state": 1, "gib_status": 1}).to_list(len(inv_ids))
+    by_id = {i["_id"]: i for i in invs}
+    return enrich_orders_with_invoices(docs, by_id)
 
 
 async def _enrich_orders_production_flags(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
