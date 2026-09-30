@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import axios from "axios";
-import { LogIn, KeyRound, ArrowLeft } from "lucide-react";
+import { LogIn, KeyRound, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { BuildStamp } from "../components/BuildStamp";
@@ -13,6 +13,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "", phone: "" });
   const [remember, setRemember] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState("login");
   const [channel, setChannel] = useState("email");
@@ -118,7 +119,28 @@ export default function LoginPage() {
           </div>
           <div>
             <label className="block text-xs font-semibold mb-1">Şifre</label>
-            <input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full border rounded-xl p-2.5 text-sm" data-testid="login-password" autoComplete="current-password" />
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                className="w-full border rounded-xl p-2.5 pr-10 text-sm"
+                data-testid="login-password"
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+                aria-label={showPassword ? "Şifreyi gizle" : "Şifreyi göster"}
+                aria-pressed={showPassword}
+                data-testid="login-password-toggle"
+                title={showPassword ? "Şifreyi gizle" : "Şifreyi göster"}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
           <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2" data-testid="login-remember-row">
             <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none" data-testid="login-remember-label">
