@@ -344,8 +344,8 @@ export const InvoiceContextMenu = (props) => {
       {issued && inv.e_type !== "paper" && inv.e_type !== "expense_slip" && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-edoc-downloads">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
-          <Item icon={FileCode2} color="text-indigo-600" label="UBL XML İndir" sub="GİB UBL-TR arşiv kopyası" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/xml`, "_blank")} testId="ctx-download-xml" />
-          <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Yazdırılabilir fatura PDF" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf`, "_blank")} testId="ctx-download-pdf" />
+          <Item icon={FileCode2} color="text-indigo-600" label="UBL XML İndir" sub="Entegratör GİB UBL-TR" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/xml`, "_blank")} testId="ctx-download-xml" />
+          <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Entegratör e-belge PDF" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf`, "_blank")} testId="ctx-download-pdf" />
           {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
             <Item
               icon={ExternalLink}

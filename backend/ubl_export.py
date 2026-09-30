@@ -253,8 +253,26 @@ async def invoice_xml(invoice_id: str):
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     if not is_outgoing_edoc(inv):
         raise HTTPException(status_code=400, detail="Yalnızca e-Fatura / e-Arşiv belgelerinin XML'i indirilebilir.")
+    filename = invoice_filename(inv, "xml")
+    # GİB'e iletilmiş: resmi entegratör UBL (İşNet DownloadXml)
+    try:
+        import e_invoice
+
+        remote = await e_invoice.fetch_integrator_xml(invoice_id)
+        if remote:
+            return Response(
+                remote,
+                media_type="application/xml",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "X-Document-Source": "integrator",
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     seller = await _db.companies.find_one({"_id": inv["company_id"]}) or {}
     contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
     xml = build_invoice_ubl(inv, seller, _buyer_from(inv, contact))
-    filename = invoice_filename(inv, "xml")
     return Response(xml, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="{filename}"'})

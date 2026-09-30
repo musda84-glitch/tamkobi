@@ -641,6 +641,23 @@ async def api_einvoice_status(invoice_id: str):
 
 @router.get("/e-invoice/{invoice_id}/xml")
 async def api_einvoice_xml(invoice_id: str):
+    try:
+        remote = await fetch_integrator_xml(invoice_id)
+        if remote:
+            inv = await _db.invoices.find_one({"_id": invoice_id}) or {}
+            name = ubl_export.invoice_filename(inv or {"invoice_number": invoice_id}, "xml")
+            return Response(
+                remote,
+                media_type="application/xml",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{name}"',
+                    "X-Document-Source": "integrator",
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("integrator xml fetch failed for %s", invoice_id)
     stored = await _db.outgoing_einvoice_xml.find_one({"_id": invoice_id})
     if stored and stored.get("xml"):
         data = stored["xml"].encode("utf-8")
@@ -721,6 +738,70 @@ async def api_gib_document_redirect(invoice_id: str):
 @router.get("/invoices/{invoice_id}/gib-document.json")
 async def api_gib_document_json(invoice_id: str):
     return await resolve_gib_document_url(invoice_id)
+
+
+def _invoice_ettn(inv: dict) -> str:
+    return (inv.get("gib_uuid") or inv.get("gib_tracking_id") or "").strip()
+
+
+def _invoice_provider(inv: dict, settings: Optional[dict] = None) -> str:
+    return (inv.get("integrator") or (settings or {}).get("provider") or "").strip()
+
+
+async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
+    """GİB'e iletilmiş faturanın resmi PDF'i (İşNet). Yoksa None → yerel PDF."""
+    inv = await _db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        return None
+    et = inv.get("e_type") or ""
+    if et in ("paper", "expense_slip", "e_dispatch") or inv.get("status") == "draft":
+        return None
+    ettn = _invoice_ettn(inv)
+    if not ettn:
+        return None
+    settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+    provider = _invoice_provider(inv, settings)
+    if provider != "isnet" or settings.get("status") != "configured":
+        return None
+    viewer = ""
+    stored = (inv.get("gib_document_url") or "").strip()
+    if _is_http_url(stored) and not _is_n11_document_url(stored):
+        viewer = stored
+    return await isnet.download_invoice_pdf(
+        settings,
+        ettn,
+        e_type=et or "e_archive",
+        invoice_number=str(inv.get("invoice_number") or inv.get("gib_invoice_id") or ""),
+        viewer_url=viewer,
+    )
+
+
+async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
+    """GİB'e iletilmiş faturanın resmi UBL XML'i (İşNet). Yoksa None → yerel UBL."""
+    inv = await _db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        return None
+    et = inv.get("e_type") or ""
+    if et in ("paper", "expense_slip", "e_dispatch") or inv.get("status") == "draft":
+        return None
+    ettn = _invoice_ettn(inv)
+    if not ettn:
+        return None
+    settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+    provider = _invoice_provider(inv, settings)
+    if provider != "isnet" or settings.get("status") != "configured":
+        return None
+    viewer = ""
+    stored = (inv.get("gib_document_url") or "").strip()
+    if _is_http_url(stored) and not _is_n11_document_url(stored):
+        viewer = stored
+    return await isnet.download_invoice_xml(
+        settings,
+        ettn,
+        e_type=et or "e_archive",
+        invoice_number=str(inv.get("invoice_number") or inv.get("gib_invoice_id") or ""),
+        viewer_url=viewer,
+    )
 
 
 async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:

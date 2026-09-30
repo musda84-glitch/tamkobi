@@ -151,10 +151,28 @@ async def invoice_pdf(invoice_id: str, download: bool = Query(False)):
     inv = await _db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    disp = "attachment" if download else "inline"
+    # GİB'e iletilmiş e-belge: resmi entegratör PDF (İşNet GetInvoicePdf)
+    try:
+        import e_invoice
+
+        remote = await e_invoice.fetch_integrator_pdf(invoice_id)
+        if remote:
+            return Response(
+                remote,
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f'{disp}; filename="{_pdf_filename(inv)}"',
+                    "X-Document-Source": "integrator",
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     seller = await _db.companies.find_one({"_id": inv["company_id"]}) or {}
     contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
     buyer = contact or {"name": inv.get("contact_name"), "tax_number_or_id": inv.get("contact_tax_id")}
-    disp = "attachment" if download else "inline"
     return Response(build_invoice_pdf(inv, seller, buyer), media_type="application/pdf", headers={"Content-Disposition": f'{disp}; filename="{_pdf_filename(inv)}"'})
 
 

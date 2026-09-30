@@ -5,7 +5,10 @@ import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix, formatTrAmount, fmtDate } from "../utils/money";
 import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
+import { shouldUseIntegratorPdf } from "../utils/printIntegratorPdf";
 import { BarcodeRenderer } from "./BarcodeRenderer";
+
+export { shouldUseIntegratorPdf } from "../utils/printIntegratorPdf";
 
 const pickItemImage = (it = {}, prod = {}) => (
   it.thumbnail_url || it.image_url
@@ -32,6 +35,7 @@ const printThumbUrl = (raw) => {
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TITLES = { invoice: "FATURA", order: "SİPARİŞ FORMU", quote: "FİYAT TEKLİFİ", dispatch: "İRSALİYE", expense_slip: "GİDER PUSULASI" };
+
 const docTitle = (docType, doc) => {
   if (doc?.e_type === "expense_slip" || docType === "expense_slip") return "GİDER PUSULASI";
   if (doc.e_type === "e_export" || doc.trade_kind === "export") return "e-İHRACAT FATURASI";
@@ -46,7 +50,61 @@ export const LAYOUTS = [
   ["bold", "Vurgulu", "Sol renk şeridi, zebra tablo"]
 ];
 
-export const PrintDocument = ({ docType, doc, company, onClose, onEditTemplate, onPrinted }) => {
+function IntegratorPdfPrint({ doc, onClose, onPrinted }) {
+  const invId = doc?.id || doc?._id;
+  const pdfUrl = `${API_URL}/invoices/${invId}/pdf`;
+  const kind = doc.e_type === "e_invoice" ? "e-Fatura" : doc.e_type === "e_export" ? "e-İhracat" : "e-Arşiv";
+  return (
+    <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static">
+      <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none flex flex-col max-h-[95vh]" data-testid="print-document-integrator">
+        <div className="flex items-center justify-between px-5 py-3 border-b no-print print:hidden shrink-0">
+          <span className="text-xs font-bold text-slate-700">
+            {kind} PDF — {doc.invoice_number || invId}
+            <span className="ml-2 font-normal text-slate-400">Entegratör belgesi</span>
+          </span>
+          <div className="flex items-center gap-2">
+            <a
+              href={pdfUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs font-semibold hover:bg-slate-50"
+              data-testid="print-integrator-open-btn"
+            >
+              Yeni sekmede aç
+            </a>
+            <button
+              type="button"
+              onClick={() => {
+                window.open(pdfUrl, "_blank");
+                try { onPrinted?.(doc); } catch { /* ignore */ }
+              }}
+              className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold"
+              data-testid="print-now-btn"
+            >
+              <Printer className="w-3.5 h-3.5" /> Yazdır
+            </button>
+            <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="print-close-btn"><X className="w-5 h-5" /></button>
+          </div>
+        </div>
+        <iframe
+          title={`${kind} PDF`}
+          src={pdfUrl}
+          className="w-full flex-1 min-h-[75vh] border-0 rounded-b-2xl"
+          data-testid="print-integrator-pdf-frame"
+        />
+      </div>
+    </div>
+  );
+}
+
+export const PrintDocument = (props) => {
+  if (shouldUseIntegratorPdf(props.docType, props.doc)) {
+    return <IntegratorPdfPrint doc={props.doc} onClose={props.onClose} onPrinted={props.onPrinted} />;
+  }
+  return <TemplatePrintDocument {...props} />;
+};
+
+const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate, onPrinted }) => {
   const [tpl, setTpl] = useState(null);
   const [tplKey, setTplKey] = useState(docType);
   const [formOptions, setFormOptions] = useState([]);
