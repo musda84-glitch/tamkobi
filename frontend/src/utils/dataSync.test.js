@@ -54,7 +54,7 @@ test("critical stock uses default min 5 when alert is unset", () => {
 });
 
 test("order filters incoming and dispatched groups", () => {
-  const { applyOrderFilters } = require("../components/OrdersToolbar");
+  const { applyOrderFilters } = require("./orderFilters");
   const rows = [
     { order_number: "N1", order_status: "approved" },
     { order_number: "N2", order_status: "pending" },
@@ -66,4 +66,20 @@ test("order filters incoming and dispatched groups", () => {
   const base = { q: "", channel: "all", invoiced: "all", cargo: "all", from: "", to: "", sort: "number" };
   expect(applyOrderFilters(rows, { ...base, status: "incoming" }).map((o) => o.order_number)).toEqual(["N2", "N1"]);
   expect(applyOrderFilters(rows, { ...base, status: "dispatched" }).map((o) => o.order_number).sort()).toEqual(["S1", "S2", "S3"]);
+});
+
+test("cancelled and returned stay out of all/incoming order lists", () => {
+  const { applyOrderFilters, ORDER_FILTER_DEFAULTS } = require("./orderFilters");
+  const rows = [
+    { order_number: "B2B-2026-0016", order_status: "cancelled", channel: "b2b" },
+    { order_number: "B2B-OK", order_status: "pending", channel: "b2b" },
+    { order_number: "RET-1", order_status: "returned", channel: "trendyol" },
+    { order_number: "PART-1", order_status: "partially_returned", channel: "hepsiburada" },
+    { order_number: "SHIP-1", order_status: "shipped", channel: "b2b" },
+  ];
+  const base = { ...ORDER_FILTER_DEFAULTS, sort: "number" };
+  expect(applyOrderFilters(rows, { ...base, status: "all" }).map((o) => o.order_number).sort()).toEqual(["B2B-OK", "SHIP-1"]);
+  expect(applyOrderFilters(rows, { ...base, status: "incoming" }).map((o) => o.order_number)).toEqual(["B2B-OK"]);
+  expect(applyOrderFilters(rows, { ...base, status: "cancelled" }).map((o) => o.order_number)).toEqual(["B2B-2026-0016"]);
+  expect(applyOrderFilters(rows, { ...base, status: "returned" }).map((o) => o.order_number)).toEqual(["RET-1"]);
 });
