@@ -3,6 +3,8 @@ import {
   canCancelInvoice,
   canIssueExpenseSlip,
   canEditInvoice,
+  canIssueInvoice,
+  canDownloadGibDocuments,
   invoiceHasPayment,
   placeContextMenu,
   suggestedIssueTypeFromGib,
@@ -71,6 +73,50 @@ describe("isGibIssued", () => {
           "Hata: İşNet SOAP ETTN döndürdü ancak fatura NetteFatura test/canlı portalında bulunamadı. Gönderim tamamlanmamış — «GİB'e iletildi» yazılmadı.",
       }),
     ).toBe(false);
+  });
+});
+
+describe("purchase invoices are not issued via FATURAYI KES", () => {
+  test("canIssueInvoice is false for all purchase invoices", () => {
+    expect(canIssueInvoice({
+      status: "draft",
+      invoice_type: "purchase",
+      e_type: "e_archive",
+      contact_name: "TEST",
+    })).toBe(false);
+    expect(canIssueInvoice({
+      status: "draft",
+      invoice_type: "purchase",
+      e_type: "paper",
+    })).toBe(false);
+    expect(canIssueInvoice({
+      status: "approved",
+      invoice_type: "purchase",
+      e_type: "e_invoice",
+      direction: "incoming",
+    })).toBe(false);
+  });
+
+  test("sales drafts can still be issued", () => {
+    expect(canIssueInvoice({
+      status: "draft",
+      invoice_type: "sales",
+      e_type: "e_archive",
+    })).toBe(true);
+  });
+
+  test("purchase e-invoice can download GİB documents", () => {
+    expect(canDownloadGibDocuments({
+      invoice_type: "purchase",
+      e_type: "e_invoice",
+      status: "approved",
+      direction: "incoming",
+    })).toBe(true);
+    expect(canDownloadGibDocuments({
+      invoice_type: "purchase",
+      e_type: "paper",
+      status: "draft",
+    })).toBe(false);
   });
 });
 
