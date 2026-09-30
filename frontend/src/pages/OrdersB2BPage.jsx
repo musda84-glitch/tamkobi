@@ -1327,9 +1327,10 @@ export default function OrdersB2BPage() {
                           if (orderHasEInvoiceIssued(ord)) {
                             return (
                               <span
-                                className={`inline-flex items-center px-1.5 py-1 rounded-lg text-[9px] font-bold border leading-tight max-w-[4.5rem] ${invBadge.className}`}
+                                className={`inline-flex flex-col items-center justify-center px-1.5 py-0.5 rounded-lg text-[9px] font-bold border leading-tight text-center max-w-[5.5rem] ${invBadge.className}`}
                                 title={invBadge.label}
                                 data-testid={`invoiced-badge-${ord.order_number}`}
+                                data-badge={invBadge.testId}
                               >
                                 {invBadge.label}
                               </span>

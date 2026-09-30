@@ -52,14 +52,22 @@ export function orderHasEInvoiceIssued(ord) {
   return false;
 }
 
-/** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil) → e-belge gönderildi (kırmızı). */
+/** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil) → faturalaşmış e-fatura/e-arşiv (kırmızı). */
+export function orderEBelgeKindLabel(ord) {
+  const eType = String(ord?.e_type || ord?.invoice_e_type || "").toLowerCase();
+  if (eType === "e_invoice" || eType === "e_export") return "E-Fatura";
+  if (eType === "e_archive") return "E-Arşiv";
+  return "E-Belge";
+}
+
 export function orderInvoiceBadge(ord) {
   if (!ord) return null;
   if (orderHasEInvoiceIssued(ord)) {
+    const kind = orderEBelgeKindLabel(ord);
     return {
-      label: "E-belge gönderildi",
+      label: `Faturalaşmış ${kind}`,
       className: "bg-rose-100 text-rose-800 border-rose-200",
-      testId: "ebelge",
+      testId: kind === "E-Fatura" ? "ebelge-efatura" : kind === "E-Arşiv" ? "ebelge-earsiv" : "ebelge",
     };
   }
   if (ord.is_invoiced) {
