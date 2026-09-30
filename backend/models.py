@@ -73,6 +73,7 @@ class Contact(BaseDocument):
     credit_limit: float = 0.0
     category: Optional[str] = "Genel"
     is_e_invoice_user: bool = False
+    e_invoice_alias: Optional[str] = None
     payment_term_days: int = 0
     late_fee_rate: float = 0.0
     b2b_token: Optional[str] = None
