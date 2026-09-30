@@ -18,10 +18,16 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from mysql_store import MySQLClient, chunk_list
+from mysql_store import MySQLClient, chunk_list, DuplicateKeyError
 from client_ip import request_ip
 import partner_pay
 from order_edit import order_edit_block_reason
+from order_dedupe import (
+    dedupe_orders_by_marketplace_key,
+    duplicate_ids_to_drop,
+    merge_keep_fields,
+    pick_canonical_order,
+)
 from b2b_catalog import b2b_catalog_mongo_filter
 
 from models import (
@@ -229,6 +235,10 @@ async def startup_event():
             await db.contacts.create_index("tax_number_or_id")
             await db.invoices.create_index("invoice_number")
             await db.orders.create_index("order_number")
+            try:
+                await db.orders.create_index([("company_id", 1), ("channel", 1), ("order_number", 1)], unique=True)
+            except Exception:
+                logger.warning("orders unique (company_id,channel,order_number) index skipped — mükerrer satırlar temizlenince tekrar denenecek")
             await db.purchase_orders.create_index("order_number")
             await db.purchase_orders.create_index([("company_id", 1), ("order_date", -1)])
             await db.production_orders.create_index([("company_id", 1), ("status", 1), ("created_at", -1)])
@@ -10433,25 +10443,65 @@ async def update_ecommerce_integration(channel_id: str, data: Dict[str, Any]):
     res = await db.integration_configs.find_one({"_id": channel_id})
     return clean_doc(res)
 
+async def _collapse_marketplace_order_dupes(company_id: str, channel: str, order_number: str) -> Optional[dict]:
+    """Aynı (firma, kanal, sipariş no) için tek satır bırak; kalanı sil."""
+    rows = await db.orders.find(
+        {"company_id": company_id, "channel": channel, "order_number": order_number}
+    ).to_list(50)
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+    keep = pick_canonical_order(rows)
+    drop = duplicate_ids_to_drop(rows)
+    if drop:
+        await db.orders.delete_many({"_id": {"$in": drop}})
+        logger.warning(
+            "Collapsed %s duplicate marketplace order(s) for %s/%s/%s (kept %s)",
+            len(drop),
+            company_id,
+            channel,
+            order_number,
+            keep.get("_id"),
+        )
+    return keep
+
+
 async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
     inserted = updated = 0
     for d in docs:
-        key = {"company_id": company_id, "channel": d["channel"], "order_number": d["order_number"]}
-        existing = await db.orders.find_one(key)
+        channel = d.get("channel")
+        order_number = d.get("order_number")
+        if not channel or not order_number:
+            continue
+        key = {"company_id": company_id, "channel": channel, "order_number": order_number}
         d["updated_at"] = datetime.now(timezone.utc).isoformat()
+        existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
         if existing:
-            keep = {k: existing[k] for k in ("invoice_id", "is_invoiced", "contact_id", "contact_name", "internal_note", "label_printed_at", "form_printed_at") if existing.get(k) is not None}
-            await db.orders.update_one({"_id": existing["_id"]}, {"$set": {**d, **keep}})
+            payload = merge_keep_fields(existing, d)
+            await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
             if not existing.get("contact_id"):
-                await _ensure_order_contact({**existing, **d})
+                await _ensure_order_contact({**existing, **payload})
             updated += 1
-        else:
-            d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
-            d["created_at"] = d["updated_at"]
+            continue
+        d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
+        d["created_at"] = d["updated_at"]
+        try:
             await db.orders.insert_one(d)
             await _ensure_order_contact(d)
             await _attach_draft_invoice_on_intake(d, source="marketplace")
             inserted += 1
+        except DuplicateKeyError:
+            # Eşzamanlı sync kazanmış; güncelle + ekstra satırları birleştir.
+            existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
+            if not existing:
+                existing = await db.orders.find_one(key)
+            if existing:
+                payload = merge_keep_fields(existing, d)
+                await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
+                if not existing.get("contact_id"):
+                    await _ensure_order_contact({**existing, **payload})
+                updated += 1
     return {"inserted": inserted, "updated": updated}
 
 CHANNEL_CUSTOMER_CATEGORY = {"trendyol": "Trendyol Müşterisi", "hepsiburada": "Hepsiburada Müşterisi", "amazon": "Amazon Müşterisi", "n11": "n11 Müşterisi", "shopify": "Shopify Müşterisi",
@@ -12093,6 +12143,15 @@ async def list_orders(company_id: Optional[str] = "comp_nexus_main_01", status: 
         query["order_status"] = status
     orders = await db.orders.find(query).sort("order_date", -1).to_list(500)
     docs = clean_docs(orders)
+    deduped = dedupe_orders_by_marketplace_key(docs)
+    if len(deduped) < len(docs):
+        keep_ids = {str(o.get("id") or o.get("_id") or "") for o in deduped}
+        drop_ids = [str(o.get("id") or o.get("_id") or "") for o in docs if str(o.get("id") or o.get("_id") or "") not in keep_ids]
+        drop_ids = [i for i in drop_ids if i]
+        if drop_ids:
+            await db.orders.delete_many({"_id": {"$in": drop_ids}})
+            logger.warning("list_orders removed %s duplicate order row(s) for company %s", len(drop_ids), company_id)
+    docs = deduped
     for o in docs:
         _decorate_b2b_held_order(o)
     docs = await _enrich_orders_production_flags(docs)

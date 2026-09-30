@@ -30,6 +30,7 @@ STARTUP_INDEXES = (
     {"collection": "contacts", "name": "tax_number_or_id", "fields": ("tax_number_or_id",), "unique": False},
     {"collection": "invoices", "name": "invoice_number", "fields": ("invoice_number",), "unique": False},
     {"collection": "orders", "name": "order_number", "fields": ("order_number",), "unique": False},
+    {"collection": "orders", "name": "company_id_channel_order_number", "fields": ("company_id", "channel", "order_number"), "unique": True},
     {"collection": "purchase_orders", "name": "order_number", "fields": ("order_number",), "unique": False},
     {"collection": "login_attempts", "name": "identifier", "fields": ("identifier",), "unique": False},
 )
