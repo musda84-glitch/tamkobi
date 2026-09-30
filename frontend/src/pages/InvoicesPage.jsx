@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, invoiceETypeLabel } from "../components/InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
 import { invoiceToOpenAfterCopy } from "../components/invoiceCopyModes";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -675,7 +675,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                             </span>
                             <SourceBadge channel={inv.source_channel} testId={`inv-source-${inv.invoice_number}`} />
                             <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded uppercase" data-testid={`inv-etype-badge-${inv.invoice_number}`}>
-                              {inv._is_quote ? "Teklif" : (E_TYPE_LABELS[inv.e_type] || "İrsaliye")}
+                              {invoiceETypeLabel(inv)}
                             </span>
                             {inv.installment_plan && <button onClick={() => setInstallmentInv(inv)} className="text-[10px] bg-violet-50 text-violet-700 px-1.5 py-0.2 rounded font-semibold hover:bg-violet-100" data-testid={`inv-installment-badge-${inv.invoice_number}`}>{inv.installment_plan.paid_count}/{inv.installment_plan.count} Taksit</button>}
                           </div>
@@ -779,7 +779,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       ) : (() => {
                         const incoming = isIncomingPurchaseInvoice(inv);
                         return (
-                      <div className="grid grid-cols-[repeat(10,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
+                      <div className="grid grid-cols-[repeat(8,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
                         {inv.status === "draft" && !incoming ? (
                           <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
@@ -795,47 +795,24 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           onClick={() => setPrintInv(inv)}
                           className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition"
                           title={
-                            isGibIssued(inv) && ["e_invoice", "e_archive", "e_export"].includes(inv.e_type)
-                              ? (inv.e_type === "e_invoice" ? "e-Fatura PDF (entegratör)" : inv.e_type === "e_export" ? "e-İhracat PDF (entegratör)" : "e-Arşiv PDF (entegratör)")
+                            (isGibIssued(inv) || incoming) && ["e_invoice", "e_archive", "e_export"].includes(inv.e_type || (incoming ? "e_invoice" : ""))
+                              ? (inv.e_type === "e_invoice" || incoming ? "e-Fatura PDF (entegratör)" : inv.e_type === "e_export" ? "e-İhracat PDF (entegratör)" : "e-Arşiv PDF (entegratör)")
                               : "Şablonlu Yazdır / Form Düzenle"
                           }
                           data-testid={`print-inv-btn-${inv.invoice_number}`}
                         >
                           <Printer className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => setNotifyInvoice(inv)}
-                          className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition"
-                          title={inv.payment_status === 'paid' ? "Fatura Bildirimi Gönder (SMS/E-posta)" : "Tahsilat Hatırlatması Gönder (SMS/E-posta)"}
-                          data-testid={`notify-inv-btn-${inv.invoice_number}`}
-                        >
-                          <MessageSquare className="w-4 h-4" />
-                        </button>
-                        {incoming && isIncomingPurchasePending(inv) ? (
-                          <>
-                            <button
-                              onClick={() => handleAcceptIncoming(inv)}
-                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
-                              title="Gelen e-faturayı onayla (ticari kabul)"
-                              data-testid={`accept-incoming-btn-${inv.invoice_number}`}
-                            >
-                              <CheckCircle2 className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleRejectIncoming(inv)}
-                              className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                              title="Gelen e-faturayı reddet (ticari ret)"
-                              data-testid={`reject-incoming-btn-${inv.invoice_number}`}
-                            >
-                              <XCircle className="w-4 h-4" />
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <span className="w-7 h-7" aria-hidden="true" />
-                            <span className="w-7 h-7" aria-hidden="true" />
-                          </>
-                        )}
+                        {!incoming ? (
+                          <button
+                            onClick={() => setNotifyInvoice(inv)}
+                            className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition"
+                            title={inv.payment_status === 'paid' ? "Fatura Bildirimi Gönder (SMS/E-posta)" : "Tahsilat Hatırlatması Gönder (SMS/E-posta)"}
+                            data-testid={`notify-inv-btn-${inv.invoice_number}`}
+                          >
+                            <MessageSquare className="w-4 h-4" />
+                          </button>
+                        ) : <span className="w-7 h-7" aria-hidden="true" />}
                         {canCancelInvoice(inv) ? (
                           <button type="button" onClick={() => handleCancelInvoice(inv)} className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition" title="Faturayı iptal et" data-testid={`cancel-inv-btn-${inv.invoice_number}`}><XCircle className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
@@ -845,7 +822,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                         {inv.invoice_type === 'dispatch' ? (
                           <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
-                        ) : inv.payment_status !== 'paid' && inv.status !== 'cancelled' ? (
+                        ) : !(incoming && isIncomingPurchasePending(inv)) && inv.payment_status !== 'paid' && inv.status !== 'cancelled' ? (
                           <button
                             onClick={() => openPayment(inv)}
                             className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition"
