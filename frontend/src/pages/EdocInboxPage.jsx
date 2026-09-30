@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import {
   Inbox, Upload, CheckCircle2, XCircle, UserPlus, PackagePlus, Loader2, Link2,
-  RefreshCw, AlertTriangle, FileCode2, Trash2, X, Download, FileText,
+  RefreshCw, AlertTriangle, FileCode2, Trash2, X, Download, FileText, Settings,
 } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
@@ -271,6 +272,13 @@ export default function EdocInboxPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/settings?tab=einvoice"
+            className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 bg-white text-slate-700 hover:bg-slate-50"
+            data-testid="edoc-einvoice-settings-link"
+          >
+            <Settings className="w-4 h-4" /> E-Fatura bağlantısı
+          </Link>
           <button type="button" onClick={pullInbox} disabled={busy === "act"} className="px-4 py-2 border rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="edoc-inbox-pull">
             <RefreshCw className={`w-4 h-4 ${busy === "act" ? "animate-spin" : ""}`} /> {integrator} gelen kutusu
           </button>
