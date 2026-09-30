@@ -5,6 +5,7 @@ describe("edocInbox", () => {
     expect(edocStatusTr("pending")).toBe("Bekliyor");
     expect(edocStatusTr("approved")).toBe("İçeri alındı");
     expect(edocStatusTr("rejected")).toBe("Reddedildi");
+    expect(edocStatusTr("ignored")).toBe("Dikkate alınmadı");
     expect(edocKindTr("invoice")).toBe("e-Fatura");
     expect(edocKindTr("dispatch")).toBe("e-İrsaliye");
   });

@@ -35,7 +35,7 @@ export type EdocInboxItem = {
   source?: string;
 };
 
-export type EdocInboxCounts = { pending?: number; approved?: number; rejected?: number };
+export type EdocInboxCounts = { pending?: number; approved?: number; rejected?: number; ignored?: number };
 
 export type EdocInboxList = {
   items?: EdocInboxItem[];
@@ -47,12 +47,14 @@ export const EDOC_FILTERS = [
   { key: "pending", label: "Bekleyen" },
   { key: "approved", label: "İçeri alınan" },
   { key: "rejected", label: "Reddedilen" },
+  { key: "ignored", label: "Dikkate alınmayan" },
   { key: "", label: "Tümü" },
 ] as const;
 
 export function edocStatusTr(status?: string | null): string {
   if (status === "approved") return "İçeri alındı";
   if (status === "rejected") return "Reddedildi";
+  if (status === "ignored") return "Dikkate alınmadı";
   if (status === "pending") return "Bekliyor";
   return status || "—";
 }
