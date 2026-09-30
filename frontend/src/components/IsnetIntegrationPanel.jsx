@@ -7,7 +7,8 @@ import { API_URL } from "../context/AuthContext";
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
 /**
- * İşNet Net-e Fatura (NetteFatura) bağlantı paneli.
+ * İşNet Net-e Fatura SOAP (IP–VKN) bağlantı paneli.
+ * Resmi doküman: SOAP’ta kullanıcı/şifre yok; kimlik IP–VKN.
  * Kaydet / test: /api/integrations/isnet/save|test
  */
 export default function IsnetIntegrationPanel({ companyId }) {
@@ -70,7 +71,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
     setLoading(true);
     try {
       const r = await axios.post(`${API_URL}/integrations/isnet/test`, body());
-      toast.success(r.data?.message || "İşNet Net-e Fatura bağlantı testi başarılı!");
+      toast.success(r.data?.message || "İşNet SOAP (IP–VKN) bağlantı testi başarılı!");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Bağlantı kurulamadı, bilgilerinizi kontrol edin.");
     } finally {
@@ -86,7 +87,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
       setStatus(r.data?.status || "configured");
       setHasPassword(Boolean(r.data?.has_password));
       setFormData((prev) => ({ ...prev, password: "" }));
-      toast.success("İşNet Net-e Fatura ayarları kaydedildi.");
+      toast.success("İşNet SOAP ayarları kaydedildi.");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Ayarlar kaydedilirken bir hata oluştu.");
     } finally {
@@ -102,8 +103,10 @@ export default function IsnetIntegrationPanel({ companyId }) {
     <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs max-w-xl" data-testid="isnet-integration-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-bold text-slate-900">İşNet SOAP API (NetteFatura-API)</h3>
-          <p className="text-slate-500 mt-0.5">Resmi SOAP / IP–VKN bağlantısı. Statik IP ve İşNet sözleşmesi gerekir.</p>
+          <h3 className="text-sm font-bold text-slate-900">İşNet SOAP API (IP–VKN)</h3>
+          <p className="text-slate-500 mt-0.5">
+            Resmi SOAP: kullanıcı/şifre yok — kimlik doğrulama çıkış IP’niz + şirket VKN ile yapılır.
+          </p>
         </div>
         <span
           className={`text-[10px] font-bold px-2 py-0.5 rounded border ${status === "configured" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}
@@ -131,70 +134,68 @@ export default function IsnetIntegrationPanel({ companyId }) {
           Canlı Ortam
         </button>
       </div>
-      <p className="text-[10px] text-slate-500">
-        SOAP:{" "}
-        <span className="font-mono">
-          {testMode ? "einvoiceservicetest.isnet.net.tr" : "einvoiceservice.isnet.net.tr"}
-        </span>
-        {" · "}Portal API:{" "}
-        <span className="font-mono">
-          {testMode ? "einvoiceapitest.isnet.net.tr" : "einvoiceapi.isnet.net.tr"}
-        </span>
-        {" · "}
-        <a
-          href="https://github.com/EfeSorogluu/NetteFatura-API"
-          target="_blank"
-          rel="noreferrer"
-          className="underline text-slate-600"
-        >
-          NetteFatura-API
-        </a>
-      </p>
+
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 space-y-1 text-[10px] text-slate-600" data-testid="isnet-endpoints-hint">
+        <div>
+          InvoiceService:{" "}
+          <span className="font-mono break-all">
+            {testMode
+              ? "https://einvoiceservicetest.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
+              : "https://einvoiceservice.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"}
+          </span>
+        </div>
+        <div>
+          AddressBookService:{" "}
+          <span className="font-mono break-all">
+            {testMode
+              ? "https://einvoiceservicetest.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc"
+              : "https://einvoiceservice.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc"}
+          </span>
+        </div>
+        {testMode ? (
+          <div className="pt-1 border-t border-slate-200 text-amber-800" data-testid="isnet-test-portal-hint">
+            Test portal:{" "}
+            <a href="http://efatura.isnet.net.tr" target="_blank" rel="noreferrer" className="underline font-semibold">
+              efatura.isnet.net.tr
+            </a>
+            {" · "}User <span className="font-mono">12345678901</span> / Pass <span className="font-mono">1234</span>
+            {" · "}Firma VKN <span className="font-mono">4810173324</span> (isnet test) veya{" "}
+            <span className="font-mono">1234567805</span> (Test firma 05)
+          </div>
+        ) : (
+          <div className="pt-1 border-t border-slate-200 text-emerald-800" data-testid="isnet-live-ip-hint">
+            Canlıda firewall IP–VKN tanımı gerekir. Çıkış IP’nizi{" "}
+            <a href="mailto:efaturadestek@nettefatura.com.tr" className="underline font-semibold">
+              efaturadestek@nettefatura.com.tr
+            </a>{" "}
+            adresine iletin; ardından başarılı test XML’i ile canlı erişim açılır.
+          </div>
+        )}
+      </div>
 
       <form onSubmit={handleSave} className="space-y-3">
         <div>
-          <label className="block font-semibold mb-1">Müşteri Kodu / Firma Kodu</label>
+          <label className="block font-semibold mb-1">
+            Şirket VKN / TCKN <span className="text-rose-600">*</span>
+            <span className="text-slate-400 font-normal"> — SOAP CompanyTaxCode (IP–VKN)</span>
+          </label>
           <input
             type="text"
-            name="client_code"
-            value={formData.client_code}
+            name="company_tax_id"
+            value={formData.company_tax_id}
             onChange={handleChange}
-            placeholder="İşNet müşteri kodunuz"
-            className={inputCls}
+            placeholder={testMode ? "4810173324 veya 1234567805" : "10 veya 11 haneli vergi kimlik no"}
+            className={`${inputCls} font-mono`}
+            inputMode="numeric"
+            maxLength={11}
             required
-            data-testid="isnet-client-code"
-          />
-        </div>
-        <div>
-          <label className="block font-semibold mb-1">Kullanıcı Adı (API Kullanıcısı)</label>
-          <input
-            type="text"
-            name="username"
-            value={formData.username}
-            onChange={handleChange}
-            placeholder="Net-e Fatura API kullanıcı adınız"
-            className={inputCls}
-            required
-            data-testid="isnet-username"
+            data-testid="isnet-company-tax-id"
           />
         </div>
         <div>
           <label className="block font-semibold mb-1">
-            Şifre {hasPassword && <span className="text-slate-400 font-normal">(kayıtlı — değiştirmek için yazın)</span>}
+            GİB Posta Kutusu Etiketi (Alias) <span className="text-rose-600">*</span>
           </label>
-          <input
-            type="password"
-            name="password"
-            value={formData.password}
-            onChange={handleChange}
-            placeholder="••••••••"
-            className={inputCls}
-            required={!hasPassword}
-            data-testid="isnet-password"
-          />
-        </div>
-        <div>
-          <label className="block font-semibold mb-1">GİB Posta Kutusu Etiketi (Alias)</label>
           <input
             type="text"
             name="gib_alias"
@@ -208,19 +209,17 @@ export default function IsnetIntegrationPanel({ companyId }) {
         </div>
         <div>
           <label className="block font-semibold mb-1">
-            Şirket VKN / TCKN
-            <span className="text-slate-400 font-normal"> (SOAP CompanyTaxCode — NetteFatura-API IP–VKN)</span>
+            Müşteri / Firma Kodu
+            <span className="text-slate-400 font-normal"> (opsiyonel)</span>
           </label>
           <input
             type="text"
-            name="company_tax_id"
-            value={formData.company_tax_id}
+            name="client_code"
+            value={formData.client_code}
             onChange={handleChange}
-            placeholder="10 veya 11 haneli vergi kimlik no"
-            className={`${inputCls} font-mono`}
-            inputMode="numeric"
-            maxLength={11}
-            data-testid="isnet-company-tax-id"
+            placeholder="İşNet müşteri kodunuz (varsa)"
+            className={inputCls}
+            data-testid="isnet-client-code"
           />
         </div>
         <div>
@@ -239,6 +238,42 @@ export default function IsnetIntegrationPanel({ companyId }) {
           />
         </div>
 
+        <details className="rounded-xl border border-dashed border-slate-200 p-3" data-testid="isnet-optional-portal">
+          <summary className="cursor-pointer font-semibold text-slate-700">
+            Opsiyonel — Portal API kullanıcı/şifre
+          </summary>
+          <p className="text-[10px] text-slate-500 mt-1 mb-2">
+            SOAP gönderimi için gerekli değildir. Yalnızca ek portal REST kontrolü istenirse doldurun.
+          </p>
+          <div className="space-y-2">
+            <div>
+              <label className="block font-semibold mb-1">Kullanıcı Adı</label>
+              <input
+                type="text"
+                name="username"
+                value={formData.username}
+                onChange={handleChange}
+                placeholder={testMode ? "12345678901" : "API kullanıcı adınız"}
+                className={inputCls}
+                data-testid="isnet-username"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold mb-1">
+                Şifre {hasPassword && <span className="text-slate-400 font-normal">(kayıtlı — değiştirmek için yazın)</span>}
+              </label>
+              <input
+                type="password"
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
+                placeholder={testMode ? "1234" : "••••••••"}
+                className={inputCls}
+                data-testid="isnet-password"
+              />
+            </div>
+          </div>
+        </details>
 
         <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
           <button

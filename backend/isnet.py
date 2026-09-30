@@ -1,12 +1,12 @@
 """İşNet NetteFatura SOAP/REST istemcisi.
 
-Resmi sözleşme: https://github.com/EfeSorogluu/NetteFatura-API
-  (InvoiceService + AddressBookService, IP–VKN / CompanyTaxCode)
+Resmi sözleşme (İşNet / NetteFatura):
+  InvoiceService + AddressBookService — kimlik doğrulama IP–VKN (CompanyTaxCode).
+  SOAP tarafında kullanıcı adı / şifre gerekmez.
+  Canlı IP kaydı: efaturadestek@nettefatura.com.tr
 
-İki kanal:
-1) Portal REST — Account/Login + GetHealthCheck (kullanıcı/şifre).
-2) NetteFatura SOAP — HealthCheck, GetCompanyBalance, GetTaxPayer,
-   SendInvoiceXml / SendArchiveInvoiceXml, SearchInvoice.
+İsteğe bağlı:
+  Portal REST (einvoiceapi) — Account/Login (kullanıcı/şifre) yalnızca ek kontrol için.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
-# --- Endpoints: nettefatura-api NETTEFATURA_ENDPOINTS ile birebir ---
+# --- Endpoints: İşNet resmi SOAP + NetteFatura portal ---
 LIVE_API = "https://einvoiceapi.isnet.net.tr"
 TEST_API = "https://einvoiceapitest.isnet.net.tr"
 LIVE_SOAP = "https://einvoiceservice.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
@@ -36,6 +36,16 @@ TEST_ADDRESS_BOOK = (
 )
 LIVE_PORTAL = "https://nettefatura.isnet.net.tr"
 TEST_PORTAL = "https://efatura.isnet.net.tr"
+# İşNet destek — canlıda firewall IP–VKN tanımı için
+SUPPORT_EMAIL = "efaturadestek@nettefatura.com.tr"
+# İşNet test portalı (http://efatura.isnet.net.tr) — resmi deneme hesabı
+TEST_PORTAL_USER = "12345678901"
+TEST_PORTAL_PASSWORD = "1234"
+TEST_FIRM_VKNS = ("4810173324", "1234567805")  # isnet test · Test firma 05
+TEST_FIRM_LABELS = {
+    "4810173324": "isnet test",
+    "1234567805": "Test firma 05",
+}
 
 SOAP_NS = "http://tempuri.org/"
 EIN_NS = "http://schemas.datacontract.org/2004/07/EInvoice.Service.Model"
@@ -192,52 +202,91 @@ async def login(settings: dict, password: str) -> Dict[str, Any]:
     raise HTTPException(status_code=400, detail=last_detail)
 
 
-async def test_connection(settings: dict, password: str) -> Dict[str, Any]:
-    """Portal login + (VKN varsa) NetteFatura SOAP HealthCheck / bakiye.
+async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
+    """SOAP IP–VKN bağlantı testi (asıl yol). Portal login isteğe bağlı.
 
-    SOAP tarafı NetteFatura-API gibi IP–VKN ile çalışır; company_tax_id zorunlu önerilir.
+    İşNet resmi not: SOAP'ta kullanıcı/şifre yok; kimlik doğrulama IP–VKN.
+    Canlıda IP kaydı: efaturadestek@nettefatura.com.tr
     """
-    client_code = (settings.get("corporate_code") or settings.get("client_code") or "").strip()
-    if not client_code:
-        raise HTTPException(status_code=400, detail="İşNet müşteri / firma kodu gerekli.")
     alias = (settings.get("alias") or "").strip()
+    tax = company_tax_code(settings)
+    if len(tax) not in (10, 11):
+        raise HTTPException(
+            status_code=400,
+            detail="Şirket VKN/TCKN (company_tax_id) zorunlu — SOAP CompanyTaxCode / IP–VKN kimliği.",
+        )
     if not alias:
         raise HTTPException(status_code=400, detail="GİB posta kutusu etiketi (alias) gerekli.")
 
-    healthy = await health_check(settings)
-    info = await login(settings, password)
-    info["ok"] = True
-    info["healthy"] = healthy
-    info["client_code"] = client_code
-    info["alias"] = alias
-    info["soap_endpoint"] = soap_url(settings)
-    info["address_book_endpoint"] = address_book_url(settings)
-    info["portal"] = portal_url(settings)
-    info["mode"] = "test" if is_test_mode(settings) else "live"
-    info["sdk"] = "https://github.com/EfeSorogluu/NetteFatura-API"
-    if not healthy:
-        info["warning"] = "Login başarılı ancak GetHealthCheck yanıt vermedi; servis kısmen erişilebilir olabilir."
+    client_code = (settings.get("corporate_code") or settings.get("client_code") or "").strip()
+    info: Dict[str, Any] = {
+        "ok": True,
+        "auth": "ip-vkn",
+        "company_tax_id": tax,
+        "alias": alias,
+        "client_code": client_code or None,
+        "soap_endpoint": soap_url(settings),
+        "address_book_endpoint": address_book_url(settings),
+        "portal": portal_url(settings),
+        "mode": "test" if is_test_mode(settings) else "live",
+        "support_email": SUPPORT_EMAIL,
+        "sdk": "https://github.com/EfeSorogluu/NetteFatura-API",
+    }
+    if is_test_mode(settings):
+        info["test_portal"] = {
+            "url": TEST_PORTAL,
+            "user": TEST_PORTAL_USER,
+            "password": TEST_PORTAL_PASSWORD,
+            "firms": [{"vkn": v, "name": TEST_FIRM_LABELS.get(v, v)} for v in TEST_FIRM_VKNS],
+        }
 
-    tax = company_tax_code(settings)
-    info["company_tax_id"] = tax
-    if tax:
+    # 1) SOAP HealthCheck + bakiye (IP–VKN)
+    try:
+        soap_health = await soap_health_check(settings)
+        info["soap_health"] = soap_health
+        bal = await get_company_balance(settings)
+        info["soap_ok"] = True
+        info["balance"] = bal.get("balance")
+        info["remaining_credit"] = bal.get("remaining_credit")
+        shown = bal.get("balance") if bal.get("balance") not in (None, "") else bal.get("remaining_credit")
+        info["message"] = f"İşNet SOAP (IP–VKN) OK · HealthCheck · bakiye: {shown or '?'}"
+    except HTTPException as e:
+        info["soap_ok"] = False
+        info["soap_warning"] = str(e.detail)
+        hint = ""
+        if not is_test_mode(settings):
+            hint = f" Canlıda IP–VKN tanımı için {SUPPORT_EMAIL} adresine çıkış IP’nizi iletin."
+        elif tax not in TEST_FIRM_VKNS:
+            hint = (
+                f" Test VKN örnekleri: {', '.join(TEST_FIRM_VKNS)} "
+                f"(portal: {TEST_PORTAL_USER} / {TEST_PORTAL_PASSWORD} · {TEST_PORTAL})."
+            )
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=f"İşNet SOAP testi başarısız: {e.detail}.{hint}",
+        ) from e
+
+    # 2) Opsiyonel portal REST login (şifre varsa)
+    username = (settings.get("username") or "").strip()
+    if username and password:
         try:
-            soap_health = await soap_health_check(settings)
-            info["soap_health"] = soap_health
-            bal = await get_company_balance(settings)
-            info["soap_ok"] = True
-            info["balance"] = bal.get("balance")
-            info["remaining_credit"] = bal.get("remaining_credit")
-            shown = bal.get("balance") if bal.get("balance") not in (None, "") else bal.get("remaining_credit")
-            info["message"] = (info.get("message") or "Bağlantı OK") + f" · SOAP HealthCheck OK · bakiye: {shown or '?'}"
+            healthy = await health_check(settings)
+            portal = await login(settings, password)
+            info["portal_ok"] = True
+            info["healthy"] = healthy
+            info["token_preview"] = portal.get("token_preview")
+            info["user_name"] = portal.get("user_name")
+            info["company_count"] = portal.get("company_count")
+            info["message"] = (info.get("message") or "SOAP OK") + " · Portal login OK"
         except HTTPException as e:
-            info["soap_ok"] = False
-            info["soap_warning"] = str(e.detail)
-            info["message"] = (info.get("message") or "Portal OK") + f" · SOAP: {e.detail}"
+            info["portal_ok"] = False
+            info["portal_warning"] = str(e.detail)
+            info["message"] = (info.get("message") or "SOAP OK") + f" · Portal: {e.detail}"
     else:
-        info["soap_ok"] = None
-        info["soap_hint"] = (
-            "Şirket VKN (company_tax_id) girin — NetteFatura SOAP (IP–VKN) bakiye / GİB için zorunlu."
+        info["portal_ok"] = None
+        info["portal_hint"] = (
+            "SOAP IP–VKN ile çalışır; kullanıcı/şifre zorunlu değildir. "
+            f"Portal denemesi için isteğe bağlı API kullanıcı bilgisi girilebilir ({TEST_PORTAL})."
         )
     return info
 
