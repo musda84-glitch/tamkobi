@@ -434,6 +434,60 @@ def test_get_document_viewer_link_reads_html_url():
     assert info["url"].startswith("https://view.example/doc")
     assert mock_call.await_args.kwargs["action"] == "GetDocumentViewerLink"
     assert isnet.extract_viewer_key(info["url"]) == "abc/def"
+    req = mock_call.await_args.kwargs["request"]
+    assert req.get("InvoiceDirection") == "Outgoing"
+
+
+def test_get_document_viewer_link_incoming_direction():
+    """Gelen e-Fatura PDF/XML için InvoiceDirection=Incoming."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "<ein:HtmlUrl>https://view.example/in?key=in123</ein:HtmlUrl>"
+        "</Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)) as mock_call:
+        asyncio.get_event_loop().run_until_complete(
+            isnet.get_document_viewer_link(
+                settings,
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                e_type="e_invoice",
+                direction="Incoming",
+            )
+        )
+    req = mock_call.await_args.kwargs["request"]
+    assert req.get("InvoiceDirection") == "Incoming"
+    assert req.get("InvoiceDocumentType") == "EInvoice"
+
+
+def test_download_invoice_pdf_passes_incoming_direction():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    pdf_bytes = b"%PDF-1.4 incoming"
+
+    class _Resp:
+        status_code = 200
+        content = pdf_bytes
+        text = ""
+        headers = {"content-type": "application/pdf"}
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(return_value=_Resp())
+    link = AsyncMock(return_value={"url": "https://portal/x?key=inTok", "html_url": "", "pdf_url": ""})
+
+    with patch("isnet.get_document_viewer_link", link), patch("isnet.httpx.AsyncClient", return_value=mock_client):
+        data = asyncio.get_event_loop().run_until_complete(
+            isnet.download_invoice_pdf(
+                settings,
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                e_type="e_invoice",
+                direction="Incoming",
+            )
+        )
+    assert data.startswith(b"%PDF")
+    assert link.await_args.kwargs.get("direction") == "Incoming"
 
 
 def test_download_invoice_pdf_uses_get_invoice_pdf_api():

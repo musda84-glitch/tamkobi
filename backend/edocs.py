@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 
 import saas
 from auth_utils import session_token
@@ -378,6 +379,94 @@ async def get_edoc_xml(doc_id: str, company_id: str):
 @router.get("/edocs/inbox/{doc_id}/xml")
 async def get_edoc_xml_route(doc_id: str, request: Request, company_id: Optional[str] = None):
     return await get_edoc_xml(doc_id, await require_inbox_company(request, company_id))
+
+
+def _safe_filename(name: str, ext: str) -> str:
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name or "ebelge")).strip("._") or "ebelge"
+    return f"{base}.{ext.lstrip('.')}"
+
+
+@router.get("/edocs/inbox/{doc_id}/xml/download")
+async def download_edoc_xml_file(doc_id: str, request: Request, company_id: Optional[str] = None):
+    """Ham UBL XML dosya olarak indir."""
+    cid = await require_inbox_company(request, company_id)
+    d = await _db.incoming_edocs.find_one({"_id": doc_id, "company_id": cid})
+    if not d:
+        raise HTTPException(status_code=404, detail="Belge bulunamadı.")
+    info = await get_edoc_xml(doc_id, cid)
+    raw = (info.get("xml") or "").encode("utf-8")
+    fname = _safe_filename(d.get("number") or doc_id, "xml")
+    return Response(
+        raw,
+        media_type="application/xml",
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "X-Document-Source": "stored_ubl",
+        },
+    )
+
+
+async def _fetch_incoming_edoc_pdf(doc: dict, company_id: str) -> bytes:
+    """Gelen e-belge PDF: bağlı fatura veya İşNet Incoming GetInvoicePdf."""
+    # İçeri alınmışsa resmi fatura PDF
+    inv_id = (doc.get("invoice_id") or "").strip()
+    if inv_id:
+        try:
+            import e_invoice
+
+            remote = await e_invoice.fetch_integrator_pdf(inv_id)
+            if remote:
+                return remote
+        except Exception:
+            pass
+
+    ettn = (doc.get("uuid") or doc.get("ettn") or "").strip()
+    if not ettn:
+        raise HTTPException(
+            status_code=404,
+            detail="Bu belgede ETTN yok; PDF entegratörden alınamaz. Önce XML indirin.",
+        )
+    settings = await _db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    provider = (settings.get("provider") or doc.get("source") or "").strip()
+    if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
+        raise HTTPException(
+            status_code=400,
+            detail="İşNet yapılandırılmamış — gelen PDF için Ayarlar → e-Fatura (İşNet) gerekli.",
+        )
+    import isnet
+
+    if not isnet.is_ettn_uuid(ettn):
+        raise HTTPException(status_code=400, detail=f"Geçersiz ETTN: {ettn}")
+    # Gelen kutu: InvoiceDirection=Incoming
+    return await isnet.download_invoice_pdf(
+        settings,
+        ettn,
+        e_type="e_invoice",
+        invoice_number=str(doc.get("number") or ""),
+        direction="Incoming",
+    )
+
+
+@router.get("/edocs/inbox/{doc_id}/pdf")
+async def download_edoc_pdf(doc_id: str, request: Request, company_id: Optional[str] = None):
+    """Gelen e-Fatura / e-İrsaliye PDF (İşNet Incoming veya bağlı fatura)."""
+    cid = await require_inbox_company(request, company_id)
+    d = await _db.incoming_edocs.find_one({"_id": doc_id, "company_id": cid})
+    if not d:
+        raise HTTPException(status_code=404, detail="Belge bulunamadı.")
+    if d.get("source") == "ai_pdf":
+        raise HTTPException(status_code=400, detail="AI PDF yüklemesi için GİB e-belge PDF'i yok.")
+    pdf = await _fetch_incoming_edoc_pdf(d, cid)
+    fname = _safe_filename(d.get("number") or doc_id, "pdf")
+    return Response(
+        pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "X-Document-Source": "integrator",
+            "Access-Control-Expose-Headers": "X-Document-Source, Content-Disposition",
+        },
+    )
 
 
 async def reparse_inbox(company_id: str):
