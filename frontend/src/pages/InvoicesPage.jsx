@@ -779,7 +779,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       ) : (() => {
                         const incoming = isIncomingPurchaseInvoice(inv);
                         return (
-                      <div className="grid grid-cols-[repeat(9,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
+                      <div className="grid grid-cols-[repeat(10,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
                         {inv.status === "draft" && !incoming ? (
                           <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
@@ -811,15 +811,30 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         >
                           <MessageSquare className="w-4 h-4" />
                         </button>
-                        {incoming && isIncomingPurchasePending(inv) && (
-                          <button
-                            onClick={() => handleAcceptIncoming(inv)}
-                            className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
-                            title="Gelen e-faturayı onayla (ticari kabul). Reddetmek için ⋮ menü."
-                            data-testid={`accept-incoming-btn-${inv.invoice_number}`}
-                          >
-                            <CheckCircle2 className="w-4 h-4" />
-                          </button>
+                        {incoming && isIncomingPurchasePending(inv) ? (
+                          <>
+                            <button
+                              onClick={() => handleAcceptIncoming(inv)}
+                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+                              title="Gelen e-faturayı onayla (ticari kabul)"
+                              data-testid={`accept-incoming-btn-${inv.invoice_number}`}
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleRejectIncoming(inv)}
+                              className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                              title="Gelen e-faturayı reddet (ticari ret)"
+                              data-testid={`reject-incoming-btn-${inv.invoice_number}`}
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="w-7 h-7" aria-hidden="true" />
+                            <span className="w-7 h-7" aria-hidden="true" />
+                          </>
                         )}
                         {canCancelInvoice(inv) ? (
                           <button type="button" onClick={() => handleCancelInvoice(inv)} className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition" title="Faturayı iptal et" data-testid={`cancel-inv-btn-${inv.invoice_number}`}><XCircle className="w-4 h-4" /></button>
