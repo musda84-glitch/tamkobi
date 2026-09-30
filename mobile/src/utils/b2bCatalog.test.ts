@@ -1,4 +1,4 @@
-import { applyB2BScan, canAddProduct, catalogCategories, categorySelectGroups, filterCatalog, findCatalogByScan, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "./b2bCatalog";
+import { applyB2BScan, canAddProduct, catalogCategories, categorySelectGroups, filterCatalog, findCatalogByScan, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftAfterAdd, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "./b2bCatalog";
 
 const p = (over: Record<string, unknown> = {}) => ({
   id: "1",
@@ -57,6 +57,7 @@ describe("parseDraftQty / canAddProduct", () => {
     expect(qtyDraftShown({ p1: "" }, "p1")).toBe("");
     expect(qtyDraftShown({ p1: "12" }, "p1")).toBe("12");
     expect(qtyDraftOnFocus()).toBe("");
+    expect(qtyDraftAfterAdd()).toBe("");
     expect(qtyDraftOnBlur("")).toBe("1");
     expect(qtyDraftOnBlur("8")).toBe("8");
   });

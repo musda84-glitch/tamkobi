@@ -20,6 +20,11 @@ export function qtyDraftOnFocus() {
   return "";
 }
 
+/** Ekle sonrası adet alanı sıfırlanır (boş). */
+export function qtyDraftAfterAdd() {
+  return "";
+}
+
 export function qtyDraftOnBlur(raw) {
   return String(parseDraftQty(raw));
 }

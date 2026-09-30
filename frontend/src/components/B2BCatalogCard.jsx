@@ -2,7 +2,7 @@ import React, { memo, useEffect, useState } from "react";
 import { Package, ShoppingCart } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { fmt, b2bGross } from "./B2BPortalParts";
-import { parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus } from "../utils/b2bSearch";
+import { parseDraftQty, qtyDraftAfterAdd, qtyDraftOnBlur, qtyDraftOnFocus } from "../utils/b2bSearch";
 
 /** Tek ürün kartı: not/adet yerel — yazınca tüm ızgara yeniden boyanmaz. */
 export const B2BCatalogCard = memo(function B2BCatalogCard({
@@ -21,6 +21,10 @@ export const B2BCatalogCard = memo(function B2BCatalogCard({
 
   const addOk = !(showStock && !p.in_stock);
   const listCut = showPrices && b2bGross(p) < b2bGross(p, "list_price");
+  const handleAdd = () => {
+    onAdd?.(p, parseDraftQty(qty), String(note || "").trim());
+    setQty(qtyDraftAfterAdd());
+  };
 
   return (
     <div
@@ -86,7 +90,7 @@ export const B2BCatalogCard = memo(function B2BCatalogCard({
                 onFocus={() => setQty(qtyDraftOnFocus())}
                 onBlur={() => setQty(qtyDraftOnBlur(qty))}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") onAdd?.(p, parseDraftQty(qty), String(note || "").trim());
+                  if (e.key === "Enter") handleAdd();
                 }}
                 className="w-full bg-transparent text-center font-black text-sm text-slate-900 py-0.5 outline-none"
                 data-testid={`b2b-add-qty-${p.sku}`}
@@ -95,7 +99,7 @@ export const B2BCatalogCard = memo(function B2BCatalogCard({
             </label>
             <button
               type="button"
-              onClick={() => onAdd?.(p, parseDraftQty(qty), String(note || "").trim())}
+              onClick={handleAdd}
               disabled={!addOk}
               className="flex-1 min-w-0 flex items-center justify-center gap-0.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] sm:text-xs font-bold disabled:opacity-40"
               data-testid={`b2b-add-${p.sku}`}

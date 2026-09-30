@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound } from "lucide-react";
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -117,6 +117,11 @@ export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy,
     {lines.length === 0 && <div className="text-xs text-slate-400 py-6 text-center">Sepetiniz boş.</div>}
     <div className="divide-y text-xs max-h-60 sm:max-h-72 overflow-y-auto">{lines.map((l, i) => (
       <div key={l.key || `${l.p.id}-${i}`} className="py-2 flex items-center gap-2" data-testid={`b2b-cart-line-${l.p.sku}-${i}${suffix}`}>
+        <div className="w-11 h-11 shrink-0 rounded-lg border bg-slate-50 overflow-hidden flex items-center justify-center" data-testid={`b2b-cart-line-img-${l.p.sku}-${i}${suffix}`}>
+          {l.p?.image_url
+            ? <img src={resolveImageUrl(l.p.image_url)} alt="" className="w-full h-full object-contain" loading="lazy" decoding="async" />
+            : <Package className="w-5 h-5 text-slate-300" />}
+        </div>
         <div className="flex-1 min-w-0">
           <div className="font-semibold truncate">{l.p.name}</div>
           {l.note ? <div className="text-[10px] text-slate-500 italic truncate" title={l.note} data-testid={`b2b-cart-line-note-${l.p.sku}-${i}${suffix}`}>{l.note}</div> : null}
