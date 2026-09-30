@@ -520,6 +520,88 @@ def test_download_invoice_pdf_uses_get_invoice_pdf_api():
     assert "tok123" in called_url
 
 
+def test_download_invoice_pdf_url_encodes_key_plus_and_slash():
+    """NetteFatura-API encodeURIComponent: + query'de boşluk sayılmasın."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    pdf_bytes = b"%PDF-1.4 enc"
+    raw_key = "abc+def/ghi="
+
+    class _Resp:
+        status_code = 200
+        content = pdf_bytes
+        text = ""
+        headers = {"content-type": "application/pdf"}
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(return_value=_Resp())
+
+    with patch("isnet.httpx.AsyncClient", return_value=mock_client):
+        data = asyncio.get_event_loop().run_until_complete(
+            isnet.download_invoice_pdf(
+                settings,
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                viewer_url="https://efatura.isnet.net.tr/DocumentViewer/DocumentViewerLink?key=abc%2Bdef%2Fghi%3D",
+            )
+        )
+    assert data.startswith(b"%PDF")
+    called_url = mock_client.get.await_args.args[0]
+    assert "GetInvoicePdf" in called_url
+    assert "abc%2Bdef%2Fghi%3D" in called_url
+    # Ham + query'de boşluk sayılır — encode edilmeden gitmemeli
+    from urllib.parse import urlparse, parse_qs
+
+    qs = parse_qs(urlparse(called_url).query)
+    assert qs.get("key") == [raw_key]
+
+
+def test_download_invoice_pdf_retries_fresh_link_when_stored_fails():
+    """Stale gib_document_url başarısızsa taze GetDocumentViewerLink denenir."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    pdf_bytes = b"%PDF-1.4 fresh"
+
+    class _Bad:
+        status_code = 200
+        content = b"<html>Fatura bilgilerinin alinmasi sirasinda hata olustu!</html>"
+        text = "Fatura bilgilerinin alınması sırasında hata oluştu!"
+        headers = {"content-type": "text/html"}
+
+    class _Good:
+        status_code = 200
+        content = pdf_bytes
+        text = ""
+        headers = {"content-type": "application/pdf"}
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(side_effect=[_Bad(), _Good()])
+    link = AsyncMock(
+        return_value={
+            "url": "https://portal/x?key=freshKey",
+            "html_url": "https://portal/x?key=freshKey",
+            "pdf_url": "https://portal/pdf?key=freshKey",
+        }
+    )
+
+    with patch("isnet.get_document_viewer_link", link), patch(
+        "isnet.httpx.AsyncClient", return_value=mock_client
+    ):
+        data = asyncio.get_event_loop().run_until_complete(
+            isnet.download_invoice_pdf(
+                settings,
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                e_type="e_invoice",
+                invoice_number="TA202600000108",
+                viewer_url="https://portal/old?key=staleKey",
+            )
+        )
+    assert data.startswith(b"%PDF")
+    assert mock_client.get.await_count >= 2
+    assert link.await_count >= 1
+
+
 def test_endpoints_match_official_isnet_docs():
     """İşNet resmi test/canlı SOAP URL’leri (destek e-postası ekindeki döküman)."""
     assert isnet.TEST_SOAP == "https://einvoiceservicetest.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"

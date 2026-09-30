@@ -1050,30 +1050,41 @@ def extract_viewer_key(key_or_url: str) -> str:
         return raw
 
 
-async def download_invoice_pdf(
-    settings: dict,
-    ettn: str,
-    *,
-    e_type: str = "e_archive",
-    invoice_number: str = "",
-    viewer_url: str = "",
-    direction: str = "Outgoing",
-) -> bytes:
-    """İşNet Invoice/GetInvoicePdf — resmi e-Arşiv/e-Fatura PDF (NetteFatura-API)."""
-    key_src = (viewer_url or "").strip()
-    if not key_src:
-        link = await get_document_viewer_link(
-            settings,
-            ettn,
-            e_type=e_type,
-            invoice_number=invoice_number,
-            direction=direction,
-        )
-        key_src = link.get("url") or ""
-    key = extract_viewer_key(key_src)
+def _isnet_error_snippet(content: bytes = b"", text: str = "") -> str:
+    """İşNet HTML/JSON hata gövdesinden kısa Türkçe mesaj ayıkla."""
+    raw = (text or "").strip()
+    if not raw and content:
+        try:
+            raw = content.decode("utf-8", errors="ignore")
+        except Exception:
+            raw = ""
+    if not raw:
+        return ""
+    cleaned = re.sub(r"<[^>]+>", " ", raw)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # JSON {"detail":"..."} veya ErrorMessage
+    try:
+        import json
+
+        j = json.loads(raw)
+        if isinstance(j, dict):
+            for k in ("detail", "ErrorMessage", "Message", "message", "error"):
+                if j.get(k):
+                    return str(j[k])[:240]
+    except Exception:
+        pass
+    return cleaned[:240]
+
+
+async def _http_get_invoice_pdf(settings: dict, key: str) -> bytes:
+    """NetteFatura-API ile aynı: GetInvoicePdf?key= — key mutlaka URL-encode."""
+    from urllib.parse import quote
+
+    key = (key or "").strip()
     if not key:
         raise HTTPException(status_code=404, detail="İşNet PDF anahtarı (key) bulunamadı.")
-    url = f"{api_base(settings)}/api/Invoice/GetInvoicePdf?key={key}"
+    # encodeURIComponent ile aynı: + / = bozulmasın (+ query'de boşluk sayılır)
+    url = f"{api_base(settings)}/api/Invoice/GetInvoicePdf?key={quote(key, safe='')}"
     try:
         async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
             r = await client.get(
@@ -1086,17 +1097,101 @@ async def download_invoice_pdf(
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"İşNet PDF indirilemedi: {e}") from e
     if r.status_code >= 400 or not r.content:
+        snippet = _isnet_error_snippet(r.content, getattr(r, "text", "") or "")
         raise HTTPException(
             status_code=502,
-            detail=f"İşNet PDF HTTP {r.status_code}: {(r.text or '')[:200]}",
+            detail=snippet or f"İşNet PDF HTTP {r.status_code}: {(getattr(r, 'text', '') or '')[:200]}",
         )
     ctype = (r.headers.get("content-type") or "").lower()
     if "pdf" not in ctype and not r.content.startswith(b"%PDF"):
+        snippet = _isnet_error_snippet(r.content, getattr(r, "text", "") or "")
         raise HTTPException(
             status_code=502,
-            detail="İşNet PDF yanıtı geçersiz (PDF değil). Fatura NetteFatura'da henüz hazır olmayabilir.",
+            detail=snippet
+            or "İşNet PDF yanıtı geçersiz (PDF değil). Fatura NetteFatura'da henüz hazır olmayabilir.",
         )
     return bytes(r.content)
+
+
+async def download_invoice_pdf(
+    settings: dict,
+    ettn: str,
+    *,
+    e_type: str = "e_archive",
+    invoice_number: str = "",
+    viewer_url: str = "",
+    direction: str = "Outgoing",
+) -> bytes:
+    """İşNet Invoice/GetInvoicePdf — resmi e-Arşiv/e-Fatura PDF (NetteFatura-API).
+
+    Kayıtlı viewer linki (gib_document_url) stale olabilir; başarısızsa taze
+    GetDocumentViewerLink + alternatif belge tipi / fatura no denenir.
+    """
+    errors: List[str] = []
+
+    async def _try_key_src(key_src: str, label: str) -> Optional[bytes]:
+        key = extract_viewer_key(key_src or "")
+        if not key:
+            return None
+        try:
+            return await _http_get_invoice_pdf(settings, key)
+        except HTTPException as e:
+            errors.append(f"{label}: {e.detail}")
+            logger.info("isnet pdf miss %s ettn=%s: %s", label, ettn, e.detail)
+            return None
+
+    stored = (viewer_url or "").strip()
+    if stored:
+        out = await _try_key_src(stored, "kayıtlı link")
+        if out:
+            return out
+
+    ettn = (ettn or "").strip()
+    primary = e_type if e_type in ("e_invoice", "e_archive") else "e_archive"
+    alt = "e_archive" if primary == "e_invoice" else "e_invoice"
+    type_order = [primary, alt]
+    inv_nos = [str(invoice_number or "").strip(), ""]
+    # Aynı no iki kez denenmesin
+    seen_nos: List[str] = []
+    for n in inv_nos:
+        if n not in seen_nos:
+            seen_nos.append(n)
+
+    for et in type_order:
+        for inv_no in seen_nos:
+            try:
+                link = await get_document_viewer_link(
+                    settings,
+                    ettn,
+                    e_type=et,
+                    invoice_number=inv_no,
+                    direction=direction,
+                )
+            except HTTPException as e:
+                errors.append(f"viewer({et}{',no' if inv_no else ''}): {e.detail}")
+                continue
+            # PdfUrl varsa önce onu dene (HTML viewer key bazen PDF API'de reddedilir)
+            candidates = [
+                (link.get("pdf_url") or "", "PdfUrl"),
+                (link.get("url") or "", "viewer"),
+                (link.get("html_url") or "", "HtmlUrl"),
+            ]
+            seen_keys: set = set()
+            for src, label in candidates:
+                if not src:
+                    continue
+                k = extract_viewer_key(src)
+                if not k or k in seen_keys:
+                    continue
+                seen_keys.add(k)
+                out = await _try_key_src(src, f"{label}/{et}")
+                if out:
+                    return out
+
+    detail = errors[-1] if errors else "İşNet PDF anahtarı (key) bulunamadı."
+    if len(errors) > 1:
+        detail = f"{detail} ({len(errors)} deneme)"
+    raise HTTPException(status_code=502, detail=detail)
 
 
 async def download_invoice_xml(
