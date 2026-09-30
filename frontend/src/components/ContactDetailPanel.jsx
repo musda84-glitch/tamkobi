@@ -14,7 +14,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, canDeleteInvoice, canCancelInvoice } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, canDeleteInvoice, canCancelInvoice, invoiceETypeLabel } from "./InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { useEscape } from "../utils/useEscape";
@@ -557,7 +557,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const cells = {
                     number: <td key="number" className="py-2 font-mono font-semibold text-slate-900"><button onClick={() => setEditInv({ ...inv })} className={`hover:underline ${inv.status === "draft" ? "text-emerald-700" : "text-slate-900"}`} title={inv.status === "draft" ? "Taslağı düzenle" : "Faturayı düzenle (vade / not)"} data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button></td>,
                     date: <td key="date" className="py-2 text-slate-500">{fmtDate(inv.issue_date)}</td>,
-                    type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{E_TYPE_TR[inv.e_type] || inv.e_type}</span></td>,
+                    type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span></td>,
                     amount: <td key="amount" className={`py-2 text-right font-bold ${inv.status === "draft" ? "text-slate-400" : ""}`}>{fmt(inv.grand_total)}{inv.status === "draft" && <div className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide" data-testid={`detail-inv-draft-${inv.invoice_number}`}>Taslak · bakiye dışı</div>}</td>,
                     gib: <td key="gib" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>,
                     payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"}</span></td>,
@@ -568,7 +568,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                       <div className="flex items-center justify-end gap-0.5">
                         <button onClick={() => setEditInv({ ...inv })} className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı düzenle" : "Faturayı düzenle (vade / not)"} data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
                         <button onClick={() => setPrintDoc(inv)} className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Görüntüle / Şablonlu Yazdır" data-testid={`detail-inv-print-${inv.invoice_number}`}><Printer className="w-4 h-4" /></button>
-                        {onMessage ? (
+                        {onMessage && !incoming ? (
                           <button onClick={() => onMessage(c)} className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition" title="SMS / E-posta gönder" data-testid={`detail-inv-notify-${inv.invoice_number}`}><MessageSquare className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
                         {inv.status === "draft" && !incoming ? (

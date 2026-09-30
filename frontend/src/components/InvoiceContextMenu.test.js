@@ -5,10 +5,13 @@ import {
   canEditInvoice,
   canIssueInvoice,
   canDownloadGibDocuments,
+  canDeleteInvoice,
+  invoiceBuyerTaxId,
+  invoiceETypeLabel,
   invoiceHasPayment,
+  isIncomingPurchaseInvoice,
   placeContextMenu,
   suggestedIssueTypeFromGib,
-  invoiceBuyerTaxId,
   shouldResolveIssueFromGib,
   isGibIssued,
 } from "./InvoiceContextMenu";
@@ -116,6 +119,12 @@ describe("purchase invoices are not issued via FATURAYI KES", () => {
       invoice_type: "purchase",
       e_type: "paper",
       status: "draft",
+      direction: "incoming",
+    })).toBe(true);
+    expect(canDownloadGibDocuments({
+      invoice_type: "purchase",
+      e_type: "paper",
+      status: "draft",
     })).toBe(false);
   });
 });
@@ -171,6 +180,44 @@ describe("draft edit lives in the ⋮ menu", () => {
     expect(canEditInvoice(issued)).toBe(false);
     expect(canEditInvoice({ status: "draft", invoice_type: "purchase", direction: "incoming" })).toBe(false);
     expect(canEditInvoice({ status: "draft", invoice_type: "dispatch" })).toBe(false);
+  });
+});
+
+describe("incoming GİB purchase labels and delete guard", () => {
+  test("wrong paper e_type still shows Gelen e-Fatura", () => {
+    expect(invoiceETypeLabel({
+      invoice_type: "purchase",
+      e_type: "paper",
+      direction: "incoming",
+      source: "edoc_inbox",
+    })).toBe("Gelen e-Fatura");
+    expect(invoiceETypeLabel({
+      invoice_type: "purchase",
+      e_type: "paper",
+      gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    })).toBe("Gelen e-Fatura");
+  });
+
+  test("incoming GİB purchase cannot be deleted from the list", () => {
+    expect(canDeleteInvoice({
+      status: "draft",
+      invoice_type: "purchase",
+      e_type: "paper",
+      direction: "incoming",
+    })).toBe(false);
+    expect(canDeleteInvoice({
+      status: "draft",
+      invoice_type: "sales",
+      e_type: "paper",
+    })).toBe(true);
+  });
+
+  test("isIncomingPurchaseInvoice catches gib_uuid even when e_type is paper", () => {
+    expect(isIncomingPurchaseInvoice({
+      invoice_type: "purchase",
+      e_type: "paper",
+      gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    })).toBe(true);
   });
 });
 

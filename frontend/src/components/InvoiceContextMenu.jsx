@@ -20,8 +20,20 @@ export function isIncomingPurchaseInvoice(inv) {
   if (!inv || inv.invoice_type !== "purchase") return false;
   if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return true;
   if (inv.e_type === "e_invoice") return true;
+  if (inv.gib_uuid || inv.gib_tracking_id) return true;
   const gs = String(inv.gib_status || "");
   return /gelen|received/i.test(gs);
+}
+
+/** Liste rozeti: gelen GİB alış asla «Kağıt Fatura» gösterilmez. */
+export function invoiceETypeLabel(inv) {
+  if (!inv) return "—";
+  if (inv._is_quote) return "Teklif";
+  if (isIncomingPurchaseInvoice(inv)) {
+    if (inv.e_type === "e_dispatch") return E_TYPE_LABELS.e_dispatch;
+    return "Gelen e-Fatura";
+  }
+  return E_TYPE_LABELS[inv.e_type] || "İrsaliye";
 }
 
 export function incomingPurchaseResponse(inv) {
@@ -62,9 +74,10 @@ export function isGibIssued(inv) {
   return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gs) && !/onaylandı$/i.test(gs);
 }
 
-/** Taslak ve (ödenmemiş) kağıt faturalar silinebilir. */
+/** Taslak ve (ödenmemiş) kağıt faturalar silinebilir. Gelen GİB e-belge silinmez. */
 export function canDeleteInvoice(inv) {
   if (!inv) return false;
+  if (isIncomingPurchaseInvoice(inv)) return false;
   if (inv.status === "draft") return true;
   if (inv.e_type !== "paper") return false;
   if (Number(inv.paid_amount || 0) > 0.01) return false;
@@ -86,9 +99,13 @@ export function canDownloadGibDocuments(inv) {
   if (!inv) return false;
   if (inv.status === "cancelled") return false;
   const et = inv.e_type || "";
-  if (et === "paper" || et === "expense_slip" || et === "e_dispatch") return false;
+  if (et === "expense_slip" || et === "e_dispatch") return false;
+  if (isIncomingPurchaseInvoice(inv)) {
+    // Gelen GİB alış bazen yanlışlıkla paper kaydedilmiş olabilir
+    return et !== "e_dispatch";
+  }
+  if (et === "paper") return false;
   if (!["e_invoice", "e_archive", "e_export"].includes(et)) return false;
-  if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return true;
   return isGibIssued(inv);
 }
 
