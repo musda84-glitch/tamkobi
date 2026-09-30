@@ -346,7 +346,16 @@ export const InvoiceContextMenu = (props) => {
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
           <Item icon={FileCode2} color="text-indigo-600" label="UBL XML İndir" sub="GİB UBL-TR arşiv kopyası" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/xml`, "_blank")} testId="ctx-download-xml" />
           <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Yazdırılabilir fatura PDF" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf`, "_blank")} testId="ctx-download-pdf" />
-          {inv.gib_document_url && <Item icon={ExternalLink} color="text-emerald-600" label="Resmi GİB Belgesi" sub="Entegratör görüntüleme linki" onClick={() => window.open(inv.gib_document_url, "_blank")} testId="ctx-gib-doc-url" />}
+          {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
+            <Item
+              icon={ExternalLink}
+              color="text-emerald-600"
+              label="Resmi GİB Belgesi"
+              sub="Entegratör görüntüleme linki"
+              onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/gib-document`, "_blank")}
+              testId="ctx-gib-doc-url"
+            />
+          )}
         </div>
       )}
       {showIssuedActions && ((onCancel && cancellable) || (onExpenseSlip && slipable)) && (

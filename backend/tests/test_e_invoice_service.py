@@ -221,12 +221,43 @@ class TestRefreshOutbound:
         fake_db.invoices.find = MagicMock(return_value=Cur())
         fake_db.invoices.update_one = AsyncMock()
         fake_db.companies.find_one = AsyncMock(return_value={})
+        fake_db.einvoice_settings.find_one = AsyncMock(return_value={})
         e_invoice.init(fake_db)
 
         res = asyncio.get_event_loop().run_until_complete(e_invoice.refresh_outbound_statuses())
         assert res["checked"] == 1
         assert res["updated"] == 1
         fake_db.invoices.update_one.assert_awaited()
+
+    def test_isnet_ignores_poisoned_n11_url(self):
+        """İşNet faturasına yanlış basılmış n11 URL → GetDocumentViewerLink."""
+        fake_db = MagicMock()
+        inv = {
+            "_id": "inv1",
+            "company_id": "c1",
+            "integrator": "isnet",
+            "e_type": "e_archive",
+            "gib_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "gib_document_url": "https://ebelge.n11faturam.com/ViewDocument.aspx?ID=1&UUID=x",
+            "invoice_number": "TA1",
+        }
+        settings = {"provider": "isnet", "status": "configured", "company_tax_id": "4810173324", "mode": "test"}
+        fake_db.invoices.find_one = AsyncMock(return_value=inv)
+        fake_db.einvoice_settings.find_one = AsyncMock(return_value=settings)
+        fake_db.invoices.update_one = AsyncMock()
+        e_invoice.init(fake_db)
+
+        async def _run():
+            with patch.object(
+                e_invoice.isnet,
+                "get_document_viewer_link",
+                AsyncMock(return_value={"url": "https://isnet.example/view?k=1", "html_url": "https://isnet.example/view?k=1", "pdf_url": ""}),
+            ):
+                out = await e_invoice.resolve_gib_document_url("inv1")
+            assert out["url"].startswith("https://isnet.example")
+            assert out["source"] == "viewer_link"
+
+        asyncio.get_event_loop().run_until_complete(_run())
 
 
 class TestFinalizeAndTrack:

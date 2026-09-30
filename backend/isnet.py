@@ -748,6 +748,49 @@ async def send_document(
     }
 
 
+async def get_document_viewer_link(
+    settings: dict,
+    ettn: str,
+    *,
+    e_type: str = "e_archive",
+    invoice_number: str = "",
+) -> Dict[str, str]:
+    """GetDocumentViewerLink — NetteFatura-API invoice.getDocumentViewerLink()."""
+    ettn = (ettn or "").strip()
+    if not ettn:
+        raise HTTPException(status_code=400, detail="ETTN gerekli.")
+    req = {
+        **_company_request(settings),
+        "Ettn": ettn,
+        "InvoiceDirection": "Outgoing",
+        "InvoiceDocumentType": "EArchiveInvoice" if e_type == "e_archive" else "EInvoice",
+    }
+    if invoice_number:
+        req["InvoiceNumber"] = str(invoice_number)
+    if len(req["CompanyTaxCode"]) not in (10, 11):
+        raise HTTPException(
+            status_code=400, detail="İşNet görüntüleme linki için şirket VKN (company_tax_id) gerekli."
+        )
+    body = await _soap_call(
+        settings,
+        endpoint=soap_url(settings),
+        action="GetDocumentViewerLink",
+        service_interface="IInvoiceService",
+        request=req,
+        timeout=45.0,
+    )
+    html = _find_text(body, "HtmlUrl", "DocumentUrl") or ""
+    pdf = _find_text(body, "PdfUrl") or ""
+    url = html or pdf
+    if not url:
+        raise HTTPException(
+            status_code=404,
+            detail=_find_text(body, "Message", "ErrorMessage")
+            or "İşNet görüntüleme linki dönmedi.",
+        )
+    return {"html_url": html, "pdf_url": pdf, "url": url}
+
+
 def _decode_xml_payload(payload: str) -> Optional[bytes]:
     if not payload:
         return None

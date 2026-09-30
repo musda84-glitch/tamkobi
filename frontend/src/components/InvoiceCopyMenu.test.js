@@ -1,5 +1,10 @@
 import { describe, expect, test } from "@jest/globals";
-import { canCopyInvoice, INVOICE_COPY_MODES, invoiceToOpenAfterCopy } from "./invoiceCopyModes";
+import {
+  canCopyInvoice,
+  INVOICE_COPY_MODES,
+  invoiceToOpenAfterCopy,
+  normalizeContactOptions,
+} from "./invoiceCopyModes";
 
 describe("canCopyInvoice", () => {
   test("allows invoices with or without items loaded", () => {
@@ -49,5 +54,22 @@ describe("invoiceToOpenAfterCopy", () => {
     expect(invoiceToOpenAfterCopy({ kind: "purchase_order", purchase_order: { id: "po1" } })).toBeNull();
     expect(invoiceToOpenAfterCopy(null)).toBeNull();
     expect(invoiceToOpenAfterCopy({})).toBeNull();
+  });
+});
+
+describe("normalizeContactOptions", () => {
+  test("maps _id to id and drops invalid rows", () => {
+    const rows = normalizeContactOptions([
+      { _id: "c1", name: "A" },
+      { id: "c2", name: "B" },
+      { name: "no-id" },
+      null,
+    ]);
+    expect(rows.map((c) => c.id)).toEqual(["c1", "c2"]);
+    expect(rows[0].name).toBe("A");
+  });
+
+  test("accepts { contacts: [] } envelope", () => {
+    expect(normalizeContactOptions({ contacts: [{ id: "x", name: "X" }] })).toHaveLength(1);
   });
 });

@@ -11,10 +11,10 @@ import {
 } from "./ui/dropdown-menu";
 import { SearchSelect } from "./SearchSelect";
 import { API_URL } from "../context/AuthContext";
-import { INVOICE_COPY_MODES, canCopyInvoice } from "./invoiceCopyModes";
+import { INVOICE_COPY_MODES, canCopyInvoice, normalizeContactOptions } from "./invoiceCopyModes";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
-export { INVOICE_COPY_MODES, canCopyInvoice } from "./invoiceCopyModes";
+export { INVOICE_COPY_MODES, canCopyInvoice, normalizeContactOptions } from "./invoiceCopyModes";
 
 export async function copyInvoice(invoice, mode, contactId) {
   const id = invoice?.id || invoice?._id;
@@ -30,21 +30,44 @@ export function InvoiceCopyContactModal({ mode, invoice, contacts = [], companyI
   const meta = INVOICE_COPY_MODES.find((m) => m.key === mode) || INVOICE_COPY_MODES[1];
   const [contactId, setContactId] = useState("");
   const [busy, setBusy] = useState(false);
-  const [list, setList] = useState(contacts);
+  const [loading, setLoading] = useState(true);
+  const [list, setList] = useState(() => normalizeContactOptions(contacts));
+
   useEffect(() => {
-    setList(contacts);
-  }, [contacts]);
-  useEffect(() => {
-    if (contacts.length || !companyId) return undefined;
     let cancelled = false;
-    axios.get(`${API_URL}/contacts`, { params: { company_id: companyId } })
+    const seed = normalizeContactOptions(contacts);
+    if (seed.length) setList(seed);
+    const cid = companyId || invoice?.company_id || "";
+    if (!cid) {
+      setLoading(false);
+      if (!seed.length) toast.error("Firma seçili değil; cariler yüklenemedi.");
+      return undefined;
+    }
+    setLoading(true);
+    axios
+      .get(`${API_URL}/contacts`, { params: { company_id: cid, lite: 1 } })
       .then((r) => {
         if (cancelled) return;
-        setList(Array.isArray(r.data) ? r.data : (r.data?.contacts || []));
+        const rows = normalizeContactOptions(r.data);
+        setList(rows);
+        if (!rows.length) toast.error("Bu firmada cari bulunamadı.");
       })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [contacts.length, companyId]);
+      .catch((err) => {
+        if (cancelled) return;
+        if (seed.length) {
+          setList(seed);
+          return;
+        }
+        toast.error(err.response?.data?.detail || "Cariler yüklenemedi.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, invoice?.company_id, mode]); // eslint-disable-line react-hooks/exhaustive-deps -- seed contacts once; always refresh from API
+
   const filtered = meta.preferSupplier
     ? list.filter((c) => !c.type || c.type === "supplier" || c.type === "both" || c.is_supplier)
     : list;
@@ -86,19 +109,27 @@ export function InvoiceCopyContactModal({ mode, invoice, contacts = [], companyI
         </p>
         <div>
           <label className="block font-semibold mb-1">{meta.preferSupplier ? "Tedarikçi" : "Hedef cari"}</label>
-          <SearchSelect
-            value={contactId}
-            options={options}
-            getLabel={(c) => c.name}
-            getSub={(c) => c.tax_number_or_id || c.phone || ""}
-            placeholder={meta.preferSupplier ? "Tedarikçi ara…" : "Cari ara…"}
-            onChange={setContactId}
-            testId="invoice-copy-contact-select"
-          />
+          {loading && !options.length ? (
+            <div className="text-slate-400 py-2" data-testid="invoice-copy-contact-loading">Cariler yükleniyor…</div>
+          ) : (
+            <SearchSelect
+              value={contactId}
+              options={options}
+              getLabel={(c) => c.name || c.company_title || "—"}
+              getSub={(c) => c.tax_number_or_id || c.phone || ""}
+              placeholder={meta.preferSupplier ? "Tedarikçi ara…" : "Cari ara…"}
+              onChange={(id) => setContactId(id || "")}
+              testId="invoice-copy-contact-select"
+              inline
+            />
+          )}
+          {!loading && options.length > 0 && (
+            <div className="text-[10px] text-slate-400 mt-1" data-testid="invoice-copy-contact-count">{options.length} cari</div>
+          )}
         </div>
         <div className="flex justify-end gap-2 pt-2 border-t">
           <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>
-          <button type="submit" disabled={busy} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="invoice-copy-confirm-btn">
+          <button type="submit" disabled={busy || loading || !contactId} className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="invoice-copy-confirm-btn">
             {busy ? "Kopyalanıyor…" : "Kopyala"}
           </button>
         </div>
