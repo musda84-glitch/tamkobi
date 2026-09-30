@@ -1,4 +1,5 @@
 """Pazaryeri entegrasyonları — Trendyol Seller API (gerçek) + diğer kanallar için simülasyon."""
+import asyncio
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
@@ -8,6 +9,11 @@ import httpx
 from fastapi import HTTPException
 
 TRENDYOL_BASE = "https://apigw.trendyol.com"
+# V1 /orders 15 Eki 2026'da kapanıyor; dönemsel 426 dönüyor. V2 zorunlu.
+TY_ORDERS_PATH = "/integration/order/sellers/{seller_id}/v2/orders"
+TY_ORDERS_MAX_PAGES = 50  # size=200 → maxQueryWindowResult 10.000
+TY_PAGE_SIZE = 200
+TY_WINDOW_MS = 14 * 86400000  # API max tarih aralığı 14 gün
 TY_STATUS = {"Created": "pending", "Picking": "approved", "Invoiced": "approved", "Shipped": "shipped", "AtCollectionPoint": "shipped", "Delivered": "delivered",
              "Cancelled": "cancelled", "UnDelivered": "returned", "Returned": "returned", "UnSupplied": "cancelled", "UnPacked": "pending"}
 TY_CARRIER = {"Yurtiçi Kargo Marketplace": "yurtici", "Aras Kargo Marketplace": "aras", "MNG Kargo Marketplace": "mng", "PTT Kargo Marketplace": "ptt", "Sürat Kargo Marketplace": "surat",
@@ -30,69 +36,135 @@ def has_live_credentials(cfg: dict) -> bool:
     return bool(cfg.get("api_key") and cfg.get("api_secret") and cfg.get("supplier_id"))
 
 
+def resolve_sync_days(
+    last_synced_at: Optional[str] = None,
+    requested_days: Optional[int] = None,
+    *,
+    default_days: int = 7,
+    max_days: int = 45,
+    min_days: int = 1,
+    overlap_hours: int = 6,
+) -> int:
+    """Sipariş Çek: son senkrondan beri geçen süre (+ örtüşme); ilk çekimde default_days."""
+    want = int(requested_days if requested_days is not None else default_days)
+    want = max(min_days, min(max_days, want))
+    if not last_synced_at:
+        return want
+    try:
+        dt = datetime.fromisoformat(str(last_synced_at).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        elapsed_h = (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds() / 3600.0
+        needed = int((elapsed_h + overlap_hours) / 24.0) + 1
+        return max(min_days, min(want, max(needed, min_days)))
+    except (TypeError, ValueError):
+        return want
+
+
 class TrendyolClient:
     def __init__(self, cfg: dict):
         self.seller_id = str(cfg["supplier_id"]).strip()
-        self.http = httpx.AsyncClient(base_url=cfg.get("base_url") or TRENDYOL_BASE, auth=(cfg["api_key"].strip(), cfg["api_secret"].strip()),
-                                      headers={"User-Agent": f"{self.seller_id} - SelfIntegration", "storeFrontCode": cfg.get("storefront_code") or "TR", "Accept": "application/json"}, timeout=30.0)
+        self.http = httpx.AsyncClient(
+            base_url=cfg.get("base_url") or TRENDYOL_BASE,
+            auth=(cfg["api_key"].strip(), cfg["api_secret"].strip()),
+            headers={
+                "User-Agent": f"{self.seller_id} - SelfIntegration",
+                "storeFrontCode": cfg.get("storefront_code") or "TR",
+                "Accept": "application/json",
+            },
+            timeout=httpx.Timeout(45.0, connect=15.0),
+        )
+        self._orders_path = TY_ORDERS_PATH.format(seller_id=self.seller_id)
 
-    async def _call(self, method: str, path: str, **kw) -> Any:
-        try:
-            r = await self.http.request(method, path, **kw)
-        except httpx.HTTPError as e:
-            raise HTTPException(status_code=502, detail=f"Trendyol'a ulaşılamadı: {type(e).__name__}")
-        if r.status_code == 401:
-            raise HTTPException(status_code=401, detail="Trendyol: API Key / API Secret hatalı (401). Satıcı Paneli → Hesap Bilgilerim → Entegrasyon Bilgileri'nden kontrol edin.")
-        if r.status_code == 403:
-            raise HTTPException(status_code=403, detail="Trendyol: Erişim reddedildi (403). Satıcı ID doğru mu? IP kısıtı / User-Agent kontrol edin.")
-        if r.status_code == 429:
-            raise HTTPException(status_code=429, detail="Trendyol: İstek limiti aşıldı (50 istek/10 sn). Biraz sonra tekrar deneyin.")
-        if r.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"Trendyol hata {r.status_code}: {r.text[:300]}")
-        try:
-            return r.json() if r.content else {}
-        except ValueError:
-            return {}
+    async def _call(self, method: str, path: str, *, retries: int = 2, **kw) -> Any:
+        last_err: Optional[HTTPException] = None
+        for attempt in range(max(1, retries + 1)):
+            try:
+                r = await self.http.request(method, path, **kw)
+            except httpx.TimeoutException:
+                last_err = HTTPException(status_code=504, detail="Trendyol yanıt vermedi (zaman aşımı). Daha kısa aralıkla tekrar deneyin.")
+                if attempt < retries:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                    continue
+                raise last_err
+            except httpx.HTTPError as e:
+                raise HTTPException(status_code=502, detail=f"Trendyol'a ulaşılamadı: {type(e).__name__}")
+            if r.status_code in (429, 426):
+                # 426: eski uç dönemsel kapanış; 429: rate limit — kısa bekleyip yeniden dene.
+                code = r.status_code
+                detail = (
+                    "Trendyol sipariş API’si geçici olarak kapalı (426). Birkaç dakika sonra tekrar deneyin."
+                    if code == 426
+                    else "Trendyol: İstek limiti aşıldı (429). Kısa süre sonra tekrar denenecek."
+                )
+                last_err = HTTPException(status_code=code, detail=detail)
+                if attempt < retries:
+                    await asyncio.sleep(2.0 * (attempt + 1))
+                    continue
+                raise last_err
+            if r.status_code == 401:
+                raise HTTPException(status_code=401, detail="Trendyol: API Key / API Secret hatalı (401). Satıcı Paneli → Hesap Bilgilerim → Entegrasyon Bilgileri'nden kontrol edin.")
+            if r.status_code == 403:
+                raise HTTPException(status_code=403, detail="Trendyol: Erişim reddedildi (403). Satıcı ID doğru mu? IP kısıtı / User-Agent kontrol edin.")
+            if r.status_code >= 400:
+                raise HTTPException(status_code=502, detail=f"Trendyol hata {r.status_code}: {r.text[:300]}")
+            try:
+                return r.json() if r.content else {}
+            except ValueError:
+                return {}
+        if last_err:
+            raise last_err
+        return {}
 
     async def close(self):
         await self.http.aclose()
 
-    async def _paged(self, path: str, start: int, end: int, size: int, extra: Optional[dict] = None) -> List[dict]:
+    async def _paged(self, path: str, start: int, end: int, size: int, extra: Optional[dict] = None, *, max_pages: int = TY_ORDERS_MAX_PAGES) -> List[dict]:
         out, page = [], 0
-        while True:
+        size = min(int(size or TY_PAGE_SIZE), TY_PAGE_SIZE)
+        while page < max_pages:
             params = {"page": page, "size": size, "startDate": start, "endDate": end, **(extra or {})}
             data = await self._call("GET", path, params=params) or {}
-            out.extend(data.get("content") or [])
-            page += 1
-            if page >= int(data.get("totalPages", 1) or 1) or page > 20:
+            chunk = data.get("content") or []
+            out.extend(chunk)
+            total_pages = int(data.get("totalPages", 1) or 1)
+            # V2: 10k pencere — page 0..49; fazlası erişilemez, küçük pencerelere bölünmeli.
+            if page + 1 >= min(total_pages, max_pages) or not chunk:
                 return out
+            page += 1
+            # Rate limit yumuşatma (yüksek hacimli satıcılar).
+            await asyncio.sleep(0.15)
+        return out
 
-    async def orders(self, days: int = 14, status: Optional[str] = None, size: int = 200) -> List[dict]:
-        """Trendyol tarih aralığını en fazla 14 gün kabul eder → aralık 14 günlük parçalara bölünür."""
+    async def orders(self, days: int = 14, status: Optional[str] = None, size: int = TY_PAGE_SIZE) -> List[dict]:
+        """Trendyol V2 sipariş paketleri — tarih aralığı en fazla 14 gün; yoğun satıcıda daha küçük dilimler."""
         end = int(datetime.now(timezone.utc).timestamp() * 1000)
-        start_all = end - days * 86400000
+        start_all = end - max(1, int(days)) * 86400000
         extra = {"orderByField": "PackageLastModifiedDate", "orderByDirection": "DESC"}
         if status:
             extra["status"] = status
         seen, out = set(), []
         cur_end = end
+        # Yoğun mağazalarda 14 günlük dilim 10k'yı aşabilir → 2 günlük parçalar.
+        chunk_ms = 2 * 86400000 if days > 7 else TY_WINDOW_MS
         while cur_end > start_all:
-            cur_start = max(start_all, cur_end - 14 * 86400000 + 1)
-            for p in await self._paged(f"/integration/order/sellers/{self.seller_id}/orders", cur_start, cur_end, size, extra):
-                if p.get("id") not in seen:
-                    seen.add(p.get("id"))
+            cur_start = max(start_all, cur_end - chunk_ms + 1)
+            for p in await self._paged(self._orders_path, cur_start, cur_end, size, extra):
+                pid = p.get("id")
+                if pid not in seen:
+                    seen.add(pid)
                     out.append(p)
             cur_end = cur_start - 1
         return out
 
-    async def claims(self, days: int = 30) -> List[dict]:
+    async def claims(self, days: int = 14) -> List[dict]:
         end = int(datetime.now(timezone.utc).timestamp() * 1000)
-        start_all = end - days * 86400000
+        start_all = end - max(1, int(days)) * 86400000
         seen, out = set(), []
         cur_end = end
         while cur_end > start_all:
-            cur_start = max(start_all, cur_end - 14 * 86400000 + 1)
-            for c in await self._paged(f"/integration/order/sellers/{self.seller_id}/claims", cur_start, cur_end, 200):
+            cur_start = max(start_all, cur_end - TY_WINDOW_MS + 1)
+            for c in await self._paged(f"/integration/order/sellers/{self.seller_id}/claims", cur_start, cur_end, 200, max_pages=20):
                 if c.get("id") not in seen:
                     seen.add(c.get("id"))
                     out.append(c)

@@ -11009,13 +11009,19 @@ async def remove_ecommerce_channel(channel_id: str):
     return {"status": "success", "message": f"{cfg.get('channel_name')} kanalı kaldırıldı."}
 
 @api_router.post("/integrations/ecommerce/{channel_id}/sync-now")
-async def sync_ecommerce_channel(channel_id: str, days: int = 14):
+async def sync_ecommerce_channel(channel_id: str, days: Optional[int] = None):
     config = await db.integration_configs.find_one({"_id": channel_id})
     if not config:
         raise HTTPException(status_code=404, detail="Entegrasyon bulunamadı.")
     company_id = config.get("company_id", "comp_nexus_main_01")
     channel = config.get("channel", "trendyol")
     now = datetime.now(timezone.utc).isoformat()
+    sync_days = marketplace_providers.resolve_sync_days(
+        config.get("last_synced_at"),
+        days,
+        default_days=7 if channel == "trendyol" else 14,
+        max_days=45,
+    )
     if channel == "shopphp" and marketplace_providers.has_shopphp_credentials(config):
         try:
             raw_orders = await marketplace_providers.shopphp_orders_xml(config)
@@ -11024,29 +11030,49 @@ async def sync_ecommerce_channel(channel_id: str, days: int = 14):
             raise
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_shopphp_xml_order(o, company_id, channel) for o in raw_orders])
         await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
-        return {"status": "success", "live": True, "channel": channel, **res, "message": f"ShopPHP: {len(raw_orders)} sipariş okundu → {res['inserted']} yeni, {res['updated']} güncellendi."}
+        return {"status": "success", "live": True, "channel": channel, "days": sync_days, **res, "message": f"ShopPHP: {len(raw_orders)} sipariş okundu → {res['inserted']} yeni, {res['updated']} güncellendi."}
     if channel == "trendyol" and marketplace_providers.has_live_credentials(config):
         client = marketplace_providers.TrendyolClient(config)
+        warnings: list = []
         try:
-            pkgs = await client.orders(days=days)
-            claims = await client.claims(days=max(days, 30))
-            questions = await client.questions("WAITING_FOR_ANSWER") + await client.questions("ANSWERED")
+            pkgs = await client.orders(days=sync_days)
         except HTTPException as e:
             await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
-            raise
-        finally:
             await client.close()
+            raise
+        # İade / soru ikincil — sipariş çekimini kilitlemesin (yoğun mağazalarda zaman aşımı kök nedeni).
+        claims, questions = [], []
+        try:
+            claims = await client.claims(days=min(sync_days, 14))
+        except HTTPException as e:
+            warnings.append(f"İadeler alınamadı: {e.detail}")
+        except Exception as e:
+            warnings.append(f"İadeler alınamadı: {type(e).__name__}")
+        try:
+            questions = await client.questions("WAITING_FOR_ANSWER")
+            try:
+                questions = questions + await client.questions("ANSWERED")
+            except HTTPException:
+                pass
+        except HTTPException as e:
+            warnings.append(f"Sorular alınamadı: {e.detail}")
+        except Exception as e:
+            warnings.append(f"Sorular alınamadı: {type(e).__name__}")
+        await client.close()
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_trendyol_order(p, company_id, channel) for p in pkgs])
-        new_claims = await _upsert_by_external(db.marketplace_claims, company_id, [marketplace_providers.map_trendyol_claim(c, company_id, channel) for c in claims])
-        new_q = await _upsert_by_external(db.marketplace_questions, company_id, [marketplace_providers.map_trendyol_question(q, company_id, channel) for q in questions])
-        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
+        new_claims = await _upsert_by_external(db.marketplace_claims, company_id, [marketplace_providers.map_trendyol_claim(c, company_id, channel) for c in claims]) if claims else 0
+        new_q = await _upsert_by_external(db.marketplace_questions, company_id, [marketplace_providers.map_trendyol_question(q, company_id, channel) for q in questions]) if questions else 0
+        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now, "last_sync_warnings": warnings[:5]}, "$inc": {"synced_orders": res["inserted"]}})
         cancelled = sum(1 for p in pkgs if (p.get("shipmentPackageStatus") or p.get("status")) == "Cancelled")
-        return {"status": "success", "live": True, **res, "claims": len(claims), "new_claims": new_claims, "questions": len(questions), "new_questions": new_q, "cancelled": cancelled,
-                "message": f"Trendyol canlı senkron: {len(pkgs)} paket ({res['inserted']} yeni, {res['updated']} güncellendi, {cancelled} iptal), {len(claims)} iade talebi, {len(questions)} müşteri sorusu çekildi."}
+        msg = f"Trendyol canlı senkron ({sync_days} gün): {len(pkgs)} paket ({res['inserted']} yeni, {res['updated']} güncellendi, {cancelled} iptal), {len(claims)} iade talebi, {len(questions)} müşteri sorusu çekildi."
+        if warnings:
+            msg += " · Uyarı: " + "; ".join(warnings[:2])
+        return {"status": "success", "live": True, "days": sync_days, **res, "claims": len(claims), "new_claims": new_claims, "questions": len(questions), "new_questions": new_q, "cancelled": cancelled, "warnings": warnings,
+                "message": msg}
     docs = marketplace_providers.simulated_orders(company_id, channel)
     res = await _upsert_marketplace_orders(company_id, docs)
     await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"last_synced_at": now, "live": False}})
-    return {"status": "success", "live": False, **res, "message": f"[SİMÜLE] {config.get('channel_name')} için API bilgisi eksik; {res['inserted']} örnek sipariş oluşturuldu. Gerçek siparişler için API Key/Secret ve Satıcı ID girin."}
+    return {"status": "success", "live": False, "days": sync_days, **res, "message": f"[SİMÜLE] {config.get('channel_name')} için API bilgisi eksik; {res['inserted']} örnek sipariş oluşturuldu. Gerçek siparişler için API Key/Secret ve Satıcı ID girin."}
 
 async def _marketplace_auto_sync_loop(interval_s: int = 600):
     """Canlı kimlik bilgisi olan pazaryeri kanallarını 10 dakikada bir otomatik senkronize eder."""
