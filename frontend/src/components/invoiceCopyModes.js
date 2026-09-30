@@ -12,3 +12,15 @@ export function canCopyInvoice(inv) {
   // Liste/özet satırlarında items gelmeyebilir; sunucu kopyada kalemleri yükler.
   return true;
 }
+
+/**
+ * Copy API sonucundan düzenlenecek taslak faturayı seç.
+ * same_contact / different_contact → invoice (cari dolu olmalı);
+ * to_supplier_order → null (satın alma siparişine yönlen).
+ */
+export function invoiceToOpenAfterCopy(result) {
+  if (!result || result.kind === "purchase_order") return null;
+  const inv = result.invoice;
+  if (!inv) return null;
+  return inv;
+}
