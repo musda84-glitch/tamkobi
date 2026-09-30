@@ -331,7 +331,7 @@ async def list_inbox(company_id: str = "comp_nexus_main_01", status: Optional[st
     if status:
         q["status"] = status
     docs = [_clean(d) for d in await _db.incoming_edocs.find(q).sort("received_at", -1).to_list(500)]
-    counts = {s: await _db.incoming_edocs.count_documents({"company_id": company_id, "status": s}) for s in ("pending", "approved", "rejected")}
+    counts = {s: await _db.incoming_edocs.count_documents({"company_id": company_id, "status": s}) for s in ("pending", "approved", "rejected", "ignored")}
     return {"items": docs, "counts": counts, "blank": sum(1 for d in docs if is_blank(d))}
 
 
@@ -547,6 +547,68 @@ async def create_product_from_line(doc_id: str, req: Dict[str, Any]):
     return await set_lines(doc_id, {"lines": [{"idx": i, "product_id": p["product"]["id"]}]})
 
 
+async def ensure_products_for_unmatched(doc: dict, *, markup: float = 1.4) -> int:
+    """Stok kartı olmayan satırlar için ürün kartı oluşturur ve satıra bağlar.
+
+    «Stok kartı olmayanları otomatik kaydet» — içeri almadan önce veya process sırasında.
+    """
+    if not _deps.get("create_product"):
+        raise HTTPException(status_code=500, detail="Ürün oluşturma bağımlılığı yapılandırılmamış.")
+    created = 0
+    lines = list(doc.get("lines") or [])
+    for i, ln in enumerate(lines):
+        if ln.get("product_id"):
+            continue
+        name = (ln.get("name") or "").strip()
+        if not name:
+            continue
+        p = await _deps["create_product"]({
+            "company_id": doc["company_id"],
+            "product_name": name,
+            "barcode": ln.get("barcode"),
+            "sku": ln.get("sku"),
+            "purchase_price": ln.get("unit_price"),
+            "sale_price": round(float(ln.get("unit_price") or 0) * float(markup or 1.4), 2),
+            "vat_rate": int(ln.get("vat_rate") or 20),
+            "category": "Tedarik",
+            "channel": "edoc",
+        })
+        pid = (p.get("product") or {}).get("id") or (p.get("product") or {}).get("_id")
+        pname = (p.get("product") or {}).get("name") or name
+        lines[i] = {
+            **ln,
+            "product_id": pid,
+            "product_name": pname,
+            "auto_matched": False,
+            "auto_created": True,
+        }
+        created += 1
+    if created:
+        matched = sum(1 for l in lines if l.get("product_id"))
+        doc["lines"] = lines
+        doc["matched_lines"] = matched
+        await _db.incoming_edocs.update_one(
+            {"_id": doc["_id"]},
+            {"$set": {"lines": lines, "matched_lines": matched}},
+        )
+    return created
+
+
+@router.post("/edocs/inbox/{doc_id}/create-missing-products")
+async def create_missing_products(doc_id: str, req: Dict[str, Any] = None):
+    """Bekleyen belgede eşleşmeyen tüm satırlar için stok kartı oluştur."""
+    req = req or {}
+    d = await _db.incoming_edocs.find_one({"_id": doc_id})
+    if not d or d.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Belge bulunamadı ya da işlenmiş.")
+    n = await ensure_products_for_unmatched(d, markup=float(req.get("markup") or 1.4))
+    d = await _db.incoming_edocs.find_one({"_id": doc_id})
+    out = _clean(d)
+    out["created_products"] = n
+    out["message"] = f"{n} stok kartı oluşturuldu ve satırlara bağlandı." if n else "Oluşturulacak eşleşmeyen satır yok."
+    return out
+
+
 async def ensure_supplier(doc: dict, overrides: Optional[Dict[str, Any]] = None) -> dict:
     """VKN ile mevcut cariyi bağlar; yoksa BizimHesap gibi tedarikçiyi otomatik oluşturur."""
     if doc.get("contact_id"):
@@ -576,7 +638,12 @@ async def create_supplier(doc_id: str, req: Dict[str, Any]):
     if not d:
         raise HTTPException(status_code=404, detail="Belge bulunamadı.")
     d = await ensure_supplier(d, req)
-    return {"status": "success", "contact_id": d["contact_id"], "message": f"Tedarikçi hazır: {d['contact_name']}"}
+    return {
+        "status": "success",
+        "contact_id": d["contact_id"],
+        "contact_name": d["contact_name"],
+        "message": f"Gelen fatura carisi tedarikçi olarak kaydedildi: {d['contact_name']}",
+    }
 
 
 @router.put("/edocs/inbox/{doc_id}/supplier")
@@ -596,10 +663,13 @@ async def approve_inbox_document(doc_id: str, req: Optional[Dict[str, Any]] = No
     if is_blank(d):
         raise HTTPException(status_code=400, detail="Belge okunamamış (tedarikçi/kalem/tutar boş). Ham XML'den yeniden okuyun veya entegratörden tekrar çekin.")
     if not d.get("contact_id"):
-        raise HTTPException(status_code=400, detail="Önce tedarikçiyi eşleştirin veya 'Yeni Tedarikçi Ekle' / 'İçeri Al' ile oluşturun.")
+        raise HTTPException(status_code=400, detail="Önce tedarikçiyi eşleştirin veya 'Tedarikçi olarak kaydet' / 'İçeri Al' ile oluşturun.")
+    if req.get("auto_create_products"):
+        await ensure_products_for_unmatched(d, markup=float(req.get("markup") or 1.4))
+        d = await _db.incoming_edocs.find_one({"_id": doc_id})
     unmatched = [l["name"] for l in d["lines"] if not l.get("product_id")]
     if unmatched and not req.get("allow_unmatched"):
-        raise HTTPException(status_code=400, detail=f"{len(unmatched)} satır stok kartıyla eşleşmedi: {', '.join(unmatched[:3])}… Eşleştirin, stok kartı açın ya da 'eşleşmeyenleri hizmet kalemi olarak al' seçin.")
+        raise HTTPException(status_code=400, detail=f"{len(unmatched)} satır stok kartıyla eşleşmedi: {', '.join(unmatched[:3])}… Eşleştirin, stok kartı açın, 'stok kartı olmayanları otomatik kaydet' seçin ya da hizmet kalemi olarak alın.")
     items, stock_moves = [], 0
     for l in d["lines"]:
         items.append({"product_id": l.get("product_id") or "", "name": l["name"], "quantity": l["quantity"], "unit": "Adet" if l.get("unit") in ("C62", None, "") else l["unit"], "unit_price": l["unit_price"], "vat_rate": l.get("vat_rate", 20), "discount_rate": 0, "total": l["total"], "vat_amount": round(l["total"] * float(l.get("vat_rate", 20)) / 100, 2)})
@@ -607,7 +677,7 @@ async def approve_inbox_document(doc_id: str, req: Optional[Dict[str, Any]] = No
             await _db.products.update_one({"_id": l["product_id"]}, {"$inc": {"stock_quantity": float(l["quantity"])}, **({"$set": {"purchase_price": float(l["unit_price"])}} if req.get("update_cost", True) and l.get("unit_price") else {})})
             stock_moves += 1
     sub = float(d.get("subtotal") or sum(i["total"] for i in items)); vat = float(d.get("vat_total") or sum(i["vat_amount"] for i in items)); gt = float(d.get("grand_total") or (sub + vat))
-    ubl_like = d.get("source") in ("ubl_xml", "n11faturam")
+    ubl_like = d.get("source") in ("ubl_xml", "n11faturam", "isnet", "isnet_portal")
     profile = (d.get("profile") or "").upper()
     # TEMELFATURA ticari yanıt gerektirmez; TICARIFATURA için yanıt beklenir.
     auto_accept = ubl_like and d.get("kind") != "dispatch" and "TICARI" not in profile
@@ -639,7 +709,7 @@ async def approve_edoc(doc_id: str, req: Dict[str, Any]):
 
 @router.post("/edocs/inbox/{doc_id}/process")
 async def process_edoc(doc_id: str, req: Dict[str, Any] = None):
-    """BizimHesap tarzı tek tık: tedarikçi yoksa oluştur, eşleşmeyen kalemleri hizmet olarak al, alış faturasını içeri al."""
+    """Tek tık: tedarikçi yoksa oluştur, isteğe bağlı stok kartı aç, alış faturasını içeri al."""
     req = dict(req or {})
     d = await _db.incoming_edocs.find_one({"_id": doc_id})
     if not d or d["status"] != "pending":
@@ -649,16 +719,21 @@ async def process_edoc(doc_id: str, req: Dict[str, Any] = None):
     await _enrich(d, d["company_id"])
     await _db.incoming_edocs.update_one({"_id": doc_id}, {"$set": {"lines": d["lines"], "matched_lines": d.get("matched_lines", 0), "contact_id": d.get("contact_id"), "contact_name": d.get("contact_name")}})
     d = await ensure_supplier(d)
-    req.setdefault("allow_unmatched", True)
+    if req.get("auto_create_products"):
+        await ensure_products_for_unmatched(d, markup=float(req.get("markup") or 1.4))
+    # Stok kartı otomatik açıldıysa eşleşmeyen kalmaz; aksi halde hizmet kalemi izni varsayılan
+    if "allow_unmatched" not in req:
+        req["allow_unmatched"] = not bool(req.get("auto_create_products"))
     req.setdefault("update_stock", True)
     req.setdefault("update_cost", True)
     return await approve_inbox_document(doc_id, req)
 
 
 async def process_pending_for_company(company_id: str, req: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Bekleyen (okunabilir) XML/PDF belgelerini BizimHesap gibi toplu içeri alır (HTTP veya otomatik çekim)."""
+    """Bekleyen (okunabilir) XML/PDF belgelerini toplu içeri alır."""
     req = dict(req or {})
-    req.setdefault("allow_unmatched", True)
+    req.setdefault("auto_create_products", False)
+    req.setdefault("allow_unmatched", not bool(req.get("auto_create_products")))
     req.setdefault("update_stock", True)
     req.setdefault("update_cost", True)
     ok, failed = [], []
@@ -670,6 +745,8 @@ async def process_pending_for_company(company_id: str, req: Optional[Dict[str, A
             await _enrich(d, company_id)
             await _db.incoming_edocs.update_one({"_id": d["_id"]}, {"$set": {"lines": d["lines"], "matched_lines": d.get("matched_lines", 0), "contact_id": d.get("contact_id"), "contact_name": d.get("contact_name")}})
             await ensure_supplier(d)
+            if req.get("auto_create_products"):
+                await ensure_products_for_unmatched(d, markup=float(req.get("markup") or 1.4))
             res = await approve_inbox_document(d["_id"], req)
             ok.append({"id": d["_id"], "invoice_id": res.get("invoice_id"), "invoice_number": res.get("invoice_number")})
         except HTTPException as e:
@@ -692,7 +769,21 @@ async def reject_edoc(doc_id: str, req: Dict[str, Any]):
     r = await _db.incoming_edocs.update_one({"_id": doc_id, "status": "pending"}, {"$set": {"status": "rejected", "rejected_at": _now(), "reject_reason": (req.get("reason") or "").strip()[:300]}})
     if not r.matched_count:
         raise HTTPException(status_code=400, detail="Belge bulunamadı ya da zaten işlenmiş.")
-    return {"status": "success", "message": "Belge reddedildi. (GİB üzerinden ret yanıtı için e-fatura entegratörü bağlantısı gerekir; ticari fatura ret süresi 8 gündür.)"}
+    return {"status": "success", "message": "Belge reddedildi — Reddedilen listesine taşındı. (GİB ticari ret yanıtı için entegratör bağlantısı gerekir; süre 8 gündür.)"}
+
+
+@router.post("/edocs/inbox/{doc_id}/ignore")
+async def ignore_edoc(doc_id: str, req: Dict[str, Any] = None):
+    """Dikkate alma: alış faturası oluşturmadan bekleyenlerden çıkar."""
+    req = req or {}
+    reason = (req.get("reason") or "Dikkate alınmadı").strip()[:300]
+    r = await _db.incoming_edocs.update_one(
+        {"_id": doc_id, "status": "pending"},
+        {"$set": {"status": "ignored", "ignored_at": _now(), "ignore_reason": reason}},
+    )
+    if not r.matched_count:
+        raise HTTPException(status_code=400, detail="Belge bulunamadı ya da zaten işlenmiş.")
+    return {"status": "success", "message": "Belge dikkate alınmadı — Dikkate alınmayan listesine taşındı."}
 
 
 @router.delete("/edocs/inbox/{doc_id}")

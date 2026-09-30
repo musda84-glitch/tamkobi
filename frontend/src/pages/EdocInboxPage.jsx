@@ -14,6 +14,7 @@ const STATUS = {
   pending: ["Bekliyor", "bg-amber-50 text-amber-700"],
   approved: ["İçeri alındı", "bg-emerald-50 text-emerald-700"],
   rejected: ["Reddedildi", "bg-rose-50 text-rose-700"],
+  ignored: ["Dikkate alınmadı", "bg-slate-100 text-slate-600"],
 };
 
 const PROVIDER_SHORT = {
@@ -51,7 +52,12 @@ export default function EdocInboxPage() {
   const [contacts, setContacts] = useState([]);
   const [products, setProducts] = useState([]);
   const [busy, setBusy] = useState("");
-  const [opts, setOpts] = useState({ update_stock: true, update_cost: true, allow_unmatched: true });
+  const [opts, setOpts] = useState({
+    update_stock: true,
+    update_cost: true,
+    allow_unmatched: true,
+    auto_create_products: true,
+  });
   const [pullNote, setPullNote] = useState(null);
   const [xml, setXml] = useState(null);
   const [einvoice, setEinvoice] = useState(null);
@@ -206,13 +212,49 @@ export default function EdocInboxPage() {
 
   const processOne = (docId) => act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/process`, opts).then((r) => {
     setSel((prev) => (prev?.id === docId ? null : prev));
+    setStatus("approved");
     return r;
   }), "Belge içeri alındı.");
 
+  const rejectOne = (docId) => {
+    const reason = window.prompt("Ret nedeni (opsiyonel):", "");
+    if (reason === null) return;
+    act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/reject`, { reason }).then((r) => {
+      setSel((prev) => (prev?.id === docId ? null : prev));
+      setStatus("rejected");
+      return r;
+    }), "Belge reddedildi.");
+  };
+
+  const ignoreOne = (docId) => {
+    if (!window.confirm("Bu belge dikkate alınmasın mı? Alış faturası oluşturulmaz; bekleyenlerden çıkar.")) return;
+    act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/ignore`, { reason: "Dikkate alınmadı" }).then((r) => {
+      setSel((prev) => (prev?.id === docId ? null : prev));
+      setStatus("ignored");
+      return r;
+    }), "Belge dikkate alınmadı.");
+  };
+
+  const saveSupplier = () => act(() => axios.post(`${API_URL}/edocs/inbox/${sel.id}/create-supplier`, {}).then((r) => {
+    load();
+    return r;
+  }), "Tedarikçi olarak kaydedildi.");
+
+  const createMissingProducts = () => act(() => axios.post(`${API_URL}/edocs/inbox/${sel.id}/create-missing-products`, {}).then((r) => {
+    setSel(r.data);
+    axios.get(`${API_URL}/products`, { params: { company_id: companyId } })
+      .then((pr) => setProducts(Array.isArray(pr.data) ? pr.data : pr.data?.items || []))
+      .catch(() => {});
+    return r;
+  }), "Eşleşmeyen stok kartları oluşturuldu.");
+
   const processPending = () => {
-    if (!window.confirm("Bekleyen okunabilir belgeler BizimHesap gibi toplu içeri alınacak (tedarikçi yoksa oluşturulur, eşleşmeyen kalemler hizmet olarak alınır). Devam?")) return;
+    if (!window.confirm("Bekleyen okunabilir belgeler toplu içeri alınacak (tedarikçi yoksa oluşturulur; işaretliyse eksik stok kartları açılır). Devam?")) return;
     act(() => axios.post(`${API_URL}/edocs/inbox/process-pending`, opts, {
       params: { company_id: companyId },
+    }).then((r) => {
+      setStatus("approved");
+      return r;
     }), "Toplu içeri alma tamamlandı.");
   };
 
@@ -280,8 +322,8 @@ export default function EdocInboxPage() {
         </div>
       )}
 
-      <div className="flex gap-2 text-xs">
-        {[["pending", "Bekleyen"], ["approved", "İçeri alınan"], ["rejected", "Reddedilen"], ["", "Tümü"]].map(([k, l]) => (
+      <div className="flex flex-wrap gap-2 text-xs">
+        {[["pending", "Bekleyen"], ["approved", "İçeri alınan"], ["rejected", "Reddedilen"], ["ignored", "Dikkate alınmayan"], ["", "Tümü"]].map(([k, l]) => (
           <button key={k || "all"} type="button" onClick={() => setStatus(k)} className={`px-3 py-1.5 rounded-lg border font-semibold ${status === k ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200 text-slate-600"}`} data-testid={`edoc-filter-${k || "all"}`}>
             {l}{k && data ? ` (${data.counts?.[k] ?? 0})` : ""}
           </button>
@@ -390,8 +432,8 @@ export default function EdocInboxPage() {
                         testId="edoc-supplier-select"
                       />
                     </div>
-                    <button type="button" onClick={() => act(() => axios.post(`${API_URL}/edocs/inbox/${sel.id}/create-supplier`, {}))} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="edoc-create-supplier">
-                      <UserPlus className="w-3.5 h-3.5" /> Yeni Tedarikçi Ekle
+                    <button type="button" onClick={saveSupplier} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="edoc-create-supplier">
+                      <UserPlus className="w-3.5 h-3.5" /> Tedarikçi olarak kaydet
                     </button>
                   </>
                 ) : null}
@@ -456,36 +498,65 @@ export default function EdocInboxPage() {
                 </tbody>
               </table>
 
+              {sel.status === "pending" && (sel.lines || []).some((l) => !l.product_id) && (
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2" data-testid="edoc-stock-match-bar">
+                  <PackagePlus className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span className="text-[11px] text-amber-900 flex-1">
+                    {(sel.lines || []).filter((l) => !l.product_id).length} satır stok kartıyla eşleşmedi. Satırdan seçin veya kart oluşturun.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={createMissingProducts}
+                    disabled={busy === "act"}
+                    className="px-3 py-1.5 bg-amber-700 text-white rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
+                    data-testid="edoc-create-missing-products"
+                  >
+                    <PackagePlus className="w-3.5 h-3.5" /> Eşleşmeyenlere stok kartı oluştur
+                  </button>
+                </div>
+              )}
+
               {sel.status === "pending" ? (
                 <div className="flex flex-wrap items-center gap-3 pt-2 border-t">
+                  <label className="flex items-center gap-1" title="İçeri alırken eşleşmeyen satırlar için stok kartı açılır">
+                    <input
+                      type="checkbox"
+                      checked={opts.auto_create_products}
+                      onChange={(e) => setOpts({ ...opts, auto_create_products: e.target.checked, allow_unmatched: e.target.checked ? false : opts.allow_unmatched })}
+                      data-testid="edoc-opt-auto-products"
+                    />
+                    Stok kartı olmayanları otomatik kaydet
+                  </label>
                   <label className="flex items-center gap-1">
                     <input type="checkbox" checked={opts.update_stock} onChange={(e) => setOpts({ ...opts, update_stock: e.target.checked })} data-testid="edoc-opt-stock" /> Stok girişi yap
                   </label>
                   <label className="flex items-center gap-1">
                     <input type="checkbox" checked={opts.update_cost} onChange={(e) => setOpts({ ...opts, update_cost: e.target.checked })} /> Alış fiyatını güncelle
                   </label>
-                  <label className="flex items-center gap-1">
-                    <input type="checkbox" checked={opts.allow_unmatched} onChange={(e) => setOpts({ ...opts, allow_unmatched: e.target.checked })} data-testid="edoc-opt-unmatched" /> Eşleşmeyenleri hizmet kalemi olarak al
-                  </label>
+                  {!opts.auto_create_products && (
+                    <label className="flex items-center gap-1">
+                      <input type="checkbox" checked={opts.allow_unmatched} onChange={(e) => setOpts({ ...opts, allow_unmatched: e.target.checked })} data-testid="edoc-opt-unmatched" /> Eşleşmeyenleri hizmet kalemi olarak al
+                    </label>
+                  )}
                   <div className="ml-auto flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => { const reason = window.prompt("Ret nedeni:"); if (reason !== null) act(() => axios.post(`${API_URL}/edocs/inbox/${sel.id}/reject`, { reason })); }}
+                      onClick={() => ignoreOne(sel.id)}
                       disabled={busy === "act"}
-                      className="px-4 py-2 border border-rose-200 text-rose-600 rounded-lg font-semibold flex items-center gap-1"
-                      data-testid="edoc-reject"
+                      className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
+                      data-testid="edoc-ignore"
+                      title="Alış faturası oluşturmadan bekleyenlerden çıkar"
                     >
-                      <XCircle className="w-4 h-4" /> Reddet
+                      Dikkate alma
                     </button>
                     <button
                       type="button"
-                      onClick={() => act(() => axios.post(`${API_URL}/edocs/inbox/${sel.id}/approve`, opts))}
+                      onClick={() => rejectOne(sel.id)}
                       disabled={busy === "act"}
-                      className="px-4 py-2 border border-emerald-300 text-emerald-800 rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
-                      data-testid="edoc-approve"
-                      title="Tedarikçi ve satır eşleşmesi gerekir"
+                      className="px-4 py-2 border border-rose-200 text-rose-600 rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
+                      data-testid="edoc-reject"
                     >
-                      <CheckCircle2 className="w-4 h-4" /> Gelişmiş onay
+                      <XCircle className="w-4 h-4" /> Reddet
                     </button>
                     <button
                       type="button"
@@ -493,9 +564,10 @@ export default function EdocInboxPage() {
                       disabled={busy === "act" || !isProcessable(sel)}
                       className="px-5 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
                       data-testid="edoc-process"
+                      title="Onayla ve alış faturasına içeri al"
                     >
-                      {busy === "act" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                      İçeri Al → {sel.kind === "dispatch" ? "İrsaliye" : "Alış Faturası"}
+                      {busy === "act" ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                      Onayla / İçeri Al
                     </button>
                   </div>
                 </div>
@@ -503,6 +575,7 @@ export default function EdocInboxPage() {
                 <div className={`rounded-xl p-3 ${STATUS[sel.status]?.[1]}`} data-testid="edoc-status-note">
                   {STATUS[sel.status]?.[0]}
                   {sel.reject_reason ? ` — ${sel.reject_reason}` : ""}
+                  {sel.ignore_reason && sel.status === "ignored" ? ` — ${sel.ignore_reason}` : ""}
                   {sel.invoice_id ? ` — fatura oluşturuldu, ${sel.stock_moves ?? 0} kalemde stok girişi` : ""}
                 </div>
               )}
