@@ -18,7 +18,7 @@ import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
 import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, cartQtyByProduct, discardHeldCart, formatCartSheetMeta, formatOrderItemLabel, heldCartTabs, heldCartsAsOrders, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty, type B2BCart, type HeldCart } from "../utils/b2bCart";
 import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
-import { applyB2BScan, canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus } from "../utils/b2bCatalog";
+import { applyB2BScan, canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftAfterAdd, qtyDraftOnBlur, qtyDraftOnFocus } from "../utils/b2bCatalog";
 import {
   addEditProduct,
   canCancelOrder,
@@ -191,7 +191,10 @@ const CatalogTile = memo(function CatalogTile({
             </View>
             <Pressable
               testID={`b2b-add-${pid}`}
-              onPress={() => onAdd(p, parseDraftQty(qty), String(note || "").trim())}
+              onPress={() => {
+                onAdd(p, parseDraftQty(qty), String(note || "").trim());
+                setQty(qtyDraftAfterAdd());
+              }}
               disabled={!addOk}
               style={{
                 flex: 1,
@@ -1002,6 +1005,36 @@ export function B2BPortalScreen() {
                 }}
               >
                 <Row style={{ alignItems: "center", gap: 6 }}>
+                  <View
+                    testID={`b2b-cart-line-img-${l.p.id}`}
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      backgroundColor: colors.slate50,
+                      overflow: "hidden",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {(() => {
+                      const cartImg = resolveMediaUrl(baseUrl, l.p.image_url);
+                      return cartImg ? (
+                      <Image
+                        source={{ uri: cartImg }}
+                        style={{ width: "100%", height: "100%" }}
+                        contentFit="contain"
+                        recyclingKey={`cart-${l.p.id}`}
+                        cachePolicy="memory-disk"
+                        transition={0}
+                      />
+                      ) : (
+                      <Ionicons name="cube-outline" size={20} color={colors.muted} />
+                      );
+                    })()}
+                  </View>
                   <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                     <Text
                       testID={`b2b-cart-line-${l.p.id}`}

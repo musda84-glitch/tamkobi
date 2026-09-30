@@ -1,4 +1,4 @@
-import { applyB2BScan, findCatalogByScan, normalizeScanText, parseDraftQty, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "./b2bSearch";
+import { applyB2BScan, findCatalogByScan, normalizeScanText, parseDraftQty, qtyDraftAfterAdd, qtyDraftOnBlur, qtyDraftOnFocus, qtyDraftShown } from "./b2bSearch";
 
 describe("qty draft focus", () => {
   test("clears on focus and restores 1 on empty blur", () => {
@@ -6,6 +6,7 @@ describe("qty draft focus", () => {
     expect(qtyDraftShown({ p1: "" }, "p1")).toBe("");
     expect(qtyDraftShown({ p1: "12" }, "p1")).toBe("12");
     expect(qtyDraftOnFocus()).toBe("");
+    expect(qtyDraftAfterAdd()).toBe("");
     expect(qtyDraftOnBlur("")).toBe("1");
     expect(qtyDraftOnBlur("8")).toBe("8");
   });
