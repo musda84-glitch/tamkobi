@@ -19,7 +19,9 @@ const placeMenu = (anchor, wide) => {
   };
 };
 
-export const SearchSelect = ({ value, onChange, options, placeholder = "Ara...", getLabel, getSub, getExtra, getImage, testId, className = "", inline = false }) => {
+const optionId = (o) => o?.id ?? o?._id;
+
+export const SearchSelect = ({ value, onChange, options, placeholder = "Ara...", getLabel, getSub, getExtra, getImage, valueLabel = "", testId, className = "", inline = false }) => {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [box, setBox] = useState(null);
@@ -44,7 +46,8 @@ export const SearchSelect = ({ value, onChange, options, placeholder = "Ara...",
       window.removeEventListener("scroll", update, true);
     };
   }, [open, getExtra]);
-  const selected = options.find((o) => o.id === value);
+  const selected = options.find((o) => optionId(o) === value);
+  const displayLabel = selected ? getLabel(selected) : (value && valueLabel ? valueLabel : "");
   const ql = q.toLowerCase();
   const filtered = options.filter((o) => {
     if (!ql) return true;
@@ -58,9 +61,9 @@ export const SearchSelect = ({ value, onChange, options, placeholder = "Ara...",
       <div className="max-h-48 overflow-y-auto">
         {filtered.length === 0 && <div className="p-3 text-xs text-slate-400 text-center">Sonuç yok</div>}
         {filtered.map((o) => (
-          <button type="button" key={o.id || getLabel(o)} onClick={() => { onChange(o.id, o); setOpen(false); setQ(""); }} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-emerald-50 ${o.id === value ? "bg-emerald-50/60" : ""}`} data-testid={testId ? `${testId}-option-${o.id}` : undefined}>
+          <button type="button" key={optionId(o) || getLabel(o)} onClick={() => { onChange(optionId(o), o); setOpen(false); setQ(""); }} className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-emerald-50 ${optionId(o) === value ? "bg-emerald-50/60" : ""}`} data-testid={testId ? `${testId}-option-${optionId(o)}` : undefined}>
             {getImage && (getImage(o) ? <img src={resolveImageUrl(getImage(o))} alt="" className="w-8 h-8 rounded-md object-cover shrink-0 border border-slate-200" /> : <span className="w-8 h-8 rounded-md bg-slate-100 flex items-center justify-center text-slate-400 shrink-0"><Package className="w-3.5 h-3.5" /></span>)}
-            <div className="flex-1 min-w-0"><div className="font-semibold text-slate-900 truncate">{getLabel(o)}</div>{getSub && <div className="text-[10px] text-slate-500 truncate">{getSub(o)}</div>}{getExtra && <div className="text-[10px] text-amber-800 mt-0.5 leading-snug" data-testid={testId ? `${testId}-cost-${o.id}` : undefined}>{getExtra(o)}</div>}</div>
+            <div className="flex-1 min-w-0"><div className="font-semibold text-slate-900 truncate">{getLabel(o)}</div>{getSub && <div className="text-[10px] text-slate-500 truncate">{getSub(o)}</div>}{getExtra && <div className="text-[10px] text-amber-800 mt-0.5 leading-snug" data-testid={testId ? `${testId}-cost-${optionId(o)}` : undefined}>{getExtra(o)}</div>}</div>
           </button>
         ))}
       </div>
@@ -70,7 +73,7 @@ export const SearchSelect = ({ value, onChange, options, placeholder = "Ara...",
     <div ref={ref} className={`relative ${className}`} data-testid={testId}>
       <button type="button" onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1.5 text-left text-xs" data-testid={testId ? `${testId}-trigger` : undefined}>
         {selected && getImage && (getImage(selected) ? <img src={resolveImageUrl(getImage(selected))} alt="" className="w-6 h-6 rounded object-cover shrink-0" /> : <span className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center text-slate-400 shrink-0"><Package className="w-3 h-3" /></span>)}
-        <span className={`flex-1 truncate ${selected ? "font-medium text-slate-900" : "text-slate-400"}`}>{selected ? getLabel(selected) : placeholder}</span>
+        <span className={`flex-1 truncate ${displayLabel ? "font-medium text-slate-900" : "text-slate-400"}`}>{displayLabel || placeholder}</span>
         <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
       </button>
       {open && inline && (

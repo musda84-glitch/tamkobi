@@ -5,6 +5,7 @@ import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
 import { InvoiceContextMenu, E_TYPE_LABELS, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice } from "../components/InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
+import { invoiceToOpenAfterCopy } from "../components/invoiceCopyModes";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { GibContactLookup } from "../components/GibContactLookup";
@@ -333,11 +334,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   });
 
   const [editingInvoice, setEditingInvoice] = useState(null);
-  const openEditInvoice = (inv) => {
+  const openEditInvoice = useCallback((inv) => {
     setEditingInvoice(inv);
     setGdMode(inv.general_discount_rate ? "percent" : "amount");
-    setFormData({
-      ...formData,
+    setFormData((fd) => ({
+      ...fd,
       invoice_type: inv.invoice_type || "sales",
       e_type: inv.e_type || "paper",
       status: "draft",
@@ -367,9 +368,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       certificate: inv.certificate || "",
       trade_file_number: inv.trade_file_number || "",
       items: (inv.items || []).map((it) => hydrateLine({ ...it, is_service: it.is_service || !it.product_id })),
-    });
+    }));
     setShowNewModal(true);
-  };
+  }, []);
 
   const onInvoiceCopied = useCallback((result) => {
     loadData();
@@ -377,12 +378,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       navigate("/purchase-orders");
       return;
     }
-    const inv = result?.invoice;
-    if (inv) {
-      setEditingInvoice(inv);
-      setShowNewModal(true);
-    }
-  }, [loadData, navigate]);
+    // Kopya taslağı formu doldur (cari dahil); yalnızca modal açmak cariyi boş bırakır.
+    const inv = invoiceToOpenAfterCopy(result);
+    if (inv) openEditInvoice(inv);
+  }, [loadData, navigate, openEditInvoice]);
   const invoiceCopy = useInvoiceCopyFromContext({
     contacts,
     companyId,
@@ -1022,6 +1021,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <label className="flex items-center justify-between font-semibold text-slate-700 mb-1">Cari Seçin <button type="button" onClick={() => setQuickContact((v) => !v)} className="text-emerald-700 hover:underline font-semibold" data-testid="inv-new-contact-btn">+ Yeni cari ekle</button></label>
                   <SearchSelect
                     value={formData.contact_id}
+                    valueLabel={formData.contact_name || ""}
                     options={contacts}
                     placeholder="Cari ara ve seç..."
                     getLabel={(c) => c.name}
