@@ -791,7 +791,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         >
                           <Eye className="w-4 h-4" />
                         </button>
-                        <button onClick={() => setPrintInv(inv)} className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Şablonlu Yazdır / Form Düzenle" data-testid={`print-inv-btn-${inv.invoice_number}`}><Printer className="w-4 h-4" /></button>
+                        <button
+                          onClick={() => setPrintInv(inv)}
+                          className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition"
+                          title={
+                            isGibIssued(inv) && ["e_invoice", "e_archive", "e_export"].includes(inv.e_type)
+                              ? (inv.e_type === "e_invoice" ? "e-Fatura PDF (entegratör)" : inv.e_type === "e_export" ? "e-İhracat PDF (entegratör)" : "e-Arşiv PDF (entegratör)")
+                              : "Şablonlu Yazdır / Form Düzenle"
+                          }
+                          data-testid={`print-inv-btn-${inv.invoice_number}`}
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={() => setNotifyInvoice(inv)}
                           className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition"

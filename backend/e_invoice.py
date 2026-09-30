@@ -774,12 +774,21 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
     et = inv.get("e_type") or ""
     if et in ("paper", "expense_slip", "e_dispatch") or inv.get("status") == "draft":
         return None
+    if inv.get("einvoice_state") == "error":
+        return None
+    gs = str(inv.get("gib_status") or "")
+    if re.match(r"^\s*hata\s*:", gs, re.I):
+        return None
     ettn = _invoice_ettn(inv)
     if not ettn:
         return None
+    # Yerel fatura no ETTN sayılmaz — İşNet GetInvoicePdf UUID ister
+    if not isnet.is_ettn_uuid(ettn):
+        logger.warning("fetch_integrator_pdf: geçersiz ETTN %s invoice=%s", ettn, invoice_id)
+        return None
     settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
     provider = _invoice_provider(inv, settings)
-    if provider != "isnet" or settings.get("status") != "configured":
+    if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
         return None
     viewer = ""
     stored = (inv.get("gib_document_url") or "").strip()

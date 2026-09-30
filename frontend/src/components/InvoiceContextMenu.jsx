@@ -347,7 +347,7 @@ export const InvoiceContextMenu = (props) => {
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-edoc-downloads">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
           <Item icon={FileCode2} color="text-indigo-600" label="UBL XML İndir" sub="Entegratör GİB UBL-TR" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/xml`, "_blank")} testId="ctx-download-xml" />
-          <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Entegratör e-belge PDF" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf`, "_blank")} testId="ctx-download-pdf" />
+          <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Entegratör e-belge PDF" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf?require_integrator=1`, "_blank")} testId="ctx-download-pdf" />
           {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
             <Item
               icon={ExternalLink}
@@ -371,7 +371,23 @@ export const InvoiceContextMenu = (props) => {
         </div>
       )}
       <Item icon={Eye} label="Görüntüle" onClick={() => onPreview(inv)} testId="ctx-preview" />
-      <Item icon={Printer} label={inv.e_type === "expense_slip" ? "Gider Pusulası Yazdır" : "Şablonlu Yazdır"} onClick={() => onPrint(inv)} testId="ctx-print" />
+      <Item
+        icon={Printer}
+        label={
+          inv.e_type === "expense_slip"
+            ? "Gider Pusulası Yazdır"
+            : isGibIssued(inv) && ["e_invoice", "e_archive", "e_export"].includes(inv.e_type)
+              ? (inv.e_type === "e_invoice" ? "e-Fatura PDF Yazdır" : inv.e_type === "e_export" ? "e-İhracat PDF Yazdır" : "e-Arşiv PDF Yazdır")
+              : "Şablonlu Yazdır"
+        }
+        sub={
+          isGibIssued(inv) && ["e_invoice", "e_archive", "e_export"].includes(inv.e_type)
+            ? "Entegratör GİB belgesi"
+            : undefined
+        }
+        onClick={() => onPrint(inv)}
+        testId="ctx-print"
+      />
       <Item icon={MessageSquare} label="SMS / E-posta Gönder" onClick={() => onNotify(inv)} testId="ctx-notify" />
       {onDispatch && inv.invoice_type === "sales" && (
         <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />
