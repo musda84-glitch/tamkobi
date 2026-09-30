@@ -7,6 +7,7 @@ import { API_URL } from "../../context/AuthContext";
 import { fmtDate, StatusBadge, PlanChip, inputCls } from "./saasUi";
 import { sortCompanyTree } from "../../utils/companyTree";
 import { backdropDismissProps } from "../../utils/modalBackdrop";
+import { impersonateRedirect } from "../../utils/impersonateRedirect";
 
 export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
   const [q, setQ] = useState("");
@@ -14,7 +15,13 @@ export const CompaniesTable = ({ rows, plans, onOpen, onCreated }) => {
   const [showNew, setShowNew] = useState(false);
   const impersonate = async (r) => {
     if (!window.confirm(`${r.name} şirketine yönetici olarak girilecek (destek modu, 2 saat). Panel oturumunuz geçici olarak bu şirkete geçer; ERP'deki "Destek modunu bitir" ile geri dönersiniz. Devam?`)) return;
-    try { const res = await axios.post(`${API_URL}/system/companies/${r.id}/impersonate`, {}); toast.success(res.data.message); window.location.href = "/"; } catch (e) { toast.error(e.response?.data?.detail || "Giriş yapılamadı."); }
+    try {
+      const res = await axios.post(`${API_URL}/system/companies/${r.id}/impersonate`, {});
+      toast.success(res.data.message);
+      window.location.href = impersonateRedirect(res.data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Giriş yapılamadı.");
+    }
   };
   const list = useMemo(() => {
     const needle = q.trim().toLowerCase();
