@@ -52,7 +52,7 @@ export function orderHasEInvoiceIssued(ord) {
   return false;
 }
 
-/** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil) → faturalaşmış e-fatura/e-arşiv (kırmızı). */
+/** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil buton) → faturalaşmış e-belge (kırmızı bilgi). */
 export function orderEBelgeKindLabel(ord) {
   const eType = String(ord?.e_type || ord?.invoice_e_type || "").toLowerCase();
   if (eType === "e_invoice" || eType === "e_export") return "E-Fatura";
@@ -65,22 +65,31 @@ export function orderInvoiceBadge(ord) {
   if (orderHasEInvoiceIssued(ord)) {
     const kind = orderEBelgeKindLabel(ord);
     return {
-      label: `Faturalaşmış ${kind}`,
-      className: "bg-rose-100 text-rose-800 border-rose-200",
+      label: `Faturalaşmış (${kind})`,
+      title: `Faturalaşmış (${kind})`,
+      line1: "Faturalaşmış",
+      line2: `(${kind})`,
+      // Solid kırmızı bilgi rozeti — tıklanmaz
+      className: "bg-rose-600 text-white border-rose-700",
+      interactive: false,
       testId: kind === "E-Fatura" ? "ebelge-efatura" : kind === "E-Arşiv" ? "ebelge-earsiv" : "ebelge",
     };
   }
   if (ord.is_invoiced) {
     return {
       label: "Faturalaştı",
+      title: "Faturalaştı — tıkla: E-Fatura Oluştur",
       className: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      interactive: true,
       testId: "invoiced",
     };
   }
   if (ord.invoice_id) {
     return {
       label: "Taslak",
+      title: "Taslak",
       className: "bg-amber-100 text-amber-800 border-amber-200",
+      interactive: true,
       testId: "draft",
     };
   }
