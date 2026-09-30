@@ -6,13 +6,19 @@ import { ExportButtons } from "./ExportButtons";
 import { OrdersBulkMenu } from "./OrdersBulkMenu";
 import { orderGross } from "../utils/orderMoney";
 import { fmtDate, formatTrAmount } from "../utils/money";
-import { orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
 import {
   ORDER_DOC_STATUS_ALL,
   ORDER_DOC_STATUS_LABELS,
-  orderMatchesDocStatus,
   docStatusFilterActive,
 } from "../utils/orderDocStatus";
+import {
+  ORDER_FILTER_DEFAULTS,
+  ORDER_STATUS_OPTIONS,
+  applyOrderFilters,
+  isIncomingOrder,
+  isDispatchedOrder,
+  orderFiltersFromSearch,
+} from "../utils/orderFilters";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -22,66 +28,17 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 
+export {
+  ORDER_FILTER_DEFAULTS,
+  applyOrderFilters,
+  isIncomingOrder,
+  isDispatchedOrder,
+  orderFiltersFromSearch,
+};
+
 const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => fmtDate(r.order_date) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { label: "Tutar (KDV dahil)", num: true, value: (r) => orderGross(r) }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
-
-export const ORDER_FILTER_DEFAULTS = {
-  q: "",
-  status: "all",
-  channel: "all",
-  invoiced: "all",
-  cargo: "all",
-  docStatus: [...ORDER_DOC_STATUS_ALL],
-  from: "",
-  to: "",
-  sort: "date_desc",
-};
-const STATUS = [["all", "Tüm Durumlar"], ["incoming", "Yeni gelen"], ["pending", "Onay Bekliyor"], ["active_cart", "Aktif sepet"], ["held_cart", "Bekleyen sepet"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["dispatched", "Sevk edilmiş"], ["shipped", "Kargoda"], ["delivered", "Teslim Edildi"], ["returned", "İade"], ["cancelled", "İptal"]];
-const INCOMING_STATUSES = new Set(["pending", "new", "approved", "held_cart", "active_cart"]);
-const DISPATCHED_STATUSES = new Set(["shipped", "delivered", "completed"]);
-const CLOSED_STATUSES = new Set(["cancelled", "returned", "partially_returned"]);
-
-export function isIncomingOrder(o) {
-  return INCOMING_STATUSES.has(o?.order_status) && !o?.cargo_tracking_number;
-}
-
-export function isDispatchedOrder(o) {
-  if (DISPATCHED_STATUSES.has(o?.order_status)) return true;
-  return !!o?.cargo_tracking_number && !CLOSED_STATUSES.has(o?.order_status);
-}
-
-export function orderFiltersFromSearch(params) {
-  const status = params?.get?.("status") || "";
-  const q = params?.get?.("q") || "";
-  const next = { ...ORDER_FILTER_DEFAULTS, docStatus: [...ORDER_DOC_STATUS_ALL] };
-  if (STATUS.some(([k]) => k === status)) next.status = status;
-  if (q) next.q = q;
-  return next;
-}
+const STATUS = ORDER_STATUS_OPTIONS;
 const SORT = [["date_desc", "Tarih (yeni)"], ["date_asc", "Tarih (eski)"], ["amount_desc", "Tutar (yüksek)"], ["amount_asc", "Tutar (düşük)"], ["customer", "Müşteri (A→Z)"], ["number", "Sipariş No"]];
-
-export const applyOrderFilters = (orders, f) => {
-  const q = (f.q || "").trim().toLowerCase();
-  const list = orders.filter((o) => {
-    if (q && !`${o.order_number} ${o.customer_name} ${o.customer_phone || ""} ${o.cargo_tracking_number || ""} ${o.marketplace_order_id || ""} ${(o.items || []).map((i) => `${i.product_name} ${i.note || ""}`).join(" ")}`.toLowerCase().includes(q)) return false;
-    if (f.status === "incoming" && !isIncomingOrder(o)) return false;
-    if (f.status === "dispatched" && !isDispatchedOrder(o)) return false;
-    if (f.status !== "all" && f.status !== "incoming" && f.status !== "dispatched" && o.order_status !== f.status) return false;
-    if (f.channel !== "all" && (o.channel || "b2b") !== f.channel) return false;
-    if (f.invoiced === "yes" && !o.invoice_id) return false;
-    if (f.invoiced === "einvoice" && !orderHasEInvoiceIssued(o)) return false;
-    if (f.invoiced === "no" && o.invoice_id) return false;
-    if (f.cargo === "yes" && !o.cargo_tracking_number) return false;
-    if (f.cargo === "no" && o.cargo_tracking_number) return false;
-    if (!orderMatchesDocStatus(o, f.docStatus)) return false;
-    const d = (o.order_date || "").slice(0, 10);
-    if (f.from && d < f.from) return false;
-    if (f.to && d > f.to) return false;
-    return true;
-  });
-  const cmp = { date_desc: (a, b) => (b.order_date || "").localeCompare(a.order_date || ""), date_asc: (a, b) => (a.order_date || "").localeCompare(b.order_date || ""), amount_desc: (a, b) => orderGross(b) - orderGross(a), amount_asc: (a, b) => orderGross(a) - orderGross(b),
-    customer: (a, b) => (a.customer_name || "").localeCompare(b.customer_name || "", "tr"), number: (a, b) => (b.order_number || "").localeCompare(a.order_number || "") }[f.sort];
-  return cmp ? [...list].sort(cmp) : list;
-};
 
 const DocStatusFilter = ({ value, onChange }) => {
   const selected = Array.isArray(value) ? value : [...ORDER_DOC_STATUS_ALL];
