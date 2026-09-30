@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 import n11faturam
@@ -649,6 +649,80 @@ async def api_einvoice_xml(invoice_id: str):
     return await ubl_export.invoice_xml(invoice_id)
 
 
+def _is_n11_document_url(url: str) -> bool:
+    u = (url or "").lower()
+    return "n11faturam.com" in u or "ebelge.n11" in u
+
+
+def _is_http_url(url: str) -> bool:
+    u = (url or "").strip().lower()
+    return u.startswith("http://") or u.startswith("https://")
+
+
+async def resolve_gib_document_url(invoice_id: str) -> Dict[str, Any]:
+    """Resmi GİB/entegratör görüntüleme URL'si — yanlış n11 linkini İşNet'te düzeltir."""
+    inv = await _db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+    provider = (inv.get("integrator") or settings.get("provider") or "").strip()
+    stored = (inv.get("gib_document_url") or "").strip()
+    ettn = (inv.get("gib_uuid") or inv.get("gib_tracking_id") or "").strip()
+    e_type = inv.get("e_type") or "e_archive"
+
+    # n11: kayıtlı / üretilebilir ViewDocument URL
+    if provider == "n11faturam" or (not provider and _is_n11_document_url(stored)):
+        if _is_http_url(stored) and _is_n11_document_url(stored):
+            return {"url": stored, "provider": "n11faturam", "source": "stored"}
+        company = await _db.companies.find_one({"_id": inv["company_id"]}) or {}
+        seller = digits(company.get("tax_number") or company.get("tax_id"))
+        if seller and ettn:
+            url = n11faturam.document_url(seller, ettn, e_type)
+            if url:
+                await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"gib_document_url": url}})
+                return {"url": url, "provider": "n11faturam", "source": "built"}
+
+    # İşNet: GetDocumentViewerLink (kayıtlı n11 URL'si yanlış olabilir — yok say)
+    if provider in ("isnet", "isnet_portal") or (stored and not _is_n11_document_url(stored)):
+        if _is_http_url(stored) and not _is_n11_document_url(stored):
+            return {"url": stored, "provider": provider or "stored", "source": "stored"}
+        if provider == "isnet" and ettn and settings.get("status") == "configured":
+            info = await isnet.get_document_viewer_link(
+                settings,
+                ettn,
+                e_type=e_type,
+                invoice_number=str(inv.get("invoice_number") or inv.get("gib_invoice_id") or ""),
+            )
+            url = info.get("url") or ""
+            if url:
+                await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"gib_document_url": url}})
+                return {"url": url, "provider": "isnet", "source": "viewer_link"}
+
+    if _is_http_url(stored) and not (provider in ("isnet", "isnet_portal") and _is_n11_document_url(stored)):
+        return {"url": stored, "provider": provider or "stored", "source": "stored"}
+
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            "Resmi GİB görüntüleme linki yok. "
+            "İşNet için ETTN ve yapılandırılmış SOAP gerekir; "
+            f"PDF için /api/invoices/{invoice_id}/pdf kullanın."
+        ),
+    )
+
+
+@router.get("/invoices/{invoice_id}/gib-document")
+async def api_gib_document_redirect(invoice_id: str):
+    """Tarayıcıda resmi entegratör belgesini aç (cookie ile)."""
+    info = await resolve_gib_document_url(invoice_id)
+    return RedirectResponse(url=info["url"], status_code=302)
+
+
+@router.get("/invoices/{invoice_id}/gib-document.json")
+async def api_gib_document_json(invoice_id: str):
+    return await resolve_gib_document_url(invoice_id)
+
+
 async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
     checked = updated = 0
     cursor = _db.invoices.find({"einvoice_state": {"$in": ["queued", "sent"]}}).sort("issued_at", -1).limit(limit)
@@ -668,13 +742,30 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
                 )
                 updated += 1
         elif inv.get("einvoice_state") == "sent" and inv.get("gib_uuid") and not inv.get("gib_document_url"):
-            company = await _db.companies.find_one({"_id": inv["company_id"]}) or {}
-            seller = digits(company.get("tax_number") or company.get("tax_id"))
-            if seller:
-                url = n11faturam.document_url(seller, inv["gib_uuid"], inv.get("e_type") or "e_archive")
-                if url:
-                    await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"gib_document_url": url}})
-                    updated += 1
+            settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+            provider = (inv.get("integrator") or settings.get("provider") or "").strip()
+            if provider == "n11faturam" or not provider:
+                company = await _db.companies.find_one({"_id": inv["company_id"]}) or {}
+                seller = digits(company.get("tax_number") or company.get("tax_id"))
+                if seller:
+                    url = n11faturam.document_url(seller, inv["gib_uuid"], inv.get("e_type") or "e_archive")
+                    if url:
+                        await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"gib_document_url": url}})
+                        updated += 1
+            elif provider == "isnet" and settings.get("status") == "configured":
+                try:
+                    info = await isnet.get_document_viewer_link(
+                        settings,
+                        inv["gib_uuid"],
+                        e_type=inv.get("e_type") or "e_archive",
+                        invoice_number=str(inv.get("invoice_number") or ""),
+                    )
+                    url = info.get("url") or ""
+                    if url:
+                        await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"gib_document_url": url}})
+                        updated += 1
+                except Exception:
+                    logger.exception("isnet viewer link backfill failed for %s", inv.get("_id"))
     return {"checked": checked, "updated": updated}
 
 

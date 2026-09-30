@@ -309,6 +309,23 @@ def test_send_invoice_xml_rejects_failed_row():
     assert "Şema" in e.value.detail
 
 
+def test_get_document_viewer_link_reads_html_url():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "<ein:HtmlUrl>https://view.example/doc?key=abc</ein:HtmlUrl>"
+        "<ein:PdfUrl>https://view.example/pdf?key=abc</ein:PdfUrl>"
+        "</Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)) as mock_call:
+        info = asyncio.get_event_loop().run_until_complete(
+            isnet.get_document_viewer_link(settings, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", e_type="e_archive")
+        )
+    assert info["url"].startswith("https://view.example/doc")
+    assert mock_call.await_args.kwargs["action"] == "GetDocumentViewerLink"
+
+
 def test_endpoints_match_official_isnet_docs():
     """İşNet resmi test/canlı SOAP URL’leri (destek e-postası ekindeki döküman)."""
     assert isnet.TEST_SOAP == "https://einvoiceservicetest.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"

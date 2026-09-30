@@ -24,3 +24,16 @@ export function invoiceToOpenAfterCopy(result) {
   if (!inv) return null;
   return inv;
 }
+
+/** SearchSelect için id/_id normalize (kopya cari seçici). */
+export function normalizeContactOptions(rows) {
+  const list = Array.isArray(rows) ? rows : (rows?.contacts || []);
+  return list
+    .map((c) => {
+      if (!c || typeof c !== "object") return null;
+      const id = c.id || c._id;
+      if (!id) return null;
+      return { ...c, id: String(id) };
+    })
+    .filter(Boolean);
+}
