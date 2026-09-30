@@ -51,10 +51,14 @@ SOAP_NS = "http://tempuri.org/"
 EIN_NS = "http://schemas.datacontract.org/2004/07/EInvoice.Service.Model"
 ARR_NS = "http://schemas.microsoft.com/2003/10/Serialization/Arrays"
 
-# WCF DataContract dizi eleman adları (NetteFatura-API ARRAY_ITEM_NAME_MAP)
+# WCF DataContract dizi eleman adları.
+# SendInvoiceXml / SendArchiveInvoiceXml resmi örnekleri (docs/request-samples):
+#   Invoices → InvoiceXml, ArchiveInvoices → ArchiveInvoiceXml
+# Yapısal SendInvoice / SendArchiveInvoice için Invoice / ArchiveInvoice kullanılır;
+# bu istemci yalnızca *Xml metotlarını çağırır.
 _ARRAY_ITEM = {
-    "Invoices": "Invoice",
-    "ArchiveInvoices": "ArchiveInvoice",
+    "Invoices": "InvoiceXml",
+    "ArchiveInvoices": "ArchiveInvoiceXml",
     "TaxPayers": "TaxPayer",
     "InboxTagList": "string",
     "OutboxTagList": "string",
@@ -553,11 +557,32 @@ async def send_invoice_xml(
         request=request,
         timeout=90.0,
     )
+    # Satır sonucu: InvoiceResult / ArchiveInvoiceResult.IsSucceded
+    for result_el in _find_all(body, "InvoiceResult", "ArchiveInvoiceResult", "InvoiceResultItem"):
+        row_ok = _find_text(result_el, "IsSucceded", "IsSucceeded", "IsSuccess", "Success").lower()
+        if row_ok in ("false", "0"):
+            row_msg = (
+                _find_text(result_el, "Message", "ErrorMessage", "Error")
+                or _find_text(body, "Message")
+                or f"İşNet {action} satır sonucu başarısız."
+            )
+            raise HTTPException(status_code=400, detail=row_msg)
+    ettn = _find_text(body, "ETTN", "Ettn", "UUID", "InvoiceETTN") or ""
+    invoice_id = _find_text(body, "InvoiceNumber", "InvoiceId", "DocumentId", "ArchiveInvoiceNumber") or ""
+    message = _find_text(body, "Message") or "Fatura İşNet'e iletildi."
+    if not ettn:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"İşNet {action} ETTN döndürmedi — fatura NetteFatura'ya düşmemiş olabilir. "
+                f"{message}"
+            ).strip(),
+        )
     return {
-        "ettn": _find_text(body, "ETTN", "Ettn", "UUID", "InvoiceETTN") or "",
-        "invoice_id": _find_text(body, "InvoiceNumber", "InvoiceId", "DocumentId") or "",
+        "ettn": ettn,
+        "invoice_id": invoice_id,
         "status": _find_text(body, "Status", "State") or "sent",
-        "message": _find_text(body, "Message") or "Fatura İşNet'e iletildi.",
+        "message": message,
         "document_url": _find_text(body, "HtmlUrl", "PdfUrl", "DocumentUrl") or "",
     }
 

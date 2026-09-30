@@ -44,6 +44,8 @@ export const GIB_ISSUED_STATUSES = new Set([
   "Başarıyla İletildi (GİB Onaylı)",
   "Kağıt Fatura (Matbu)",
   "n11 Faturam ile GİB'e iletildi",
+  "İşNet SOAP API ile GİB'e iletildi",
+  "İşNet Web Portal ile GİB'e iletildi",
   "e-İhracat GİB'e iletildi",
   "GİB'e Gönderildi",
   "Kuyrukta",

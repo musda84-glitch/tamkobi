@@ -169,6 +169,37 @@ class TestIssueInvoiceSimulated:
 
         asyncio.get_event_loop().run_until_complete(_run())
 
+    def test_isnet_not_configured_refuses_simulated_gib(self):
+        """İşNet seçili ama configured değilse sahte GİB başarısı yok."""
+        fake_db = MagicMock()
+        inv = {
+            "_id": "inv_isnet", "company_id": "c1", "invoice_type": "sales", "e_type": "e_archive",
+            "status": "draft", "contact_id": "cnt1", "contact_name": "Musteri", "contact_tax_id": "12345678901",
+            "invoice_number": "TA202600000095", "items": [],
+        }
+        contact = {"_id": "cnt1", "name": "Musteri", "tax_number_or_id": "12345678901"}
+        company = {"_id": "c1", "name": "Firma", "tax_number": "4810173324"}
+
+        fake_db.invoices.find_one = AsyncMock(return_value=inv)
+        fake_db.contacts.find_one = AsyncMock(return_value=contact)
+        fake_db.contacts.update_one = AsyncMock()
+        fake_db.companies.find_one = AsyncMock(return_value=company)
+        fake_db.einvoice_settings.find_one = AsyncMock(
+            return_value={"provider": "isnet", "status": "simulated", "mode": "test"}
+        )
+        fake_db.invoices.update_one = AsyncMock()
+        fake_db.outgoing_einvoice_xml.update_one = AsyncMock()
+        e_invoice.init(fake_db, {"password_fn": lambda s: ""})
+
+        async def _run():
+            with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")):
+                with pytest.raises(HTTPException) as e:
+                    await e_invoice.issue_invoice("inv_isnet", e_type="e_archive")
+                assert e.value.status_code == 400
+                assert "yapılandırılmamış" in e.value.detail.lower() or "simüle" in e.value.detail.lower()
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
 
 class TestRefreshOutbound:
     def test_timeout_queued(self):
