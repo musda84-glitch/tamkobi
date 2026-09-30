@@ -724,9 +724,9 @@ EINVOICE_PROVIDERS = {
     },
     "isnet": {
         "name": "İşNet Net-e Fatura — SOAP API (NetteFatura-API)",
-        "fields": ["username", "password", "corporate_code"],
+        "fields": ["company_tax_id", "alias", "corporate_code"],
         "docs": "https://github.com/EfeSorogluu/NetteFatura-API",
-        "hint": "Resmi SOAP (IP–VKN). Müşteri kodu + API kullanıcı/şifre + GİB PK alias. Statik IP ve İşNet SOAP sözleşmesi gerekir. SDK: github.com/EfeSorogluu/NetteFatura-API",
+        "hint": "Resmi SOAP: kimlik doğrulama IP–VKN (şifre yok). Test SOAP: einvoiceservicetest.isnet.net.tr · Portal: efatura.isnet.net.tr (12345678901/1234 · VKN 4810173324 veya 1234567805). Canlı IP kaydı: efaturadestek@nettefatura.com.tr",
     },
     "isnet_portal": {
         "name": "İşNet Net-e Fatura — Web Portal (NetteFatura-Portal)",
@@ -815,10 +815,14 @@ async def save_einvoice_settings(req: Dict[str, Any]):
         update["api_key_enc"] = comm_service.encrypt(req["api_key"])
     has_pwd = bool(update.get("password_enc") or existing.get("password_enc"))
     has_creds = bool(update["username"] and has_pwd)
-    if provider in ("n11faturam", "isnet"):
+    if provider == "n11faturam":
         has_creds = has_creds and bool(update.get("corporate_code") or existing.get("corporate_code"))
     if provider == "isnet":
-        has_creds = has_creds and bool((update.get("alias") or existing.get("alias") or "").strip())
+        # Resmi SOAP: IP–VKN — şifre yok; VKN + GİB alias yeterli
+        tax = (update.get("company_tax_id") if "company_tax_id" in update else existing.get("company_tax_id") or "")
+        tax = "".join(ch for ch in str(tax) if ch.isdigit())
+        alias = (update.get("alias") or existing.get("alias") or "").strip()
+        has_creds = len(tax) in (10, 11) and bool(alias)
     if provider == "isnet_portal":
         # Portal: VKN/TCKN (username) + şifre yeterli; müşteri kodu opsiyonel (firma id)
         has_creds = bool(update["username"] and has_pwd)
@@ -872,9 +876,8 @@ async def test_einvoice_connection(company_id: Optional[str] = "comp_nexus_main_
     if provider == "n11faturam":
         info = await n11faturam.test_login(s, pwd)
     elif provider == "isnet":
-        if not pwd:
-            raise HTTPException(status_code=400, detail="Kayıtlı İşNet şifresi yok; Ayarlar → e-Fatura ekranından şifreyi kaydedin.")
-        info = await isnet.test_connection(s, pwd)
+        # SOAP IP–VKN — şifre zorunlu değil
+        info = await isnet.test_connection(s, pwd or "")
     elif provider == "isnet_portal":
         if not pwd:
             raise HTTPException(status_code=400, detail="Kayıtlı İşNet portal şifresi yok; Ayarlar → e-Fatura ekranından şifreyi kaydedin.")
@@ -938,8 +941,12 @@ async def isnet_save_settings(req: Dict[str, Any]):
             detail=f"Bu şirkete zaten '{provider}' atanmış. SOAP kaydı için Platform Yönetimi → Şirketler'den «İşNet SOAP API» seçin (Web Portal ayrı seçenektir).",
         )
     fields = _isnet_payload(req, existing)
-    if not fields["corporate_code"] or not fields["username"] or not fields["alias"]:
-        raise HTTPException(status_code=400, detail="Müşteri kodu, kullanıcı adı ve GİB alias zorunludur.")
+    tax = fields.get("company_tax_id") or ""
+    if len(tax) not in (10, 11) or not fields["alias"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Şirket VKN/TCKN ve GİB alias zorunludur (SOAP IP–VKN; kullanıcı/şifre gerekmez).",
+        )
     password = (req.get("password") or "").strip()
     update = {
         "provider": "isnet",
@@ -947,15 +954,14 @@ async def isnet_save_settings(req: Dict[str, Any]):
         "username": fields["username"],
         "corporate_code": fields["corporate_code"],
         "alias": fields["alias"],
-        "company_tax_id": fields.get("company_tax_id") or "",
+        "company_tax_id": tax,
         "company_vendor_number": fields.get("company_vendor_number") or "",
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "assigned_at": existing.get("assigned_at") or datetime.now(timezone.utc).isoformat(),
     }
     if password:
         update["password_enc"] = comm_service.encrypt(password)
-    has_pwd = bool(update.get("password_enc") or existing.get("password_enc"))
-    update["status"] = "configured" if (fields["username"] and has_pwd and fields["corporate_code"] and fields["alias"]) else "simulated"
+    update["status"] = "configured" if (len(tax) in (10, 11) and fields["alias"]) else "simulated"
     await db.einvoice_settings.update_one(
         {"company_id": company_id},
         {"$set": update, "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id}},
@@ -966,13 +972,11 @@ async def isnet_save_settings(req: Dict[str, Any]):
 
 @api_router.post("/integrations/isnet/test")
 async def isnet_test_connection(req: Dict[str, Any]):
-    """Formdaki veya kayıtlı İşNet bilgileriyle bağlantı testi."""
+    """Formdaki veya kayıtlı İşNet bilgileriyle SOAP (IP–VKN) bağlantı testi."""
     company_id = (req.get("company_id") or "").strip() or "comp_nexus_main_01"
     existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
     fields = _isnet_payload(req, existing)
     password = (req.get("password") or "").strip() or _einvoice_password(existing)
-    if not password:
-        raise HTTPException(status_code=400, detail="Bağlantı testi için şifre gerekli.")
     settings = {
         **existing,
         "provider": "isnet",
@@ -984,10 +988,8 @@ async def isnet_test_connection(req: Dict[str, Any]):
         "company_tax_id": fields.get("company_tax_id") or existing.get("company_tax_id") or "",
         "company_vendor_number": fields.get("company_vendor_number") or existing.get("company_vendor_number") or "",
     }
-    info = await isnet.test_connection(settings, password)
+    info = await isnet.test_connection(settings, password or "")
     return info
-
-
 
 
 def _isnet_portal_payload(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict[str, Any]:

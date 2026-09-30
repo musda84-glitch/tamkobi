@@ -21,59 +21,47 @@ def test_soap_url_follows_mode():
     assert isnet.soap_url({"mode": "live"}) == isnet.LIVE_SOAP
 
 
-def test_connection_requires_client_code_and_alias():
+def test_connection_requires_vkn_and_alias():
     with pytest.raises(HTTPException) as e:
         asyncio.get_event_loop().run_until_complete(
-            isnet.test_connection({"username": "u", "mode": "test"}, "secret")
+            isnet.test_connection({"mode": "test", "alias": "urn:mail:pk@x.com"}, "")
         )
     assert e.value.status_code == 400
+    assert "vkn" in e.value.detail.lower() or "tckn" in e.value.detail.lower() or "tax" in e.value.detail.lower()
 
     with pytest.raises(HTTPException) as e2:
         asyncio.get_event_loop().run_until_complete(
-            isnet.test_connection(
-                {"username": "u", "corporate_code": "C1", "mode": "test"},
-                "secret",
-            )
+            isnet.test_connection({"mode": "test", "company_tax_id": "4810173324"}, "")
         )
     assert e2.value.status_code == 400
     assert "alias" in e2.value.detail.lower() or "etiket" in e2.value.detail.lower()
 
 
-def test_login_success_parses_token():
+def test_connection_soap_ip_vkn_without_password():
+    """Resmi SOAP: kullanıcı/şifre yok — HealthCheck + GetCompanyBalance yeterli."""
     settings = {
-        "username": "demo",
-        "corporate_code": "1001",
+        "company_tax_id": "4810173324",
         "alias": "urn:mail:defaultpk@demo.com",
         "mode": "test",
     }
-    payload = {
-        "Token": "abcdef123456",
-        "Result": 0,
-        "Adi": "Ali",
-        "Soyadi": "Veli",
-        "CompanyList": [{"IdFirma": 1, "FirmaAdi": "Demo AS", "SchemaName": "demo"}],
-    }
 
-    class _Resp:
-        status_code = 200
-        content = b"1"
-        text = "ok"
+    async def _fake_health(_s):
+        return "OK"
 
-        def json(self):
-            return payload
+    async def _fake_balance(_s, tax_code=None):
+        return {"balance": "100", "remaining_credit": "100", "message": "OK"}
 
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(return_value=_Resp())
-    mock_client.get = AsyncMock(return_value=MagicMock(status_code=200, text="true"))
-
-    with patch("isnet.httpx.AsyncClient", return_value=mock_client):
-        info = asyncio.get_event_loop().run_until_complete(isnet.test_connection(settings, "pw"))
+    with patch("isnet.soap_health_check", side_effect=_fake_health), patch(
+        "isnet.get_company_balance", side_effect=_fake_balance
+    ):
+        info = asyncio.get_event_loop().run_until_complete(isnet.test_connection(settings, ""))
     assert info["ok"] is True
-    assert info["client_code"] == "1001"
-    assert info["alias"].startswith("urn:")
-    assert info["mode"] == "test"
+    assert info["auth"] == "ip-vkn"
+    assert info["soap_ok"] is True
+    assert info["company_tax_id"] == "4810173324"
+    assert info["support_email"] == isnet.SUPPORT_EMAIL
+    assert info["test_portal"]["user"] == isnet.TEST_PORTAL_USER
+    assert "password" not in (info.get("message") or "").lower() or "SOAP" in info["message"]
 
 
 def test_login_401_raises():
@@ -98,27 +86,16 @@ def test_login_401_raises():
     assert e.value.status_code == 400
 
 
-def test_isnet_in_providers_and_payload():
-    import server
+def test_isnet_payload_fields_documented_in_server_source():
+    """server.EINVOICE_PROVIDERS['isnet'] IP–VKN alanları (tam import ortam bağımlılığı olmadan)."""
+    from pathlib import Path
 
-    mapped = server._isnet_payload(
-        {
-            "test_mode": True,
-            "username": "apiuser",
-            "client_code": "ISN-9",
-            "gib_alias": "urn:mail:pk@x.com",
-            "company_tax_id": "1234567890",
-            "company_vendor_number": "001",
-        }
-    )
-    assert mapped["mode"] == "test"
-    assert mapped["corporate_code"] == "ISN-9"
-    assert mapped["alias"] == "urn:mail:pk@x.com"
-    assert mapped["company_tax_id"] == "1234567890"
-    assert mapped["company_vendor_number"] == "001"
-    assert "isnet" in server.EINVOICE_PROVIDERS
-    assert "Net-e" in server.EINVOICE_PROVIDERS["isnet"]["name"] or "IsNet" in server.EINVOICE_PROVIDERS["isnet"]["name"]
-    assert "NetteFatura-API" in (server.EINVOICE_PROVIDERS["isnet"].get("docs") or "")
+    src = Path(__file__).resolve().parents[1] / "server.py"
+    text = src.read_text(encoding="utf-8")
+    assert '"isnet"' in text
+    assert "company_tax_id" in text
+    assert "efaturadestek@nettefatura.com.tr" in text
+    assert "IP–VKN" in text or "IP-VKN" in text
 
 
 def test_company_tax_code_and_soap_serialize():
@@ -146,13 +123,17 @@ def test_address_book_url_follows_mode():
     assert isnet.address_book_url({"mode": "live"}) == isnet.LIVE_ADDRESS_BOOK
 
 
-def test_endpoints_match_nettefatura_api():
-    """https://github.com/EfeSorogluu/NetteFatura-API src/constants/endpoints.ts"""
+def test_endpoints_match_official_isnet_docs():
+    """İşNet resmi test/canlı SOAP URL’leri (destek e-postası ekindeki döküman)."""
     assert isnet.TEST_SOAP == "https://einvoiceservicetest.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
     assert isnet.LIVE_SOAP == "https://einvoiceservice.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
-    assert "AddressBookService" in isnet.TEST_ADDRESS_BOOK
+    assert isnet.TEST_ADDRESS_BOOK == (
+        "https://einvoiceservicetest.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc"
+    )
+    assert "AddressBookService" in isnet.LIVE_ADDRESS_BOOK
     assert isnet.TEST_API == "https://einvoiceapitest.isnet.net.tr"
     assert isnet.LIVE_API == "https://einvoiceapi.isnet.net.tr"
     assert isnet.TEST_PORTAL == "https://efatura.isnet.net.tr"
     assert isnet.LIVE_PORTAL == "https://nettefatura.isnet.net.tr"
-
+    assert isnet.TEST_PORTAL_USER == "12345678901"
+    assert isnet.TEST_FIRM_VKNS == ("4810173324", "1234567805")
