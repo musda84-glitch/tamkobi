@@ -48,6 +48,7 @@ import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printO
 import { eBelgeMenuItems, orderCanIssueEFatura, orderEBelgeType } from "../utils/orderEBelge";
 import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
+import { orderBulkEInvoiceEligible, bulkApiErrorDetail, orderRowId } from "../utils/orderBulkActions";
 import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
@@ -202,7 +203,10 @@ export default function OrdersB2BPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const toggleSel = (id) => setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
-  const selectedOrders = () => orders.filter((o) => selected.includes(o.id));
+  const selectedOrders = () => orders.filter((o) => {
+    const id = orderRowId(o);
+    return id && selected.includes(id);
+  });
   const openInvoicePdfs = (list) => {
     const ids = [...new Set(list.map((o) => o.invoice_id).filter(Boolean))];
     if (!ids.length) { toast.error("Seçili siparişlerde fatura yok."); return; }
@@ -292,16 +296,19 @@ export default function OrdersB2BPage() {
     }
     const list = selectedOrders();
     if (!list.length) { toast.error("Sipariş seçin."); return; }
-    if (action === "labels" || action === "cargo_label") { setBulkLabels(list); return; }
+    if (action === "labels" || action === "cargo_label" || action === "cargo_label_alt") { setBulkLabels(list); return; }
     if (action === "thermal" || action === "cargo_mini") {
       if (printThermalLabels(list, activeCompany, { size: "100x150" })) {
-        axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: list.map((o) => o.id) }).catch(() => {});
+        axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: list.map((o) => orderRowId(o)).filter(Boolean) }).catch(() => {});
         toast.success(`${list.length} ${action === "cargo_mini" ? "mini kargo etiketi" : "termal etiket"} yazdırmaya gönderildi.`);
+      } else {
+        toast.error("Etiket yazdırılamadı (açılır pencere engellenmiş olabilir).");
       }
       return;
     }
     if (action === "cargo_10x10") {
       if (printThermalLabels(list, activeCompany, { size: "100x100" })) toast.success(`${list.length} etiket (10×10) yazdırmaya gönderildi.`);
+      else toast.error("Etiket yazdırılamadı (açılır pencere engellenmiş olabilir).");
       return;
     }
     if (action === "hepsijet") { carrierLabels(list, "hepsijet", "HepsiJet"); return; }
@@ -318,7 +325,14 @@ export default function OrdersB2BPage() {
       const deletable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
       if (!deletable.length) { toast.error("Faturalanmış siparişler silinemez."); return; }
       if (!window.confirm(`${deletable.length} sipariş silinsin mi? (Çöp Kutusu'ndan 30 gün içinde geri getirebilirsiniz.)`)) return;
-      try { const r = await axios.post(`${API_URL}/orders/bulk-delete`, { ids: deletable.map((o) => o.id) }); toast.success(r.data.message); setSelected([]); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+      try {
+        const r = await axios.post(`${API_URL}/orders/bulk-delete`, { ids: deletable.map((o) => orderRowId(o)).filter(Boolean) });
+        toast.success(r.data.message);
+        setSelected([]);
+        loadData();
+      } catch (err) {
+        toast.error(bulkApiErrorDetail(err) || "Silinemedi.");
+      }
       return;
     }
     if (action === "invoice_date") {
@@ -327,19 +341,19 @@ export default function OrdersB2BPage() {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast.error("Tarih YYYY-AA-GG olmalı."); return; }
       const withInv = list.filter((o) => o.invoice_id);
       if (!withInv.length) { toast.error("Seçili siparişlerde fatura yok."); return; }
-      let ok = 0, fail = 0;
+      let ok = 0, fail = 0, firstErr = "";
       for (const o of withInv) {
         try { await axios.put(`${API_URL}/invoices/${o.invoice_id}`, { issue_date: date }); ok++; }
-        catch { fail++; }
+        catch (err) { fail++; if (!firstErr) firstErr = bulkApiErrorDetail(err); }
       }
-      toast[fail ? "error" : "success"](`${ok} faturanın tarihi güncellendi${fail ? `, ${fail} kesilmiş fatura değiştirilemedi` : ""}.`);
+      toast[fail ? "error" : "success"](`${ok} faturanın tarihi güncellendi${fail ? `, ${fail} kesilmiş fatura değiştirilemedi${firstErr ? `: ${firstErr}` : ""}` : ""}.`);
       loadData();
       return;
     }
     if (action === "invoice_link") {
       const ready = list.filter((o) => o.invoice_id && o.customer_email);
       if (!ready.length) { toast.error("Faturalı ve e-posta adresi olan sipariş seçin."); return; }
-      let ok = 0, fail = 0;
+      let ok = 0, fail = 0, firstErr = "";
       for (const o of ready) {
         try {
           const fd = new FormData();
@@ -354,9 +368,9 @@ export default function OrdersB2BPage() {
           fd.append("contact_name", o.customer_name || "");
           await axios.post(`${API_URL}/comm/mail/send`, fd);
           ok++;
-        } catch { fail++; }
+        } catch (err) { fail++; if (!firstErr) firstErr = bulkApiErrorDetail(err); }
       }
-      toast[fail ? "error" : "success"](`${ok} fatura linki gönderildi${fail ? `, ${fail} hata` : ""}.`);
+      toast[fail ? "error" : "success"](`${ok} fatura linki gönderildi${fail ? `, ${fail} hata${firstErr ? `: ${firstErr}` : ""}` : ""}.`);
       return;
     }
     if (action === "cancel") {
@@ -364,33 +378,36 @@ export default function OrdersB2BPage() {
       if (!open.length) { toast.info("Seçili siparişler zaten iptal."); return; }
       if (!window.confirm(`${open.length} sipariş iptal edilsin mi?`)) return;
     }
+
     setBulkBusy(true);
-    let ok = 0, fail = 0, skipped = 0;
+    let ok = 0, fail = 0, skipped = 0, firstErr = "";
     for (const o of list) {
+      const oid = orderRowId(o);
       try {
         if (action === "invoice" || action === "invoice_create") {
           if (o.is_invoiced || o.invoice_id) { skipped++; continue; }
-          await axios.post(`${API_URL}/orders/${o.id || o._id}/convert-to-invoice`, { e_type: "e_archive", as_draft: true });
+          await axios.post(`${API_URL}/orders/${oid}/convert-to-invoice`, { e_type: "e_archive", as_draft: true });
         } else if (action === "einvoice_create") {
-          if (o.is_invoiced || o.invoice_id) { skipped++; continue; }
+          if (!orderBulkEInvoiceEligible(o) || o.is_invoiced || o.invoice_id) { skipped++; continue; }
           const eType = orderEBelgeType(o, contacts);
           await axios.post(`${API_URL}/e-invoice/create`, {
-            order_id: o.id || o._id,
+            order_id: oid,
             e_type: eType,
             scenario: eType === "e_invoice" ? "TICARI" : undefined,
           });
         } else if (action === "einvoice_send") {
           if (!o.invoice_id) { skipped++; continue; }
+          if (orderHasEInvoiceIssued(o)) { skipped++; continue; }
           const eType = o.e_type || orderEBelgeType(o, contacts);
           await axios.post(`${API_URL}/invoices/${o.invoice_id}/send-to-gib`, { e_type: eType });
         } else if (action === "approve") {
           if (o.order_status !== "pending") { skipped++; continue; }
-          await axios.post(`${API_URL}/orders/${o.id}/approve`, { cargo_carrier: o.cargo_carrier || "geliver" });
+          await axios.post(`${API_URL}/orders/${oid}/approve`, { cargo_carrier: o.cargo_carrier || "geliver" });
         } else if (action === "cargo_create") {
           if (o.cargo_tracking_number) { skipped++; continue; }
           await axios.post(`${API_URL}/cargo/create-shipment`, {
             carrier_code: o.cargo_carrier || "geliver",
-            order_id: o.id || o._id,
+            order_id: oid,
             customer_name: o.customer_name,
             address: o.shipping_address || o.address,
             city: o.city,
@@ -399,14 +416,20 @@ export default function OrdersB2BPage() {
           });
         } else if (action === "cancel") {
           if (o.order_status === "cancelled") { skipped++; continue; }
-          await axios.put(`${API_URL}/orders/${o.id}/status`, { status: "cancelled" });
+          await axios.put(`${API_URL}/orders/${oid}/status`, { status: "cancelled" });
+        } else {
+          skipped++;
+          continue;
         }
         ok++;
-      } catch { fail++; }
+      } catch (err) {
+        fail++;
+        if (!firstErr) firstErr = bulkApiErrorDetail(err);
+      }
     }
     setBulkBusy(false);
     if (!ok && !fail) toast.info(skipped ? "Seçili siparişlerde bu işlem için uygun kayıt yok." : "İşlenecek sipariş yok.");
-    else toast[fail ? "error" : "success"](`${ok} sipariş işlendi${fail ? `, ${fail} hata` : ""}${skipped ? `, ${skipped} atlandı` : ""}.`);
+    else toast[fail ? "error" : "success"](`${ok} sipariş işlendi${fail ? `, ${fail} hata${firstErr ? `: ${firstErr}` : ""}` : ""}${skipped ? `, ${skipped} atlandı` : ""}.`);
     setSelected([]);
     loadData();
   };
@@ -1236,7 +1259,7 @@ export default function OrdersB2BPage() {
                   </colgroup>
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
                 <tr>
-                  <th className="px-3 py-3 w-8"><input type="checkbox" checked={selected.length > 0 && selected.length === orders.length} onChange={(e) => setSelected(e.target.checked ? orders.map((o) => o.id) : [])} className="rounded" data-testid="orders-select-all" /></th>
+                  <th className="px-3 py-3 w-8"><input type="checkbox" checked={selected.length > 0 && orders.length > 0 && selected.length === orders.map(orderRowId).filter(Boolean).length} onChange={(e) => setSelected(e.target.checked ? orders.map(orderRowId).filter(Boolean) : [])} className="rounded" data-testid="orders-select-all" /></th>
                   <SortTh k="order_number">Sipariş No & Kanal</SortTh>
                   <SortTh k="customer_name">Müşteri / Alıcı</SortTh>
                   <SortTh k="items">Ürünler</SortTh>
@@ -1248,8 +1271,8 @@ export default function OrdersB2BPage() {
               <tbody className="divide-y divide-slate-100">
                 {visibleOrders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="ord-empty">Filtreye uyan sipariş yok.</td></tr>}
                 {pagedOrders.map((ord) => (
-                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_64px] ${selected.includes(ord.id) ? "bg-emerald-50/60" : ""} ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50/90" : ""}`} data-testid={`order-row-${ord.order_number}`}>
-                    <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(ord.id)} onChange={() => toggleSel(ord.id)} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
+                  <tr key={ord.id || ord._id || ord.order_number} className={`group/row hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_64px] ${selected.includes(orderRowId(ord)) ? "bg-emerald-50/60" : ""} ${isB2BCartOrder(ord) ? "opacity-70 bg-slate-50/90" : ""}`} data-testid={`order-row-${ord.order_number}`}>
+                    <td className="px-3 py-3"><input type="checkbox" checked={selected.includes(orderRowId(ord))} onChange={() => toggleSel(orderRowId(ord))} className="rounded" data-testid={`order-select-${ord.order_number}`} /></td>
                     <td className="px-4 py-3 font-medium overflow-hidden" data-testid={`order-no-cell-${ord.order_number}`}>
                       <div className="font-bold text-slate-900 font-mono">{ord.held_label || ord.order_number}</div>
                       {ord.held_label && ord.order_number && ord.held_label !== ord.order_number ? (
@@ -1338,7 +1361,7 @@ export default function OrdersB2BPage() {
                         <option value="partially_returned">Kısmi İade</option>
                       </select>)}
                     </td>
-                    <td className={`px-3 py-3 text-center overflow-hidden sticky right-0 z-[1] ${selected.includes(ord.id) ? "bg-emerald-50" : "bg-white group-hover/row:bg-slate-50"}`} style={{ width: ORDER_ACTIONS_COL }}>
+                    <td className={`px-3 py-3 text-center overflow-hidden sticky right-0 z-[1] ${selected.includes(orderRowId(ord)) ? "bg-emerald-50" : "bg-white group-hover/row:bg-slate-50"}`} style={{ width: ORDER_ACTIONS_COL }}>
                       <div className="inline-flex items-center justify-center gap-1" data-testid={`order-actions-${ord.order_number}`}>
                         {isB2BCartOrder(ord) ? (
                           <>

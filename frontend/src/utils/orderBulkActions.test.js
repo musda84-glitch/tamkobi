@@ -1,5 +1,5 @@
 import { buildMiniInvoiceHtml, miniInvoiceSize } from "./miniInvoicePrint";
-import { ORDER_BULK_ACTIONS, bulkActionNeedsSelection } from "./orderBulkActions";
+import { ORDER_BULK_ACTIONS, bulkActionNeedsSelection, orderBulkEInvoiceEligible, orderRowId } from "./orderBulkActions";
 
 test("bulk menu lists the order actions and only refresh works with an empty selection", () => {
   expect(ORDER_BULK_ACTIONS.map((a) => a.label)).toEqual([
@@ -7,7 +7,6 @@ test("bulk menu lists the order actions and only refresh works with an empty sel
     "Toplu E-Fatura Yazdır",
     "Toplu Mini E-Fatura Yazdır (10X15cm)",
     "Toplu Mini E-Fatura Yazdır (8X20cm)",
-    "Toplu HepsiJet Ortak Barkod Yazdır",
     "Toplu E-Fatura Gönder",
     "Toplu Fatura Oluştur",
     "Toplu Fatura Yazdır",
@@ -23,8 +22,16 @@ test("bulk menu lists the order actions and only refresh works with an empty sel
     "Toplu Navlungo Kargo Etiketi Yazdır",
     "Seçili Siparişleri İptal Et",
   ]);
+  expect(ORDER_BULK_ACTIONS.map((a) => a.id)).not.toContain("hepsijet");
   expect(bulkActionNeedsSelection("refresh")).toBe(false);
   expect(bulkActionNeedsSelection("cancel")).toBe(true);
+});
+
+test("order bulk helpers resolve row id and skip issued e-invoices", () => {
+  expect(orderRowId({ id: "a" })).toBe("a");
+  expect(orderRowId({ _id: "b" })).toBe("b");
+  expect(orderBulkEInvoiceEligible({ einvoice_state: "sent" })).toBe(false);
+  expect(orderBulkEInvoiceEligible({ order_status: "pending" })).toBe(true);
 });
 
 test("mini invoice slip uses the requested paper size", () => {
