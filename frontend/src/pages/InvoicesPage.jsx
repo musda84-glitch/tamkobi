@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, invoiceETypeLabel, displayInvoiceNumber } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel } from "../components/InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
 import { invoiceToOpenAfterCopy } from "../components/invoiceCopyModes";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -485,6 +485,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     try {
       const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`, eType ? { e_type: eType } : {});
       toast.success(res.data.message);
+      // Portal/GİB durumu gecikebilir — hemen bir kez daha çek
+      try {
+        const st = await axios.post(`${API_URL}/e-invoice/${invId}/refresh-status`);
+        if (st.data?.gib_status) toast.message(st.data.gib_status);
+      } catch { /* liste yine yenilenecek */ }
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Fatura kesilemedi.");
@@ -695,25 +700,31 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         const incoming = isIncomingPurchaseInvoice(inv);
                         const pending = isIncomingPurchasePending(inv);
                         const resp = incomingPurchaseResponse(inv);
-                        const gs = String(inv.gib_status || "");
+                        const gs = formatGibStatusLabel(inv);
+                        const rawGs = String(inv.gib_status || "");
                         const isErr =
                           inv.einvoice_state === "error" ||
+                          /^\s*hata\s*:/i.test(rawGs) ||
                           /^\s*hata\s*:/i.test(gs) ||
                           resp === "rejected" ||
                           inv.status === "cancelled";
+                        const isTest = /test/i.test(String(inv.gib_mode || "")) || /^test\b/i.test(gs);
                         const cls = isErr
                           ? "bg-rose-50 text-rose-700"
                           : incoming && pending
                             ? "bg-amber-50 text-amber-800"
-                            : "bg-emerald-50 text-emerald-700";
+                            : isTest
+                              ? "bg-sky-50 text-sky-800"
+                              : "bg-emerald-50 text-emerald-700";
                         const Icon = isErr ? XCircle : CheckCircle2;
                         const label =
                           isErr && gs.length > 96 ? `${gs.slice(0, 93)}…` : gs || "Taslak";
                         return (
                       <span
                         className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full max-w-full ${cls}`}
-                        title={gs || undefined}
+                        title={rawGs || gs || undefined}
                         data-testid={`inv-gib-badge-${inv.invoice_number}`}
+                        data-gib-mode={inv.gib_mode || ""}
                       >
                         <Icon className="w-3 h-3 shrink-0" />
                         <span className="min-w-0 break-words">{label}</span>

@@ -16,6 +16,24 @@ export function displayInvoiceNumber(inv) {
   return String(inv.invoice_number || inv.id || inv._id || "—");
 }
 
+/** GİB Durumu sütunu — test ortamı ve boş durumlar. */
+export function formatGibStatusLabel(inv) {
+  if (!inv) return "Taslak";
+  const raw = String(inv.gib_status || "").trim();
+  const mode = String(inv.gib_mode || inv.mode || "").toLowerCase();
+  const isTest = mode === "test" || mode === "sandbox" || mode === "demo";
+  const state = String(inv.einvoice_state || "").toLowerCase();
+  if (!raw || raw === "Taslak") {
+    if (state === "sent" || state === "queued") {
+      return isTest ? "Test · GİB durumu bekleniyor" : "GİB durumu bekleniyor";
+    }
+    if (state === "error") return "Hata";
+    return "Taslak";
+  }
+  if (isTest && !/^test\b/i.test(raw)) return `Test · ${raw}`;
+  return raw;
+}
+
 async function blobErrorDetail(err, fallback = "İşlem başarısız.") {
   const blob = err?.response?.data;
   if (blob instanceof Blob) {

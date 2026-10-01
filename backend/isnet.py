@@ -793,9 +793,8 @@ async def send_document(
             status_code=502,
             detail="İşNet geçerli ETTN (UUID) döndürmedi — NetteFatura/GİB kaydı doğrulanamadı.",
         )
-    # Yalnızca SOAP'ın verdiği fatura no (yerel TA no ile portal arama yanıltmasın)
+    # Fatura no: SOAP → portal arama → UBL yerel (GİB/NetteFatura numarası öncelikli)
     soap_inv_no = (info.get("invoice_id") or "").strip()
-    inv_no = soap_inv_no or (inv_id or invoice.get("invoice_number") or "").strip()
     verified = await try_verify_outgoing_in_portal(
         merged,
         uuid_out,
@@ -803,6 +802,9 @@ async def send_document(
         invoice_number=soap_inv_no,
         retries=3,
     )
+    portal_no = (verified.get("invoice_id") or "").strip()
+    inv_no = portal_no or soap_inv_no or (inv_id or invoice.get("invoice_number") or "").strip()
+    portal_status = (verified.get("status") or "").strip()
     if not verified.get("ok"):
         logger.info(
             "isnet soft-verify pending ettn=%s inv=%s — SOAP Success kabul (SDK ile aynı)",
@@ -819,6 +821,9 @@ async def send_document(
         "seller_tax": seller,
         "verified": bool(verified.get("ok")),
         "verify_via": verified.get("via") or "",
+        "gib_status_raw": portal_status,
+        "gib_status_code": (verified.get("status_code") or "").strip(),
+        "mode": "test" if is_test_mode(merged) else "live",
     }
 
 
@@ -871,7 +876,8 @@ async def search_archive_invoice(
             {
                 "ettn": _find_text(inv, "ETTN", "Ettn", "UUID", "InvoiceETTN"),
                 "invoice_id": _find_text(inv, "InvoiceNumber", "ArchiveInvoiceNumber", "InvoiceId", "ID"),
-                "status": _find_text(inv, "Status", "State"),
+                "status": _find_text(inv, "Status", "State", "StatusDescription", "InvoiceStatus"),
+                "status_code": _find_text(inv, "StatusCode", "Code"),
             }
         )
     return out
@@ -924,7 +930,8 @@ async def search_outgoing_invoice(
             {
                 "ettn": _find_text(inv, "ETTN", "Ettn", "UUID", "InvoiceETTN"),
                 "invoice_id": _find_text(inv, "InvoiceNumber", "InvoiceId", "ID"),
-                "status": _find_text(inv, "Status", "State"),
+                "status": _find_text(inv, "Status", "State", "StatusDescription", "InvoiceStatus"),
+                "status_code": _find_text(inv, "StatusCode", "Code"),
             }
         )
     return out
@@ -982,6 +989,8 @@ async def try_verify_outgoing_in_portal(
                         "document_url": last_url,
                         "via": "search",
                         "invoice_id": row_no,
+                        "status": (row.get("status") or "").strip(),
+                        "status_code": (row.get("status_code") or "").strip(),
                         "attempt": attempt + 1,
                     }
         except HTTPException as e:
