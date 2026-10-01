@@ -11,6 +11,53 @@ from fastapi import HTTPException
 import isnet
 
 
+def test_resolve_gib_transmission_status_prefers_detail_1300():
+    out = isnet.resolve_gib_transmission_status(
+        detail_status="Basariyla_Tamamlandi",
+        process_status="Imza_Bekliyor",
+    )
+    assert out["status"] == "Başarıyla Tamamlandı"
+    assert out["status_code"] == "1300"
+    assert out["source"] == "detail"
+
+
+def test_resolve_gib_transmission_falls_back_to_imza_when_not_enveloped():
+    out = isnet.resolve_gib_transmission_status(
+        detail_status="Zarflanmadi",
+        process_status="Imza_Bekliyor",
+    )
+    assert out["status"] == "İmza bekliyor"
+    assert out["source"] == "process"
+
+
+def test_resolve_gib_schematron_error():
+    out = isnet.resolve_gib_transmission_status(
+        detail_status="Schematron_Kontrol_Sonucu_Hatali",
+        process_status="Gib_Tarafinda_Hata_Olustu",
+    )
+    assert out["status_code"] == "1150"
+    assert "Schematron" in out["status"]
+
+
+def test_search_row_reads_detail_status():
+    xml = """
+    <Invoice xmlns="http://schemas.datacontract.org/2004/07/EInvoice.Service.Model">
+      <ETTN>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</ETTN>
+      <InvoiceNumber>U052026000000099</InvoiceNumber>
+      <Status>Imza_Bekliyor</Status>
+      <DetailStatus>Basariyla_Tamamlandi</DetailStatus>
+      <EnvelopeId>env-1</EnvelopeId>
+    </Invoice>
+    """
+    el = ET.fromstring(xml)
+    row = isnet._search_row_from_el(el)
+    assert row["invoice_id"] == "U052026000000099"
+    assert row["status"] == "Başarıyla Tamamlandı"
+    assert row["status_code"] == "1300"
+    assert row["detail_status"] == "Basariyla_Tamamlandi"
+    assert row["process_status"] == "Imza_Bekliyor"
+
+
 def test_api_base_test_vs_live():
     assert isnet.api_base({"mode": "test"}) == isnet.TEST_API
     assert isnet.api_base({"mode": "live"}) == isnet.LIVE_API

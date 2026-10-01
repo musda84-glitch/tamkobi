@@ -902,7 +902,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         )}
       </div>
 
-      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={canDeleteInv ? handleDeleteInvoice : undefined} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} onCopy={invoiceCopy.handleCopyMode} />
+      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={canDeleteInv ? handleDeleteInvoice : undefined} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} onCopy={invoiceCopy.handleCopyMode} onGibStatusRefreshed={() => loadData({ silent: true })} />
       {invoiceCopy.modal}
       {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && printInv.e_type === "expense_slip" && (
