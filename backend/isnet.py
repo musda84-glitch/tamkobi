@@ -896,9 +896,6 @@ async def send_structured_invoice(
     if not message:
         message = "SOAP yanıtı alındı."
     if not is_ettn_uuid(ettn):
-        # Yapısal yanıt bazen ETTN'yi bizim gönderdiğimizle eşler
-        ettn = (invoice_payload.get("ETTN") or "").strip() or ettn
-    if not is_ettn_uuid(ettn):
         raise HTTPException(
             status_code=502,
             detail=(
@@ -917,46 +914,8 @@ async def send_structured_invoice(
     }
 
 
-async def send_invoice_xml(
-    settings: dict,
-    *,
-    ubl_xml: str,
-    receiver_alias: str = "",
-    is_earchive: bool = False,
-) -> Dict[str, Any]:
-    """SendInvoiceXml / SendArchiveInvoiceXml — NetteFatura-API invoice.sendInvoiceXml()."""
-    req_base = _company_request(settings)
-    if len(req_base["CompanyTaxCode"]) not in (10, 11):
-        raise HTTPException(
-            status_code=400, detail="İşNet SOAP gönderimi için şirket VKN (company_tax_id) gerekli."
-        )
-    content = _ensure_b64(ubl_xml)
-    if not content:
-        raise HTTPException(status_code=400, detail="UBL XML boş.")
-    alias = (receiver_alias or settings.get("alias") or "").strip()
-
-    if is_earchive:
-        action = "SendArchiveInvoiceXml"
-        request: Dict[str, Any] = {
-            **req_base,
-            "ArchiveInvoices": [{"ArchiveInvoiceContent": content}],
-        }
-    else:
-        action = "SendInvoiceXml"
-        item: Dict[str, Any] = {"InvoiceContent": content}
-        if alias:
-            item["ReceiverTag"] = alias
-        request = {**req_base, "Invoices": [item]}
-
-    body = await _soap_call(
-        settings,
-        endpoint=soap_url(settings),
-        action=action,
-        service_interface="IInvoiceService",
-        request=request,
-        timeout=90.0,
-    )
-    # Satır sonucu: yalnızca başarılı satırdan ETTN al (Failed satırdaki UUID iletildi sayılmasın)
+def _parse_send_xml_body(body: ET.Element, action: str) -> Dict[str, Any]:
+    """Send*Xml SOAP gövdesinden ETTN + İşNet fatura no."""
     row_tags = (
         "InvoiceResult",
         "ArchiveInvoiceResult",
@@ -979,7 +938,6 @@ async def send_invoice_xml(
             )
             message = message or _find_text(result_el, "Message")
     else:
-        # Satır yoksa gövde düzeyi (eski yanıt şekli)
         ettn = _find_text(body, "ETTN", "Ettn", "InvoiceETTN") or ""
         invoice_id = (
             _find_text(body, "InvoiceNumber", "InvoiceId", "DocumentId", "ArchiveInvoiceNumber") or ""
@@ -998,11 +956,114 @@ async def send_invoice_xml(
         )
     return {
         "ettn": ettn.strip(),
-        "invoice_id": invoice_id,
+        "invoice_id": (invoice_id or "").strip(),
         "status": _find_text(body, "Status", "State") or "sent",
         "message": message,
         "document_url": _find_text(body, "HtmlUrl", "PdfUrl", "DocumentUrl") or "",
+        "action": action,
     }
+
+
+def _xml_send_actions(*, is_earchive: bool, assign_number: bool) -> List[str]:
+    """Önce WithoutInvoiceNumber (İşNet seri atar), yoksa klasik *Xml."""
+    if is_earchive:
+        auto = "SendArchiveInvoiceXmlWithoutInvoiceNumber"
+        classic = "SendArchiveInvoiceXml"
+    else:
+        auto = "SendInvoiceXmlWithoutInvoiceNumber"
+        classic = "SendInvoiceXml"
+    return [auto, classic] if assign_number else [classic]
+
+
+def _action_missing(err: HTTPException) -> bool:
+    """SOAP metodu WSDL'de yok / Fault — diğer aksiyona düş."""
+    if err.status_code not in (400, 502):
+        return False
+    d = str(err.detail or "").lower()
+    keys = (
+        "not found",
+        "bilinmeyen",
+        "unknown",
+        "does not exist",
+        "bulunamadı",
+        "not supported",
+        "desteklenmiyor",
+        "operation",
+        "action",
+        "method",
+    )
+    return any(k in d for k in keys)
+
+
+async def send_invoice_xml(
+    settings: dict,
+    *,
+    ubl_xml: str,
+    receiver_alias: str = "",
+    is_earchive: bool = False,
+    assign_number: bool = True,
+) -> Dict[str, Any]:
+    """UBL gönder — NetteFatura test/canlıya düşen kanıtlı yol.
+
+    assign_number=True: resmi *WithoutInvoiceNumber (İşNet kayıtlı seriyi atar).
+    Metod yoksa SendInvoiceXml / SendArchiveInvoiceXml.
+    """
+    req_base = _company_request(settings)
+    if len(req_base["CompanyTaxCode"]) not in (10, 11):
+        raise HTTPException(
+            status_code=400, detail="İşNet SOAP gönderimi için şirket VKN (company_tax_id) gerekli."
+        )
+    content = _ensure_b64(ubl_xml)
+    if not content:
+        raise HTTPException(status_code=400, detail="UBL XML boş.")
+    alias = (receiver_alias or settings.get("alias") or "").strip()
+
+    if is_earchive:
+        request: Dict[str, Any] = {
+            **req_base,
+            "ArchiveInvoices": [{"ArchiveInvoiceContent": content}],
+        }
+    else:
+        item: Dict[str, Any] = {"InvoiceContent": content}
+        if alias:
+            item["ReceiverTag"] = alias
+        request = {**req_base, "Invoices": [item]}
+
+    actions = _xml_send_actions(is_earchive=is_earchive, assign_number=assign_number)
+    last_err: Optional[HTTPException] = None
+    for i, action in enumerate(actions):
+        try:
+            body = await _soap_call(
+                settings,
+                endpoint=soap_url(settings),
+                action=action,
+                service_interface="IInvoiceService",
+                request=request,
+                timeout=90.0,
+            )
+            return _parse_send_xml_body(body, action)
+        except HTTPException as e:
+            last_err = e
+            more = i < len(actions) - 1
+            if more and _action_missing(e):
+                logger.warning("isnet %s yok/geçersiz — %s deneniyor: %s", action, actions[i + 1], e.detail)
+                continue
+            if more and e.status_code == 502:
+                logger.warning("isnet %s 502 — %s deneniyor: %s", action, actions[i + 1], e.detail)
+                continue
+            raise
+    raise last_err or HTTPException(status_code=502, detail="İşNet UBL gönderimi başarısız.")
+
+
+def is_provisional_invoice_number(number: str, local_ubl: str = "") -> bool:
+    """Yerel TKB / UBL id — entegratör serisi değil."""
+    no = (number or "").strip().upper()
+    if not no:
+        return True
+    if no.startswith("TKB"):
+        return True
+    loc = (local_ubl or "").strip().upper()
+    return bool(loc and no == loc)
 
 
 async def send_document(
@@ -1014,9 +1075,8 @@ async def send_document(
 ) -> Dict[str, Any]:
     """n11faturam.send_document ile aynı sözleşme.
 
-    Tercih: yapısal SendInvoice / SendArchiveInvoice — InvoiceNumber İşNet atar
-    (NetteFatura kayıtlı seri, örn. UUU…). UBL Xml yolu TKB ile sabit numaraya
-    kilitlenmesin diye yalnızca yapısal başarısız olursa yedek.
+    Kanıtlı yol: UBL Send*Xml (NetteFatura test/canlıya düşer).
+    Numara: Send*XmlWithoutInvoiceNumber → SOAP/portal InvoiceNumber (TKB değil).
     """
     e_type = invoice.get("e_type") or "e_archive"
     if e_type not in ("e_invoice", "e_archive"):
@@ -1071,46 +1131,23 @@ async def send_document(
 
     company_for_ubl = {**(company or {})}
     company_for_ubl["tax_number"] = seller_vkn
-    local_ubl = ""
-    info: Dict[str, Any] = {}
-    send_mode = "structured"
-
     try:
-        structured = build_structured_invoice(
-            invoice,
-            company_for_ubl,
-            contact,
-            is_earchive=is_earchive,
-            receiver_alias=str(receiver or ""),
-        )
-        info = await send_structured_invoice(
-            merged, invoice_payload=structured, is_earchive=is_earchive
-        )
-        local_ubl = ""  # yapısalda yerel TKB yok
-    except HTTPException as structured_err:
-        # Yapısal başarısız → eski UBL Xml (geriye dönük)
-        logger.warning(
-            "isnet structured send failed (%s) — UBL Xml yedeği deneniyor",
-            structured_err.detail,
-        )
-        send_mode = "ubl_xml"
-        try:
-            import n11faturam
+        import n11faturam
 
-            xml, _local_ettn, inv_id = n11faturam.build_ubl(invoice, company_for_ubl, contact)
-            local_ubl = (inv_id or "").strip()
-        except Exception as e:
-            logger.exception("isnet build_ubl")
-            raise HTTPException(status_code=500, detail=f"UBL oluşturma hatası: {e}") from e
-        try:
-            info = await send_invoice_xml(
-                merged,
-                ubl_xml=xml,
-                receiver_alias=str(receiver or ""),
-                is_earchive=is_earchive,
-            )
-        except HTTPException:
-            raise structured_err from None
+        xml, _local_ettn, inv_id = n11faturam.build_ubl(invoice, company_for_ubl, contact)
+    except Exception as e:
+        logger.exception("isnet build_ubl")
+        raise HTTPException(status_code=500, detail=f"UBL oluşturma hatası: {e}") from e
+    local_ubl = (inv_id or "").strip()
+
+    info = await send_invoice_xml(
+        merged,
+        ubl_xml=xml,
+        receiver_alias=str(receiver or ""),
+        is_earchive=is_earchive,
+        assign_number=True,
+    )
+    send_mode = (info.get("action") or "ubl_xml").strip()
 
     seller = seller_vkn
     uuid_out = (info.get("ettn") or "").strip()
@@ -1125,45 +1162,44 @@ async def send_document(
         merged,
         uuid_out,
         e_type=e_type,
-        invoice_number=soap_inv_no or local_ubl,
+        invoice_number="" if is_provisional_invoice_number(soap_inv_no, local_ubl) else soap_inv_no,
         retries=4,
     )
     portal_no = (verified.get("invoice_id") or "").strip()
     xml_no = ""
-    if not portal_no and not soap_inv_no:
+    if not portal_no or is_provisional_invoice_number(portal_no, local_ubl):
         xml_no = await resolve_invoice_number_from_xml(
             merged,
             uuid_out,
             e_type=e_type,
-            invoice_number=soap_inv_no or local_ubl,
+            invoice_number=soap_inv_no if not is_provisional_invoice_number(soap_inv_no, local_ubl) else "",
             viewer_url=(verified.get("document_url") or info.get("document_url") or ""),
         )
         xml_no = (xml_no or "").strip()
 
     official = ""
     number_source = "ubl"
-    # Yapısal SOAP yanıtındaki InvoiceNumber = İşNet'in kestiği resmi seri
-    if soap_inv_no and send_mode == "structured":
-        official, number_source = soap_inv_no, "isnet"
-    elif portal_no:
-        official, number_source = portal_no, "portal"
-    elif soap_inv_no and (not local_ubl or soap_inv_no.upper() != local_ubl.upper()):
-        official, number_source = soap_inv_no, "soap"
-    elif xml_no and (not local_ubl or xml_no.upper() != local_ubl.upper()):
-        official, number_source = xml_no, "xml"
+    for cand, src in (
+        (portal_no, "portal"),
+        (soap_inv_no, "soap"),
+        (xml_no, "xml"),
+    ):
+        if cand and not is_provisional_invoice_number(cand, local_ubl):
+            official, number_source = cand, src
+            break
 
     inv_no = official or soap_inv_no or local_ubl or (invoice.get("invoice_number") or "").strip()
     portal_status = (verified.get("status") or "").strip()
     if not verified.get("ok"):
         logger.info(
-            "isnet soft-verify pending ettn=%s inv=%s mode=%s",
+            "isnet soft-verify pending ettn=%s inv=%s action=%s",
             uuid_out,
             soap_inv_no or inv_no,
             send_mode,
         )
     elif official:
         logger.info(
-            "isnet fatura no kaynak=%s ettn=%s no=%s mode=%s",
+            "isnet fatura no kaynak=%s ettn=%s no=%s action=%s",
             number_source,
             uuid_out,
             official,

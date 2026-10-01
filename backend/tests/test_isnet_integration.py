@@ -256,31 +256,34 @@ def test_soft_verify_returns_false_when_not_in_portal():
 
 
 def test_send_document_accepts_soap_success_without_immediate_portal():
-    """WSDL/SDK: SendArchiveInvoice Success+ETTN → iletildi; portal soft."""
+    """UBL Xml Success+ETTN → iletildi; portal soft; SOAP no resmiyse alınır."""
     settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
     invoice = {
         "e_type": "e_archive",
         "invoice_number": "TA202600000095",
         "items": [{"name": "Hizmet", "quantity": 1, "unit_price": 100, "vat_rate": 20}],
-        "subtotal": 100,
-        "vat_total": 20,
-        "grand_total": 120,
     }
     company = {"tax_number": "4810173324"}
     contact = {"name": "Alıcı", "tax_number_or_id": "11111111111"}
 
     with patch(
-        "isnet.send_structured_invoice",
+        "n11faturam.build_ubl",
+        return_value=("<Invoice/>", "local-uuid", "TKB2026000000095"),
+    ), patch(
+        "isnet.send_invoice_xml",
         AsyncMock(return_value={
             "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             "invoice_id": "UUU2026999000001",
             "message": "OK",
             "document_url": "",
-            "via": "structured",
+            "action": "SendArchiveInvoiceXmlWithoutInvoiceNumber",
         }),
     ), patch(
         "isnet.try_verify_outgoing_in_portal",
         AsyncMock(return_value={"ok": False, "document_url": "", "via": "", "invoice_id": ""}),
+    ), patch(
+        "isnet.resolve_invoice_number_from_xml",
+        AsyncMock(return_value=""),
     ):
         sent = asyncio.get_event_loop().run_until_complete(
             isnet.send_document(settings, "", invoice, contact, company)
@@ -288,22 +291,19 @@ def test_send_document_accepts_soap_success_without_immediate_portal():
     assert sent["ettn"].startswith("aaaaaaaa")
     assert sent["verified"] is False
     assert sent["official_invoice_id"] == "UUU2026999000001"
-    assert sent["number_source"] == "isnet"
-    assert sent["send_mode"] == "structured"
+    assert sent["number_source"] == "soap"
+    assert sent["send_mode"] == "SendArchiveInvoiceXmlWithoutInvoiceNumber"
     assert sent["seller_tax"] == "4810173324"
 
 
-def test_send_document_structured_assigns_isnet_series_not_tkb():
-    """Yapısal SendInvoice: İşNet UUU… keser; TKB UBL id kullanılmaz."""
+def test_send_document_prefers_portal_number_over_ubl_tkb():
+    """İşNet/portal UUU…; yerel TKB resmi sayılmaz."""
     settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
     invoice = {
         "e_type": "e_invoice",
         "invoice_number": "TA2026000000130",
         "gib_scenario": "TICARIFATURA",
         "items": [{"name": "Ürün", "quantity": 1, "unit_price": 1000, "vat_rate": 20}],
-        "subtotal": 1000,
-        "vat_total": 200,
-        "grand_total": 1200,
     }
     company = {"tax_number": "4810173324"}
     contact = {
@@ -313,20 +313,23 @@ def test_send_document_structured_assigns_isnet_series_not_tkb():
     }
 
     with patch(
-        "isnet.send_structured_invoice",
+        "n11faturam.build_ubl",
+        return_value=("<Invoice/>", "local-uuid", "TKB2026000000130"),
+    ), patch(
+        "isnet.send_invoice_xml",
         AsyncMock(return_value={
             "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-            "invoice_id": "UUU2026999464749",
+            "invoice_id": "TKB2026000000130",
             "message": "OK",
             "document_url": "https://view.example/x",
-            "via": "structured",
+            "action": "SendInvoiceXmlWithoutInvoiceNumber",
         }),
     ), patch(
         "isnet.try_verify_outgoing_in_portal",
         AsyncMock(return_value={
             "ok": True,
             "document_url": "https://view.example/x",
-            "via": "viewer",
+            "via": "search",
             "invoice_id": "UUU2026999464749",
             "status": "İmza Bekliyor",
         }),
@@ -336,12 +339,11 @@ def test_send_document_structured_assigns_isnet_series_not_tkb():
         )
     assert sent["official_invoice_id"] == "UUU2026999464749"
     assert sent["invoice_id"] == "UUU2026999464749"
-    assert sent["number_source"] == "isnet"
-    assert sent["ubl_id"] == ""
-    assert "TKB" not in (sent["invoice_id"] or "")
+    assert sent["number_source"] == "portal"
+    assert sent["ubl_id"] == "TKB2026000000130"
 
 
-def test_send_document_falls_back_to_ubl_xml_when_structured_fails():
+def test_send_document_xml_fallback_when_search_has_no_number():
     settings = {"company_tax_id": "4810173324", "mode": "test"}
     invoice = {
         "e_type": "e_archive",
@@ -352,9 +354,6 @@ def test_send_document_falls_back_to_ubl_xml_when_structured_fails():
     contact = {"name": "Alıcı", "tax_number_or_id": "11111111111"}
 
     with patch(
-        "isnet.send_structured_invoice",
-        AsyncMock(side_effect=HTTPException(status_code=400, detail="yapısal hata")),
-    ), patch(
         "n11faturam.build_ubl",
         return_value=("<Invoice/>", "u", "TKB2026000000001"),
     ), patch(
@@ -364,6 +363,7 @@ def test_send_document_falls_back_to_ubl_xml_when_structured_fails():
             "invoice_id": "",
             "message": "OK",
             "document_url": "https://view.example/x",
+            "action": "SendArchiveInvoiceXmlWithoutInvoiceNumber",
         }),
     ), patch(
         "isnet.try_verify_outgoing_in_portal",
@@ -380,7 +380,6 @@ def test_send_document_falls_back_to_ubl_xml_when_structured_fails():
         sent = asyncio.get_event_loop().run_until_complete(
             isnet.send_document(settings, "", invoice, contact, company)
         )
-    assert sent["send_mode"] == "ubl_xml"
     assert sent["official_invoice_id"] == "UUU2026999464754"
     assert sent["number_source"] == "xml"
 
@@ -443,37 +442,38 @@ def test_serialize_structured_uses_invoice_element():
 
 
 def test_send_document_ubl_seller_uses_isnet_company_tax_id():
-    """Firma kartı VKN boş/farklı olsa bile yapısal Receiver/şirket VKN = İşNet CompanyTaxCode."""
+    """Firma kartı VKN boş/farklı olsa bile UBL satıcı = İşNet CompanyTaxCode."""
     settings = {"company_tax_id": "4810173324", "mode": "test"}
     invoice = {
         "e_type": "e_archive",
         "invoice_number": "TA1",
         "items": [{"name": "X", "quantity": 1, "unit_price": 1, "vat_rate": 20}],
     }
-    company = {"name": "Firma", "tax_number": ""}  # boş
+    company = {"name": "Firma", "tax_number": ""}
     contact = {"name": "Alıcı", "tax_number_or_id": "11111111111"}
-    captured = {}
+    built = {}
 
-    async def _cap_structured(settings, *, invoice_payload, is_earchive=False):
-        captured["vkn"] = settings.get("company_tax_id")
-        captured["payload"] = invoice_payload
-        return {
+    def _capture_ubl(inv, co, ct, ettn=None):
+        built["seller"] = co.get("tax_number")
+        return ("<Invoice/>", "u", "TKB2026000000001")
+
+    with patch("n11faturam.build_ubl", side_effect=_capture_ubl), patch(
+        "isnet.send_invoice_xml",
+        AsyncMock(return_value={
             "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             "invoice_id": "UUU1",
             "message": "OK",
-            "document_url": "https://x",
-            "via": "structured",
-        }
-
-    with patch("isnet.send_structured_invoice", side_effect=_cap_structured), patch(
+            "document_url": "",
+            "action": "SendArchiveInvoiceXmlWithoutInvoiceNumber",
+        }),
+    ), patch(
         "isnet.try_verify_outgoing_in_portal",
         AsyncMock(return_value={"ok": True, "document_url": "https://x", "via": "viewer", "invoice_id": "UUU1"}),
     ):
         asyncio.get_event_loop().run_until_complete(
             isnet.send_document(settings, "", invoice, contact, company)
         )
-    assert captured["vkn"] == "4810173324"
-    assert "InvoiceNumber" not in captured["payload"]
+    assert built["seller"] == "4810173324"
 
 
 def test_send_document_efatura_requires_receiver_or_lookup():
@@ -488,7 +488,7 @@ def test_send_document_efatura_requires_receiver_or_lookup():
     company = {"tax_number": "4810173324"}
     contact = {"name": "Test Firma 05", "tax_number_or_id": "1234567805"}
 
-    with patch(
+    with patch("n11faturam.build_ubl", return_value=("<Invoice/>", "u", "EF1")), patch(
         "isnet.lookup_user",
         AsyncMock(return_value={"alias": "", "is_e_invoice_user": True}),
     ):
@@ -501,20 +501,20 @@ def test_send_document_efatura_requires_receiver_or_lookup():
 
     called = {}
 
-    async def _cap_structured(settings, *, invoice_payload, is_earchive=False):
-        called["tag"] = invoice_payload.get("ReceiverInboxTag")
+    async def _cap_send(*_a, **kw):
+        called["receiver"] = kw.get("receiver_alias")
         return {
             "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             "invoice_id": "UUU2",
             "message": "OK",
             "document_url": "",
-            "via": "structured",
+            "action": "SendInvoiceXmlWithoutInvoiceNumber",
         }
 
-    with patch(
+    with patch("n11faturam.build_ubl", return_value=("<Invoice/>", "u", "EF1")), patch(
         "isnet.lookup_user",
         AsyncMock(return_value={"alias": "urn:mail:test05defaultpk@isnet.com"}),
-    ), patch("isnet.send_structured_invoice", side_effect=_cap_structured), patch(
+    ), patch("isnet.send_invoice_xml", side_effect=_cap_send), patch(
         "isnet.try_verify_outgoing_in_portal",
         AsyncMock(return_value={"ok": True, "document_url": "", "via": "viewer", "invoice_id": "UUU2"}),
     ):
@@ -522,7 +522,7 @@ def test_send_document_efatura_requires_receiver_or_lookup():
             isnet.send_document(settings, "", invoice, contact, company)
         )
     assert sent["ettn"].startswith("aaaaaaaa")
-    assert called["tag"] == "urn:mail:test05defaultpk@isnet.com"
+    assert called["receiver"] == "urn:mail:test05defaultpk@isnet.com"
 
 
 def test_send_document_requires_company_tax():
@@ -648,6 +648,44 @@ def test_send_archive_rejects_failed_return_with_ettn():
     assert "posta kutusu" in e.value.detail
 
 
+def test_send_invoice_xml_falls_back_when_without_number_action_missing():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "<ein:ArchiveInvoiceResult>"
+        "<ein:ETTN>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</ein:ETTN>"
+        "<ein:ArchiveInvoiceNumber>UUU2026999000001</ein:ArchiveInvoiceNumber>"
+        "<ein:IsSucceded>true</ein:IsSucceded>"
+        "</ein:ArchiveInvoiceResult></Body>"
+    )
+    calls = []
+
+    async def _soap(*_a, **kw):
+        calls.append(kw.get("action"))
+        if kw.get("action") == "SendArchiveInvoiceXmlWithoutInvoiceNumber":
+            raise HTTPException(status_code=502, detail="İşNet SOAP Fault (SendArchiveInvoiceXmlWithoutInvoiceNumber): unknown")
+        return body
+
+    with patch("isnet._soap_call", side_effect=_soap):
+        info = asyncio.get_event_loop().run_until_complete(
+            isnet.send_invoice_xml(settings, ubl_xml="<Invoice/>", is_earchive=True)
+        )
+    assert calls == [
+        "SendArchiveInvoiceXmlWithoutInvoiceNumber",
+        "SendArchiveInvoiceXml",
+    ]
+    assert info["invoice_id"] == "UUU2026999000001"
+    assert info["action"] == "SendArchiveInvoiceXml"
+
+
+def test_is_provisional_invoice_number():
+    assert isnet.is_provisional_invoice_number("TKB2026000000130")
+    assert isnet.is_provisional_invoice_number("TKB2026000000130", "TKB2026000000130")
+    assert isnet.is_provisional_invoice_number("ABC", "ABC")
+    assert not isnet.is_provisional_invoice_number("UUU2026999464749", "TKB2026000000130")
+
+
 def test_send_archive_invoice_xml_ok_with_ettn():
     settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
     body = ET.fromstring(
@@ -666,7 +704,7 @@ def test_send_archive_invoice_xml_ok_with_ettn():
     assert info["ettn"].startswith("aaaaaaaa")
     assert info["invoice_id"] == "TA202600000095"
     kwargs = mock_call.await_args.kwargs
-    assert kwargs["action"] == "SendArchiveInvoiceXml"
+    assert kwargs["action"] == "SendArchiveInvoiceXmlWithoutInvoiceNumber"
     req = kwargs["request"]
     assert "ArchiveInvoices" in req
     # serialize uses ArchiveInvoiceXml wrapper
