@@ -528,7 +528,14 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         remaining = None
         if consume:
             remaining = await consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
-        gib_no = (sent.get("invoice_id") or "").strip()
+        # Resmi GİB/NetteFatura no — yerel TKB UBL id listeyi ezmesin
+        official = (sent.get("official_invoice_id") or "").strip()
+        number_source = (sent.get("number_source") or "").strip()
+        gib_no = official or ""
+        if not gib_no and number_source in ("portal", "xml", "soap"):
+            gib_no = (sent.get("invoice_id") or "").strip()
+        if not gib_no and provider not in ("isnet", "isnet_portal"):
+            gib_no = (sent.get("invoice_id") or "").strip()
         gib_mode = (sent.get("mode") or settings.get("mode") or "test").strip()
         gib_status = format_integrator_gib_status(
             label=label,
@@ -585,7 +592,7 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             "invoice_number": gib_no or inv.get("invoice_number"),
             "e_type": et,
             "gib_uuid": sent.get("ettn"),
-            "gib_invoice_id": sent.get("invoice_id"),
+            "gib_invoice_id": gib_no or None,
             "gib_status": gib_status,
             "tracking_id": tracking,
             "document_url": sent.get("document_url") or "",
@@ -793,12 +800,14 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
     provider = (inv.get("integrator") or settings.get("provider") or "").strip()
     if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
         return {"updated": False, "invoice": inv}
+    e_type = inv.get("e_type") or "e_archive"
+    hint_no = str(inv.get("gib_invoice_id") or inv.get("local_invoice_number") or inv.get("invoice_number") or "")
     info = await isnet.try_verify_outgoing_in_portal(
         settings,
         ettn,
-        e_type=inv.get("e_type") or "e_archive",
-        invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
-        retries=2,
+        e_type=e_type,
+        invoice_number=hint_no,
+        retries=3,
     )
     if not info.get("ok"):
         return {"updated": False, "invoice": inv, "verified": False}
@@ -807,6 +816,15 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
     if url:
         patch["gib_document_url"] = url
     gib_no = (info.get("invoice_id") or "").strip()
+    if not gib_no:
+        gib_no = await isnet.resolve_invoice_number_from_xml(
+            settings,
+            ettn,
+            e_type=e_type,
+            invoice_number=hint_no,
+            viewer_url=url or (inv.get("gib_document_url") or ""),
+        )
+        gib_no = (gib_no or "").strip()
     if gib_no:
         patch["gib_invoice_id"] = gib_no
         if gib_no.upper() != str(inv.get("invoice_number") or "").strip().upper():
@@ -1103,6 +1121,18 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
             patch["gib_document_url"] = url
 
         gib_no = (info.get("invoice_id") or "").strip()
+        if not gib_no:
+            try:
+                gib_no = await isnet.resolve_invoice_number_from_xml(
+                    settings,
+                    ettn,
+                    e_type=inv.get("e_type") or "e_archive",
+                    invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
+                    viewer_url=url or (inv.get("gib_document_url") or ""),
+                )
+                gib_no = (gib_no or "").strip()
+            except Exception:
+                logger.info("outbound status xml no resolve failed for %s", inv.get("_id"))
         if gib_no:
             if gib_no != (inv.get("gib_invoice_id") or ""):
                 patch["gib_invoice_id"] = gib_no

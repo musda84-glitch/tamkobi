@@ -793,17 +793,40 @@ async def send_document(
             status_code=502,
             detail="İşNet geçerli ETTN (UUID) döndürmedi — NetteFatura/GİB kaydı doğrulanamadı.",
         )
-    # Fatura no: SOAP → portal arama → UBL yerel (GİB/NetteFatura numarası öncelikli)
+    # Fatura no: portal (ETTN) → UBL cbc:ID → SOAP (yerel TKB UBL id resmi sayılmaz)
+    local_ubl = (inv_id or "").strip()
     soap_inv_no = (info.get("invoice_id") or "").strip()
     verified = await try_verify_outgoing_in_portal(
         merged,
         uuid_out,
         e_type=e_type,
-        invoice_number=soap_inv_no,
-        retries=3,
+        invoice_number=soap_inv_no or local_ubl,
+        retries=4,
     )
     portal_no = (verified.get("invoice_id") or "").strip()
-    inv_no = portal_no or soap_inv_no or (inv_id or invoice.get("invoice_number") or "").strip()
+    xml_no = ""
+    if not portal_no:
+        xml_no = await resolve_invoice_number_from_xml(
+            merged,
+            uuid_out,
+            e_type=e_type,
+            invoice_number=soap_inv_no or local_ubl,
+            viewer_url=(verified.get("document_url") or info.get("document_url") or ""),
+        )
+        xml_no = (xml_no or "").strip()
+
+    official = ""
+    number_source = "ubl"
+    if portal_no:
+        official, number_source = portal_no, "portal"
+    elif xml_no and (not local_ubl or xml_no.upper() != local_ubl.upper()):
+        # İşNet/GİB yerel TKB’den farklı resmi no kesti
+        official, number_source = xml_no, "xml"
+    elif soap_inv_no and (not local_ubl or soap_inv_no.upper() != local_ubl.upper()):
+        official, number_source = soap_inv_no, "soap"
+
+    # Geriye dönük: invoice_id her zaman dolu olsun; official ayrı alanda
+    inv_no = official or soap_inv_no or local_ubl or (invoice.get("invoice_number") or "").strip()
     portal_status = (verified.get("status") or "").strip()
     if not verified.get("ok"):
         logger.info(
@@ -811,10 +834,20 @@ async def send_document(
             uuid_out,
             soap_inv_no or inv_no,
         )
+    elif official and number_source in ("portal", "xml"):
+        logger.info(
+            "isnet fatura no kaynak=%s ettn=%s no=%s (ubl=%s)",
+            number_source,
+            uuid_out,
+            official,
+            local_ubl,
+        )
     return {
         "ettn": uuid_out,
         "invoice_id": inv_no,
-        "ubl_id": inv_id,
+        "official_invoice_id": official,
+        "number_source": number_source,
+        "ubl_id": local_ubl or inv_id,
         "document_url": verified.get("document_url") or info.get("document_url") or "",
         "description": info.get("message") or "",
         "provider": "isnet",
@@ -948,55 +981,139 @@ async def try_verify_outgoing_in_portal(
     """NetteFatura-API ile uyum: viewer/search soft doğrulama; bulunamazsa hata fırlatmaz.
 
     Send*Xml Success+ETTN yeterli kabul edilir; portal indeksi gecikebilir.
+    Fatura no için arama (ETTN) viewer'dan ayrı yapılır — viewer tek başına
+    InvoiceNumber döndürmez.
     """
     ettn = (ettn or "").strip()
     if not is_ettn_uuid(ettn):
         return {"ok": False, "document_url": "", "via": ""}
 
-    delays = (0.0, 0.8, 1.6)[: max(1, int(retries or 1))]
+    delays = (0.0, 0.8, 1.6, 3.0)[: max(1, int(retries or 1))]
     last_url = ""
+    found_no = ""
+    found_status = ""
+    found_code = ""
+    via = ""
     for attempt, delay in enumerate(delays):
         if delay:
             await asyncio.sleep(delay)
         # 1) GetDocumentViewerLink
         try:
             link = await get_document_viewer_link(
-                settings, ettn, e_type=e_type, invoice_number=invoice_number
+                settings, ettn, e_type=e_type, invoice_number=invoice_number or found_no
             )
             last_url = (link.get("url") or link.get("html_url") or link.get("pdf_url") or "").strip()
-            if last_url:
-                return {"ok": True, "document_url": last_url, "via": "viewer", "attempt": attempt + 1}
+            if last_url and not via:
+                via = "viewer"
         except HTTPException as e:
             logger.info("isnet soft-verify viewer miss ettn=%s try=%s: %s", ettn, attempt + 1, e.detail)
 
-        # 2) SearchArchiveInvoice / SearchInvoice
+        # 2) Search — önce ETTN ile (yerel TKB filtresi yanlış eşleşmeyi engellemesin)
         try:
             if e_type == "e_archive":
-                rows = await search_archive_invoice(
-                    settings, ettn=ettn, invoice_number=invoice_number
-                )
+                rows = await search_archive_invoice(settings, ettn=ettn, invoice_number="")
             else:
-                rows = await search_outgoing_invoice(
-                    settings, ettn=ettn, invoice_number=invoice_number
-                )
+                rows = await search_outgoing_invoice(settings, ettn=ettn, invoice_number="")
             needle = ettn.lower()
             for row in rows:
                 row_ettn = (row.get("ettn") or "").strip().lower()
                 row_no = (row.get("invoice_id") or "").strip()
                 if row_ettn == needle or (invoice_number and row_no == invoice_number):
-                    return {
-                        "ok": True,
-                        "document_url": last_url,
-                        "via": "search",
-                        "invoice_id": row_no,
-                        "status": (row.get("status") or "").strip(),
-                        "status_code": (row.get("status_code") or "").strip(),
-                        "attempt": attempt + 1,
-                    }
+                    if row_no:
+                        found_no = row_no
+                    found_status = (row.get("status") or "").strip() or found_status
+                    found_code = (row.get("status_code") or "").strip() or found_code
+                    via = via or "search"
+                    break
+            # ETTN satırında no yoksa, istenen local no ile ikinci arama
+            if not found_no and invoice_number:
+                if e_type == "e_archive":
+                    rows2 = await search_archive_invoice(
+                        settings, ettn="", invoice_number=invoice_number
+                    )
+                else:
+                    rows2 = await search_outgoing_invoice(
+                        settings, ettn="", invoice_number=invoice_number
+                    )
+                for row in rows2:
+                    row_ettn = (row.get("ettn") or "").strip().lower()
+                    row_no = (row.get("invoice_id") or "").strip()
+                    if row_ettn == needle or row_no == invoice_number:
+                        if row_no:
+                            found_no = row_no
+                        found_status = (row.get("status") or "").strip() or found_status
+                        found_code = (row.get("status_code") or "").strip() or found_code
+                        via = via or "search"
+                        break
         except HTTPException as e:
             logger.info("isnet soft-verify search miss ettn=%s try=%s: %s", ettn, attempt + 1, e.detail)
 
-    return {"ok": False, "document_url": last_url, "via": ""}
+        # Fatura no bulunduysa hemen dön; yalnız viewer URL varsa no için tekrar dene
+        if found_no:
+            return {
+                "ok": True,
+                "document_url": last_url,
+                "via": via or "search",
+                "invoice_id": found_no,
+                "status": found_status,
+                "status_code": found_code,
+                "attempt": attempt + 1,
+            }
+
+    # Son deneme: viewer varsa soft-ok (no sonra XML/refresh ile tamamlanır)
+    if last_url or found_no:
+        return {
+            "ok": True,
+            "document_url": last_url,
+            "via": via or ("viewer" if last_url else "search"),
+            "invoice_id": found_no,
+            "status": found_status,
+            "status_code": found_code,
+            "attempt": len(delays),
+        }
+
+    return {
+        "ok": False,
+        "document_url": last_url,
+        "via": via,
+        "invoice_id": found_no,
+        "status": found_status,
+        "status_code": found_code,
+    }
+
+
+async def resolve_invoice_number_from_xml(
+    settings: dict,
+    ettn: str,
+    *,
+    e_type: str = "e_archive",
+    invoice_number: str = "",
+    viewer_url: str = "",
+) -> str:
+    """Resmi UBL cbc:ID — İşNet'in kestiği fatura numarası."""
+    try:
+        data = await download_invoice_xml(
+            settings,
+            ettn,
+            e_type=e_type,
+            invoice_number=invoice_number,
+            viewer_url=viewer_url,
+        )
+    except Exception as e:
+        logger.info("resolve_invoice_number_from_xml failed ettn=%s: %s", ettn, e)
+        return ""
+    if not data:
+        return ""
+    try:
+        import xml.etree.ElementTree as ET
+
+        root = ET.fromstring(data)
+        cbc = "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}"
+        el = root.find(f"{cbc}ID")
+        return (el.text or "").strip() if el is not None else ""
+    except Exception:
+        logger.info("resolve_invoice_number_from_xml parse failed ettn=%s", ettn)
+        return ""
 
 
 async def verify_outgoing_in_portal(

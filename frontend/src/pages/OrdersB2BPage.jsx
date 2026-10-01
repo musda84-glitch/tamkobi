@@ -722,6 +722,10 @@ export default function OrdersB2BPage() {
             await axios.post(`${API_URL}/invoices/${ord.invoice_id}/send-to-gib`, {
               e_type: ord.e_type || orderEBelgeType(ord, contacts),
             });
+            try {
+              const st = await axios.post(`${API_URL}/e-invoice/${ord.invoice_id}/refresh-status`);
+              if (st.data?.invoice_number) toast.message(`GİB fatura no: ${st.data.invoice_number}`);
+            } catch { /* ignore */ }
             toast.success("E-Arşiv yazdırma açıldı; GİB gönderimi tetiklendi.");
             loadData();
           } catch (err) {

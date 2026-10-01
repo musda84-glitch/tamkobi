@@ -485,10 +485,14 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     try {
       const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`, eType ? { e_type: eType } : {});
       toast.success(res.data.message);
-      // Portal/GİB durumu gecikebilir — hemen bir kez daha çek
+      // Portal/GİB fatura no + durumu gecikebilir — hemen bir kez daha çek
       try {
         const st = await axios.post(`${API_URL}/e-invoice/${invId}/refresh-status`);
-        if (st.data?.gib_status) toast.message(st.data.gib_status);
+        if (st.data?.invoice_number) {
+          toast.message(`GİB fatura no: ${st.data.invoice_number}`);
+        } else if (st.data?.gib_status) {
+          toast.message(st.data.gib_status);
+        }
       } catch { /* liste yine yenilenecek */ }
       loadData();
     } catch (err) {
