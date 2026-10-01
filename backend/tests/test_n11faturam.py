@@ -121,6 +121,10 @@ class TestN11FaturamUnit:
         assert "1234567801" in xml and "Koltuk" in xml
         assert "<cac:Country>" in xml and "<cbc:Country>" not in xml
         assert "<cbc:IssueTime>" in xml
+        # İşNet Send*Xml imza önkoşulu
+        assert "<ext:UBLExtensions>" in xml and "<ext:ExtensionContent/>" in xml
+        assert "<cac:Signature>" in xml and "#Signature" in xml
+        assert 'schemeID="VKN_TCKN"' in xml
         assert root is not None
         xml2, _, _ = n11faturam.build_ubl({**inv, "e_type": "e_archive", "contact_tax_id": ""}, company, {"name": "Ali Veli"})
         assert "EARSIVFATURA" in xml2 and "11111111111" in xml2

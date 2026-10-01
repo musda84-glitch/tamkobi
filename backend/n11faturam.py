@@ -233,10 +233,42 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
     <cbc:DocumentDescription>{internet}</cbc:DocumentDescription>
   </cac:AdditionalDocumentReference>"""
 
+    # İşNet Send*Xml: imza için UBLExtensions (boş ExtensionContent) + dolu Signature zorunlu.
+    # ExtensionContent'i entegratör XAdES ile doldurur; URI #Signature eşleşmeli.
+    seller_street = _esc(company.get("address") or "-")
+    seller_city = _esc(company.get("city") or "İstanbul")
+    seller_district = _esc(company.get("district") or company.get("tax_office") or "-")
+    signature_block = f"""
+  <cac:Signature>
+    <cbc:ID schemeID="VKN_TCKN">{_esc(seller_tax)}</cbc:ID>
+    <cac:SignatoryParty>
+      <cac:PartyIdentification>
+        <cbc:ID schemeID="{seller_scheme}">{_esc(seller_tax)}</cbc:ID>
+      </cac:PartyIdentification>
+      <cac:PostalAddress>
+        <cbc:StreetName>{seller_street}</cbc:StreetName>
+        <cbc:CitySubdivisionName>{seller_district}</cbc:CitySubdivisionName>
+        <cbc:CityName>{seller_city}</cbc:CityName>
+        <cac:Country><cbc:Name>Türkiye</cbc:Name></cac:Country>
+      </cac:PostalAddress>
+    </cac:SignatoryParty>
+    <cac:DigitalSignatureAttachment>
+      <cac:ExternalReference>
+        <cbc:URI>#Signature</cbc:URI>
+      </cac:ExternalReference>
+    </cac:DigitalSignatureAttachment>
+  </cac:Signature>"""
+
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
          xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
-         xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+         xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
+         xmlns:ext="urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2">
+  <ext:UBLExtensions>
+    <ext:UBLExtension>
+      <ext:ExtensionContent/>
+    </ext:UBLExtension>
+  </ext:UBLExtensions>
   <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
   <cbc:CustomizationID>TR1.2</cbc:CustomizationID>
   <cbc:ProfileID>{profile}</cbc:ProfileID>
@@ -251,6 +283,7 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
   <cbc:LineCountNumeric>{len(items)}</cbc:LineCountNumeric>
   {archive_refs}
   <cac:OrderReference><cbc:ID>{_esc(invoice.get("order_number") or invoice.get("invoice_number") or inv_id)}</cbc:ID></cac:OrderReference>
+  {signature_block}
   <cac:AccountingSupplierParty>{party(seller_tax, seller_scheme, company.get("name") or "Satıcı", company)}</cac:AccountingSupplierParty>
   <cac:AccountingCustomerParty>{party(buyer_tax, buyer_scheme, buyer_name, contact_for_party)}</cac:AccountingCustomerParty>
   <cac:PaymentMeans>
