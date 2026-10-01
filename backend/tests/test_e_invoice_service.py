@@ -48,8 +48,22 @@ class TestScenarioAndBuyer:
         assert "Test" in e_invoice.format_integrator_gib_status(
             label="İşNet", mode="test", portal_status="", verified=False
         )
-        assert "GİB onaylı" in e_invoice.format_integrator_gib_status(
+        assert "Başarıyla Tamamlandı" in e_invoice.format_integrator_gib_status(
             label="İşNet", mode="live", portal_status="Succeed", verified=True
+        )
+        assert "Başarıyla Tamamlandı" in e_invoice.format_integrator_gib_status(
+            label="İşNet",
+            mode="test",
+            portal_status="Basariyla_Tamamlandi",
+            status_code="1300",
+            verified=True,
+        )
+        assert "Schematron" in e_invoice.format_integrator_gib_status(
+            label="İşNet",
+            mode="live",
+            portal_status="Schematron_Kontrol_Sonucu_Hatali",
+            status_code="1150",
+            verified=True,
         )
         assert e_invoice.format_integrator_gib_status(
             label="İşNet SOAP API", mode="live", portal_status="", verified=True

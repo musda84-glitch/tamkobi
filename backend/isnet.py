@@ -360,6 +360,199 @@ def _find_all(root: Optional[ET.Element], *names: str) -> List[ET.Element]:
     return [el for el in root.iter() if _local(el.tag).lower() in wanted]
 
 
+# Invoice.DetailStatus = GİB zarf/iletim kodu (WSDL InvoiceDetailStatus).
+# Invoice.Status = İşNet süreç durumu (Imza_Bekliyor, Gibe_Iletildi, …).
+_DETAIL_STATUS_CODE_BY_ENUM = {
+    "zarflanmadi": "1",
+    "zarf_kuyruga_eklendi": "1000",
+    "zarf_isleniyor": "1100",
+    "zip_dosyasi_degil": "1110",
+    "zarfid_uzunlugu_gecersiz": "1111",
+    "zarf_arsivden_kopyalanamadi": "1120",
+    "zip_acilamadi": "1130",
+    "zip_bir_dosya_icermeli": "1131",
+    "xml_dosyasi_degil": "1132",
+    "zarf_id_ve_xml_dosyasinin_adi_ayni_olmali": "1133",
+    "dokuman_ayristirilamadi": "1140",
+    "zarf_id_yok": "1141",
+    "zarf_id_ve_zip_dosyasi_adi_ayni_olmali": "1142",
+    "gecersiz_versiyon": "1143",
+    "schematron_kontrol_sonucu_hatali": "1150",
+    "xml_sema_kontrolundan_gecemedi": "1160",
+    "imza_sahibi_tckn_vkn_alinamadi": "1161",
+    "imza_kaydedilemedi": "1162",
+    "gonderilen_zarf_kayitli_bir_fatura_icermelidir": "1163",
+    "gonderilen_zarf_kayitli_bir_belge_icermektedir": "1164",
+    "yetki_kontrol_edilemedi": "1170",
+    "gonderici_birim_yetkisi_yok": "1171",
+    "posta_kutusu_yetkisi_yok": "1172",
+    "islem_yetkisi_yok": "1173",
+    "fatura_islem_yetkisi_yok": "1174",
+    "imza_yetkisi_kontrol_edilemedi": "1175",
+    "imza_sahibi_yetkisi": "1176",
+    "gecersiz_imza": "1177",
+    "adres_kontrol_edilemedi": "1180",
+    "adres_bulunamadi": "1181",
+    "kullanici_eklenemedi": "1182",
+    "kullanici_silinemedi": "1183",
+    "sistem_yaniti_hazirlanamadi": "1190",
+    "sistem_hatasi": "1195",
+    "zarf_basariyla_islendi": "1200",
+    "dokuman_bulunan_adrese_gonderilemedi": "1210",
+    "dokuman_gonderimi_basarisiz_tekrar_gonderme_sonlandi": "1215",
+    "hedeften_sistem_yaniti_gelmedi": "1220",
+    "hedeften_sistem_yaniti_basarisiz_geldi": "1230",
+    "fatura_iptale_konu_edildi": "1235",
+    "basariyla_tamamlandi": "1300",
+}
+
+_DETAIL_STATUS_LABEL_BY_CODE = {
+    "1": "Zarflanmadı",
+    "1000": "Zarf kuyruğa eklendi",
+    "1100": "Zarf işleniyor",
+    "1110": "ZIP dosyası değil",
+    "1111": "Zarf ID uzunluğu geçersiz",
+    "1120": "Zarf arşivden kopyalanamadı",
+    "1130": "ZIP açılamadı",
+    "1131": "ZIP bir dosya içermeli",
+    "1132": "XML dosyası değil",
+    "1133": "Zarf ID ve XML dosya adı aynı olmalı",
+    "1140": "Doküman ayrıştırılamadı",
+    "1141": "Zarf ID yok",
+    "1142": "Zarf ID ve ZIP dosya adı aynı olmalı",
+    "1143": "Geçersiz versiyon",
+    "1150": "Schematron kontrol sonucu hatalı",
+    "1160": "XML şema kontrolünden geçemedi",
+    "1161": "İmza sahibi TCKN/VKN alınamadı",
+    "1162": "İmza kaydedilemedi",
+    "1163": "Gönderilen zarf kayıtlı bir fatura içermektedir",
+    "1164": "Gönderilen zarf kayıtlı bir belge içermektedir",
+    "1170": "Yetki kontrol edilemedi",
+    "1171": "Gönderici birim yetkisi yok",
+    "1172": "Posta kutusu yetkisi yok",
+    "1173": "İşlem yetkisi yok",
+    "1174": "Fatura işlem yetkisi yok",
+    "1175": "İmza yetkisi kontrol edilemedi",
+    "1176": "İmza sahibi yetkisiz",
+    "1177": "Geçersiz imza",
+    "1180": "Adres kontrol edilemedi",
+    "1181": "Adres bulunamadı",
+    "1182": "Kullanıcı eklenemedi",
+    "1183": "Kullanıcı silinemedi",
+    "1190": "Sistem yanıtı hazırlanamadı",
+    "1195": "Sistem hatası",
+    "1200": "Zarf başarıyla işlendi",
+    "1210": "Doküman bulunan adrese gönderilemedi",
+    "1215": "Doküman gönderimi başarısız — tekrar gönderme sonlandı",
+    "1220": "Hedeften sistem yanıtı gelmedi",
+    "1230": "Hedeften sistem yanıtı başarısız geldi",
+    "1235": "Fatura iptale konu edildi",
+    "1300": "Başarıyla Tamamlandı",
+}
+
+_PROCESS_STATUS_LABELS = {
+    "onay_bekliyor": "Onay bekliyor",
+    "onaylandi": "Onaylandı",
+    "reddedildi": "Reddedildi",
+    "onay_akisinda": "Onay akışında",
+    "iade_edildi": "İade edildi",
+    "gonderildi": "Gönderildi",
+    "ziplendi": "Ziplenmiş",
+    "gibe_iletildi": "GİB'e iletildi",
+    "imza_bekliyor": "İmza bekliyor",
+    "gib_tarafinda_hata_olustu": "GİB tarafında hata oluştu",
+    "sistem_hatasi": "Sistem hatası",
+    "alici_kabul_etti": "Alıcı kabul etti",
+    "alici_reddetti": "Alıcı reddetti",
+    "alici_iade_etti": "Alıcı iade etti",
+    "otomatik_onaylandi": "Otomatik onaylandı",
+    "otomatik_alici_kabul_etti": "Otomatik alıcı kabul etti",
+}
+
+
+def _norm_status_key(value: str) -> str:
+    s = (value or "").strip().lower()
+    for ch in ("ı", "İ"):
+        s = s.replace(ch, "i")
+    s = (
+        s.replace("ş", "s")
+        .replace("ğ", "g")
+        .replace("ü", "u")
+        .replace("ö", "o")
+        .replace("ç", "c")
+        .replace(" ", "_")
+        .replace("-", "_")
+    )
+    return s
+
+
+def resolve_gib_transmission_status(
+    *,
+    detail_status: str = "",
+    process_status: str = "",
+    status_code: str = "",
+) -> Dict[str, str]:
+    """GİB iletim durumu: DetailStatus (1300…) öncelikli; yoksa süreç Status."""
+    detail = (detail_status or "").strip()
+    process = (process_status or "").strip()
+    code = (status_code or "").strip()
+
+    if detail:
+        key = _norm_status_key(detail)
+        if key.isdigit():
+            code = code or key
+        else:
+            code = code or _DETAIL_STATUS_CODE_BY_ENUM.get(key, "")
+        # Zarflanmadı = henüz GİB iletimi yok → süreç Status'a düş
+        if key not in ("zarflanmadi", "1") and code not in ("", "1"):
+            if code in _DETAIL_STATUS_LABEL_BY_CODE:
+                return {"status": _DETAIL_STATUS_LABEL_BY_CODE[code], "status_code": code, "source": "detail"}
+            label = detail.replace("_", " ").strip()
+            return {"status": label, "status_code": code, "source": "detail"}
+
+    if code and code in _DETAIL_STATUS_LABEL_BY_CODE and code not in ("1",):
+        return {"status": _DETAIL_STATUS_LABEL_BY_CODE[code], "status_code": code, "source": "code"}
+
+    if process:
+        pkey = _norm_status_key(process)
+        if pkey in _PROCESS_STATUS_LABELS:
+            return {"status": _PROCESS_STATUS_LABELS[pkey], "status_code": code, "source": "process"}
+        if pkey in _DETAIL_STATUS_CODE_BY_ENUM:
+            c = _DETAIL_STATUS_CODE_BY_ENUM[pkey]
+            return {
+                "status": _DETAIL_STATUS_LABEL_BY_CODE.get(c, process.replace("_", " ")),
+                "status_code": c,
+                "source": "process",
+            }
+        return {"status": process.replace("_", " ").strip(), "status_code": code, "source": "process"}
+
+    return {"status": "", "status_code": code, "source": ""}
+
+
+def _search_row_from_el(inv: ET.Element) -> Dict[str, Any]:
+    """SearchInvoice / SearchArchiveInvoice satırı — DetailStatus = GİB iletim."""
+    process = _find_text(inv, "Status", "State", "StatusDescription", "InvoiceStatus")
+    detail = _find_text(inv, "DetailStatus", "InvoiceDetailStatus")
+    # StatusCode alanı Invoice'da yok; yanlışlıkla nested Code çekilmesin
+    resolved = resolve_gib_transmission_status(
+        detail_status=detail,
+        process_status=process,
+        status_code="",
+    )
+    return {
+        "ettn": _find_text(inv, "ETTN", "Ettn", "UUID", "InvoiceETTN"),
+        "invoice_id": _find_text(
+            inv, "InvoiceNumber", "ArchiveInvoiceNumber", "InvoiceId", "ID"
+        ),
+        "status": resolved["status"],
+        "status_code": resolved["status_code"],
+        "detail_status": detail,
+        "process_status": process,
+        "envelope_id": _find_text(inv, "EnvelopeId", "EnvelopeID"),
+        "status_source": resolved["source"],
+    }
+
+
 _FAIL_RESULTS = frozenset({"failed", "error", "false", "0"})
 _ETTN_UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -1189,7 +1382,9 @@ async def send_document(
             break
 
     inv_no = official or soap_inv_no or local_ubl or (invoice.get("invoice_number") or "").strip()
+    # GİB iletim: DetailStatus (1300 Başarıyla Tamamlandı); süreç Status yedek
     portal_status = (verified.get("status") or "").strip()
+    portal_code = (verified.get("status_code") or "").strip()
     if not verified.get("ok"):
         logger.info(
             "isnet soft-verify pending ettn=%s inv=%s action=%s",
@@ -1199,11 +1394,13 @@ async def send_document(
         )
     elif official:
         logger.info(
-            "isnet fatura no kaynak=%s ettn=%s no=%s action=%s",
+            "isnet fatura no kaynak=%s ettn=%s no=%s action=%s status=%s code=%s",
             number_source,
             uuid_out,
             official,
             send_mode,
+            portal_status or "-",
+            portal_code or "-",
         )
     return {
         "ettn": uuid_out,
@@ -1218,7 +1415,7 @@ async def send_document(
         "verified": bool(verified.get("ok")),
         "verify_via": verified.get("via") or "",
         "gib_status_raw": portal_status,
-        "gib_status_code": (verified.get("status_code") or "").strip(),
+        "gib_status_code": portal_code,
         "mode": "test" if is_test_mode(merged) else "live",
         "send_mode": send_mode,
     }
@@ -1269,14 +1466,7 @@ async def search_archive_invoice(
     )
     out: List[Dict[str, Any]] = []
     for inv in _find_all(body, "ArchiveInvoice", "ArchiveInvoiceInfo", "Invoice", "ArchiveInvoiceReturn"):
-        out.append(
-            {
-                "ettn": _find_text(inv, "ETTN", "Ettn", "UUID", "InvoiceETTN"),
-                "invoice_id": _find_text(inv, "InvoiceNumber", "ArchiveInvoiceNumber", "InvoiceId", "ID"),
-                "status": _find_text(inv, "Status", "State", "StatusDescription", "InvoiceStatus"),
-                "status_code": _find_text(inv, "StatusCode", "Code"),
-            }
-        )
+        out.append(_search_row_from_el(inv))
     return out
 
 
@@ -1323,14 +1513,7 @@ async def search_outgoing_invoice(
     )
     out: List[Dict[str, Any]] = []
     for inv in _find_all(body, "Invoice", "InvoiceInfo", "Document"):
-        out.append(
-            {
-                "ettn": _find_text(inv, "ETTN", "Ettn", "UUID", "InvoiceETTN"),
-                "invoice_id": _find_text(inv, "InvoiceNumber", "InvoiceId", "ID"),
-                "status": _find_text(inv, "Status", "State", "StatusDescription", "InvoiceStatus"),
-                "status_code": _find_text(inv, "StatusCode", "Code"),
-            }
-        )
+        out.append(_search_row_from_el(inv))
     return out
 
 
@@ -1357,7 +1540,25 @@ async def try_verify_outgoing_in_portal(
     found_no = ""
     found_status = ""
     found_code = ""
+    found_detail = ""
+    found_process = ""
     via = ""
+
+    def _apply_row(row: Dict[str, Any]) -> None:
+        nonlocal found_no, found_status, found_code, found_detail, found_process, via
+        row_no = (row.get("invoice_id") or "").strip()
+        if row_no:
+            found_no = row_no
+        if row.get("status"):
+            found_status = str(row.get("status") or "").strip()
+        if row.get("status_code"):
+            found_code = str(row.get("status_code") or "").strip()
+        if row.get("detail_status"):
+            found_detail = str(row.get("detail_status") or "").strip()
+        if row.get("process_status"):
+            found_process = str(row.get("process_status") or "").strip()
+        via = via or "search"
+
     for attempt, delay in enumerate(delays):
         if delay:
             await asyncio.sleep(delay)
@@ -1383,11 +1584,7 @@ async def try_verify_outgoing_in_portal(
                 row_ettn = (row.get("ettn") or "").strip().lower()
                 row_no = (row.get("invoice_id") or "").strip()
                 if row_ettn == needle or (invoice_number and row_no == invoice_number):
-                    if row_no:
-                        found_no = row_no
-                    found_status = (row.get("status") or "").strip() or found_status
-                    found_code = (row.get("status_code") or "").strip() or found_code
-                    via = via or "search"
+                    _apply_row(row)
                     break
             # ETTN satırında no yoksa, istenen local no ile ikinci arama
             if not found_no and invoice_number:
@@ -1403,11 +1600,7 @@ async def try_verify_outgoing_in_portal(
                     row_ettn = (row.get("ettn") or "").strip().lower()
                     row_no = (row.get("invoice_id") or "").strip()
                     if row_ettn == needle or row_no == invoice_number:
-                        if row_no:
-                            found_no = row_no
-                        found_status = (row.get("status") or "").strip() or found_status
-                        found_code = (row.get("status_code") or "").strip() or found_code
-                        via = via or "search"
+                        _apply_row(row)
                         break
         except HTTPException as e:
             logger.info("isnet soft-verify search miss ettn=%s try=%s: %s", ettn, attempt + 1, e.detail)
@@ -1421,6 +1614,8 @@ async def try_verify_outgoing_in_portal(
                 "invoice_id": found_no,
                 "status": found_status,
                 "status_code": found_code,
+                "detail_status": found_detail,
+                "process_status": found_process,
                 "attempt": attempt + 1,
             }
 
@@ -1433,6 +1628,8 @@ async def try_verify_outgoing_in_portal(
             "invoice_id": found_no,
             "status": found_status,
             "status_code": found_code,
+            "detail_status": found_detail,
+            "process_status": found_process,
             "attempt": len(delays),
         }
 
@@ -1443,6 +1640,8 @@ async def try_verify_outgoing_in_portal(
         "invoice_id": found_no,
         "status": found_status,
         "status_code": found_code,
+        "detail_status": found_detail,
+        "process_status": found_process,
     }
 
 

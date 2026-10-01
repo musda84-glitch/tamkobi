@@ -4,7 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import {
   FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock,
-  Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink, Trash2, Receipt, Pencil, Loader2, Copy,
+  Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink, Trash2, Receipt, Pencil, Loader2, Copy, RefreshCw,
 } from "lucide-react";
 import { canCopyInvoice, INVOICE_COPY_MODES } from "./invoiceCopyModes";
 
@@ -55,6 +55,31 @@ function triggerBlobDownload(blob, filename) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+/** NetteFatura / GİB iletim durumunu (DetailStatus → 1300) senkronla. */
+export async function refreshInvoiceGibStatus(apiBase, inv, { onUpdated } = {}) {
+  const id = inv?.id || inv?._id;
+  if (!apiBase || !id) {
+    toast.error("Fatura bulunamadı.");
+    return null;
+  }
+  try {
+    const r = await axios.post(`${apiBase}/e-invoice/${id}/refresh-status`);
+    const gs = r.data?.gib_status || "";
+    const no = r.data?.invoice_number || r.data?.gib_invoice_id || "";
+    if (r.data?.updated) {
+      toast.success(gs ? `GİB durumu: ${gs}` : (r.data?.message || "GİB durumu güncellendi."));
+      if (no) toast.message(`Fatura no: ${no}`);
+    } else {
+      toast.message(r.data?.message || gs || "Yeni GİB durumu yok.");
+    }
+    if (typeof onUpdated === "function") onUpdated(r.data);
+    return r.data;
+  } catch (err) {
+    toast.error(err?.response?.data?.detail || "GİB durumu alınamadı.");
+    return null;
+  }
 }
 
 /** UBL XML: entegratör → yerel UBL. */
@@ -194,7 +219,9 @@ export function isIncomingPurchasePending(inv) {
 
 /** Yalnızca GİB'e gerçekten iletilmiş / kağıt kesilmiş faturalar "kesildi" sayılır. */
 export const GIB_ISSUED_STATUSES = new Set([
+  "Başarıyla Tamamlandı",
   "Başarıyla İletildi (GİB Onaylı)",
+  "GİB onaylı",
   "Kağıt Fatura (Matbu)",
   "n11 Faturam ile GİB'e iletildi",
   "İşNet SOAP API ile GİB'e iletildi",
@@ -207,12 +234,14 @@ export const GIB_ISSUED_STATUSES = new Set([
 export function isGibIssued(inv) {
   if (!inv) return false;
   const gs = String(inv.gib_status || "");
+  const gsBare = gs.replace(/^test\s*·\s*/i, "").trim();
   // Hata: ... iletildi mesajı /ileti/ regex'ine takılmasın
-  if (inv.einvoice_state === "error" || /^\s*hata\s*:/i.test(gs)) return false;
+  if (inv.einvoice_state === "error" || /^\s*hata\s*:/i.test(gsBare)) return false;
   if (inv.einvoice_state === "sent" || inv.einvoice_state === "queued") return true;
   if (inv.gib_tracking_id) return true;
-  if (GIB_ISSUED_STATUSES.has(gs)) return true;
-  return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gs) && !/onaylandı$/i.test(gs);
+  if (GIB_ISSUED_STATUSES.has(gs) || GIB_ISSUED_STATUSES.has(gsBare)) return true;
+  if (/başarıyla tamamland/i.test(gsBare)) return true;
+  return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gsBare) && !/onaylandı$/i.test(gsBare);
 }
 
 /** Taslak ve (ödenmemiş) kağıt faturalar silinebilir. Gelen GİB e-belge silinmez. */
@@ -326,7 +355,7 @@ export function shouldResolveIssueFromGib(eType) {
 }
 export const InvoiceContextMenu = (props) => {
   const {
-    menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onDelete, onCancel, onExpenseSlip, onEdit, onCopy,
+    menu, onClose, onIssue, onPreview, onPrint, onNotify, onPayment, onInstallments, onDispatch, onDelete, onCancel, onExpenseSlip, onEdit, onCopy, onGibStatusRefreshed,
   } = props;
   const onAcceptIncoming = props.onAcceptIncoming;
   const onRejectIncoming = props.onRejectIncoming;
@@ -554,6 +583,16 @@ export const InvoiceContextMenu = (props) => {
       {!isPurchase && showGibDownloads && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-edoc-downloads">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
+          {(inv.gib_uuid || inv.gib_tracking_id) && (
+            <Item
+              icon={RefreshCw}
+              color="text-emerald-600"
+              label="GİB Durumunu Güncelle"
+              sub="NetteFatura iletim (1300 Başarıyla Tamamlandı)"
+              onClick={() => refreshInvoiceGibStatus(apiBase, inv, { onUpdated: onGibStatusRefreshed })}
+              testId="ctx-refresh-gib-status"
+            />
+          )}
           <Item icon={FileCode2} color="text-indigo-600" label="UBL XML İndir" sub="Entegratör GİB UBL-TR" onClick={() => downloadInvoiceXmlEdoc(apiBase, inv)} testId="ctx-download-xml" />
           <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Entegratör e-belge PDF" onClick={() => downloadInvoicePdfEdoc(apiBase, inv)} testId="ctx-download-pdf" />
           {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (

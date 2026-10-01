@@ -160,21 +160,52 @@ def format_integrator_gib_status(
     mode: str = "",
     portal_status: str = "",
     verified: bool = False,
+    status_code: str = "",
 ) -> str:
-    """Liste «GİB Durumu» metni — test/canlı + portal durumu."""
+    """Liste «GİB Durumu» metni — test/canlı + GİB iletim (DetailStatus/1300)."""
     mode_l = (mode or "").strip().lower()
     is_test = mode_l in ("test", "sandbox", "demo")
     prefix = "Test · " if is_test else ""
     portal = (portal_status or "").strip()
+    code = (status_code or "").strip()
+
+    # Ham DetailStatus enum / kod gelmişse Türkçe iletime çevir
+    if portal or code:
+        try:
+            resolved = isnet.resolve_gib_transmission_status(
+                detail_status=portal if "_" in portal or (portal.isdigit()) else "",
+                process_status="" if ("_" in portal or portal.isdigit()) else portal,
+                status_code=code,
+            )
+            if resolved.get("status"):
+                portal = resolved["status"]
+            if resolved.get("status_code"):
+                code = resolved["status_code"]
+        except Exception:
+            pass
+
     if portal:
-        # Ham İngilizce kodları kısaca Türkçeleştir
-        low = portal.lower()
-        if low in ("succeed", "succeeded", "success", "approved", "completed", "ok"):
-            portal = "GİB onaylı"
-        elif "wait" in low or "pending" in low or "1220" in low:
+        low = portal.lower().replace("ı", "i").replace("İ", "i")
+        # 1300 — nihai GİB iletim durumu
+        if code == "1300" or "basariyla tamamland" in low:
+            portal = "Başarıyla Tamamlandı"
+        elif low in ("succeed", "succeeded", "success", "approved", "completed", "ok", "gib onayli"):
+            portal = "Başarıyla Tamamlandı"
+        elif code == "1220" or "hedeften sistem yaniti gelmedi" in low:
             portal = "Alıcı yanıtı bekleniyor"
-        elif "fail" in low or "error" in low or "hata" in low:
-            portal = f"Hata: {portal}"
+        elif "wait" in low or "pending" in low:
+            portal = "Alıcı yanıtı bekleniyor"
+        elif (
+            code in ("1150", "1160", "1162", "1177", "1195", "1215", "1230")
+            or "schematron" in low
+            or low.startswith("hata")
+            or "fail" in low
+            or "error" in low
+            or "hatali" in low
+            or "basarisiz" in low
+        ):
+            if not low.startswith("hata"):
+                portal = f"Hata: {portal}"
         return f"{prefix}{portal}"
     if verified:
         return f"{prefix}{label} ile GİB'e iletildi"
@@ -542,6 +573,7 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             mode=gib_mode,
             portal_status=sent.get("gib_status_raw") or "",
             verified=bool(sent.get("verified")),
+            status_code=str(sent.get("gib_status_code") or ""),
         )
         patch = {
             "status": "approved",
@@ -837,6 +869,7 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
         mode=inv.get("gib_mode") or settings.get("mode") or "",
         portal_status=(info.get("status") or "").strip(),
         verified=True,
+        status_code=str(info.get("status_code") or ""),
     )
     if info.get("status_code"):
         patch["gib_status_code"] = info.get("status_code")
@@ -1149,6 +1182,7 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
                 mode=inv.get("gib_mode") or settings.get("mode") or "",
                 portal_status=portal_status,
                 verified=True,
+                status_code=str(info.get("status_code") or ""),
             )
             if new_gs != (inv.get("gib_status") or ""):
                 patch["gib_status"] = new_gs
