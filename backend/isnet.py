@@ -65,11 +65,27 @@ ARR_NS = "http://schemas.microsoft.com/2003/10/Serialization/Arrays"
 _ARRAY_ITEM = {
     "Invoices": "InvoiceXml",
     "ArchiveInvoices": "ArchiveInvoiceXml",
+    "InvoiceDetails": "InvoiceDetail",
     "TaxPayers": "TaxPayer",
     "InboxTagList": "string",
     "OutboxTagList": "string",
     "Aliases": "Alias",
     "Notes": "string",
+    "FinancialAccount": "FinancialAccount",
+    "InvoiceTotalTaxList": "Tax",
+    "Taxes": "Tax",
+}
+
+# Yapısal SendInvoice / SendArchiveInvoice (InvoiceNumber yok → İşNet atar)
+_ARRAY_ITEM_STRUCTURED_INVOICE = {
+    **_ARRAY_ITEM,
+    "Invoices": "Invoice",
+    "InvoiceDetails": "InvoiceDetail",
+}
+_ARRAY_ITEM_STRUCTURED_ARCHIVE = {
+    **_ARRAY_ITEM,
+    "ArchiveInvoices": "ArchiveInvoice",
+    "InvoiceDetails": "ArchiveInvoiceDetail",
 }
 
 
@@ -431,8 +447,14 @@ def _assert_soap_execution_ok(body: ET.Element, action: str) -> None:
             raise HTTPException(status_code=400, detail=top_err)
 
 
-def _serialize_ein(obj: Any, parent: Optional[str] = None) -> str:
+def _serialize_ein(
+    obj: Any,
+    parent: Optional[str] = None,
+    *,
+    array_map: Optional[Dict[str, str]] = None,
+) -> str:
     """WCF DataContract SOAP gövdesi — NetteFatura-API serializeToSoapXml (alfabetik anahtar)."""
+    amap = array_map or _ARRAY_ITEM
     if obj is None:
         return ""
     if isinstance(obj, bool):
@@ -442,11 +464,13 @@ def _serialize_ein(obj: Any, parent: Optional[str] = None) -> str:
     if isinstance(obj, str):
         return xml_esc(obj)
     if isinstance(obj, list):
-        item_name = _ARRAY_ITEM.get(parent or "", "Item")
+        item_name = amap.get(parent or "", "Item")
         chunks = []
         for item in obj:
             if isinstance(item, dict):
-                chunks.append(f"<ein:{item_name}>{_serialize_ein(item, item_name)}</ein:{item_name}>")
+                chunks.append(
+                    f"<ein:{item_name}>{_serialize_ein(item, item_name, array_map=amap)}</ein:{item_name}>"
+                )
             else:
                 chunks.append(f"<ein:{item_name}>{xml_esc(str(item))}</ein:{item_name}>")
         return "".join(chunks)
@@ -457,11 +481,11 @@ def _serialize_ein(obj: Any, parent: Optional[str] = None) -> str:
             if val is None or (isinstance(val, list) and not val):
                 continue
             if isinstance(val, (dict, list)):
-                inner = _serialize_ein(val, key)
+                inner = _serialize_ein(val, key, array_map=amap)
                 if inner:
                     parts.append(f"<ein:{key}>{inner}</ein:{key}>")
             else:
-                parts.append(f"<ein:{key}>{_serialize_ein(val, key)}</ein:{key}>")
+                parts.append(f"<ein:{key}>{_serialize_ein(val, key, array_map=amap)}</ein:{key}>")
         return "".join(parts)
     return xml_esc(str(obj))
 
@@ -474,9 +498,10 @@ async def _soap_call(
     service_interface: str,
     request: Optional[dict] = None,
     timeout: float = 60.0,
+    array_map: Optional[Dict[str, str]] = None,
 ) -> ET.Element:
     _ = settings
-    inner = _serialize_ein(request or {})
+    inner = _serialize_ein(request or {}, array_map=array_map)
     envelope = (
         '<?xml version="1.0" encoding="utf-8"?>'
         '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" '
@@ -620,6 +645,278 @@ def _ensure_b64(xml_or_b64: str) -> str:
         return base64.b64encode(raw.encode("utf-8")).decode("ascii")
 
 
+def _round2(value: Any) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _measure_unit(raw: Any) -> str:
+    u = str(raw or "Adet").strip().upper()
+    mapping = {
+        "ADET": "NIU",
+        "AD": "NIU",
+        "NIU": "NIU",
+        "KG": "KGM",
+        "KGM": "KGM",
+        "LT": "LTR",
+        "LTR": "LTR",
+        "M": "MTR",
+        "MTR": "MTR",
+        "M2": "MTK",
+        "MTK": "MTK",
+        "M3": "MTQ",
+        "MTQ": "MTQ",
+        "PAKET": "PK",
+        "PK": "PK",
+        "SAAT": "HUR",
+        "HUR": "HUR",
+    }
+    return mapping.get(u, "NIU")
+
+
+def build_structured_invoice(
+    invoice: dict,
+    company: dict,
+    contact: Optional[dict],
+    *,
+    is_earchive: bool,
+    receiver_alias: str = "",
+) -> Dict[str, Any]:
+    """NetteFatura yapısal Invoice / ArchiveInvoice — InvoiceNumber YOK (İşNet atar)."""
+    import uuid as _uuid
+
+    issue = (invoice.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
+    currency = invoice.get("currency") or "TRY"
+    items = invoice.get("items") or []
+    details = []
+    for idx, it in enumerate(items, start=1):
+        qty = _round2(it.get("quantity") or 1)
+        unit = _round2(it.get("unit_price") or 0)
+        vat_rate = _round2(it.get("vat_rate") if it.get("vat_rate") is not None else 20)
+        # satır tutarı: KDV hariç tercih
+        line_ext = it.get("line_total") or it.get("amount") or (qty * unit)
+        line_ext = _round2(line_ext)
+        if it.get("vat_included") or str(it.get("price_mode") or "").lower() in ("incl", "gross"):
+            # kabaca KDV dahil fiyattan matrah
+            line_ext = _round2(line_ext / (1 + vat_rate / 100.0)) if vat_rate else line_ext
+        disc = _round2(it.get("discount_amount") or 0)
+        if disc and disc < line_ext:
+            line_ext = _round2(line_ext - disc)
+        vat_amt = _round2(it.get("vat_amount") if it.get("vat_amount") is not None else line_ext * vat_rate / 100.0)
+        code = str(it.get("product_code") or it.get("sku") or it.get("product_id") or f"PRD-{idx}")
+        name = str(it.get("name") or it.get("product_name") or f"Kalem {idx}")
+        details.append(
+            {
+                "CurrencyCode": currency,
+                "DiscountAmount": disc or None,
+                "LineExtensionAmount": line_ext,
+                "Product": {
+                    "ExternalProductCode": code,
+                    "MeasureUnit": _measure_unit(it.get("unit") or it.get("measure_unit")),
+                    "ProductCode": code,
+                    "ProductName": name,
+                    "UnitPrice": unit,
+                },
+                "Quantity": qty,
+                "VATAmount": vat_amt,
+                "VATRate": vat_rate,
+                "Mensei": "TR",
+            }
+        )
+
+    if not details:
+        raise HTTPException(status_code=400, detail="Faturada en az bir kalem gerekli (İşNet yapısal gönderim).")
+
+    subtotal = _round2(invoice.get("subtotal"))
+    if not subtotal:
+        subtotal = _round2(sum(d["LineExtensionAmount"] for d in details))
+    vat_total = _round2(invoice.get("vat_total"))
+    if not vat_total:
+        vat_total = _round2(sum(d["VATAmount"] for d in details))
+    discount = _round2(invoice.get("discount_total") or 0)
+    payable = _round2(invoice.get("grand_total") or (subtotal + vat_total))
+    tax_incl = _round2(subtotal + vat_total)
+
+    buyer_tax = re.sub(
+        r"\D",
+        "",
+        str(
+            (contact or {}).get("tax_number_or_id")
+            or (contact or {}).get("tax_id")
+            or invoice.get("contact_tax_id")
+            or ""
+        ),
+    )
+    if is_earchive and len(buyer_tax) not in (10, 11):
+        buyer_tax = "11111111111"
+    buyer_name = (contact or {}).get("name") or invoice.get("contact_name") or "Nihai Tüketici"
+    buyer_email = (
+        (contact or {}).get("email")
+        or invoice.get("contact_email")
+        or invoice.get("buyer_email")
+        or ""
+    ).strip()
+    address = {
+        "BoulevardAveneuStreetName": (
+            (contact or {}).get("address") or invoice.get("contact_address") or "Türkiye"
+        )[:200],
+        "CityName": (contact or {}).get("city") or invoice.get("contact_city") or "İSTANBUL",
+        "CountryCode": "TR",
+        "CountryName": "TÜRKİYE",
+        "EMail": buyer_email or None,
+        "PhoneNumber": (contact or {}).get("phone") or None,
+        "TaxOfficeName": (contact or {}).get("tax_office") or None,
+        "TownName": (contact or {}).get("district") or None,
+    }
+    receiver = {
+        "ReceiverName": buyer_name,
+        "ReceiverTaxCode": buyer_tax,
+        "Address": {k: v for k, v in address.items() if v},
+        "TaxOfficeName": (contact or {}).get("tax_office") or None,
+        "EMail": buyer_email or None,
+    }
+
+    scen = invoice.get("gib_scenario") or invoice.get("_profile_override") or ""
+    if scen not in ("TEMELFATURA", "TICARIFATURA", "EARSIVFATURA", "IHRACAT"):
+        scen = "EARSIVFATURA" if is_earchive else "TICARIFATURA"
+    inv_type = (invoice.get("invoice_type_code") or invoice.get("gib_invoice_type") or "SATIS").upper()
+    if inv_type not in ("SATIS", "IADE", "TEVKIFAT", "ISTISNA", "OZELMATRAH", "IHRACKAYITLI"):
+        inv_type = "SATIS"
+
+    ettn = str(invoice.get("gib_uuid") or invoice.get("ettn") or _uuid.uuid4()).upper()
+    external = str(
+        invoice.get("id")
+        or invoice.get("_id")
+        or invoice.get("invoice_number")
+        or ettn
+    )
+    notes = []
+    if invoice.get("notes"):
+        notes.append(str(invoice.get("notes"))[:500])
+
+    payload: Dict[str, Any] = {
+        "CurrencyCode": currency,
+        "ETTN": ettn,
+        "InvoiceDate": issue,
+        "InvoiceCreationDate": issue,
+        "InvoiceDetails": details,
+        "InvoiceType": inv_type,
+        "Receiver": {k: v for k, v in receiver.items() if v is not None},
+        "TotalDiscountAmount": discount or None,
+        "TotalLineExtensionAmount": subtotal,
+        "TotalPayableAmount": payable,
+        "TotalTaxInclusiveAmount": tax_incl,
+        "TotalVATAmount": vat_total,
+    }
+    if notes:
+        payload["Notes"] = notes
+    if invoice.get("order_number"):
+        payload["OrderNumber"] = str(invoice.get("order_number"))
+        if invoice.get("order_date"):
+            payload["OrderDate"] = str(invoice.get("order_date"))[:10]
+    if is_earchive:
+        payload["ExternalArchiveInvoiceCode"] = external
+        # InvoiceNumber bilerek yok — İşNet GİB serisinden atar
+    else:
+        payload["ExternalInvoiceCode"] = external
+        payload["ScenarioType"] = scen
+        if receiver_alias:
+            payload["ReceiverInboxTag"] = receiver_alias
+        # InvoiceNumber bilerek yok — İşNet GİB serisinden atar
+    return payload
+
+
+async def send_structured_invoice(
+    settings: dict,
+    *,
+    invoice_payload: dict,
+    is_earchive: bool = False,
+) -> Dict[str, Any]:
+    """SendInvoice / SendArchiveInvoice — InvoiceNumber İşNet tarafından üretilir."""
+    req_base = _company_request(settings)
+    if len(req_base["CompanyTaxCode"]) not in (10, 11):
+        raise HTTPException(
+            status_code=400, detail="İşNet SOAP gönderimi için şirket VKN (company_tax_id) gerekli."
+        )
+    if is_earchive:
+        action = "SendArchiveInvoice"
+        request: Dict[str, Any] = {**req_base, "ArchiveInvoices": [invoice_payload]}
+        array_map = _ARRAY_ITEM_STRUCTURED_ARCHIVE
+    else:
+        action = "SendInvoice"
+        request = {**req_base, "Invoices": [invoice_payload]}
+        array_map = _ARRAY_ITEM_STRUCTURED_INVOICE
+
+    body = await _soap_call(
+        settings,
+        endpoint=soap_url(settings),
+        action=action,
+        service_interface="IInvoiceService",
+        request=request,
+        timeout=90.0,
+        array_map=array_map,
+    )
+    row_tags = (
+        "InvoiceResult",
+        "ArchiveInvoiceResult",
+        "InvoiceResultItem",
+        "ArchiveInvoiceReturn",
+        "InvoiceReturn",
+        "ArchiveInvoice",
+    )
+    ettn = ""
+    invoice_id = ""
+    message = ""
+    rows = _find_all(body, *row_tags)
+    if rows:
+        for result_el in rows:
+            row_err = _row_failed(result_el)
+            if row_err:
+                raise HTTPException(status_code=400, detail=row_err)
+            ettn = ettn or _find_text(result_el, "ETTN", "Ettn", "InvoiceETTN")
+            invoice_id = invoice_id or _find_text(
+                result_el, "InvoiceNumber", "InvoiceId", "DocumentId", "ArchiveInvoiceNumber"
+            )
+            message = message or _find_text(result_el, "Message")
+    else:
+        ettn = _find_text(body, "ETTN", "Ettn", "InvoiceETTN") or ""
+        invoice_id = (
+            _find_text(body, "InvoiceNumber", "InvoiceId", "DocumentId", "ArchiveInvoiceNumber") or ""
+        )
+        message = _find_text(body, "Message") or ""
+    # Yanıtta satır listesi ArchiveInvoices altında da olabilir
+    if not invoice_id:
+        for inv in _find_all(body, "ArchiveInvoice", "Invoice"):
+            invoice_id = invoice_id or _find_text(
+                inv, "InvoiceNumber", "ArchiveInvoiceNumber", "InvoiceId", "ID"
+            )
+            ettn = ettn or _find_text(inv, "ETTN", "Ettn")
+    if not message:
+        message = "SOAP yanıtı alındı."
+    if not is_ettn_uuid(ettn):
+        # Yapısal yanıt bazen ETTN'yi bizim gönderdiğimizle eşler
+        ettn = (invoice_payload.get("ETTN") or "").strip() or ettn
+    if not is_ettn_uuid(ettn):
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"İşNet {action} geçerli ETTN (UUID) döndürmedi"
+                f"{f' ({ettn})' if ettn else ''} — fatura NetteFatura'ya düşmemiş olabilir. "
+                f"{message}"
+            ).strip(),
+        )
+    return {
+        "ettn": ettn.strip(),
+        "invoice_id": (invoice_id or "").strip(),
+        "status": _find_text(body, "Status", "State") or "sent",
+        "message": message,
+        "document_url": _find_text(body, "HtmlUrl", "PdfUrl", "DocumentUrl") or "",
+        "via": "structured",
+    }
+
+
 async def send_invoice_xml(
     settings: dict,
     *,
@@ -715,7 +1012,12 @@ async def send_document(
     contact: Optional[dict],
     company: dict,
 ) -> Dict[str, Any]:
-    """n11faturam.send_document ile aynı sözleşme."""
+    """n11faturam.send_document ile aynı sözleşme.
+
+    Tercih: yapısal SendInvoice / SendArchiveInvoice — InvoiceNumber İşNet atar
+    (NetteFatura kayıtlı seri, örn. UUU…). UBL Xml yolu TKB ile sabit numaraya
+    kilitlenmesin diye yalnızca yapısal başarısız olursa yedek.
+    """
     e_type = invoice.get("e_type") or "e_archive"
     if e_type not in ("e_invoice", "e_archive"):
         raise HTTPException(status_code=400, detail="İşNet yalnızca e-Fatura ve e-Arşiv gönderir.")
@@ -732,18 +1034,7 @@ async def send_document(
             ),
         )
     merged["company_tax_id"] = seller_vkn
-
-    # UBL satıcı VKN == SOAP CompanyTaxCode olmalı; aksi halde test/canlı reddeder.
-    company_for_ubl = {**(company or {})}
-    company_for_ubl["tax_number"] = seller_vkn
-
-    try:
-        import n11faturam
-
-        xml, _local_ettn, inv_id = n11faturam.build_ubl(invoice, company_for_ubl, contact)
-    except Exception as e:
-        logger.exception("isnet build_ubl")
-        raise HTTPException(status_code=500, detail=f"UBL oluşturma hatası: {e}") from e
+    is_earchive = e_type == "e_archive"
 
     receiver = (
         (contact or {}).get("e_invoice_alias")
@@ -778,23 +1069,57 @@ async def send_document(
                 ),
             )
 
-    info = await send_invoice_xml(
-        merged,
-        ubl_xml=xml,
-        receiver_alias=str(receiver or ""),
-        is_earchive=(e_type == "e_archive"),
-    )
+    company_for_ubl = {**(company or {})}
+    company_for_ubl["tax_number"] = seller_vkn
+    local_ubl = ""
+    info: Dict[str, Any] = {}
+    send_mode = "structured"
+
+    try:
+        structured = build_structured_invoice(
+            invoice,
+            company_for_ubl,
+            contact,
+            is_earchive=is_earchive,
+            receiver_alias=str(receiver or ""),
+        )
+        info = await send_structured_invoice(
+            merged, invoice_payload=structured, is_earchive=is_earchive
+        )
+        local_ubl = ""  # yapısalda yerel TKB yok
+    except HTTPException as structured_err:
+        # Yapısal başarısız → eski UBL Xml (geriye dönük)
+        logger.warning(
+            "isnet structured send failed (%s) — UBL Xml yedeği deneniyor",
+            structured_err.detail,
+        )
+        send_mode = "ubl_xml"
+        try:
+            import n11faturam
+
+            xml, _local_ettn, inv_id = n11faturam.build_ubl(invoice, company_for_ubl, contact)
+            local_ubl = (inv_id or "").strip()
+        except Exception as e:
+            logger.exception("isnet build_ubl")
+            raise HTTPException(status_code=500, detail=f"UBL oluşturma hatası: {e}") from e
+        try:
+            info = await send_invoice_xml(
+                merged,
+                ubl_xml=xml,
+                receiver_alias=str(receiver or ""),
+                is_earchive=is_earchive,
+            )
+        except HTTPException:
+            raise structured_err from None
+
     seller = seller_vkn
-    # NetteFatura-API / WSDL: başarı = satır IsSucceded + geçerli ETTN (UUID).
-    # GetDocumentViewerLink / Search anında hazır olmayabilir — soft verify.
     uuid_out = (info.get("ettn") or "").strip()
     if not is_ettn_uuid(uuid_out):
         raise HTTPException(
             status_code=502,
             detail="İşNet geçerli ETTN (UUID) döndürmedi — NetteFatura/GİB kaydı doğrulanamadı.",
         )
-    # Fatura no: portal (ETTN) → UBL cbc:ID → SOAP (yerel TKB UBL id resmi sayılmaz)
-    local_ubl = (inv_id or "").strip()
+
     soap_inv_no = (info.get("invoice_id") or "").strip()
     verified = await try_verify_outgoing_in_portal(
         merged,
@@ -805,7 +1130,7 @@ async def send_document(
     )
     portal_no = (verified.get("invoice_id") or "").strip()
     xml_no = ""
-    if not portal_no:
+    if not portal_no and not soap_inv_no:
         xml_no = await resolve_invoice_number_from_xml(
             merged,
             uuid_out,
@@ -817,37 +1142,39 @@ async def send_document(
 
     official = ""
     number_source = "ubl"
-    if portal_no:
+    # Yapısal SOAP yanıtındaki InvoiceNumber = İşNet'in kestiği resmi seri
+    if soap_inv_no and send_mode == "structured":
+        official, number_source = soap_inv_no, "isnet"
+    elif portal_no:
         official, number_source = portal_no, "portal"
-    elif xml_no and (not local_ubl or xml_no.upper() != local_ubl.upper()):
-        # İşNet/GİB yerel TKB’den farklı resmi no kesti
-        official, number_source = xml_no, "xml"
     elif soap_inv_no and (not local_ubl or soap_inv_no.upper() != local_ubl.upper()):
         official, number_source = soap_inv_no, "soap"
+    elif xml_no and (not local_ubl or xml_no.upper() != local_ubl.upper()):
+        official, number_source = xml_no, "xml"
 
-    # Geriye dönük: invoice_id her zaman dolu olsun; official ayrı alanda
     inv_no = official or soap_inv_no or local_ubl or (invoice.get("invoice_number") or "").strip()
     portal_status = (verified.get("status") or "").strip()
     if not verified.get("ok"):
         logger.info(
-            "isnet soft-verify pending ettn=%s inv=%s — SOAP Success kabul (SDK ile aynı)",
+            "isnet soft-verify pending ettn=%s inv=%s mode=%s",
             uuid_out,
             soap_inv_no or inv_no,
+            send_mode,
         )
-    elif official and number_source in ("portal", "xml"):
+    elif official:
         logger.info(
-            "isnet fatura no kaynak=%s ettn=%s no=%s (ubl=%s)",
+            "isnet fatura no kaynak=%s ettn=%s no=%s mode=%s",
             number_source,
             uuid_out,
             official,
-            local_ubl,
+            send_mode,
         )
     return {
         "ettn": uuid_out,
         "invoice_id": inv_no,
         "official_invoice_id": official,
         "number_source": number_source,
-        "ubl_id": local_ubl or inv_id,
+        "ubl_id": local_ubl,
         "document_url": verified.get("document_url") or info.get("document_url") or "",
         "description": info.get("message") or "",
         "provider": "isnet",
@@ -857,6 +1184,7 @@ async def send_document(
         "gib_status_raw": portal_status,
         "gib_status_code": (verified.get("status_code") or "").strip(),
         "mode": "test" if is_test_mode(merged) else "live",
+        "send_mode": send_mode,
     }
 
 
