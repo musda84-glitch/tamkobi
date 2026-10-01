@@ -260,6 +260,36 @@ class TestRefreshOutbound:
         asyncio.get_event_loop().run_until_complete(_run())
 
 
+class TestIntegratorCredits:
+    def test_returns_isnet_balance(self):
+        fake_db = MagicMock()
+        fake_db.einvoice_settings.find_one = AsyncMock(
+            return_value={"provider": "isnet", "status": "configured", "company_tax_id": "4810173324", "mode": "test"}
+        )
+        e_invoice.init(fake_db)
+
+        async def _run():
+            with patch.object(
+                e_invoice.isnet,
+                "get_company_balance",
+                AsyncMock(return_value={"remaining_credit": "42", "balance": "42", "message": "OK"}),
+            ):
+                out = await e_invoice.api_integrator_credits("c1")
+            assert out["balance"] == 42
+            assert out["source"] == "isnet"
+            assert out["provider"] == "isnet"
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
+    def test_unconfigured_returns_null_balance(self):
+        fake_db = MagicMock()
+        fake_db.einvoice_settings.find_one = AsyncMock(return_value={"provider": "isnet", "status": "simulated"})
+        e_invoice.init(fake_db)
+        out = asyncio.get_event_loop().run_until_complete(e_invoice.api_integrator_credits("c1"))
+        assert out["balance"] is None
+        assert out["source"] == "none"
+
+
 class TestFinalizeAndTrack:
     def test_create_request_and_record(self):
         req = e_invoice.InvoiceCreateRequest(order_id="o1", company_id="c1", scenario="TEMEL")

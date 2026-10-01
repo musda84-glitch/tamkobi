@@ -603,6 +603,55 @@ async def create_from_order(order_id: str, req: Dict[str, Any]) -> Dict[str, Any
     return await finalize_create_result(result, inv_id, order_id=order_id, company_id=company_id or order.get("company_id"))
 
 
+@router.get("/e-invoice/integrator-credits")
+async def api_integrator_credits(company_id: str = "comp_nexus_main_01"):
+    """Entegratör (İşNet SOAP vb.) kontör / bakiye — yerel gib-credits cüzdanı değil."""
+    settings = (await _db.einvoice_settings.find_one({"company_id": company_id}) if _db else None) or {}
+    provider = (settings.get("provider") or "").strip()
+    if settings.get("status") != "configured" or provider not in ("isnet", "isnet_portal", "n11faturam"):
+        return {
+            "company_id": company_id,
+            "provider": provider or None,
+            "balance": None,
+            "source": "none",
+            "message": "Entegratör yapılandırılmamış — kontör bilgisi alınamadı.",
+        }
+    password_fn: Optional[Callable] = _deps.get("password_fn")
+    _ = password_fn  # SOAP IP–VKN; şifre gerekmez
+    label = {"isnet": "İşNet SOAP", "isnet_portal": "İşNet Portal", "n11faturam": "n11 Faturam"}.get(provider, provider)
+    try:
+        if provider in ("isnet", "isnet_portal"):
+            bal = await isnet.get_company_balance(settings)
+            src = provider
+        else:
+            return {
+                "company_id": company_id,
+                "provider": provider,
+                "balance": None,
+                "source": provider,
+                "message": "n11 Faturam kontör sorgusu bu uçtan desteklenmiyor.",
+            }
+    except HTTPException as e:
+        raise HTTPException(status_code=e.status_code, detail=f"{label} kontör sorgusu: {e.detail}") from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Entegratör kontör sorgusu başarısız: {e}") from e
+
+    raw = bal.get("remaining_credit") or bal.get("balance") or bal.get("total_credit") or ""
+    digits = re.sub(r"[^\d.]", "", str(raw))
+    try:
+        balance = int(float(digits)) if digits else None
+    except ValueError:
+        balance = None
+    return {
+        "company_id": company_id,
+        "provider": provider,
+        "balance": balance,
+        "raw": bal,
+        "source": src,
+        "message": bal.get("message") or f"{label} kontör bakiyesi",
+    }
+
+
 @router.post("/e-invoice/create")
 async def api_create_einvoice(payload: InvoiceCreateRequest):
     """Body: { invoice_id?, order_id?, company_id?, e_type?, scenario?: TICARI|TEMEL }"""
