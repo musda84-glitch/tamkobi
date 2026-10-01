@@ -186,17 +186,14 @@ def format_integrator_gib_status(
 
     if portal:
         low = portal.lower().replace("ı", "i").replace("İ", "i")
-        # GİB iletim başarısı (gönderen için):
-        # 1300 nihai; 1220 alıcıya ulaştı — GİB: «başarılı kabul edilmelidir»;
-        # 1200 zarf GİB'de başarıyla işlendi (test/canlıda sık görülen ara başarı).
-        if (
-            code in ("1300", "1220", "1200")
-            or "basariyla tamamland" in low
-            or "hedeften sistem yaniti gelmedi" in low
-            or "zarf basariyla islendi" in low
-            or low in ("succeed", "succeeded", "success", "approved", "completed", "ok", "gib onayli")
-        ):
+        # Yalnız gerçek 1300 / «Başarıyla Tamamlandı» — U05…068–071 NetteFatura ile aynı.
+        # 1200/1220 ara kodlar olduğu gibi kalsın (sahte başarı gösterme).
+        if code == "1300" or "basariyla tamamland" in low:
             portal = "Başarıyla Tamamlandı"
+        elif low in ("succeed", "succeeded", "success", "approved", "completed", "ok", "gib onayli"):
+            portal = "Başarıyla Tamamlandı"
+        elif code == "1220" or "hedeften sistem yaniti gelmedi" in low:
+            portal = "Alıcı yanıtı bekleniyor"
         elif "wait" in low or "pending" in low:
             portal = "Alıcı yanıtı bekleniyor"
         elif (

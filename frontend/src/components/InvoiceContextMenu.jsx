@@ -31,16 +31,13 @@ export function formatGibStatusLabel(inv) {
     if (state === "error") return "Hata";
     return "Taslak";
   }
-  // GİB: 1300 nihai; 1220 alıcıya ulaştı (başarı); 1200 zarf GİB'de işlendi
+  // Yalnız gerçek 1300 → Başarıyla Tamamlandı (NetteFatura U05…068–071 ile aynı)
   const bare = raw.replace(/^test\s*·\s*/i, "").trim();
   const low = bare.toLocaleLowerCase("tr-TR").replace(/ı/g, "i");
-  const isSuccess =
-    ["1300", "1220", "1200"].includes(code) ||
-    /basariyla tamamland/i.test(low) ||
-    /hedeften sistem yaniti gelmedi/i.test(low) ||
-    /zarf basariyla islendi/i.test(low);
-  const display = isSuccess ? (isTest || /^test\b/i.test(raw) ? "Test · Başarıyla Tamamlandı" : "Başarıyla Tamamlandı") : null;
-  if (display) return display;
+  const isReal1300 = code === "1300" || /basariyla tamamland/i.test(low);
+  if (isReal1300) {
+    return isTest || /^test\b/i.test(raw) ? "Test · Başarıyla Tamamlandı" : "Başarıyla Tamamlandı";
+  }
   if (isTest && !/^test\b/i.test(raw)) return `Test · ${raw}`;
   return raw;
 }
@@ -249,6 +246,7 @@ export function isGibIssued(inv) {
   const code = String(inv.gib_status_code || "").trim();
   // Hata: ... iletildi mesajı /ileti/ regex'ine takılmasın
   if (inv.einvoice_state === "error" || /^\s*hata\s*:/i.test(gsBare)) return false;
+  // 1300 nihai başarı; 1200/1220 iletilmiş (kesilmiş) sayılır ama etiket 1300 değildir
   if (["1300", "1220", "1200"].includes(code)) return true;
   if (inv.einvoice_state === "sent" || inv.einvoice_state === "queued") return true;
   if (inv.gib_tracking_id) return true;

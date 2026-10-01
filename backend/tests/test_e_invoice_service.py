@@ -58,15 +58,29 @@ class TestScenarioAndBuyer:
             status_code="1300",
             verified=True,
         )
-        # 1220: GİB — alıcıya ulaştı, başarılı kabul edilmeli
-        assert "Başarıyla Tamamlandı" in e_invoice.format_integrator_gib_status(
+        # 1220/1200 ara durum — «Başarıyla Tamamlandı» değil (yalnız gerçek 1300)
+        assert "Başarıyla Tamamlandı" not in e_invoice.format_integrator_gib_status(
             label="İşNet",
             mode="test",
             portal_status="Hedeften_Sistem_Yaniti_Gelmedi",
             status_code="1220",
             verified=True,
         )
-        assert "Başarıyla Tamamlandı" in e_invoice.format_integrator_gib_status(
+        assert "Alıcı yanıtı bekleniyor" in e_invoice.format_integrator_gib_status(
+            label="İşNet",
+            mode="test",
+            portal_status="Hedeften_Sistem_Yaniti_Gelmedi",
+            status_code="1220",
+            verified=True,
+        )
+        assert "Başarıyla Tamamlandı" not in e_invoice.format_integrator_gib_status(
+            label="İşNet",
+            mode="live",
+            portal_status="Zarf_Basariyla_Islendi",
+            status_code="1200",
+            verified=True,
+        )
+        assert "Zarf başarıyla işlendi" in e_invoice.format_integrator_gib_status(
             label="İşNet",
             mode="live",
             portal_status="Zarf_Basariyla_Islendi",
