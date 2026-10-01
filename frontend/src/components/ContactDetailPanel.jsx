@@ -959,9 +959,11 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             companyId={activeCompany?.id || activeCompany?._id || c?.company_id}
             onClose={() => setEFaturaInvoice(null)}
             onConfirm={async ({ eType, scenario, alias }) => {
-              if (alias && eFaturaInvoice?.contact_id) {
+              const inv = eFaturaInvoice;
+              if (!inv) return;
+              if (alias && inv.contact_id) {
                 try {
-                  await axios.put(`${API_URL}/contacts/${eFaturaInvoice.contact_id}`, {
+                  await axios.put(`${API_URL}/contacts/${inv.contact_id}`, {
                     e_invoice_alias: alias,
                     is_e_invoice_user: eType === "e_invoice",
                   });
@@ -969,7 +971,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   /* gönderim yine denenecek */
                 }
               }
-              await sendToGib(eFaturaInvoice, eType, { scenario });
+              await sendToGib(inv, eType, { scenario });
             }}
           />
         )}

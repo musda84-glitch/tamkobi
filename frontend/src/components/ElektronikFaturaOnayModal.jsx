@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { X, ChevronDown, ListOrdered, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { X, ChevronDown, ListOrdered, Loader2, Check } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { backdropDismissProps } from "../utils/modalBackdrop";
@@ -27,10 +28,21 @@ function orderBuyerTaxId(order, contacts = []) {
   return digitsTax(tax);
 }
 
+function confirmErrorDetail(err) {
+  const d = err?.response?.data?.detail ?? err?.response?.data?.message ?? err?.message;
+  if (typeof d === "string" && d.trim()) return d.trim();
+  if (Array.isArray(d)) {
+    const parts = d.map((x) => x?.msg || x?.message || x?.detail || "").filter(Boolean);
+    if (parts.length) return parts.join(" ");
+  }
+  return "Gönderim başarısız.";
+}
+
 /**
  * Faturalaştı siparişte «E-Fatura Oluştur» / fatura ⋮ «E-Fatura / E-Arşiv (GİB)» onayı.
  * Mükellefiyet + kontör entegratörden (GİB lookup / İşNet bakiye) gelir.
  * Devam Et her zaman Temel / Ticari senaryo seçimi ister (GİB önerisinden bağımsız).
+ * Onaydan sonra modal hemen kapanır; gönderim arka planda sürer.
  *
  * `order` veya `invoice` verilebilir; ikisi de cari VKN / mükellef çözümlemesi için kullanılır.
  */
@@ -46,10 +58,8 @@ export function ElektronikFaturaOnayModal({
   const doc = order || invoice || null;
   const [credits, setCredits] = useState(null);
   const [creditsSource, setCreditsSource] = useState("");
-  const [busy, setBusy] = useState(false);
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [error, setError] = useState("");
   const [gibMeta, setGibMeta] = useState(null);
 
   const fallbackEFatura = orderCanIssueEFatura(doc, contacts);
@@ -104,27 +114,26 @@ export function ElektronikFaturaOnayModal({
     };
   }, [companyId, doc, contacts]);
 
-  const submit = async (scenario) => {
+  const submit = (scenario) => {
     const sc = scenario === "TEMEL" ? "TEMEL" : "TICARI";
-    setBusy(true);
     setMenuOpen(false);
-    setError("");
-    try {
+    const payload = {
       // Kullanıcı Temel/Ticari seçti → her zaman e-fatura senaryosu (lookup e-arşiv dese bile).
-      await onConfirm?.({
-        eType: "e_invoice",
-        scenario: sc,
-        suggestedEType,
-        alias: gibMeta?.alias || undefined,
-        gibMeta: gibMeta || undefined,
+      eType: "e_invoice",
+      scenario: sc,
+      suggestedEType,
+      alias: gibMeta?.alias || undefined,
+      gibMeta: gibMeta || undefined,
+    };
+    const confirmFn = onConfirm;
+    // Modal hemen kapansın; uzun süren GİB/entegratör gönderimi arka planda devam etsin.
+    onClose?.();
+    toast.message("E-fatura gönderimi arka planda devam ediyor…");
+    Promise.resolve()
+      .then(() => confirmFn?.(payload))
+      .catch((err) => {
+        toast.error(confirmErrorDetail(err));
       });
-      onClose?.();
-    } catch (err) {
-      const detail = err?.response?.data?.detail || err?.message || "Gönderim başarısız.";
-      setError(typeof detail === "string" ? detail : "Gönderim başarısız.");
-    } finally {
-      setBusy(false);
-    }
   };
 
   return (
@@ -179,23 +188,13 @@ export function ElektronikFaturaOnayModal({
               </span>
             </div>
           )}
-          {error ? (
-            <div
-              className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-800"
-              data-testid="efatura-onay-error"
-              role="alert"
-            >
-              {error}
-            </div>
-          ) : null}
         </div>
 
         <div className="relative flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50/80 rounded-b-2xl overflow-visible">
           <button
             type="button"
             onClick={onClose}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold shadow-sm disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold shadow-sm"
             data-testid="efatura-onay-cancel"
           >
             <X className="w-4 h-4" />
@@ -205,14 +204,14 @@ export function ElektronikFaturaOnayModal({
           <div className="relative">
             <button
               type="button"
-              disabled={busy || loadingMeta}
+              disabled={loadingMeta}
               onClick={() => setMenuOpen((o) => !o)}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm disabled:opacity-50"
               aria-expanded={menuOpen}
               aria-haspopup="menu"
               data-testid="efatura-onay-continue"
             >
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              <Check className="w-4 h-4" />
               Devam Et
               <ChevronDown className={`w-4 h-4 transition-transform ${menuOpen ? "rotate-180" : ""}`} />
             </button>
@@ -225,7 +224,6 @@ export function ElektronikFaturaOnayModal({
                 <button
                   type="button"
                   role="menuitem"
-                  disabled={busy}
                   onClick={() => submit("TEMEL")}
                   className="w-full text-left rounded-lg px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
                   data-testid="efatura-onay-temel"
@@ -235,7 +233,6 @@ export function ElektronikFaturaOnayModal({
                 <button
                   type="button"
                   role="menuitem"
-                  disabled={busy}
                   onClick={() => submit("TICARI")}
                   className="w-full text-left rounded-lg px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
                   data-testid="efatura-onay-ticari"
