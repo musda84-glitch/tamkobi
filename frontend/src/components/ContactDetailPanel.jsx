@@ -38,6 +38,7 @@ import { ContactForm } from "./ContactForm";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { orderEditBlockedReason, orderLinesLocked as orderChannelLocked } from "../utils/orderEdit";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { TimeInput } from "./TimeInput";
 
 const fmt = (n, c = "TRY") => fmtMoney(n, c);
 const TABS = [["invoices", "Faturalar", FileText], ["payments", "Ödemeler", Wallet], ["cheques", "Çek ve Senetler", ScrollText], ["orders", "Siparişler", ShoppingCart], ["quotes", "Teklifler", FileSignature], ["projects", "Projeler", Briefcase], ["surveys", "Keşifler", Ruler], ["b2b", "B2B Portal", KeyRound], ["comm", "İletişim", MessageSquare], ["mail_status", "E-posta Durumu", Mail], ["whatsapp", "WhatsApp", Phone], ["installments", "Taksitler", CalendarClock]];
@@ -1082,9 +1083,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 <div>
                   <label className="block font-semibold mb-1">Fatura Saati</label>
                   <div className="flex gap-1.5">
-                    <input
-                      type="time"
-                      step="1"
+                    <TimeInput
+                      text24
+                      step={1}
                       disabled={isGibIssued(editInv)}
                       value={(editInv.issue_time || "").slice(0, 8) || ""}
                       onChange={(e) => setEditInv({ ...editInv, issue_time: e.target.value })}
