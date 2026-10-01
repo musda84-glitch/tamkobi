@@ -137,6 +137,25 @@ class TestN11FaturamUnit:
         assert "GONDERIMSEKLI" in xml3 and "ELEKTRONIK" in xml3 and "INTERNETSATISI" in xml3
         assert "ali@example.com" in xml3
         assert "GONDERIMSEKLI" not in xml  # e-Fatura profilinde yok
+        # Schematron/XSD: sipariş yoksa OrderReference yok; PaymentMeans yok; boş Contact yok; ilçe "-" değil
+        assert "<cac:OrderReference>" not in xml
+        assert "<cac:PaymentMeans>" not in xml
+        assert "<cac:Contact>" not in xml  # telefon/e-posta yok → Contact atlanır
+        assert "<cbc:CitySubdivisionName>-</cbc:CitySubdivisionName>" not in xml
+        assert "<cbc:CitySubdivisionName>İstanbul</cbc:CitySubdivisionName>" in xml
+
+        xml_ord, _, _ = n11faturam.build_ubl(
+            {**inv, "order_number": "SIP-42"},
+            {**company, "district": "-", "phone": "02120000000"},
+            {**contact, "email": "alici@example.com"},
+        )
+        assert "<cac:OrderReference>" in xml_ord
+        assert "<cbc:ID>SIP-42</cbc:ID>" in xml_ord
+        assert "<cbc:IssueDate>2026-09-08</cbc:IssueDate>" in xml_ord.split("OrderReference")[1].split("</cac:OrderReference>")[0]
+        assert "<cac:PaymentMeans>" not in xml_ord
+        assert "<cbc:Telephone>02120000000</cbc:Telephone>" in xml_ord
+        assert "<cbc:ElectronicMail>alici@example.com</cbc:ElectronicMail>" in xml_ord
+        assert "<cbc:CitySubdivisionName>-</cbc:CitySubdivisionName>" not in xml_ord
 
     def test_parse_ticket_and_send(self):
         assert n11faturam.parse_ticket(_ticket_xml()) == "TICKET-ABC"

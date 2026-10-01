@@ -117,7 +117,6 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
     if profile not in ("TEMELFATURA", "TICARIFATURA", "EARSIVFATURA", "IHRACAT"):
         profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
     issue = (invoice.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
-    due = (invoice.get("due_date") or issue)[:10]
     # İşNet/GİB Schematron: IssueTime beklenir (örnek UBL’lerde var)
     issue_time = (invoice.get("issue_time") or datetime.now(timezone.utc).strftime("%H:%M:%S"))[:8]
     if len(issue_time) == 5:
@@ -148,28 +147,39 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
     contact_for_party = {**(contact or {}), "email": buyer_email}
 
     def party(tax: str, scheme: str, name: str, src: dict) -> str:
-        street = _esc(src.get("address") or "")
+        street = _esc(src.get("address") or "") or "-"
         city = _esc(src.get("city") or "İstanbul")
-        district = _esc(src.get("district") or src.get("tax_office") or "")
+        # Schematron/XSD: "-" veya boş CitySubdivisionName yerine ilçe/vergi dairesi/şehir
+        district_raw = (src.get("district") or src.get("tax_office") or src.get("city") or "Merkez")
+        district = _esc(str(district_raw).strip() or "Merkez")
+        if district in ("-", "."):
+            district = _esc(city or "Merkez")
         email = _esc(src.get("email") or "")
         phone = _esc(src.get("phone") or "")
-        office = _esc(src.get("tax_office") or "")
+        office = _esc(src.get("tax_office") or "") or "Vergi Dairesi"
         person = ""
         if scheme == "TCKN":
             parts = (name or "").split(None, 1)
             first, last = (parts[0] if parts else "Ad"), (parts[1] if len(parts) > 1 else "Soyad")
             person = f"<cac:Person><cbc:FirstName>{_esc(first)}</cbc:FirstName><cbc:FamilyName>{_esc(last)}</cbc:FamilyName></cac:Person>"
+        # Boş Telephone/ElectronicMail XSD/Schematron'da sorun çıkarır — yalnızca dolu alanlar
+        contact_bits = []
+        if phone:
+            contact_bits.append(f"<cbc:Telephone>{phone}</cbc:Telephone>")
+        if email:
+            contact_bits.append(f"<cbc:ElectronicMail>{email}</cbc:ElectronicMail>")
+        contact_xml = f"<cac:Contact>{''.join(contact_bits)}</cac:Contact>" if contact_bits else ""
         return f"""<cac:Party>
       <cac:PartyIdentification><cbc:ID schemeID="{scheme}">{_esc(tax)}</cbc:ID></cac:PartyIdentification>
       <cac:PartyName><cbc:Name>{_esc(name)}</cbc:Name></cac:PartyName>
       <cac:PostalAddress>
-        <cbc:StreetName>{street or "-"}</cbc:StreetName>
-        <cbc:CitySubdivisionName>{district or "-"}</cbc:CitySubdivisionName>
+        <cbc:StreetName>{street}</cbc:StreetName>
+        <cbc:CitySubdivisionName>{district}</cbc:CitySubdivisionName>
         <cbc:CityName>{city}</cbc:CityName>
         <cac:Country><cbc:Name>Türkiye</cbc:Name></cac:Country>
       </cac:PostalAddress>
-      <cac:PartyTaxScheme><cac:TaxScheme><cbc:Name>{office or "Vergi Dairesi"}</cbc:Name></cac:TaxScheme></cac:PartyTaxScheme>
-      <cac:Contact><cbc:Telephone>{phone}</cbc:Telephone><cbc:ElectronicMail>{email}</cbc:ElectronicMail></cac:Contact>
+      <cac:PartyTaxScheme><cac:TaxScheme><cbc:Name>{office}</cbc:Name></cac:TaxScheme></cac:PartyTaxScheme>
+      {contact_xml}
       {person}
     </cac:Party>"""
 
@@ -185,7 +195,7 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
         sku_xml = f"<cac:SellersItemIdentification><cbc:ID>{_esc(sku)}</cbc:ID></cac:SellersItemIdentification>" if sku else ""
         lines_xml.append(f"""<cac:InvoiceLine>
     <cbc:ID>{i}</cbc:ID>
-    <cbc:InvoicedQuantity unitCode="{unit}">{qty:g}</cbc:InvoicedQuantity>
+    <cbc:InvoicedQuantity unitCode="{unit}">{_money(qty)}</cbc:InvoicedQuantity>
     <cbc:LineExtensionAmount currencyID="{currency}">{_money(total)}</cbc:LineExtensionAmount>
     <cac:TaxTotal>
       <cbc:TaxAmount currencyID="{currency}">{_money(vat_amt)}</cbc:TaxAmount>
@@ -235,9 +245,14 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
 
     # İşNet Send*Xml: imza için UBLExtensions (boş ExtensionContent) + dolu Signature zorunlu.
     # ExtensionContent'i entegratör XAdES ile doldurur; URI #Signature eşleşmeli.
-    seller_street = _esc(company.get("address") or "-")
+    seller_street = _esc(company.get("address") or "-") or "-"
     seller_city = _esc(company.get("city") or "İstanbul")
-    seller_district = _esc(company.get("district") or company.get("tax_office") or "-")
+    seller_district_raw = (
+        company.get("district") or company.get("tax_office") or company.get("city") or "Merkez"
+    )
+    seller_district = _esc(str(seller_district_raw).strip() or "Merkez")
+    if seller_district in ("-", "."):
+        seller_district = seller_city or "Merkez"
     signature_block = f"""
   <cac:Signature>
     <cbc:ID schemeID="VKN_TCKN">{_esc(seller_tax)}</cbc:ID>
@@ -258,6 +273,17 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
       </cac:ExternalReference>
     </cac:DigitalSignatureAttachment>
   </cac:Signature>"""
+
+    # OrderReference: yalnız gerçek sipariş no — ID tek başına XSD'de IssueDate ister (Schematron 1150).
+    order_no = str(invoice.get("order_number") or "").strip()
+    order_ref = ""
+    if order_no:
+        order_ref = (
+            f"<cac:OrderReference>"
+            f"<cbc:ID>{_esc(order_no)}</cbc:ID>"
+            f"<cbc:IssueDate>{issue}</cbc:IssueDate>"
+            f"</cac:OrderReference>"
+        )
 
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
@@ -282,14 +308,10 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
   <cbc:DocumentCurrencyCode>{_esc(currency)}</cbc:DocumentCurrencyCode>
   <cbc:LineCountNumeric>{len(items)}</cbc:LineCountNumeric>
   {archive_refs}
-  <cac:OrderReference><cbc:ID>{_esc(invoice.get("order_number") or invoice.get("invoice_number") or inv_id)}</cbc:ID></cac:OrderReference>
+  {order_ref}
   {signature_block}
   <cac:AccountingSupplierParty>{party(seller_tax, seller_scheme, company.get("name") or "Satıcı", company)}</cac:AccountingSupplierParty>
   <cac:AccountingCustomerParty>{party(buyer_tax, buyer_scheme, buyer_name, contact_for_party)}</cac:AccountingCustomerParty>
-  <cac:PaymentMeans>
-    <cbc:PaymentMeansCode>1</cbc:PaymentMeansCode>
-    <cbc:PaymentDueDate>{due}</cbc:PaymentDueDate>
-  </cac:PaymentMeans>
   <cac:TaxTotal>
     <cbc:TaxAmount currencyID="{currency}">{_money(vat_total)}</cbc:TaxAmount>
     <cac:TaxSubtotal>
