@@ -186,23 +186,28 @@ def format_integrator_gib_status(
 
     if portal:
         low = portal.lower().replace("ı", "i").replace("İ", "i")
-        # 1300 — nihai GİB iletim durumu
-        if code == "1300" or "basariyla tamamland" in low:
+        # GİB iletim başarısı (gönderen için):
+        # 1300 nihai; 1220 alıcıya ulaştı — GİB: «başarılı kabul edilmelidir»;
+        # 1200 zarf GİB'de başarıyla işlendi (test/canlıda sık görülen ara başarı).
+        if (
+            code in ("1300", "1220", "1200")
+            or "basariyla tamamland" in low
+            or "hedeften sistem yaniti gelmedi" in low
+            or "zarf basariyla islendi" in low
+            or low in ("succeed", "succeeded", "success", "approved", "completed", "ok", "gib onayli")
+        ):
             portal = "Başarıyla Tamamlandı"
-        elif low in ("succeed", "succeeded", "success", "approved", "completed", "ok", "gib onayli"):
-            portal = "Başarıyla Tamamlandı"
-        elif code == "1220" or "hedeften sistem yaniti gelmedi" in low:
-            portal = "Alıcı yanıtı bekleniyor"
         elif "wait" in low or "pending" in low:
             portal = "Alıcı yanıtı bekleniyor"
         elif (
-            code in ("1150", "1160", "1162", "1177", "1195", "1215", "1230")
+            code in ("1150", "1160", "1162", "1177", "1195", "1210", "1215", "1230")
             or "schematron" in low
             or low.startswith("hata")
             or "fail" in low
             or "error" in low
             or "hatali" in low
             or "basarisiz" in low
+            or "gonderilemedi" in low
         ):
             if not low.startswith("hata"):
                 portal = f"Hata: {portal}"
