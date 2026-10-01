@@ -37,15 +37,18 @@ describe("formatGibStatusLabel", () => {
     expect(formatGibStatusLabel({ gib_status: "GİB onaylı", gib_mode: "test" })).toBe("Test · GİB onaylı");
   });
 
-  test("maps 1200/1220/1300 and portal labels to Başarıyla Tamamlandı", () => {
-    expect(formatGibStatusLabel({ gib_status: "Hedeften Sistem Yanıtı Gelmedi", gib_status_code: "1220", gib_mode: "test" })).toBe(
-      "Test · Başarıyla Tamamlandı"
-    );
-    expect(formatGibStatusLabel({ gib_status: "Zarf Başarıyla İşlendi", gib_status_code: "1200" })).toBe(
-      "Başarıyla Tamamlandı"
-    );
+  test("only real 1300 maps to Başarıyla Tamamlandı", () => {
     expect(formatGibStatusLabel({ gib_status: "Basariyla_Tamamlandi", gib_status_code: "1300", gib_mode: "test" })).toBe(
       "Test · Başarıyla Tamamlandı"
+    );
+    expect(formatGibStatusLabel({ gib_status: "Başarıyla Tamamlandı", gib_status_code: "1300" })).toBe(
+      "Başarıyla Tamamlandı"
+    );
+    expect(formatGibStatusLabel({ gib_status: "Hedeften Sistem Yanıtı Gelmedi", gib_status_code: "1220", gib_mode: "test" })).toBe(
+      "Test · Hedeften Sistem Yanıtı Gelmedi"
+    );
+    expect(formatGibStatusLabel({ gib_status: "Zarf Başarıyla İşlendi", gib_status_code: "1200" })).toBe(
+      "Zarf Başarıyla İşlendi"
     );
   });
 
