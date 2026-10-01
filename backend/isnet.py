@@ -716,19 +716,31 @@ async def send_document(
     company: dict,
 ) -> Dict[str, Any]:
     """n11faturam.send_document ile aynı sözleşme."""
-    _ = password
     e_type = invoice.get("e_type") or "e_archive"
     if e_type not in ("e_invoice", "e_archive"):
         raise HTTPException(status_code=400, detail="İşNet yalnızca e-Fatura ve e-Arşiv gönderir.")
 
     merged = {**settings}
-    if not company_tax_code(merged):
-        merged["company_tax_id"] = company_tax_code(settings, company)
+    seller_vkn = company_tax_code(merged) or company_tax_code(settings, company)
+    if not seller_vkn:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "İşNet gönderimi için şirket VKN gerekli. "
+                "Ayarlar → e-Fatura (İşNet SOAP) içinde CompanyTaxCode / VKN kaydedin "
+                f"(test: {', '.join(TEST_FIRM_VKNS)})."
+            ),
+        )
+    merged["company_tax_id"] = seller_vkn
+
+    # UBL satıcı VKN == SOAP CompanyTaxCode olmalı; aksi halde test/canlı reddeder.
+    company_for_ubl = {**(company or {})}
+    company_for_ubl["tax_number"] = seller_vkn
 
     try:
         import n11faturam
 
-        xml, _local_ettn, inv_id = n11faturam.build_ubl(invoice, company or {}, contact)
+        xml, _local_ettn, inv_id = n11faturam.build_ubl(invoice, company_for_ubl, contact)
     except Exception as e:
         logger.exception("isnet build_ubl")
         raise HTTPException(status_code=500, detail=f"UBL oluşturma hatası: {e}") from e
@@ -736,16 +748,43 @@ async def send_document(
     receiver = (
         (contact or {}).get("e_invoice_alias")
         or (contact or {}).get("gib_alias")
+        or (contact or {}).get("inbox_tag")
         or settings.get("alias")
         or ""
-    )
+    ).strip()
+    if e_type == "e_invoice" and not receiver:
+        buyer_tax = re.sub(
+            r"\D",
+            "",
+            str(
+                (contact or {}).get("tax_number_or_id")
+                or (contact or {}).get("tax_id")
+                or invoice.get("contact_tax_id")
+                or ""
+            ),
+        )
+        if len(buyer_tax) in (10, 11):
+            try:
+                looked = await lookup_user(merged, password or "", buyer_tax)
+                receiver = (looked.get("alias") or "").strip()
+            except HTTPException:
+                logger.info("isnet GetTaxPayer alias lookup failed tax=%s", buyer_tax)
+        if not receiver:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "E-Fatura için alıcı GİB posta kutusu (ReceiverTag / alias) gerekli. "
+                    "Caride e-fatura alias girin veya Ayarlar → İşNet alias alanını doldurun."
+                ),
+            )
+
     info = await send_invoice_xml(
         merged,
         ubl_xml=xml,
         receiver_alias=str(receiver or ""),
         is_earchive=(e_type == "e_archive"),
     )
-    seller = re.sub(r"\D", "", str((company or {}).get("tax_number") or ""))
+    seller = seller_vkn
     # NetteFatura-API / WSDL: başarı = satır IsSucceded + geçerli ETTN (UUID).
     # GetDocumentViewerLink / Search anında hazır olmayabilir — soft verify.
     uuid_out = (info.get("ettn") or "").strip()

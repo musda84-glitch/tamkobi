@@ -21,6 +21,7 @@ export function ElektronikFaturaOnayModal({
   const [credits, setCredits] = useState(null);
   const [busy, setBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [error, setError] = useState("");
   const isEFatura = orderCanIssueEFatura(order, contacts);
   const eType = orderEBelgeType(order, contacts);
   const message = efaturaOnayMessage(order, contacts);
@@ -44,12 +45,16 @@ export function ElektronikFaturaOnayModal({
   const submit = async (scenario) => {
     setBusy(true);
     setMenuOpen(false);
+    setError("");
     try {
       await onConfirm?.({
         eType,
         scenario: eType === "e_invoice" ? scenario : undefined,
       });
       onClose?.();
+    } catch (err) {
+      const detail = err?.response?.data?.detail || err?.message || "Gönderim başarısız.";
+      setError(typeof detail === "string" ? detail : "Gönderim başarısız.");
     } finally {
       setBusy(false);
     }
@@ -95,6 +100,15 @@ export function ElektronikFaturaOnayModal({
               </span>
             </div>
           )}
+          {error ? (
+            <div
+              className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-800"
+              data-testid="efatura-onay-error"
+              role="alert"
+            >
+              {error}
+            </div>
+          ) : null}
         </div>
 
         <div className="relative flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50/80 rounded-b-2xl overflow-visible">
