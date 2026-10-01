@@ -149,6 +149,11 @@ def should_resolve_e_type_from_gib(e_type: Optional[str]) -> bool:
     return e_type not in MANUAL_ISSUE_TYPES
 
 
+def honor_explicit_einvoice(e_type: Optional[str]) -> bool:
+    """Onay modalı Temel/Ticari → e_type=e_invoice açıkça gelir; GİB e-arşiv önerisini geçme."""
+    return (e_type or "").strip().lower() == "e_invoice"
+
+
 class InvoiceCreateRequest(BaseModel):
     order_id: Optional[str] = None
     invoice_id: Optional[str] = None
@@ -337,7 +342,10 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
     contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
     requested = e_type if e_type is not None else inv.get("e_type")
     gib_meta: Optional[Dict[str, Any]] = None
-    if should_resolve_e_type_from_gib(requested):
+    # Temel/Ticari onayı e_type=e_invoice gönderir — GİB e-arşiv dese bile korunur.
+    if honor_explicit_einvoice(requested):
+        e_type = "e_invoice"
+    elif should_resolve_e_type_from_gib(requested):
         tax = digits(
             (contact or {}).get("tax_number_or_id")
             or (contact or {}).get("tax_id")
@@ -728,13 +736,14 @@ async def api_einvoice_xml(invoice_id: str):
                     "X-Document-Source": "integrator",
                 },
             )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        # Entegratör anahtarı/ETTN yoksa yerel UBL'e düş (menü «XML indir» kırılmasın).
+        logger.info("integrator xml unavailable for %s: %s", invoice_id, getattr(exc, "detail", exc))
     except Exception:
         logger.exception("integrator xml fetch failed for %s", invoice_id)
     stored = await _db.outgoing_einvoice_xml.find_one({"_id": invoice_id})
     if stored and stored.get("xml"):
-        data = stored["xml"].encode("utf-8")
+        data = stored["xml"].encode("utf-8") if isinstance(stored["xml"], str) else stored["xml"]
         name = ubl_export.invoice_filename({"invoice_number": stored.get("invoice_id") or invoice_id}, "xml")
         return Response(data, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="{name}"'})
     return await ubl_export.invoice_xml(invoice_id)
@@ -878,13 +887,20 @@ async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
     stored = (inv.get("gib_document_url") or "").strip()
     if _is_http_url(stored) and not _is_n11_document_url(stored):
         viewer = stored
-    return await isnet.download_invoice_xml(
-        settings,
-        ettn,
-        e_type=et or "e_archive",
-        invoice_number=str(inv.get("invoice_number") or inv.get("gib_invoice_id") or ""),
-        viewer_url=viewer,
-    )
+    try:
+        return await isnet.download_invoice_xml(
+            settings,
+            ettn,
+            e_type=et or "e_archive",
+            invoice_number=str(inv.get("invoice_number") or inv.get("gib_invoice_id") or ""),
+            viewer_url=viewer,
+        )
+    except HTTPException as exc:
+        logger.info("fetch_integrator_xml: %s → %s", invoice_id, getattr(exc, "detail", exc))
+        return None
+    except Exception:
+        logger.exception("fetch_integrator_xml failed for %s", invoice_id)
+        return None
 
 
 async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:

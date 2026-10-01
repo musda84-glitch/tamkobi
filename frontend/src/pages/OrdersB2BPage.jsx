@@ -213,9 +213,39 @@ export default function OrdersB2BPage() {
     const ids = [...new Set(list.map((o) => o.invoice_id).filter(Boolean))];
     if (!ids.length) { toast.error("Seçili siparişlerde e-fatura yok."); return; }
     let ok = 0, fail = 0;
+    const failMsgs = [];
+    const blobErrorDetail = async (err) => {
+      const blob = err?.response?.data;
+      if (blob instanceof Blob) {
+        try {
+          const j = JSON.parse(await blob.text());
+          if (j?.detail) return typeof j.detail === "string" ? j.detail : "XML indirilemedi.";
+        } catch { /* ignore */ }
+      }
+      const d = err?.response?.data?.detail || err?.message;
+      return typeof d === "string" ? d : "XML indirilemedi.";
+    };
     for (const id of ids) {
       try {
-        const r = await axios.get(`${API_URL}/e-invoice/${id}/xml`, { responseType: "blob" });
+        let r;
+        try {
+          r = await axios.get(`${API_URL}/e-invoice/${id}/xml`, { responseType: "blob" });
+        } catch (firstErr) {
+          try {
+            r = await axios.get(`${API_URL}/invoices/${id}/xml`, { responseType: "blob" });
+          } catch (secondErr) {
+            throw secondErr?.response ? secondErr : firstErr;
+          }
+        }
+        const ct = String(r.headers?.["content-type"] || "");
+        if (ct.includes("json")) {
+          const text = typeof r.data?.text === "function" ? await r.data.text() : await new Response(r.data).text();
+          let detail = "XML indirilemedi.";
+          try { detail = JSON.parse(text)?.detail || detail; } catch { /* ignore */ }
+          failMsgs.push(typeof detail === "string" ? detail : "XML indirilemedi.");
+          fail++;
+          continue;
+        }
         const url = URL.createObjectURL(r.data);
         const a = document.createElement("a");
         a.href = url;
@@ -225,9 +255,16 @@ export default function OrdersB2BPage() {
         a.remove();
         URL.revokeObjectURL(url);
         ok++;
-      } catch { fail++; }
+      } catch (err) {
+        fail++;
+        failMsgs.push(await blobErrorDetail(err));
+      }
     }
-    toast[fail ? "error" : "success"](`${ok} XML indirildi${fail ? `, ${fail} hata` : ""}.`);
+    if (fail && !ok) {
+      toast.error(failMsgs[0] || "XML indirilemedi.");
+    } else {
+      toast[fail ? "error" : "success"](`${ok} XML indirildi${fail ? `, ${fail} hata` : ""}.`);
+    }
   };
   const carrierLabels = (list, needle, title) => {
     const hit = list.filter((o) => String(o.cargo_carrier || "").toLowerCase().includes(needle));
@@ -583,14 +620,17 @@ export default function OrdersB2BPage() {
     }
   };
 
-  /** Diğer işlemler: e-belge (GİB). Mükellef değilse zorla e-arşiv. opts.scenario = TEMEL|TICARI. */
+  /** Diğer işlemler: e-belge (GİB). Mükellef değilse zorla e-arşiv — Temel/Ticari seçimi hariç. */
   const handleEBelgeInvoice = async (ord, eType, opts = {}) => {
     const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
-    const resolved = eType === "e_invoice" && orderEBelgeType(ord, contacts) !== "e_invoice"
-      ? "e_archive"
-      : (eType || orderEBelgeType(ord, contacts));
+    const explicitScenario = opts.scenario === "TEMEL" || opts.scenario === "TICARI";
+    const resolved = explicitScenario
+      ? "e_invoice"
+      : (eType === "e_invoice" && orderEBelgeType(ord, contacts) !== "e_invoice"
+        ? "e_archive"
+        : (eType || orderEBelgeType(ord, contacts)));
     const label = resolved === "e_invoice" ? "E-Fatura" : "E-Arşiv";
-    if (resolved !== eType && eType === "e_invoice") {
+    if (!explicitScenario && resolved !== eType && eType === "e_invoice") {
       toast.message("Cari e-fatura mükellefi değil; E-Arşiv kesilecek.");
     }
     if (!opts.skipConfirm && !window.confirm(`${ord.order_number} için ${label} GİB'e iletilsin mi?`)) return;

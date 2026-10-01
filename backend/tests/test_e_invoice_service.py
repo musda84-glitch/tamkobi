@@ -36,6 +36,14 @@ class TestScenarioAndBuyer:
         assert e_invoice.should_resolve_e_type_from_gib("paper") is False
         assert e_invoice.should_resolve_e_type_from_gib("e_export") is False
 
+    def test_scenario_forces_einvoice(self):
+        assert e_invoice.honor_explicit_einvoice("e_invoice") is True
+        assert e_invoice.honor_explicit_einvoice("E_INVOICE") is True
+        assert e_invoice.honor_explicit_einvoice("e_archive") is False
+        assert e_invoice.honor_explicit_einvoice("auto") is False
+        assert e_invoice.honor_explicit_einvoice(None) is False
+        assert e_invoice.honor_explicit_einvoice("") is False
+
 
 class TestResolveBuyerMukellef:
     def test_simulated_vkn_is_efatura_tckn_is_archive(self):
@@ -169,6 +177,45 @@ class TestIssueInvoiceSimulated:
 
         asyncio.get_event_loop().run_until_complete(_run())
 
+    def test_explicit_einvoice_honors_temel_ticari(self):
+        """Temel/Ticari onayı e_type=e_invoice gönderir; TCKN (e-arşiv) olsa bile e-fatura kalır."""
+        fake_db = MagicMock()
+        inv = {
+            "_id": "inv_force", "company_id": "c1", "invoice_type": "sales", "e_type": "paper",
+            "status": "draft", "contact_id": "cnt3", "contact_name": "Nihai", "contact_tax_id": "12345678901",
+            "invoice_number": "NX3", "items": [],
+        }
+        contact = {"_id": "cnt3", "name": "Nihai", "tax_number_or_id": "12345678901", "is_e_invoice_user": False}
+        company = {"_id": "c1", "name": "Firma", "tax_number": "1234567801"}
+
+        async def find_one(q):
+            if q.get("_id") == "inv_force":
+                return inv
+            if q.get("_id") == "cnt3":
+                return contact
+            if q.get("_id") == "c1":
+                return company
+            return {"status": "simulated"}
+
+        fake_db.invoices.find_one = AsyncMock(side_effect=find_one)
+        fake_db.contacts.find_one = AsyncMock(return_value=contact)
+        fake_db.contacts.update_one = AsyncMock()
+        fake_db.companies.find_one = AsyncMock(return_value=company)
+        fake_db.einvoice_settings.find_one = AsyncMock(return_value={"status": "simulated"})
+        fake_db.invoices.update_one = AsyncMock()
+        fake_db.outgoing_einvoice_xml.update_one = AsyncMock()
+        e_invoice.init(fake_db, {"consume_credits": AsyncMock(return_value=10)})
+
+        async def _run():
+            with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")):
+                with patch.object(e_invoice, "resolve_buyer_mukellef", AsyncMock()) as lookup:
+                    out = await e_invoice.issue_invoice("inv_force", e_type="e_invoice", scenario="TEMEL")
+                    lookup.assert_not_awaited()
+                assert out["e_type"] == "e_invoice"
+                assert out["einvoice_state"] == "sent"
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
     def test_isnet_not_configured_refuses_simulated_gib(self):
         """İşNet seçili ama configured değilse sahte GİB başarısı yok."""
         fake_db = MagicMock()
@@ -288,6 +335,36 @@ class TestIntegratorCredits:
         out = asyncio.get_event_loop().run_until_complete(e_invoice.api_integrator_credits("c1"))
         assert out["balance"] is None
         assert out["source"] == "none"
+
+
+class TestFetchIntegratorXml:
+    def test_http_error_returns_none_for_local_fallback(self):
+        fake_db = MagicMock()
+        inv = {
+            "_id": "inv_xml",
+            "company_id": "c1",
+            "e_type": "e_invoice",
+            "status": "approved",
+            "gib_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "invoice_number": "TA1",
+            "integrator": "isnet",
+        }
+        fake_db.invoices.find_one = AsyncMock(return_value=inv)
+        fake_db.einvoice_settings.find_one = AsyncMock(
+            return_value={"provider": "isnet", "status": "configured", "company_tax_id": "4810173324"}
+        )
+        e_invoice.init(fake_db)
+
+        async def _run():
+            with patch.object(
+                e_invoice.isnet,
+                "download_invoice_xml",
+                AsyncMock(side_effect=HTTPException(status_code=404, detail="İşNet XML anahtarı (key) bulunamadı.")),
+            ):
+                out = await e_invoice.fetch_integrator_xml("inv_xml")
+            assert out is None
+
+        asyncio.get_event_loop().run_until_complete(_run())
 
 
 class TestFinalizeAndTrack:
