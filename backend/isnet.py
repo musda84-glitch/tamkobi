@@ -1242,48 +1242,90 @@ async def download_invoice_xml(
     viewer_url: str = "",
     direction: str = "Outgoing",
 ) -> bytes:
-    """İşNet DocumentViewer/DownloadXml — resmi UBL-TR (NetteFatura-API)."""
-    key_src = (viewer_url or "").strip()
-    if not key_src:
-        link = await get_document_viewer_link(
-            settings,
-            ettn,
-            e_type=e_type,
-            invoice_number=invoice_number,
-            direction=direction,
-        )
-        key_src = link.get("url") or ""
-    key = extract_viewer_key(key_src)
-    if not key:
-        raise HTTPException(status_code=404, detail="İşNet XML anahtarı (key) bulunamadı.")
-    from urllib.parse import quote
+    """İşNet DocumentViewer/DownloadXml — resmi UBL-TR (NetteFatura-API).
 
-    url = f"{portal_url(settings).rstrip('/')}/DocumentViewer/DownloadXml?key={quote(key, safe='')}"
-    try:
-        async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
-            r = await client.get(
-                url,
-                headers={
-                    "Accept": "text/xml, application/xml, application/octet-stream, */*",
-                    "User-Agent": "TamKobi-Isnet-Client",
-                },
-            )
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"İşNet XML indirilemedi: {e}") from e
-    if r.status_code >= 400 or not r.content:
-        raise HTTPException(
-            status_code=502,
-            detail=f"İşNet XML HTTP {r.status_code}: {(r.text or '')[:200]}",
-        )
-    text = r.content
-    # Bazen zip/html döner
-    head = text[:200].lstrip()
-    if head.startswith(b"<") or b"Invoice" in head[:500]:
-        return bytes(text)
-    raise HTTPException(
-        status_code=502,
-        detail="İşNet XML yanıtı UBL değil. Fatura NetteFatura'da henüz hazır olmayabilir.",
-    )
+    PDF ile aynı: kayıtlı link stale olabilir; taze viewer + alternatif tip/no dene.
+    """
+    errors: List[str] = []
+
+    async def _try_key_src(key_src: str, label: str) -> Optional[bytes]:
+        key = extract_viewer_key(key_src or "")
+        if not key:
+            return None
+        from urllib.parse import quote
+
+        url = f"{portal_url(settings).rstrip('/')}/DocumentViewer/DownloadXml?key={quote(key, safe='')}"
+        try:
+            async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
+                r = await client.get(
+                    url,
+                    headers={
+                        "Accept": "text/xml, application/xml, application/octet-stream, */*",
+                        "User-Agent": "TamKobi-Isnet-Client",
+                    },
+                )
+        except httpx.RequestError as e:
+            errors.append(f"{label}: {e}")
+            return None
+        if r.status_code >= 400 or not r.content:
+            errors.append(f"{label}: HTTP {r.status_code}")
+            return None
+        text = r.content
+        head = text[:200].lstrip()
+        if head.startswith(b"<") or b"Invoice" in head[:500]:
+            return bytes(text)
+        errors.append(f"{label}: UBL değil")
+        return None
+
+    stored = (viewer_url or "").strip()
+    if stored:
+        out = await _try_key_src(stored, "kayıtlı link")
+        if out:
+            return out
+
+    ettn = (ettn or "").strip()
+    primary = e_type if e_type in ("e_invoice", "e_archive") else "e_archive"
+    alt = "e_archive" if primary == "e_invoice" else "e_invoice"
+    inv_nos = [str(invoice_number or "").strip(), ""]
+    seen_nos: List[str] = []
+    for n in inv_nos:
+        if n not in seen_nos:
+            seen_nos.append(n)
+
+    for et in [primary, alt]:
+        for inv_no in seen_nos:
+            try:
+                link = await get_document_viewer_link(
+                    settings,
+                    ettn,
+                    e_type=et,
+                    invoice_number=inv_no,
+                    direction=direction,
+                )
+            except HTTPException as e:
+                errors.append(f"viewer({et}): {e.detail}")
+                continue
+            candidates = [
+                (link.get("url") or "", "viewer"),
+                (link.get("html_url") or "", "HtmlUrl"),
+                (link.get("pdf_url") or "", "PdfUrl"),
+            ]
+            seen_keys: set = set()
+            for src, label in candidates:
+                if not src:
+                    continue
+                k = extract_viewer_key(src)
+                if not k or k in seen_keys:
+                    continue
+                seen_keys.add(k)
+                out = await _try_key_src(src, f"{label}/{et}")
+                if out:
+                    return out
+
+    detail = errors[-1] if errors else "İşNet XML anahtarı (key) bulunamadı."
+    if len(errors) > 1:
+        detail = f"{detail} ({len(errors)} deneme)"
+    raise HTTPException(status_code=502, detail=detail)
 
 
 def _decode_xml_payload(payload: str) -> Optional[bytes]:
@@ -1296,7 +1338,6 @@ def _decode_xml_payload(payload: str) -> Optional[bytes]:
         return base64.b64decode("".join(text.split()), validate=False)
     except Exception:
         return None
-
 
 async def list_incoming(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
     """SearchInvoice (Incoming) — NetteFatura-API invoice.searchInvoice()."""

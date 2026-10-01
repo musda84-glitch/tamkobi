@@ -40,6 +40,36 @@ def test_invoice_pdf_require_integrator_raises_when_missing():
     assert "Entegratör" in e.value.detail
 
 
+def test_invoice_pdf_falls_back_to_local_without_require():
+    """Menü indirme: entegratör yoksa yerel PDF (require_integrator=False)."""
+    inv = {
+        "_id": "inv_pdf_local",
+        "company_id": "c1",
+        "invoice_number": "TA202600000115",
+        "e_type": "e_invoice",
+        "status": "approved",
+        "einvoice_state": "sent",
+        "gib_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "gib_status": "İşNet SOAP API ile GİB'e iletildi",
+        "items": [{"name": "A", "quantity": 1, "unit_price": 10, "vat_rate": 20, "total": 10}],
+        "subtotal": 10,
+        "vat_total": 2,
+        "grand_total": 12,
+    }
+    fake_db = MagicMock()
+    fake_db.invoices.find_one = AsyncMock(return_value=inv)
+    fake_db.companies.find_one = AsyncMock(return_value={"_id": "c1", "name": "Firma", "tax_number": "123"})
+    fake_db.contacts.find_one = AsyncMock(return_value=None)
+    saas_docs.init(fake_db)
+
+    with patch("e_invoice.fetch_integrator_pdf", AsyncMock(return_value=None)):
+        resp = asyncio.get_event_loop().run_until_complete(
+            saas_docs.invoice_pdf("inv_pdf_local", require_integrator=False)
+        )
+    assert resp.body[:4] == b"%PDF"
+    assert resp.headers.get("x-document-source") == "local"
+
+
 def test_invoice_pdf_returns_integrator_bytes_with_header():
     inv = {
         "_id": "inv_pdf_2",
