@@ -4,11 +4,32 @@ import { X, ChevronDown, ListOrdered, Loader2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { backdropDismissProps } from "../utils/modalBackdrop";
-import { orderCanIssueEFatura, orderEBelgeType, efaturaOnayMessage } from "../utils/orderEBelge";
+import {
+  orderCanIssueEFatura,
+  orderEBelgeType,
+  efaturaOnayMessage,
+  resolveOrderContact,
+} from "../utils/orderEBelge";
+
+function digitsTax(raw) {
+  return String(raw || "").replace(/\D/g, "");
+}
+
+function orderBuyerTaxId(order, contacts = []) {
+  const c = resolveOrderContact(order, contacts);
+  const tax =
+    c?.tax_number_or_id ||
+    c?.tax_id ||
+    order?.contact_tax_id ||
+    order?.customer_tax_id ||
+    "";
+  return digitsTax(tax);
+}
 
 /**
  * Faturalaştı siparişte «E-Fatura Oluştur» onayı.
- * E-fatura mükellefinde Temel / Ticari senaryo seçimi; kontör bakiyesi gösterilir.
+ * Mükellefiyet + kontör entegratörden (GİB lookup / İşNet bakiye) gelir.
+ * E-fatura mükellefinde Temel / Ticari senaryo seçimi.
  */
 export function ElektronikFaturaOnayModal({
   order,
@@ -19,28 +40,64 @@ export function ElektronikFaturaOnayModal({
 }) {
   useEscape(onClose);
   const [credits, setCredits] = useState(null);
+  const [creditsSource, setCreditsSource] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadingMeta, setLoadingMeta] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [error, setError] = useState("");
-  const isEFatura = orderCanIssueEFatura(order, contacts);
-  const eType = orderEBelgeType(order, contacts);
-  const message = efaturaOnayMessage(order, contacts);
+  const [gibMeta, setGibMeta] = useState(null);
+
+  const fallbackEFatura = orderCanIssueEFatura(order, contacts);
+  const isEFatura = gibMeta ? !!gibMeta.is_e_invoice_user : fallbackEFatura;
+  const eType = gibMeta?.suggested_e_type || orderEBelgeType(order, contacts);
+  const message = gibMeta?.message
+    ? (isEFatura
+      ? "Bu müşteri e-fatura mükellefidir, karşı tarafa e-fatura gönderilecek. Onaylıyor musunuz?"
+      : "Bu müşteri e-fatura mükellefi değildir, e-arşiv faturası oluşturulacak. Onaylıyor musunuz?")
+    : efaturaOnayMessage(order, contacts);
 
   useEffect(() => {
-    if (!companyId) return;
+    if (!companyId) {
+      setLoadingMeta(false);
+      return;
+    }
     let cancelled = false;
-    axios
-      .get(`${API_URL}/account/gib-credits`, { params: { company_id: companyId } })
+    const tax = orderBuyerTaxId(order, contacts);
+
+    const loadCredits = axios
+      .get(`${API_URL}/e-invoice/integrator-credits`, { params: { company_id: companyId } })
       .then((r) => {
-        if (!cancelled) setCredits(Number(r.data?.balance ?? 0));
+        if (cancelled) return;
+        const bal = r.data?.balance;
+        setCredits(bal == null || Number.isNaN(Number(bal)) ? null : Number(bal));
+        setCreditsSource(r.data?.source || r.data?.provider || "");
       })
       .catch(() => {
-        if (!cancelled) setCredits(null);
+        if (!cancelled) {
+          setCredits(null);
+          setCreditsSource("");
+        }
       });
+
+    const loadGib = tax.length === 10 || tax.length === 11
+      ? axios
+        .get(`${API_URL}/gib/lookup`, { params: { tax_id: tax, company_id: companyId } })
+        .then((r) => {
+          if (!cancelled) setGibMeta(r.data || null);
+        })
+        .catch(() => {
+          if (!cancelled) setGibMeta(null);
+        })
+      : Promise.resolve();
+
+    Promise.all([loadCredits, loadGib]).finally(() => {
+      if (!cancelled) setLoadingMeta(false);
+    });
+
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+  }, [companyId, order, contacts]);
 
   const submit = async (scenario) => {
     setBusy(true);
@@ -50,6 +107,8 @@ export function ElektronikFaturaOnayModal({
       await onConfirm?.({
         eType,
         scenario: eType === "e_invoice" ? scenario : undefined,
+        alias: gibMeta?.alias || undefined,
+        gibMeta: gibMeta || undefined,
       });
       onClose?.();
     } catch (err) {
@@ -86,17 +145,29 @@ export function ElektronikFaturaOnayModal({
         </div>
 
         <div className="px-5 py-4 space-y-3">
-          <p className="text-sm text-slate-700 leading-relaxed" data-testid="efatura-onay-msg">
-            {message}
-          </p>
+          {loadingMeta ? (
+            <p className="text-sm text-slate-500 flex items-center gap-2" data-testid="efatura-onay-loading">
+              <Loader2 className="w-4 h-4 animate-spin" /> Entegratör sorgulanıyor…
+            </p>
+          ) : (
+            <p className="text-sm text-slate-700 leading-relaxed" data-testid="efatura-onay-msg">
+              {message}
+            </p>
+          )}
           {credits != null && (
             <div
               className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2.5 text-sm text-amber-900"
               data-testid="efatura-onay-credits"
+              data-credits-source={creditsSource || "integrator"}
             >
               <ListOrdered className="w-4 h-4 text-amber-700 shrink-0" />
               <span>
                 <b>{credits.toLocaleString("tr-TR")}</b> adet e-fatura kontörünüz var.
+                {creditsSource ? (
+                  <span className="text-[11px] text-amber-700/80 ml-1">
+                    ({creditsSource === "isnet" || creditsSource === "isnet_portal" ? "İşNet" : creditsSource})
+                  </span>
+                ) : null}
               </span>
             </div>
           )}
@@ -127,7 +198,7 @@ export function ElektronikFaturaOnayModal({
             <div className="relative">
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || loadingMeta}
                 onClick={() => setMenuOpen((o) => !o)}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm disabled:opacity-50"
                 aria-expanded={menuOpen}
@@ -170,7 +241,7 @@ export function ElektronikFaturaOnayModal({
           ) : (
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || loadingMeta}
               onClick={() => submit()}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm disabled:opacity-50"
               data-testid="efatura-onay-continue"
