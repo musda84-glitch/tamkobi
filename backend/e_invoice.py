@@ -154,6 +154,35 @@ def honor_explicit_einvoice(e_type: Optional[str]) -> bool:
     return (e_type or "").strip().lower() == "e_invoice"
 
 
+def format_integrator_gib_status(
+    *,
+    label: str,
+    mode: str = "",
+    portal_status: str = "",
+    verified: bool = False,
+) -> str:
+    """Liste «GİB Durumu» metni — test/canlı + portal durumu."""
+    mode_l = (mode or "").strip().lower()
+    is_test = mode_l in ("test", "sandbox", "demo")
+    prefix = "Test · " if is_test else ""
+    portal = (portal_status or "").strip()
+    if portal:
+        # Ham İngilizce kodları kısaca Türkçeleştir
+        low = portal.lower()
+        if low in ("succeed", "succeeded", "success", "approved", "completed", "ok"):
+            portal = "GİB onaylı"
+        elif "wait" in low or "pending" in low or "1220" in low:
+            portal = "Alıcı yanıtı bekleniyor"
+        elif "fail" in low or "error" in low or "hata" in low:
+            portal = f"Hata: {portal}"
+        return f"{prefix}{portal}"
+    if verified:
+        return f"{prefix}{label} ile GİB'e iletildi"
+    if is_test:
+        return f"{prefix}NetteFatura'ya iletildi — GİB durumu bekleniyor"
+    return f"{label} ile GİB'e iletildi — durum bekleniyor"
+
+
 class InvoiceCreateRequest(BaseModel):
     order_id: Optional[str] = None
     invoice_id: Optional[str] = None
@@ -500,28 +529,40 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         if consume:
             remaining = await consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
         gib_no = (sent.get("invoice_id") or "").strip()
+        gib_mode = (sent.get("mode") or settings.get("mode") or "test").strip()
+        gib_status = format_integrator_gib_status(
+            label=label,
+            mode=gib_mode,
+            portal_status=sent.get("gib_status_raw") or "",
+            verified=bool(sent.get("verified")),
+        )
         patch = {
             "status": "approved",
             "einvoice_state": "sent",
-            "gib_status": f"{label} ile GİB'e iletildi",
+            "gib_status": gib_status,
+            "gib_status_code": sent.get("gib_status_code") or None,
             "gib_tracking_id": tracking,
             "gib_uuid": sent.get("ettn"),
             "gib_invoice_id": gib_no or None,
             "gib_document_url": sent.get("document_url") or "",
             "integrator": provider,
             "gib_scenario": scen,
-            "gib_mode": settings.get("mode") or "test",
+            "gib_mode": gib_mode,
             "issued_at": _now(),
             "buyer_tax_id": buyer["tax_id"],
         }
         # GİB / NetteFatura fatura numarası geldiyse liste numarası da onu göstersin
-        if gib_no and gib_no.upper() != str(inv.get("invoice_number") or "").strip().upper():
+        if gib_no:
+            if gib_no.upper() != str(inv.get("invoice_number") or "").strip().upper():
+                patch["local_invoice_number"] = inv.get("invoice_number")
             patch["invoice_number"] = gib_no
-            patch["local_invoice_number"] = inv.get("invoice_number")
         await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
         try:
             xml_str, ettn, _iid = n11faturam.build_ubl(
-                {**inv, "e_type": et, "gib_scenario": scen}, company, contact, ettn=sent.get("ettn")
+                {**inv, "e_type": et, "gib_scenario": scen, "invoice_number": gib_no or inv.get("invoice_number")},
+                company,
+                contact,
+                ettn=sent.get("ettn"),
             )
             await store_outgoing_xml(
                 invoice_id, inv["company_id"], xml_str.encode("utf-8"),
@@ -530,20 +571,26 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         except Exception:
             logger.exception("%s UBL arşivi yazılamadı", provider)
         msg = f"Fatura {label} üzerinden GİB'e iletildi. ETTN: {tracking}"
+        if gib_no:
+            msg = f"Fatura no {gib_no}. {msg}"
         if gib_meta:
             msg = f"{'E-Fatura' if et == 'e_invoice' else 'E-Arşiv'} (GİB). {msg}"
+        if gib_mode.lower() in ("test", "sandbox", "demo"):
+            msg = f"[Test] {msg}"
         return {
             "status": "success",
             "einvoice_state": "sent",
             "message": msg,
             "invoice_id": invoice_id,
+            "invoice_number": gib_no or inv.get("invoice_number"),
             "e_type": et,
             "gib_uuid": sent.get("ettn"),
             "gib_invoice_id": sent.get("invoice_id"),
+            "gib_status": gib_status,
             "tracking_id": tracking,
             "document_url": sent.get("document_url") or "",
             "provider": provider,
-            "mode": settings.get("mode") or "test",
+            "mode": gib_mode,
             "scenario": scen,
             "gib_credits_left": remaining,
             "gib_lookup": gib_meta,
@@ -705,6 +752,12 @@ async def api_einvoice_status(invoice_id: str):
     inv = await _db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if inv.get("einvoice_state") in ("sent", "queued") and (inv.get("gib_uuid") or inv.get("gib_tracking_id")):
+        try:
+            await refresh_one_invoice_status(invoice_id)
+            inv = await _db.invoices.find_one({"_id": invoice_id}) or inv
+        except Exception:
+            logger.exception("status refresh on read failed for %s", invoice_id)
     xml_doc = await _db.outgoing_einvoice_xml.find_one({"_id": invoice_id}, {"byte_len": 1, "scenario": 1, "updated_at": 1})
     track = await _db.e_invoices.find_one({"_id": f"einv_{invoice_id}"})
     return {
@@ -713,6 +766,7 @@ async def api_einvoice_status(invoice_id: str):
         "e_type": inv.get("e_type"),
         "einvoice_state": inv.get("einvoice_state") or ("sent" if inv.get("gib_tracking_id") else "draft"),
         "gib_status": inv.get("gib_status"),
+        "gib_status_code": inv.get("gib_status_code"),
         "gib_uuid": inv.get("gib_uuid"),
         "gib_invoice_id": inv.get("gib_invoice_id"),
         "gib_tracking_id": inv.get("gib_tracking_id"),
@@ -720,9 +774,78 @@ async def api_einvoice_status(invoice_id: str):
         "gib_document_url": inv.get("gib_document_url"),
         "gib_error": inv.get("gib_error"),
         "mode": inv.get("gib_mode"),
+        "gib_mode": inv.get("gib_mode"),
         "has_xml": bool(xml_doc),
         "xml_meta": xml_doc,
         "e_invoice_track": track,
+    }
+
+
+async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
+    """Tek fatura için İşNet/GİB durum + fatura no senkronu."""
+    inv = await _db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    ettn = (inv.get("gib_uuid") or inv.get("gib_tracking_id") or "").strip()
+    if not ettn or not isnet.is_ettn_uuid(ettn):
+        return {"updated": False, "invoice": inv}
+    settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+    provider = (inv.get("integrator") or settings.get("provider") or "").strip()
+    if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
+        return {"updated": False, "invoice": inv}
+    info = await isnet.try_verify_outgoing_in_portal(
+        settings,
+        ettn,
+        e_type=inv.get("e_type") or "e_archive",
+        invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
+        retries=2,
+    )
+    if not info.get("ok"):
+        return {"updated": False, "invoice": inv, "verified": False}
+    patch: Dict[str, Any] = {}
+    url = (info.get("document_url") or "").strip()
+    if url:
+        patch["gib_document_url"] = url
+    gib_no = (info.get("invoice_id") or "").strip()
+    if gib_no:
+        patch["gib_invoice_id"] = gib_no
+        if gib_no.upper() != str(inv.get("invoice_number") or "").strip().upper():
+            if inv.get("invoice_number") and not inv.get("local_invoice_number"):
+                patch["local_invoice_number"] = inv.get("invoice_number")
+            patch["invoice_number"] = gib_no
+    label = "İşNet SOAP API" if provider == "isnet" else "İşNet Web Portal"
+    patch["gib_status"] = format_integrator_gib_status(
+        label=label,
+        mode=inv.get("gib_mode") or settings.get("mode") or "",
+        portal_status=(info.get("status") or "").strip(),
+        verified=True,
+    )
+    if info.get("status_code"):
+        patch["gib_status_code"] = info.get("status_code")
+    if patch:
+        await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+    refreshed = await _db.invoices.find_one({"_id": invoice_id}) or {**inv, **patch}
+    return {"updated": bool(patch), "invoice": refreshed, "verified": True}
+
+
+@router.post("/e-invoice/{invoice_id}/refresh-status")
+async def api_refresh_einvoice_status(invoice_id: str):
+    out = await refresh_one_invoice_status(invoice_id)
+    inv = out.get("invoice") or {}
+    return {
+        "status": "success",
+        "updated": out.get("updated"),
+        "verified": out.get("verified"),
+        "invoice_number": inv.get("invoice_number"),
+        "gib_invoice_id": inv.get("gib_invoice_id"),
+        "gib_status": inv.get("gib_status"),
+        "gib_mode": inv.get("gib_mode"),
+        "gib_document_url": inv.get("gib_document_url"),
+        "message": (
+            "GİB durumu güncellendi."
+            if out.get("updated")
+            else "Yeni GİB durumu yok (NetteFatura henüz indekslenmemiş olabilir)."
+        ),
     }
 
 
@@ -936,31 +1059,76 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
                     {"$set": {"einvoice_state": "error", "gib_status": "Gönderim zaman aşımı", "gib_error": "queued_timeout", "error_at": _now()}},
                 )
                 updated += 1
-        elif inv.get("einvoice_state") == "sent" and inv.get("gib_uuid") and not inv.get("gib_document_url"):
-            settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
-            provider = (inv.get("integrator") or settings.get("provider") or "").strip()
-            if provider == "n11faturam" or not provider:
-                company = await _db.companies.find_one({"_id": inv["company_id"]}) or {}
-                seller = digits(company.get("tax_number") or company.get("tax_id"))
-                if seller:
-                    url = n11faturam.document_url(seller, inv["gib_uuid"], inv.get("e_type") or "e_archive")
-                    if url:
-                        await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"gib_document_url": url}})
-                        updated += 1
-            elif provider == "isnet" and settings.get("status") == "configured":
-                try:
-                    info = await isnet.get_document_viewer_link(
-                        settings,
-                        inv["gib_uuid"],
-                        e_type=inv.get("e_type") or "e_archive",
-                        invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
-                    )
-                    url = info.get("url") or ""
-                    if url:
-                        await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"gib_document_url": url}})
-                        updated += 1
-                except Exception:
-                    logger.exception("isnet viewer link backfill failed for %s", inv.get("_id"))
+            continue
+
+        ettn = (inv.get("gib_uuid") or inv.get("gib_tracking_id") or "").strip()
+        if not ettn:
+            continue
+        settings = await _db.einvoice_settings.find_one({"company_id": inv.get("company_id")}) or {}
+        provider = (inv.get("integrator") or settings.get("provider") or "").strip()
+
+        if provider == "n11faturam" or (not provider and not inv.get("gib_document_url")):
+            company = await _db.companies.find_one({"_id": inv["company_id"]}) or {}
+            seller = digits(company.get("tax_number") or company.get("tax_id"))
+            if seller and not inv.get("gib_document_url"):
+                url = n11faturam.document_url(seller, ettn, inv.get("e_type") or "e_archive")
+                if url:
+                    await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"gib_document_url": url}})
+                    updated += 1
+            continue
+
+        if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
+            continue
+        if not isnet.is_ettn_uuid(ettn):
+            continue
+
+        try:
+            info = await isnet.try_verify_outgoing_in_portal(
+                settings,
+                ettn,
+                e_type=inv.get("e_type") or "e_archive",
+                invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
+                retries=2,
+            )
+        except Exception:
+            logger.exception("isnet status refresh failed for %s", inv.get("_id"))
+            continue
+
+        if not info.get("ok"):
+            continue
+
+        patch: Dict[str, Any] = {}
+        url = (info.get("document_url") or "").strip()
+        if url and url != (inv.get("gib_document_url") or ""):
+            patch["gib_document_url"] = url
+
+        gib_no = (info.get("invoice_id") or "").strip()
+        if gib_no:
+            if gib_no != (inv.get("gib_invoice_id") or ""):
+                patch["gib_invoice_id"] = gib_no
+            if gib_no.upper() != str(inv.get("invoice_number") or "").strip().upper():
+                if inv.get("invoice_number") and not inv.get("local_invoice_number"):
+                    patch["local_invoice_number"] = inv.get("invoice_number")
+                patch["invoice_number"] = gib_no
+
+        portal_status = (info.get("status") or "").strip()
+        if portal_status or gib_no or url:
+            label = "İşNet SOAP API" if provider == "isnet" else "İşNet Web Portal"
+            new_gs = format_integrator_gib_status(
+                label=label,
+                mode=inv.get("gib_mode") or settings.get("mode") or "",
+                portal_status=portal_status,
+                verified=True,
+            )
+            if new_gs != (inv.get("gib_status") or ""):
+                patch["gib_status"] = new_gs
+            if info.get("status_code"):
+                patch["gib_status_code"] = info.get("status_code")
+
+        if patch:
+            await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": patch})
+            updated += 1
+
     return {"checked": checked, "updated": updated}
 
 
