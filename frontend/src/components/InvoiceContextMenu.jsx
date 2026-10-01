@@ -1,11 +1,134 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import axios from "axios";
+import { toast } from "sonner";
 import {
   FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock,
   Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink, Trash2, Receipt, Pencil, Loader2, Copy,
 } from "lucide-react";
 import { canCopyInvoice, INVOICE_COPY_MODES } from "./invoiceCopyModes";
+
+/** Listede gösterilecek no: GİB/entegratör numarası varsa onu kullan. */
+export function displayInvoiceNumber(inv) {
+  if (!inv) return "—";
+  const gib = String(inv.gib_invoice_id || "").trim();
+  if (gib) return gib;
+  return String(inv.invoice_number || inv.id || inv._id || "—");
+}
+
+async function blobErrorDetail(err, fallback = "İşlem başarısız.") {
+  const blob = err?.response?.data;
+  if (blob instanceof Blob) {
+    try {
+      const j = JSON.parse(await blob.text());
+      if (j?.detail) return typeof j.detail === "string" ? j.detail : fallback;
+    } catch { /* ignore */ }
+  }
+  const d = err?.response?.data?.detail || err?.message;
+  return typeof d === "string" ? d : fallback;
+}
+
+function triggerBlobDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** UBL XML: entegratör → yerel UBL. */
+export async function downloadInvoiceXmlEdoc(apiBase, inv) {
+  const id = inv?.id || inv?._id;
+  if (!apiBase || !id) {
+    toast.error("Fatura bulunamadı.");
+    return;
+  }
+  const name = `${displayInvoiceNumber(inv)}.xml`;
+  try {
+    let r;
+    try {
+      r = await axios.get(`${apiBase}/e-invoice/${id}/xml`, { responseType: "blob" });
+    } catch {
+      r = await axios.get(`${apiBase}/invoices/${id}/xml`, { responseType: "blob" });
+    }
+    const ct = String(r.headers?.["content-type"] || "");
+    if (ct.includes("json")) {
+      const text = typeof r.data?.text === "function" ? await r.data.text() : await new Response(r.data).text();
+      let detail = "XML indirilemedi.";
+      try { detail = JSON.parse(text)?.detail || detail; } catch { /* ignore */ }
+      toast.error(typeof detail === "string" ? detail : "XML indirilemedi.");
+      return;
+    }
+    triggerBlobDownload(r.data, name);
+    toast.success("UBL XML indirildi.");
+  } catch (err) {
+    toast.error(await blobErrorDetail(err, "XML indirilemedi."));
+  }
+}
+
+/** PDF: önce entegratör (zorunlu değil), yoksa yerel şablon. */
+export async function downloadInvoicePdfEdoc(apiBase, inv) {
+  const id = inv?.id || inv?._id;
+  if (!apiBase || !id) {
+    toast.error("Fatura bulunamadı.");
+    return;
+  }
+  const name = `${displayInvoiceNumber(inv)}.pdf`;
+  try {
+    let r;
+    let source = "";
+    try {
+      r = await axios.get(`${apiBase}/invoices/${id}/pdf`, {
+        responseType: "blob",
+        params: { download: 1 },
+        headers: { Accept: "application/pdf" },
+      });
+      source = String(r.headers?.["x-document-source"] || "");
+    } catch (firstErr) {
+      throw firstErr;
+    }
+    const ct = String(r.headers?.["content-type"] || "");
+    if (ct.includes("json")) {
+      const text = typeof r.data?.text === "function" ? await r.data.text() : await new Response(r.data).text();
+      let detail = "PDF indirilemedi.";
+      try { detail = JSON.parse(text)?.detail || detail; } catch { /* ignore */ }
+      toast.error(typeof detail === "string" ? detail : "PDF indirilemedi.");
+      return;
+    }
+    triggerBlobDownload(r.data, name);
+    if (source === "integrator") toast.success("Entegratör PDF indirildi.");
+    else toast.success("PDF indirildi.");
+  } catch (err) {
+    toast.error(await blobErrorDetail(err, "PDF indirilemedi."));
+  }
+}
+
+/** Resmi GİB görüntüleme linki (JSON → yeni sekme). */
+export async function openGibDocumentUrl(apiBase, inv) {
+  const id = inv?.id || inv?._id;
+  if (!apiBase || !id) {
+    toast.error("Fatura bulunamadı.");
+    return;
+  }
+  if (inv.gib_document_url && /^https?:\/\//i.test(String(inv.gib_document_url))) {
+    window.open(inv.gib_document_url, "_blank", "noopener");
+    return;
+  }
+  try {
+    const r = await axios.get(`${apiBase}/invoices/${id}/gib-document.json`);
+    const url = r.data?.url;
+    if (!url) {
+      toast.error("Resmi GİB görüntüleme linki yok.");
+      return;
+    }
+    window.open(url, "_blank", "noopener");
+  } catch (err) {
+    toast.error(err?.response?.data?.detail || err?.message || "GİB belgesi açılamadı.");
+  }
+}
 export const E_TYPE_LABELS = {
   e_invoice: "E-Fatura",
   e_archive: "E-Arşiv",
@@ -325,7 +448,7 @@ export const InvoiceContextMenu = (props) => {
             color="text-indigo-600"
             label="PDF İndir"
             sub="GİB / entegratör e-belge PDF"
-            onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf?require_integrator=1`, "_blank")}
+            onClick={() => downloadInvoicePdfEdoc(apiBase, inv)}
             testId="ctx-download-pdf"
           />
           <Item
@@ -333,7 +456,7 @@ export const InvoiceContextMenu = (props) => {
             color="text-indigo-600"
             label="XML İndir"
             sub="GİB UBL-TR"
-            onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/xml`, "_blank")}
+            onClick={() => downloadInvoiceXmlEdoc(apiBase, inv)}
             testId="ctx-download-xml"
           />
           {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
@@ -342,7 +465,7 @@ export const InvoiceContextMenu = (props) => {
               color="text-emerald-600"
               label="Resmi GİB Belgesi"
               sub="Entegratör görüntüleme linki"
-              onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/gib-document`, "_blank")}
+              onClick={() => openGibDocumentUrl(apiBase, inv)}
               testId="ctx-gib-doc-url"
             />
           )}
@@ -413,15 +536,15 @@ export const InvoiceContextMenu = (props) => {
       {!isPurchase && showGibDownloads && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-edoc-downloads">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
-          <Item icon={FileCode2} color="text-indigo-600" label="UBL XML İndir" sub="Entegratör GİB UBL-TR" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/xml`, "_blank")} testId="ctx-download-xml" />
-          <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Entegratör e-belge PDF" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf?require_integrator=1`, "_blank")} testId="ctx-download-pdf" />
+          <Item icon={FileCode2} color="text-indigo-600" label="UBL XML İndir" sub="Entegratör GİB UBL-TR" onClick={() => downloadInvoiceXmlEdoc(apiBase, inv)} testId="ctx-download-xml" />
+          <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Entegratör e-belge PDF" onClick={() => downloadInvoicePdfEdoc(apiBase, inv)} testId="ctx-download-pdf" />
           {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
             <Item
               icon={ExternalLink}
               color="text-emerald-600"
               label="Resmi GİB Belgesi"
               sub="Entegratör görüntüleme linki"
-              onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/gib-document`, "_blank")}
+              onClick={() => openGibDocumentUrl(apiBase, inv)}
               testId="ctx-gib-doc-url"
             />
           )}
@@ -431,15 +554,15 @@ export const InvoiceContextMenu = (props) => {
       {incoming && showGibDownloads && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-incoming-edoc-downloads">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-indigo-700">GİB BELGELERİ</div>
-          <Item icon={Download} color="text-indigo-600" label="PDF İndir" sub="GİB / entegratör e-belge PDF" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/pdf?require_integrator=1`, "_blank")} testId="ctx-download-pdf" />
-          <Item icon={FileCode2} color="text-indigo-600" label="XML İndir" sub="GİB UBL-TR" onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/xml`, "_blank")} testId="ctx-download-xml" />
+          <Item icon={Download} color="text-indigo-600" label="PDF İndir" sub="GİB / entegratör e-belge PDF" onClick={() => downloadInvoicePdfEdoc(apiBase, inv)} testId="ctx-download-pdf" />
+          <Item icon={FileCode2} color="text-indigo-600" label="XML İndir" sub="GİB UBL-TR" onClick={() => downloadInvoiceXmlEdoc(apiBase, inv)} testId="ctx-download-xml" />
           {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
             <Item
               icon={ExternalLink}
               color="text-emerald-600"
               label="Resmi GİB Belgesi"
               sub="Entegratör görüntüleme linki"
-              onClick={() => window.open(`${apiBase}/invoices/${inv.id || inv._id}/gib-document`, "_blank")}
+              onClick={() => openGibDocumentUrl(apiBase, inv)}
               testId="ctx-gib-doc-url"
             />
           )}

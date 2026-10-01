@@ -499,13 +499,14 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         remaining = None
         if consume:
             remaining = await consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
+        gib_no = (sent.get("invoice_id") or "").strip()
         patch = {
             "status": "approved",
             "einvoice_state": "sent",
             "gib_status": f"{label} ile GİB'e iletildi",
             "gib_tracking_id": tracking,
             "gib_uuid": sent.get("ettn"),
-            "gib_invoice_id": sent.get("invoice_id") or None,
+            "gib_invoice_id": gib_no or None,
             "gib_document_url": sent.get("document_url") or "",
             "integrator": provider,
             "gib_scenario": scen,
@@ -513,6 +514,10 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             "issued_at": _now(),
             "buyer_tax_id": buyer["tax_id"],
         }
+        # GİB / NetteFatura fatura numarası geldiyse liste numarası da onu göstersin
+        if gib_no and gib_no.upper() != str(inv.get("invoice_number") or "").strip().upper():
+            patch["invoice_number"] = gib_no
+            patch["local_invoice_number"] = inv.get("invoice_number")
         await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
         try:
             xml_str, ettn, _iid = n11faturam.build_ubl(
@@ -791,7 +796,7 @@ async def resolve_gib_document_url(invoice_id: str) -> Dict[str, Any]:
                 settings,
                 ettn,
                 e_type=e_type,
-                invoice_number=str(inv.get("invoice_number") or inv.get("gib_invoice_id") or ""),
+                invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
             )
             url = info.get("url") or ""
             if url:
@@ -859,13 +864,22 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
     stored = (inv.get("gib_document_url") or "").strip()
     if _is_http_url(stored) and not _is_n11_document_url(stored):
         viewer = stored
-    return await isnet.download_invoice_pdf(
-        settings,
-        ettn,
-        e_type=et or "e_archive",
-        invoice_number=str(inv.get("invoice_number") or inv.get("gib_invoice_id") or ""),
-        viewer_url=viewer,
-    )
+    # İşNet fatura no: önce GİB'den dönen numara, sonra yerel
+    inv_no = str(inv.get("gib_invoice_id") or inv.get("invoice_number") or "").strip()
+    try:
+        return await isnet.download_invoice_pdf(
+            settings,
+            ettn,
+            e_type=et or "e_archive",
+            invoice_number=inv_no,
+            viewer_url=viewer,
+        )
+    except HTTPException as exc:
+        logger.info("fetch_integrator_pdf: %s → %s", invoice_id, getattr(exc, "detail", exc))
+        return None
+    except Exception:
+        logger.exception("fetch_integrator_pdf failed for %s", invoice_id)
+        return None
 
 
 async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
@@ -887,12 +901,13 @@ async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
     stored = (inv.get("gib_document_url") or "").strip()
     if _is_http_url(stored) and not _is_n11_document_url(stored):
         viewer = stored
+    inv_no = str(inv.get("gib_invoice_id") or inv.get("invoice_number") or "").strip()
     try:
         return await isnet.download_invoice_xml(
             settings,
             ettn,
             e_type=et or "e_archive",
-            invoice_number=str(inv.get("invoice_number") or inv.get("gib_invoice_id") or ""),
+            invoice_number=inv_no,
             viewer_url=viewer,
         )
     except HTTPException as exc:
@@ -938,7 +953,7 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
                         settings,
                         inv["gib_uuid"],
                         e_type=inv.get("e_type") or "e_archive",
-                        invoice_number=str(inv.get("invoice_number") or ""),
+                        invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
                     )
                     url = info.get("url") or ""
                     if url:

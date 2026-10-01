@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, invoiceETypeLabel } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, invoiceETypeLabel, displayInvoiceNumber } from "../components/InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
 import { invoiceToOpenAfterCopy } from "../components/invoiceCopyModes";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -668,7 +668,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${linesOpen ? "rotate-180 text-emerald-700" : ""}`} />
                         </button>
                         <div className="min-w-0 flex-1">
-                          <div className="text-slate-900 font-mono font-semibold truncate">{inv.invoice_number}</div>
+                          <div className="text-slate-900 font-mono font-semibold truncate">{displayInvoiceNumber(inv)}</div>
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                             <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${typeBadge(inv)[1]}`}>
                               {typeBadge(inv)[0]}

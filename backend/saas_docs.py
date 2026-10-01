@@ -186,7 +186,8 @@ async def invoice_pdf(
                         "Access-Control-Expose-Headers": "X-Document-Source",
                     },
                 )
-            if require_integrator or wants_integrator:
+            # Yazdırma ekranı (require_integrator=1) entegratör şart; menü indirme yerel UBL/PDF'e düşebilir.
+            if require_integrator:
                 raise HTTPException(
                     status_code=502,
                     detail=(
@@ -195,9 +196,11 @@ async def invoice_pdf(
                     ),
                 )
         except HTTPException:
-            raise
+            if require_integrator:
+                raise
+            # wants_integrator ama require yok → yerel şablona düş
         except Exception as e:
-            if require_integrator or wants_integrator:
+            if require_integrator:
                 raise HTTPException(
                     status_code=502,
                     detail=f"Entegratör PDF hatası: {e}",
