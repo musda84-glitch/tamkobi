@@ -3,8 +3,28 @@ import { ChevronDown, Menu } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { ORDER_BULK_ACTIONS, bulkActionNeedsSelection } from "../utils/orderBulkActions";
 
+/**
+ * Radix menü kapanınca window.confirm/prompt kullanıcı jestini kaybeder;
+ * aksiyonu bir tick sonra çalıştır.
+ */
+const runBulkAction = (onAction, id) => {
+  if (!onAction) return;
+  window.setTimeout(() => {
+    try {
+      const result = onAction(id);
+      if (result && typeof result.catch === "function") {
+        result.catch((err) => {
+          console.error("orders bulk action failed", id, err);
+        });
+      }
+    } catch (err) {
+      console.error("orders bulk action failed", id, err);
+    }
+  }, 0);
+};
+
 export const OrdersBulkMenu = ({ selectedCount = 0, busy = false, onAction }) => (
-  <DropdownMenu>
+  <DropdownMenu modal={false}>
     <DropdownMenuTrigger asChild>
       <button
         type="button"
@@ -26,8 +46,15 @@ export const OrdersBulkMenu = ({ selectedCount = 0, busy = false, onAction }) =>
           <DropdownMenuItem
             key={action.id}
             disabled={locked || busy}
-            onSelect={() => onAction?.(action.id)}
-            className={`gap-2 text-xs ${locked ? "text-slate-400" : "text-slate-700"}`}
+            onSelect={(e) => {
+              // Menü kapanmasını engelleme; jest kaybını setTimeout ile telafi ediyoruz.
+              if (locked || busy) {
+                e.preventDefault();
+                return;
+              }
+              runBulkAction(onAction, action.id);
+            }}
+            className={`gap-2 text-xs cursor-pointer ${locked ? "text-slate-400" : "text-slate-700"}`}
             data-testid={`bulk-action-${action.id}`}
           >
             <Icon className={`w-4 h-4 shrink-0 ${locked ? "text-slate-300" : "text-slate-500"}`} />
