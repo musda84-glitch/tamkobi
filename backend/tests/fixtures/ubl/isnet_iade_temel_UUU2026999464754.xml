@@ -1,0 +1,184 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ns0:Invoice xmlns:ns0="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:ns2="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:ns3="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2 ..\xsd\maindoc\UBL-Invoice-2.1.xsd.xsd">
+  <ns2:UBLVersionID>2.1</ns2:UBLVersionID>
+  <ns2:CustomizationID>TR1.2</ns2:CustomizationID>
+  <ns2:ProfileID>TEMELFATURA</ns2:ProfileID>
+  <ns2:ID>UUU2026999464754</ns2:ID>
+  <ns2:CopyIndicator>false</ns2:CopyIndicator>
+  <ns2:UUID>06ea5b17-6c99-4cc1-9cac-1cb8593eeabd</ns2:UUID>
+  <ns2:IssueDate>2026-10-01</ns2:IssueDate>
+  <ns2:IssueTime>10:54:02</ns2:IssueTime>
+  <ns2:InvoiceTypeCode>IADE</ns2:InvoiceTypeCode>
+  <ns2:Note>Yalnız DÖRTBİNYÜZYİRMİ TL SEKSEN Kr'dir</ns2:Note>
+  <ns2:Note>AA</ns2:Note>
+  <ns2:Note>29.09.2026 tarihli GHJ2026000002586 numaralı faturaya istinaden düzenlenen iade faturasıdır.</ns2:Note>
+  <ns2:DocumentCurrencyCode>TRY</ns2:DocumentCurrencyCode>
+  <ns2:LineCountNumeric>1</ns2:LineCountNumeric>
+  <ns3:BillingReference>
+    <ns3:InvoiceDocumentReference>
+      <ns2:ID>GHJ2026000002586</ns2:ID>
+      <ns2:IssueDate>2026-09-29</ns2:IssueDate>
+      <ns2:DocumentTypeCode>İADE</ns2:DocumentTypeCode>
+      <ns2:DocumentType>SFGDFG</ns2:DocumentType>
+    </ns3:InvoiceDocumentReference>
+  </ns3:BillingReference>
+  <ns3:AdditionalDocumentReference>
+    <ns2:ID>ffc14025-0878-40c8-93a8-777b34441324</ns2:ID>
+    <ns2:IssueDate>2026-10-01</ns2:IssueDate>
+    </ns3:AdditionalDocumentReference>
+  <ns3:AccountingSupplierParty>
+    <ns3:Party>
+      <ns2:WebsiteURI>www.isnet.net.tr</ns2:WebsiteURI>
+      <ns3:PartyIdentification>
+        <ns2:ID schemeID="VKN">4810173324</ns2:ID>
+      </ns3:PartyIdentification>
+      <ns3:PartyIdentification>
+        <ns2:ID schemeID="TELEFONNO">05309059959</ns2:ID>
+      </ns3:PartyIdentification>
+      <ns3:PartyIdentification>
+        <ns2:ID schemeID="TICARETSICILNO">2336262</ns2:ID>
+      </ns3:PartyIdentification>
+      <ns3:PartyIdentification>
+        <ns2:ID schemeID="MERSISNO">23351515</ns2:ID>
+      </ns3:PartyIdentification>
+      <ns3:PartyName>
+        <ns2:Name>İŞNET</ns2:Name>
+      </ns3:PartyName>
+      <ns3:PostalAddress>
+        <ns2:StreetName>Yayla Mahallesi Gökçek Sokak</ns2:StreetName>
+        <ns2:BuildingNumber>30</ns2:BuildingNumber>
+        <ns2:CitySubdivisionName>GELİBOLU</ns2:CitySubdivisionName>
+        <ns2:CityName>Çanakkale</ns2:CityName>
+        <ns2:PostalZone>34000</ns2:PostalZone>
+        <ns3:Country>
+          <ns2:Name>Türkiye</ns2:Name>
+        </ns3:Country>
+      </ns3:PostalAddress>
+      <ns3:PartyTaxScheme>
+        <ns3:TaxScheme>
+          <ns2:Name>KARATAŞ VERGİ DAİRESİ</ns2:Name>
+        </ns3:TaxScheme>
+      </ns3:PartyTaxScheme>
+      <ns3:Contact>
+        <ns2:Telephone>05309059959</ns2:Telephone>
+        <ns2:ElectronicMail>esma.yolcu@is.net.tr</ns2:ElectronicMail>
+      </ns3:Contact>
+    </ns3:Party>
+  </ns3:AccountingSupplierParty>
+  <ns3:AccountingCustomerParty>
+    <ns3:Party>
+      <ns2:WebsiteURI />
+      <ns3:PartyIdentification>
+        <ns2:ID schemeID="VKN">4810173324</ns2:ID>
+      </ns3:PartyIdentification>
+      <ns3:PartyName>
+        <ns2:Name>İŞ NET ELEKTRONİK BİLGİ ÜRETİM DAĞITIM TİCARET VE İLETİŞİM HİZMETLERİ ANONİM ŞİRKETİ</ns2:Name>
+      </ns3:PartyName>
+      <ns3:PostalAddress>
+        <ns2:StreetName>IÇMELER MAH. PIRI REIS CAD.</ns2:StreetName>
+        <ns2:BuildingNumber>62</ns2:BuildingNumber>
+        <ns2:CitySubdivisionName>TUZLA</ns2:CitySubdivisionName>
+        <ns2:CityName>İstanbul</ns2:CityName>
+        <ns2:PostalZone />
+        <ns3:Country>
+          <ns2:Name>Türkiye</ns2:Name>
+        </ns3:Country>
+      </ns3:PostalAddress>
+      <ns3:PartyTaxScheme>
+        <ns3:TaxScheme>
+          <ns2:Name>BOĞAZİÇİ KURUMLAR VERGİ DAİRESİ</ns2:Name>
+        </ns3:TaxScheme>
+      </ns3:PartyTaxScheme>
+      <ns3:Contact>
+        <ns2:Telefax />
+        <ns2:ElectronicMail />
+      </ns3:Contact>
+    </ns3:Party>
+  </ns3:AccountingCustomerParty>
+  <ns3:PaymentMeans>
+    <ns2:PaymentMeansCode>ZZZ</ns2:PaymentMeansCode>
+    <ns3:PayeeFinancialAccount>
+      <ns2:ID>TR630622522260004381444433</ns2:ID>
+      <ns2:CurrencyCode>TRY</ns2:CurrencyCode>
+      <ns2:PaymentNote>TÜRKİYE İŞ BANKASI A.Ş. / SEFAKÖY/İSTANBUL / ŞUBE KODU: 00292 / IBAN: TR630622522260004381444433</ns2:PaymentNote>
+    </ns3:PayeeFinancialAccount>
+  </ns3:PaymentMeans>
+  <ns3:PaymentMeans>
+    <ns2:PaymentMeansCode>ZZZ</ns2:PaymentMeansCode>
+    <ns3:PayeeFinancialAccount>
+      <ns2:ID>TR111111111111111111111111</ns2:ID>
+      <ns2:CurrencyCode>TRY</ns2:CurrencyCode>
+      <ns2:PaymentNote>TÜRKİYE İŞ BANKASI A.Ş. / TOROS / ŞUBE KODU: 00709 / IBAN: TR111111111111111111111111</ns2:PaymentNote>
+    </ns3:PayeeFinancialAccount>
+  </ns3:PaymentMeans>
+  <ns3:PaymentMeans>
+    <ns2:PaymentMeansCode>ZZZ</ns2:PaymentMeansCode>
+    <ns3:PayeeFinancialAccount>
+      <ns2:ID>TR955555333552221522222222</ns2:ID>
+      <ns2:CurrencyCode>TRY</ns2:CurrencyCode>
+      <ns2:PaymentNote>TÜRKİYE İŞ BANKASI A.Ş. / IBAN: TR955555333552221522222222</ns2:PaymentNote>
+    </ns3:PayeeFinancialAccount>
+  </ns3:PaymentMeans>
+  <ns3:AllowanceCharge>
+    <ns2:ChargeIndicator>false</ns2:ChargeIndicator>
+    <ns2:Amount currencyID="TRY">0.00</ns2:Amount>
+  </ns3:AllowanceCharge>
+  <ns3:PricingExchangeRate>
+    <ns2:SourceCurrencyCode>TRY</ns2:SourceCurrencyCode>
+    <ns2:TargetCurrencyCode>TRY</ns2:TargetCurrencyCode>
+    <ns2:CalculationRate>1.0000</ns2:CalculationRate>
+    <ns2:Date>2026-10-01</ns2:Date>
+  </ns3:PricingExchangeRate>
+  <ns3:TaxTotal>
+    <ns2:TaxAmount currencyID="TRY">686.80</ns2:TaxAmount>
+    <ns3:TaxSubtotal>
+      <ns2:TaxableAmount currencyID="TRY">3434.00</ns2:TaxableAmount>
+      <ns2:TaxAmount currencyID="TRY">686.80</ns2:TaxAmount>
+      <ns2:Percent>20</ns2:Percent>
+      <ns3:TaxCategory>
+        <ns3:TaxScheme>
+          <ns2:Name>KDV GERCEK</ns2:Name>
+          <ns2:TaxTypeCode>0015</ns2:TaxTypeCode>
+        </ns3:TaxScheme>
+      </ns3:TaxCategory>
+    </ns3:TaxSubtotal>
+  </ns3:TaxTotal>
+  <ns3:LegalMonetaryTotal>
+    <ns2:LineExtensionAmount currencyID="TRY">3434.00</ns2:LineExtensionAmount>
+    <ns2:TaxExclusiveAmount currencyID="TRY">3434.00</ns2:TaxExclusiveAmount>
+    <ns2:TaxInclusiveAmount currencyID="TRY">4120.80</ns2:TaxInclusiveAmount>
+    <ns2:AllowanceTotalAmount currencyID="TRY">0.00</ns2:AllowanceTotalAmount>
+    <ns2:ChargeTotalAmount currencyID="TRY">0.00</ns2:ChargeTotalAmount>
+    <ns2:PayableRoundingAmount currencyID="TRY">686.80</ns2:PayableRoundingAmount>
+    <ns2:PayableAmount currencyID="TRY">4120.80</ns2:PayableAmount>
+  </ns3:LegalMonetaryTotal>
+  <ns3:InvoiceLine>
+    <ns2:ID>1</ns2:ID>
+    <ns2:InvoicedQuantity unitCode="NIU">1.00</ns2:InvoicedQuantity>
+    <ns2:LineExtensionAmount currencyID="TRY">3434.00</ns2:LineExtensionAmount>
+    <ns3:TaxTotal>
+      <ns2:TaxAmount currencyID="TRY">686.80</ns2:TaxAmount>
+      <ns3:TaxSubtotal>
+        <ns2:TaxableAmount currencyID="TRY">3434.00</ns2:TaxableAmount>
+        <ns2:TaxAmount currencyID="TRY">686.80</ns2:TaxAmount>
+        <ns2:CalculationSequenceNumeric>1</ns2:CalculationSequenceNumeric>
+        <ns2:Percent>20</ns2:Percent>
+        <ns3:TaxCategory>
+          <ns3:TaxScheme>
+            <ns2:Name>KDV GERCEK</ns2:Name>
+            <ns2:TaxTypeCode>0015</ns2:TaxTypeCode>
+          </ns3:TaxScheme>
+        </ns3:TaxCategory>
+      </ns3:TaxSubtotal>
+    </ns3:TaxTotal>
+    <ns3:Item>
+      <ns2:Name>DENEME</ns2:Name>
+      <ns3:SellersItemIdentification>
+        <ns2:ID>000000000000061</ns2:ID>
+      </ns3:SellersItemIdentification>
+    </ns3:Item>
+    <ns3:Price>
+      <ns2:PriceAmount currencyID="TRY">3434.00</ns2:PriceAmount>
+    </ns3:Price>
+  </ns3:InvoiceLine>
+</ns0:Invoice>

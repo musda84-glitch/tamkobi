@@ -15,8 +15,9 @@ INVOICE_NS = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
 CBC = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
 CAC = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
 EDOC_TYPES = ("e_invoice", "e_archive")
+RETURN_INVOICE_TYPES = frozenset({"return", "sales_return", "purchase_return", "iade"})
 UNIT_CODES = {
-    "Adet": "C62", "adet": "C62", "C62": "C62",
+    "Adet": "C62", "adet": "C62", "C62": "C62", "NIU": "NIU",
     "Kg": "KGM", "kg": "KGM", "Kilogram": "KGM",
     "Lt": "LTR", "Litre": "LTR", "L": "LTR",
     "M": "MTR", "m": "MTR", "Metre": "MTR",
@@ -34,7 +35,56 @@ def init(db):
 
 
 def is_outgoing_edoc(inv: Dict[str, Any]) -> bool:
-    return inv.get("invoice_type") == "sales" and inv.get("e_type") in EDOC_TYPES
+    et = inv.get("e_type")
+    if et not in EDOC_TYPES:
+        return False
+    itype = str(inv.get("invoice_type") or "").lower()
+    if itype in ("sales", "sale") or itype in RETURN_INVOICE_TYPES:
+        return True
+    # Gelen alış dışındaki satış belgeleri
+    if inv.get("direction") == "incoming" or inv.get("source") == "edoc_inbox":
+        return False
+    return itype not in ("purchase", "dispatch", "expense_slip", "proforma")
+
+
+def is_return_invoice(inv: Dict[str, Any]) -> bool:
+    return str(inv.get("invoice_type") or "").lower() in RETURN_INVOICE_TYPES
+
+
+def _return_billing_ref(inv: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
+    """İade faturası için (original_id, issue_date, doc_type_code, doc_type)."""
+    oid = (
+        inv.get("original_invoice_number")
+        or inv.get("return_of_invoice_number")
+        or inv.get("billing_reference_id")
+        or inv.get("referenced_invoice_number")
+        or ""
+    )
+    oid = str(oid).strip()
+    odate = (
+        inv.get("original_issue_date")
+        or inv.get("return_of_issue_date")
+        or inv.get("billing_reference_date")
+        or ""
+    )
+    odate = _date(odate) if odate else ""
+    dtype = str(inv.get("billing_reference_type") or inv.get("original_document_type") or "").strip()
+    dcode = str(inv.get("billing_reference_type_code") or "İADE").strip() or "İADE"
+    if not oid:
+        # Notdan «GHJ2026000002586 numaralı» yakala
+        notes = str(inv.get("notes") or "")
+        m = re.search(r"([A-Z]{2,3}\d{10,16})\s*numaralı", notes, re.I)
+        if m:
+            oid = m.group(1).upper()
+        m2 = re.search(r"(\d{2}[./]\d{2}[./]\d{4})\s*tarihli", notes)
+        if m2 and not odate:
+            raw = m2.group(1).replace(".", "-").replace("/", "-")
+            parts = raw.split("-")
+            if len(parts) == 3 and len(parts[2]) == 4:
+                odate = f"{parts[2]}-{parts[1]}-{parts[0]}"
+    if not oid:
+        return None
+    return oid, odate or _date(inv.get("issue_date")), dcode, dtype
 
 
 def invoice_filename(inv: Dict[str, Any], ext: str) -> str:
@@ -126,12 +176,16 @@ def _stable_uuid(inv: Dict[str, Any]) -> str:
 
 
 def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[str, Any]) -> bytes:
-    """UBL-TR Invoice XML (imzasız arşiv). parse_ubl ile okunabilir."""
+    """UBL-TR Invoice XML (imzasız arşiv). parse_ubl ile okunabilir.
+
+    İşNet test başarılı örnekleriyle uyum: SATIS/TICARIFATURA, IADE/TEMELFATURA + BillingReference.
+    """
     e_type = inv.get("e_type") or "e_archive"
     profile = inv.get("_profile_override") or inv.get("gib_scenario")
     if profile not in ("TEMELFATURA", "TICARIFATURA", "EARSIVFATURA", "IHRACAT"):
         profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
-    type_code = "IADE" if inv.get("invoice_type") == "return" else "SATIS"
+    returning = is_return_invoice(inv)
+    type_code = "IADE" if returning else "SATIS"
     items = list(inv.get("items") or [])
     currency = (inv.get("currency") or "TRY").upper()
     subtotal = float(inv.get("subtotal") or 0)
@@ -147,6 +201,10 @@ def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
     _cbc(root, "CopyIndicator", "false")
     _cbc(root, "UUID", _stable_uuid(inv))
     _cbc(root, "IssueDate", _date(inv.get("issue_date")))
+    issue_time = (inv.get("issue_time") or "").strip()
+    if not issue_time:
+        issue_time = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    _cbc(root, "IssueTime", issue_time[:8] if len(issue_time) >= 8 else issue_time)
     _cbc(root, "InvoiceTypeCode", type_code)
     notes = (inv.get("notes") or "").strip()
     if notes:
@@ -155,6 +213,20 @@ def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
         _cbc(root, "Note", f"ETTN/Takip: {inv['gib_tracking_id']}")
     _cbc(root, "DocumentCurrencyCode", currency)
     _cbc(root, "LineCountNumeric", str(len(items) or 1))
+
+    # İade: orijinal satış faturasına BillingReference (İşNet IADE örneği)
+    if returning:
+        bref = _return_billing_ref(inv)
+        if bref:
+            oid, odate, dcode, dtype = bref
+            br = _cac(root, "BillingReference")
+            idr = _cac(br, "InvoiceDocumentReference")
+            _cbc(idr, "ID", oid)
+            if odate:
+                _cbc(idr, "IssueDate", odate)
+            _cbc(idr, "DocumentTypeCode", dcode)
+            if dtype:
+                _cbc(idr, "DocumentType", dtype[:120])
 
     seller_party = {
         "name": seller.get("name"),

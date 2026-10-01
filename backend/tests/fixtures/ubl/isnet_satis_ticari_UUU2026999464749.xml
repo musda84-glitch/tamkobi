@@ -1,0 +1,153 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ns0:Invoice xmlns:ns0="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:ns2="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:ns3="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2 ..\xsd\maindoc\UBL-Invoice-2.1.xsd.xsd">
+  <ns2:UBLVersionID>2.1</ns2:UBLVersionID>
+  <ns2:CustomizationID>TR1.2</ns2:CustomizationID>
+  <ns2:ProfileID>TICARIFATURA</ns2:ProfileID>
+  <ns2:ID>UUU2026999464749</ns2:ID>
+  <ns2:CopyIndicator>false</ns2:CopyIndicator>
+  <ns2:UUID>c78f024e-b728-447d-a956-18f89dbe559c</ns2:UUID>
+  <ns2:IssueDate>2026-09-30</ns2:IssueDate>
+  <ns2:IssueTime>20:45:56</ns2:IssueTime>
+  <ns2:InvoiceTypeCode>SATIS</ns2:InvoiceTypeCode>
+  <ns2:Note>Yalnız BİR TL YİRMİ Kr'dir</ns2:Note>
+  <ns2:DocumentCurrencyCode>TRY</ns2:DocumentCurrencyCode>
+  <ns2:AccountingCost />
+  <ns2:LineCountNumeric>1</ns2:LineCountNumeric>
+  <ns3:AdditionalDocumentReference>
+    <ns2:ID>845107f0-fb09-494c-941a-c23b4dc89e83</ns2:ID>
+    <ns2:IssueDate>2026-09-30</ns2:IssueDate>
+    </ns3:AdditionalDocumentReference>
+  <ns3:AdditionalDocumentReference>
+    <ns2:ID>EYDEP_BILGISI</ns2:ID>
+    <ns2:IssueDate>2026-09-30</ns2:IssueDate>
+    <ns2:DocumentTypeCode>EYDEP_BILGISI</ns2:DocumentTypeCode>
+    <ns2:DocumentType>HAYIR</ns2:DocumentType>
+    <ns2:DocumentDescription>EYDEP Bilgisi</ns2:DocumentDescription>
+  </ns3:AdditionalDocumentReference>
+  <ns3:AccountingSupplierParty>
+    <ns3:Party>
+      <ns2:WebsiteURI>www.isnet.net.tr</ns2:WebsiteURI>
+      <ns3:PartyIdentification>
+        <ns2:ID schemeID="VKN">4810173324</ns2:ID>
+      </ns3:PartyIdentification>
+      <ns3:PartyIdentification>
+        <ns2:ID schemeID="HIZMETNO">OBSPTR1XTRA</ns2:ID>
+      </ns3:PartyIdentification>
+      <ns3:PartyIdentification>
+        <ns2:ID schemeID="TICARETSICILNO">112233</ns2:ID>
+      </ns3:PartyIdentification>
+      <ns3:PartyIdentification>
+        <ns2:ID schemeID="MERSISNO">1122331231233123</ns2:ID>
+      </ns3:PartyIdentification>
+      <ns3:PartyName>
+        <ns2:Name>isnet test</ns2:Name>
+      </ns3:PartyName>
+      <ns3:PostalAddress>
+        <ns2:StreetName>TUZLA</ns2:StreetName>
+        <ns2:BuildingNumber>1</ns2:BuildingNumber>
+        <ns2:CitySubdivisionName>TUZLA</ns2:CitySubdivisionName>
+        <ns2:CityName>İstanbul</ns2:CityName>
+        <ns2:PostalZone>34500</ns2:PostalZone>
+        <ns2:District>TUZLA</ns2:District>
+        <ns3:Country>
+          <ns2:Name>Türkiye</ns2:Name>
+        </ns3:Country>
+      </ns3:PostalAddress>
+      <ns3:PartyTaxScheme>
+        <ns3:TaxScheme>
+          <ns2:Name>TUZLA VERGİ DAİRESİ</ns2:Name>
+        </ns3:TaxScheme>
+      </ns3:PartyTaxScheme>
+      <ns3:Contact>
+        <ns2:Telephone>8507243387</ns2:Telephone>
+        <ns2:Telefax />
+        <ns2:ElectronicMail>noreply@nettefatura.com.tr</ns2:ElectronicMail>
+      </ns3:Contact>
+    </ns3:Party>
+  </ns3:AccountingSupplierParty>
+  <ns3:AccountingCustomerParty>
+    <ns3:Party>
+      <ns2:WebsiteURI />
+      <ns3:PartyIdentification>
+        <ns2:ID schemeID="VKN">4810173324</ns2:ID>
+      </ns3:PartyIdentification>
+      <ns3:PartyName>
+        <ns2:Name>İş Net Elektronik Bilgi Üretim Dağıtım Ticaret ve İletişim Hizm. A.Ş.</ns2:Name>
+      </ns3:PartyName>
+      <ns3:PostalAddress>
+        <ns2:StreetName>TEST ADRESİ</ns2:StreetName>
+        <ns2:BuildingNumber />
+        <ns2:CitySubdivisionName />
+        <ns2:CityName />
+        <ns2:PostalZone>00000</ns2:PostalZone>
+        <ns3:Country>
+          <ns2:Name>Türkiye</ns2:Name>
+        </ns3:Country>
+      </ns3:PostalAddress>
+      <ns3:PartyTaxScheme>
+        <ns3:TaxScheme>
+          <ns2:Name />
+        </ns3:TaxScheme>
+      </ns3:PartyTaxScheme>
+      <ns3:Contact>
+        <ns2:Telephone />
+        <ns2:Telefax />
+        <ns2:ElectronicMail />
+      </ns3:Contact>
+    </ns3:Party>
+  </ns3:AccountingCustomerParty>
+  <ns3:TaxTotal>
+    <ns2:TaxAmount currencyID="TRY">0.20</ns2:TaxAmount>
+    <ns3:TaxSubtotal>
+      <ns2:TaxableAmount currencyID="TRY">1.00</ns2:TaxableAmount>
+      <ns2:TaxAmount currencyID="TRY">0.20</ns2:TaxAmount>
+      <ns2:Percent>20</ns2:Percent>
+      <ns3:TaxCategory>
+        <ns3:TaxScheme>
+          <ns2:Name>KDV</ns2:Name>
+          <ns2:TaxTypeCode>0015</ns2:TaxTypeCode>
+        </ns3:TaxScheme>
+      </ns3:TaxCategory>
+    </ns3:TaxSubtotal>
+  </ns3:TaxTotal>
+  <ns3:LegalMonetaryTotal>
+    <ns2:LineExtensionAmount currencyID="TRY">1.00</ns2:LineExtensionAmount>
+    <ns2:TaxExclusiveAmount currencyID="TRY">1.00</ns2:TaxExclusiveAmount>
+    <ns2:TaxInclusiveAmount currencyID="TRY">1.20</ns2:TaxInclusiveAmount>
+    <ns2:AllowanceTotalAmount currencyID="TRY">0.00</ns2:AllowanceTotalAmount>
+    <ns2:PayableAmount currencyID="TRY">1.20</ns2:PayableAmount>
+  </ns3:LegalMonetaryTotal>
+  <ns3:InvoiceLine>
+    <ns2:ID>1</ns2:ID>
+    <ns2:Note />
+    <ns2:InvoicedQuantity unitCode="C62">1.00</ns2:InvoicedQuantity>
+    <ns2:LineExtensionAmount currencyID="TRY">1.00</ns2:LineExtensionAmount>
+    <ns3:TaxTotal>
+      <ns2:TaxAmount currencyID="TRY">0.20</ns2:TaxAmount>
+      <ns3:TaxSubtotal>
+        <ns2:TaxableAmount currencyID="TRY">1.00</ns2:TaxableAmount>
+        <ns2:TaxAmount currencyID="TRY">0.20</ns2:TaxAmount>
+        <ns2:CalculationSequenceNumeric>1</ns2:CalculationSequenceNumeric>
+        <ns2:Percent>20</ns2:Percent>
+        <ns3:TaxCategory>
+          <ns3:TaxScheme>
+            <ns2:Name>KDV</ns2:Name>
+            <ns2:TaxTypeCode>0015</ns2:TaxTypeCode>
+          </ns3:TaxScheme>
+        </ns3:TaxCategory>
+      </ns3:TaxSubtotal>
+    </ns3:TaxTotal>
+    <ns3:Item>
+      <ns2:Name>UI-3 RESMİ RED TESTİ (hakedis)</ns2:Name>
+      <ns3:SellersItemIdentification>
+        <ns2:ID>HKD-TEST-1</ns2:ID>
+      </ns3:SellersItemIdentification>
+      <ns3:AdditionalItemIdentification>
+        <ns2:ID>%0</ns2:ID>
+      </ns3:AdditionalItemIdentification>
+    </ns3:Item>
+    <ns3:Price>
+      <ns2:PriceAmount currencyID="TRY">1.00</ns2:PriceAmount>
+    </ns3:Price>
+  </ns3:InvoiceLine>
+</ns0:Invoice>
