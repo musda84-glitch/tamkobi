@@ -532,7 +532,7 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         official = (sent.get("official_invoice_id") or "").strip()
         number_source = (sent.get("number_source") or "").strip()
         gib_no = official or ""
-        if not gib_no and number_source in ("portal", "xml", "soap"):
+        if not gib_no and number_source in ("portal", "xml", "soap", "isnet"):
             gib_no = (sent.get("invoice_id") or "").strip()
         if not gib_no and provider not in ("isnet", "isnet_portal"):
             gib_no = (sent.get("invoice_id") or "").strip()
