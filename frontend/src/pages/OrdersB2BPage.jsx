@@ -961,9 +961,11 @@ export default function OrdersB2BPage() {
           companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
           onClose={() => setEFaturaOrder(null)}
           onConfirm={async ({ eType, scenario, alias }) => {
-            if (alias && eFaturaOrder?.contact_id) {
+            const ord = eFaturaOrder;
+            if (!ord) return;
+            if (alias && ord.contact_id) {
               try {
-                await axios.put(`${API_URL}/contacts/${eFaturaOrder.contact_id}`, {
+                await axios.put(`${API_URL}/contacts/${ord.contact_id}`, {
                   e_invoice_alias: alias,
                   is_e_invoice_user: eType === "e_invoice",
                 });
@@ -971,7 +973,7 @@ export default function OrdersB2BPage() {
                 /* gönderim yine denenecek */
               }
             }
-            await handleEBelgeInvoice(eFaturaOrder, eType, { scenario, skipConfirm: true });
+            await handleEBelgeInvoice(ord, eType, { scenario, skipConfirm: true });
           }}
         />
       )}

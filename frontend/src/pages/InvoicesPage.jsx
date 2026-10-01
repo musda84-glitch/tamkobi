@@ -1137,9 +1137,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
           onClose={() => setEFaturaInvoice(null)}
           onConfirm={async ({ eType, scenario, alias }) => {
-            if (alias && eFaturaInvoice?.contact_id) {
+            const inv = eFaturaInvoice;
+            if (!inv) return;
+            if (alias && inv.contact_id) {
               try {
-                await axios.put(`${API_URL}/contacts/${eFaturaInvoice.contact_id}`, {
+                await axios.put(`${API_URL}/contacts/${inv.contact_id}`, {
                   e_invoice_alias: alias,
                   is_e_invoice_user: eType === "e_invoice",
                 });
@@ -1147,7 +1149,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 /* gönderim yine denenecek */
               }
             }
-            await handleSendToGib(eFaturaInvoice.id || eFaturaInvoice._id, eType, { scenario });
+            await handleSendToGib(inv.id || inv._id, eType, { scenario });
           }}
         />
       )}
