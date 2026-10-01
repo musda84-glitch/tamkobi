@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel } from "../components/InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
 import { invoiceToOpenAfterCopy } from "../components/invoiceCopyModes";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -37,13 +37,11 @@ import {
   Printer,
   Download,
   Filter,
-  DollarSign,
   X,
   CreditCard,
   Building2,
   Sparkles,
   QrCode,
-  MessageSquare,
   MoreVertical,
   MousePointerClick,
   ArrowUp,
