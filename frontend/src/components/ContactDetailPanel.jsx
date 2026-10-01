@@ -401,7 +401,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   };
   const sendToGib = async (inv, eType) => {
     setBusy(inv.id);
-    try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/send-to-gib`, { e_type: eType || inv.e_type }); toast.success(r.data.message || "E-Fatura GİB'e gönderildi."); load(); }
+    try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/send-to-gib`, { e_type: eType || inv.e_type }); toast.success(r.data.message || "E-Fatura GİB'e gönderildi.");
+      try {
+        const st = await axios.post(`${API_URL}/e-invoice/${inv.id}/refresh-status`);
+        if (st.data?.invoice_number) toast.message(`GİB fatura no: ${st.data.invoice_number}`);
+      } catch { /* ignore */ }
+      load();
+    }
     catch (err) { toast.error(err.response?.data?.detail || "Gönderilemedi."); } finally { setBusy(null); }
   };
   const acceptIncoming = async (inv) => {

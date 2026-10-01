@@ -410,3 +410,128 @@ class TestFinalizeAndTrack:
             return out
 
         asyncio.run(_run())
+
+
+class TestIsnetOfficialInvoiceNumber:
+    def test_issue_patches_list_number_from_portal(self):
+        """İşNet portal no (UUU…) → invoice_number + gib_invoice_id; yerel TKB ezilmez kaynak olarak."""
+        fake_db = MagicMock()
+        inv = {
+            "_id": "inv_uuu",
+            "company_id": "c1",
+            "invoice_type": "sales",
+            "e_type": "e_invoice",
+            "status": "draft",
+            "contact_id": "cnt1",
+            "contact_name": "Musteri",
+            "contact_tax_id": "1234567890",
+            "invoice_number": "NX2026000000103",
+            "items": [],
+        }
+        contact = {
+            "_id": "cnt1",
+            "name": "Musteri",
+            "tax_number_or_id": "1234567890",
+            "is_e_invoice_user": True,
+            "e_invoice_alias": "urn:mail:pk@x.com",
+        }
+        company = {"_id": "c1", "name": "Firma", "tax_number": "4810173324"}
+        settings = {
+            "provider": "isnet",
+            "status": "configured",
+            "mode": "test",
+            "company_tax_id": "4810173324",
+        }
+
+        fake_db.invoices.find_one = AsyncMock(return_value=inv)
+        fake_db.contacts.find_one = AsyncMock(return_value=contact)
+        fake_db.contacts.update_one = AsyncMock()
+        fake_db.companies.find_one = AsyncMock(return_value=company)
+        fake_db.einvoice_settings.find_one = AsyncMock(return_value=settings)
+        fake_db.invoices.update_one = AsyncMock()
+        fake_db.outgoing_einvoice_xml.update_one = AsyncMock()
+        e_invoice.init(fake_db, {"password_fn": lambda s: "x", "consume_credits": AsyncMock(return_value=5)})
+
+        sent = {
+            "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "invoice_id": "UUU2026999464749",
+            "official_invoice_id": "UUU2026999464749",
+            "number_source": "portal",
+            "ubl_id": "TKB2026000000103",
+            "document_url": "https://view.example/x",
+            "verified": True,
+            "gib_status_raw": "Onaylandı",
+            "mode": "test",
+        }
+
+        async def _run():
+            with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
+                e_invoice, "resolve_buyer_mukellef", AsyncMock(return_value={"suggested_e_type": "e_invoice", "is_e_invoice_user": True})
+            ), patch.object(e_invoice.isnet, "send_document", AsyncMock(return_value=sent)), patch.object(
+                e_invoice, "store_outgoing_xml", AsyncMock()
+            ), patch("n11faturam.build_ubl", return_value=("<Invoice/>", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "UUU2026999464749")):
+                out = await e_invoice.issue_invoice("inv_uuu", e_type="e_invoice", scenario="TEMEL")
+            assert out["invoice_number"] == "UUU2026999464749"
+            assert out["gib_invoice_id"] == "UUU2026999464749"
+            sets = [c.args[1]["$set"] for c in fake_db.invoices.update_one.await_args_list if "$set" in (c.args[1] if c.args else {})]
+            final = [s for s in sets if s.get("einvoice_state") == "sent"]
+            assert final
+            assert final[-1]["invoice_number"] == "UUU2026999464749"
+            assert final[-1]["local_invoice_number"] == "NX2026000000103"
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
+    def test_issue_does_not_promote_local_ubl_tkb_as_official(self):
+        fake_db = MagicMock()
+        inv = {
+            "_id": "inv_tkb",
+            "company_id": "c1",
+            "invoice_type": "sales",
+            "e_type": "e_archive",
+            "status": "draft",
+            "contact_id": "cnt1",
+            "contact_name": "Musteri",
+            "contact_tax_id": "11111111111",
+            "invoice_number": "NX2026000000103",
+            "items": [],
+        }
+        contact = {"_id": "cnt1", "name": "Musteri", "tax_number_or_id": "11111111111"}
+        company = {"_id": "c1", "name": "Firma", "tax_number": "4810173324"}
+        settings = {"provider": "isnet", "status": "configured", "mode": "test", "company_tax_id": "4810173324"}
+
+        fake_db.invoices.find_one = AsyncMock(return_value=inv)
+        fake_db.contacts.find_one = AsyncMock(return_value=contact)
+        fake_db.contacts.update_one = AsyncMock()
+        fake_db.companies.find_one = AsyncMock(return_value=company)
+        fake_db.einvoice_settings.find_one = AsyncMock(return_value=settings)
+        fake_db.invoices.update_one = AsyncMock()
+        fake_db.outgoing_einvoice_xml.update_one = AsyncMock()
+        e_invoice.init(fake_db, {"password_fn": lambda s: "x", "consume_credits": AsyncMock(return_value=5)})
+
+        sent = {
+            "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "invoice_id": "TKB2026000000103",
+            "official_invoice_id": "",
+            "number_source": "ubl",
+            "ubl_id": "TKB2026000000103",
+            "document_url": "",
+            "verified": False,
+            "mode": "test",
+        }
+
+        async def _run():
+            with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
+                e_invoice, "resolve_buyer_mukellef", AsyncMock(return_value={"suggested_e_type": "e_archive", "is_e_invoice_user": False})
+            ), patch.object(e_invoice.isnet, "send_document", AsyncMock(return_value=sent)), patch.object(
+                e_invoice, "store_outgoing_xml", AsyncMock()
+            ), patch("n11faturam.build_ubl", return_value=("<Invoice/>", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "TKB2026000000103")):
+                out = await e_invoice.issue_invoice("inv_tkb", e_type="e_archive")
+            assert out["invoice_number"] == "NX2026000000103"
+            assert out.get("gib_invoice_id") in (None, "")
+            sets = [c.args[1]["$set"] for c in fake_db.invoices.update_one.await_args_list if c.args and "$set" in c.args[1]]
+            final = [s for s in sets if s.get("einvoice_state") == "sent"]
+            assert final
+            assert "invoice_number" not in final[-1] or final[-1].get("invoice_number") != "TKB2026000000103"
+            assert final[-1].get("gib_invoice_id") in (None, "")
+
+        asyncio.get_event_loop().run_until_complete(_run())

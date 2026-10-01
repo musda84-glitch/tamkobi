@@ -185,6 +185,9 @@ def test_verify_outgoing_ok_via_viewer():
     with patch(
         "isnet.get_document_viewer_link",
         AsyncMock(return_value={"url": "https://view.example/doc?key=abc", "html_url": "https://view.example/doc?key=abc", "pdf_url": ""}),
+    ), patch(
+        "isnet.search_archive_invoice",
+        AsyncMock(return_value=[]),
     ):
         info = asyncio.get_event_loop().run_until_complete(
             isnet.try_verify_outgoing_in_portal(
@@ -193,7 +196,27 @@ def test_verify_outgoing_ok_via_viewer():
         )
     assert info["ok"] is True
     assert info["via"] == "viewer"
+    assert info.get("invoice_id") == ""
     assert "view.example" in info["document_url"]
+
+
+def test_verify_viewer_plus_search_returns_invoice_number():
+    """Viewer URL gelse de ETTN araması ile resmi fatura no alınır (TKB kalmasın)."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    ettn = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(return_value={"url": "https://view.example/doc?key=abc"}),
+    ), patch(
+        "isnet.search_archive_invoice",
+        AsyncMock(return_value=[{"ettn": ettn, "invoice_id": "UUU2026999464749", "status": "Onaylandı"}]),
+    ):
+        info = asyncio.get_event_loop().run_until_complete(
+            isnet.try_verify_outgoing_in_portal(settings, ettn, e_type="e_archive", retries=1)
+        )
+    assert info["ok"] is True
+    assert info["invoice_id"] == "UUU2026999464749"
+    assert info["via"] in ("search", "viewer")
 
 
 def test_verify_outgoing_ok_via_search_when_viewer_missing():
@@ -252,7 +275,10 @@ def test_send_document_accepts_soap_success_without_immediate_portal():
         }),
     ), patch(
         "isnet.try_verify_outgoing_in_portal",
-        AsyncMock(return_value={"ok": False, "document_url": "", "via": ""}),
+        AsyncMock(return_value={"ok": False, "document_url": "", "via": "", "invoice_id": ""}),
+    ), patch(
+        "isnet.resolve_invoice_number_from_xml",
+        AsyncMock(return_value=""),
     ):
         sent = asyncio.get_event_loop().run_until_complete(
             isnet.send_document(settings, "", invoice, contact, company)
@@ -260,7 +286,83 @@ def test_send_document_accepts_soap_success_without_immediate_portal():
     assert sent["ettn"].startswith("aaaaaaaa")
     assert sent["verified"] is False
     assert sent["invoice_id"] == "TA202600000095"
+    assert sent.get("official_invoice_id") == ""
+    assert sent.get("number_source") == "ubl"
     assert sent["seller_tax"] == "4810173324"
+
+
+def test_send_document_prefers_portal_invoice_number_over_ubl_tkb():
+    """E-Fatura sonrası liste no: NetteFatura InvoiceNumber (UUU…), yerel TKB değil."""
+    settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}
+    invoice = {"e_type": "e_invoice", "invoice_number": "NX2026000000103", "gib_scenario": "TEMELFATURA"}
+    company = {"tax_number": "4810173324"}
+    contact = {"name": "Alıcı", "tax_number_or_id": "1234567890", "e_invoice_alias": "urn:mail:pk@alici.com"}
+
+    with patch(
+        "n11faturam.build_ubl",
+        return_value=("<Invoice/>", "local-uuid", "TKB2026000000103"),
+    ), patch(
+        "isnet.send_invoice_xml",
+        AsyncMock(return_value={
+            "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "invoice_id": "",
+            "message": "OK",
+            "document_url": "",
+        }),
+    ), patch(
+        "isnet.try_verify_outgoing_in_portal",
+        AsyncMock(return_value={
+            "ok": True,
+            "document_url": "https://view.example/x",
+            "via": "search",
+            "invoice_id": "UUU2026999464749",
+            "status": "Onaylandı",
+            "status_code": "",
+        }),
+    ):
+        sent = asyncio.get_event_loop().run_until_complete(
+            isnet.send_document(settings, "", invoice, contact, company)
+        )
+    assert sent["official_invoice_id"] == "UUU2026999464749"
+    assert sent["invoice_id"] == "UUU2026999464749"
+    assert sent["number_source"] == "portal"
+    assert sent["ubl_id"] == "TKB2026000000103"
+
+
+def test_send_document_xml_fallback_when_search_has_no_number():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    invoice = {"e_type": "e_archive", "invoice_number": "NX1"}
+    company = {"tax_number": "4810173324"}
+    contact = {"name": "Alıcı", "tax_number_or_id": "11111111111"}
+
+    with patch(
+        "n11faturam.build_ubl",
+        return_value=("<Invoice/>", "u", "TKB2026000000001"),
+    ), patch(
+        "isnet.send_invoice_xml",
+        AsyncMock(return_value={
+            "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "invoice_id": "",
+            "message": "OK",
+            "document_url": "https://view.example/x",
+        }),
+    ), patch(
+        "isnet.try_verify_outgoing_in_portal",
+        AsyncMock(return_value={
+            "ok": True,
+            "document_url": "https://view.example/x",
+            "via": "viewer",
+            "invoice_id": "",
+        }),
+    ), patch(
+        "isnet.resolve_invoice_number_from_xml",
+        AsyncMock(return_value="UUU2026999464754"),
+    ):
+        sent = asyncio.get_event_loop().run_until_complete(
+            isnet.send_document(settings, "", invoice, contact, company)
+        )
+    assert sent["official_invoice_id"] == "UUU2026999464754"
+    assert sent["number_source"] == "xml"
 
 
 def test_send_document_ubl_seller_uses_isnet_company_tax_id():
@@ -285,7 +387,10 @@ def test_send_document_ubl_seller_uses_isnet_company_tax_id():
         }),
     ), patch(
         "isnet.try_verify_outgoing_in_portal",
-        AsyncMock(return_value={"ok": True, "document_url": "https://x", "via": "viewer"}),
+        AsyncMock(return_value={"ok": True, "document_url": "https://x", "via": "viewer", "invoice_id": ""}),
+    ), patch(
+        "isnet.resolve_invoice_number_from_xml",
+        AsyncMock(return_value=""),
     ):
         asyncio.get_event_loop().run_until_complete(
             isnet.send_document(settings, "", invoice, contact, company)
@@ -327,7 +432,10 @@ def test_send_document_efatura_requires_receiver_or_lookup():
         AsyncMock(return_value={"alias": "urn:mail:test05defaultpk@isnet.com"}),
     ), patch("isnet.send_invoice_xml", side_effect=_cap_send), patch(
         "isnet.try_verify_outgoing_in_portal",
-        AsyncMock(return_value={"ok": True, "document_url": "", "via": "viewer"}),
+        AsyncMock(return_value={"ok": True, "document_url": "", "via": "viewer", "invoice_id": ""}),
+    ), patch(
+        "isnet.resolve_invoice_number_from_xml",
+        AsyncMock(return_value=""),
     ):
         sent = asyncio.get_event_loop().run_until_complete(
             isnet.send_document(settings, "", invoice, contact, company)
