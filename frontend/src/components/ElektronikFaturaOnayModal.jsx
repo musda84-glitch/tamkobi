@@ -27,18 +27,22 @@ function orderBuyerTaxId(order, contacts = []) {
 }
 
 /**
- * Faturalaştı siparişte «E-Fatura Oluştur» onayı.
+ * Faturalaştı siparişte «E-Fatura Oluştur» / fatura ⋮ «E-Fatura / E-Arşiv (GİB)» onayı.
  * Mükellefiyet + kontör entegratörden (GİB lookup / İşNet bakiye) gelir.
  * Devam Et her zaman Temel / Ticari senaryo seçimi ister (GİB önerisinden bağımsız).
+ *
+ * `order` veya `invoice` verilebilir; ikisi de cari VKN / mükellef çözümlemesi için kullanılır.
  */
 export function ElektronikFaturaOnayModal({
   order,
+  invoice,
   contacts = [],
   companyId,
   onClose,
   onConfirm,
 }) {
   useEscape(onClose);
+  const doc = order || invoice || null;
   const [credits, setCredits] = useState(null);
   const [creditsSource, setCreditsSource] = useState("");
   const [busy, setBusy] = useState(false);
@@ -47,14 +51,14 @@ export function ElektronikFaturaOnayModal({
   const [error, setError] = useState("");
   const [gibMeta, setGibMeta] = useState(null);
 
-  const fallbackEFatura = orderCanIssueEFatura(order, contacts);
+  const fallbackEFatura = orderCanIssueEFatura(doc, contacts);
   const isEFatura = gibMeta ? !!gibMeta.is_e_invoice_user : fallbackEFatura;
-  const suggestedEType = gibMeta?.suggested_e_type || orderEBelgeType(order, contacts);
+  const suggestedEType = gibMeta?.suggested_e_type || orderEBelgeType(doc, contacts);
   const message = gibMeta?.message
     ? (isEFatura
       ? "Bu müşteri e-fatura mükellefidir, karşı tarafa e-fatura gönderilecek. Onaylıyor musunuz?"
       : "Bu müşteri e-fatura mükellefi değildir, e-arşiv faturası oluşturulacak. Onaylıyor musunuz?")
-    : efaturaOnayMessage(order, contacts);
+    : efaturaOnayMessage(doc, contacts);
 
   useEffect(() => {
     if (!companyId) {
@@ -62,7 +66,7 @@ export function ElektronikFaturaOnayModal({
       return;
     }
     let cancelled = false;
-    const tax = orderBuyerTaxId(order, contacts);
+    const tax = orderBuyerTaxId(doc, contacts);
 
     const loadCredits = axios
       .get(`${API_URL}/e-invoice/integrator-credits`, { params: { company_id: companyId } })
@@ -97,7 +101,7 @@ export function ElektronikFaturaOnayModal({
     return () => {
       cancelled = true;
     };
-  }, [companyId, order, contacts]);
+  }, [companyId, doc, contacts]);
 
   const submit = async (scenario) => {
     const sc = scenario === "TEMEL" ? "TEMEL" : "TICARI";
