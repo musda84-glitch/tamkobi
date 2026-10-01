@@ -19,6 +19,7 @@ import { DocumentLineEditor } from "../components/DocumentLineEditor";
 import { AiInvoiceImportModal } from "../components/AiInvoiceImportModal";
 import { InvoiceToolbar, applyInvoiceFilters, DEFAULT_FILTERS, toggleInvoiceSort, invoiceSortCol, invoiceSortDir } from "../components/InvoiceToolbar";
 import InvoiceActionPanel from "../components/InvoiceActionPanel";
+import { ElektronikFaturaOnayModal } from "../components/ElektronikFaturaOnayModal";
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 import { INVOICE_ACTIONS_COL } from "../utils/invoiceTableLayout";
@@ -153,6 +154,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentAccount, setPaymentAccount] = useState("");
   const [ctxMenu, setCtxMenu] = useState(null);
+  const [eFaturaInvoice, setEFaturaInvoice] = useState(null);
   const [installmentInv, setInstallmentInv] = useState(null);
   const [expandedInvId, setExpandedInvId] = useState(null);
   const [expandedItemsById, setExpandedItemsById] = useState({});
@@ -479,9 +481,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
   };
 
-  const handleSendToGib = async (invId, eType) => {
+  const handleSendToGib = async (invId, eType, opts = {}) => {
     try {
-      const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`, eType ? { e_type: eType } : {});
+      const body = {};
+      if (eType && eType !== "auto") body.e_type = eType;
+      if (opts.scenario === "TEMEL" || opts.scenario === "TICARI") body.scenario = opts.scenario;
+      const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`, body);
       toast.success(res.data.message);
       // Portal/GİB fatura no + durumu gecikebilir — hemen bir kez daha çek
       try {
@@ -495,7 +500,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Fatura kesilemedi.");
+      throw err;
     }
+  };
+
+  const handleIssueFromMenu = (inv, eType) => {
+    if (eType === "auto") {
+      setEFaturaInvoice(inv);
+      return;
+    }
+    return handleSendToGib(inv.id || inv._id, eType);
   };
 
   const handleAcceptIncoming = async (inv) => {
@@ -877,7 +891,28 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         )}
       </div>
 
-      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={(inv, eType) => handleSendToGib(inv.id || inv._id, eType)} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={canDeleteInv ? handleDeleteInvoice : undefined} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} onCopy={invoiceCopy.handleCopyMode} onGibStatusRefreshed={() => loadData({ silent: true })} />
+      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={handleIssueFromMenu} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={canDeleteInv ? handleDeleteInvoice : undefined} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} onCopy={invoiceCopy.handleCopyMode} onGibStatusRefreshed={() => loadData({ silent: true })} />
+      {eFaturaInvoice && (
+        <ElektronikFaturaOnayModal
+          invoice={eFaturaInvoice}
+          contacts={contacts}
+          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          onClose={() => setEFaturaInvoice(null)}
+          onConfirm={async ({ eType, scenario, alias }) => {
+            if (alias && eFaturaInvoice?.contact_id) {
+              try {
+                await axios.put(`${API_URL}/contacts/${eFaturaInvoice.contact_id}`, {
+                  e_invoice_alias: alias,
+                  is_e_invoice_user: eType === "e_invoice",
+                });
+              } catch {
+                /* gönderim yine denenecek */
+              }
+            }
+            await handleSendToGib(eFaturaInvoice.id || eFaturaInvoice._id, eType, { scenario });
+          }}
+        />
+      )}
       {invoiceCopy.modal}
       {installmentInv && <InstallmentPlanModal doc={installmentInv} kind="invoice" accounts={bankAccounts} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setInstallmentInv(null)} onChanged={loadData} />}
       {printInv && printInv.e_type === "expense_slip" && (
