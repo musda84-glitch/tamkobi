@@ -533,8 +533,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   };
 
   const handleIssueFromMenu = (inv, eType) => {
-    if (eType === "auto") {
-      setEFaturaInvoice(inv);
+    // Siparişlerdeki gibi: GİB e-belge kesimi Elektronik Fatura Onayı modalından geçer.
+    const openOnay = !eType || eType === "auto" || eType === "e_invoice" || eType === "e_archive";
+    if (openOnay) {
+      closeCtx();
+      // Menü mousedown/unmount sonrası açılsın (sipariş dropdown ile aynı güvenli timing).
+      window.setTimeout(() => setEFaturaInvoice(inv), 0);
       return;
     }
     return handleSendToGib(inv.id || inv._id, eType);
@@ -872,7 +876,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 </th>
                 <SortTh col="number">{filterType === "dispatch" ? "İrsaliye No" : "Fatura No"} / Tür / Kaynak</SortTh>
                 <SortTh col="contact">Cari (Müşteri / Tedarikçi)</SortTh>
-                <SortTh col="date">Tarih / Vade</SortTh>
+                <SortTh col="date">Tarih / Saat / Vade</SortTh>
                 <SortTh col="gib">GİB Durumu</SortTh>
                 <SortTh col="amount" className="text-right">Tutar</SortTh>
                 {filterType === "dispatch" ? (
@@ -942,7 +946,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       <div className="text-[11px] text-slate-400 truncate">VKN/TCKN: {inv.contact_tax_id || '-'}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <div>{fmtDate(inv.issue_date)}</div>
+                      <div>{fmtDate(inv.issue_date)}{inv.issue_time ? <span className="text-slate-400 font-normal"> · {String(inv.issue_time).slice(0, 5)}</span> : null}</div>
                       <div className="text-[11px] text-slate-400">Vade: {inv.due_date ? fmtDate(inv.due_date) : 'Peşin'}</div>
                     </td>
                     <td className="px-4 py-3">

@@ -21,6 +21,7 @@ function orderBuyerTaxId(order, contacts = []) {
     c?.tax_number_or_id ||
     c?.tax_id ||
     order?.contact_tax_id ||
+    order?.buyer_tax_id ||
     order?.customer_tax_id ||
     "";
   return digitsTax(tax);
@@ -128,7 +129,7 @@ export function ElektronikFaturaOnayModal({
 
   return (
     <div
-      className="fixed inset-0 z-[70] bg-slate-900/50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[90] bg-slate-900/50 flex items-center justify-center p-4"
       {...backdropDismissProps(onClose)}
       data-testid="efatura-onay-modal"
     >

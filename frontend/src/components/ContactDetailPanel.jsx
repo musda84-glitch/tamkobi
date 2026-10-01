@@ -440,8 +440,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
     }
   };
   const issueFromMenu = (inv, eType) => {
-    if (eType === "auto") {
-      setEFaturaInvoice(inv);
+    const openOnay = !eType || eType === "auto" || eType === "e_invoice" || eType === "e_archive";
+    if (openOnay) {
+      closeInvCtx();
+      window.setTimeout(() => setEFaturaInvoice(inv), 0);
       return;
     }
     return sendToGib(inv, eType);
