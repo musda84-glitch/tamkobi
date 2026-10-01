@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, canIssueInvoice, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel } from "../components/InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
 import { invoiceToOpenAfterCopy } from "../components/invoiceCopyModes";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -23,6 +23,7 @@ import { ElektronikFaturaOnayModal } from "../components/ElektronikFaturaOnayMod
 import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 import { INVOICE_ACTIONS_COL } from "../utils/invoiceTableLayout";
+import { invoiceBulkNeedsSelection, bulkApiErrorDetail } from "../utils/invoiceBulkActions";
 import { FxPicker } from "../components/FxPicker";
 import { TimeInput } from "../components/TimeInput";
 import { fmtDate, fmtMoney, formatTrAmount } from "../utils/money";
@@ -165,6 +166,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [paymentAccount, setPaymentAccount] = useState("");
   const [ctxMenu, setCtxMenu] = useState(null);
   const [eFaturaInvoice, setEFaturaInvoice] = useState(null);
+  const [selected, setSelected] = useState([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [installmentInv, setInstallmentInv] = useState(null);
   const [expandedInvId, setExpandedInvId] = useState(null);
   const [expandedItemsById, setExpandedItemsById] = useState({});
@@ -177,6 +180,15 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     setCtxMenu({ x: Math.max(8, r.right - 256), y: r.bottom + 4, inv });
   };
   const invRowId = (inv) => inv?.id || inv?._id || inv?.invoice_number;
+  const toggleSel = (id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const selectedInvoices = () => visibleInvoices.filter((inv) => selected.includes(invRowId(inv)));
+  const visibleSelIds = useMemo(
+    () => visibleInvoices.map((inv) => invRowId(inv)).filter(Boolean),
+    [visibleInvoices],
+  );
+  const allVisibleSelected = visibleSelIds.length > 0 && visibleSelIds.every((id) => selected.includes(id));
+  const someVisibleSelected = visibleSelIds.some((id) => selected.includes(id));
+  const toggleSelectAllVisible = () => setSelected(allVisibleSelected ? [] : visibleSelIds);
   const itemsForInv = (inv) => {
     const id = invRowId(inv);
     if (Array.isArray(inv?.items) && inv.items.length) return inv.items;
@@ -302,6 +314,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
   }, [activeCompany, filterType]);
   useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { setSelected([]); }, [listResetKey]);
   const refreshInvoicesSilent = useCallback(() => loadData({ silent: true }), [loadData]);
   useDataRefresh(refreshInvoicesSilent, { companyId, scopes: ["cash", "invoices", "contacts"] });
 
@@ -527,6 +540,181 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     return handleSendToGib(inv.id || inv._id, eType);
   };
 
+  const openInvoicePdfs = (list) => {
+    const ids = [...new Set(list.map((o) => o.id || o._id).filter(Boolean))];
+    if (!ids.length) { toast.error("Seçili faturalarda yazdırılacak belge yok."); return; }
+    ids.slice(0, 12).forEach((id) => window.open(`${API_URL}/invoices/${id}/pdf`, "_blank", "noopener"));
+    toast.success(ids.length > 12 ? `İlk 12 fatura açıldı (${ids.length} belge).` : `${ids.length} fatura yazdırmaya açıldı.`);
+  };
+
+  const downloadInvoiceXmlBulk = async (list) => {
+    const ids = [...new Set(list.map((o) => o.id || o._id).filter(Boolean))];
+    if (!ids.length) { toast.error("Seçili faturalarda e-belge yok."); return; }
+    let ok = 0, fail = 0;
+    for (const id of ids) {
+      try {
+        let r;
+        try {
+          r = await axios.get(`${API_URL}/e-invoice/${id}/xml`, { responseType: "blob" });
+        } catch (firstErr) {
+          r = await axios.get(`${API_URL}/invoices/${id}/xml`, { responseType: "blob" });
+        }
+        const url = URL.createObjectURL(r.data);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `efatura-${id}.xml`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    toast[fail && !ok ? "error" : fail ? "error" : "success"](`${ok} XML indirildi${fail ? `, ${fail} hata` : ""}.`);
+  };
+
+  const bulk = async (action) => {
+    if (invoiceBulkNeedsSelection(action) && !selected.length) {
+      toast.error("Fatura seçin.");
+      return;
+    }
+    const list = selectedInvoices();
+
+    if (action === "refresh") {
+      setBulkBusy(true);
+      try {
+        const targets = list.length ? list : visibleInvoices.filter((inv) => inv.gib_uuid || inv.gib_tracking_id).slice(0, 40);
+        if (!targets.length) {
+          toast.info("Güncellenecek GİB belgesi yok.");
+          return;
+        }
+        let ok = 0;
+        for (const inv of targets) {
+          try {
+            await refreshInvoiceGibStatus(API_URL, inv);
+            ok++;
+          } catch { /* devam */ }
+        }
+        await loadData({ silent: true });
+        toast.success(`${ok} belgenin GİB durumu güncellendi.`);
+      } finally {
+        setBulkBusy(false);
+      }
+      return;
+    }
+
+    if (action === "einvoice_print" || action === "invoice_print") {
+      openInvoicePdfs(list);
+      return;
+    }
+    if (action === "xml") {
+      await downloadInvoiceXmlBulk(list);
+      return;
+    }
+    if (action === "invoice_date") {
+      const date = window.prompt("Yeni fatura tarihi (YYYY-AA-GG)", new Date().toISOString().slice(0, 10));
+      if (!date) return;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast.error("Tarih YYYY-AA-GG olmalı."); return; }
+      let ok = 0, fail = 0, firstErr = "";
+      for (const inv of list) {
+        try {
+          await axios.put(`${API_URL}/invoices/${inv.id || inv._id}`, { issue_date: date });
+          ok++;
+        } catch (err) {
+          fail++;
+          if (!firstErr) firstErr = bulkApiErrorDetail(err);
+        }
+      }
+      toast[fail ? "error" : "success"](`${ok} faturanın tarihi güncellendi${fail ? `, ${fail} değiştirilemedi${firstErr ? `: ${firstErr}` : ""}` : ""}.`);
+      loadData();
+      return;
+    }
+    if (action === "invoice_link") {
+      const ready = list.filter((inv) => {
+        const c = contacts.find((x) => x.id === inv.contact_id);
+        return inv.id && (inv.contact_email || c?.email);
+      });
+      if (!ready.length) { toast.error("E-posta adresi olan fatura seçin."); return; }
+      let ok = 0, fail = 0;
+      for (const inv of ready) {
+        try {
+          const c = contacts.find((x) => x.id === inv.contact_id) || {};
+          const to = inv.contact_email || c.email;
+          const fd = new FormData();
+          const link = `${window.location.origin}/api/invoices/${inv.id || inv._id}/pdf`;
+          fd.append("company_id", companyId);
+          fd.append("to", to);
+          fd.append("subject", `Faturanız ${inv.invoice_number}`);
+          fd.append("body", `Sayın ${inv.contact_name || ""},\n\n${inv.invoice_number} numaralı faturanız: ${link}`);
+          fd.append("context", "invoice");
+          fd.append("ref_id", inv.id || inv._id);
+          fd.append("contact_id", inv.contact_id || "");
+          fd.append("contact_name", inv.contact_name || "");
+          await axios.post(`${API_URL}/comm/mail/send`, fd);
+          ok++;
+        } catch { fail++; }
+      }
+      toast[fail ? "error" : "success"](`${ok} fatura linki gönderildi${fail ? `, ${fail} hata` : ""}.`);
+      return;
+    }
+    if (action === "delete") {
+      const deletable = list.filter((inv) => canDeleteInvoice(inv));
+      if (!deletable.length) { toast.error("Silinebilir (taslak/kağıt) fatura seçin."); return; }
+      if (!canDeleteInv) { toast.error("Silme yetkiniz yok."); return; }
+      if (!window.confirm(`${deletable.length} fatura çöp kutusuna taşınsın mı?`)) return;
+      setBulkBusy(true);
+      let ok = 0, fail = 0;
+      for (const inv of deletable) {
+        try {
+          await axios.delete(`${API_URL}/invoices/${inv.id || inv._id}`);
+          ok++;
+        } catch { fail++; }
+      }
+      setBulkBusy(false);
+      toast[fail ? "error" : "success"](`${ok} fatura silindi${fail ? `, ${fail} hata` : ""}.`);
+      setSelected([]);
+      loadData();
+      return;
+    }
+    if (action === "cancel") {
+      const open = list.filter((inv) => canCancelInvoice(inv));
+      if (!open.length) { toast.info("İptal edilebilir fatura yok."); return; }
+      if (!window.confirm(`${open.length} fatura iptal edilsin mi?`)) return;
+    }
+
+    setBulkBusy(true);
+    let ok = 0, fail = 0, skipped = 0, firstErr = "";
+    for (const inv of list) {
+      try {
+        if (action === "einvoice_send") {
+          if (!canIssueInvoice(inv) || isIncomingPurchaseInvoice(inv)) { skipped++; continue; }
+          await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/send-to-gib`, { e_type: "auto" });
+          try { await axios.post(`${API_URL}/e-invoice/${inv.id || inv._id}/refresh-status`); } catch { /* ignore */ }
+        } else if (action === "approve") {
+          if (inv.status !== "draft" || isIncomingPurchaseInvoice(inv)) { skipped++; continue; }
+          await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
+        } else if (action === "cancel") {
+          if (!canCancelInvoice(inv)) { skipped++; continue; }
+          await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/cancel`, {});
+        } else {
+          skipped++;
+          continue;
+        }
+        ok++;
+      } catch (err) {
+        fail++;
+        if (!firstErr) firstErr = bulkApiErrorDetail(err);
+      }
+    }
+    setBulkBusy(false);
+    if (!ok && !fail) toast.info(skipped ? "Seçili faturalarda bu işlem için uygun kayıt yok." : "İşlenecek fatura yok.");
+    else toast[fail ? "error" : "success"](`${ok} fatura işlendi${fail ? `, ${fail} hata${firstErr ? `: ${firstErr}` : ""}` : ""}${skipped ? `, ${skipped} atlandı` : ""}.`);
+    setSelected([]);
+    loadData();
+  };
+
   const handleAcceptIncoming = async (inv) => {
     const id = inv.id || inv._id;
     if (!window.confirm(`${inv.invoice_number} gelen e-faturası onaylansın mı? Ticari kabul GİB'e iletilir.`)) return;
@@ -634,7 +822,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         ))}
       </div>}
 
-      <InvoiceToolbar f={filters} setF={setFilters} count={visibleInvoices.length} total={visibleTotal} hidePay={filterType === "dispatch"} rows={visibleInvoices} />
+      <InvoiceToolbar
+        f={filters}
+        setF={setFilters}
+        count={visibleInvoices.length}
+        total={visibleTotal}
+        hidePay={filterType === "dispatch"}
+        rows={visibleInvoices}
+        selectedCount={selected.length}
+        bulkBusy={bulkBusy}
+        onBulkAction={bulk}
+      />
 
       {/* Invoices Table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
@@ -650,8 +848,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         <div className="overflow-x-auto">
           <table className="w-full table-fixed text-left text-xs text-slate-600">
             <colgroup>
-              <col style={{ width: "16%" }} />
-              <col style={{ width: "18%" }} />
+              <col style={{ width: "2.25rem" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "17%" }} />
               <col style={{ width: "11%" }} />
               <col style={{ width: "14%" }} />
               <col style={{ width: "10%" }} />
@@ -660,6 +859,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
             </colgroup>
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold">
               <tr>
+                <th className="px-3 py-3 w-8">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    ref={(el) => { if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected; }}
+                    onChange={toggleSelectAllVisible}
+                    className="rounded border-slate-300"
+                    title="Hepsini seç"
+                    data-testid="inv-select-all"
+                  />
+                </th>
                 <SortTh col="number">{filterType === "dispatch" ? "İrsaliye No" : "Fatura No"} / Tür / Kaynak</SortTh>
                 <SortTh col="contact">Cari (Müşteri / Tedarikçi)</SortTh>
                 <SortTh col="date">Tarih / Vade</SortTh>
@@ -676,7 +886,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
             <tbody className="divide-y divide-slate-100">
               {visibleInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400" data-testid="inv-empty">
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="inv-empty">
                     {invoices.length === 0
                       ? (filterType === "proforma" ? "Proforma veya teklif kaydı yok." : "Kayıtlı fatura bulunamadı.")
                       : "Filtreye uyan kayıt yok."}
@@ -690,7 +900,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   const linesLoading = expandLoadingId === rowId;
                   return (
                   <React.Fragment key={rowId}>
-                  <tr className={`group/row hover:bg-slate-50/70 transition ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""} ${linesOpen ? "bg-slate-50/50" : ""}`} data-testid={inv._is_quote ? `quote-row-${inv.invoice_number}` : `invoice-row-${inv.invoice_number}`}>
+                  <tr className={`group/row hover:bg-slate-50/70 transition ${ctxMenu?.inv?.invoice_number === inv.invoice_number ? "bg-emerald-50/60" : ""} ${linesOpen ? "bg-slate-50/50" : ""} ${selected.includes(rowId) ? "bg-rose-50/40" : ""}`} data-testid={inv._is_quote ? `quote-row-${inv.invoice_number}` : `invoice-row-${inv.invoice_number}`}>
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(rowId)}
+                        onChange={() => toggleSel(rowId)}
+                        className="rounded border-slate-300"
+                        data-testid={`inv-select-${inv.invoice_number}`}
+                      />
+                    </td>
                     <td className="px-4 py-3 font-medium overflow-hidden">
                       <div className="flex items-start gap-1.5 min-w-0">
                         <button
@@ -858,7 +1077,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </tr>
                   {linesOpen && (
                     <tr className="bg-slate-50/80" data-testid={`inv-lines-row-${inv.invoice_number}`}>
-                      <td colSpan={7} className="px-4 py-3 border-t border-slate-100">
+                      <td colSpan={8} className="px-4 py-3 border-t border-slate-100">
                         {linesLoading ? (
                           <div className="text-[11px] text-slate-400 pl-6">Kalemler yükleniyor…</div>
                         ) : lineItems.length === 0 ? (
