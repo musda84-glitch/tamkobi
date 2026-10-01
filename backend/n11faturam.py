@@ -118,6 +118,10 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
         profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
     issue = (invoice.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
     due = (invoice.get("due_date") or issue)[:10]
+    # İşNet/GİB Schematron: IssueTime beklenir (örnek UBL’lerde var)
+    issue_time = (invoice.get("issue_time") or datetime.now(timezone.utc).strftime("%H:%M:%S"))[:8]
+    if len(issue_time) == 5:
+        issue_time = f"{issue_time}:00"
     currency = invoice.get("currency") or "TRY"
     items = invoice.get("items") or []
     subtotal = float(invoice.get("subtotal") or 0)
@@ -162,7 +166,7 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
         <cbc:StreetName>{street or "-"}</cbc:StreetName>
         <cbc:CitySubdivisionName>{district or "-"}</cbc:CitySubdivisionName>
         <cbc:CityName>{city}</cbc:CityName>
-        <cbc:Country><cbc:Name>Türkiye</cbc:Name></cbc:Country>
+        <cac:Country><cbc:Name>Türkiye</cbc:Name></cac:Country>
       </cac:PostalAddress>
       <cac:PartyTaxScheme><cac:TaxScheme><cbc:Name>{office or "Vergi Dairesi"}</cbc:Name></cac:TaxScheme></cac:PartyTaxScheme>
       <cac:Contact><cbc:Telephone>{phone}</cbc:Telephone><cbc:ElectronicMail>{email}</cbc:ElectronicMail></cac:Contact>
@@ -240,6 +244,7 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
   <cbc:CopyIndicator>false</cbc:CopyIndicator>
   <cbc:UUID>{ettn}</cbc:UUID>
   <cbc:IssueDate>{issue}</cbc:IssueDate>
+  <cbc:IssueTime>{issue_time}</cbc:IssueTime>
   <cbc:InvoiceTypeCode>SATIS</cbc:InvoiceTypeCode>
   {f"<cbc:Note>{_esc(notes)}</cbc:Note>" if notes else ""}
   <cbc:DocumentCurrencyCode>{_esc(currency)}</cbc:DocumentCurrencyCode>

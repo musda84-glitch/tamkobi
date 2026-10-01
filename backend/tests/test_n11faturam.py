@@ -119,6 +119,8 @@ class TestN11FaturamUnit:
         root = fromstring(xml.encode())
         assert "TICARIFATURA" in xml and ettn and inv_id.startswith("TKB2026")
         assert "1234567801" in xml and "Koltuk" in xml
+        assert "<cac:Country>" in xml and "<cbc:Country>" not in xml
+        assert "<cbc:IssueTime>" in xml
         assert root is not None
         xml2, _, _ = n11faturam.build_ubl({**inv, "e_type": "e_archive", "contact_tax_id": ""}, company, {"name": "Ali Veli"})
         assert "EARSIVFATURA" in xml2 and "11111111111" in xml2
