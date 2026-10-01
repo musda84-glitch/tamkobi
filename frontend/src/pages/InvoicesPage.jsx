@@ -23,6 +23,7 @@ import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 import { INVOICE_ACTIONS_COL } from "../utils/invoiceTableLayout";
 import { FxPicker } from "../components/FxPicker";
+import { TimeInput } from "../components/TimeInput";
 import { fmtDate, fmtMoney, formatTrAmount } from "../utils/money";
 import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "../utils/documentLines";
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
@@ -48,8 +49,17 @@ import {
   ArrowDown,
   ArrowUpDown,
   ChevronDown,
-  FileCheck2, CheckCircle, XCircle, Trash2, Pencil } from "lucide-react";
+  FileCheck2, CheckCircle, XCircle, Trash2, Pencil, CalendarClock } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
+
+const pad2 = (x) => String(x).padStart(2, "0");
+const nowIssueDateTime = () => {
+  const n = new Date();
+  return {
+    issue_date: `${n.getFullYear()}-${pad2(n.getMonth() + 1)}-${pad2(n.getDate())}`,
+    issue_time: `${pad2(n.getHours())}:${pad2(n.getMinutes())}:${pad2(n.getSeconds())}`,
+  };
+};
 
 const typeBadge = (inv) => {
   if (inv.e_type === "expense_slip") return ["Gider Pusulası", "bg-rose-50 text-rose-800"];
@@ -206,7 +216,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const openPayment = (inv) => { setPaymentModalInvoice(inv); setPaymentAmount(inv.grand_total - (inv.paid_amount || 0)); };
 
   // New Invoice Form
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState(() => {
+    const now = nowIssueDateTime();
+    return {
     invoice_type: "sales",
     e_type: "paper",
     status: "draft",
@@ -215,7 +227,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     price_mode: "excl",
     contact_id: "",
     contact_name: "",
-    issue_date: new Date().toISOString().split("T")[0],
+    issue_date: now.issue_date,
+    issue_time: now.issue_time,
     due_date: new Date(Date.now() + 15 * 86400000).toISOString().split("T")[0],
     items: [
       emptyLine()
@@ -238,6 +251,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     bl_awb: "",
     certificate: "",
     trade_file_number: "",
+  };
   });
   const [gdMode, setGdMode] = useState("percent");
   const [quickContact, setQuickContact] = useState(false);
@@ -343,6 +357,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       contact_id: inv.contact_id || "",
       contact_name: inv.contact_name || "",
       issue_date: (inv.issue_date || "").slice(0, 10),
+      issue_time: (inv.issue_time || "").slice(0, 8) || nowIssueDateTime().issue_time,
       due_date: (inv.due_date || "").slice(0, 10),
       notes: inv.notes || "",
       withholding_rate: inv.withholding_rate || 0,
@@ -1053,7 +1068,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
                 </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Düzenleme Tarihi</label>
                   <input
@@ -1061,7 +1076,31 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     value={formData.issue_date}
                     onChange={(e) => setFormData({ ...formData, issue_date: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    data-testid="inv-issue-date"
                   />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold text-slate-700 mb-1">Düzenleme Saati</label>
+                  <div className="flex gap-1.5">
+                    <TimeInput
+                      text24
+                      step={1}
+                      value={(formData.issue_time || "").slice(0, 8) || ""}
+                      onChange={(e) => setFormData({ ...formData, issue_time: e.target.value })}
+                      className="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-lg p-2"
+                      data-testid="inv-issue-time"
+                    />
+                    <button
+                      type="button"
+                      title="Şimdiki tarih ve saat"
+                      onClick={() => setFormData({ ...formData, ...nowIssueDateTime() })}
+                      className="shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 font-semibold hover:bg-sky-100"
+                      data-testid="inv-now-btn"
+                    >
+                      <CalendarClock className="w-3.5 h-3.5" />
+                      Şimdi
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Vade Tarihi</label>
@@ -1070,6 +1109,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     value={formData.due_date}
                     onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                    data-testid="inv-due-date"
                   />
                 </div>
                 <div className="sm:col-span-2">
