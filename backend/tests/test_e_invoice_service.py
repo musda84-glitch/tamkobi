@@ -524,6 +524,76 @@ class TestIsnetOfficialInvoiceNumber:
 
         asyncio.get_event_loop().run_until_complete(_run())
 
+    def test_isnet_issue_skips_platform_gib_credits(self):
+        """İşNet canlı gönderimde platform GİB kontörü (0 bakiye) engellemez."""
+        from fastapi import HTTPException
+
+        fake_db = MagicMock()
+        inv = {
+            "_id": "inv_cred",
+            "company_id": "c1",
+            "invoice_type": "sales",
+            "e_type": "e_invoice",
+            "status": "draft",
+            "contact_id": "cnt1",
+            "contact_name": "Musteri",
+            "contact_tax_id": "1234567890",
+            "invoice_number": "NX2026000000200",
+            "items": [],
+        }
+        contact = {
+            "_id": "cnt1",
+            "name": "Musteri",
+            "tax_number_or_id": "1234567890",
+            "is_e_invoice_user": True,
+            "e_invoice_alias": "urn:mail:pk@x.com",
+        }
+        company = {"_id": "c1", "name": "Firma", "tax_number": "4810173324"}
+        settings = {
+            "provider": "isnet",
+            "status": "configured",
+            "mode": "test",
+            "company_tax_id": "4810173324",
+        }
+        fake_db.invoices.find_one = AsyncMock(return_value=inv)
+        fake_db.contacts.find_one = AsyncMock(return_value=contact)
+        fake_db.contacts.update_one = AsyncMock()
+        fake_db.companies.find_one = AsyncMock(return_value=company)
+        fake_db.einvoice_settings.find_one = AsyncMock(return_value=settings)
+        fake_db.invoices.update_one = AsyncMock()
+        fake_db.outgoing_einvoice_xml.update_one = AsyncMock()
+
+        async def refuse_credits(*_a, **_k):
+            raise HTTPException(status_code=402, detail="GİB kontörünüz yetersiz (0 kalan, 1 gerekli).")
+
+        consume = AsyncMock(side_effect=refuse_credits)
+        e_invoice.init(fake_db, {"password_fn": lambda s: "x", "consume_credits": consume})
+        sent = {
+            "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "invoice_id": "U052026000000071",
+            "official_invoice_id": "U052026000000071",
+            "number_source": "portal",
+            "document_url": "https://view.example/x",
+            "verified": True,
+            "gib_status_raw": "Basariyla_Tamamlandi",
+            "gib_status_code": "1300",
+            "mode": "test",
+        }
+
+        async def _run():
+            with patch.object(e_invoice, "build_and_store_xml", AsyncMock(return_value=b"<Invoice/>")), patch.object(
+                e_invoice, "resolve_buyer_mukellef", AsyncMock(return_value={"suggested_e_type": "e_invoice", "is_e_invoice_user": True})
+            ), patch.object(e_invoice.isnet, "send_document", AsyncMock(return_value=sent)), patch.object(
+                e_invoice, "store_outgoing_xml", AsyncMock()
+            ), patch("n11faturam.build_ubl", return_value=("<Invoice/>", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "U052026000000071")):
+                out = await e_invoice.issue_invoice("inv_cred", e_type="e_invoice", scenario="TEMEL")
+            assert out["status"] == "success"
+            assert out["invoice_number"] == "U052026000000071"
+            assert out.get("gib_credits_left") is None
+            consume.assert_not_called()
+
+        asyncio.get_event_loop().run_until_complete(_run())
+
     def test_issue_does_not_promote_local_ubl_tkb_as_official(self):
         fake_db = MagicMock()
         inv = {

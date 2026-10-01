@@ -558,9 +558,9 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
                     detail=f"{label} ETTN/fatura numarası döndürmedi — NetteFatura/GİB kaydı doğrulanamadı.",
                 )
 
+        # Canlı entegratör (İşNet / n11): kontör entegratör bakiyesinden düşer.
+        # Platform «GİB kontör» cüzdanı yalnızca simüle gönderimde zorunlu (aşağıda).
         remaining = None
-        if consume:
-            remaining = await consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
         # Resmi GİB/NetteFatura no — yerel TKB UBL id listeyi ezmesin
         official = (sent.get("official_invoice_id") or "").strip()
         number_source = (sent.get("number_source") or "").strip()
@@ -638,6 +638,7 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         }
 
     remaining = None
+    # Simüle / kağıt dışı yerel GİB yolu — platform kontörü burada düşer
     if consume:
         remaining = await consume(inv.get("company_id"), 1, invoice_id=invoice_id, note=inv.get("invoice_number") or invoice_id)
     tracking = f"GIB-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
