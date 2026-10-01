@@ -254,7 +254,7 @@ async def invoice_xml(invoice_id: str):
     if not is_outgoing_edoc(inv):
         raise HTTPException(status_code=400, detail="Yalnızca e-Fatura / e-Arşiv belgelerinin XML'i indirilebilir.")
     filename = invoice_filename(inv, "xml")
-    # GİB'e iletilmiş: resmi entegratör UBL (İşNet DownloadXml)
+    # GİB'e iletilmiş: resmi entegratör UBL (İşNet DownloadXml); hata olursa yerel UBL.
     try:
         import e_invoice
 
@@ -269,7 +269,7 @@ async def invoice_xml(invoice_id: str):
                 },
             )
     except HTTPException:
-        raise
+        pass
     except Exception:
         pass
     seller = await _db.companies.find_one({"_id": inv["company_id"]}) or {}

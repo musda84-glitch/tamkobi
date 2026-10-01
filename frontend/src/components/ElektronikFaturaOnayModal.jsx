@@ -29,7 +29,7 @@ function orderBuyerTaxId(order, contacts = []) {
 /**
  * Faturalaştı siparişte «E-Fatura Oluştur» onayı.
  * Mükellefiyet + kontör entegratörden (GİB lookup / İşNet bakiye) gelir.
- * E-fatura mükellefinde Temel / Ticari senaryo seçimi.
+ * Devam Et her zaman Temel / Ticari senaryo seçimi ister (GİB önerisinden bağımsız).
  */
 export function ElektronikFaturaOnayModal({
   order,
@@ -49,7 +49,7 @@ export function ElektronikFaturaOnayModal({
 
   const fallbackEFatura = orderCanIssueEFatura(order, contacts);
   const isEFatura = gibMeta ? !!gibMeta.is_e_invoice_user : fallbackEFatura;
-  const eType = gibMeta?.suggested_e_type || orderEBelgeType(order, contacts);
+  const suggestedEType = gibMeta?.suggested_e_type || orderEBelgeType(order, contacts);
   const message = gibMeta?.message
     ? (isEFatura
       ? "Bu müşteri e-fatura mükellefidir, karşı tarafa e-fatura gönderilecek. Onaylıyor musunuz?"
@@ -100,13 +100,16 @@ export function ElektronikFaturaOnayModal({
   }, [companyId, order, contacts]);
 
   const submit = async (scenario) => {
+    const sc = scenario === "TEMEL" ? "TEMEL" : "TICARI";
     setBusy(true);
     setMenuOpen(false);
     setError("");
     try {
+      // Kullanıcı Temel/Ticari seçti → her zaman e-fatura senaryosu (lookup e-arşiv dese bile).
       await onConfirm?.({
-        eType,
-        scenario: eType === "e_invoice" ? scenario : undefined,
+        eType: "e_invoice",
+        scenario: sc,
+        suggestedEType,
         alias: gibMeta?.alias || undefined,
         gibMeta: gibMeta || undefined,
       });
@@ -194,62 +197,49 @@ export function ElektronikFaturaOnayModal({
             Vazgeç
           </button>
 
-          {isEFatura ? (
-            <div className="relative">
-              <button
-                type="button"
-                disabled={busy || loadingMeta}
-                onClick={() => setMenuOpen((o) => !o)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm disabled:opacity-50"
-                aria-expanded={menuOpen}
-                aria-haspopup="menu"
-                data-testid="efatura-onay-continue"
-              >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                Devam Et
-                <ChevronDown className={`w-4 h-4 transition-transform ${menuOpen ? "rotate-180" : ""}`} />
-              </button>
-              {menuOpen && (
-                <div
-                  className="absolute right-0 top-full mt-1.5 w-56 bg-white border border-slate-200 rounded-xl p-1.5 shadow-lg z-10"
-                  role="menu"
-                  data-testid="efatura-onay-scenario-menu"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={busy}
-                    onClick={() => submit("TEMEL")}
-                    className="w-full text-left rounded-lg px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
-                    data-testid="efatura-onay-temel"
-                  >
-                    Temel Fatura Gönder
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={busy}
-                    onClick={() => submit("TICARI")}
-                    className="w-full text-left rounded-lg px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
-                    data-testid="efatura-onay-ticari"
-                  >
-                    Ticari Fatura Gönder
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
+          <div className="relative">
             <button
               type="button"
               disabled={busy || loadingMeta}
-              onClick={() => submit()}
+              onClick={() => setMenuOpen((o) => !o)}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold shadow-sm disabled:opacity-50"
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
               data-testid="efatura-onay-continue"
             >
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               Devam Et
+              <ChevronDown className={`w-4 h-4 transition-transform ${menuOpen ? "rotate-180" : ""}`} />
             </button>
-          )}
+            {menuOpen && (
+              <div
+                className="absolute right-0 top-full mt-1.5 w-56 bg-white border border-slate-200 rounded-xl p-1.5 shadow-lg z-10"
+                role="menu"
+                data-testid="efatura-onay-scenario-menu"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={busy}
+                  onClick={() => submit("TEMEL")}
+                  className="w-full text-left rounded-lg px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                  data-testid="efatura-onay-temel"
+                >
+                  Temel Fatura Gönder
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={busy}
+                  onClick={() => submit("TICARI")}
+                  className="w-full text-left rounded-lg px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                  data-testid="efatura-onay-ticari"
+                >
+                  Ticari Fatura Gönder
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
