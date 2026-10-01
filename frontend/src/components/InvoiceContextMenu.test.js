@@ -6,6 +6,7 @@ import {
   canIssueInvoice,
   canDownloadGibDocuments,
   canDeleteInvoice,
+  displayInvoiceNumber,
   invoiceBuyerTaxId,
   invoiceETypeLabel,
   invoiceHasPayment,
@@ -15,6 +16,16 @@ import {
   shouldResolveIssueFromGib,
   isGibIssued,
 } from "./InvoiceContextMenu";
+
+describe("displayInvoiceNumber", () => {
+  test("prefers GİB invoice id over local number", () => {
+    expect(displayInvoiceNumber({ invoice_number: "LOCAL-1", gib_invoice_id: "TA202600000115" })).toBe("TA202600000115");
+  });
+
+  test("falls back to local invoice number", () => {
+    expect(displayInvoiceNumber({ invoice_number: "TA202600000115" })).toBe("TA202600000115");
+  });
+});
 
 describe("placeContextMenu", () => {
   test("shifts a menu opened at the bottom of the screen fully into view", () => {
