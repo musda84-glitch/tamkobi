@@ -14,7 +14,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, canDeleteInvoice, canCancelInvoice, invoiceETypeLabel } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isGibIssued, canDeleteInvoice, canCancelInvoice, invoiceETypeLabel } from "./InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { useEscape } from "../utils/useEscape";
@@ -386,8 +386,25 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [waMsg, setWaMsg] = useState("");
   const [waPhone, setWaPhone] = useState("");
   const saveInvoiceEdit = async () => {
-    try { await axios.put(`${API_URL}/invoices/${editInv.id}`, editInv.status === "draft" ? { e_type: editInv.e_type, due_date: editInv.due_date, notes: editInv.notes, items: editInv.items } : { due_date: editInv.due_date, notes: editInv.notes }); toast.success("Fatura güncellendi."); setEditInv(null); load(); }
-    catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); }
+    const locked = isGibIssued(editInv);
+    const payload = locked
+      ? { due_date: editInv.due_date, notes: editInv.notes }
+      : {
+          e_type: editInv.e_type,
+          due_date: editInv.due_date,
+          notes: editInv.notes,
+          items: editInv.items,
+          issue_date: (editInv.issue_date || "").slice(0, 10),
+          issue_time: (editInv.issue_time || "").slice(0, 8),
+        };
+    try {
+      await axios.put(`${API_URL}/invoices/${editInv.id}`, payload);
+      toast.success("Fatura güncellendi.");
+      setEditInv(null);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Güncellenemedi.");
+    }
   };
   const sendWa = async (openLink) => {
     if (!waMsg.trim()) { toast.error("Mesaj boş olamaz."); return; }
@@ -561,7 +578,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <tbody className="divide-y divide-slate-100">
                 {data.invoices.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
                 {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const cells = {
-                    number: <td key="number" className="py-2 font-mono font-semibold text-slate-900"><button onClick={() => setEditInv({ ...inv })} className={`hover:underline ${inv.status === "draft" ? "text-emerald-700" : "text-slate-900"}`} title={inv.status === "draft" ? "Taslağı düzenle" : "Faturayı düzenle (vade / not)"} data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button></td>,
+                    number: <td key="number" className="py-2 font-mono font-semibold text-slate-900"><button onClick={() => setEditInv({ ...inv })} className={`hover:underline ${isGibIssued(inv) ? "text-slate-900" : "text-emerald-700"}`} title={isGibIssued(inv) ? "Faturayı düzenle (vade / not)" : "Faturayı düzenle"} data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button></td>,
                     date: <td key="date" className="py-2 text-slate-500">{fmtDate(inv.issue_date)}</td>,
                     type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span></td>,
                     amount: <td key="amount" className={`py-2 text-right font-bold ${inv.status === "draft" ? "text-slate-400" : ""}`}>{fmt(inv.grand_total)}{inv.status === "draft" && <div className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide" data-testid={`detail-inv-draft-${inv.invoice_number}`}>Taslak · bakiye dışı</div>}</td>,
@@ -572,7 +589,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                     {colState.cols.map((k) => cells[k])}
                     <td className="py-2">
                       <div className="flex items-center justify-end gap-0.5">
-                        <button onClick={() => setEditInv({ ...inv })} className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı düzenle" : "Faturayı düzenle (vade / not)"} data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
+                        <button onClick={() => setEditInv({ ...inv })} className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition" title={isGibIssued(inv) ? "Faturayı düzenle (vade / not)" : "Faturayı düzenle"} data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
                         <button onClick={() => setPrintDoc(inv)} className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Görüntüle / Şablonlu Yazdır" data-testid={`detail-inv-print-${inv.invoice_number}`}><Printer className="w-4 h-4" /></button>
                         {onMessage && !incoming ? (
                           <button onClick={() => onMessage(c)} className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition" title="SMS / E-posta gönder" data-testid={`detail-inv-notify-${inv.invoice_number}`}><MessageSquare className="w-4 h-4" /></button>
@@ -1019,7 +1036,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setEditInv(null))}>
             <div className="bg-white rounded-2xl max-w-6xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="invoice-edit-modal">
               <div className="flex justify-between items-center border-b pb-2 gap-3">
-                <h3 className="text-sm font-bold">{editInv.status === "draft" ? "Taslak Fatura Düzenle" : "Fatura Düzenle"} — {editInv.invoice_number}</h3>
+                <h3 className="text-sm font-bold">{isGibIssued(editInv) ? "Fatura Düzenle" : (editInv.status === "draft" ? "Taslak Fatura Düzenle" : "Fatura Düzenle")} — {editInv.invoice_number}</h3>
                 <div className="flex items-center gap-2 shrink-0">
                   <InvoiceCopyButton
                     invoice={editInv}
@@ -1029,11 +1046,89 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   <button type="button" onClick={() => setEditInv(null)} className="text-slate-400"><X className="w-5 h-5" /></button>
                 </div>
               </div>
-              {editInv.status !== "draft" && <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800 flex items-center gap-1" data-testid="edit-inv-locked-note"><Lock className="w-3 h-3" /> Kesilmiş fatura: kalemler ve belge türü değiştirilemez; yalnızca vade ve not düzenlenebilir.</div>}
-              <div className="grid grid-cols-3 gap-2">
-                <div><label className="block font-semibold mb-1">Belge Türü</label><select disabled={editInv.status !== "draft"} value={editInv.e_type} onChange={(e) => setEditInv({ ...editInv, e_type: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="edit-inv-etype"><option value="e_invoice">E-Fatura</option><option value="e_archive">E-Arşiv</option><option value="e_export">e-İhracat</option><option value="paper">Kağıt Fatura</option><option value="e_dispatch">E-İrsaliye</option></select></div>
-                <div><label className="block font-semibold mb-1">Vade</label><input type="date" value={editInv.due_date || ""} onChange={(e) => setEditInv({ ...editInv, due_date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" /></div>
-                <div><label className="block font-semibold mb-1">Not</label><input value={editInv.notes || ""} onChange={(e) => setEditInv({ ...editInv, notes: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" /></div>
+              {isGibIssued(editInv) && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-amber-800 flex items-center gap-1" data-testid="edit-inv-locked-note">
+                  <Lock className="w-3 h-3" /> GİB'e iletilmiş fatura: kalemler, belge türü ve fatura tarihi değiştirilemez; yalnızca vade ve not düzenlenebilir.
+                </div>
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div>
+                  <label className="block font-semibold mb-1">Belge Türü</label>
+                  <select
+                    disabled={isGibIssued(editInv)}
+                    value={editInv.e_type}
+                    onChange={(e) => setEditInv({ ...editInv, e_type: e.target.value })}
+                    className="w-full bg-slate-50 border rounded-lg p-2 disabled:opacity-60"
+                    data-testid="edit-inv-etype"
+                  >
+                    <option value="e_invoice">E-Fatura</option>
+                    <option value="e_archive">E-Arşiv</option>
+                    <option value="e_export">e-İhracat</option>
+                    <option value="paper">Kağıt Fatura</option>
+                    <option value="e_dispatch">E-İrsaliye</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Fatura Tarihi</label>
+                  <input
+                    type="date"
+                    disabled={isGibIssued(editInv)}
+                    value={(editInv.issue_date || "").slice(0, 10)}
+                    onChange={(e) => setEditInv({ ...editInv, issue_date: e.target.value })}
+                    className="w-full bg-slate-50 border rounded-lg p-2 disabled:opacity-60"
+                    data-testid="edit-inv-issue-date"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Fatura Saati</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="time"
+                      step="1"
+                      disabled={isGibIssued(editInv)}
+                      value={(editInv.issue_time || "").slice(0, 8) || ""}
+                      onChange={(e) => setEditInv({ ...editInv, issue_time: e.target.value })}
+                      className="flex-1 min-w-0 bg-slate-50 border rounded-lg p-2 disabled:opacity-60"
+                      data-testid="edit-inv-issue-time"
+                    />
+                    <button
+                      type="button"
+                      disabled={isGibIssued(editInv)}
+                      title="Şimdiki tarih ve saat"
+                      onClick={() => {
+                        const n = new Date();
+                        const pad = (x) => String(x).padStart(2, "0");
+                        const d = `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}`;
+                        const t = `${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
+                        setEditInv({ ...editInv, issue_date: d, issue_time: t });
+                      }}
+                      className="shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 font-semibold hover:bg-sky-100 disabled:opacity-50"
+                      data-testid="edit-inv-now-btn"
+                    >
+                      <CalendarClock className="w-3.5 h-3.5" />
+                      Şimdi
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Vade</label>
+                  <input
+                    type="date"
+                    value={editInv.due_date || ""}
+                    onChange={(e) => setEditInv({ ...editInv, due_date: e.target.value })}
+                    className="w-full bg-slate-50 border rounded-lg p-2"
+                    data-testid="edit-inv-due-date"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold mb-1">Not</label>
+                  <input
+                    value={editInv.notes || ""}
+                    onChange={(e) => setEditInv({ ...editInv, notes: e.target.value })}
+                    className="w-full bg-slate-50 border rounded-lg p-2"
+                    data-testid="edit-inv-notes"
+                  />
+                </div>
               </div>
               <DocumentLineEditor
                 items={(editInv.items || []).map(hydrateLine)}
@@ -1042,7 +1137,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 kind="invoice"
                 allowService
                 currency={editInv.currency || "TRY"}
-                disabled={editInv.status !== "draft"}
+                disabled={isGibIssued(editInv)}
                 testIdPrefix="edit-inv-item"
               />
               {(() => { const t = documentLineTotals(editInv.items || []); const ccy = editInv.currency || "TRY"; return (

@@ -323,11 +323,13 @@ export function canCancelInvoice(inv) {
   return false;
 }
 
-/** Taslak satış/alış belgesi ⋮ menüden düzenlenir (satır ikonu yok). */
+/** GİB'e iletilmemiş satış/alış belgesi ⋮ menüden düzenlenir. */
 export function canEditInvoice(inv) {
-  if (!inv || inv.status !== "draft") return false;
+  if (!inv) return false;
+  if (inv.status === "cancelled") return false;
   if (isIncomingPurchaseInvoice(inv)) return false;
   if (inv.invoice_type === "dispatch") return false;
+  if (isGibIssued(inv)) return false;
   return true;
 }
 
