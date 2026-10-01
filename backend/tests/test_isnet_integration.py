@@ -260,6 +260,90 @@ def test_send_document_accepts_soap_success_without_immediate_portal():
     assert sent["ettn"].startswith("aaaaaaaa")
     assert sent["verified"] is False
     assert sent["invoice_id"] == "TA202600000095"
+    assert sent["seller_tax"] == "4810173324"
+
+
+def test_send_document_ubl_seller_uses_isnet_company_tax_id():
+    """Firma kartı VKN boş/farklı olsa bile UBL satıcı = İşNet CompanyTaxCode."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    invoice = {"e_type": "e_archive", "invoice_number": "TA1", "items": []}
+    company = {"name": "Firma", "tax_number": ""}  # boş → eskiden 0000000000 UBL
+    contact = {"name": "Alıcı", "tax_number_or_id": "11111111111"}
+    built = {}
+
+    def _capture_ubl(inv, co, ct, ettn=None):
+        built["seller"] = co.get("tax_number")
+        return ("<Invoice/>", "u", "TA1")
+
+    with patch("n11faturam.build_ubl", side_effect=_capture_ubl), patch(
+        "isnet.send_invoice_xml",
+        AsyncMock(return_value={
+            "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "invoice_id": "TA1",
+            "message": "OK",
+            "document_url": "",
+        }),
+    ), patch(
+        "isnet.try_verify_outgoing_in_portal",
+        AsyncMock(return_value={"ok": True, "document_url": "https://x", "via": "viewer"}),
+    ):
+        asyncio.get_event_loop().run_until_complete(
+            isnet.send_document(settings, "", invoice, contact, company)
+        )
+    assert built["seller"] == "4810173324"
+
+
+def test_send_document_efatura_requires_receiver_or_lookup():
+    """E-Fatura ReceiverTag yoksa GetTaxPayer alias dener; yoksa net 400."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    invoice = {"e_type": "e_invoice", "invoice_number": "EF1", "contact_tax_id": "1234567805"}
+    company = {"tax_number": "4810173324"}
+    contact = {"name": "Test Firma 05", "tax_number_or_id": "1234567805"}
+
+    with patch("n11faturam.build_ubl", return_value=("<Invoice/>", "u", "EF1")), patch(
+        "isnet.lookup_user",
+        AsyncMock(return_value={"alias": "", "is_e_invoice_user": True}),
+    ):
+        with pytest.raises(HTTPException) as e:
+            asyncio.get_event_loop().run_until_complete(
+                isnet.send_document(settings, "", invoice, contact, company)
+            )
+    assert e.value.status_code == 400
+    assert "posta kutusu" in e.value.detail.lower() or "alias" in e.value.detail.lower()
+
+    called = {}
+
+    async def _cap_send(*_a, **kw):
+        called["receiver"] = kw.get("receiver_alias")
+        return {
+            "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "invoice_id": "EF1",
+            "message": "OK",
+            "document_url": "",
+        }
+
+    with patch("n11faturam.build_ubl", return_value=("<Invoice/>", "u", "EF1")), patch(
+        "isnet.lookup_user",
+        AsyncMock(return_value={"alias": "urn:mail:test05defaultpk@isnet.com"}),
+    ), patch("isnet.send_invoice_xml", side_effect=_cap_send), patch(
+        "isnet.try_verify_outgoing_in_portal",
+        AsyncMock(return_value={"ok": True, "document_url": "", "via": "viewer"}),
+    ):
+        sent = asyncio.get_event_loop().run_until_complete(
+            isnet.send_document(settings, "", invoice, contact, company)
+        )
+    assert sent["ettn"].startswith("aaaaaaaa")
+    assert called["receiver"] == "urn:mail:test05defaultpk@isnet.com"
+
+
+def test_send_document_requires_company_tax():
+    settings = {"mode": "test"}
+    with pytest.raises(HTTPException) as e:
+        asyncio.get_event_loop().run_until_complete(
+            isnet.send_document(settings, "", {"e_type": "e_archive"}, {}, {})
+        )
+    assert e.value.status_code == 400
+    assert "VKN" in e.value.detail
 
 
 def test_soap_call_surfaces_result_failed():
