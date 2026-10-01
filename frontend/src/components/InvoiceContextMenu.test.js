@@ -7,6 +7,7 @@ import {
   canDownloadGibDocuments,
   canDeleteInvoice,
   displayInvoiceNumber,
+  formatGibStatusLabel,
   invoiceBuyerTaxId,
   invoiceETypeLabel,
   invoiceHasPayment,
@@ -24,6 +25,16 @@ describe("displayInvoiceNumber", () => {
 
   test("falls back to local invoice number", () => {
     expect(displayInvoiceNumber({ invoice_number: "TA202600000115" })).toBe("TA202600000115");
+  });
+});
+
+describe("formatGibStatusLabel", () => {
+  test("marks test mode when status empty but sent", () => {
+    expect(formatGibStatusLabel({ einvoice_state: "sent", gib_mode: "test" })).toBe("Test · GİB durumu bekleniyor");
+  });
+
+  test("prefixes Test on existing status", () => {
+    expect(formatGibStatusLabel({ gib_status: "GİB onaylı", gib_mode: "test" })).toBe("Test · GİB onaylı");
   });
 });
 

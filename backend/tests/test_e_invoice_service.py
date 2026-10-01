@@ -44,6 +44,17 @@ class TestScenarioAndBuyer:
         assert e_invoice.honor_explicit_einvoice(None) is False
         assert e_invoice.honor_explicit_einvoice("") is False
 
+    def test_format_integrator_gib_status(self):
+        assert "Test" in e_invoice.format_integrator_gib_status(
+            label="İşNet", mode="test", portal_status="", verified=False
+        )
+        assert "GİB onaylı" in e_invoice.format_integrator_gib_status(
+            label="İşNet", mode="live", portal_status="Succeed", verified=True
+        )
+        assert e_invoice.format_integrator_gib_status(
+            label="İşNet SOAP API", mode="live", portal_status="", verified=True
+        ).startswith("İşNet")
+
 
 class TestResolveBuyerMukellef:
     def test_simulated_vkn_is_efatura_tckn_is_archive(self):
