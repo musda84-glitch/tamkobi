@@ -6730,18 +6730,33 @@ async def gib_lookup(tax_id: str, company_id: Optional[str] = "comp_nexus_main_0
         "local_contact": clean_doc(local) if local else None,
         "message": result.get("message") or "",
     }
+def _invoice_gib_locked(inv: dict) -> bool:
+    """GİB'e iletilmiş e-belge: kalem/tarih/tür kilitli; yalnız vade/not."""
+    from invoice_edit_lock import invoice_gib_locked
+
+    return invoice_gib_locked(inv)
+
+
 @api_router.put("/invoices/{invoice_id}")
 async def update_invoice(invoice_id: str, req: Dict[str, Any]):
     inv = await db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
-    if inv.get("status") != "draft":
+    if inv.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="İptal edilmiş fatura düzenlenemez.")
+    # GİB'e gönderilmemiş faturalar (taslak veya yalnızca yerel onay) tam düzenlenebilir
+    if _invoice_gib_locked(inv):
         allowed = {k: v for k, v in req.items() if k in {"due_date", "notes"}}
         if not allowed or set(req.keys()) - {"due_date", "notes"}:
-            raise HTTPException(status_code=400, detail="Kesilmiş faturada sadece vade ve not düzenlenebilir.")
+            raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
-    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "notes", "contact_id", "contact_name", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number"}}
+    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number"}}
+    if "issue_time" in allowed and allowed["issue_time"] is not None:
+        t = str(allowed["issue_time"] or "").strip()
+        if len(t) == 5 and t[2] == ":":
+            t = f"{t}:00"
+        allowed["issue_time"] = t[:8] if t else ""
     if "items" in allowed:
         await _fill_stock_codes(inv.get("company_id"), allowed["items"])
     if "items" in allowed or "general_discount_rate" in allowed or "general_discount_amount" in allowed:

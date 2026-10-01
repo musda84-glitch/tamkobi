@@ -222,6 +222,15 @@ describe("draft edit lives in the ⋮ menu", () => {
     expect(canEditInvoice({ status: "draft", invoice_type: "sales", e_type: "e_archive" })).toBe(true);
   });
 
+  test("approved but not GİB-sent invoices can be edited", () => {
+    expect(canEditInvoice({
+      status: "approved",
+      invoice_type: "sales",
+      e_type: "e_invoice",
+      gib_status: "Taslak",
+    })).toBe(true);
+  });
+
   test("issued invoices and incoming e-invoices cannot be edited from the menu", () => {
     expect(canEditInvoice(issued)).toBe(false);
     expect(canEditInvoice({ status: "draft", invoice_type: "purchase", direction: "incoming" })).toBe(false);
