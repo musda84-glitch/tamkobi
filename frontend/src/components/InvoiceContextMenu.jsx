@@ -23,6 +23,7 @@ export function formatGibStatusLabel(inv) {
   const mode = String(inv.gib_mode || inv.mode || "").toLowerCase();
   const isTest = mode === "test" || mode === "sandbox" || mode === "demo";
   const state = String(inv.einvoice_state || "").toLowerCase();
+  const code = String(inv.gib_status_code || "").trim();
   if (!raw || raw === "Taslak") {
     if (state === "sent" || state === "queued") {
       return isTest ? "Test · GİB durumu bekleniyor" : "GİB durumu bekleniyor";
@@ -30,6 +31,16 @@ export function formatGibStatusLabel(inv) {
     if (state === "error") return "Hata";
     return "Taslak";
   }
+  // GİB: 1300 nihai; 1220 alıcıya ulaştı (başarı); 1200 zarf GİB'de işlendi
+  const bare = raw.replace(/^test\s*·\s*/i, "").trim();
+  const low = bare.toLocaleLowerCase("tr-TR").replace(/ı/g, "i");
+  const isSuccess =
+    ["1300", "1220", "1200"].includes(code) ||
+    /basariyla tamamland/i.test(low) ||
+    /hedeften sistem yaniti gelmedi/i.test(low) ||
+    /zarf basariyla islendi/i.test(low);
+  const display = isSuccess ? (isTest || /^test\b/i.test(raw) ? "Test · Başarıyla Tamamlandı" : "Başarıyla Tamamlandı") : null;
+  if (display) return display;
   if (isTest && !/^test\b/i.test(raw)) return `Test · ${raw}`;
   return raw;
 }
@@ -235,12 +246,16 @@ export function isGibIssued(inv) {
   if (!inv) return false;
   const gs = String(inv.gib_status || "");
   const gsBare = gs.replace(/^test\s*·\s*/i, "").trim();
+  const code = String(inv.gib_status_code || "").trim();
   // Hata: ... iletildi mesajı /ileti/ regex'ine takılmasın
   if (inv.einvoice_state === "error" || /^\s*hata\s*:/i.test(gsBare)) return false;
+  if (["1300", "1220", "1200"].includes(code)) return true;
   if (inv.einvoice_state === "sent" || inv.einvoice_state === "queued") return true;
   if (inv.gib_tracking_id) return true;
   if (GIB_ISSUED_STATUSES.has(gs) || GIB_ISSUED_STATUSES.has(gsBare)) return true;
   if (/başarıyla tamamland/i.test(gsBare)) return true;
+  if (/hedeften sistem yanıtı gelmedi/i.test(gsBare)) return true;
+  if (/zarf başarıyla işlendi/i.test(gsBare)) return true;
   return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gsBare) && !/onaylandı$/i.test(gsBare);
 }
 
