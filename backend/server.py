@@ -12545,7 +12545,18 @@ async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict
     inv_ids = list({i for i in inv_ids if i})
     if not inv_ids:
         return docs
-    invs = await db.invoices.find({"_id": {"$in": inv_ids}}, {"e_type": 1, "einvoice_state": 1, "gib_status": 1}).to_list(len(inv_ids))
+    invs = await db.invoices.find(
+        {"_id": {"$in": inv_ids}},
+        {
+            "e_type": 1,
+            "einvoice_state": 1,
+            "gib_status": 1,
+            "gib_invoice_id": 1,
+            "invoice_number": 1,
+            "gib_uuid": 1,
+            "gib_tracking_id": 1,
+        },
+    ).to_list(len(inv_ids))
     by_id = {i["_id"]: i for i in invs}
     return enrich_orders_with_invoices(docs, by_id)
 
