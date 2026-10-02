@@ -58,6 +58,38 @@ def test_search_row_reads_detail_status():
     assert row["process_status"] == "Imza_Bekliyor"
 
 
+def test_search_row_nested_detail_status_beats_ziplendi():
+    """WCF iç içe DetailStatus/Code=1300 — süreç Status=Ziplendi ezilmesin."""
+    xml = """
+    <Invoice xmlns="http://schemas.datacontract.org/2004/07/EInvoice.Service.Model">
+      <ETTN>bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee</ETTN>
+      <InvoiceNumber>U052026000000067</InvoiceNumber>
+      <Status>Ziplendi</Status>
+      <DetailStatus>
+        <Code>1300</Code>
+        <Description>Basariyla_Tamamlandi</Description>
+      </DetailStatus>
+    </Invoice>
+    """
+    row = isnet._search_row_from_el(ET.fromstring(xml))
+    assert row["process_status"] == "Ziplendi"
+    assert row["status_code"] == "1300"
+    assert row["status"] == "Başarıyla Tamamlandı"
+
+
+def test_search_row_detail_enum_beats_ziplendi():
+    xml = """
+    <Invoice xmlns="http://schemas.datacontract.org/2004/07/EInvoice.Service.Model">
+      <InvoiceNumber>U052026000000066</InvoiceNumber>
+      <Status>Ziplendi</Status>
+      <DetailStatus>Basariyla_Tamamlandi</DetailStatus>
+    </Invoice>
+    """
+    row = isnet._search_row_from_el(ET.fromstring(xml))
+    assert row["status"] == "Başarıyla Tamamlandı"
+    assert row["status_code"] == "1300"
+
+
 def test_api_base_test_vs_live():
     assert isnet.api_base({"mode": "test"}) == isnet.TEST_API
     assert isnet.api_base({"mode": "live"}) == isnet.LIVE_API
