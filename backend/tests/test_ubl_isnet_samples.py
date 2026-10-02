@@ -172,3 +172,68 @@ def test_builder_tevkifat_withholding_tax_total():
     assert percent is not None and percent.text in ("50", "50.0")
     line_wtt = root.find(f"{CAC}InvoiceLine/{CAC}WithholdingTaxTotal")
     assert line_wtt is not None
+
+
+def test_builder_line_tax_subtotal_has_category():
+    """İşNet .NET: satır TaxSubtotal.TaxCategory null → Object reference NRE."""
+    inv = {
+        "_id": "inv_line_tax",
+        "invoice_number": "U052026000000099",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "gib_scenario": "TEMELFATURA",
+        "issue_date": "2026-10-02",
+        "items": [{"name": "Kalem", "quantity": 2, "unit": "Adet", "unit_price": 10, "vat_rate": 20, "total": 20}],
+        "subtotal": 20,
+        "vat_total": 4,
+        "grand_total": 24,
+    }
+    root = ET.fromstring(
+        ubl_export.build_invoice_ubl(
+            inv,
+            {"name": "S", "tax_number": "4810173324"},
+            {"name": "B", "tax_number_or_id": "4810173324"},
+            send_ready=True,
+        )
+    )
+    line_sub = root.find(f"{CAC}InvoiceLine/{CAC}TaxTotal/{CAC}TaxSubtotal")
+    assert line_sub is not None
+    assert line_sub.find(f"{CBC}TaxableAmount") is not None
+    assert line_sub.find(f"{CBC}TaxAmount") is not None
+    scheme = line_sub.find(f"{CAC}TaxCategory/{CAC}TaxScheme/{CBC}TaxTypeCode")
+    assert scheme is not None and scheme.text == "0015"
+    # send_ready party alanları boş bırakılmaz
+    buyer_addr = root.find(f"{CAC}AccountingCustomerParty/{CAC}Party/{CAC}PostalAddress")
+    assert buyer_addr is not None
+    assert buyer_addr.find(f"{CBC}CitySubdivisionName") is not None
+    assert buyer_addr.find(f"{CBC}StreetName") is not None
+    pts = root.find(
+        f"{CAC}AccountingCustomerParty/{CAC}Party/{CAC}PartyTaxScheme/{CAC}TaxScheme/{CBC}Name"
+    )
+    assert pts is not None
+
+
+def test_builder_zero_vat_still_has_tax_subtotal():
+    inv = {
+        "_id": "inv_zero",
+        "invoice_number": "U052026000000100",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "gib_scenario": "TEMELFATURA",
+        "issue_date": "2026-10-02",
+        "items": [{"name": "İstisna", "quantity": 1, "unit": "Adet", "unit_price": 100, "vat_rate": 0, "total": 100}],
+        "subtotal": 100,
+        "vat_total": 0,
+        "grand_total": 100,
+    }
+    root = ET.fromstring(
+        ubl_export.build_invoice_ubl(
+            inv, {"name": "S", "tax_number": "4810173324"}, {"name": "B", "tax_number_or_id": "1234567890"}
+        )
+    )
+    subs = root.findall(f"{CAC}TaxTotal/{CAC}TaxSubtotal")
+    assert len(subs) >= 1
+    line_cat = root.find(
+        f"{CAC}InvoiceLine/{CAC}TaxTotal/{CAC}TaxSubtotal/{CAC}TaxCategory/{CAC}TaxScheme/{CBC}Name"
+    )
+    assert line_cat is not None and line_cat.text == "KDV"

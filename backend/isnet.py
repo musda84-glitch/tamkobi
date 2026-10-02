@@ -626,24 +626,39 @@ def _is_fail_flag(value: str) -> bool:
     return (value or "").strip().lower() in _FAIL_RESULTS
 
 
+def _humanize_isnet_error(msg: str) -> str:
+    """İşNet .NET ham hatalarını kullanıcıya anlamlı Türkçe metne çevir."""
+    raw = (msg or "").strip()
+    if not raw:
+        return raw
+    low = raw.lower()
+    if "object reference not set to an instance of an object" in low:
+        return (
+            "İşNet UBL işlerken zorunlu bir alan boş kaldı "
+            "(satır KDV TaxCategory, adres veya vergi dairesi). "
+            "Cari/şirket adresini ve fatura kalemlerini kontrol edip yeniden gönderin."
+        )
+    return raw
+
+
 def _row_failed(el: ET.Element) -> Optional[str]:
     """InvoiceResult / ArchiveInvoiceReturn satırında başarısızlık mesajı (yoksa None)."""
     ok = _find_text(el, "IsSucceded", "IsSucceeded", "IsSuccess", "Success")
     result = _find_text(el, "Result")
     if ok and _is_fail_flag(ok):
-        return (
+        return _humanize_isnet_error(
             _find_text(el, "ErrorMessage", "Error", "Message")
             or f"İşNet satır sonucu başarısız ({ok})."
         )
     if result and _is_fail_flag(result):
-        return (
+        return _humanize_isnet_error(
             _find_text(el, "ErrorMessage", "Error", "Message")
             or f"İşNet satır sonucu başarısız ({result})."
         )
     # ErrorMessage varken IsSucceded açıkça true değilse hata say
     err = _find_text(el, "ErrorMessage", "Error")
     if err and (not ok or _is_fail_flag(ok)):
-        return err
+        return _humanize_isnet_error(err)
     return None
 
 
@@ -674,7 +689,7 @@ def _assert_soap_execution_ok(body: ET.Element, action: str) -> None:
             raise HTTPException(status_code=400, detail=row_err)
 
     if fail_msgs:
-        msg = (
+        msg = _humanize_isnet_error(
             _find_text(body, "ErrorMessage", "Error")
             or _find_text(body, "Message")
             or ""
@@ -687,6 +702,7 @@ def _assert_soap_execution_ok(body: ET.Element, action: str) -> None:
     # Üst düzey ErrorMessage + açık Success yoksa (yalnızca Failed senaryosu)
     top_err = _find_text(body, "ErrorMessage")
     if top_err:
+        top_err = _humanize_isnet_error(top_err)
         results = [v.lower() for v in _find_all_texts(body, "Result")]
         oks = [v.lower() for v in _find_all_texts(body, "IsSucceded", "IsSucceeded", "IsSuccess")]
         if any(r in _FAIL_RESULTS for r in results) or any(o in _FAIL_RESULTS for o in oks):

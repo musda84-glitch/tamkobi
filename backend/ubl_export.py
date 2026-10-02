@@ -263,7 +263,8 @@ def _tax_id(raw: Any) -> Tuple[str, str]:
     return "VKN", digits
 
 
-def _party(parent_tag, party: Dict[str, Any], parent):
+def _party(parent_tag, party: Dict[str, Any], parent, *, send_ready: bool = False):
+    """UBL Party. send_ready: İşNet .NET parse için adres/vergi dairesi boş bırakılmaz."""
     wrap = _cac(parent, parent_tag)
     p = _cac(wrap, "Party")
     scheme, tid = _tax_id(party.get("tax_id") or party.get("tax_number") or party.get("tax_number_or_id"))
@@ -276,21 +277,34 @@ def _party(parent_tag, party: Dict[str, Any], parent):
         _cbc(pn, "Name", name[:200])
     addr = _cac(p, "PostalAddress")
     street = (party.get("address") or party.get("street") or "").strip()
+    if send_ready and not street:
+        street = "-"
     if street:
         _cbc(addr, "StreetName", street[:200])
+    district = (
+        party.get("district") or party.get("tax_office") or party.get("city") or ""
+    )
+    district = str(district).strip()
+    if send_ready and (not district or district in ("-", ".")):
+        district = str(party.get("city") or "Merkez").strip() or "Merkez"
+    if district:
+        _cbc(addr, "CitySubdivisionName", district[:60])
     city = str(party.get("city") or "").strip()
+    if send_ready and not city:
+        city = "İstanbul"
     if city:
         _cbc(addr, "CityName", city[:60])
     country = _cac(addr, "Country")
     _cbc(country, "Name", "Türkiye")
     office = (party.get("tax_office") or "").strip()
-    if office:
+    # İşNet örnekleri her zaman PartyTaxScheme içerir; boş Name bile NRE'yi önler
+    if office or send_ready:
         pts = _cac(p, "PartyTaxScheme")
         ts = _cac(pts, "TaxScheme")
-        _cbc(ts, "Name", office[:80])
+        _cbc(ts, "Name", (office or "-")[:80])
     email = (party.get("email") or "").strip()
     phone = (party.get("phone") or "").strip()
-    if email or phone:
+    if email or phone or send_ready:
         contact = _cac(p, "Contact")
         if phone:
             _cbc(contact, "Telephone", phone[:30])
@@ -446,21 +460,29 @@ def build_invoice_ubl(
         eref = _cac(dsa, "ExternalReference")
         _cbc(eref, "URI", "#Signature")
 
-    _party("AccountingSupplierParty", seller_party, root)
-    _party("AccountingCustomerParty", buyer_party, root)
+    _party("AccountingSupplierParty", seller_party, root, send_ready=send_ready)
+    _party("AccountingCustomerParty", buyer_party, root, send_ready=send_ready)
 
     tax_total = _cac(root, "TaxTotal")
     _cbc(tax_total, "TaxAmount", _amt(vat_total), currencyID=currency)
     by_rate: Dict[float, float] = {}
+    taxable_by_rate: Dict[float, float] = {}
     for it in items:
         rate = float(it.get("vat_rate") or 0)
         net = float(it.get("total") or 0)
         by_rate[rate] = by_rate.get(rate, 0) + net * rate / 100
+        taxable_by_rate[rate] = taxable_by_rate.get(rate, 0) + net
     if not by_rate and vat_total:
         by_rate[20.0] = vat_total
+        taxable_by_rate[20.0] = subtotal
+    # İşNet .NET: TaxTotal.TaxSubtotal null → "Object reference not set..."
+    if not by_rate:
+        by_rate[0.0] = 0.0
+        taxable_by_rate[0.0] = subtotal
     for rate, amount in sorted(by_rate.items(), key=lambda x: -x[0]):
         sub = _cac(tax_total, "TaxSubtotal")
-        _cbc(sub, "TaxableAmount", _amt(sum(float(it.get("total") or 0) for it in items if float(it.get("vat_rate") or 0) == rate) or subtotal), currencyID=currency)
+        taxable = taxable_by_rate.get(rate, 0) or subtotal
+        _cbc(sub, "TaxableAmount", _amt(taxable), currencyID=currency)
         _cbc(sub, "TaxAmount", _amt(amount), currencyID=currency)
         _cbc(sub, "Percent", f"{rate:g}")
         cat = _cac(sub, "TaxCategory")
@@ -472,16 +494,18 @@ def build_invoice_ubl(
     wp = withholding_parts(inv, vat_total)
     if wp:
         code, percent, taxable, amount = wp
-        wtt = _cac(root, "WithholdingTaxTotal")
-        _cbc(wtt, "TaxAmount", _amt(amount), currencyID=currency)
-        wsub = _cac(wtt, "TaxSubtotal")
-        _cbc(wsub, "TaxableAmount", _amt(taxable), currencyID=currency)
-        _cbc(wsub, "TaxAmount", _amt(amount), currencyID=currency)
-        _cbc(wsub, "Percent", f"{percent:g}")
-        wcat = _cac(wsub, "TaxCategory")
-        wsch = _cac(wcat, "TaxScheme")
-        _cbc(wsch, "Name", "KDV TEVKİFATI")
-        _cbc(wsch, "TaxTypeCode", code)
+        # Sıfır tevkifat tutarıyla boş blok İşNet'te NRE üretebilir
+        if amount > 0 or taxable > 0:
+            wtt = _cac(root, "WithholdingTaxTotal")
+            _cbc(wtt, "TaxAmount", _amt(amount), currencyID=currency)
+            wsub = _cac(wtt, "TaxSubtotal")
+            _cbc(wsub, "TaxableAmount", _amt(taxable), currencyID=currency)
+            _cbc(wsub, "TaxAmount", _amt(amount), currencyID=currency)
+            _cbc(wsub, "Percent", f"{percent:g}")
+            wcat = _cac(wsub, "TaxCategory")
+            wsch = _cac(wcat, "TaxScheme")
+            _cbc(wsch, "Name", "KDV TEVKİFATI")
+            _cbc(wsch, "TaxTypeCode", code)
 
     totals = _cac(root, "LegalMonetaryTotal")
     _cbc(totals, "LineExtensionAmount", _amt(subtotal + discount if discount else subtotal), currencyID=currency)
@@ -504,11 +528,18 @@ def build_invoice_ubl(
         net = float(it.get("total") or 0)
         _cbc(line, "LineExtensionAmount", _amt(net), currencyID=currency)
         rate = float(it.get("vat_rate") or 0)
-        line_vat = net * rate / 100
+        line_vat = round(net * rate / 100.0, 2)
         lt = _cac(line, "TaxTotal")
         _cbc(lt, "TaxAmount", _amt(line_vat), currencyID=currency)
         ls = _cac(lt, "TaxSubtotal")
+        # İşNet resmi örnek / n11: satır TaxSubtotal'da tutar + TaxCategory zorunlu
+        _cbc(ls, "TaxableAmount", _amt(net), currencyID=currency)
+        _cbc(ls, "TaxAmount", _amt(line_vat), currencyID=currency)
         _cbc(ls, "Percent", f"{rate:g}")
+        lcat = _cac(ls, "TaxCategory")
+        lsch = _cac(lcat, "TaxScheme")
+        _cbc(lsch, "Name", "KDV")
+        _cbc(lsch, "TaxTypeCode", "0015")
         if wh_code and wh_rate > 0 and line_vat > 0:
             line_wh = round(line_vat * wh_rate, 2)
             lwt = _cac(line, "WithholdingTaxTotal")
