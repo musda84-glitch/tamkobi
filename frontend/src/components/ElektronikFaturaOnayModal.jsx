@@ -43,13 +43,66 @@ function confirmErrorDetail(err) {
   return "Gönderim başarısız.";
 }
 
+export function isReturnInvoiceDoc(doc) {
+  const invTypeNorm = String(doc?.invoice_type || "")
+    .replace(/İ/g, "I")
+    .replace(/I/g, "i")
+    .replace(/ı/g, "i")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return (
+    ["return", "sales_return", "purchase_return", "iade"].includes(invTypeNorm) ||
+    invTypeNorm.includes("return") ||
+    invTypeNorm.includes("iade")
+  );
+}
+
+/** Nota / alanlardan iade edilen fatura no + tarih ön doldurma. */
+export function prefillReturnBillingRef(doc) {
+  const number = String(
+    doc?.original_invoice_number ||
+      doc?.return_of_invoice_number ||
+      doc?.billing_reference_id ||
+      doc?.referenced_invoice_number ||
+      "",
+  ).trim();
+  let date = String(
+    doc?.original_issue_date ||
+      doc?.return_of_issue_date ||
+      doc?.billing_reference_date ||
+      "",
+  ).trim().slice(0, 10);
+  const notes = String(doc?.notes || "");
+  let num = number;
+  if (!num) {
+    const m =
+      notes.match(/([A-Z]{2,3}\d{10,16})\s*numaral[ıi]/i) ||
+      notes.match(/[←<]\s*([A-Z]{2,3}\d{10,16})/i) ||
+      notes.match(/\b([A-Z]{2,3}\d{13,16})\b/i);
+    if (m) num = m[1].toUpperCase();
+  }
+  if (!date) {
+    const m2 = notes.match(/(\d{2})[./](\d{2})[./](\d{4})\s*tarihli/);
+    if (m2) date = `${m2[3]}-${m2[2]}-${m2[1]}`;
+  }
+  return { number: num, date };
+}
+
+export function buildIadeNote(number, dateYmd) {
+  const no = String(number || "").trim().toUpperCase();
+  const ymd = String(dateYmd || "").slice(0, 10);
+  let trDate = ymd;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+    const [y, m, d] = ymd.split("-");
+    trDate = `${d}.${m}.${y}`;
+  }
+  return `${trDate} tarihli ${no} numaralı faturaya istinaden düzenlenen iade faturasıdır.`;
+}
+
 /**
  * Faturalaştı siparişte «E-Fatura Oluştur» / fatura ⋮ «E-Fatura / E-Arşiv (GİB)» onayı.
- * Mükellefiyet + kontör entegratörden (GİB lookup / İşNet bakiye) gelir.
- * Devam Et her zaman Temel / Ticari senaryo seçimi ister (GİB önerisinden bağımsız).
- * Onaydan sonra modal hemen kapanır; gönderim arka planda sürer.
- *
- * `order` veya `invoice` verilebilir; ikisi de cari VKN / mükellef çözümlemesi için kullanılır.
+ * İade: orijinal fatura no + tarih formu. KDV %0: tevkifat seçimi.
  */
 export function ElektronikFaturaOnayModal({
   order,
@@ -69,14 +122,10 @@ export function ElektronikFaturaOnayModal({
   const askWithholding = invoiceNeedsWithholdingPrompt(invoice || doc);
   const [withholdingValue, setWithholdingValue] = useState("");
   const [withholdingTouched, setWithholdingTouched] = useState(false);
-  const invTypeNorm = String(doc?.invoice_type || "")
-    .toLowerCase()
-    .replace(/ı/g, "i")
-    .replace(/İ/g, "i");
-  const isReturnInvoice =
-    ["return", "sales_return", "purchase_return", "iade"].includes(invTypeNorm) ||
-    invTypeNorm.includes("return") ||
-    invTypeNorm.includes("iade");
+  const isReturnInvoice = isReturnInvoiceDoc(doc);
+  const prefilled = prefillReturnBillingRef(doc);
+  const [returnInvoiceNo, setReturnInvoiceNo] = useState(prefilled.number);
+  const [returnInvoiceDate, setReturnInvoiceDate] = useState(prefilled.date);
 
   const fallbackEFatura = orderCanIssueEFatura(doc, contacts);
   const isEFatura = gibMeta ? !!gibMeta.is_e_invoice_user : fallbackEFatura;
@@ -86,6 +135,12 @@ export function ElektronikFaturaOnayModal({
       ? "Bu müşteri e-fatura mükellefidir, karşı tarafa e-fatura gönderilecek. Onaylıyor musunuz?"
       : "Bu müşteri e-fatura mükellefi değildir, e-arşiv faturası oluşturulacak. Onaylıyor musunuz?")
     : efaturaOnayMessage(doc, contacts);
+
+  useEffect(() => {
+    const next = prefillReturnBillingRef(doc);
+    setReturnInvoiceNo(next.number);
+    setReturnInvoiceDate(next.date);
+  }, [doc]);
 
   useEffect(() => {
     if (!companyId) {
@@ -131,6 +186,20 @@ export function ElektronikFaturaOnayModal({
   }, [companyId, doc, contacts]);
 
   const submit = (scenario) => {
+    if (isReturnInvoice) {
+      const no = String(returnInvoiceNo || "").trim();
+      const dt = String(returnInvoiceDate || "").trim();
+      if (!no) {
+        toast.error("İade edilen fatura numarasını girin.");
+        setMenuOpen(false);
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dt)) {
+        toast.error("İade edilen faturanın tarihini seçin.");
+        setMenuOpen(false);
+        return;
+      }
+    }
     if (askWithholding && !withholdingTouched) {
       toast.error("KDV %0 satır var — tevkifat seçin veya «Tevkifat yok» deyin.");
       setMenuOpen(false);
@@ -140,6 +209,13 @@ export function ElektronikFaturaOnayModal({
     const sc = isReturnInvoice || scenario === "TEMEL" ? "TEMEL" : "TICARI";
     setMenuOpen(false);
     const wh = askWithholding ? parseWithholdingValue(withholdingValue) : null;
+    const returnRef = isReturnInvoice
+      ? {
+          original_invoice_number: String(returnInvoiceNo || "").trim().toUpperCase(),
+          original_issue_date: String(returnInvoiceDate || "").trim().slice(0, 10),
+          notes: buildIadeNote(returnInvoiceNo, returnInvoiceDate),
+        }
+      : undefined;
     const payload = {
       // Kullanıcı Temel/Ticari seçti → her zaman e-fatura senaryosu (lookup e-arşiv dese bile).
       eType: "e_invoice",
@@ -148,6 +224,7 @@ export function ElektronikFaturaOnayModal({
       alias: gibMeta?.alias || undefined,
       gibMeta: gibMeta || undefined,
       withholding: wh || undefined,
+      returnRef,
     };
     const confirmFn = onConfirm;
     // Modal hemen kapansın; uzun süren GİB/entegratör gönderimi arka planda devam etsin.
@@ -167,10 +244,10 @@ export function ElektronikFaturaOnayModal({
       data-testid="efatura-onay-modal"
     >
       <div
-        className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200"
+        className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between bg-sky-800 px-4 py-3 rounded-t-2xl">
+        <div className="flex items-center justify-between bg-sky-800 px-4 py-3 rounded-t-2xl sticky top-0 z-[1]">
           <h3 className="text-sm font-bold text-white" data-testid="efatura-onay-title">
             Elektronik Fatura Onayı
           </h3>
@@ -213,13 +290,46 @@ export function ElektronikFaturaOnayModal({
             </div>
           )}
           {isReturnInvoice && (
-            <p
-              className="text-[11px] text-rose-800 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 leading-snug"
-              data-testid="efatura-onay-iade-hint"
+            <div
+              className="rounded-xl border border-rose-200 bg-rose-50/90 px-3 py-3 space-y-2.5"
+              data-testid="efatura-onay-iade-fields"
             >
-              İade faturası GİB Schematron kuralı gereği yalnızca <b>Temel</b> senaryoda gider;
-              notta orijinal fatura numarası («… numaralı faturaya istinaden») bulunmalı.
-            </p>
+              <div>
+                <p className="text-sm font-semibold text-rose-900">İade edilen fatura</p>
+                <p className="text-[11px] text-rose-800/80 leading-snug mt-0.5">
+                  GİB Schematron için orijinal fatura numarası ve tarihi zorunlu.
+                  İade yalnızca <b>Temel</b> senaryoda gönderilir.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <label className="block space-y-1 sm:col-span-2">
+                  <span className="text-[11px] font-semibold text-rose-900 uppercase tracking-wide">
+                    Fatura numarası
+                  </span>
+                  <input
+                    type="text"
+                    value={returnInvoiceNo}
+                    onChange={(e) => setReturnInvoiceNo(e.target.value.toUpperCase())}
+                    placeholder="Örn. U052026000000065"
+                    autoComplete="off"
+                    className="w-full bg-white border border-rose-200 rounded-lg px-3 py-2 text-sm font-medium text-slate-800 placeholder:text-slate-400"
+                    data-testid="efatura-onay-iade-number"
+                  />
+                </label>
+                <label className="block space-y-1 sm:col-span-2">
+                  <span className="text-[11px] font-semibold text-rose-900 uppercase tracking-wide">
+                    Fatura tarihi
+                  </span>
+                  <input
+                    type="date"
+                    value={returnInvoiceDate}
+                    onChange={(e) => setReturnInvoiceDate(e.target.value)}
+                    className="w-full bg-white border border-rose-200 rounded-lg px-3 py-2 text-sm font-medium text-slate-800"
+                    data-testid="efatura-onay-iade-date"
+                  />
+                </label>
+              </div>
+            </div>
           )}
           {askWithholding && (
             <div
@@ -257,7 +367,7 @@ export function ElektronikFaturaOnayModal({
           )}
         </div>
 
-        <div className="relative flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50/80 rounded-b-2xl overflow-visible">
+        <div className="relative flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50/80 rounded-b-2xl overflow-visible sticky bottom-0">
           <button
             type="button"
             onClick={onClose}
@@ -284,7 +394,7 @@ export function ElektronikFaturaOnayModal({
             </button>
             {menuOpen && (
               <div
-                className="absolute right-0 top-full mt-1.5 w-56 bg-white border border-slate-200 rounded-xl p-1.5 shadow-lg z-10"
+                className="absolute right-0 bottom-full mb-1.5 w-56 bg-white border border-slate-200 rounded-xl p-1.5 shadow-lg z-10"
                 role="menu"
                 data-testid="efatura-onay-scenario-menu"
               >
