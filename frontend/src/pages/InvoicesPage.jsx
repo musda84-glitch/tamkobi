@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, canIssueInvoice, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, canIssueInvoice, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount } from "../components/InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
 import { invoiceToOpenAfterCopy } from "../components/invoiceCopyModes";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -1307,15 +1307,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         {canDeleteInv && canDeleteInvoice(inv) ? (
                           <button type="button" onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : "Kağıt faturayı sil"} data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
-                        <button
-                          type="button"
-                          onClick={() => openEditInvoice(inv)}
-                          className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition"
-                          title={isGibIssued(inv) ? "Faturayı düzenle (vade / not)" : "Faturayı düzenle"}
-                          data-testid={`edit-inv-btn-${inv.invoice_number}`}
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
+                        {canEditInvoice(inv) ? (
+                          <button
+                            type="button"
+                            onClick={() => openEditInvoice(inv)}
+                            className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition"
+                            title="Faturayı düzenle"
+                            data-testid={`edit-inv-btn-${inv.invoice_number}`}
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                        ) : <span className="w-7 h-7" aria-hidden="true" />}
                         <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Fatura kesim & diğer işlemler" data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                         {inv.invoice_type === "dispatch" ? (
                           <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
