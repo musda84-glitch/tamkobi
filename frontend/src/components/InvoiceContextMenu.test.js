@@ -17,6 +17,7 @@ import {
   placeContextMenu,
   suggestedIssueTypeFromGib,
   shouldResolveIssueFromGib,
+  looksLikeOfficialGibInvoiceNumber,
   isGibIssued,
 } from "./InvoiceContextMenu";
 
@@ -298,6 +299,15 @@ describe("draft edit lives in the ⋮ menu", () => {
       e_type: "e_archive",
       invoice_number: "U052026000000090",
       gib_invoice_id: "U052026000000090",
+      gib_status: "Onaylandı",
+    })).toBe(false);
+    // Resmi GİB serisi invoice_number — gib_invoice_id yoksa bile düzenlenmez
+    expect(looksLikeOfficialGibInvoiceNumber("U052026000000090")).toBe(true);
+    expect(canEditInvoice({
+      status: "approved",
+      invoice_type: "sales",
+      e_type: "e_archive",
+      invoice_number: "U052026000000090",
       gib_status: "Onaylandı",
     })).toBe(false);
   });

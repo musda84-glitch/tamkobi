@@ -3,6 +3,7 @@ import {
   isIntegrationOrder,
   isPanelOrder,
   orderHasEInvoiceIssued,
+  orderGibInvoiceNumber,
   orderInvoiceBadge,
   orderMoreMenuKind,
   orderMoreMenuItems,
@@ -26,6 +27,18 @@ describe("orderMoreMenu", () => {
     expect(orderHasEInvoiceIssued({ is_invoiced: true, e_type: "paper", channel: "b2b" })).toBe(false);
     expect(orderHasEInvoiceIssued({ invoice_id: "x", is_invoiced: false })).toBe(false);
     expect(orderHasEInvoiceIssued({ channel: "trendyol", is_invoiced: true, e_type: "e_archive" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ invoice_gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ invoice_gib_status: "Ziplenmiş — GİB iletimi bekleniyor" })).toBe(true);
+  });
+
+  it("exposes GİB invoice number for the order cell", () => {
+    expect(orderGibInvoiceNumber({ gib_invoice_id: "U052026000000090", order_number: "B2B-1" })).toBe("U052026000000090");
+    expect(orderGibInvoiceNumber({
+      invoice_number: "U052026000000090",
+      order_number: "B2B-1",
+      einvoice_state: "sent",
+    })).toBe("U052026000000090");
+    expect(orderGibInvoiceNumber({ order_number: "B2B-1", invoice_number: "B2B-1" })).toBe("");
   });
 
   it("invoice badge: taslak sarı → faturalaştı yeşil → faturalaşmış e-fatura/e-arşiv kırmızı bilgi", () => {
