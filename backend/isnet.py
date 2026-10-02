@@ -1520,14 +1520,43 @@ async def send_document(
         )
 
     soap_inv_no = (info.get("invoice_id") or "").strip()
+    hint_no = "" if is_provisional_invoice_number(soap_inv_no, local_ubl) else soap_inv_no
     verified = await try_verify_outgoing_in_portal(
         merged,
         uuid_out,
         e_type=e_type,
-        invoice_number="" if is_provisional_invoice_number(soap_inv_no, local_ubl) else soap_inv_no,
+        invoice_number=hint_no,
         retries=4,
         wait_for_gib=True,
     )
+    pending = verified.get("pending_gib") or _is_pending_process_status(
+        verified.get("process_status") or "",
+        verified.get("status") or "",
+        verified.get("status_code") or "",
+    )
+    if pending and (password or "").strip():
+        try:
+            import isnet_portal as _portal
+
+            advanced = await _portal.advance_outgoing_invoice(
+                merged,
+                password,
+                ettn=uuid_out,
+                invoice_number=hint_no or soap_inv_no,
+                e_type=e_type,
+                process_status=verified.get("process_status") or "",
+            )
+            if advanced.get("ok"):
+                verified = await try_verify_outgoing_in_portal(
+                    merged,
+                    uuid_out,
+                    e_type=e_type,
+                    invoice_number=hint_no or soap_inv_no,
+                    retries=5,
+                    wait_for_gib=True,
+                )
+        except Exception:
+            logger.exception("isnet portal advance failed ettn=%s", uuid_out)
     portal_no = (verified.get("invoice_id") or "").strip()
     xml_no = ""
     if not portal_no or is_provisional_invoice_number(portal_no, local_ubl):
@@ -1593,6 +1622,19 @@ async def send_document(
     }
 
 
+def _search_invoice_filters(*, ettn: str = "", invoice_number: str = "") -> Dict[str, str]:
+    """WSDL: Ettn + MinInvoiceNumber/MaxInvoiceNumber (InvoiceNumber/ETTN geçersiz)."""
+    out: Dict[str, str] = {}
+    e = (ettn or "").strip()
+    no = (invoice_number or "").strip()
+    if e:
+        out["Ettn"] = e
+    if no:
+        out["MinInvoiceNumber"] = no
+        out["MaxInvoiceNumber"] = no
+    return out
+
+
 async def search_archive_invoice(
     settings: dict,
     *,
@@ -1624,10 +1666,7 @@ async def search_archive_invoice(
             "IsXMLIncluded": False,
         },
     }
-    if ettn:
-        req["ETTN"] = str(ettn).strip()
-    if invoice_number:
-        req["InvoiceNumber"] = str(invoice_number).strip()
+    req.update(_search_invoice_filters(ettn=ettn, invoice_number=invoice_number))
     body = await _soap_call(
         settings,
         endpoint=soap_url(settings),
@@ -1671,10 +1710,7 @@ async def search_outgoing_invoice(
             "IsXMLIncluded": False,
         },
     }
-    if ettn:
-        req["ETTN"] = str(ettn).strip()
-    if invoice_number:
-        req["InvoiceNumber"] = str(invoice_number).strip()
+    req.update(_search_invoice_filters(ettn=ettn, invoice_number=invoice_number))
     body = await _soap_call(
         settings,
         endpoint=soap_url(settings),
@@ -1690,13 +1726,49 @@ async def search_outgoing_invoice(
 
 
 def _is_pending_process_status(process: str = "", status: str = "", code: str = "") -> bool:
-    """Ziplenmiş / imza bekliyor — GİB DetailStatus henüz yok; poll devam etsin."""
+    """Onay/Imza/Ziplenmiş/GİB'e iletildi — DetailStatus 1300 gelene kadar poll devam."""
+    if (code or "").strip() == "1300":
+        return False
     blob = f"{process} {status}".lower().replace("ı", "i").replace("İ", "i")
-    if "ziplen" in blob or "imza_bekliyor" in blob or "imza bekliyor" in blob:
+    if "basariyla tamamland" in blob:
+        return False
+    if (
+        "ziplen" in blob
+        or "imza_bekliyor" in blob
+        or "imza bekliyor" in blob
+        or "onay_bekliyor" in blob
+        or "onay bekliyor" in blob
+        or "gibe_iletildi" in blob
+        or "gib'e iletildi" in blob
+        or "gibe iletildi" in blob
+    ):
         return True
-    if code in ("", "1") and ("gonderildi" in blob or "onay" in blob):
+    if code in ("", "1") and "gonderildi" in blob and "gibe" not in blob:
         return False
     return False
+
+
+def is_outbound_gib_pending(
+    *,
+    gib_status: str = "",
+    gib_status_code: str = "",
+    detail_status: str = "",
+    process_status: str = "",
+) -> bool:
+    """TamKobi giden fatura — GİB 1300 tamamlanmadı mı?"""
+    code = str(gib_status_code or "").strip()
+    if code == "1300":
+        return False
+    gs = (gib_status or "").lower().replace("ı", "i")
+    if "basariyla tamamland" in gs:
+        return False
+    if _is_pending_process_status(process_status, gib_status, code):
+        return True
+    if "imza bek" in gs or "onay bek" in gs or "ziplen" in gs or "tamamlaniyor" in gs or "bekleniyor" in gs:
+        return True
+    if "gib" in gs and "iletildi" in gs:
+        return True
+    return code in ("", "1", "1000", "1100", "1200", "1220")
 
 
 async def try_verify_outgoing_in_portal(
@@ -1746,6 +1818,8 @@ async def try_verify_outgoing_in_portal(
             return 100
         if code in ("1220", "1200"):
             return 80
+        if "gibe_iletildi" in status or "gib'e iletildi" in status or "gibe iletildi" in status:
+            return 75
         if src == "detail" and code and code not in ("1", ""):
             return 60
         if detail and _norm_status_key(detail) not in ("", "zarflanmadi", "1"):

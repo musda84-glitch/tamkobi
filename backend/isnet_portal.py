@@ -949,6 +949,103 @@ def _pick_company_id(settings: dict, companies: List[dict]) -> Optional[str]:
     return None
 
 
+def _portal_result_ok(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    err = str(data.get("ErrorMessage") or data.get("errorMessage") or "").strip()
+    result = data.get("Result") if "Result" in data else data.get("result")
+    if err and result not in (0, "0", "Success", "success", True, "True"):
+        return False
+    return result in (0, "0", "Success", "success", True, "True", None)
+
+
+async def advance_outgoing_invoice(
+    settings: dict,
+    password: str,
+    *,
+    ettn: str,
+    invoice_number: str = "",
+    e_type: str = "e_invoice",
+    process_status: str = "",
+) -> Dict[str, Any]:
+    """Onay/Imza/Ziplenmiş ara durum — portal REST ile onay + GİB gönderim dene."""
+    ettn = (ettn or "").strip()
+    invoice_number = (invoice_number or "").strip()
+    if not password:
+        return {"ok": False, "skipped": True, "reason": "no_password"}
+    try:
+        session = await _mobile_login(settings, password)
+    except HTTPException as exc:
+        return {"ok": False, "via": "portal", "error": str(exc.detail)}
+
+    company_id = _pick_company_id(settings, session.get("companies") or [])
+    if not company_id:
+        return {"ok": False, "via": "portal", "error": "CompanyId bulunamadı"}
+
+    api = mobile_api_base(settings)
+    token = session["token"]
+    cid: Any = float(company_id) if str(company_id).replace(".", "").isdigit() else company_id
+    proc = (process_status or "").lower().replace("ı", "i")
+    actions: List[Dict[str, Any]] = []
+    today = datetime.now(timezone.utc)
+    date_from = (today - timedelta(days=30)).strftime("%d.%m.%Y")
+    date_to = today.strftime("%d.%m.%Y")
+
+    async with httpx.AsyncClient(timeout=45.0, headers={"User-Agent": UA}) as client:
+        if "onay" in proc or not process_status:
+            st, data = await _mobile_post_json(
+                client,
+                f"{api}/api/Invoice/GetApprovableStagingInvoiceList",
+                token,
+                {
+                    "CompanyId": cid,
+                    "FirstInvoiceDate": date_from,
+                    "LastInvoiceDate": date_to,
+                    "PageIndex": 0,
+                    "PageSize": 100,
+                },
+            )
+            portal_inv_id = None
+            if isinstance(data, dict):
+                for row in data.get("Invoices") or []:
+                    if not isinstance(row, dict):
+                        continue
+                    row_ettn = str(row.get("Ettn") or row.get("ETTN") or "").strip().lower()
+                    row_no = str(row.get("InvoiceNumber") or "").strip()
+                    if (ettn and row_ettn == ettn.lower()) or (invoice_number and row_no == invoice_number):
+                        portal_inv_id = row.get("InvoiceId")
+                        break
+            if portal_inv_id is not None:
+                st2, data2 = await _mobile_post_json(
+                    client,
+                    f"{api}/api/Invoice/ApproveStagingInvoice",
+                    token,
+                    {
+                        "CompanyId": cid,
+                        "InvoiceId": float(portal_inv_id) if str(portal_inv_id).replace(".", "").isdigit() else portal_inv_id,
+                        "ApprovalType": "KABUL",
+                        "Reason": "",
+                    },
+                )
+                actions.append({"action": "approve", "status": st2, "ok": _portal_result_ok(data2), "result": data2})
+
+        if e_type == "e_archive":
+            send_url = f"{api}/api/Invoice/SendStagingArchive"
+            send_body: Dict[str, Any] = {"ETTN": ettn, "CompanyId": cid}
+        else:
+            send_url = f"{api}/api/Invoice/SendStagingInvoice"
+            if not invoice_number:
+                return {"ok": False, "via": "portal", "actions": actions, "error": "InvoiceNumber gerekli"}
+            send_body = {"CompanyId": cid, "InvoiceNumber": invoice_number}
+
+        if ettn or invoice_number:
+            st3, data3 = await _mobile_post_json(client, send_url, token, send_body)
+            actions.append({"action": "send", "status": st3, "ok": _portal_result_ok(data3), "result": data3})
+
+    ok = any(a.get("ok") for a in actions)
+    return {"ok": ok, "via": "portal", "actions": actions}
+
+
 async def _mobile_post_json(
     client: httpx.AsyncClient,
     url: str,

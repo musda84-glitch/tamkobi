@@ -209,6 +209,12 @@ def format_integrator_gib_status(
         elif "ziplen" in low and code in ("", "1"):
             # Süreç Status=Ziplendi, DetailStatus yok — NetteFatura ara durumu
             portal = "Ziplenmiş — GİB iletimi bekleniyor"
+        elif "onay bek" in low and code in ("", "1"):
+            portal = "Onay bekliyor — GİB gönderimi sırada"
+        elif "imza bek" in low and code in ("", "1"):
+            portal = "İmza bekliyor — GİB iletimi sırada"
+        elif "gib" in low and "iletildi" in low and code not in ("1300",):
+            portal = "GİB'e iletildi — tamamlanıyor"
         elif code == "1220" or "hedeften sistem yaniti gelmedi" in low:
             portal = "Alıcı yanıtı bekleniyor"
         elif "wait" in low or "pending" in low:
@@ -633,6 +639,8 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             "einvoice_state": "sent",
             "gib_status": gib_status,
             "gib_status_code": gib_code,
+            "gib_detail_status": sent.get("detail_status") or None,
+            "gib_process_status": sent.get("process_status") or None,
             "gib_tracking_id": tracking,
             "gib_uuid": sent.get("ettn"),
             "gib_invoice_id": gib_no or None,
@@ -897,10 +905,31 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
         return {"updated": False, "invoice": inv}
     e_type = inv.get("e_type") or "e_archive"
     hint_no = str(inv.get("gib_invoice_id") or inv.get("local_invoice_number") or inv.get("invoice_number") or "")
-    gs_low = str(inv.get("gib_status") or "").lower().replace("ı", "i")
-    pending_zip = "ziplen" in gs_low or "bekleniyor" in gs_low or "tamamlaniyor" in gs_low or str(
-        inv.get("gib_status_code") or ""
-    ) in ("", "1", "1000", "1100", "1200", "1220")
+    pending_zip = isnet.is_outbound_gib_pending(
+        gib_status=str(inv.get("gib_status") or ""),
+        gib_status_code=str(inv.get("gib_status_code") or ""),
+        detail_status=str(inv.get("gib_detail_status") or ""),
+        process_status=str(inv.get("gib_process_status") or ""),
+    )
+    password_fn: Optional[Callable] = _deps.get("password_fn")
+    pwd = ""
+    if pending_zip and password_fn:
+        try:
+            pwd = password_fn(settings) or ""
+        except Exception:
+            pwd = ""
+    if pending_zip and pwd:
+        try:
+            await isnet_portal.advance_outgoing_invoice(
+                settings,
+                pwd,
+                ettn=ettn,
+                invoice_number=hint_no,
+                e_type=e_type,
+                process_status=str(inv.get("gib_process_status") or ""),
+            )
+        except Exception:
+            logger.exception("refresh_one portal advance failed for %s", invoice_id)
     info = await isnet.try_verify_outgoing_in_portal(
         settings,
         ettn,
@@ -945,6 +974,10 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
         patch["gib_status_code"] = info.get("status_code")
     elif "Başarıyla Tamamlandı" in (patch.get("gib_status") or ""):
         patch["gib_status_code"] = "1300"
+    if info.get("detail_status"):
+        patch["gib_detail_status"] = info.get("detail_status")
+    if info.get("process_status"):
+        patch["gib_process_status"] = info.get("process_status")
     if patch:
         await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
     refreshed = await _db.invoices.find_one({"_id": invoice_id}) or {**inv, **patch}
@@ -1204,17 +1237,14 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
     rest: list = []
     async for inv in cursor:
         gs_low = str(inv.get("gib_status") or "").lower().replace("ı", "i")
-        code = str(inv.get("gib_status_code") or "")
-        done = code == "1300" or "basariyla tamamland" in gs_low
-        if inv.get("einvoice_state") == "queued" or (
-            not done
-            and (
-                "ziplen" in gs_low
-                or "bekleniyor" in gs_low
-                or "tamamlaniyor" in gs_low
-                or code in ("", "1", "1000", "1100", "1200", "1220")
-            )
-        ):
+        done = str(inv.get("gib_status_code") or "") == "1300" or "basariyla tamamland" in gs_low
+        pending = isnet.is_outbound_gib_pending(
+            gib_status=str(inv.get("gib_status") or ""),
+            gib_status_code=str(inv.get("gib_status_code") or ""),
+            detail_status=str(inv.get("gib_detail_status") or ""),
+            process_status=str(inv.get("gib_process_status") or ""),
+        )
+        if inv.get("einvoice_state") == "queued" or (pending and not done):
             pending_first.append(inv)
         elif not done:
             rest.append(inv)
@@ -1257,10 +1287,31 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
         if not isnet.is_ettn_uuid(ettn):
             continue
 
-        gs_low = str(inv.get("gib_status") or "").lower().replace("ı", "i")
-        pending_zip = "ziplen" in gs_low or "bekleniyor" in gs_low or "tamamlaniyor" in gs_low or str(
-            inv.get("gib_status_code") or ""
-        ) in ("", "1", "1000", "1100", "1200", "1220")
+        pending_zip = isnet.is_outbound_gib_pending(
+            gib_status=str(inv.get("gib_status") or ""),
+            gib_status_code=str(inv.get("gib_status_code") or ""),
+            detail_status=str(inv.get("gib_detail_status") or ""),
+            process_status=str(inv.get("gib_process_status") or ""),
+        )
+        password_fn: Optional[Callable] = _deps.get("password_fn")
+        pwd = ""
+        if pending_zip and password_fn:
+            try:
+                pwd = password_fn(settings) or ""
+            except Exception:
+                pwd = ""
+        if pending_zip and pwd:
+            try:
+                await isnet_portal.advance_outgoing_invoice(
+                    settings,
+                    pwd,
+                    ettn=ettn,
+                    invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
+                    e_type=inv.get("e_type") or "e_archive",
+                    process_status=str(inv.get("gib_process_status") or ""),
+                )
+            except Exception:
+                logger.exception("outbound refresh portal advance failed for %s", inv.get("_id"))
         try:
             info = await isnet.try_verify_outgoing_in_portal(
                 settings,
@@ -1321,6 +1372,10 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
                 patch["gib_status_code"] = info.get("status_code")
             elif "Başarıyla Tamamlandı" in new_gs:
                 patch["gib_status_code"] = "1300"
+            if info.get("detail_status"):
+                patch["gib_detail_status"] = info.get("detail_status")
+            if info.get("process_status"):
+                patch["gib_process_status"] = info.get("process_status")
 
         if patch:
             await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": patch})

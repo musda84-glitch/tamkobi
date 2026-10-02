@@ -95,6 +95,22 @@ class TestScenarioAndBuyer:
             status_code="",
             verified=True,
         )
+        assert "İmza bekliyor" in e_invoice.format_integrator_gib_status(
+            label="İşNet",
+            mode="test",
+            portal_status="İmza bekliyor",
+            process_status="Imza_Bekliyor",
+            status_code="",
+            verified=True,
+        )
+        assert "Onay bekliyor" in e_invoice.format_integrator_gib_status(
+            label="İşNet",
+            mode="live",
+            portal_status="Onay bekliyor",
+            process_status="Onay_Bekliyor",
+            status_code="",
+            verified=True,
+        )
         assert "Schematron" in e_invoice.format_integrator_gib_status(
             label="İşNet",
             mode="live",
