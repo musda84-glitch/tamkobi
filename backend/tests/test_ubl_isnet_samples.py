@@ -120,3 +120,13 @@ def test_outgoing_edoc_includes_return():
     assert ubl_export.is_outgoing_edoc({"invoice_type": "sales_return", "e_type": "e_invoice"}) is True
     assert ubl_export.is_outgoing_edoc({"invoice_type": "return", "e_type": "e_archive"}) is True
     assert ubl_export.is_outgoing_edoc({"invoice_type": "purchase", "e_type": "e_invoice"}) is False
+
+
+def test_gib_invoice_type_code_from_tamkobi_types():
+    assert ubl_export.gib_invoice_type_code({"invoice_type": "sales"}) == "SATIS"
+    assert ubl_export.gib_invoice_type_code({"invoice_type": "return"}) == "IADE"
+    assert ubl_export.gib_invoice_type_code({"invoice_type": "sales_return"}) == "IADE"
+    assert ubl_export.gib_invoice_type_code({"invoice_type": "iade"}) == "IADE"
+    assert ubl_export.gib_invoice_type_code({"invoice_type": "İade"}) == "IADE"
+    assert ubl_export.gib_invoice_type_code({"gib_invoice_type": "TEVKIFAT"}) == "TEVKIFAT"
+    assert ubl_export.gib_invoice_type_code({"invoice_type": "return", "invoice_type_code": "SATIS"}) == "SATIS"

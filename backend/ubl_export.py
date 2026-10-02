@@ -47,8 +47,42 @@ def is_outgoing_edoc(inv: Dict[str, Any]) -> bool:
     return itype not in ("purchase", "dispatch", "expense_slip", "proforma")
 
 
+def _norm_invoice_type(value: Any) -> str:
+    """Türkçe İ/ı dahil invoice_type karşılaştırması için ASCII-ish küçük harf."""
+    s = str(value or "").strip().lower()
+    return (
+        s.replace("ı", "i")
+        .replace("İ", "i")
+        .replace("i̇", "i")  # İ.lower() → i + combining dot
+        .replace("ş", "s")
+        .replace("ğ", "g")
+        .replace("ü", "u")
+        .replace("ö", "o")
+        .replace("ç", "c")
+    )
+
+
 def is_return_invoice(inv: Dict[str, Any]) -> bool:
-    return str(inv.get("invoice_type") or "").lower() in RETURN_INVOICE_TYPES
+    return _norm_invoice_type(inv.get("invoice_type")) in RETURN_INVOICE_TYPES
+
+
+def gib_invoice_type_code(inv: Dict[str, Any]) -> str:
+    """GİB InvoiceTypeCode — İşNet/n11 UBL ve yapılandırılmış gönderim için.
+
+    Açık invoice_type_code / gib_invoice_type varsa onu kullanır; yoksa
+    TamKobi invoice_type (return / sales_return / iade) → IADE, aksi SATIS.
+    """
+    allowed = ("SATIS", "IADE", "TEVKIFAT", "ISTISNA", "OZELMATRAH", "IHRACKAYITLI")
+    raw = str(inv.get("invoice_type_code") or inv.get("gib_invoice_type") or "").strip()
+    explicit = _norm_invoice_type(raw).upper()
+    if explicit in allowed:
+        return explicit
+    return "IADE" if is_return_invoice(inv) else "SATIS"
+
+
+def return_billing_ref(inv: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
+    """İade faturası için (original_id, issue_date, doc_type_code, doc_type)."""
+    return _return_billing_ref(inv)
 
 
 def _return_billing_ref(inv: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
@@ -184,8 +218,8 @@ def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
     profile = inv.get("_profile_override") or inv.get("gib_scenario")
     if profile not in ("TEMELFATURA", "TICARIFATURA", "EARSIVFATURA", "IHRACAT"):
         profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
-    returning = is_return_invoice(inv)
-    type_code = "IADE" if returning else "SATIS"
+    type_code = gib_invoice_type_code(inv)
+    returning = type_code == "IADE" or is_return_invoice(inv)
     items = list(inv.get("items") or [])
     currency = (inv.get("currency") or "TRY").upper()
     subtotal = float(inv.get("subtotal") or 0)

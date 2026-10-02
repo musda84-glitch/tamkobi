@@ -110,12 +110,15 @@ def gib_invoice_id(invoice_number: str, issue_date: str) -> str:
 
 def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optional[str] = None) -> Tuple[str, str, str]:
     """Return (xml, ettn, invoice_id) for UBL-TR 1.2."""
+    import ubl_export
+
     ettn = ettn or str(uuid.uuid4()).upper()
     inv_id = gib_invoice_id(invoice.get("invoice_number") or "", invoice.get("issue_date") or "")
     e_type = invoice.get("e_type") or "e_archive"
     profile = invoice.get("_profile_override") or invoice.get("gib_scenario")
     if profile not in ("TEMELFATURA", "TICARIFATURA", "EARSIVFATURA", "IHRACAT"):
         profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
+    invoice_type_code = ubl_export.gib_invoice_type_code(invoice)
     issue = (invoice.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
     # İşNet/GİB Schematron: IssueTime beklenir (örnek UBL’lerde var)
     issue_time = (invoice.get("issue_time") or datetime.now(timezone.utc).strftime("%H:%M:%S"))[:8]
@@ -285,6 +288,24 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
             f"</cac:OrderReference>"
         )
 
+    # İade: orijinal satış faturasına BillingReference (İşNet IADE örneği)
+    billing_ref = ""
+    if invoice_type_code == "IADE":
+        bref = ubl_export.return_billing_ref(invoice)
+        if bref:
+            oid, odate, dcode, dtype = bref
+            dtype_xml = f"<cbc:DocumentType>{_esc(dtype[:120])}</cbc:DocumentType>" if dtype else ""
+            billing_ref = (
+                f"<cac:BillingReference>"
+                f"<cac:InvoiceDocumentReference>"
+                f"<cbc:ID>{_esc(oid)}</cbc:ID>"
+                f"{f'<cbc:IssueDate>{_esc(odate)}</cbc:IssueDate>' if odate else ''}"
+                f"<cbc:DocumentTypeCode>{_esc(dcode)}</cbc:DocumentTypeCode>"
+                f"{dtype_xml}"
+                f"</cac:InvoiceDocumentReference>"
+                f"</cac:BillingReference>"
+            )
+
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
          xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
@@ -303,12 +324,13 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
   <cbc:UUID>{ettn}</cbc:UUID>
   <cbc:IssueDate>{issue}</cbc:IssueDate>
   <cbc:IssueTime>{issue_time}</cbc:IssueTime>
-  <cbc:InvoiceTypeCode>SATIS</cbc:InvoiceTypeCode>
+  <cbc:InvoiceTypeCode>{invoice_type_code}</cbc:InvoiceTypeCode>
   {f"<cbc:Note>{_esc(notes)}</cbc:Note>" if notes else ""}
   <cbc:DocumentCurrencyCode>{_esc(currency)}</cbc:DocumentCurrencyCode>
   <cbc:LineCountNumeric>{len(items)}</cbc:LineCountNumeric>
   {archive_refs}
   {order_ref}
+  {billing_ref}
   {signature_block}
   <cac:AccountingSupplierParty>{party(seller_tax, seller_scheme, company.get("name") or "Satıcı", company)}</cac:AccountingSupplierParty>
   <cac:AccountingCustomerParty>{party(buyer_tax, buyer_scheme, buyer_name, contact_for_party)}</cac:AccountingCustomerParty>
