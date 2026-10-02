@@ -334,6 +334,56 @@ def test_soft_verify_returns_false_when_not_in_portal():
     assert info["ok"] is False
 
 
+def test_wait_for_gib_keeps_polling_past_ziplendi_until_1300():
+    """Ziplenmiş ara durum — wait_for_gib ile DetailStatus 1300 gelene kadar poll."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    ettn = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    zip_row = {
+        "ettn": ettn,
+        "invoice_id": "U052026000000073",
+        "status": "Ziplenmiş",
+        "status_code": "",
+        "detail_status": "",
+        "process_status": "Ziplendi",
+        "status_source": "process",
+    }
+    done_row = {
+        "ettn": ettn,
+        "invoice_id": "U052026000000073",
+        "status": "Başarıyla Tamamlandı",
+        "status_code": "1300",
+        "detail_status": "Basariyla_Tamamlandi",
+        "process_status": "Ziplendi",
+        "status_source": "detail",
+    }
+    search = AsyncMock(side_effect=[[zip_row], [zip_row], [done_row]])
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(side_effect=HTTPException(status_code=404, detail="link yok")),
+    ), patch(
+        "isnet.search_outgoing_invoice",
+        search,
+    ), patch(
+        "isnet.asyncio.sleep",
+        AsyncMock(),
+    ):
+        info = asyncio.get_event_loop().run_until_complete(
+            isnet.try_verify_outgoing_in_portal(
+                settings, ettn, e_type="e_invoice", wait_for_gib=True
+            )
+        )
+    assert info["ok"] is True
+    assert info["status_code"] == "1300"
+    assert info["invoice_id"] == "U052026000000073"
+    assert search.await_count >= 3
+
+
+def test_is_pending_process_status_ziplendi():
+    assert isnet._is_pending_process_status("Ziplendi", "Ziplenmiş", "") is True
+    assert isnet._is_pending_process_status("Imza_Bekliyor", "", "") is True
+    assert isnet._is_pending_process_status("Gonderildi", "Gönderildi", "") is False
+
+
 def test_send_document_accepts_soap_success_without_immediate_portal():
     """UBL Xml Success+ETTN → iletildi; portal soft; SOAP no resmiyse alınır."""
     settings = {"company_tax_id": "4810173324", "alias": "urn:mail:pk@x.com", "mode": "test"}

@@ -80,11 +80,19 @@ class TestScenarioAndBuyer:
             status_code="1200",
             verified=True,
         )
-        assert "Zarf başarıyla işlendi" in e_invoice.format_integrator_gib_status(
+        assert "GİB tamamlanıyor" in e_invoice.format_integrator_gib_status(
             label="İşNet",
             mode="live",
             portal_status="Zarf_Basariyla_Islendi",
             status_code="1200",
+            verified=True,
+        )
+        assert "GİB iletimi bekleniyor" in e_invoice.format_integrator_gib_status(
+            label="İşNet",
+            mode="test",
+            portal_status="Ziplenmiş",
+            process_status="Ziplendi",
+            status_code="",
             verified=True,
         )
         assert "Schematron" in e_invoice.format_integrator_gib_status(

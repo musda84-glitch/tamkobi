@@ -203,6 +203,12 @@ def format_integrator_gib_status(
             portal = "Başarıyla Tamamlandı"
         elif low in ("succeed", "succeeded", "success", "approved", "completed", "ok", "gib onayli"):
             portal = "Başarıyla Tamamlandı"
+        elif code == "1200" or "zarf basariyla islendi" in low:
+            # Ara GİB kodu — henüz 1300 değil; NetteFatura'da da «işlendi» görünür
+            portal = "Zarf işlendi — GİB tamamlanıyor"
+        elif "ziplen" in low and code in ("", "1"):
+            # Süreç Status=Ziplendi, DetailStatus yok — NetteFatura ara durumu
+            portal = "Ziplenmiş — GİB iletimi bekleniyor"
         elif code == "1220" or "hedeften sistem yaniti gelmedi" in low:
             portal = "Alıcı yanıtı bekleniyor"
         elif "wait" in low or "pending" in low:
@@ -891,12 +897,17 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
         return {"updated": False, "invoice": inv}
     e_type = inv.get("e_type") or "e_archive"
     hint_no = str(inv.get("gib_invoice_id") or inv.get("local_invoice_number") or inv.get("invoice_number") or "")
+    gs_low = str(inv.get("gib_status") or "").lower().replace("ı", "i")
+    pending_zip = "ziplen" in gs_low or "bekleniyor" in gs_low or "tamamlaniyor" in gs_low or str(
+        inv.get("gib_status_code") or ""
+    ) in ("", "1", "1000", "1100", "1200", "1220")
     info = await isnet.try_verify_outgoing_in_portal(
         settings,
         ettn,
         e_type=e_type,
         invoice_number=hint_no,
-        retries=3,
+        retries=4 if pending_zip else 3,
+        wait_for_gib=bool(pending_zip),
     )
     if not info.get("ok"):
         return {"updated": False, "invoice": inv, "verified": False}
@@ -1185,8 +1196,30 @@ async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
 
 async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
     checked = updated = 0
-    cursor = _db.invoices.find({"einvoice_state": {"$in": ["queued", "sent"]}}).sort("issued_at", -1).limit(limit)
+    # Önce GİB tamamlanmamış (Ziplenmiş/1200) faturalar — 1300'ler limit'i doldurmasın
+    cursor = _db.invoices.find({"einvoice_state": {"$in": ["queued", "sent"]}}).sort("issued_at", -1).limit(
+        max(limit * 3, 150)
+    )
+    pending_first: list = []
+    rest: list = []
     async for inv in cursor:
+        gs_low = str(inv.get("gib_status") or "").lower().replace("ı", "i")
+        code = str(inv.get("gib_status_code") or "")
+        done = code == "1300" or "basariyla tamamland" in gs_low
+        if inv.get("einvoice_state") == "queued" or (
+            not done
+            and (
+                "ziplen" in gs_low
+                or "bekleniyor" in gs_low
+                or "tamamlaniyor" in gs_low
+                or code in ("", "1", "1000", "1100", "1200", "1220")
+            )
+        ):
+            pending_first.append(inv)
+        elif not done:
+            rest.append(inv)
+        # 1300 tamamlanmış → bu turda atla (yeniden poll gereksiz)
+    for inv in (pending_first + rest)[:limit]:
         checked += 1
         if inv.get("einvoice_state") == "queued":
             queued_at = inv.get("queued_at") or ""
@@ -1224,13 +1257,18 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
         if not isnet.is_ettn_uuid(ettn):
             continue
 
+        gs_low = str(inv.get("gib_status") or "").lower().replace("ı", "i")
+        pending_zip = "ziplen" in gs_low or "bekleniyor" in gs_low or "tamamlaniyor" in gs_low or str(
+            inv.get("gib_status_code") or ""
+        ) in ("", "1", "1000", "1100", "1200", "1220")
         try:
             info = await isnet.try_verify_outgoing_in_portal(
                 settings,
                 ettn,
                 e_type=inv.get("e_type") or "e_archive",
                 invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
-                retries=2,
+                retries=4 if pending_zip else 2,
+                wait_for_gib=bool(pending_zip),
             )
         except Exception:
             logger.exception("isnet status refresh failed for %s", inv.get("_id"))
@@ -1291,10 +1329,11 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
     return {"checked": checked, "updated": updated}
 
 
-async def outbound_status_loop(interval_s: int = 300):
+async def outbound_status_loop(interval_s: int = 90):
+    """Giden İşNet faturalarında Ziplenmiş→1300 gecikmesi için sık yenile (varsayılan 90 sn)."""
     import asyncio
 
-    await asyncio.sleep(60)
+    await asyncio.sleep(30)
     while True:
         try:
             await refresh_outbound_statuses()
