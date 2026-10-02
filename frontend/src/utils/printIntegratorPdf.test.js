@@ -29,6 +29,21 @@ describe("shouldUseIntegratorPdf", () => {
     })).toBe(false);
   });
 
+  test("uses integrator PDF for incoming Gelen e-Fatura", () => {
+    expect(shouldUseIntegratorPdf("invoice", {
+      e_type: "e_invoice",
+      direction: "incoming",
+      status: "approved",
+      gib_status: "Gelen E-Fatura Onaylandı",
+      gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    })).toBe(true);
+    expect(shouldUseIntegratorPdf("invoice", {
+      e_type: "e_invoice",
+      source: "edoc_inbox",
+      status: "approved",
+    })).toBe(true);
+  });
+
   test("integratorPdfKindLabel", () => {
     expect(integratorPdfKindLabel({ e_type: "e_invoice" })).toBe("e-Fatura");
     expect(integratorPdfKindLabel({ e_type: "e_archive" })).toBe("e-Arşiv");

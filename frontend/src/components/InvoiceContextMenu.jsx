@@ -13,6 +13,7 @@ import {
   supportsGibInbox,
   supportsEDispatch,
 } from "../utils/einvoiceIntegrator";
+import { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
 
 /** Listede gösterilecek no: GİB/entegratör numarası varsa onu kullan. */
 export function displayInvoiceNumber(inv) {
@@ -544,36 +545,9 @@ export const InvoiceContextMenu = (props) => {
           {onEdit && editable && (
             <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
           )}
-          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-indigo-700">GİB BELGELERİ</div>
-          <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-purchase-no-issue-note">
-            Alış faturası GİB&apos;e kesilmez; satıcı keser. PDF / XML indirin.
+          <p className="px-3 py-2 text-[10px] text-slate-500" data-testid="ctx-purchase-no-issue-note">
+            Alış faturası GİB&apos;e kesilmez; satıcı keser. Görüntüle / Yazdır entegratör belgesini açar.
           </p>
-          <Item
-            icon={Download}
-            color="text-indigo-600"
-            label="PDF İndir"
-            sub="GİB / entegratör e-belge PDF"
-            onClick={() => downloadInvoicePdfEdoc(apiBase, inv)}
-            testId="ctx-download-pdf"
-          />
-          <Item
-            icon={FileCode2}
-            color="text-indigo-600"
-            label="XML İndir"
-            sub="GİB UBL-TR"
-            onClick={() => downloadInvoiceXmlEdoc(apiBase, inv)}
-            testId="ctx-download-xml"
-          />
-          {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
-            <Item
-              icon={ExternalLink}
-              color="text-emerald-600"
-              label="Resmi GİB Belgesi"
-              sub="Entegratör görüntüleme linki"
-              onClick={() => openGibDocumentUrl(apiBase, inv)}
-              testId="ctx-gib-doc-url"
-            />
-          )}
         </div>
       ) : canIssue && (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") ? (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-despatch-issue">
@@ -684,24 +658,6 @@ export const InvoiceContextMenu = (props) => {
           )}
         </div>
       )}
-      {/* Gelen alış: onay/red altında da PDF/XML */}
-      {incoming && showGibDownloads && (
-        <div className="border-b border-slate-100 pb-1" data-testid="ctx-incoming-edoc-downloads">
-          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-indigo-700">GİB BELGELERİ</div>
-          <Item icon={Download} color="text-indigo-600" label="PDF İndir" sub="GİB / entegratör e-belge PDF" onClick={() => downloadInvoicePdfEdoc(apiBase, inv)} testId="ctx-download-pdf" />
-          <Item icon={FileCode2} color="text-indigo-600" label="XML İndir" sub="GİB UBL-TR" onClick={() => downloadInvoiceXmlEdoc(apiBase, inv)} testId="ctx-download-xml" />
-          {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
-            <Item
-              icon={ExternalLink}
-              color="text-emerald-600"
-              label="Resmi GİB Belgesi"
-              sub="Entegratör görüntüleme linki"
-              onClick={() => openGibDocumentUrl(apiBase, inv)}
-              testId="ctx-gib-doc-url"
-            />
-          )}
-        </div>
-      )}
       {showIssuedActions && ((onCancel && cancellable) || (onExpenseSlip && slipable)) && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-issued-actions">
           {onCancel && cancellable && (
@@ -712,25 +668,41 @@ export const InvoiceContextMenu = (props) => {
           )}
         </div>
       )}
-      <Item icon={Eye} label="Görüntüle" onClick={() => onPreview(inv)} testId="ctx-preview" />
-      <Item
-        icon={Printer}
-        label={
-          inv.e_type === "expense_slip"
-            ? "Gider Pusulası Yazdır"
-            : isGibIssued(inv) && ["e_invoice", "e_archive", "e_export"].includes(inv.e_type)
-              ? (inv.e_type === "e_invoice" ? "e-Fatura PDF Yazdır" : inv.e_type === "e_export" ? "e-İhracat PDF Yazdır" : "e-Arşiv PDF Yazdır")
-              : "Şablonlu Yazdır"
-        }
-        sub={
-          isGibIssued(inv) && ["e_invoice", "e_archive", "e_export"].includes(inv.e_type)
-            ? "Entegratör GİB belgesi"
-            : undefined
-        }
-        onClick={() => onPrint(inv)}
-        testId="ctx-print"
-      />
-      <Item icon={MessageSquare} label="SMS / E-posta Gönder" onClick={() => onNotify(inv)} testId="ctx-notify" />
+      {(() => {
+        const integratorDoc = shouldUseIntegratorPdf("invoice", inv);
+        const kind = integratorPdfKindLabel(inv);
+        return (
+          <>
+            <Item
+              icon={Eye}
+              label="Görüntüle"
+              sub={integratorDoc ? `Entegratör ${kind} PDF` : undefined}
+              onClick={() => onPreview(inv)}
+              testId="ctx-preview"
+            />
+            <Item
+              icon={Printer}
+              label={
+                inv.e_type === "expense_slip"
+                  ? "Gider Pusulası Yazdır"
+                  : integratorDoc
+                    ? `${kind} PDF Yazdır`
+                    : "Şablonlu Yazdır"
+              }
+              sub={integratorDoc ? "Entegratör GİB belgesi" : undefined}
+              onClick={() => onPrint(inv)}
+              testId="ctx-print"
+            />
+            <Item
+              icon={MessageSquare}
+              label="SMS / E-posta Gönder"
+              sub={integratorDoc ? "E-postaya entegratör PDF eklenebilir" : undefined}
+              onClick={() => onNotify(inv)}
+              testId="ctx-notify"
+            />
+          </>
+        );
+      })()}
       {onDispatch && inv.invoice_type === "sales" && (
         <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />
       )}
