@@ -112,11 +112,73 @@ def withholding_parts(inv: Dict[str, Any], vat_total: Optional[float] = None) ->
     return code, percent, vat_total, amount
 
 
+# Sık kullanılan GİB vergi muafiyet / istisna kodları (TaxExemptionReasonCode)
+TAX_EXEMPTION_REASONS: Dict[str, str] = {
+    "301": "11/1-a Mal ihracatı",
+    "302": "11/1-a Hizmet ihracatı",
+    "308": "13/ı Külçe altın, kıymetli maden",
+    "309": "13/e Konut teslimi",
+    "318": "17/1 Kültür ve eğitim amacı taşıyan işlemler",
+    "337": "17/4-g Serbest bölgelerdeki işlemler",
+    "350": "Diğer istisnalar",
+    "351": "İstisna olmayan diğer",
+}
+
+
+def invoice_has_zero_vat(inv: Dict[str, Any]) -> bool:
+    try:
+        if float(inv.get("vat_total") or 0) == 0:
+            items = list(inv.get("items") or [])
+            if items and all(float(it.get("vat_rate") or 0) == 0 for it in items):
+                return True
+    except (TypeError, ValueError):
+        pass
+    for it in inv.get("items") or []:
+        try:
+            if float(it.get("vat_rate") or 0) == 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def resolve_tax_exemption(
+    inv: Dict[str, Any],
+    item: Optional[Dict[str, Any]] = None,
+) -> Optional[Tuple[str, str]]:
+    """KDV %0 için (TaxExemptionReasonCode, TaxExemptionReason)."""
+    code = ""
+    if item:
+        code = str(item.get("vat_exemption_code") or item.get("tax_exemption_code") or "").strip()
+    if not code:
+        code = str(
+            inv.get("tax_exemption_code")
+            or inv.get("vat_exemption_code")
+            or inv.get("exemption_reason_code")
+            or ""
+        ).strip()
+    if not code:
+        return None
+    # 301 / "301 – …" kabul et
+    code = code.split("–")[0].split("-")[0].strip()
+    code = "".join(ch for ch in code if ch.isdigit()) or code
+    reason = str(
+        (item or {}).get("vat_exemption_reason")
+        or inv.get("tax_exemption_reason")
+        or inv.get("vat_exemption_reason")
+        or ""
+    ).strip()
+    if not reason:
+        reason = TAX_EXEMPTION_REASONS.get(code) or f"Vergi muafiyet kodu {code}"
+    return code, reason
+
+
 def gib_invoice_type_code(inv: Dict[str, Any]) -> str:
     """GİB InvoiceTypeCode — İşNet/n11 UBL ve yapılandırılmış gönderim için.
 
     Açık invoice_type_code / gib_invoice_type varsa onu kullanır; yoksa
-    TamKobi invoice_type (return…) → IADE, tevkifat → TEVKIFAT, aksi SATIS.
+    TamKobi invoice_type (return…) → IADE, tevkifat → TEVKIFAT,
+    KDV%0 + muafiyet → ISTISNA, aksi SATIS.
     """
     allowed = (
         "SATIS",
@@ -133,12 +195,16 @@ def gib_invoice_type_code(inv: Dict[str, Any]) -> str:
         return explicit
     returning = is_return_invoice(inv)
     withholding = has_withholding(inv)
-    if returning and withholding:
+    zero_vat = invoice_has_zero_vat(inv)
+    # Tevkifat: KDV %0 (yalnızca istisna) faturalarda TEVKIFAT tipi kullanılmaz
+    if returning and withholding and not zero_vat:
         return "TEVKIFATIADE"
     if returning:
         return "IADE"
-    if withholding:
+    if withholding and not zero_vat:
         return "TEVKIFAT"
+    if resolve_tax_exemption(inv) and zero_vat:
+        return "ISTISNA"
     return "SATIS"
 
 
@@ -257,6 +323,27 @@ def _cbc(parent, tag: str, text: Optional[str] = None, **attrib):
 
 def _cac(parent, tag: str):
     return ET.SubElement(parent, _q(CAC, tag))
+
+
+def _tax_category_kdv(
+    parent,
+    *,
+    rate: float,
+    inv: Dict[str, Any],
+    item: Optional[Dict[str, Any]] = None,
+):
+    """TaxCategory + KDV TaxScheme; KDV%0 ise TaxExemptionReasonCode zorunlu."""
+    cat = _cac(parent, "TaxCategory")
+    if float(rate or 0) == 0:
+        ex = resolve_tax_exemption(inv, item)
+        if ex:
+            code, reason = ex
+            _cbc(cat, "TaxExemptionReasonCode", code)
+            _cbc(cat, "TaxExemptionReason", reason[:200])
+    sch = _cac(cat, "TaxScheme")
+    _cbc(sch, "Name", "KDV")
+    _cbc(sch, "TaxTypeCode", "0015")
+    return cat
 
 
 def _amt(n: Any) -> str:
@@ -383,6 +470,18 @@ def build_invoice_ubl(
             else:
                 profile = "TEMELFATURA"
     items = list(inv.get("items") or [])
+    if send_ready and invoice_has_zero_vat(inv) and not resolve_tax_exemption(inv):
+        # Satırda kod varsa fatura düzeyinde yoksa yine kabul (satırdan alınır)
+        line_ok = any(
+            resolve_tax_exemption(inv, it)
+            for it in items
+            if float(it.get("vat_rate") or 0) == 0
+        )
+        if not line_ok:
+            raise ValueError(
+                "KDV %0 satırlarda vergi muafiyet sebebi (TaxExemptionReasonCode) zorunlu. "
+                "E-fatura onayında muafiyet kodunu seçin."
+            )
     currency = (inv.get("currency") or "TRY").upper()
     subtotal = float(inv.get("subtotal") or 0)
     vat_total = float(inv.get("vat_total") or 0)
@@ -528,10 +627,7 @@ def build_invoice_ubl(
         _cbc(sub, "TaxableAmount", _amt(taxable), currencyID=currency)
         _cbc(sub, "TaxAmount", _amt(amount), currencyID=currency)
         _cbc(sub, "Percent", f"{rate:g}")
-        cat = _cac(sub, "TaxCategory")
-        sch = _cac(cat, "TaxScheme")
-        _cbc(sch, "Name", "KDV")
-        _cbc(sch, "TaxTypeCode", "0015")
+        _tax_category_kdv(sub, rate=rate, inv=inv)
 
     # Tevkifat: WithholdingTaxTotal (TaxTypeCode = 601…615; 9015 değil)
     wp = withholding_parts(inv, vat_total)
@@ -580,10 +676,7 @@ def build_invoice_ubl(
         _cbc(ls, "TaxAmount", _amt(line_vat), currencyID=currency)
         _cbc(ls, "CalculationSequenceNumeric", "1")
         _cbc(ls, "Percent", f"{rate:g}")
-        lcat = _cac(ls, "TaxCategory")
-        lsch = _cac(lcat, "TaxScheme")
-        _cbc(lsch, "Name", "KDV")
-        _cbc(lsch, "TaxTypeCode", "0015")
+        _tax_category_kdv(ls, rate=rate, inv=inv, item=it)
         if wh_code and wh_rate > 0 and line_vat > 0:
             line_wh = round(line_vat * wh_rate, 2)
             lwt = _cac(line, "WithholdingTaxTotal")

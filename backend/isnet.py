@@ -1476,6 +1476,20 @@ async def send_document(
                     "Fatura notuna «… numaralı faturaya istinaden» yazın veya original_invoice_number girin."
                 ),
             )
+    if _ubl_exp.invoice_has_zero_vat(inv_for_ubl) and not _ubl_exp.resolve_tax_exemption(inv_for_ubl):
+        line_ok = any(
+            _ubl_exp.resolve_tax_exemption(inv_for_ubl, it)
+            for it in (inv_for_ubl.get("items") or [])
+            if float(it.get("vat_rate") or 0) == 0
+        )
+        if not line_ok:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "KDV %0 satırlarda vergi muafiyet sebebi zorunlu "
+                    "(TaxExemptionReasonCode). E-fatura onayında muafiyet kodunu seçin."
+                ),
+            )
 
     company_for_ubl = {**(company or {})}
     company_for_ubl["tax_number"] = seller_vkn

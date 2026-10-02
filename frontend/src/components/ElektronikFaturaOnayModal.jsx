@@ -16,6 +16,11 @@ import {
   invoiceNeedsWithholdingPrompt,
   parseWithholdingValue,
 } from "../utils/invoiceWithholding";
+import {
+  TAX_EXEMPTION_OPTIONS,
+  TAX_EXEMPTION_LABELS,
+  invoiceNeedsExemptionPrompt,
+} from "../utils/invoiceExemption";
 
 function digitsTax(raw) {
   return String(raw || "").replace(/\D/g, "");
@@ -102,7 +107,7 @@ export function buildIadeNote(number, dateYmd) {
 
 /**
  * Faturalaştı siparişte «E-Fatura Oluştur» / fatura ⋮ «E-Fatura / E-Arşiv (GİB)» onayı.
- * İade: orijinal fatura no + tarih formu. KDV %0: tevkifat seçimi.
+ * İade: orijinal fatura no + tarih. KDV %0: muafiyet kodu (+ isteğe tevkifat).
  */
 export function ElektronikFaturaOnayModal({
   order,
@@ -119,7 +124,11 @@ export function ElektronikFaturaOnayModal({
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [gibMeta, setGibMeta] = useState(null);
+  const askExemption = invoiceNeedsExemptionPrompt(invoice || doc);
   const askWithholding = invoiceNeedsWithholdingPrompt(invoice || doc);
+  const [exemptionCode, setExemptionCode] = useState(
+    String(doc?.tax_exemption_code || doc?.vat_exemption_code || "").trim(),
+  );
   const [withholdingValue, setWithholdingValue] = useState("");
   const [withholdingTouched, setWithholdingTouched] = useState(false);
   const isReturnInvoice = isReturnInvoiceDoc(doc);
@@ -140,6 +149,7 @@ export function ElektronikFaturaOnayModal({
     const next = prefillReturnBillingRef(doc);
     setReturnInvoiceNo(next.number);
     setReturnInvoiceDate(next.date);
+    setExemptionCode(String(doc?.tax_exemption_code || doc?.vat_exemption_code || "").trim());
   }, [doc]);
 
   useEffect(() => {
@@ -200,6 +210,11 @@ export function ElektronikFaturaOnayModal({
         return;
       }
     }
+    if (askExemption && !String(exemptionCode || "").trim()) {
+      toast.error("KDV %0 satır var — vergi muafiyet / istisna kodunu seçin.");
+      setMenuOpen(false);
+      return;
+    }
     if (askWithholding && !withholdingTouched) {
       toast.error("KDV %0 satır var — tevkifat seçin veya «Tevkifat yok» deyin.");
       setMenuOpen(false);
@@ -209,6 +224,15 @@ export function ElektronikFaturaOnayModal({
     const sc = isReturnInvoice || scenario === "TEMEL" ? "TEMEL" : "TICARI";
     setMenuOpen(false);
     const wh = askWithholding ? parseWithholdingValue(withholdingValue) : null;
+    const exCode = String(exemptionCode || "").trim();
+    const exemption = exCode
+      ? {
+          tax_exemption_code: exCode,
+          tax_exemption_reason: (
+            TAX_EXEMPTION_LABELS[exCode] || `Vergi muafiyet kodu ${exCode}`
+          ).replace(/^\d+\s*[–-]\s*/, ""),
+        }
+      : undefined;
     const returnRef = isReturnInvoice
       ? {
           original_invoice_number: String(returnInvoiceNo || "").trim().toUpperCase(),
@@ -224,6 +248,7 @@ export function ElektronikFaturaOnayModal({
       alias: gibMeta?.alias || undefined,
       gibMeta: gibMeta || undefined,
       withholding: wh || undefined,
+      exemption,
       returnRef,
     };
     const confirmFn = onConfirm;
@@ -331,16 +356,46 @@ export function ElektronikFaturaOnayModal({
               </div>
             </div>
           )}
+          {askExemption && (
+            <div
+              className="rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-3 space-y-2"
+              data-testid="efatura-onay-exemption"
+            >
+              <label className="block text-sm font-semibold text-amber-950" htmlFor="efatura-onay-ex-select">
+                KDV %0 — Vergi muafiyet / istisna sebebi
+              </label>
+              <p className="text-[11px] text-amber-900/80 leading-snug">
+                İşNet/GİB, KDV oranı 0 olan faturalarda TaxExemptionReasonCode ister.
+                Uygun kodu seçmeden gönderim reddedilir.
+              </p>
+              <select
+                id="efatura-onay-ex-select"
+                value={exemptionCode}
+                onChange={(e) => setExemptionCode(e.target.value)}
+                className="w-full bg-white border border-amber-200 rounded-lg p-2 text-sm font-medium text-slate-800"
+                data-testid="efatura-onay-exemption-select"
+              >
+                <option value="" disabled>
+                  Muafiyet kodu seçin…
+                </option>
+                {TAX_EXEMPTION_OPTIONS.map(([v, l]) => (
+                  <option key={v} value={v}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           {askWithholding && (
             <div
               className="rounded-xl border border-indigo-200 bg-indigo-50/80 px-3 py-3 space-y-2"
               data-testid="efatura-onay-withholding"
             >
               <label className="block text-sm font-semibold text-indigo-900" htmlFor="efatura-onay-wh-select">
-                KDV %0 satır var — Tevkifat (Hizmet Faturası)
+                Tevkifat (isteğe bağlı)
               </label>
               <p className="text-[11px] text-indigo-800/80 leading-snug">
-                E-fatura kesmeden önce tevkifat kodunu seçin. Uygulanmayacaksa «Tevkifat yok» seçin.
+                Hizmet tevkifatı uygulanacaksa kodu seçin; değilse «Tevkifat yok».
               </p>
               <select
                 id="efatura-onay-wh-select"

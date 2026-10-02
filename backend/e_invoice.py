@@ -467,6 +467,20 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
                     "Nota «… numaralı faturaya istinaden» ekleyin veya original_invoice_number girin."
                 ),
             )
+    if ubl_export.invoice_has_zero_vat(inv) and not ubl_export.resolve_tax_exemption(inv):
+        line_ok = any(
+            ubl_export.resolve_tax_exemption(inv, it)
+            for it in (inv.get("items") or [])
+            if float(it.get("vat_rate") or 0) == 0
+        )
+        if not line_ok:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "KDV %0 satırlarda vergi muafiyet sebebi zorunlu. "
+                    "E-fatura onayında muafiyet / istisna kodunu seçin."
+                ),
+            )
     buyer = validate_buyer(contact, inv, et)
     company = await _db.companies.find_one({"_id": inv.get("company_id")}) or {}
 

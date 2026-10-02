@@ -239,6 +239,64 @@ def test_builder_zero_vat_still_has_tax_subtotal():
     assert line_cat is not None and line_cat.text == "KDV"
 
 
+def test_builder_zero_vat_emits_tax_exemption_reason():
+    inv = {
+        "_id": "inv_ex",
+        "invoice_number": "AL202600000162",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "gib_scenario": "TEMELFATURA",
+        "issue_date": "2026-10-02",
+        "tax_exemption_code": "351",
+        "items": [{"name": "Hizmet", "quantity": 1, "unit_price": 100, "vat_rate": 0, "total": 100}],
+        "subtotal": 100,
+        "vat_total": 0,
+        "grand_total": 100,
+    }
+    root = ET.fromstring(
+        ubl_export.build_invoice_ubl(
+            inv,
+            {"name": "S", "tax_number": "4810173324"},
+            {"name": "B", "tax_number_or_id": "4810173324"},
+            send_ready=True,
+        )
+    )
+    assert _txt(root, "InvoiceTypeCode") == "ISTISNA"
+    code = root.find(f"{CAC}TaxTotal/{CAC}TaxSubtotal/{CAC}TaxCategory/{CBC}TaxExemptionReasonCode")
+    assert code is not None and code.text == "351"
+    reason = root.find(f"{CAC}TaxTotal/{CAC}TaxSubtotal/{CAC}TaxCategory/{CBC}TaxExemptionReason")
+    assert reason is not None and reason.text
+    line_code = root.find(
+        f"{CAC}InvoiceLine/{CAC}TaxTotal/{CAC}TaxSubtotal/{CAC}TaxCategory/{CBC}TaxExemptionReasonCode"
+    )
+    assert line_code is not None and line_code.text == "351"
+
+
+def test_builder_zero_vat_send_ready_requires_exemption():
+    inv = {
+        "_id": "inv_ex_miss",
+        "invoice_number": "AL202600000163",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "gib_scenario": "TEMELFATURA",
+        "issue_date": "2026-10-02",
+        "items": [{"name": "Hizmet", "quantity": 1, "unit_price": 100, "vat_rate": 0, "total": 100}],
+        "subtotal": 100,
+        "vat_total": 0,
+        "grand_total": 100,
+    }
+    try:
+        ubl_export.build_invoice_ubl(
+            inv,
+            {"name": "S", "tax_number": "4810173324"},
+            {"name": "B", "tax_number_or_id": "4810173324"},
+            send_ready=True,
+        )
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "muafiyet" in str(e).lower() or "Exemption" in str(e)
+
+
 def test_builder_iade_forces_temel_not_ticari():
     """GİB Schematron: IADE + TICARIFATURA → hata; TEMELFATURA'ya düş."""
     inv = {
