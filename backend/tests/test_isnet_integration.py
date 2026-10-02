@@ -1244,3 +1244,137 @@ def test_list_incoming_all_merges_invoice_and_despatch():
         )
     assert len(rows) == 2
     assert {r["kind"] for r in rows} == {"invoice", "dispatch"}
+
+
+def test_send_despatch_xml_payload_shape():
+    """SendDespatchAdviceXml — DespatchAdvices / DespatchAdviceContent base64."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    ubl = "<DespatchAdvice><ID>IRS1</ID></DespatchAdvice>"
+    captured = {}
+
+    async def fake_soap(*_a, **kw):
+        captured.update(kw)
+        xml = """
+        <Body xmlns:ein="http://schemas.datacontract.org/2004/07/EInvoice.Service.Model">
+          <ein:InvoiceResult>
+            <ein:IsSucceded>true</ein:IsSucceded>
+            <ein:ETTN>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</ein:ETTN>
+            <ein:DespatchAdviceNumber>IRS2026000000099</ein:DespatchAdviceNumber>
+          </ein:InvoiceResult>
+        </Body>
+        """
+        return ET.fromstring(xml)
+
+    with patch("isnet._soap_call", side_effect=fake_soap):
+        out = asyncio.get_event_loop().run_until_complete(
+            isnet.send_despatch_xml(settings, ubl_xml=ubl, receiver_alias="urn:mail:x@isnet.net.tr")
+        )
+    assert captured["action"] == "SendDespatchAdviceXml"
+    req = captured["request"]
+    assert req["CompanyTaxCode"] == "4810173324"
+    assert len(req["DespatchAdvices"]) == 1
+    assert "DespatchAdviceContent" in req["DespatchAdvices"][0]
+    assert req["DespatchAdvices"][0]["ReceiverTag"] == "urn:mail:x@isnet.net.tr"
+    assert out["ettn"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert captured.get("array_map") is None or captured["array_map"].get("DespatchAdvices") in (
+        "DespatchAdviceXml",
+        "DespatchAdvice",
+        None,
+    )
+
+
+def test_lookup_despatch_user_get_despatch_tax_payer():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    body = ET.fromstring(
+        """
+        <Body xmlns:ein="http://schemas.datacontract.org/2004/07/EInvoice.Service.Model">
+          <ein:TaxPayer>
+            <ein:TaxPayerName>Alıcı A.Ş.</ein:TaxPayerName>
+            <ein:InboxTagList>
+              <ein:string>urn:mail:defaultgk@isnet.net.tr</ein:string>
+            </ein:InboxTagList>
+          </ein:TaxPayer>
+        </Body>
+        """
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)) as mock_call:
+        info = asyncio.get_event_loop().run_until_complete(
+            isnet.lookup_despatch_user(settings, "", "1234567890")
+        )
+    assert mock_call.await_args.kwargs["action"] == "GetDespatchTaxPayer"
+    assert info["is_e_dispatch_user"] is True
+    assert "isnet.net.tr" in info["alias"]
+
+
+def test_search_outgoing_despatch_direction():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    ettn = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    body = ET.fromstring(
+        f"""
+        <Body xmlns:ein="http://schemas.datacontract.org/2004/07/EInvoice.Service.Model">
+          <ein:DespatchAdvice>
+            <ein:ETTN>{ettn}</ein:ETTN>
+            <ein:DespatchAdviceNumber>IRS2026000000001</ein:DespatchAdviceNumber>
+            <ein:Status>Ziplendi</ein:Status>
+            <ein:DetailStatus>Basariyla_Tamamlandi</ein:DetailStatus>
+          </ein:DespatchAdvice>
+        </Body>
+        """
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)) as mock_call:
+        rows = asyncio.get_event_loop().run_until_complete(
+            isnet.search_outgoing_despatch(settings, ettn=ettn)
+        )
+    assert mock_call.await_args.kwargs["action"] == "SearchDespatchAdvice"
+    assert mock_call.await_args.kwargs["request"]["DespatchAdviceDirection"] == "Outgoing"
+    assert mock_call.await_args.kwargs["request"]["Ettn"] == ettn
+    assert rows[0]["status_code"] == "1300"
+    assert rows[0]["invoice_id"] == "IRS2026000000001"
+
+
+def test_try_verify_uses_search_outgoing_despatch_for_e_dispatch():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    ettn = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    row = {
+        "ettn": ettn,
+        "invoice_id": "IRS2026000000001",
+        "status": "Başarıyla Tamamlandı",
+        "status_code": "1300",
+        "detail_status": "Basariyla_Tamamlandi",
+        "process_status": "Ziplendi",
+        "status_source": "detail",
+    }
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(side_effect=HTTPException(status_code=404, detail="link yok")),
+    ), patch(
+        "isnet.search_outgoing_despatch",
+        AsyncMock(return_value=[row]),
+    ) as search, patch("isnet.asyncio.sleep", AsyncMock()):
+        info = asyncio.get_event_loop().run_until_complete(
+            isnet.try_verify_outgoing_in_portal(
+                settings, ettn, e_type="e_dispatch", wait_for_gib=True
+            )
+        )
+    assert info["ok"] is True
+    assert info["status_code"] == "1300"
+    assert search.await_count >= 1
+
+
+def test_build_despatch_ubl_requires_plate_when_send_ready():
+    import ubl_export
+
+    inv = {
+        "invoice_number": "IRS1",
+        "items": [{"name": "X", "quantity": 1, "unit": "Adet", "unit_price": 1, "total": 1}],
+    }
+    seller = {"name": "F", "tax_number": "4810173324", "address": "A", "city": "İstanbul", "tax_office": "X"}
+    buyer = {"name": "A", "tax_number_or_id": "1234567890", "address": "B", "city": "Ankara"}
+    try:
+        ubl_export.build_despatch_ubl(inv, seller, buyer, send_ready=True)
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "plaka" in str(e).lower()
+    inv["despatch_plate"] = "34ABC123"
+    xml = ubl_export.build_despatch_ubl(inv, seller, buyer, send_ready=True)
+    assert b"TEMELIRSALIYE" in xml

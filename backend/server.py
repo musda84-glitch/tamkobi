@@ -6350,6 +6350,34 @@ async def get_invoice(invoice_id: str):
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     return clean_doc(inv)
 
+async def _send_dispatch_to_isnet_if_configured(doc: dict) -> Dict[str, Any]:
+    """İşNet yapılandırılmışsa e-İrsaliye taslağını SendDespatchAdviceXml ile gönder."""
+    settings = await db.einvoice_settings.find_one({"company_id": doc.get("company_id")}) or {}
+    provider = (settings.get("provider") or "").strip()
+    if provider not in ("isnet", "isnet_portal") or settings.get("status") != "configured":
+        return {"sent": False, "reason": "not_configured"}
+    if settings.get("e_dispatch_enabled") is False:
+        return {"sent": False, "reason": "disabled"}
+    defaults = _despatch_defaults_view(settings)
+    patch = {"despatch_defaults": defaults}
+    for key in ("plate", "trailer", "driver_first", "driver_last", "driver_tckn", "carrier_name", "carrier_vkn"):
+        field = f"despatch_{key}"
+        if defaults.get(key) and not doc.get(field):
+            patch[field] = defaults[key]
+    if len(patch) > 1 or not doc.get("despatch_defaults"):
+        await db.invoices.update_one({"_id": doc["_id"]}, {"$set": patch})
+        doc = await db.invoices.find_one({"_id": doc["_id"]}) or doc
+    try:
+        result = await e_invoice.issue_invoice(doc["_id"], e_type="e_dispatch")
+        refreshed = await db.invoices.find_one({"_id": doc["_id"]}) or doc
+        return {"sent": True, "result": result, "dispatch": clean_doc(refreshed)}
+    except HTTPException as e:
+        return {"sent": False, "reason": "send_failed", "detail": e.detail, "dispatch": clean_doc(doc)}
+    except Exception as e:
+        logger.exception("create-dispatch İşNet send failed")
+        return {"sent": False, "reason": "send_failed", "detail": str(e)[:200], "dispatch": clean_doc(doc)}
+
+
 @api_router.post("/invoices/{invoice_id}/create-dispatch")
 async def create_dispatch_from_invoice(invoice_id: str):
     inv = await db.invoices.find_one({"_id": invoice_id})
@@ -6360,17 +6388,56 @@ async def create_dispatch_from_invoice(invoice_id: str):
     if inv.get("dispatch_id"):
         d = await db.invoices.find_one({"_id": inv["dispatch_id"]})
         if d:
+            # Taslak kaldıysa İşNet'e göndermeyi dene
+            if d.get("status") == "draft" and d.get("e_type") == "e_dispatch" and not d.get("gib_uuid"):
+                sent = await _send_dispatch_to_isnet_if_configured(d)
+                if sent.get("sent"):
+                    return {
+                        "status": "success",
+                        "dispatch": sent.get("dispatch") or clean_doc(d),
+                        "message": (sent.get("result") or {}).get("message") or f"{d['invoice_number']} İşNet'e iletildi.",
+                    }
+                if sent.get("reason") == "send_failed":
+                    return {
+                        "status": "exists",
+                        "dispatch": clean_doc(d),
+                        "message": f"İrsaliye taslak: {d['invoice_number']}. İşNet: {sent.get('detail')}",
+                    }
             return {"status": "exists", "dispatch": clean_doc(d), "message": f"Bu faturanın irsaliyesi zaten var: {d['invoice_number']}"}
     number = await _next_number("IRS", db.invoices)
     contact = await db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
+    settings = await db.einvoice_settings.find_one({"company_id": inv["company_id"]}) or {}
+    defaults = _despatch_defaults_view(settings)
     doc = {"_id": str(uuid.uuid4()), "company_id": inv["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": inv.get("contact_id"), "contact_name": inv.get("contact_name"),
-           "contact_tax_id": inv.get("contact_tax_id"), "shipping_address": (contact or {}).get("address"), "city": (contact or {}).get("city"), "items": [{**it, "vat_rate": 0} for it in inv.get("items", [])],
+           "contact_tax_id": inv.get("contact_tax_id") or (contact or {}).get("tax_number_or_id") or (contact or {}).get("tax_id"),
+           "shipping_address": (contact or {}).get("address"), "city": (contact or {}).get("city"), "items": [{**it, "vat_rate": 0} for it in inv.get("items", [])],
            "subtotal": inv.get("subtotal", 0), "vat_total": 0, "grand_total": inv.get("subtotal", 0), "currency": inv.get("currency", "TRY"), "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
            "invoice_id": invoice_id, "invoice_ref_number": inv.get("invoice_number"), "source_channel": inv.get("source_channel", "manual"), "dispatch_status": "draft",
+           "despatch_defaults": defaults,
+           "despatch_plate": defaults.get("plate") or "",
+           "despatch_trailer": defaults.get("trailer") or "",
+           "despatch_driver_first": defaults.get("driver_first") or "",
+           "despatch_driver_last": defaults.get("driver_last") or "",
+           "despatch_driver_tckn": defaults.get("driver_tckn") or "",
+           "despatch_carrier_name": defaults.get("carrier_name") or "",
+           "despatch_carrier_vkn": defaults.get("carrier_vkn") or "",
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
     await db.invoices.insert_one(doc)
     await db.invoices.update_one({"_id": invoice_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
-    return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} irsaliyesi oluşturuldu."}
+    sent = await _send_dispatch_to_isnet_if_configured(doc)
+    if sent.get("sent"):
+        return {
+            "status": "success",
+            "dispatch": sent.get("dispatch") or clean_doc(doc),
+            "message": (sent.get("result") or {}).get("message") or f"{number} e-İrsaliye İşNet'e iletildi.",
+        }
+    if sent.get("reason") == "send_failed":
+        return {
+            "status": "success",
+            "dispatch": clean_doc(doc),
+            "message": f"{number} taslak oluşturuldu; İşNet gönderimi: {sent.get('detail')}. Plaka/sürücü ayarlarını kontrol edin.",
+        }
+    return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} irsaliye taslağı oluşturuldu (İşNet bağlantısı yok — gönderilmedi)."}
 
 
 def _expense_slip_block_reason(inv: dict) -> Optional[str]:
@@ -10216,17 +10283,50 @@ async def create_dispatch(order_id: str):
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
     if o.get("dispatch_id"):
         d = await db.invoices.find_one({"_id": o["dispatch_id"]})
+        if d and d.get("status") == "draft" and d.get("e_type") == "e_dispatch" and not d.get("gib_uuid"):
+            sent = await _send_dispatch_to_isnet_if_configured(d)
+            if sent.get("sent"):
+                return {
+                    "status": "success",
+                    "dispatch": sent.get("dispatch") or clean_doc(d),
+                    "message": (sent.get("result") or {}).get("message") or "e-İrsaliye İşNet'e iletildi.",
+                }
         return {"status": "exists", "dispatch": clean_doc(d), "message": "Bu sipariş için irsaliye zaten mevcut."}
     number = await _next_number("IRS", db.invoices)
     contact = await db.contacts.find_one({"name": o.get("customer_name"), "company_id": o["company_id"]})
+    settings = await db.einvoice_settings.find_one({"company_id": o["company_id"]}) or {}
+    defaults = _despatch_defaults_view(settings)
     doc = {"_id": str(uuid.uuid4()), "company_id": o["company_id"], "invoice_number": number, "invoice_type": "dispatch", "e_type": "e_dispatch", "contact_id": contact["_id"] if contact else None,
-           "contact_name": o.get("customer_name"), "customer_phone": o.get("customer_phone"), "shipping_address": o.get("shipping_address"), "city": o.get("city"),
+           "contact_name": o.get("customer_name"),
+           "contact_tax_id": (contact or {}).get("tax_number_or_id") or (contact or {}).get("tax_id"),
+           "customer_phone": o.get("customer_phone"), "shipping_address": o.get("shipping_address"), "city": o.get("city"),
            "items": [{"product_id": it.get("product_id"), "name": it.get("product_name"), "quantity": it.get("quantity"), "unit": "Adet", "unit_price": it.get("unit_price"), "vat_rate": 0, "total": it.get("total")} for it in o.get("items", [])],
            "subtotal": o.get("total_amount", 0), "vat_total": 0, "grand_total": o.get("total_amount", 0), "currency": "TRY", "status": "draft", "gib_status": "Taslak (e-İrsaliye)", "payment_status": "n/a",
-           "order_id": order_id, "order_number": o["order_number"], "cargo_carrier": o.get("cargo_carrier"), "cargo_tracking_number": o.get("cargo_tracking_number"), "source_channel": o.get("channel", "b2b"),
+           "order_id": order_id, "order_number": o["order_number"], "cargo_carrier": o.get("cargo_carrier") or defaults.get("carrier_name"), "cargo_tracking_number": o.get("cargo_tracking_number"), "source_channel": o.get("channel", "b2b"),
+           "despatch_defaults": defaults,
+           "despatch_plate": defaults.get("plate") or "",
+           "despatch_trailer": defaults.get("trailer") or "",
+           "despatch_driver_first": defaults.get("driver_first") or "",
+           "despatch_driver_last": defaults.get("driver_last") or "",
+           "despatch_driver_tckn": defaults.get("driver_tckn") or "",
+           "despatch_carrier_name": defaults.get("carrier_name") or o.get("cargo_carrier") or "",
+           "despatch_carrier_vkn": defaults.get("carrier_vkn") or "",
            "issue_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "created_at": datetime.now(timezone.utc).isoformat()}
     await db.invoices.insert_one(doc)
     await db.orders.update_one({"_id": order_id}, {"$set": {"dispatch_id": doc["_id"], "dispatch_number": number}})
+    sent = await _send_dispatch_to_isnet_if_configured(doc)
+    if sent.get("sent"):
+        return {
+            "status": "success",
+            "dispatch": sent.get("dispatch") or clean_doc(doc),
+            "message": (sent.get("result") or {}).get("message") or f"{number} e-İrsaliye İşNet'e iletildi.",
+        }
+    if sent.get("reason") == "send_failed":
+        return {
+            "status": "success",
+            "dispatch": clean_doc(doc),
+            "message": f"{number} taslak oluşturuldu; İşNet: {sent.get('detail')}",
+        }
     return {"status": "success", "dispatch": clean_doc(doc), "message": f"{number} e-İrsaliye taslağı oluşturuldu."}
 
 

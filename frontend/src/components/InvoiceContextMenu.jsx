@@ -278,9 +278,21 @@ export function canDeleteInvoice(inv) {
 export function canIssueInvoice(inv) {
   if (!inv) return false;
   if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return false;
-  if (inv.status === "cancelled" || inv.invoice_type === "dispatch" || inv.e_type === "expense_slip") return false;
+  if (inv.status === "cancelled" || inv.e_type === "expense_slip") return false;
+  // e-İrsaliye: İşNet SendDespatchAdviceXml
+  if (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") {
+    if (inv.status === "cancelled") return false;
+    return inv.status === "draft" || !isGibIssued(inv);
+  }
   if (inv.status === "draft" || inv.e_type === "paper") return true;
   return !isGibIssued(inv);
+}
+
+/** e-İrsaliye taslağı İşNet'e gönderilebilir mi? */
+export function canSendDespatch(inv, einvoiceSettings) {
+  if (!inv || !canIssueInvoice(inv)) return false;
+  if (inv.invoice_type !== "dispatch" && inv.e_type !== "e_dispatch") return false;
+  return supportsEDispatch(einvoiceSettings);
 }
 
 /** Alış veya GİB'e kesilmiş satış: PDF/XML indirilebilir. */
@@ -542,6 +554,25 @@ export const InvoiceContextMenu = (props) => {
               onClick={() => openGibDocumentUrl(apiBase, inv)}
               testId="ctx-gib-doc-url"
             />
+          )}
+        </div>
+      ) : canIssue && (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") ? (
+        <div className="border-b border-slate-100 pb-1" data-testid="ctx-despatch-issue">
+          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-fuchsia-700">E-İRSALİYE</div>
+          <p className="px-3 pb-1 text-[10px] text-slate-500">
+            İşNet SendDespatchAdviceXml — plaka/sürücü Ayarlar → e-İrsaliye varsayılanlarından alınır.
+          </p>
+          {canSendDespatch(inv, einvoiceSettings) ? (
+            <Item
+              icon={Truck}
+              color="text-fuchsia-600"
+              label="İşNet'e e-İrsaliye Gönder"
+              sub="TEMELIRSALIYE / SEVK"
+              onClick={() => onIssue(inv, "e_dispatch")}
+              testId="ctx-issue-e_dispatch"
+            />
+          ) : (
+            <p className="px-3 pb-2 text-[10px] text-amber-700">İşNet e-İrsaliye yapılandırılmamış veya kapalı.</p>
           )}
         </div>
       ) : canIssue ? (

@@ -12,10 +12,12 @@ router = APIRouter(prefix="/api")
 _db = None
 
 INVOICE_NS = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
+DESPATCH_NS = "urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2"
 CBC = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
 CAC = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
 EXT = "urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2"
 EDOC_TYPES = ("e_invoice", "e_archive")
+ET.register_namespace("despatch", DESPATCH_NS)
 RETURN_INVOICE_TYPES = frozenset({"return", "sales_return", "purchase_return", "iade"})
 UNIT_CODES = {
     "Adet": "C62", "adet": "C62", "C62": "C62", "NIU": "NIU",
@@ -708,11 +710,196 @@ def _buyer_from(inv: Dict[str, Any], contact: Optional[Dict[str, Any]]) -> Dict[
         "name": c.get("name") or inv.get("contact_name") or "",
         "tax_number_or_id": c.get("tax_number_or_id") or inv.get("contact_tax_id") or "",
         "tax_office": c.get("tax_office") or "",
-        "address": c.get("address") or "",
-        "city": c.get("city") or "",
-        "phone": c.get("phone") or "",
+        "address": c.get("address") or inv.get("shipping_address") or "",
+        "city": c.get("city") or inv.get("city") or "",
+        "phone": c.get("phone") or inv.get("customer_phone") or "",
         "email": c.get("email") or "",
     }
+
+
+def _despatch_transport(inv: Dict[str, Any]) -> Dict[str, str]:
+    """Plaka / sürücü / taşıyıcı — belge alanı veya despatch_defaults."""
+    nested = inv.get("despatch_defaults") if isinstance(inv.get("despatch_defaults"), dict) else {}
+    def _g(*keys: str) -> str:
+        for k in keys:
+            if inv.get(k) not in (None, ""):
+                return str(inv.get(k) or "").strip()
+            if nested.get(k) not in (None, ""):
+                return str(nested.get(k) or "").strip()
+        return ""
+    plate = _g("despatch_plate", "plate", "vehicle_plate").upper().replace(" ", "")
+    trailer = _g("despatch_trailer", "trailer").upper().replace(" ", "")
+    driver_first = _g("despatch_driver_first", "driver_first", "driver_name")
+    driver_last = _g("despatch_driver_last", "driver_last")
+    if driver_first and not driver_last and " " in driver_first:
+        parts = driver_first.split(None, 1)
+        driver_first, driver_last = parts[0], parts[1]
+    driver_tckn = "".join(ch for ch in _g("despatch_driver_tckn", "driver_tckn") if ch.isdigit())
+    carrier_name = _g("despatch_carrier_name", "carrier_name", "cargo_carrier")
+    carrier_vkn = "".join(ch for ch in _g("despatch_carrier_vkn", "carrier_vkn") if ch.isdigit())
+    return {
+        "plate": plate,
+        "trailer": trailer,
+        "driver_first": driver_first,
+        "driver_last": driver_last,
+        "driver_tckn": driver_tckn,
+        "carrier_name": carrier_name,
+        "carrier_vkn": carrier_vkn,
+    }
+
+
+def build_despatch_ubl(
+    inv: Dict[str, Any],
+    seller: Dict[str, Any],
+    buyer: Dict[str, Any],
+    *,
+    send_ready: bool = False,
+) -> bytes:
+    """UBL-TR DespatchAdvice (TEMELIRSALIYE / SEVK) — İşNet SendDespatchAdviceXml."""
+    items = list(inv.get("items") or [])
+    if not items:
+        items = [{"name": "Kalem", "quantity": 1, "unit": "Adet", "unit_price": 0, "total": 0}]
+    issue_date = _date(inv.get("issue_date"))
+    issue_time = (inv.get("issue_time") or "").strip()
+    if not issue_time:
+        issue_time = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    transport = _despatch_transport(inv)
+    if send_ready and not transport["plate"]:
+        raise ValueError(
+            "e-İrsaliye için araç plakası zorunlu. "
+            "Ayarlar → İşNet e-İrsaliye varsayılanları veya irsaliye belgesine plaka girin."
+        )
+
+    root = ET.Element(_q(DESPATCH_NS, "DespatchAdvice"))
+    if send_ready:
+        exts = ET.SubElement(root, _q(EXT, "UBLExtensions"))
+        ext_one = ET.SubElement(exts, _q(EXT, "UBLExtension"))
+        ET.SubElement(ext_one, _q(EXT, "ExtensionContent"))
+    _cbc(root, "UBLVersionID", "2.1")
+    _cbc(root, "CustomizationID", "TR1.2")
+    _cbc(root, "ProfileID", "TEMELIRSALIYE")
+    _cbc(root, "ID", inv.get("invoice_number") or inv.get("dispatch_number") or "")
+    _cbc(root, "CopyIndicator", "false")
+    _cbc(root, "UUID", _stable_uuid(inv))
+    _cbc(root, "IssueDate", issue_date)
+    _cbc(root, "IssueTime", issue_time[:8] if len(issue_time) >= 8 else issue_time)
+    _cbc(root, "DespatchAdviceTypeCode", "SEVK")
+    notes = (inv.get("notes") or "").strip()
+    if notes:
+        _cbc(root, "Note", notes[:500])
+    if transport["plate"]:
+        _cbc(root, "Note", f"Plaka: {transport['plate']}")
+    _cbc(root, "LineCountNumeric", str(len(items)))
+
+    seller_party = {
+        "name": seller.get("name"),
+        "tax_id": seller.get("tax_number") or seller.get("tax_id"),
+        "tax_office": seller.get("tax_office"),
+        "address": seller.get("address"),
+        "city": seller.get("city"),
+        "phone": seller.get("phone"),
+        "email": seller.get("email"),
+        "district": seller.get("district"),
+    }
+    buyer_party = {
+        "name": buyer.get("name") or inv.get("contact_name"),
+        "tax_id": buyer.get("tax_number_or_id") or buyer.get("tax_number") or inv.get("contact_tax_id"),
+        "tax_office": buyer.get("tax_office"),
+        "address": buyer.get("address") or inv.get("shipping_address"),
+        "city": buyer.get("city") or inv.get("city"),
+        "phone": buyer.get("phone") or inv.get("customer_phone"),
+        "email": buyer.get("email"),
+    }
+
+    if send_ready:
+        seller_tax = "".join(ch for ch in str(seller_party.get("tax_id") or "") if ch.isdigit())
+        seller_scheme = "VKN" if len(seller_tax) == 10 else "TCKN"
+        if len(seller_tax) not in (10, 11):
+            seller_tax, seller_scheme = (seller_tax.zfill(10)[:10] or "0000000000"), "VKN"
+        sig = _cac(root, "Signature")
+        _cbc(sig, "ID", seller_tax, schemeID="VKN_TCKN")
+        sparty = _cac(sig, "SignatoryParty")
+        sid = _cac(sparty, "PartyIdentification")
+        _cbc(sid, "ID", seller_tax, schemeID=seller_scheme)
+        addr = _cac(sparty, "PostalAddress")
+        _cbc(addr, "StreetName", str(seller.get("address") or "-") or "-")
+        district = str(seller.get("district") or seller.get("tax_office") or seller.get("city") or "Merkez").strip() or "Merkez"
+        _cbc(addr, "CitySubdivisionName", district)
+        _cbc(addr, "CityName", str(seller.get("city") or "İstanbul"))
+        country = _cac(addr, "Country")
+        _cbc(country, "Name", "Türkiye")
+        dsa = _cac(sig, "DigitalSignatureAttachment")
+        eref = _cac(dsa, "ExternalReference")
+        _cbc(eref, "URI", "#Signature")
+
+    _party("DespatchSupplierParty", seller_party, root, send_ready=send_ready)
+    _party("DeliveryCustomerParty", buyer_party, root, send_ready=send_ready)
+
+    shipment = _cac(root, "Shipment")
+    _cbc(shipment, "ID", "1")
+    delivery = _cac(shipment, "Delivery")
+    _cbc(delivery, "ActualDespatchDate", issue_date)
+    _cbc(delivery, "ActualDespatchTime", issue_time[:8] if len(issue_time) >= 8 else issue_time)
+    carrier_party = _cac(delivery, "CarrierParty")
+    if transport["carrier_vkn"] or transport["carrier_name"]:
+        if transport["carrier_vkn"]:
+            cident = _cac(carrier_party, "PartyIdentification")
+            scheme = "VKN" if len(transport["carrier_vkn"]) == 10 else "TCKN"
+            _cbc(cident, "ID", transport["carrier_vkn"], schemeID=scheme)
+        if transport["carrier_name"]:
+            cpn = _cac(carrier_party, "PartyName")
+            _cbc(cpn, "Name", transport["carrier_name"][:200])
+    else:
+        # Taşıyıcı yoksa satıcı
+        cident = _cac(carrier_party, "PartyIdentification")
+        scheme, tid = _tax_id(seller_party.get("tax_id"))
+        _cbc(cident, "ID", tid or "0000000000", schemeID=scheme or "VKN")
+        cpn = _cac(carrier_party, "PartyName")
+        _cbc(cpn, "Name", str(seller_party.get("name") or "Taşıyıcı")[:200])
+
+    if transport["plate"] or transport["driver_tckn"] or transport["driver_first"]:
+        stage = _cac(shipment, "ShipmentStage")
+        _cbc(stage, "ID", "1")
+        if transport["plate"]:
+            means = _cac(stage, "TransportMeans")
+            road = _cac(means, "RoadTransport")
+            _cbc(road, "LicensePlateID", transport["plate"], schemeID="PLAKA")
+        if transport["trailer"]:
+            _cbc(stage, "Instructions", f"Dorse: {transport['trailer']}")
+        if transport["driver_first"] or transport["driver_tckn"]:
+            driver = _cac(stage, "DriverPerson")
+            _cbc(driver, "FirstName", (transport["driver_first"] or "Sürücü")[:60])
+            _cbc(driver, "FamilyName", (transport["driver_last"] or "-")[:60])
+            if transport["driver_tckn"]:
+                # UBL-TR: Person altında NationalityID / IdentityDocumentReference yerine
+                # yaygın kullanım: PartyIdentification benzeri Note + TCKN attribute yok;
+                # İşNet REST DriverList TCKN — UBL'de ID schemeID=TCKN
+                _cbc(driver, "NationalityID", transport["driver_tckn"], schemeID="TCKN")
+
+    for i, it in enumerate(items, 1):
+        line = _cac(root, "DespatchLine")
+        _cbc(line, "ID", str(i))
+        qty = float(it.get("quantity") or 1) or 1
+        unit = UNIT_CODES.get(str(it.get("unit") or "Adet"), "C62")
+        _cbc(line, "DeliveredQuantity", _amt(qty), unitCode=unit)
+        _cbc(line, "OutstandingQuantity", "0", unitCode=unit)
+        order_line = _cac(line, "OrderLineReference")
+        _cbc(order_line, "LineID", str(i))
+        item_el = _cac(line, "Item")
+        _cbc(item_el, "Name", str(it.get("name") or it.get("product_name") or "Kalem")[:200])
+        sku = (it.get("sku") or "").strip()
+        if sku:
+            sid = _cac(item_el, "SellersItemIdentification")
+            _cbc(sid, "ID", sku[:50])
+        # Birim fiyat bilgilendirme (irsaliyede KDV yok)
+        unit_price = float(it.get("unit_price") or 0)
+        if unit_price > 0:
+            shipment_line = _cac(line, "Shipment")
+            _cbc(shipment_line, "ID", str(i))
+            goods = _cac(shipment_line, "GoodsItem")
+            _cbc(goods, "ValueAmount", _amt(unit_price * qty), currencyID=(inv.get("currency") or "TRY").upper())
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
 @router.get("/invoices/{invoice_id}/xml")
