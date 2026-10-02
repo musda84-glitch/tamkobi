@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Loader2, Plug, Save } from "lucide-react";
+import { Inbox, Loader2, Plug, Save, Truck } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -116,9 +117,18 @@ export default function IsnetPortalPanel({ companyId }) {
             </a>
           </p>
           <p className="text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-2" data-testid="isnet-portal-inbox-hint">
-            Bağlantıyı kaydetmek yetmez. Gelen faturaları görmek için{" "}
+            Bağlantıyı kaydetmek yetmez. Gelen faturaları / e-İrsaliyeleri görmek için{" "}
             <span className="font-semibold">Muhasebe → Gelen e-Belgeler → Entegratörden çek</span> kullanın.
+            Giden e-İrsaliye için Platform&apos;da <span className="font-semibold">İşNet SOAP API</span> tercih edilir (aynı VKN).
           </p>
+          <div className="flex flex-wrap gap-2 mt-2" data-testid="isnet-portal-quick-links">
+            <Link to="/edoc-inbox" className="px-3 py-1.5 rounded-lg font-semibold border border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 inline-flex items-center gap-1.5" data-testid="isnet-portal-inbox-link">
+              <Inbox className="w-3.5 h-3.5" /> Gelen e-Belgeler
+            </Link>
+            <Link to="/edoc-inbox?kind=dispatch" className="px-3 py-1.5 rounded-lg font-semibold border border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800 hover:bg-fuchsia-100 inline-flex items-center gap-1.5" data-testid="isnet-portal-despatch-link">
+              <Truck className="w-3.5 h-3.5" /> Gelen e-İrsaliye
+            </Link>
+          </div>
           <p className="text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1.5 mt-2" data-testid="isnet-portal-mode-hint">
             Gerçek NetteFatura hesabınız varsa <span className="font-semibold">Canlı Ortam</span> seçin.
             Portal açılıp Mobile API 401 verirse gelen faturalar Web Portal oturumuyla çekilir.

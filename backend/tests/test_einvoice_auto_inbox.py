@@ -81,6 +81,34 @@ class TestEinvoiceViewDefaults:
         assert view["auto_pull"] is False
         assert view["auto_process"] is True
 
+    def test_isnet_e_dispatch_defaults_and_flag(self):
+        import server
+
+        view = server._einvoice_view("comp1", {"provider": "isnet", "status": "configured"})
+        assert view["e_dispatch_enabled"] is True
+        assert view["despatch_defaults"]["plate"] == ""
+        assert "e-İrsaliye" in (view.get("hint") or "")
+
+        view2 = server._einvoice_view(
+            "comp1",
+            {
+                "provider": "isnet",
+                "status": "configured",
+                "e_dispatch_enabled": False,
+                "despatch_defaults": {"plate": "34abc123", "driver_tckn": "12345678901"},
+            },
+        )
+        assert view2["e_dispatch_enabled"] is False
+        assert view2["despatch_defaults"]["plate"] == "34abc123"
+        assert view2["despatch_defaults"]["driver_tckn"] == "12345678901"
+
+        normalized = server._normalize_despatch_defaults(
+            {"despatch_plate": "34 ab c123", "despatch_driver_tckn": "111"},
+            {},
+        )
+        assert normalized["plate"] == "34ABC123"
+        assert normalized["driver_tckn"] == "111"
+
 
 class TestPullAndProcess:
     def test_pull_skips_when_not_configured(self):

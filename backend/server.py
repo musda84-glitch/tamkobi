@@ -726,11 +726,13 @@ EINVOICE_PROVIDERS = {
         "name": "İşNet Net-e Fatura — SOAP API (NetteFatura-API)",
         "fields": ["company_tax_id", "alias", "corporate_code"],
         "docs": "https://github.com/EfeSorogluu/NetteFatura-API",
+        "hint": "Aynı SOAP (IP–VKN) bağlantısı e-Fatura, e-Arşiv ve e-İrsaliye için kullanılır; ikinci entegratör kaydı gerekmez. e-İrsaliye: SendDespatchAdvice / SearchDespatchAdvice / GetDespatchTaxPayer.",
     },
     "isnet_portal": {
         "name": "İşNet Net-e Fatura — Web Portal (NetteFatura-Portal)",
         "fields": ["username", "password"],
         "docs": "https://github.com/EfeSorogluu/NetteFatura-Portal",
+        "hint": "Portal hesabı e-Fatura / e-İrsaliye gelen kutusu için kullanılır; giden e-İrsaliye için SOAP (İşNet SOAP API) tercih edilir.",
     },
     "foriba": {"name": "Foriba (Sovos)", "fields": ["username", "password"], "docs": "https://www.sovos.com/tr/"},
     "elogo": {"name": "Logo e-Fatura / eLogo", "fields": ["username", "password"], "docs": "https://www.elogo.com.tr/"},
@@ -739,10 +741,58 @@ EINVOICE_PROVIDERS = {
     "other": {"name": "Diğer Entegratör", "fields": ["api_url", "username", "password", "api_key"], "docs": ""},
 }
 
+def _despatch_defaults_view(s: Optional[dict] = None) -> Dict[str, str]:
+    """İşNet e-İrsaliye varsayılanları (plaka / sürücü / taşıyıcı) — ayrı SOAP bağlantısı değil."""
+    s = s or {}
+    nested = s.get("despatch_defaults") if isinstance(s.get("despatch_defaults"), dict) else {}
+    def _g(*keys: str) -> str:
+        for k in keys:
+            if k in s and s.get(k) not in (None, ""):
+                return str(s.get(k) or "").strip()
+            if k in nested and nested.get(k) not in (None, ""):
+                return str(nested.get(k) or "").strip()
+        return ""
+    return {
+        "plate": _g("despatch_plate", "plate"),
+        "trailer": _g("despatch_trailer", "trailer"),
+        "driver_first": _g("despatch_driver_first", "driver_first"),
+        "driver_last": _g("despatch_driver_last", "driver_last"),
+        "driver_tckn": "".join(ch for ch in _g("despatch_driver_tckn", "driver_tckn") if ch.isdigit()),
+        "carrier_name": _g("despatch_carrier_name", "carrier_name"),
+        "carrier_vkn": "".join(ch for ch in _g("despatch_carrier_vkn", "carrier_vkn") if ch.isdigit()),
+    }
+
+
+def _normalize_despatch_defaults(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict[str, str]:
+    """İstek gövdesinden despatch_defaults üretir (düz veya nested alanlar)."""
+    existing = existing or {}
+    prev = _despatch_defaults_view(existing)
+    raw = req.get("despatch_defaults") if isinstance(req.get("despatch_defaults"), dict) else {}
+    out = {
+        "plate": str(raw.get("plate") if "plate" in raw else req.get("despatch_plate", prev["plate"]) or "").strip().upper().replace(" ", ""),
+        "trailer": str(raw.get("trailer") if "trailer" in raw else req.get("despatch_trailer", prev["trailer"]) or "").strip().upper().replace(" ", ""),
+        "driver_first": str(raw.get("driver_first") if "driver_first" in raw else req.get("despatch_driver_first", prev["driver_first"]) or "").strip(),
+        "driver_last": str(raw.get("driver_last") if "driver_last" in raw else req.get("despatch_driver_last", prev["driver_last"]) or "").strip(),
+        "driver_tckn": "".join(
+            ch for ch in str(raw.get("driver_tckn") if "driver_tckn" in raw else req.get("despatch_driver_tckn", prev["driver_tckn"]) or "") if ch.isdigit()
+        ),
+        "carrier_name": str(raw.get("carrier_name") if "carrier_name" in raw else req.get("despatch_carrier_name", prev["carrier_name"]) or "").strip(),
+        "carrier_vkn": "".join(
+            ch for ch in str(raw.get("carrier_vkn") if "carrier_vkn" in raw else req.get("despatch_carrier_vkn", prev["carrier_vkn"]) or "") if ch.isdigit()
+        ),
+    }
+    return out
+
+
 def _einvoice_view(company_id: str, s: Optional[dict] = None) -> Dict[str, Any]:
     s = s or {}
     code = s.get("provider") or ""
     meta = EINVOICE_PROVIDERS.get(code) or {}
+    # e-İrsaliye: İşNet SOAP/Portal'da varsayılan açık; n11'de kapalı
+    if "e_dispatch_enabled" in s:
+        e_dispatch_enabled = bool(s["e_dispatch_enabled"])
+    else:
+        e_dispatch_enabled = code in ("isnet", "isnet_portal")
     return {
         "id": str(s["_id"]) if s.get("_id") else None,
         "company_id": company_id,
@@ -765,6 +815,8 @@ def _einvoice_view(company_id: str, s: Optional[dict] = None) -> Dict[str, Any]:
         # Gelen kutu: çekim varsayılan açık; içeri alma yalnızca manuel onay (stok/tedarikçi)
         "auto_pull": bool(s["auto_pull"]) if "auto_pull" in s else True,
         "auto_process": bool(s["auto_process"]) if "auto_process" in s else False,
+        "e_dispatch_enabled": e_dispatch_enabled,
+        "despatch_defaults": _despatch_defaults_view(s),
         "last_inbox_sync_at": s.get("last_inbox_sync_at"),
         "last_inbox_sync_message": s.get("last_inbox_sync_message") or "",
         "updated_at": s.get("updated_at"),
@@ -807,6 +859,12 @@ async def save_einvoice_settings(req: Dict[str, Any]):
         update["auto_pull"] = bool(req.get("auto_pull"))
     if "auto_process" in req:
         update["auto_process"] = bool(req.get("auto_process"))
+    if "e_dispatch_enabled" in req:
+        update["e_dispatch_enabled"] = bool(req.get("e_dispatch_enabled"))
+    if "despatch_defaults" in req or any(
+        k.startswith("despatch_") for k in req
+    ):
+        update["despatch_defaults"] = _normalize_despatch_defaults(req, existing)
     if req.get("password"):
         update["password_enc"] = comm_service.encrypt(req["password"])
     if req.get("api_key"):
@@ -914,6 +972,13 @@ def _isnet_payload(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict
         else (req.get("vkn") if "vkn" in req else existing.get("company_tax_id") or "")
     )
     company_tax = "".join(ch for ch in str(company_tax or "") if ch.isdigit())
+    if "e_dispatch_enabled" in req:
+        e_dispatch_enabled = bool(req.get("e_dispatch_enabled"))
+    elif "e_dispatch_enabled" in existing:
+        e_dispatch_enabled = bool(existing.get("e_dispatch_enabled"))
+    else:
+        e_dispatch_enabled = True
+    despatch_defaults = _normalize_despatch_defaults(req, existing)
     return {
         "mode": mode,
         "username": username,
@@ -922,6 +987,8 @@ def _isnet_payload(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict
         "client_code": corporate,
         "company_tax_id": company_tax,
         "company_vendor_number": str(req.get("company_vendor_number") if "company_vendor_number" in req else existing.get("company_vendor_number") or "").strip(),
+        "e_dispatch_enabled": e_dispatch_enabled,
+        "despatch_defaults": despatch_defaults,
     }
 
 
@@ -954,6 +1021,8 @@ async def isnet_save_settings(req: Dict[str, Any]):
         "alias": fields["alias"],
         "company_tax_id": tax,
         "company_vendor_number": fields.get("company_vendor_number") or "",
+        "e_dispatch_enabled": bool(fields.get("e_dispatch_enabled", True)),
+        "despatch_defaults": fields.get("despatch_defaults") or _despatch_defaults_view(existing),
         # Gelen belgeler Bekleyen'de kalsın — otomatik içeri alma kapalı
         "auto_process": False,
         "updated_at": datetime.now(timezone.utc).isoformat(),
