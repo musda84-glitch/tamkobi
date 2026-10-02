@@ -513,7 +513,24 @@ export default function OrdersB2BPage() {
     catch (err) { toast.error(err.response?.data?.detail || "Cariler eşlenemedi."); } finally { setAutoBusy(false); }
   };
   const doReturn = async () => { try { const r = await axios.post(`${API_URL}/orders/${returnOrder.id}/return`, { reason: returnReason, restock: true }); toast.success(r.data.message); setReturnOrder(null); setReturnReason(""); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İade kaydedilemedi."); } };
-  const makeDispatch = async (ord) => { try { const r = await axios.post(`${API_URL}/orders/${ord.id}/create-dispatch`); toast.success(r.data.message); setDispatchDoc(r.data.dispatch); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); } };
+  /** İrsaliye olarak kaydet → e-İrsaliye taslağı (cari fatura değil). */
+  const makeDispatch = async (ord, { confirm = true } = {}) => {
+    if (ord.dispatch_id || ord.dispatch_number) {
+      toast.info(ord.dispatch_number ? `İrsaliye zaten var: ${ord.dispatch_number}` : "Bu sipariş için irsaliye zaten mevcut.");
+      return;
+    }
+    if (confirm && !window.confirm(`${ord.order_number} irsaliye olarak kaydedilsin mi?\nSevk irsaliyesi (e-İrsaliye taslağı) oluşturulur; cari fatura kesilmez.`)) {
+      return;
+    }
+    try {
+      const r = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/create-dispatch`);
+      toast.success(r.data.message || "İrsaliye kaydedildi.");
+      if (r.data?.dispatch) setDispatchDoc(r.data.dispatch);
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı.");
+    }
+  };
   const [editTpl, setEditTpl] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => { if (searchParams.get("new") === "1") setNewOrder(true); }, [searchParams]);
@@ -1510,16 +1527,42 @@ export default function OrdersB2BPage() {
                           }
                           if (ord.invoice_id) {
                             return (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
                               <button
                                 type="button"
-                                onClick={() => handlePostDraftInvoice(ord)}
                                 className="p-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-sm border border-amber-600"
-                                title={`Taslak — cariye faturalaştırmak için tıkla${ord.invoice_number ? `: ${ord.invoice_number}` : ""}`}
+                                title={`Taslak — Faturalaştır veya İrsaliye olarak kaydet${ord.invoice_number ? `: ${ord.invoice_number}` : ""}`}
                                 aria-label="Faturalaştır"
                                 data-testid={`convert-inv-btn-${ord.order_number}`}
                               >
                                 <FileText className="w-4 h-4" />
                               </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" sideOffset={8} collisionPadding={24} className="z-[80] w-56 rounded-xl p-1.5 shadow-lg" data-testid={`draft-inv-chooser-${ord.order_number}`}>
+                              <div className="px-2 py-1 text-[10px] font-bold text-amber-700 uppercase">Taslak belge</div>
+                              <DropdownMenuItem
+                                onSelect={() => handlePostDraftInvoice(ord)}
+                                className="flex-col items-start gap-0 py-1.5"
+                                data-testid={`inv-faturalastir-draft-${ord.order_number}`}
+                              >
+                                <span className="text-xs font-semibold text-slate-800">Faturalaştır</span>
+                                <span className="text-[10px] text-slate-400">Cari bakiyesi + stok işlenir</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() => makeDispatch(ord)}
+                                className="flex-col items-start gap-0 py-1.5"
+                                data-testid={`inv-save-dispatch-${ord.order_number}`}
+                              >
+                                <span className="text-xs font-semibold text-slate-800">
+                                  {ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "İrsaliye olarak kaydet"}
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                  {ord.dispatch_number ? "Bu siparişin irsaliyesi var" : "Sevk irsaliyesi · cari fatura değil"}
+                                </span>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                             );
                           }
                           return (
@@ -1544,6 +1587,18 @@ export default function OrdersB2BPage() {
                               >
                                 <span className="text-xs font-semibold text-slate-800">Faturalaştır</span>
                                 <span className="text-[10px] text-slate-400">Cariye işle · yeşil Faturalaştı</span>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() => makeDispatch(ord)}
+                                className="flex-col items-start gap-0 py-1.5"
+                                data-testid={`inv-save-dispatch-${ord.order_number}`}
+                              >
+                                <span className="text-xs font-semibold text-slate-800">
+                                  {ord.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "İrsaliye olarak kaydet"}
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                  {ord.dispatch_number ? "Bu siparişin irsaliyesi var" : "e-İrsaliye taslağı · fatura değil"}
+                                </span>
                               </DropdownMenuItem>
                               {orderCanIssueEFatura(ord, contacts) && (
                                 <DropdownMenuItem

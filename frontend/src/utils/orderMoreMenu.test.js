@@ -73,12 +73,13 @@ describe("orderMoreMenu", () => {
     expect(labels).toContain("Siparişi PDF İndir");
   });
 
-  it("panel draft (B2B/manual) shows Faturalaştır / Kargola menu", () => {
+  it("panel draft (B2B/manual) shows Faturalaştır / İrsaliye / Kargola menu", () => {
     const ord = { channel: "b2b", is_invoiced: false, order_number: "B2B-1" };
     expect(orderMoreMenuKind(ord)).toBe("panel_draft");
     const { items } = orderMoreMenuItems(ord);
     expect(items.map((i) => i.label)).toEqual([
       "Faturalaştır",
+      "İrsaliye olarak kaydet",
       "Mini Kargo Etiketi Yazdır",
       "Mini Kargo Etiketi Yazdır 10X10",
       "Fatura Tarihi Değiştir",

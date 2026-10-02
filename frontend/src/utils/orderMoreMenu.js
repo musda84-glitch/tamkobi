@@ -138,9 +138,15 @@ export function integrationEInvoiceMoreItems() {
 }
 
 /** B2B / panel / manuel taslak (henüz faturalanmamış) sipariş menüsü. */
-export function panelDraftMoreItems() {
+export function panelDraftMoreItems(ord) {
   return [
     item("faturalastir", "Faturalaştır", FileText, { color: "text-emerald-600" }),
+    item(
+      "dispatch",
+      ord?.dispatch_number ? `İrsaliye: ${ord.dispatch_number}` : "İrsaliye olarak kaydet",
+      Package,
+      { color: "text-fuchsia-600" },
+    ),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
     item("invoice_date", "Fatura Tarihi Değiştir", History, { color: "text-amber-600" }),
@@ -230,7 +236,7 @@ export function orderMoreMenuItems(ord, opts = {}) {
     return { kind, items: panelEInvoiceMoreItems(ord) };
   }
   if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
-  else if (kind === "panel_draft") items = panelDraftMoreItems();
+  else if (kind === "panel_draft") items = panelDraftMoreItems(ord);
   else if (kind === "panel_invoiced") {
     // Faturalaştı: E-Fatura Oluştur + kargo (Excel/PDF yok — referans menü)
     return { kind, items: panelInvoicedMoreItems() };
