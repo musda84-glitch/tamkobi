@@ -1294,8 +1294,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                                               options={products}
                                               getLabel={(p) => p.name}
                                               getSub={(p) => `${p.sku || ""} · stok ${p.stock_quantity ?? "-"}`}
-                                              placeholder={it.product_id ? (it.matched_product_name || products.find((p) => (p.id || p._id) === it.product_id)?.name || "Eşleşti") : "Stok kartı seç…"}
-                                              onChange={(pid) => matchIncomingLine(inv, i, pid)}
+                                              valueLabel={it.matched_product_name || products.find((p) => (p.id || p._id) === it.product_id)?.name || ""}
+                                              placeholder="Stok kartı seç…"
+                                              clearable
+                                              clearLabel="Eşleştirmeyi kaldır"
+                                              onChange={(pid) => matchIncomingLine(inv, i, pid || null)}
                                               testId={`inv-line-select-${inv.invoice_number}-${i}`}
                                             />
                                           </div>

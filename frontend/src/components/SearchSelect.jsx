@@ -1,7 +1,7 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, ChevronDown, Package } from "lucide-react";
+import { Search, ChevronDown, Package, X } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 
 const placeMenu = (anchor, wide) => {
@@ -21,7 +21,22 @@ const placeMenu = (anchor, wide) => {
 
 const optionId = (o) => o?.id ?? o?._id;
 
-export const SearchSelect = ({ value, onChange, options, placeholder = "Ara...", getLabel, getSub, getExtra, getImage, valueLabel = "", testId, className = "", inline = false }) => {
+export const SearchSelect = ({
+  value,
+  onChange,
+  options,
+  placeholder = "Ara...",
+  getLabel,
+  getSub,
+  getExtra,
+  getImage,
+  valueLabel = "",
+  testId,
+  className = "",
+  inline = false,
+  clearable = false,
+  clearLabel = "Seçimi kaldır",
+}) => {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [box, setBox] = useState(null);
@@ -48,6 +63,14 @@ export const SearchSelect = ({ value, onChange, options, placeholder = "Ara...",
   }, [open, getExtra]);
   const selected = options.find((o) => optionId(o) === value);
   const displayLabel = selected ? getLabel(selected) : (value && valueLabel ? valueLabel : "");
+  const hasValue = Boolean(value);
+  const clear = (e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    onChange("", null);
+    setOpen(false);
+    setQ("");
+  };
   const ql = q.toLowerCase();
   const filtered = options.filter((o) => {
     if (!ql) return true;
@@ -58,6 +81,17 @@ export const SearchSelect = ({ value, onChange, options, placeholder = "Ara...",
   const panel = (
     <>
       <div className="relative border-b"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" /><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ad, SKU veya barkod ile ara..." className="w-full pl-8 p-2 text-xs outline-none" data-testid={testId ? `${testId}-search` : undefined} /></div>
+      {clearable && hasValue && (
+        <button
+          type="button"
+          onClick={clear}
+          className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs text-rose-700 hover:bg-rose-50 border-b border-slate-100 font-semibold"
+          data-testid={testId ? `${testId}-clear` : undefined}
+        >
+          <X className="w-3.5 h-3.5 shrink-0" />
+          {clearLabel}
+        </button>
+      )}
       <div className="max-h-48 overflow-y-auto">
         {filtered.length === 0 && <div className="p-3 text-xs text-slate-400 text-center">Sonuç yok</div>}
         {filtered.map((o) => (
@@ -74,7 +108,20 @@ export const SearchSelect = ({ value, onChange, options, placeholder = "Ara...",
       <button type="button" onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1.5 text-left text-xs" data-testid={testId ? `${testId}-trigger` : undefined}>
         {selected && getImage && (getImage(selected) ? <img src={resolveImageUrl(getImage(selected))} alt="" className="w-6 h-6 rounded object-cover shrink-0" /> : <span className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center text-slate-400 shrink-0"><Package className="w-3 h-3" /></span>)}
         <span className={`flex-1 truncate ${displayLabel ? "font-medium text-slate-900" : "text-slate-400"}`}>{displayLabel || placeholder}</span>
-        <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+        {clearable && hasValue && (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={clear}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") clear(e); }}
+            className="p-0.5 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 shrink-0"
+            title={clearLabel}
+            data-testid={testId ? `${testId}-clear-btn` : undefined}
+          >
+            <X className="w-3.5 h-3.5" />
+          </span>
+        )}
+        <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
       </button>
       {open && inline && (
         <div ref={menuRef} className="mt-1 w-full min-w-[280px] bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden" data-testid={testId ? `${testId}-menu` : undefined}>

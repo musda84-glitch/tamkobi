@@ -513,8 +513,11 @@ export default function EdocInboxPage() {
                                 options={products}
                                 getLabel={(p) => p.name}
                                 getSub={(p) => `${p.sku || ""} · stok ${p.stock_quantity ?? "-"}`}
-                                placeholder={l.product_id ? l.product_name : "Stok kartı seç…"}
-                                onChange={(id) => setLine(i, id)}
+                                valueLabel={l.product_name || ""}
+                                placeholder="Stok kartı seç…"
+                                clearable
+                                clearLabel="Eşleştirmeyi kaldır"
+                                onChange={(id) => setLine(i, id || null)}
                                 testId={`edoc-line-select-${i}`}
                               />
                             </div>
