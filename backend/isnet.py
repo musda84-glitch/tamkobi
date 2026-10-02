@@ -1438,6 +1438,25 @@ async def send_document(
                 ),
             )
 
+    buyer_tax_digits = re.sub(
+        r"\D",
+        "",
+        str(
+            (contact or {}).get("tax_number_or_id")
+            or (contact or {}).get("tax_id")
+            or invoice.get("contact_tax_id")
+            or ""
+        ),
+    )
+    if e_type == "e_invoice" and len(buyer_tax_digits) not in (10, 11):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "E-Fatura için cari VKN/TCKN zorunlu. "
+                "Eksik kimlik İşNet'te «Object reference…» hatasına yol açar — cari kartını güncelleyin."
+            ),
+        )
+
     company_for_ubl = {**(company or {})}
     company_for_ubl["tax_number"] = seller_vkn
     try:

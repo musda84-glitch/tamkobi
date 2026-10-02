@@ -264,14 +264,19 @@ def _tax_id(raw: Any) -> Tuple[str, str]:
 
 
 def _party(parent_tag, party: Dict[str, Any], parent, *, send_ready: bool = False):
-    """UBL Party. send_ready: İşNet .NET parse için adres/vergi dairesi boş bırakılmaz."""
+    """UBL Party. send_ready: İşNet .NET parse için kimlik/adres/vergi dairesi boş bırakılmaz."""
     wrap = _cac(parent, parent_tag)
     p = _cac(wrap, "Party")
     scheme, tid = _tax_id(party.get("tax_id") or party.get("tax_number") or party.get("tax_number_or_id"))
-    if tid:
+    if send_ready and len(tid) not in (10, 11):
+        # e-Arşiv nihai tüketici / eksik cari VKN — İşNet PartyIdentification null NRE
+        tid, scheme = "11111111111", "TCKN"
+    if tid or send_ready:
         ident = _cac(p, "PartyIdentification")
-        _cbc(ident, "ID", tid, schemeID=scheme)
+        _cbc(ident, "ID", tid or "11111111111", schemeID=scheme or "TCKN")
     name = (party.get("name") or "").strip()
+    if send_ready and not name:
+        name = "Nihai Tüketici" if scheme == "TCKN" else "Alıcı"
     if name:
         pn = _cac(p, "PartyName")
         _cbc(pn, "Name", name[:200])
@@ -297,19 +302,25 @@ def _party(parent_tag, party: Dict[str, Any], parent, *, send_ready: bool = Fals
     country = _cac(addr, "Country")
     _cbc(country, "Name", "Türkiye")
     office = (party.get("tax_office") or "").strip()
-    # İşNet örnekleri her zaman PartyTaxScheme içerir; boş Name bile NRE'yi önler
+    # İşNet örnekleri her zaman PartyTaxScheme içerir
     if office or send_ready:
         pts = _cac(p, "PartyTaxScheme")
         ts = _cac(pts, "TaxScheme")
-        _cbc(ts, "Name", (office or "-")[:80])
+        _cbc(ts, "Name", (office or "Vergi Dairesi")[:80])
     email = (party.get("email") or "").strip()
     phone = (party.get("phone") or "").strip()
-    if email or phone or send_ready:
+    # Boş Contact (çocuk yok) .NET'te NRE; yalnızca dolu alanlar
+    if email or phone:
         contact = _cac(p, "Contact")
         if phone:
             _cbc(contact, "Telephone", phone[:30])
         if email:
             _cbc(contact, "ElectronicMail", email[:120])
+    if send_ready and scheme == "TCKN" and name:
+        parts = name.split(None, 1)
+        person = _cac(p, "Person")
+        _cbc(person, "FirstName", (parts[0] if parts else "Ad")[:60])
+        _cbc(person, "FamilyName", (parts[1] if len(parts) > 1 else "Soyad")[:60])
     return p
 
 
@@ -509,10 +520,10 @@ def build_invoice_ubl(
 
     totals = _cac(root, "LegalMonetaryTotal")
     _cbc(totals, "LineExtensionAmount", _amt(subtotal + discount if discount else subtotal), currencyID=currency)
-    if discount:
-        _cbc(totals, "AllowanceTotalAmount", _amt(discount), currencyID=currency)
     _cbc(totals, "TaxExclusiveAmount", _amt(subtotal), currencyID=currency)
     _cbc(totals, "TaxInclusiveAmount", _amt(subtotal + vat_total), currencyID=currency)
+    # İşNet örnekleri AllowanceTotalAmount'u her zaman gönderir (0.00 dahil)
+    _cbc(totals, "AllowanceTotalAmount", _amt(discount), currencyID=currency)
     _cbc(totals, "PayableAmount", _amt(grand), currencyID=currency)
 
     if not items:
@@ -524,7 +535,7 @@ def build_invoice_ubl(
         _cbc(line, "ID", str(i))
         qty = float(it.get("quantity") or 1) or 1
         unit = UNIT_CODES.get(str(it.get("unit") or "Adet"), "C62")
-        _cbc(line, "InvoicedQuantity", f"{qty:g}", unitCode=unit)
+        _cbc(line, "InvoicedQuantity", _amt(qty), unitCode=unit)
         net = float(it.get("total") or 0)
         _cbc(line, "LineExtensionAmount", _amt(net), currencyID=currency)
         rate = float(it.get("vat_rate") or 0)
@@ -535,6 +546,7 @@ def build_invoice_ubl(
         # İşNet resmi örnek / n11: satır TaxSubtotal'da tutar + TaxCategory zorunlu
         _cbc(ls, "TaxableAmount", _amt(net), currencyID=currency)
         _cbc(ls, "TaxAmount", _amt(line_vat), currencyID=currency)
+        _cbc(ls, "CalculationSequenceNumeric", "1")
         _cbc(ls, "Percent", f"{rate:g}")
         lcat = _cac(ls, "TaxCategory")
         lsch = _cac(lcat, "TaxScheme")

@@ -237,3 +237,38 @@ def test_builder_zero_vat_still_has_tax_subtotal():
         f"{CAC}InvoiceLine/{CAC}TaxTotal/{CAC}TaxSubtotal/{CAC}TaxCategory/{CAC}TaxScheme/{CBC}Name"
     )
     assert line_cat is not None and line_cat.text == "KDV"
+
+
+def test_builder_send_ready_fills_missing_buyer_identity():
+    """Eksik cari VKN/adres → İşNet PartyIdentification null NRE önlenir."""
+    inv = {
+        "_id": "inv_buyer_gap",
+        "invoice_number": "U052026000000101",
+        "invoice_type": "sales",
+        "e_type": "e_archive",
+        "gib_scenario": "EARSIVFATURA",
+        "issue_date": "2026-10-02",
+        "items": [{"name": "X", "quantity": 1, "unit_price": 10, "vat_rate": 20, "total": 10}],
+        "subtotal": 10,
+        "vat_total": 2,
+        "grand_total": 12,
+    }
+    root = ET.fromstring(
+        ubl_export.build_invoice_ubl(
+            inv,
+            {"name": "Satıcı AŞ", "tax_number": "4810173324", "tax_office": "Tuzla"},
+            {},  # boş alıcı
+            send_ready=True,
+        )
+    )
+    buyer = root.find(f"{CAC}AccountingCustomerParty/{CAC}Party")
+    assert buyer is not None
+    pid = buyer.find(f"{CAC}PartyIdentification/{CBC}ID")
+    assert pid is not None and (pid.text or "").isdigit()
+    assert buyer.find(f"{CAC}PartyName/{CBC}Name") is not None
+    assert buyer.find(f"{CAC}PostalAddress/{CBC}StreetName") is not None
+    assert buyer.find(f"{CAC}PartyTaxScheme/{CAC}TaxScheme/{CBC}Name") is not None
+    assert root.find(f"{CAC}LegalMonetaryTotal/{CBC}AllowanceTotalAmount") is not None
+    # Boş Contact düğümü yok
+    contact = buyer.find(f"{CAC}Contact")
+    assert contact is None or list(contact)
