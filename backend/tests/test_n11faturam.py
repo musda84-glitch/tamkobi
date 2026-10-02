@@ -157,6 +157,35 @@ class TestN11FaturamUnit:
         assert "<cbc:ElectronicMail>alici@example.com</cbc:ElectronicMail>" in xml_ord
         assert "<cbc:CitySubdivisionName>-</cbc:CitySubdivisionName>" not in xml_ord
 
+    def test_build_ubl_return_invoice_type_iade(self):
+        """İade faturası İşNet'e SATIS değil IADE + BillingReference olarak gitmeli."""
+        inv = {
+            "invoice_number": "U052026000000066",
+            "invoice_type": "return",
+            "e_type": "e_invoice",
+            "gib_scenario": "TEMELFATURA",
+            "issue_date": "2026-10-02",
+            "contact_name": "TÜRMOB",
+            "subtotal": 5.9,
+            "vat_total": 1.18,
+            "grand_total": 7.08,
+            "original_invoice_number": "U052026000000065",
+            "original_issue_date": "2026-10-01",
+            "items": [{"name": "Kalem", "quantity": 1, "unit_price": 5.9, "vat_rate": 20, "total": 5.9, "unit": "Adet"}],
+        }
+        company = {"name": "Demo", "tax_number": "1234567801", "city": "İstanbul", "address": "Cadde 1"}
+        contact = {"name": "TÜRMOB", "tax_number_or_id": "1111111111", "city": "İstanbul"}
+        xml, _, _ = n11faturam.build_ubl(inv, company, contact)
+        assert "<cbc:InvoiceTypeCode>IADE</cbc:InvoiceTypeCode>" in xml
+        assert "<cbc:InvoiceTypeCode>SATIS</cbc:InvoiceTypeCode>" not in xml
+        assert "<cac:BillingReference>" in xml
+        assert "U052026000000065" in xml
+        assert "<cbc:DocumentTypeCode>İADE</cbc:DocumentTypeCode>" in xml
+
+        sales_xml, _, _ = n11faturam.build_ubl({**inv, "invoice_type": "sales"}, company, contact)
+        assert "<cbc:InvoiceTypeCode>SATIS</cbc:InvoiceTypeCode>" in sales_xml
+        assert "<cac:BillingReference>" not in sales_xml
+
     def test_parse_ticket_and_send(self):
         assert n11faturam.parse_ticket(_ticket_xml()) == "TICKET-ABC"
         parsed = n11faturam.parse_service_result(n11faturam.parse_soap_xml(_send_xml()), "SendInvoiceDataResult")

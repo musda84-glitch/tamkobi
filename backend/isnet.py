@@ -974,9 +974,10 @@ def build_structured_invoice(
     scen = invoice.get("gib_scenario") or invoice.get("_profile_override") or ""
     if scen not in ("TEMELFATURA", "TICARIFATURA", "EARSIVFATURA", "IHRACAT"):
         scen = "EARSIVFATURA" if is_earchive else "TICARIFATURA"
-    inv_type = (invoice.get("invoice_type_code") or invoice.get("gib_invoice_type") or "SATIS").upper()
-    if inv_type not in ("SATIS", "IADE", "TEVKIFAT", "ISTISNA", "OZELMATRAH", "IHRACKAYITLI"):
-        inv_type = "SATIS"
+    # TamKobi invoice_type=return/sales_return/iade → GİB IADE (önceden hep SATIS kalıyordu)
+    import ubl_export
+
+    inv_type = ubl_export.gib_invoice_type_code(invoice)
 
     ettn = str(invoice.get("gib_uuid") or invoice.get("ettn") or _uuid.uuid4()).upper()
     external = str(

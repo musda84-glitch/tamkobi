@@ -450,10 +450,44 @@ def test_build_structured_invoice_omits_invoice_number():
     )
     assert "InvoiceNumber" not in payload
     assert payload["ScenarioType"] == "TICARIFATURA"
+    assert payload["InvoiceType"] == "SATIS"
     assert payload["ReceiverInboxTag"] == "urn:mail:pk@x.com"
     assert payload["ExternalInvoiceCode"]
     assert len(payload["InvoiceDetails"]) == 1
     assert isnet.is_ettn_uuid(payload["ETTN"])
+
+
+def test_build_structured_invoice_return_is_iade():
+    """TamKobi İade (invoice_type=return) → İşNet InvoiceType IADE (SATIS değil)."""
+    inv = {
+        "invoice_number": "U052026000000066",
+        "invoice_type": "return",
+        "issue_date": "2026-10-02",
+        "items": [{"name": "Kalem", "quantity": 1, "unit_price": 5.9, "vat_rate": 20}],
+        "subtotal": 5.9,
+        "vat_total": 1.18,
+        "grand_total": 7.08,
+        "gib_scenario": "TEMELFATURA",
+        "original_invoice_number": "U052026000000065",
+        "original_issue_date": "2026-10-01",
+    }
+    payload = isnet.build_structured_invoice(
+        inv,
+        {"tax_number": "4810173324"},
+        {"name": "Alıcı", "tax_number_or_id": "1234567890"},
+        is_earchive=False,
+        receiver_alias="urn:mail:pk@x.com",
+    )
+    assert payload["InvoiceType"] == "IADE"
+    assert payload["ScenarioType"] == "TEMELFATURA"
+
+    sales_return = isnet.build_structured_invoice(
+        {**inv, "invoice_type": "sales_return"},
+        {"tax_number": "4810173324"},
+        {"name": "Alıcı", "tax_number_or_id": "1234567890"},
+        is_earchive=False,
+    )
+    assert sales_return["InvoiceType"] == "IADE"
 
 
 def test_serialize_structured_uses_invoice_element():
