@@ -161,6 +161,8 @@ def format_integrator_gib_status(
     portal_status: str = "",
     verified: bool = False,
     status_code: str = "",
+    detail_status: str = "",
+    process_status: str = "",
 ) -> str:
     """Liste «GİB Durumu» metni — test/canlı + GİB iletim (DetailStatus/1300)."""
     mode_l = (mode or "").strip().lower()
@@ -168,15 +170,24 @@ def format_integrator_gib_status(
     prefix = "Test · " if is_test else ""
     portal = (portal_status or "").strip()
     code = (status_code or "").strip()
+    detail = (detail_status or "").strip()
+    process = (process_status or "").strip()
 
-    # Ham DetailStatus enum / kod gelmişse Türkçe iletime çevir
-    if portal or code:
+    # Ham DetailStatus (1300) süreç Status (Ziplendi) üzerine öncelikli
+    if detail or process or portal or code:
         try:
-            resolved = isnet.resolve_gib_transmission_status(
-                detail_status=portal if "_" in portal or (portal.isdigit()) else "",
-                process_status="" if ("_" in portal or portal.isdigit()) else portal,
-                status_code=code,
-            )
+            if detail or process:
+                resolved = isnet.resolve_gib_transmission_status(
+                    detail_status=detail,
+                    process_status=process or portal,
+                    status_code=code,
+                )
+            else:
+                resolved = isnet.resolve_gib_transmission_status(
+                    detail_status=portal if "_" in portal or (portal.isdigit()) else "",
+                    process_status="" if ("_" in portal or portal.isdigit()) else portal,
+                    status_code=code,
+                )
             if resolved.get("status"):
                 portal = resolved["status"]
             if resolved.get("status_code"):
@@ -576,12 +587,17 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             portal_status=sent.get("gib_status_raw") or "",
             verified=bool(sent.get("verified")),
             status_code=str(sent.get("gib_status_code") or ""),
+            detail_status=str(sent.get("detail_status") or ""),
+            process_status=str(sent.get("process_status") or ""),
         )
+        gib_code = sent.get("gib_status_code") or None
+        if not gib_code and "Başarıyla Tamamlandı" in gib_status:
+            gib_code = "1300"
         patch = {
             "status": "approved",
             "einvoice_state": "sent",
             "gib_status": gib_status,
-            "gib_status_code": sent.get("gib_status_code") or None,
+            "gib_status_code": gib_code,
             "gib_tracking_id": tracking,
             "gib_uuid": sent.get("ettn"),
             "gib_invoice_id": gib_no or None,
@@ -873,9 +889,13 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
         portal_status=(info.get("status") or "").strip(),
         verified=True,
         status_code=str(info.get("status_code") or ""),
+        detail_status=str(info.get("detail_status") or ""),
+        process_status=str(info.get("process_status") or ""),
     )
     if info.get("status_code"):
         patch["gib_status_code"] = info.get("status_code")
+    elif "Başarıyla Tamamlandı" in (patch.get("gib_status") or ""):
+        patch["gib_status_code"] = "1300"
     if patch:
         await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
     refreshed = await _db.invoices.find_one({"_id": invoice_id}) or {**inv, **patch}
@@ -1208,7 +1228,7 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
                 patch["invoice_number"] = gib_no
 
         portal_status = (info.get("status") or "").strip()
-        if portal_status or gib_no or url:
+        if portal_status or gib_no or url or info.get("detail_status"):
             label = "İşNet SOAP API" if provider == "isnet" else "İşNet Web Portal"
             new_gs = format_integrator_gib_status(
                 label=label,
@@ -1216,11 +1236,15 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
                 portal_status=portal_status,
                 verified=True,
                 status_code=str(info.get("status_code") or ""),
+                detail_status=str(info.get("detail_status") or ""),
+                process_status=str(info.get("process_status") or ""),
             )
             if new_gs != (inv.get("gib_status") or ""):
                 patch["gib_status"] = new_gs
             if info.get("status_code"):
                 patch["gib_status_code"] = info.get("status_code")
+            elif "Başarıyla Tamamlandı" in new_gs:
+                patch["gib_status_code"] = "1300"
 
         if patch:
             await _db.invoices.update_one({"_id": inv["_id"]}, {"$set": patch})

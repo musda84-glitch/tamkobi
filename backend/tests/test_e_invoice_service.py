@@ -97,6 +97,24 @@ class TestScenarioAndBuyer:
         assert e_invoice.format_integrator_gib_status(
             label="İşNet SOAP API", mode="live", portal_status="", verified=True
         ).startswith("İşNet")
+        # DetailStatus 1300, süreç Ziplendi → Başarıyla Tamamlandı (Ziplenmiş değil)
+        assert e_invoice.format_integrator_gib_status(
+            label="İşNet",
+            mode="test",
+            portal_status="Ziplenmiş",
+            detail_status="Basariyla_Tamamlandi",
+            process_status="Ziplendi",
+            status_code="",
+            verified=True,
+        ) == "Test · Başarıyla Tamamlandı"
+        assert "Ziplenmiş" not in e_invoice.format_integrator_gib_status(
+            label="İşNet",
+            mode="test",
+            portal_status="Ziplenmiş",
+            detail_status="1300",
+            process_status="Ziplendi",
+            verified=True,
+        )
 
 
 class TestResolveBuyerMukellef:

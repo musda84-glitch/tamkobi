@@ -341,6 +341,53 @@ def _find_text(root: Optional[ET.Element], *names: str) -> str:
     return ""
 
 
+def _element_value(el: Optional[ET.Element]) -> str:
+    """Düz metin veya iç içe Code/Value/Id (WCF enum / kompleks DetailStatus)."""
+    if el is None:
+        return ""
+    direct = _text(el)
+    if direct:
+        return direct
+    for child_name in ("Code", "Value", "Id", "StatusCode", "DetailStatusCode", "Description", "Name"):
+        for child in el:
+            if _local(child.tag).lower() == child_name.lower():
+                t = _text(child)
+                if t:
+                    return t
+    for child in el.iter():
+        if child is el:
+            continue
+        if _local(child.tag).lower() in {
+            "code",
+            "value",
+            "id",
+            "statuscode",
+            "detailstatuscode",
+        }:
+            t = _text(child)
+            if t:
+                return t
+    return ""
+
+
+def _find_value(root: Optional[ET.Element], *names: str) -> str:
+    """Önce doğrudan çocuk, sonra derin arama — Status/DetailStatus için."""
+    if root is None:
+        return ""
+    wanted = {n.lower() for n in names}
+    for el in list(root):
+        if _local(el.tag).lower() in wanted:
+            val = _element_value(el)
+            if val:
+                return val
+    for el in root.iter():
+        if _local(el.tag).lower() in wanted:
+            val = _element_value(el)
+            if val:
+                return val
+    return ""
+
+
 def _find_all_texts(root: Optional[ET.Element], *names: str) -> List[str]:
     """Tüm eşleşen etiket metinleri (ilk değil) — iç içe Result=Failed kaçmasın."""
     if root is None:
@@ -531,13 +578,23 @@ def resolve_gib_transmission_status(
 
 def _search_row_from_el(inv: ET.Element) -> Dict[str, Any]:
     """SearchInvoice / SearchArchiveInvoice satırı — DetailStatus = GİB iletim."""
-    process = _find_text(inv, "Status", "State", "StatusDescription", "InvoiceStatus")
-    detail = _find_text(inv, "DetailStatus", "InvoiceDetailStatus")
-    # StatusCode alanı Invoice'da yok; yanlışlıkla nested Code çekilmesin
+    # Doğrudan çocuk tercih: satır kalemi Status ile karışmasın
+    process = _find_value(inv, "Status", "State", "StatusDescription", "InvoiceStatus")
+    detail = _find_value(
+        inv,
+        "DetailStatus",
+        "InvoiceDetailStatus",
+        "GibDetailStatus",
+        "EnvelopeDetailStatus",
+    )
+    # Bazı yanıtlarda kod ayrı alanda
+    detail_code = _find_value(
+        inv, "DetailStatusCode", "InvoiceDetailStatusCode", "GibStatusCode", "EnvelopeStatusCode"
+    )
     resolved = resolve_gib_transmission_status(
         detail_status=detail,
         process_status=process,
-        status_code="",
+        status_code=detail_code,
     )
     return {
         "ettn": _find_text(inv, "ETTN", "Ettn", "UUID", "InvoiceETTN"),
@@ -546,7 +603,7 @@ def _search_row_from_el(inv: ET.Element) -> Dict[str, Any]:
         ),
         "status": resolved["status"],
         "status_code": resolved["status_code"],
-        "detail_status": detail,
+        "detail_status": detail or detail_code,
         "process_status": process,
         "envelope_id": _find_text(inv, "EnvelopeId", "EnvelopeID"),
         "status_source": resolved["source"],
@@ -1417,6 +1474,8 @@ async def send_document(
         "verify_via": verified.get("via") or "",
         "gib_status_raw": portal_status,
         "gib_status_code": portal_code,
+        "detail_status": (verified.get("detail_status") or "").strip(),
+        "process_status": (verified.get("process_status") or "").strip(),
         "mode": "test" if is_test_mode(merged) else "live",
         "send_mode": send_mode,
     }
@@ -1544,19 +1603,46 @@ async def try_verify_outgoing_in_portal(
     found_detail = ""
     found_process = ""
     via = ""
+    found_rank = -1
+
+    def _status_rank(row: Dict[str, Any]) -> int:
+        """1300 / DetailStatus, süreç Ziplendi'nin üzerine yazılmasın."""
+        code = str(row.get("status_code") or "").strip()
+        status = str(row.get("status") or "").strip().lower().replace("ı", "i").replace("İ", "i")
+        src = str(row.get("status_source") or "")
+        detail = str(row.get("detail_status") or "").strip()
+        if code == "1300" or "basariyla tamamland" in status:
+            return 100
+        if code in ("1220", "1200"):
+            return 80
+        if src == "detail" and code and code not in ("1", ""):
+            return 60
+        if detail and _norm_status_key(detail) not in ("", "zarflanmadi", "1"):
+            return 55
+        if "ziplen" in status:
+            return 15
+        if row.get("status"):
+            return 30
+        return 0
 
     def _apply_row(row: Dict[str, Any]) -> None:
-        nonlocal found_no, found_status, found_code, found_detail, found_process, via
+        nonlocal found_no, found_status, found_code, found_detail, found_process, via, found_rank
         row_no = (row.get("invoice_id") or "").strip()
         if row_no:
             found_no = row_no
-        if row.get("status"):
-            found_status = str(row.get("status") or "").strip()
-        if row.get("status_code"):
-            found_code = str(row.get("status_code") or "").strip()
-        if row.get("detail_status"):
-            found_detail = str(row.get("detail_status") or "").strip()
-        if row.get("process_status"):
+        rank = _status_rank(row)
+        # Daha iyi GİB DetailStatus (1300) süreç Ziplendi'yi ezmesin diye rank
+        if rank >= found_rank and (row.get("status") or row.get("status_code") or row.get("detail_status")):
+            found_rank = rank
+            if row.get("status"):
+                found_status = str(row.get("status") or "").strip()
+            if row.get("status_code"):
+                found_code = str(row.get("status_code") or "").strip()
+            if row.get("detail_status"):
+                found_detail = str(row.get("detail_status") or "").strip()
+            if row.get("process_status"):
+                found_process = str(row.get("process_status") or "").strip()
+        elif row.get("process_status") and not found_process:
             found_process = str(row.get("process_status") or "").strip()
         via = via or "search"
 
@@ -1606,8 +1692,10 @@ async def try_verify_outgoing_in_portal(
         except HTTPException as e:
             logger.info("isnet soft-verify search miss ettn=%s try=%s: %s", ettn, attempt + 1, e.detail)
 
-        # Fatura no bulunduysa hemen dön; yalnız viewer URL varsa no için tekrar dene
-        if found_no:
+        # Fatura no + nihai 1300 → hemen dön. Ziplendi ara durumsa DetailStatus için tekrar dene.
+        terminal = found_rank >= 100
+        last_try = attempt >= len(delays) - 1
+        if found_no and (terminal or last_try):
             return {
                 "ok": True,
                 "document_url": last_url,
