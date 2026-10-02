@@ -26,7 +26,7 @@ import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { Printer, Tag, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Factory } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
-import { printMiniInvoices } from "../utils/miniInvoicePrint";
+import { printMiniInvoices, printMiniInvoicesFromIntegrator } from "../utils/miniInvoicePrint";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
 import { CargoLabel } from "../components/CargoLabel";
@@ -374,6 +374,15 @@ export default function OrdersB2BPage() {
     if (action === "einvoice_print" || action === "invoice_print") { openInvoicePdfs(list); return; }
     if (action === "mini_10x15" || action === "mini_8x20") {
       const size = action === "mini_8x20" ? "8x20" : "10x15";
+      // GİB e-belgesi kesilmiş siparişler → entegratör PDF; aksi halde yerel mini fiş
+      const issued = list.filter((o) => o.invoice_id && (o.einvoice_state === "sent" || o.einvoice_state === "queued" || o.gib_uuid || o.is_invoiced));
+      if (issued.length) {
+        const r = await printMiniInvoicesFromIntegrator(issued, { apiUrl: API_URL, axiosClient: axios });
+        if (r.ok) toast.success(r.message || `${r.ok} entegratör PDF yazdırmaya açıldı.`);
+        if (r.fail) toast.error(r.message || "Entegratör PDF yazdırılamadı.");
+        if (!r.ok && !r.fail) toast.error(r.message || "Yazdırılacak e-fatura yok.");
+        return;
+      }
       if (!printMiniInvoices(list, activeCompany, size)) toast.error("Seçili siparişlerde yazdırılacak fatura yok veya açılır pencere engellendi.");
       else toast.success("Mini fatura fişi yazdırmaya gönderildi.");
       return;
@@ -889,6 +898,12 @@ export default function OrdersB2BPage() {
   const runBulkForOrder = async (actionId, ord) => {
     if (actionId === "mini_10x15" || actionId === "mini_8x20") {
       const size = actionId === "mini_8x20" ? "8x20" : "10x15";
+      if (ord.invoice_id) {
+        const r = await printMiniInvoicesFromIntegrator([ord], { apiUrl: API_URL, axiosClient: axios });
+        if (r.ok) toast.success("Entegratör e-belge PDF yazdırmaya açıldı.");
+        else toast.error(r.message || "Entegratör PDF yazdırılamadı.");
+        return;
+      }
       if (!printMiniInvoices([ord], activeCompany, size)) toast.error("Yazdırılacak fatura yok veya pencere engellendi.");
       else toast.success("Mini fatura fişi yazdırmaya gönderildi.");
       return;
