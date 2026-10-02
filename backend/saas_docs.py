@@ -161,13 +161,17 @@ async def invoice_pdf(
     wants_integrator = (
         et in ("e_invoice", "e_archive", "e_export")
         and inv.get("status") != "draft"
+        and inv.get("status") != "cancelled"
         and inv.get("einvoice_state") != "error"
         and not re.match(r"^\s*hata\s*:", gs, re.I)
         and (
             inv.get("einvoice_state") in ("sent", "queued")
             or inv.get("gib_uuid")
             or inv.get("gib_tracking_id")
-            or bool(re.search(r"ileti|GİB'e|SOAP API|Web Portal|n11 Faturam", gs, re.I))
+            or inv.get("direction") == "incoming"
+            or inv.get("source") == "edoc_inbox"
+            or inv.get("edoc_id")
+            or bool(re.search(r"gelen|received|ileti|GİB'e|SOAP API|Web Portal|n11 Faturam", gs, re.I))
         )
     )
     # GİB'e iletilmiş e-belge: resmi entegratör PDF (İşNet GetInvoicePdf)
