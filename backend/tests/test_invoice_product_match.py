@@ -135,6 +135,31 @@ def test_match_rejects_outgoing_sales():
     assert e.value.status_code == 400
 
 
+def test_match_invoice_item_clears_product():
+    """Eşleştirmeyi kaldır — product_id null/boş."""
+    inv = {
+        "_id": "inv_clear",
+        "company_id": "c1",
+        "invoice_type": "purchase",
+        "direction": "incoming",
+        "status": "approved",
+        "items": [{
+            "name": "İçim Peynir",
+            "product_id": "p1",
+            "matched_product_name": "İçim Peynir",
+        }],
+    }
+    server.db.invoices.find_one = AsyncMock(return_value=inv)
+    server.db.products.find_one = AsyncMock(return_value=None)
+    server.db.invoices.update_one = AsyncMock()
+    server.db.products.update_one = AsyncMock()
+    out = _run(server.match_invoice_item_product("inv_clear", {"idx": 0, "product_id": None}))
+    assert out["status"] == "success"
+    assert out["invoice"]["items"][0]["product_id"] == ""
+    assert out["invoice"]["items"][0].get("matched_product_name") is None
+    assert "kaldır" in out["message"].lower()
+
+
 def test_routes_registered():
     paths = [getattr(r, "path", "") or "" for r in server.api_router.routes]
     assert any(p.endswith("/invoices/{invoice_id}/items/match") for p in paths)
