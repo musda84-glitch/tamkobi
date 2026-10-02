@@ -93,3 +93,30 @@ def test_invoice_pdf_returns_integrator_bytes_with_header():
     assert resp.body == pdf
     assert resp.headers.get("x-document-source") == "integrator"
     assert "pdf" in (resp.media_type or "")
+
+
+def test_e_invoice_pdf_endpoint_prefers_integrator():
+    """Sipariş menüsü /e-invoice/{id}/pdf — entegratör PDF."""
+    import e_invoice
+
+    inv = {
+        "_id": "inv_pdf_menu",
+        "company_id": "c1",
+        "invoice_number": "TA202600000200",
+        "e_type": "e_archive",
+        "status": "approved",
+        "einvoice_state": "sent",
+        "gib_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    }
+    fake_db = MagicMock()
+    fake_db.invoices.find_one = AsyncMock(return_value=inv)
+    e_invoice.init(fake_db)
+    pdf = b"%PDF-1.4 menu-integrator"
+
+    with patch("e_invoice.fetch_integrator_pdf", AsyncMock(return_value=pdf)):
+        resp = asyncio.get_event_loop().run_until_complete(
+            e_invoice.api_einvoice_pdf("inv_pdf_menu", download=True)
+        )
+    assert resp.body == pdf
+    assert resp.headers.get("x-document-source") == "integrator"
+    assert "attachment" in (resp.headers.get("content-disposition") or "")

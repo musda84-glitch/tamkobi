@@ -65,6 +65,7 @@ describe("orderMoreMenu", () => {
     expect(labels.slice(0, -2)).toEqual(integrationEInvoiceMoreItems().map((i) => i.label));
     expect(labels[0]).toBe("Siparişin Güncel Durumunu Getir");
     expect(labels).toContain("E-Fatura XML'i İndir");
+    expect(labels).toContain("E-Fatura PDF İndir");
     expect(labels).toContain("Kargola");
     expect(labels).not.toContain("Navlungo Siparişi Oluştur");
     expect(labels).toContain("Pazaryeri Kargo Firmasını Değiştir");
@@ -126,6 +127,7 @@ describe("orderMoreMenu", () => {
       "E-Arşiv Yazdır & Gönder",
       "Kargola",
       "E-Arşiv XML'i İndir",
+      "E-Arşiv PDF İndir",
     ]);
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("E-Fatura Oluştur");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Siparişi Excel İndir");
@@ -142,6 +144,7 @@ describe("orderMoreMenu", () => {
       "E-Fatura Yazdır & Gönder",
       "Kargola",
       "E-Fatura XML'i İndir",
+      "E-Fatura PDF İndir",
     ]);
   });
 

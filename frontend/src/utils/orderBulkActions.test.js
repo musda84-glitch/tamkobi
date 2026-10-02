@@ -17,6 +17,7 @@ test("bulk menu lists the order actions and only refresh works with an empty sel
     "Toplu Sipariş Onayla",
     "Toplu Kargo Siparişi Oluştur",
     "Toplu E-Fatura XML'i İndir",
+    "Toplu E-Fatura PDF İndir",
     "Toplu Fatura Linki gönder",
     "Siparişlerin Güncel Durumlarını Getir",
     "Toplu Navlungo Kargo Etiketi Yazdır",

@@ -26,7 +26,7 @@ import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { Printer, Tag, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Factory } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
-import { printMiniInvoices } from "../utils/miniInvoicePrint";
+import { printMiniInvoices, printMiniInvoicesFromIntegrator } from "../utils/miniInvoicePrint";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
 import { CargoLabel } from "../components/CargoLabel";
@@ -270,6 +270,64 @@ export default function OrdersB2BPage() {
       toast[fail ? "error" : "success"](`${ok} XML indirildi${fail ? `, ${fail} hata` : ""}.`);
     }
   };
+  /** E-Fatura/e-Arşiv PDF — önce entegratör (İşNet), yoksa yerel. */
+  const downloadInvoicePdf = async (list) => {
+    const ids = [...new Set(list.map((o) => o.invoice_id).filter(Boolean))];
+    if (!ids.length) { toast.error("Seçili siparişlerde e-fatura yok."); return; }
+    let ok = 0, fail = 0;
+    const failMsgs = [];
+    const blobErrorDetail = async (err) => {
+      const blob = err?.response?.data;
+      if (blob instanceof Blob) {
+        try {
+          const j = JSON.parse(await blob.text());
+          if (j?.detail) return typeof j.detail === "string" ? j.detail : "PDF indirilemedi.";
+        } catch { /* ignore */ }
+      }
+      const d = err?.response?.data?.detail || err?.message;
+      return typeof d === "string" ? d : "PDF indirilemedi.";
+    };
+    for (const id of ids) {
+      try {
+        let r;
+        try {
+          r = await axios.get(`${API_URL}/e-invoice/${id}/pdf`, { params: { download: 1 }, responseType: "blob" });
+        } catch (firstErr) {
+          try {
+            r = await axios.get(`${API_URL}/invoices/${id}/pdf`, { params: { download: 1 }, responseType: "blob" });
+          } catch (secondErr) {
+            throw secondErr?.response ? secondErr : firstErr;
+          }
+        }
+        const ct = String(r.headers?.["content-type"] || "");
+        if (ct.includes("json")) {
+          const text = typeof r.data?.text === "function" ? await r.data.text() : await new Response(r.data).text();
+          let detail = "PDF indirilemedi.";
+          try { detail = JSON.parse(text)?.detail || detail; } catch { /* ignore */ }
+          failMsgs.push(typeof detail === "string" ? detail : "PDF indirilemedi.");
+          fail++;
+          continue;
+        }
+        const url = URL.createObjectURL(r.data);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `efatura-${id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        ok++;
+      } catch (err) {
+        fail++;
+        failMsgs.push(await blobErrorDetail(err));
+      }
+    }
+    if (fail && !ok) {
+      toast.error(failMsgs[0] || "PDF indirilemedi.");
+    } else {
+      toast[fail ? "error" : "success"](`${ok} PDF indirildi${fail ? `, ${fail} hata` : ""}.`);
+    }
+  };
   const carrierLabels = (list, needle, title) => {
     const hit = list.filter((o) => String(o.cargo_carrier || "").toLowerCase().includes(needle));
     if (!hit.length) { toast.error(`Seçili siparişlerde ${title} gönderisi yok.`); return; }
@@ -316,11 +374,21 @@ export default function OrdersB2BPage() {
     if (action === "einvoice_print" || action === "invoice_print") { openInvoicePdfs(list); return; }
     if (action === "mini_10x15" || action === "mini_8x20") {
       const size = action === "mini_8x20" ? "8x20" : "10x15";
+      // GİB e-belgesi kesilmiş siparişler → entegratör PDF; aksi halde yerel mini fiş
+      const issued = list.filter((o) => o.invoice_id && (o.einvoice_state === "sent" || o.einvoice_state === "queued" || o.gib_uuid || o.is_invoiced));
+      if (issued.length) {
+        const r = await printMiniInvoicesFromIntegrator(issued, { apiUrl: API_URL, axiosClient: axios });
+        if (r.ok) toast.success(r.message || `${r.ok} entegratör PDF yazdırmaya açıldı.`);
+        if (r.fail) toast.error(r.message || "Entegratör PDF yazdırılamadı.");
+        if (!r.ok && !r.fail) toast.error(r.message || "Yazdırılacak e-fatura yok.");
+        return;
+      }
       if (!printMiniInvoices(list, activeCompany, size)) toast.error("Seçili siparişlerde yazdırılacak fatura yok veya açılır pencere engellendi.");
       else toast.success("Mini fatura fişi yazdırmaya gönderildi.");
       return;
     }
     if (action === "xml") { await downloadInvoiceXml(list); return; }
+    if (action === "efatura_pdf") { await downloadInvoicePdf(list); return; }
     if (action === "delete") {
       const deletable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
       if (!deletable.length) { toast.error("Faturalanmış siparişler silinemez."); return; }
@@ -700,7 +768,7 @@ export default function OrdersB2BPage() {
       await handleEBelgeInvoice(ord, extra.eType || actionId.replace(/^ebelge_/, ""));
       return;
     }
-    if (["mini_10x15", "mini_8x20", "cargo_mini", "cargo_10x10", "xml", "invoice_link", "refresh_status"].includes(actionId)) {
+    if (["mini_10x15", "mini_8x20", "cargo_mini", "cargo_10x10", "xml", "efatura_pdf", "invoice_link", "refresh_status"].includes(actionId)) {
       await runBulkForOrder(actionId, ord);
       return;
     }
@@ -830,6 +898,12 @@ export default function OrdersB2BPage() {
   const runBulkForOrder = async (actionId, ord) => {
     if (actionId === "mini_10x15" || actionId === "mini_8x20") {
       const size = actionId === "mini_8x20" ? "8x20" : "10x15";
+      if (ord.invoice_id) {
+        const r = await printMiniInvoicesFromIntegrator([ord], { apiUrl: API_URL, axiosClient: axios });
+        if (r.ok) toast.success("Entegratör e-belge PDF yazdırmaya açıldı.");
+        else toast.error(r.message || "Entegratör PDF yazdırılamadı.");
+        return;
+      }
       if (!printMiniInvoices([ord], activeCompany, size)) toast.error("Yazdırılacak fatura yok veya pencere engellendi.");
       else toast.success("Mini fatura fişi yazdırmaya gönderildi.");
       return;
@@ -847,6 +921,10 @@ export default function OrdersB2BPage() {
     }
     if (actionId === "xml") {
       await downloadInvoiceXml([ord]);
+      return;
+    }
+    if (actionId === "efatura_pdf") {
+      await downloadInvoicePdf([ord]);
       return;
     }
     if (actionId === "invoice_link") {
