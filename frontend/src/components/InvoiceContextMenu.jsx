@@ -706,7 +706,8 @@ export const InvoiceContextMenu = (props) => {
       {onDispatch && inv.invoice_type === "sales" && (
         <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />
       )}
-      {isEinvoiceConfigured(einvoiceSettings) && (
+      {/* Alış faturalarında İŞNET/GİB kutu navigasyonu gösterilmez (satış menüsünde kalır). */}
+      {isEinvoiceConfigured(einvoiceSettings) && !isPurchase && (
         <div className="border-t border-slate-100 mt-1 pt-1" data-testid="ctx-integrator-section">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-indigo-700">
             {einvoiceProviderLabel(einvoiceSettings.provider).toUpperCase()} · GİB
@@ -761,7 +762,7 @@ export const InvoiceContextMenu = (props) => {
               testId="ctx-filter-dispatch"
             />
           )}
-          {(inv.gib_uuid || inv.gib_tracking_id) && !isPurchase && (
+          {(inv.gib_uuid || inv.gib_tracking_id) && (
             <Item
               icon={RefreshCw}
               color="text-emerald-600"
