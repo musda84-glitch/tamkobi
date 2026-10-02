@@ -381,7 +381,55 @@ def test_wait_for_gib_keeps_polling_past_ziplendi_until_1300():
 def test_is_pending_process_status_ziplendi():
     assert isnet._is_pending_process_status("Ziplendi", "Ziplenmiş", "") is True
     assert isnet._is_pending_process_status("Imza_Bekliyor", "", "") is True
+    assert isnet._is_pending_process_status("Onay_Bekliyor", "Onay bekliyor", "") is True
+    assert isnet._is_pending_process_status("Gibe_Iletildi", "GİB'e iletildi", "1") is True
+    assert isnet._is_pending_process_status("Gonderildi", "Başarıyla Tamamlandı", "1300") is False
     assert isnet._is_pending_process_status("Gonderildi", "Gönderildi", "") is False
+
+
+def test_search_invoice_filters_wsdl_field_names():
+    f = isnet._search_invoice_filters(
+        ettn="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        invoice_number="U052026000000073",
+    )
+    assert f["Ettn"] == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    assert f["MinInvoiceNumber"] == "U052026000000073"
+    assert f["MaxInvoiceNumber"] == "U052026000000073"
+    assert "ETTN" not in f
+    assert "InvoiceNumber" not in f
+
+
+def test_is_outbound_gib_pending():
+    assert isnet.is_outbound_gib_pending(gib_status="Test · İmza bekliyor", gib_status_code="") is True
+    assert isnet.is_outbound_gib_pending(gib_status="Test · Ziplenmiş — GİB iletimi bekleniyor") is True
+    assert isnet.is_outbound_gib_pending(gib_status="Test · Başarıyla Tamamlandı", gib_status_code="1300") is False
+
+
+def test_search_outgoing_passes_ettnto_soap_request():
+    """SearchInvoice — Ettn (ETTN değil) SOAP gövdesine yazılmalı."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    ettn = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    captured = {}
+
+    async def fake_soap(*_a, **kw):
+        captured.update(kw.get("request") or {})
+        xml = """
+        <Invoice xmlns="http://schemas.datacontract.org/2004/07/EInvoice.Service.Model">
+          <ETTN>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</ETTN>
+          <InvoiceNumber>U052026000000073</InvoiceNumber>
+          <Status>Gonderildi</Status>
+          <DetailStatus>Basariyla_Tamamlandi</DetailStatus>
+        </Invoice>
+        """
+        return ET.fromstring(f"<Body>{xml}</Body>")
+
+    with patch("isnet._soap_call", side_effect=fake_soap):
+        rows = asyncio.get_event_loop().run_until_complete(
+            isnet.search_outgoing_invoice(settings, ettn=ettn)
+        )
+    assert captured.get("Ettn") == ettn
+    assert "ETTN" not in captured
+    assert rows[0]["status_code"] == "1300"
 
 
 def test_send_document_accepts_soap_success_without_immediate_portal():
