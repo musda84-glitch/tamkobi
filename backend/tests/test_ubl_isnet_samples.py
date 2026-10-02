@@ -239,6 +239,64 @@ def test_builder_zero_vat_still_has_tax_subtotal():
     assert line_cat is not None and line_cat.text == "KDV"
 
 
+def test_builder_iade_forces_temel_not_ticari():
+    """GİB Schematron: IADE + TICARIFATURA → hata; TEMELFATURA'ya düş."""
+    inv = {
+        "_id": "inv_iade_ticari",
+        "invoice_number": "U052026000000110",
+        "invoice_type": "return",
+        "e_type": "e_invoice",
+        "gib_scenario": "TICARIFATURA",
+        "issue_date": "2026-10-02",
+        "original_invoice_number": "U052026000000065",
+        "original_issue_date": "2026-09-29",
+        "items": [{"name": "X", "quantity": 1, "unit_price": 10, "vat_rate": 20, "total": 10}],
+        "subtotal": 10,
+        "vat_total": 2,
+        "grand_total": 12,
+    }
+    root = ET.fromstring(
+        ubl_export.build_invoice_ubl(
+            inv,
+            {"name": "S", "tax_number": "4810173324"},
+            {"name": "B", "tax_number_or_id": "4810173324"},
+            send_ready=True,
+        )
+    )
+    assert _txt(root, "InvoiceTypeCode") == "IADE"
+    assert _txt(root, "ProfileID") == "TEMELFATURA"
+    br = root.find(f"{CAC}BillingReference/{CAC}InvoiceDocumentReference")
+    assert br is not None
+    assert br.find(f"{CBC}ID").text == "U052026000000065"
+    assert br.find(f"{CBC}DocumentTypeCode").text == "İADE"
+    assert br.find(f"{CBC}IssueDate") is not None
+
+
+def test_builder_iade_send_ready_requires_billing_ref():
+    inv = {
+        "_id": "inv_iade_noref",
+        "invoice_number": "U052026000000111",
+        "invoice_type": "return",
+        "e_type": "e_invoice",
+        "gib_scenario": "TEMELFATURA",
+        "issue_date": "2026-10-02",
+        "items": [{"name": "X", "quantity": 1, "unit_price": 10, "vat_rate": 20, "total": 10}],
+        "subtotal": 10,
+        "vat_total": 2,
+        "grand_total": 12,
+    }
+    try:
+        ubl_export.build_invoice_ubl(
+            inv,
+            {"name": "S", "tax_number": "4810173324"},
+            {"name": "B", "tax_number_or_id": "4810173324"},
+            send_ready=True,
+        )
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "BillingReference" in str(e) or "orijinal" in str(e).lower()
+
+
 def test_builder_send_ready_fills_missing_buyer_identity():
     """Eksik cari VKN/adres → İşNet PartyIdentification null NRE önlenir."""
     inv = {

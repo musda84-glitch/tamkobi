@@ -69,6 +69,14 @@ export function ElektronikFaturaOnayModal({
   const askWithholding = invoiceNeedsWithholdingPrompt(invoice || doc);
   const [withholdingValue, setWithholdingValue] = useState("");
   const [withholdingTouched, setWithholdingTouched] = useState(false);
+  const invTypeNorm = String(doc?.invoice_type || "")
+    .toLowerCase()
+    .replace(/ı/g, "i")
+    .replace(/İ/g, "i");
+  const isReturnInvoice =
+    ["return", "sales_return", "purchase_return", "iade"].includes(invTypeNorm) ||
+    invTypeNorm.includes("return") ||
+    invTypeNorm.includes("iade");
 
   const fallbackEFatura = orderCanIssueEFatura(doc, contacts);
   const isEFatura = gibMeta ? !!gibMeta.is_e_invoice_user : fallbackEFatura;
@@ -128,7 +136,8 @@ export function ElektronikFaturaOnayModal({
       setMenuOpen(false);
       return;
     }
-    const sc = scenario === "TEMEL" ? "TEMEL" : "TICARI";
+    // GİB Schematron: iade → yalnızca Temel (Ticari yasak)
+    const sc = isReturnInvoice || scenario === "TEMEL" ? "TEMEL" : "TICARI";
     setMenuOpen(false);
     const wh = askWithholding ? parseWithholdingValue(withholdingValue) : null;
     const payload = {
@@ -202,6 +211,15 @@ export function ElektronikFaturaOnayModal({
                 ) : null}
               </span>
             </div>
+          )}
+          {isReturnInvoice && (
+            <p
+              className="text-[11px] text-rose-800 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 leading-snug"
+              data-testid="efatura-onay-iade-hint"
+            >
+              İade faturası GİB Schematron kuralı gereği yalnızca <b>Temel</b> senaryoda gider;
+              notta orijinal fatura numarası («… numaralı faturaya istinaden») bulunmalı.
+            </p>
           )}
           {askWithholding && (
             <div
@@ -277,17 +295,19 @@ export function ElektronikFaturaOnayModal({
                   className="w-full text-left rounded-lg px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
                   data-testid="efatura-onay-temel"
                 >
-                  Temel Fatura Gönder
+                  {isReturnInvoice ? "İade — Temel Fatura Gönder" : "Temel Fatura Gönder"}
                 </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => submit("TICARI")}
-                  className="w-full text-left rounded-lg px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
-                  data-testid="efatura-onay-ticari"
-                >
-                  Ticari Fatura Gönder
-                </button>
+                {!isReturnInvoice && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => submit("TICARI")}
+                    className="w-full text-left rounded-lg px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                    data-testid="efatura-onay-ticari"
+                  >
+                    Ticari Fatura Gönder
+                  </button>
+                )}
               </div>
             )}
           </div>

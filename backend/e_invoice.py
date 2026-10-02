@@ -452,6 +452,21 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
 
     et = e_type or (inv.get("e_type") if inv else None) or "e_archive"
     scen = normalize_scenario(scenario or inv.get("gib_scenario"), et)
+    # GİB Schematron: IADE / TEVKIFATIADE → TICARIFATURA yasak
+    if ubl_export.is_return_invoice(inv) or ubl_export.gib_invoice_type_code(inv) in (
+        "IADE",
+        "TEVKIFATIADE",
+    ):
+        if et == "e_invoice" and scen == "TICARIFATURA":
+            scen = "TEMELFATURA"
+        if et == "e_invoice" and not ubl_export.return_billing_ref(inv):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "İade e-faturası için orijinal fatura numarası zorunlu (GİB Schematron / BillingReference). "
+                    "Nota «… numaralı faturaya istinaden» ekleyin veya original_invoice_number girin."
+                ),
+            )
     buyer = validate_buyer(contact, inv, et)
     company = await _db.companies.find_one({"_id": inv.get("company_id")}) or {}
 

@@ -186,6 +186,17 @@ def return_billing_ref(inv: Dict[str, Any]) -> Optional[Tuple[str, str, str, str
     return _return_billing_ref(inv)
 
 
+def _normalize_iade_doc_type_code(raw: Any) -> str:
+    """GİB Schematron: DocumentTypeCode İADE (veya IADE) olmalı."""
+    s = _norm_invoice_type(raw).upper().replace("İ", "I")
+    if s in ("IADE", "RETURN", "IADEFATURA"):
+        return "İADE"
+    if s:
+        # Kullanıcı özel kod verdiyse Türkçe İADE'ye zorla (Schematron)
+        return "İADE"
+    return "İADE"
+
+
 def _return_billing_ref(inv: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
     """İade faturası için (original_id, issue_date, doc_type_code, doc_type)."""
     oid = (
@@ -204,13 +215,19 @@ def _return_billing_ref(inv: Dict[str, Any]) -> Optional[Tuple[str, str, str, st
     )
     odate = _date(odate) if odate else ""
     dtype = str(inv.get("billing_reference_type") or inv.get("original_document_type") or "").strip()
-    dcode = str(inv.get("billing_reference_type_code") or "İADE").strip() or "İADE"
+    dcode = _normalize_iade_doc_type_code(inv.get("billing_reference_type_code") or "İADE")
     if not oid:
-        # Notdan «GHJ2026000002586 numaralı» yakala
         notes = str(inv.get("notes") or "")
-        m = re.search(r"([A-Z]{2,3}\d{10,16})\s*numaralı", notes, re.I)
-        if m:
-            oid = m.group(1).upper()
+        # «GHJ… numaralı» / «POS iade ← U05…» / genel fatura no
+        for pat in (
+            r"([A-Z]{2,3}\d{10,16})\s*numaral[ıi]",
+            r"[←<]\s*([A-Z]{2,3}\d{10,16})",
+            r"\b([A-Z]{2,3}\d{13,16})\b",
+        ):
+            m = re.search(pat, notes, re.I)
+            if m:
+                oid = m.group(1).upper()
+                break
         m2 = re.search(r"(\d{2}[./]\d{2}[./]\d{4})\s*tarihli", notes)
         if m2 and not odate:
             raw = m2.group(1).replace(".", "-").replace("/", "-")
@@ -355,6 +372,16 @@ def build_invoice_ubl(
         profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
     type_code = gib_invoice_type_code(inv)
     returning = type_code in ("IADE", "TEVKIFATIADE") or is_return_invoice(inv)
+    # GİB Schematron: IADE / TEVKIFATIADE → TICARIFATURA yasak (TEMELFATURA vb.)
+    _IADE_PROFILES = frozenset({
+        "TEMELFATURA", "EARSIVFATURA", "ILAC_TIBBICIHAZ", "YATIRIMTESVIK", "IDIS", "KAMU",
+    })
+    if returning and type_code in ("IADE", "TEVKIFATIADE"):
+        if profile == "TICARIFATURA" or profile not in _IADE_PROFILES:
+            if e_type == "e_archive" or profile == "EARSIVFATURA":
+                profile = "EARSIVFATURA"
+            else:
+                profile = "TEMELFATURA"
     items = list(inv.get("items") or [])
     currency = (inv.get("currency") or "TRY").upper()
     subtotal = float(inv.get("subtotal") or 0)
@@ -394,6 +421,25 @@ def build_invoice_ubl(
     _cbc(root, "DocumentCurrencyCode", currency)
     _cbc(root, "LineCountNumeric", str(len(items) or 1))
 
+    # UBL sıra: BillingReference → AdditionalDocumentReference → Signature
+    # İade: orijinal satış faturasına BillingReference (GİB Schematron zorunlu)
+    if returning:
+        bref = _return_billing_ref(inv)
+        if not bref and send_ready:
+            raise ValueError(
+                "İade e-faturası için orijinal fatura no (BillingReference) zorunlu. "
+                "Notlara «… numaralı faturaya istinaden» yazın veya original_invoice_number girin."
+            )
+        if bref:
+            oid, odate, dcode, dtype = bref
+            br = _cac(root, "BillingReference")
+            idr = _cac(br, "InvoiceDocumentReference")
+            _cbc(idr, "ID", oid)
+            _cbc(idr, "IssueDate", odate or issue_date)
+            _cbc(idr, "DocumentTypeCode", dcode or "İADE")
+            if dtype:
+                _cbc(idr, "DocumentType", dtype[:120])
+
     if send_ready and (e_type == "e_archive" or profile == "EARSIVFATURA"):
         buyer_email = str(buyer.get("email") or inv.get("contact_email") or "").strip()
         send_type = str(inv.get("earchive_send_type") or inv.get("sending_type") or "").strip().upper()
@@ -410,20 +456,6 @@ def build_invoice_ubl(
             _cbc(adr, "IssueDate", issue_date)
             _cbc(adr, "DocumentType", doc_type)
             _cbc(adr, "DocumentDescription", desc)
-
-    # İade: orijinal satış faturasına BillingReference (İşNet IADE örneği)
-    if returning:
-        bref = _return_billing_ref(inv)
-        if bref:
-            oid, odate, dcode, dtype = bref
-            br = _cac(root, "BillingReference")
-            idr = _cac(br, "InvoiceDocumentReference")
-            _cbc(idr, "ID", oid)
-            if odate:
-                _cbc(idr, "IssueDate", odate)
-            _cbc(idr, "DocumentTypeCode", dcode)
-            if dtype:
-                _cbc(idr, "DocumentType", dtype[:120])
 
     seller_party = {
         "name": seller.get("name"),
