@@ -270,11 +270,14 @@ export function isGibIssued(inv) {
   // 1300 nihai başarı; 1200/1220 iletilmiş (kesilmiş) sayılır ama etiket 1300 değildir
   if (["1300", "1220", "1200"].includes(code)) return true;
   if (inv.einvoice_state === "sent" || inv.einvoice_state === "queued") return true;
-  if (inv.gib_tracking_id) return true;
+  // Entegratör UUID / takip no → GİB'e çıkmış e-belge (düzenleme kapalı)
+  if (inv.gib_tracking_id || inv.gib_uuid) return true;
   if (GIB_ISSUED_STATUSES.has(gs) || GIB_ISSUED_STATUSES.has(gsBare)) return true;
   if (/başarıyla tamamland/i.test(gsBare)) return true;
   if (/hedeften sistem yanıtı gelmedi/i.test(gsBare)) return true;
   if (/zarf başarıyla işlendi/i.test(gsBare)) return true;
+  // Ziplenmiş / zarflanmış — iletim yolu başlamış
+  if (/ziplen|zarflan/i.test(gsBare)) return true;
   return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gsBare) && !/onaylandı$/i.test(gsBare);
 }
 
@@ -356,13 +359,17 @@ export function canCancelInvoice(inv) {
   return false;
 }
 
-/** GİB'e iletilmemiş satış/alış belgesi ⋮ menüden düzenlenir. */
+/** GİB'e iletilmemiş satış/alış belgesi ⋮ menüden / satırdan düzenlenir. */
 export function canEditInvoice(inv) {
   if (!inv) return false;
   if (inv.status === "cancelled") return false;
   if (isIncomingPurchaseInvoice(inv)) return false;
   if (inv.invoice_type === "dispatch") return false;
   if (isGibIssued(inv)) return false;
+  // Resmi GİB fatura no atanmış e-belge (UUID olmasa bile) düzenlenmez
+  const gibNo = String(inv.gib_invoice_id || "").trim();
+  if (gibNo && gibNo !== String(inv.invoice_number || "").trim()) return false;
+  if (["e_invoice", "e_archive", "e_export"].includes(String(inv.e_type || "")) && gibNo) return false;
   return true;
 }
 
