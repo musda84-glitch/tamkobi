@@ -701,6 +701,14 @@ def test_send_document_requires_company_tax():
     assert "VKN" in e.value.detail
 
 
+def test_humanize_object_reference_nre():
+    msg = isnet._humanize_isnet_error(
+        "Object reference not set to an instance of an object."
+    )
+    assert "Object reference" not in msg
+    assert "UBL" in msg or "TaxCategory" in msg
+
+
 def test_soap_call_surfaces_result_failed():
     """İşNet Result=Failed + ErrorMessage → kullanıcıya net hata (ETTN yok mesajı değil)."""
     settings = {"mode": "test"}
