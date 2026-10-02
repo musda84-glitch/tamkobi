@@ -29,6 +29,8 @@ describe("orderMoreMenu", () => {
     expect(orderHasEInvoiceIssued({ channel: "trendyol", is_invoiced: true, e_type: "e_archive" })).toBe(true);
     expect(orderHasEInvoiceIssued({ invoice_gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" })).toBe(true);
     expect(orderHasEInvoiceIssued({ invoice_gib_status: "Ziplenmiş — GİB iletimi bekleniyor" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ invoice_gib_status: "GİB'e Gönderildi", channel: "b2b" })).toBe(true);
+    expect(orderHasEInvoiceIssued({ gib_invoice_id: "U052026000000090" })).toBe(true);
   });
 
   it("exposes GİB invoice number for the order cell", () => {
@@ -38,6 +40,11 @@ describe("orderMoreMenu", () => {
       order_number: "B2B-1",
       einvoice_state: "sent",
     })).toBe("U052026000000090");
+    expect(orderGibInvoiceNumber({
+      invoice_number: "NX202623431210",
+      order_number: "ORD-2026-0060",
+      invoice_gib_status: "GİB'e Gönderildi",
+    })).toBe("NX202623431210");
     expect(orderGibInvoiceNumber({ order_number: "B2B-1", invoice_number: "B2B-1" })).toBe("");
   });
 
