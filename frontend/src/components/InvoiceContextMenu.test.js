@@ -143,6 +143,16 @@ describe("isGibIssued", () => {
     expect(isGibIssued({ gib_status: "İşNet SOAP API ile GİB'e iletildi" })).toBe(true);
   });
 
+  test("treats gib_uuid / ziplenmiş as issued", () => {
+    expect(isGibIssued({ gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", gib_status: "Onaylandı" })).toBe(true);
+    expect(isGibIssued({ gib_status: "Test - Ziplenmiş — GİB iletimi bekleniyor" })).toBe(true);
+  });
+
+  test("local Taslak/Onaylandı without GİB ids is not issued", () => {
+    expect(isGibIssued({ gib_status: "Onaylandı", e_type: "paper", status: "approved" })).toBe(false);
+    expect(isGibIssued({ gib_status: "Taslak", e_type: "e_archive", status: "draft" })).toBe(false);
+  });
+
   test("does not treat Hata gib_status containing iletildi as issued", () => {
     expect(
       isGibIssued({
@@ -270,6 +280,26 @@ describe("draft edit lives in the ⋮ menu", () => {
     expect(canEditInvoice(issued)).toBe(false);
     expect(canEditInvoice({ status: "draft", invoice_type: "purchase", direction: "incoming" })).toBe(false);
     expect(canEditInvoice({ status: "draft", invoice_type: "dispatch" })).toBe(false);
+  });
+
+  test("GİB-sent e-invoice with uuid or official number cannot be edited", () => {
+    expect(canEditInvoice({
+      status: "approved",
+      invoice_type: "sales",
+      e_type: "e_invoice",
+      invoice_number: "U052026000000090",
+      gib_invoice_id: "U052026000000090",
+      gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      gib_status: "Onaylandı",
+    })).toBe(false);
+    expect(canEditInvoice({
+      status: "approved",
+      invoice_type: "sales",
+      e_type: "e_archive",
+      invoice_number: "U052026000000090",
+      gib_invoice_id: "U052026000000090",
+      gib_status: "Onaylandı",
+    })).toBe(false);
   });
 });
 

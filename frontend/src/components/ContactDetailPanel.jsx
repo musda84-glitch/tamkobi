@@ -14,7 +14,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isGibIssued, canDeleteInvoice, canCancelInvoice, invoiceETypeLabel } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel } from "./InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { ElektronikFaturaOnayModal } from "./ElektronikFaturaOnayModal";
@@ -599,7 +599,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <tbody className="divide-y divide-slate-100">
                 {data.invoices.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
                 {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const cells = {
-                    number: <td key="number" className="py-2 font-mono font-semibold text-slate-900"><button onClick={() => setEditInv({ ...inv })} className={`hover:underline ${isGibIssued(inv) ? "text-slate-900" : "text-emerald-700"}`} title={isGibIssued(inv) ? "Faturayı düzenle (vade / not)" : "Faturayı düzenle"} data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button></td>,
+                    number: <td key="number" className="py-2 font-mono font-semibold text-slate-900">{canEditInvoice(inv) ? (<button onClick={() => setEditInv({ ...inv })} className="hover:underline text-emerald-700" title="Faturayı düzenle" data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button>) : (<span data-testid={`detail-inv-no-${inv.invoice_number}`}>{inv.invoice_number}</span>)}</td>,
                     date: <td key="date" className="py-2 text-slate-500">{fmtDate(inv.issue_date)}</td>,
                     type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span></td>,
                     amount: <td key="amount" className={`py-2 text-right font-bold ${inv.status === "draft" ? "text-slate-400" : ""}`}>{fmt(inv.grand_total)}{inv.status === "draft" && <div className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide" data-testid={`detail-inv-draft-${inv.invoice_number}`}>Taslak · bakiye dışı</div>}</td>,
@@ -610,7 +610,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                     {colState.cols.map((k) => cells[k])}
                     <td className="py-2">
                       <div className="flex items-center justify-end gap-0.5">
-                        <button onClick={() => setEditInv({ ...inv })} className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition" title={isGibIssued(inv) ? "Faturayı düzenle (vade / not)" : "Faturayı düzenle"} data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
+                        {canEditInvoice(inv) ? (
+                          <button onClick={() => setEditInv({ ...inv })} className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition" title="Faturayı düzenle" data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
+                        ) : <span className="w-7 h-7" aria-hidden="true" />}
                         <button onClick={() => setPrintDoc(inv)} className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Görüntüle / Şablonlu Yazdır" data-testid={`detail-inv-print-${inv.invoice_number}`}><Printer className="w-4 h-4" /></button>
                         {onMessage && !incoming ? (
                           <button onClick={() => onMessage(c)} className="p-1.5 text-slate-600 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition" title="SMS / E-posta gönder" data-testid={`detail-inv-notify-${inv.invoice_number}`}><MessageSquare className="w-4 h-4" /></button>
