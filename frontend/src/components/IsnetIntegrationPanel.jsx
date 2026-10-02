@@ -50,6 +50,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
     company_tax_id: "",
     company_vendor_number: "",
   });
+  const [egressIps, setEgressIps] = useState([]);
 
   const load = useCallback(async () => {
     if (!companyId) return;
@@ -78,6 +79,20 @@ export default function IsnetIntegrationPanel({ companyId }) {
   }, [companyId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (testMode) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await axios.get(`${API_URL}/integrations/isnet/egress`);
+        if (!cancelled) setEgressIps(Array.isArray(r.data?.egress_ips) ? r.data.egress_ips : []);
+      } catch {
+        if (!cancelled) setEgressIps([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [testMode]);
 
   const handleChange = (e) => {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
@@ -115,7 +130,16 @@ export default function IsnetIntegrationPanel({ companyId }) {
       const r = await axios.post(`${API_URL}/integrations/isnet/test`, body());
       toast.success(r.data?.message || "İşNet SOAP (IP–VKN) bağlantı testi başarılı!");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Bağlantı kurulamadı, bilgilerinizi kontrol edin.");
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === "string" ? detail : (detail?.message || "Bağlantı kurulamadı, bilgilerinizi kontrol edin.");
+      toast.error(msg, { duration: 12000 });
+      // Canlı hata sonrası IP’yi yenile (toast’ta da yazılmış olabilir)
+      if (!testMode) {
+        try {
+          const eg = await axios.get(`${API_URL}/integrations/isnet/egress`);
+          setEgressIps(Array.isArray(eg.data?.egress_ips) ? eg.data.egress_ips : []);
+        } catch { /* ignore */ }
+      }
     } finally {
       setLoading(false);
     }
@@ -231,12 +255,22 @@ export default function IsnetIntegrationPanel({ companyId }) {
           </li>
         </ul>
         {!testMode && (
-          <p className="text-[10px] text-emerald-900/80 pt-0.5" data-testid="isnet-live-ip-hint">
-            Canlıda çıkış IP’nizi VKN ile eşleştirmek için{" "}
-            <a href="mailto:efaturadestek@nettefatura.com.tr" className="underline font-semibold">
-              efaturadestek@nettefatura.com.tr
-            </a>
-          </p>
+          <div className="text-[10px] text-emerald-900/80 pt-0.5 space-y-1" data-testid="isnet-live-ip-hint">
+            <p>
+              Canlı SOAP (einvoiceservice) IP–VKN firewall ister. Çıkış IP + VKN’yi{" "}
+              <a href="mailto:efaturadestek@nettefatura.com.tr" className="underline font-semibold">
+                efaturadestek@nettefatura.com.tr
+              </a>{" "}
+              adresine iletin.
+            </p>
+            {egressIps.length > 0 ? (
+              <p className="font-mono font-semibold text-emerald-950" data-testid="isnet-egress-ips">
+                Sunucu çıkış IP: {egressIps.join(", ")}
+              </p>
+            ) : (
+              <p className="text-emerald-800/70" data-testid="isnet-egress-ips-loading">Çıkış IP tespit ediliyor…</p>
+            )}
+          </div>
         )}
       </div>
 

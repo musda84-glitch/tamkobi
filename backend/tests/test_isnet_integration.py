@@ -5,6 +5,7 @@ import asyncio
 import xml.etree.ElementTree as ET
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -142,6 +143,39 @@ def test_connection_soap_ip_vkn_without_password():
     assert info["support_email"] == isnet.SUPPORT_EMAIL
     assert info["test_portal"]["user"] == isnet.TEST_PORTAL_USER
     assert "password" not in (info.get("message") or "").lower() or "SOAP" in info["message"]
+
+
+def test_soap_unreachable_hint_timeout():
+    assert "zaman aşımı" in isnet._soap_unreachable_hint(httpx.ConnectTimeout("x"))
+
+
+def test_live_connection_failure_includes_egress_ip():
+    settings = {
+        "company_tax_id": "6131659091",
+        "alias": "urn:mail:389265defaultgb@isnet.com",
+        "mode": "live",
+    }
+
+    async def _fail(_s):
+        raise HTTPException(status_code=502, detail="İşNet SOAP'a ulaşılamadı (HealthCheck): bağlantı zaman aşımı")
+
+    async def _ips():
+        return ["203.0.113.10"]
+
+    async def _rest_ok(_s):
+        return True
+
+    with patch("isnet.soap_health_check", side_effect=_fail), patch(
+        "isnet.detect_egress_ips", side_effect=_ips
+    ), patch("isnet.health_check", side_effect=_rest_ok):
+        with pytest.raises(HTTPException) as e:
+            asyncio.get_event_loop().run_until_complete(isnet.test_connection(settings, ""))
+    assert e.value.status_code == 502
+    detail = str(e.value.detail)
+    assert "203.0.113.10" in detail
+    assert "6131659091" in detail
+    assert isnet.SUPPORT_EMAIL in detail
+    assert "einvoiceapi" in detail or "REST" in detail
 
 
 def test_login_401_raises():

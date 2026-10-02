@@ -258,6 +258,42 @@ async def login(settings: dict, password: str) -> Dict[str, Any]:
     raise HTTPException(status_code=400, detail=last_detail)
 
 
+async def detect_egress_ips() -> List[str]:
+    """Sunucunun İşNet’e görünen genel çıkış IP’lerini tespit et (IP–VKN kaydı için)."""
+    urls = (
+        "https://api.ipify.org",
+        "https://icanhazip.com",
+        "https://ifconfig.me/ip",
+    )
+    found: List[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+            for url in urls:
+                try:
+                    r = await client.get(url)
+                    ip = (r.text or "").strip().split()[0] if r.text else ""
+                    if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", ip) and ip not in found:
+                        found.append(ip)
+                except Exception:
+                    continue
+    except Exception:
+        logger.exception("egress IP tespiti başarısız")
+    return found
+
+
+def _soap_unreachable_hint(exc: BaseException) -> str:
+    """Timeout / connect hatalarını kısa Türkçe özetle."""
+    name = type(exc).__name__
+    text = str(exc) or name
+    if isinstance(exc, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+        return "bağlantı zaman aşımı (TLS/HealthCheck yanıt vermedi)"
+    if isinstance(exc, httpx.ConnectError):
+        return f"bağlantı kurulamadı ({text[:120]})"
+    if "timed out" in text.lower() or "timeout" in text.lower():
+        return "bağlantı zaman aşımı (TLS/HealthCheck yanıt vermedi)"
+    return text[:180]
+
+
 async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
     """SOAP IP–VKN bağlantı testi (asıl yol). Portal login isteğe bağlı.
 
@@ -311,7 +347,25 @@ async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
         info["soap_warning"] = str(e.detail)
         hint = ""
         if not is_test_mode(settings):
-            hint = f" Canlıda IP–VKN tanımı için {SUPPORT_EMAIL} adresine çıkış IP’nizi iletin."
+            ips = await detect_egress_ips()
+            info["egress_ips"] = ips
+            ip_txt = ", ".join(ips) if ips else "tespit edilemedi"
+            # Live REST (einvoiceapi) çoğu ağda açık; SOAP (einvoiceservice) IP–VKN firewall ister
+            rest_ok = False
+            try:
+                rest_ok = await health_check({**settings, "mode": "live"})
+            except Exception:
+                rest_ok = False
+            info["live_rest_ok"] = rest_ok
+            rest_note = (
+                " Live REST (einvoiceapi) erişilebilir; sorun canlı SOAP (einvoiceservice) IP–VKN kaydında."
+                if rest_ok
+                else ""
+            )
+            hint = (
+                f" Canlıda IP–VKN için çıkış IP: {ip_txt} — VKN {tax} ile "
+                f"{SUPPORT_EMAIL} adresine iletin.{rest_note}"
+            )
         elif tax not in TEST_FIRM_VKNS:
             hint = (
                 f" Test VKN örnekleri: {', '.join(TEST_FIRM_VKNS)} "
@@ -822,7 +876,10 @@ async def _soap_call(
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             resp = await client.post(endpoint, content=envelope.encode("utf-8"), headers=headers)
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"İşNet SOAP'a ulaşılamadı ({action}): {e}") from e
+        raise HTTPException(
+            status_code=502,
+            detail=f"İşNet SOAP'a ulaşılamadı ({action}): {_soap_unreachable_hint(e)}",
+        ) from e
     text = resp.text or ""
     if resp.status_code >= 400:
         raise HTTPException(

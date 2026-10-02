@@ -1039,6 +1039,21 @@ async def isnet_save_settings(req: Dict[str, Any]):
     return await get_einvoice_settings(company_id)
 
 
+@api_router.get("/integrations/isnet/egress")
+async def isnet_egress_ips():
+    """Canlı SOAP IP–VKN kaydı için sunucu çıkış IP’leri."""
+    ips = await isnet.detect_egress_ips()
+    return {
+        "egress_ips": ips,
+        "support_email": isnet.SUPPORT_EMAIL,
+        "message": (
+            f"Çıkış IP: {', '.join(ips)}. Canlı SOAP için VKN ile {isnet.SUPPORT_EMAIL} adresine iletin."
+            if ips
+            else f"Çıkış IP tespit edilemedi. Canlı kayıt: {isnet.SUPPORT_EMAIL}"
+        ),
+    }
+
+
 @api_router.post("/integrations/isnet/test")
 async def isnet_test_connection(req: Dict[str, Any]):
     """Formdaki veya kayıtlı İşNet bilgileriyle SOAP (IP–VKN) bağlantı testi."""
