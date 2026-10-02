@@ -1457,10 +1457,32 @@ async def send_document(
             ),
         )
 
+    import ubl_export as _ubl_exp
+
+    inv_for_ubl = dict(invoice or {})
+    # IADE Schematron: TICARIFATURA yasak → TEMELFATURA
+    if _ubl_exp.is_return_invoice(inv_for_ubl) or _ubl_exp.gib_invoice_type_code(inv_for_ubl) in (
+        "IADE",
+        "TEVKIFATIADE",
+    ):
+        if (inv_for_ubl.get("gib_scenario") or "") == "TICARIFATURA" or e_type == "e_invoice":
+            inv_for_ubl["gib_scenario"] = "TEMELFATURA"
+            inv_for_ubl["_profile_override"] = "TEMELFATURA"
+        if not _ubl_exp.return_billing_ref(inv_for_ubl):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "İade e-faturası Schematron için orijinal fatura numarası (BillingReference) zorunlu. "
+                    "Fatura notuna «… numaralı faturaya istinaden» yazın veya original_invoice_number girin."
+                ),
+            )
+
     company_for_ubl = {**(company or {})}
     company_for_ubl["tax_number"] = seller_vkn
     try:
-        xml, _local_ettn, inv_id = build_ubl(invoice, company_for_ubl, contact)
+        xml, _local_ettn, inv_id = build_ubl(inv_for_ubl, company_for_ubl, contact)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.exception("isnet build_ubl")
         raise HTTPException(status_code=500, detail=f"UBL oluşturma hatası: {e}") from e
