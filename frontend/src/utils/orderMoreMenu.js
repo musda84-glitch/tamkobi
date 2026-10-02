@@ -133,6 +133,7 @@ export function integrationEInvoiceMoreItems() {
     item("cargo_change", "Pazaryeri Kargo Firmasını Değiştir", Truck, { color: "text-sky-500" }),
     item("invoice_link", "Fatura Linki Gönder", Link2, { color: "text-rose-500" }),
     item("xml", "E-Fatura XML'i İndir", Code2, { color: "text-sky-500" }),
+    item("efatura_pdf", "E-Fatura PDF İndir", Download, { color: "text-indigo-600", testId: "efatura-pdf" }),
   ];
 }
 
@@ -159,6 +160,7 @@ export function panelEInvoiceMoreItems(ord) {
     item("earsiv_send", `${doc} Yazdır & Gönder`, Mail, { color: "text-emerald-600" }),
     item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
     item("xml", `${doc} XML'i İndir`, Code2, { color: "text-sky-500" }),
+    item("efatura_pdf", `${doc} PDF İndir`, Download, { color: "text-indigo-600", testId: "efatura-pdf" }),
   ];
 }
 

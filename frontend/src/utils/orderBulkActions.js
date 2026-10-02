@@ -19,6 +19,7 @@ export const ORDER_BULK_ACTIONS = [
   { id: "approve", label: "Toplu Sipariş Onayla", icon: ThumbsUp },
   { id: "cargo_create", label: "Toplu Kargo Siparişi Oluştur", icon: Truck },
   { id: "xml", label: "Toplu E-Fatura XML'i İndir", icon: Code2 },
+  { id: "efatura_pdf", label: "Toplu E-Fatura PDF İndir", icon: FileText },
   { id: "invoice_link", label: "Toplu Fatura Linki gönder", icon: Link2 },
   { id: "refresh", label: "Siparişlerin Güncel Durumlarını Getir", icon: RefreshCw },
   { id: "navlungo", label: "Toplu Navlungo Kargo Etiketi Yazdır", icon: Truck },

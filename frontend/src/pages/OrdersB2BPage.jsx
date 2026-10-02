@@ -270,6 +270,64 @@ export default function OrdersB2BPage() {
       toast[fail ? "error" : "success"](`${ok} XML indirildi${fail ? `, ${fail} hata` : ""}.`);
     }
   };
+  /** E-Fatura/e-Arşiv PDF — önce entegratör (İşNet), yoksa yerel. */
+  const downloadInvoicePdf = async (list) => {
+    const ids = [...new Set(list.map((o) => o.invoice_id).filter(Boolean))];
+    if (!ids.length) { toast.error("Seçili siparişlerde e-fatura yok."); return; }
+    let ok = 0, fail = 0;
+    const failMsgs = [];
+    const blobErrorDetail = async (err) => {
+      const blob = err?.response?.data;
+      if (blob instanceof Blob) {
+        try {
+          const j = JSON.parse(await blob.text());
+          if (j?.detail) return typeof j.detail === "string" ? j.detail : "PDF indirilemedi.";
+        } catch { /* ignore */ }
+      }
+      const d = err?.response?.data?.detail || err?.message;
+      return typeof d === "string" ? d : "PDF indirilemedi.";
+    };
+    for (const id of ids) {
+      try {
+        let r;
+        try {
+          r = await axios.get(`${API_URL}/e-invoice/${id}/pdf`, { params: { download: 1 }, responseType: "blob" });
+        } catch (firstErr) {
+          try {
+            r = await axios.get(`${API_URL}/invoices/${id}/pdf`, { params: { download: 1 }, responseType: "blob" });
+          } catch (secondErr) {
+            throw secondErr?.response ? secondErr : firstErr;
+          }
+        }
+        const ct = String(r.headers?.["content-type"] || "");
+        if (ct.includes("json")) {
+          const text = typeof r.data?.text === "function" ? await r.data.text() : await new Response(r.data).text();
+          let detail = "PDF indirilemedi.";
+          try { detail = JSON.parse(text)?.detail || detail; } catch { /* ignore */ }
+          failMsgs.push(typeof detail === "string" ? detail : "PDF indirilemedi.");
+          fail++;
+          continue;
+        }
+        const url = URL.createObjectURL(r.data);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `efatura-${id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        ok++;
+      } catch (err) {
+        fail++;
+        failMsgs.push(await blobErrorDetail(err));
+      }
+    }
+    if (fail && !ok) {
+      toast.error(failMsgs[0] || "PDF indirilemedi.");
+    } else {
+      toast[fail ? "error" : "success"](`${ok} PDF indirildi${fail ? `, ${fail} hata` : ""}.`);
+    }
+  };
   const carrierLabels = (list, needle, title) => {
     const hit = list.filter((o) => String(o.cargo_carrier || "").toLowerCase().includes(needle));
     if (!hit.length) { toast.error(`Seçili siparişlerde ${title} gönderisi yok.`); return; }
@@ -321,6 +379,7 @@ export default function OrdersB2BPage() {
       return;
     }
     if (action === "xml") { await downloadInvoiceXml(list); return; }
+    if (action === "efatura_pdf") { await downloadInvoicePdf(list); return; }
     if (action === "delete") {
       const deletable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
       if (!deletable.length) { toast.error("Faturalanmış siparişler silinemez."); return; }
@@ -700,7 +759,7 @@ export default function OrdersB2BPage() {
       await handleEBelgeInvoice(ord, extra.eType || actionId.replace(/^ebelge_/, ""));
       return;
     }
-    if (["mini_10x15", "mini_8x20", "cargo_mini", "cargo_10x10", "xml", "invoice_link", "refresh_status"].includes(actionId)) {
+    if (["mini_10x15", "mini_8x20", "cargo_mini", "cargo_10x10", "xml", "efatura_pdf", "invoice_link", "refresh_status"].includes(actionId)) {
       await runBulkForOrder(actionId, ord);
       return;
     }
@@ -847,6 +906,10 @@ export default function OrdersB2BPage() {
     }
     if (actionId === "xml") {
       await downloadInvoiceXml([ord]);
+      return;
+    }
+    if (actionId === "efatura_pdf") {
+      await downloadInvoicePdf([ord]);
       return;
     }
     if (actionId === "invoice_link") {

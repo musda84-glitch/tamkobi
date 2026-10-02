@@ -931,6 +931,36 @@ async def api_einvoice_xml(invoice_id: str):
     return await ubl_export.invoice_xml(invoice_id)
 
 
+@router.get("/e-invoice/{invoice_id}/pdf")
+async def api_einvoice_pdf(invoice_id: str, download: bool = True):
+    """Sipariş menüsü «E-Fatura PDF İndir» — önce entegratör (İşNet), yoksa yerel PDF."""
+    inv = await _db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    disp = "attachment" if download else "inline"
+    name = ubl_export.invoice_filename(inv, "pdf")
+    try:
+        remote = await fetch_integrator_pdf(invoice_id)
+        if remote:
+            return Response(
+                remote,
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f'{disp}; filename="{name}"',
+                    "X-Document-Source": "integrator",
+                    "Access-Control-Expose-Headers": "X-Document-Source",
+                },
+            )
+    except HTTPException as exc:
+        logger.info("integrator pdf unavailable for %s: %s", invoice_id, getattr(exc, "detail", exc))
+    except Exception:
+        logger.exception("integrator pdf fetch failed for %s", invoice_id)
+    # Yerel şablon (entegratör PDF henüz yoksa menü kırılmasın)
+    import saas_docs
+
+    return await saas_docs.invoice_pdf(invoice_id, download=download, require_integrator=False)
+
+
 def _is_n11_document_url(url: str) -> bool:
     u = (url or "").lower()
     return "n11faturam.com" in u or "ebelge.n11" in u
