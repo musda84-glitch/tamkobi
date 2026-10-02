@@ -958,7 +958,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             contacts={c ? [c] : []}
             companyId={activeCompany?.id || activeCompany?._id || c?.company_id}
             onClose={() => setEFaturaInvoice(null)}
-            onConfirm={async ({ eType, scenario, alias, withholding }) => {
+            onConfirm={async ({ eType, scenario, alias, withholding, returnRef }) => {
               const inv = eFaturaInvoice;
               if (!inv) return;
               const invId = inv.id || inv._id;
@@ -972,14 +972,21 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   /* gönderim yine denenecek */
                 }
               }
+              const patch = {};
               if (withholding) {
+                patch.withholding_rate = Number(withholding.withholding_rate || 0);
+                patch.withholding_code = withholding.withholding_code || null;
+              }
+              if (returnRef?.original_invoice_number) {
+                patch.original_invoice_number = returnRef.original_invoice_number;
+                patch.original_issue_date = returnRef.original_issue_date || null;
+                if (returnRef.notes) patch.notes = returnRef.notes;
+              }
+              if (Object.keys(patch).length) {
                 try {
-                  await axios.put(`${API_URL}/invoices/${invId}`, {
-                    withholding_rate: Number(withholding.withholding_rate || 0),
-                    withholding_code: withholding.withholding_code || null,
-                  });
+                  await axios.put(`${API_URL}/invoices/${invId}`, patch);
                 } catch (err) {
-                  toast.error(err.response?.data?.detail || "Tevkifat kaydedilemedi.");
+                  toast.error(err.response?.data?.detail || "İade / tevkifat bilgisi kaydedilemedi.");
                   throw err;
                 }
               }
