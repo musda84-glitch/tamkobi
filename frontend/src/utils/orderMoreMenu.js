@@ -45,8 +45,10 @@ export function orderHasEInvoiceIssued(ord) {
   const state = String(ord.einvoice_state || "").toLowerCase();
   if (state === "sent" || state === "queued" || state === "accepted") return true;
   if (ord.invoice_gib_uuid || ord.gib_uuid || ord.invoice_gib_tracking_id || ord.gib_tracking_id) return true;
+  if (ord.gib_invoice_id) return true;
   const gs = String(ord.invoice_gib_status || ord.gib_status || "");
-  if (/ziplen|zarflan|ileti|1300|başarıyla tamamland/i.test(gs) && !/^\s*hata\s*:/i.test(gs)) return true;
+  // "GİB'e Gönderildi" / iletildi / ziplenmiş — yerel "Gönderilmedi" ile karışmaz
+  if (/ziplen|zarflan|ileti|gönderildi|1300|başarıyla tamamland/i.test(gs) && !/^\s*hata\s*:/i.test(gs)) return true;
   const eType = String(ord.e_type || ord.invoice_e_type || "").toLowerCase();
   if (eType === "paper" || eType === "expense_slip") return false;
   if (isIntegrationOrder(ord) && ord.is_invoiced && ["e_invoice", "e_archive", "e_export"].includes(eType)) {
@@ -60,10 +62,11 @@ export function orderGibInvoiceNumber(ord) {
   if (!ord) return "";
   const gib = String(ord.gib_invoice_id || "").trim();
   if (gib) return gib;
+  // Yerel fatura no yalnızca GİB gönderimi sonrası (resmi no henüz düşmemiş olabilir)
+  if (!orderHasEInvoiceIssued(ord)) return "";
   const no = String(ord.invoice_number || "").trim();
   if (!no || no === String(ord.order_number || "").trim()) return "";
-  if (orderHasEInvoiceIssued(ord) || ord.invoice_id) return no;
-  return "";
+  return no;
 }
 
 /** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil buton) → faturalaşmış e-belge (kırmızı bilgi). */
