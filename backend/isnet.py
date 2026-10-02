@@ -18,10 +18,16 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
 import re
+import shutil
+import signal
+import subprocess
+import tempfile
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from xml.sax.saxutils import escape as xml_esc
 
 import httpx
@@ -138,6 +144,28 @@ def company_vendor_number(settings: dict) -> str:
         or settings.get("branch_code")
         or ""
     ).strip()
+
+
+# İşNet test/canlı şube serisi: U05… → CompanyVendorNumber "05"
+_VENDOR_FROM_SERIES_RE = re.compile(r"^U(\d{2})\d", re.I)
+
+
+def infer_vendor_from_invoice_number(invoice_number: str = "") -> str:
+    """U052026000000080 → '05' (İşNet şube/vendor kodu)."""
+    m = _VENDOR_FROM_SERIES_RE.match((invoice_number or "").strip())
+    return m.group(1) if m else ""
+
+
+def with_inferred_vendor(settings: dict, invoice_number: str = "") -> dict:
+    """Ayarlarda vendor yoksa fatura no serisinden CompanyVendorNumber ekle."""
+    if company_vendor_number(settings or {}):
+        return settings or {}
+    vendor = infer_vendor_from_invoice_number(invoice_number)
+    if not vendor:
+        return settings or {}
+    out = dict(settings or {})
+    out["company_vendor_number"] = vendor
+    return out
 
 
 def _company_request(settings: dict, tax: Optional[str] = None) -> Dict[str, str]:
@@ -609,6 +637,9 @@ def _search_row_from_el(inv: ET.Element) -> Dict[str, Any]:
         "process_status": process,
         "envelope_id": _find_text(inv, "EnvelopeId", "EnvelopeID"),
         "status_source": resolved["source"],
+        # Search ResultSet IsHtmlIncluded / IsPdfIncluded (veya IsPDFIncluded)
+        "invoice_html": _find_text(inv, "InvoiceHtml", "Html", "InvoiceHTML") or "",
+        "invoice_pdf": _find_text(inv, "InvoicePdf", "Pdf", "InvoicePDF") or "",
     }
 
 
@@ -1959,27 +1990,39 @@ async def search_outgoing_invoice(
     invoice_number: str = "",
     min_date: str = "",
     max_date: str = "",
+    include_documents: bool = False,
+    direction: str = "Outgoing",
 ) -> List[Dict[str, Any]]:
-    """SearchInvoice (Outgoing) — giden e-Fatura arama."""
+    """SearchInvoice — giden/gelen e-Fatura arama.
+
+    include_documents=True → IsHtmlIncluded + IsPdfIncluded (PDF fallback için).
+    """
     req_base = _company_request(settings)
     if len(req_base["CompanyTaxCode"]) not in (10, 11):
         raise HTTPException(
             status_code=400, detail="İşNet giden fatura arama için şirket VKN (company_tax_id) gerekli."
         )
+    direction = "Incoming" if str(direction or "").lower().startswith("in") else "Outgoing"
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=90)
+    result_set: Dict[str, Any] = {
+        "IsAdditionalTaxIncluded": True,
+        "IsArchiveIncluded": True,
+        "IsInvoiceDetailIncluded": True,
+        "IsXMLIncluded": False,
+    }
+    if include_documents:
+        result_set["IsHtmlIncluded"] = True
+        result_set["IsPdfIncluded"] = True
+        # Bazı WSDL sürümleri IsPDFIncluded kullanır
+        result_set["IsPDFIncluded"] = True
     req: Dict[str, Any] = {
         **req_base,
-        "InvoiceDirection": "Outgoing",
+        "InvoiceDirection": direction,
         "MinInvoiceDate": (min_date or start.strftime("%Y-%m-%d")),
         "MaxInvoiceDate": (max_date or end.strftime("%Y-%m-%d")),
         "PagingRequest": {"PageNumber": 1, "RecordsPerPage": 50},
-        "ResultSet": {
-            "IsAdditionalTaxIncluded": True,
-            "IsArchiveIncluded": True,
-            "IsInvoiceDetailIncluded": True,
-            "IsXMLIncluded": False,
-        },
+        "ResultSet": result_set,
     }
     req.update(_search_invoice_filters(ettn=ettn, invoice_number=invoice_number))
     body = await _soap_call(
@@ -1988,7 +2031,7 @@ async def search_outgoing_invoice(
         action="SearchInvoice",
         service_interface="IInvoiceService",
         request=req,
-        timeout=60.0,
+        timeout=90.0 if include_documents else 60.0,
     )
     out: List[Dict[str, Any]] = []
     for inv in _find_all(body, "Invoice", "InvoiceInfo", "Document"):
@@ -2435,6 +2478,185 @@ async def _http_get_invoice_pdf(settings: dict, key: str) -> bytes:
     return bytes(r.content)
 
 
+def _decode_maybe_b64(payload: str = "", *, prefer_pdf: bool = False) -> bytes:
+    """SearchInvoice InvoicePdf/InvoiceHtml — ham veya base64."""
+    raw = (payload or "").strip()
+    if not raw:
+        return b""
+    # Zaten PDF / HTML
+    if raw.startswith("%PDF") or raw.lstrip().lower().startswith("<!doctype") or raw.lstrip().startswith("<"):
+        return raw.encode("utf-8", errors="replace")
+    try:
+        data = base64.b64decode(raw, validate=False)
+    except Exception:
+        return raw.encode("utf-8", errors="replace")
+    if prefer_pdf and data.startswith(b"%PDF"):
+        return data
+    if data.startswith(b"%PDF") or data.lstrip().lower().startswith(b"<!doctype") or data.lstrip().startswith(b"<"):
+        return data
+    # validate=False bazen çöp üretir — orijinal metin HTML olabilir
+    if "<html" in raw.lower() or "<!doctype" in raw.lower():
+        return raw.encode("utf-8", errors="replace")
+    return data if data else b""
+
+
+def _chrome_bin() -> str:
+    for cand in (
+        os.environ.get("CHROME_BIN") or "",
+        os.environ.get("GOOGLE_CHROME_BIN") or "",
+        shutil.which("google-chrome") or "",
+        shutil.which("google-chrome-stable") or "",
+        shutil.which("chromium") or "",
+        shutil.which("chromium-browser") or "",
+        "/usr/local/bin/google-chrome",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+    ):
+        if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return ""
+
+
+def html_to_pdf_bytes(html: Union[bytes, str], *, timeout: float = 45.0) -> bytes:
+    """İşNet InvoiceHtml → PDF (Chrome headless --print-to-pdf).
+
+    Chrome bazen PDF yazdıktan sonra çıkmaz; dosya oluşunca süreç sonlandırılır.
+    """
+    if isinstance(html, str):
+        html_bytes = html.encode("utf-8", errors="replace")
+    else:
+        html_bytes = html or b""
+    if not html_bytes.strip():
+        raise HTTPException(status_code=502, detail="İşNet InvoiceHtml boş.")
+    chrome = _chrome_bin()
+    if not chrome:
+        raise HTTPException(
+            status_code=502,
+            detail="İşNet HTML belgesi alındı ancak PDF dönüştürücü (Chrome) yok.",
+        )
+    tmp = tempfile.mkdtemp(prefix="isnet-html-pdf-")
+    try:
+        html_path = os.path.join(tmp, "invoice.html")
+        pdf_path = os.path.join(tmp, "invoice.pdf")
+        user_data = os.path.join(tmp, "chrome-ud")
+        os.makedirs(user_data, exist_ok=True)
+        with open(html_path, "wb") as f:
+            f.write(html_bytes)
+        cmd = [
+            chrome,
+            "--headless",
+            "--disable-gpu",
+            "--no-pdf-header-footer",
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            f"--user-data-dir={user_data}",
+            f"--print-to-pdf={pdf_path}",
+            f"file://{html_path}",
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        step = 0.25
+        elapsed = 0.0
+        while elapsed < timeout:
+            if os.path.isfile(pdf_path) and os.path.getsize(pdf_path) > 500:
+                time.sleep(0.4)  # yazmanın bitmesi
+                break
+            if proc.poll() is not None:
+                break
+            time.sleep(step)
+            elapsed += step
+        try:
+            if proc.poll() is None:
+                proc.send_signal(signal.SIGTERM)
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        if not os.path.isfile(pdf_path) or os.path.getsize(pdf_path) < 100:
+            err = b""
+            try:
+                err = (proc.stderr.read() if proc.stderr else b"") or b""
+            except Exception:
+                pass
+            snippet = err.decode("utf-8", errors="ignore")[:200]
+            raise HTTPException(
+                status_code=502,
+                detail=snippet or "İşNet InvoiceHtml PDF'e dönüştürülemedi.",
+            )
+        with open(pdf_path, "rb") as f:
+            data = f.read()
+        if not data.startswith(b"%PDF"):
+            raise HTTPException(status_code=502, detail="Chrome PDF çıktısı geçersiz.")
+        return data
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def _pdf_from_search_documents(
+    settings: dict,
+    ettn: str,
+    *,
+    e_type: str = "e_invoice",
+    invoice_number: str = "",
+    direction: str = "Outgoing",
+) -> Optional[bytes]:
+    """GetDocumentViewerLink yokken Search* InvoicePdf / InvoiceHtml → PDF."""
+    ettn = (ettn or "").strip()
+    inv_no = str(invoice_number or "").strip()
+    if not ettn and not inv_no:
+        return None
+    rows: List[Dict[str, Any]] = []
+    try:
+        if e_type == "e_archive":
+            # Archive search zaten IsHtml/IsPdf açıyor
+            rows = await search_archive_invoice(
+                settings, ettn=ettn, invoice_number=inv_no or ""
+            )
+        else:
+            rows = await search_outgoing_invoice(
+                settings,
+                ettn=ettn,
+                invoice_number=inv_no or "",
+                include_documents=True,
+                direction=direction,
+            )
+    except HTTPException as e:
+        logger.info("isnet search-doc miss ettn=%s: %s", ettn, e.detail)
+        return None
+    needle = ettn.lower()
+    match: Optional[Dict[str, Any]] = None
+    for row in rows:
+        row_ettn = (row.get("ettn") or "").strip().lower()
+        row_no = (row.get("invoice_id") or "").strip()
+        if (needle and row_ettn == needle) or (inv_no and row_no == inv_no):
+            match = row
+            break
+    if not match and rows and (ettn or inv_no):
+        # Tek satır döndüyse kullan
+        if len(rows) == 1:
+            match = rows[0]
+    if not match:
+        return None
+    pdf_raw = match.get("invoice_pdf") or ""
+    if pdf_raw:
+        pdf = _decode_maybe_b64(pdf_raw, prefer_pdf=True)
+        if pdf.startswith(b"%PDF"):
+            logger.info("isnet pdf via Search InvoicePdf ettn=%s", ettn)
+            return pdf
+    html_raw = match.get("invoice_html") or ""
+    if html_raw:
+        html = _decode_maybe_b64(html_raw)
+        if html and (b"<html" in html.lower() or b"<!doctype" in html.lower() or len(html) > 200):
+            logger.info("isnet pdf via Search InvoiceHtml→PDF ettn=%s html=%s", ettn, len(html))
+            return await asyncio.to_thread(html_to_pdf_bytes, html)
+    return None
+
+
 async def download_invoice_pdf(
     settings: dict,
     ettn: str,
@@ -2444,12 +2666,17 @@ async def download_invoice_pdf(
     viewer_url: str = "",
     direction: str = "Outgoing",
 ) -> bytes:
-    """İşNet Invoice/GetInvoicePdf — resmi e-Arşiv/e-Fatura PDF (NetteFatura-API).
+    """İşNet resmi e-Fatura/e-Arşiv PDF.
 
-    Kayıtlı viewer linki (gib_document_url) stale olabilir; başarısızsa taze
-    GetDocumentViewerLink + alternatif belge tipi / fatura no denenir.
+    Sıra:
+      1) Kayıtlı viewer key → GetInvoicePdf
+      2) GetDocumentViewerLink (vendor: ayar veya U05 serisi)
+      3) Search* InvoicePdf / InvoiceHtml→Chrome PDF
+         (Zarflanmadı / Ziplenmiş iken viewer boş kalabiliyor)
     """
     errors: List[str] = []
+    inv_no = str(invoice_number or "").strip()
+    settings = with_inferred_vendor(settings, inv_no)
 
     async def _try_key_src(key_src: str, label: str) -> Optional[bytes]:
         key = extract_viewer_key(key_src or "")
@@ -2472,27 +2699,25 @@ async def download_invoice_pdf(
     primary = e_type if e_type in ("e_invoice", "e_archive") else "e_archive"
     alt = "e_archive" if primary == "e_invoice" else "e_invoice"
     type_order = [primary, alt]
-    inv_nos = [str(invoice_number or "").strip(), ""]
-    # Aynı no iki kez denenmesin
+    inv_nos = [inv_no, ""]
     seen_nos: List[str] = []
     for n in inv_nos:
         if n not in seen_nos:
             seen_nos.append(n)
 
     for et in type_order:
-        for inv_no in seen_nos:
+        for try_no in seen_nos:
             try:
                 link = await get_document_viewer_link(
                     settings,
                     ettn,
                     e_type=et,
-                    invoice_number=inv_no,
+                    invoice_number=try_no,
                     direction=direction,
                 )
             except HTTPException as e:
-                errors.append(f"viewer({et}{',no' if inv_no else ''}): {e.detail}")
+                errors.append(f"viewer({et}{',no' if try_no else ''}): {e.detail}")
                 continue
-            # PdfUrl varsa önce onu dene (HTML viewer key bazen PDF API'de reddedilir)
             candidates = [
                 (link.get("pdf_url") or "", "PdfUrl"),
                 (link.get("url") or "", "viewer"),
@@ -2509,6 +2734,22 @@ async def download_invoice_pdf(
                 out = await _try_key_src(src, f"{label}/{et}")
                 if out:
                     return out
+
+    # Viewer yok / Zarflanmadı: Search InvoiceHtml (resmi e-belge içeriği)
+    for et in type_order:
+        try:
+            out = await _pdf_from_search_documents(
+                settings,
+                ettn,
+                e_type=et,
+                invoice_number=inv_no,
+                direction=direction,
+            )
+            if out:
+                return out
+        except HTTPException as e:
+            errors.append(f"search-doc({et}): {e.detail}")
+            logger.info("isnet pdf search-doc miss ettn=%s: %s", ettn, e.detail)
 
     detail = errors[-1] if errors else "İşNet PDF anahtarı (key) bulunamadı."
     if len(errors) > 1:
