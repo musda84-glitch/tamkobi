@@ -109,7 +109,11 @@ def gib_invoice_id(invoice_number: str, issue_date: str) -> str:
 
 
 def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optional[str] = None) -> Tuple[str, str, str]:
-    """Return (xml, ettn, invoice_id) for UBL-TR 1.2."""
+    """Return (xml, ettn, invoice_id) for UBL-TR 1.2.
+
+    Not: İşNet gönderimi isnet.build_ubl / ubl_export kullanır (TEVKIFAT dahil).
+    Bu builder yalnızca n11 Faturam / Digital Planet yoludur — tevkifat tipi burada üretilmez.
+    """
     import ubl_export
 
     ettn = ettn or str(uuid.uuid4()).upper()
@@ -118,7 +122,8 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
     profile = invoice.get("_profile_override") or invoice.get("gib_scenario")
     if profile not in ("TEMELFATURA", "TICARIFATURA", "EARSIVFATURA", "IHRACAT"):
         profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
-    invoice_type_code = ubl_export.gib_invoice_type_code(invoice)
+    # n11 yolu: yalnız iade → IADE; tevkifat İşNet/ubl_export tarafında
+    invoice_type_code = "IADE" if ubl_export.is_return_invoice(invoice) else "SATIS"
     issue = (invoice.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
     # İşNet/GİB Schematron: IssueTime beklenir (örnek UBL’lerde var)
     issue_time = (invoice.get("issue_time") or datetime.now(timezone.utc).strftime("%H:%M:%S"))[:8]

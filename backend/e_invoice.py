@@ -599,12 +599,21 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             patch["invoice_number"] = gib_no
         await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
         try:
-            xml_str, ettn, _iid = n11faturam.build_ubl(
-                {**inv, "e_type": et, "gib_scenario": scen, "invoice_number": gib_no or inv.get("invoice_number")},
-                company,
-                contact,
-                ettn=sent.get("ettn"),
-            )
+            archive_inv = {
+                **inv,
+                "e_type": et,
+                "gib_scenario": scen,
+                "invoice_number": gib_no or inv.get("invoice_number"),
+            }
+            if provider in ("isnet", "isnet_portal"):
+                # İşNet: ubl_export üzerinden (TEVKIFAT/IADE); n11faturam değil
+                xml_str, ettn, _iid = isnet.build_ubl(
+                    archive_inv, company, contact, ettn=sent.get("ettn"),
+                )
+            else:
+                xml_str, ettn, _iid = n11faturam.build_ubl(
+                    archive_inv, company, contact, ettn=sent.get("ettn"),
+                )
             await store_outgoing_xml(
                 invoice_id, inv["company_id"], xml_str.encode("utf-8"),
                 {"scenario": scen, "ettn": ettn, "source": provider},

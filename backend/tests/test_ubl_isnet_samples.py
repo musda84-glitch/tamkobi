@@ -130,3 +130,45 @@ def test_gib_invoice_type_code_from_tamkobi_types():
     assert ubl_export.gib_invoice_type_code({"invoice_type": "İade"}) == "IADE"
     assert ubl_export.gib_invoice_type_code({"gib_invoice_type": "TEVKIFAT"}) == "TEVKIFAT"
     assert ubl_export.gib_invoice_type_code({"invoice_type": "return", "invoice_type_code": "SATIS"}) == "SATIS"
+    # Tevkifat seçimi (5/10 – Makine/teçhizat bakım 603) → TEVKIFAT
+    assert ubl_export.gib_invoice_type_code({
+        "invoice_type": "sales",
+        "withholding_rate": 0.5,
+        "withholding_code": "603",
+    }) == "TEVKIFAT"
+    assert ubl_export.gib_invoice_type_code({
+        "invoice_type": "return",
+        "withholding_rate": 0.5,
+        "withholding_code": "603",
+    }) == "TEVKIFATIADE"
+
+
+def test_builder_tevkifat_withholding_tax_total():
+    inv = {
+        "_id": "inv_t",
+        "invoice_number": "U052026000000067",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "gib_scenario": "TEMELFATURA",
+        "issue_date": "2026-10-02",
+        "withholding_rate": 0.5,
+        "withholding_code": "603",
+        "withholding_amount": 0.54,
+        "items": [{"name": "Bakım", "quantity": 1, "unit": "Adet", "unit_price": 5.41, "vat_rate": 20, "total": 5.41}],
+        "subtotal": 5.41,
+        "vat_total": 1.08,
+        "grand_total": 5.95,
+    }
+    seller = {"name": "Demo", "tax_number": "4810173324"}
+    buyer = {"name": "İş Net", "tax_number_or_id": "4810173324"}
+    root = ET.fromstring(ubl_export.build_invoice_ubl(inv, seller, buyer))
+    assert _txt(root, "InvoiceTypeCode") == "TEVKIFAT"
+    wtt = root.find(f"{CAC}WithholdingTaxTotal")
+    assert wtt is not None
+    assert (wtt.find(f"{CBC}TaxAmount").text or "").startswith("0.54")
+    code = wtt.find(f".//{CBC}TaxTypeCode")
+    assert code is not None and code.text == "603"
+    percent = wtt.find(f".//{CBC}Percent")
+    assert percent is not None and percent.text in ("50", "50.0")
+    line_wtt = root.find(f"{CAC}InvoiceLine/{CAC}WithholdingTaxTotal")
+    assert line_wtt is not None
