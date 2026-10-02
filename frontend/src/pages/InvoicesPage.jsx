@@ -1186,9 +1186,64 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         </div>
                       ) : (() => {
                         const incoming = isIncomingPurchaseInvoice(inv);
+                        const pendingIncoming = incoming && isIncomingPurchasePending(inv);
+                        if (incoming) {
+                          return (
+                            <div
+                              className="flex flex-wrap items-center justify-center gap-1.5"
+                              data-testid={`inv-actions-${inv.invoice_number}`}
+                            >
+                              {pendingIncoming ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAcceptIncoming(inv)}
+                                    className="px-2.5 py-1.5 text-[11px] font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+                                    title="Ticari kabul yanıtı GİB'e iletilir"
+                                    data-testid={`accept-incoming-btn-${inv.invoice_number}`}
+                                  >
+                                    Onayla
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRejectIncoming(inv)}
+                                    className="px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50"
+                                    title="Ticari ret — alış kaydı iptal edilir"
+                                    data-testid={`reject-incoming-btn-${inv.invoice_number}`}
+                                  >
+                                    Reddet
+                                  </button>
+                                </>
+                              ) : (
+                                <span
+                                  className={`inline-flex items-center px-2 py-1 text-[10px] font-semibold rounded-md ${
+                                    incomingPurchaseResponse(inv) === "rejected"
+                                      ? "bg-rose-50 text-rose-700"
+                                      : "bg-emerald-50 text-emerald-700"
+                                  }`}
+                                  data-testid={`incoming-response-${inv.invoice_number}`}
+                                >
+                                  {incomingPurchaseResponse(inv) === "rejected" ? "Reddedildi" : "Onaylandı"}
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (shouldUseIntegratorPdf("invoice", inv)) setPrintInv(inv);
+                                  else setPreviewInvoice(inv);
+                                }}
+                                className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                                title="Görüntüle / Yazdır"
+                                data-testid={`preview-inv-btn-${inv.invoice_number}`}
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+                            </div>
+                          );
+                        }
                         return (
                       <div className="grid grid-cols-[repeat(8,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
-                        {inv.status === "draft" && !incoming ? (
+                        {inv.status === "draft" ? (
                           <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
                         <button
@@ -1202,21 +1257,19 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         {canDeleteInv && canDeleteInvoice(inv) ? (
                           <button type="button" onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : "Kağıt faturayı sil"} data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
-                        {!incoming ? (
-                          <button
-                            type="button"
-                            onClick={() => openEditInvoice(inv)}
-                            className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition"
-                            title={isGibIssued(inv) ? "Faturayı düzenle (vade / not)" : "Faturayı düzenle"}
-                            data-testid={`edit-inv-btn-${inv.invoice_number}`}
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                        ) : <span className="w-7 h-7" aria-hidden="true" />}
-                        <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
+                        <button
+                          type="button"
+                          onClick={() => openEditInvoice(inv)}
+                          className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition"
+                          title={isGibIssued(inv) ? "Faturayı düzenle (vade / not)" : "Faturayı düzenle"}
+                          data-testid={`edit-inv-btn-${inv.invoice_number}`}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Fatura kesim & diğer işlemler" data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                         {inv.invoice_type === "dispatch" ? (
                           <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
-                        ) : inv.invoice_type === "sales" && !incoming && supportsEDispatch(einvoiceSettings) ? (
+                        ) : inv.invoice_type === "sales" && supportsEDispatch(einvoiceSettings) ? (
                           <button type="button" onClick={() => handleCreateDispatch(inv)} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition" title={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "e-İrsaliye oluştur (bağlı entegratör)"} data-testid={`create-dispatch-btn-${inv.invoice_number}`}><Truck className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
                         {(inv.gib_uuid || inv.gib_tracking_id) && isEinvoiceConfigured(einvoiceSettings) ? (
