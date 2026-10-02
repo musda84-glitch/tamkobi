@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import {
@@ -46,6 +46,8 @@ function isProcessable(doc) {
 
 export default function EdocInboxPage() {
   const { activeCompany } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const kindFilter = String(searchParams.get("kind") || "all").toLowerCase();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("pending");
@@ -260,6 +262,20 @@ export default function EdocInboxPage() {
     }), "Toplu içeri alma tamamlandı.");
   };
 
+  const setKindFilter = (kind) => {
+    const next = new URLSearchParams(searchParams);
+    if (!kind || kind === "all") next.delete("kind");
+    else next.set("kind", kind);
+    setSearchParams(next, { replace: true });
+  };
+
+  const filteredItems = useMemo(() => {
+    const items = data?.items || [];
+    if (kindFilter === "dispatch") return items.filter((d) => d.kind === "dispatch");
+    if (kindFilter === "invoice") return items.filter((d) => d.kind !== "dispatch");
+    return items;
+  }, [data, kindFilter]);
+
   return (
     <div className="space-y-4" data-testid="edoc-inbox-page">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -339,13 +355,31 @@ export default function EdocInboxPage() {
         ))}
       </div>
 
+      <div className="flex flex-wrap gap-2 text-xs" data-testid="edoc-kind-filters">
+        {[
+          ["all", "Tüm belgeler"],
+          ["invoice", "Gelen e-Fatura"],
+          ["dispatch", "Gelen e-İrsaliye"],
+        ].map(([k, l]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setKindFilter(k)}
+            className={`px-3 py-1.5 rounded-lg border font-semibold ${kindFilter === k || (k === "all" && !["invoice", "dispatch"].includes(kindFilter)) ? "bg-indigo-700 text-white border-indigo-700" : "bg-white border-slate-200 text-slate-600"}`}
+            data-testid={`edoc-kind-${k}`}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-3 text-xs">
         <div className="bg-white border border-slate-200 rounded-2xl divide-y max-h-[70vh] overflow-y-auto" data-testid="edoc-list">
           {!data ? (
             <div className="p-6 text-slate-400">Yükleniyor…</div>
-          ) : data.items.length === 0 ? (
+          ) : filteredItems.length === 0 ? (
             <div className="p-8 text-center text-slate-400" data-testid="edoc-empty">Belge yok. {integrator} üzerinden çekin veya UBL XML / PDF yükleyin.</div>
-          ) : data.items.map((d) => (
+          ) : filteredItems.map((d) => (
             <div key={d.id} className={`flex items-stretch ${sel?.id === d.id ? "bg-indigo-50/60" : "hover:bg-slate-50"}`}>
               <button type="button" onClick={() => { setSel(d); setXml(null); }} className="flex-1 text-left p-3" data-testid={`edoc-item-${d.id}`}>
                 <div className="flex items-center justify-between gap-2">

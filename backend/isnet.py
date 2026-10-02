@@ -2391,6 +2391,7 @@ async def list_incoming(settings: dict, password: str, days: int = 14) -> List[D
                 "payable_amount": _find_text(inv, "PayableAmount", "Payable", "Amount"),
                 "profile": _find_text(inv, "ProfileId", "Scenario", "Profile"),
                 "status": _find_text(inv, "Status", "State"),
+                "kind": "invoice",
                 "xml": xml_bytes,
                 "xml_error": (
                     ""
@@ -2400,3 +2401,136 @@ async def list_incoming(settings: dict, password: str, days: int = 14) -> List[D
             }
         )
     return out
+
+
+async def _search_despatch_advice_xml(
+    settings: dict, *, req_base: dict, ettn: str, direction: str = "Incoming"
+) -> Optional[bytes]:
+    """ETTN ile tekil SearchDespatchAdvice — tarih aralığı satır/XML vermeyebilir (Dolibarr notu)."""
+    if not ettn:
+        return None
+    body = await _soap_call(
+        settings,
+        endpoint=soap_url(settings),
+        action="SearchDespatchAdvice",
+        service_interface="IInvoiceService",
+        request={
+            **req_base,
+            "DespatchAdviceDirection": direction,
+            "Ettn": ettn,
+            "PagingRequest": {"PageNumber": 1, "RecordsPerPage": 1},
+            "ResultSet": {
+                "IsArchiveIncluded": False,
+                "IsAttachmentIncluded": False,
+                "IsDespatchAdviceDetailIncluded": True,
+                "IsExternalUrlIncluded": False,
+                "IsHtmlIncluded": False,
+                "IsPDFIncluded": False,
+                "IsXMLIncluded": True,
+            },
+        },
+        timeout=60.0,
+    )
+    for adv in _find_all(body, "DespatchAdvice", "DespatchAdviceInfo", "Document"):
+        raw_xml = _find_text(
+            adv, "DespatchAdviceXML", "XMLContent", "XmlData", "UBL", "InvoiceXML"
+        )
+        xml_bytes = _decode_xml_payload(raw_xml) if raw_xml else None
+        if xml_bytes:
+            return xml_bytes
+    return None
+
+
+async def list_incoming_despatch(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
+    """SearchDespatchAdvice (Incoming) — Dolibarr isnetefatura syncDespatch ile aynı operasyon."""
+    _ = password
+    req_base = _company_request(settings)
+    if len(req_base["CompanyTaxCode"]) not in (10, 11):
+        raise HTTPException(
+            status_code=400, detail="İşNet gelen e-İrsaliye için şirket VKN (company_tax_id) gerekli."
+        )
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=max(1, min(int(days or 14), 90)))
+    body = await _soap_call(
+        settings,
+        endpoint=soap_url(settings),
+        action="SearchDespatchAdvice",
+        service_interface="IInvoiceService",
+        request={
+            **req_base,
+            "DespatchAdviceDirection": "Incoming",
+            "MaxDespatchAdviceDate": end.strftime("%Y-%m-%d"),
+            "MinDespatchAdviceDate": start.strftime("%Y-%m-%d"),
+            "PagingRequest": {"PageNumber": 1, "RecordsPerPage": 50},
+            "ResultSet": {
+                "IsArchiveIncluded": False,
+                "IsAttachmentIncluded": False,
+                "IsDespatchAdviceDetailIncluded": True,
+                "IsExternalUrlIncluded": False,
+                "IsHtmlIncluded": False,
+                "IsPDFIncluded": False,
+                "IsXMLIncluded": True,
+            },
+        },
+        timeout=60.0,
+    )
+    out: List[Dict[str, Any]] = []
+    for adv in _find_all(body, "DespatchAdvice", "DespatchAdviceInfo", "Document"):
+        uuid = _find_text(adv, "ETTN", "Ettn", "UUID")
+        inv_id = _find_text(adv, "DespatchAdviceNumber", "InvoiceNumber", "InvoiceId", "ID")
+        raw_xml = _find_text(
+            adv, "DespatchAdviceXML", "XMLContent", "XmlData", "UBL", "InvoiceXML"
+        )
+        xml_bytes = _decode_xml_payload(raw_xml) if raw_xml else None
+        if not xml_bytes and uuid:
+            try:
+                xml_bytes = await _search_despatch_advice_xml(
+                    settings, req_base=req_base, ettn=uuid, direction="Incoming"
+                )
+            except HTTPException:
+                xml_bytes = None
+        # Dolibarr: gelen irsaliyede karşı taraf DespatchSupplierParty.Receiver*
+        sender_vkn = _find_text(
+            adv, "SenderTaxCode", "SenderVKN", "ReceiverTaxCode", "VKN"
+        )
+        sender_title = _find_text(
+            adv, "SenderName", "SenderTitle", "ReceiverName", "Title"
+        )
+        out.append(
+            {
+                "uuid": uuid,
+                "invoice_id": inv_id,
+                "sender_vkn": sender_vkn,
+                "sender_title": sender_title,
+                "issue_date": _find_text(
+                    adv, "DespatchAdviceDate", "InvoiceDate", "IssueDate", "Date"
+                ),
+                "payable_amount": _find_text(
+                    adv, "TotalValueAmount", "PayableAmount", "Payable", "Amount"
+                ),
+                "profile": _find_text(
+                    adv, "DespatchAdviceScenarioType", "ProfileId", "Scenario", "Profile"
+                ),
+                "status": _find_text(adv, "Status", "State"),
+                "kind": "dispatch",
+                "xml": xml_bytes,
+                "xml_error": (
+                    ""
+                    if xml_bytes
+                    else ("İşNet e-İrsaliye XML döndürmedi." if not raw_xml else "İşNet XML çözümlenemedi.")
+                ),
+            }
+        )
+    return out
+
+
+async def list_incoming_all(settings: dict, password: str, days: int = 14) -> List[Dict[str, Any]]:
+    """Gelen e-Fatura + e-İrsaliye (Dolibarr: Gelen e-Faturalar / Gelen e-İrsaliyeler)."""
+    invoices = await list_incoming(settings, password, days=days)
+    try:
+        despatches = await list_incoming_despatch(settings, password, days=days)
+    except HTTPException as e:
+        # e-İrsaliye yetkisi yoksa fatura çekimini bozma
+        logger.warning("İşNet SearchDespatchAdvice Incoming atlandı: %s", e.detail)
+        despatches = []
+    return list(invoices) + list(despatches)

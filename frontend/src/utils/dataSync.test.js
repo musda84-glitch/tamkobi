@@ -18,6 +18,15 @@ test("invoiceTypeFilter matches invoice_type", () => {
   expect(invoiceTypeFilter("dispatch")({ invoice_type: "dispatch" })).toBe(true);
 });
 
+test("invoiceTypeFilter incoming and outgoing_gib", () => {
+  expect(invoiceTypeFilter("incoming")({ invoice_type: "purchase", direction: "incoming" })).toBe(true);
+  expect(invoiceTypeFilter("incoming")({ invoice_type: "purchase", edoc_id: "x" })).toBe(true);
+  expect(invoiceTypeFilter("incoming")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(false);
+  expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(true);
+  expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "purchase", direction: "incoming", e_type: "e_invoice" })).toBe(false);
+  expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "dispatch", e_type: "e_dispatch" })).toBe(false);
+});
+
 test("mergeDelta patches product flags by id", () => {
   const items = { a: { id: "a", show_in_b2b: true, track_stock: true } };
   const next = mergeDelta(items, [{ id: "a", show_in_b2b: false, track_stock: false }], [], false);

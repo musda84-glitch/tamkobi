@@ -1095,7 +1095,8 @@ async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Opti
     if not pwd:
         raise HTTPException(status_code=400, detail="Kayıtlı e-Fatura şifresi çözülemedi; şifreyi Ayarlar → e-Fatura ekranından yeniden kaydedin.")
     if provider == "isnet":
-        rows = await isnet.list_incoming(s, pwd, days=days)
+        # Dolibarr isnetefatura: gelen e-Fatura (SearchInvoice) + gelen e-İrsaliye (SearchDespatchAdvice)
+        rows = await isnet.list_incoming_all(s, pwd, days=days)
         source_label = "İşNet SOAP"
     elif provider == "isnet_portal":
         rows = await isnet_portal.list_incoming(s, pwd, days=days)
@@ -1138,14 +1139,18 @@ async def pull_einvoice_incoming(company_id: str, days: int = 14, settings: Opti
     if not rows:
         if provider == "isnet_portal":
             message = (
-                f"İşNet Portal son {days} günde gelen fatura döndürmedi. "
-                "Portal hesabında Gelen Kutusu’nda fatura olduğundan emin olun; "
+                f"İşNet Portal son {days} günde gelen e-belge döndürmedi. "
+                "Portal hesabında Gelen Kutusu’nda fatura/irsaliye olduğundan emin olun; "
                 "çoklu firmada Ayarlar’daki Portal firma ID’yi kontrol edin."
             )
         else:
-            message = f"{source_label} son {days} günde gelen fatura döndürmedi."
+            message = f"{source_label} son {days} günde gelen e-Fatura / e-İrsaliye döndürmedi."
     else:
-        parts = [f"{len(pulled)} yeni gelen e-fatura alındı"]
+        n_inv = sum(1 for r in rows if r.get("kind") != "dispatch")
+        n_disp = sum(1 for r in rows if r.get("kind") == "dispatch")
+        parts = [f"{len(pulled)} yeni gelen e-belge alındı"]
+        if n_inv or n_disp:
+            parts.append(f"listede {n_inv} e-Fatura / {n_disp} e-İrsaliye")
         if already:
             parts.append(f"{already} zaten kayıtlı")
         if failed:

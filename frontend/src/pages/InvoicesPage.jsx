@@ -31,6 +31,8 @@ import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduc
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
 import { WITHHOLDING_OPTIONS } from "../utils/invoiceWithholding";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { InvoiceGibBar } from "../components/InvoiceGibBar";
+import { isEinvoiceConfigured, supportsEDispatch } from "../utils/einvoiceIntegrator";
 
 import {
   FileText,
@@ -52,7 +54,7 @@ import {
   ArrowDown,
   ArrowUpDown,
   ChevronDown,
-  FileCheck2, CheckCircle, XCircle, Trash2, Pencil, CalendarClock } from "lucide-react";
+  FileCheck2, CheckCircle, XCircle, Trash2, Pencil, CalendarClock, Truck, RefreshCw } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const pad2 = (x) => String(x).padStart(2, "0");
@@ -129,6 +131,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [bankAccounts, setBankAccounts] = useState([]);
   const [filterType, setFilterType] = useState(initialType);
   const [loading, setLoading] = useState(true);
+  const [einvoiceSettings, setEinvoiceSettings] = useState(null);
+  const [gibBusy, setGibBusy] = useState("");
 
   // Modals
   const [showNewModal, setShowNewModal] = useState(false);
@@ -229,6 +233,57 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     catch (err) { toast.error(err.response?.data?.detail || "İrsaliye oluşturulamadı."); }
   };
   const openPayment = (inv) => { setPaymentModalInvoice(inv); setPaymentAmount(inv.grand_total - (inv.paid_amount || 0)); };
+
+  const loadEinvoiceSettings = useCallback(async () => {
+    const cid = activeCompany?.id || activeCompany?._id;
+    if (!cid) return;
+    try {
+      const r = await axios.get(`${API_URL}/einvoice/settings`, { params: { company_id: cid } });
+      setEinvoiceSettings(r.data || null);
+    } catch {
+      setEinvoiceSettings(null);
+    }
+  }, [activeCompany]);
+
+  useEffect(() => { loadEinvoiceSettings(); }, [loadEinvoiceSettings]);
+
+  const pullGibIncoming = async () => {
+    const cid = activeCompany?.id || activeCompany?._id;
+    if (!cid) { toast.error("Firma seçin."); return; }
+    setGibBusy("pull");
+    try {
+      const r = await axios.post(`${API_URL}/einvoice/incoming/sync`, null, { params: { company_id: cid, days: 14 } });
+      toast.success(r.data?.message || "Gelen GİB kutusu çekildi.");
+      navigate("/edoc-inbox");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Gelen kutu çekilemedi.");
+    } finally {
+      setGibBusy("");
+    }
+  };
+
+  const filterOutgoingGib = () => {
+    setFilterType("outgoing_gib");
+    setFilters((s) => ({ ...s, etype: "all" }));
+  };
+  const filterIncomingGib = () => {
+    setFilterType("incoming");
+    setFilters((s) => ({ ...s, etype: "all" }));
+  };
+  const filterDispatchList = () => {
+    setFilterType("dispatch");
+    setFilters((s) => ({ ...s, etype: "all" }));
+  };
+  const openGibInbox = () => navigate("/edoc-inbox");
+  const openIncomingDispatchInbox = () => navigate("/edoc-inbox?kind=dispatch");
+  const refreshOutgoingGib = async () => {
+    setGibBusy("refresh");
+    try {
+      await bulk("refresh");
+    } finally {
+      setGibBusy("");
+    }
+  };
 
   // New Invoice Form
   const [formData, setFormData] = useState(() => {
@@ -808,11 +863,13 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           { id: "all", label: "Tüm Faturalar" },
           { id: "sales", label: "Satış Faturaları" },
           { id: "purchase", label: "Alış Faturaları" },
+          { id: "incoming", label: "Gelen e-Fatura" },
+          { id: "outgoing_gib", label: "Giden e-Fatura" },
           { id: "proforma", label: "Proforma & Teklif" },
           { id: "return", label: "İade Faturaları" },
           { id: "export", label: "İhracat" },
           { id: "import", label: "İthalat" },
-          { id: "dispatch", label: "İrsaliyeler" }
+          { id: "dispatch", label: "Giden e-İrsaliye" }
         ].map(tab => (
           <button
             key={tab.id}
@@ -826,6 +883,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           </button>
         ))}
       </div>}
+
+      {!lockType && (
+        <InvoiceGibBar
+          settings={einvoiceSettings}
+          busy={gibBusy}
+          onPullIncoming={pullGibIncoming}
+          onRefreshOutgoing={refreshOutgoingGib}
+          onFilterDispatch={filterDispatchList}
+          onFilterOutgoing={filterOutgoingGib}
+          onFilterIncoming={filterIncomingGib}
+        />
+      )}
 
       <InvoiceToolbar
         f={filters}
@@ -1045,7 +1114,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       ) : (() => {
                         const incoming = isIncomingPurchaseInvoice(inv);
                         return (
-                      <div className="grid grid-cols-[repeat(6,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
+                      <div className="grid grid-cols-[repeat(8,1.75rem)] gap-1 justify-center justify-items-center items-center mx-auto" data-testid={`inv-actions-${inv.invoice_number}`}>
                         {inv.status === "draft" && !incoming ? (
                           <button onClick={async () => { if (!window.confirm(`${inv.invoice_number} onaylansın mı? Cari bakiyesi ve stok işlenecek.`)) return; try { const r = await axios.post(`${API_URL}/invoices/${inv.id}/approve`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } }} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg" title="Taslağı onayla (bakiye + stok işlenir)" data-testid={`approve-inv-btn-${inv.invoice_number}`}><CheckCircle className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
@@ -1074,6 +1143,19 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                         {inv.invoice_type === "dispatch" ? (
                           <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
+                        ) : inv.invoice_type === "sales" && !incoming && supportsEDispatch(einvoiceSettings) ? (
+                          <button type="button" onClick={() => handleCreateDispatch(inv)} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition" title={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "e-İrsaliye oluştur (bağlı entegratör)"} data-testid={`create-dispatch-btn-${inv.invoice_number}`}><Truck className="w-4 h-4" /></button>
+                        ) : <span className="w-7 h-7" aria-hidden="true" />}
+                        {(inv.gib_uuid || inv.gib_tracking_id) && isEinvoiceConfigured(einvoiceSettings) ? (
+                          <button
+                            type="button"
+                            onClick={async () => { await refreshInvoiceGibStatus(API_URL, inv); loadData({ silent: true }); }}
+                            className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition"
+                            title="Giden GİB durumunu yenile (bağlı entegratör)"
+                            data-testid={`refresh-gib-btn-${inv.invoice_number}`}
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
                       </div>
                         );
@@ -1130,7 +1212,33 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         )}
       </div>
 
-      <InvoiceContextMenu menu={ctxMenu} onClose={closeCtx} companyId={activeCompany?.id || activeCompany?._id} onIssue={handleIssueFromMenu} onPreview={setPreviewInvoice} onPrint={setPrintInv} onNotify={setNotifyInvoice} onPayment={openPayment} onDispatch={handleCreateDispatch} onInstallments={setInstallmentInv} onAcceptIncoming={handleAcceptIncoming} onRejectIncoming={handleRejectIncoming} apiBase={API_URL} onEdit={openEditInvoice} onDelete={canDeleteInv ? handleDeleteInvoice : undefined} onCancel={handleCancelInvoice} onExpenseSlip={handleExpenseSlip} onCopy={invoiceCopy.handleCopyMode} onGibStatusRefreshed={() => loadData({ silent: true })} />
+      <InvoiceContextMenu
+        menu={ctxMenu}
+        onClose={closeCtx}
+        companyId={activeCompany?.id || activeCompany?._id}
+        onIssue={handleIssueFromMenu}
+        onPreview={setPreviewInvoice}
+        onPrint={setPrintInv}
+        onNotify={setNotifyInvoice}
+        onPayment={openPayment}
+        onDispatch={handleCreateDispatch}
+        onInstallments={setInstallmentInv}
+        onAcceptIncoming={handleAcceptIncoming}
+        onRejectIncoming={handleRejectIncoming}
+        apiBase={API_URL}
+        onEdit={openEditInvoice}
+        onDelete={canDeleteInv ? handleDeleteInvoice : undefined}
+        onCancel={handleCancelInvoice}
+        onExpenseSlip={handleExpenseSlip}
+        onCopy={invoiceCopy.handleCopyMode}
+        onGibStatusRefreshed={() => loadData({ silent: true })}
+        einvoiceSettings={einvoiceSettings}
+        onOpenGibInbox={openGibInbox}
+        onOpenIncomingDispatch={openIncomingDispatchInbox}
+        onPullGibInbox={pullGibIncoming}
+        onFilterOutgoingGib={filterOutgoingGib}
+        onFilterDispatch={filterDispatchList}
+      />
       {eFaturaInvoice && (
         <ElektronikFaturaOnayModal
           invoice={eFaturaInvoice}

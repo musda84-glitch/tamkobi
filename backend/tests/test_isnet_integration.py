@@ -1199,3 +1199,48 @@ def test_endpoints_match_official_isnet_docs():
     assert isnet.LIVE_PORTAL == "https://nettefatura.isnet.net.tr"
     assert isnet.TEST_PORTAL_USER == "12345678901"
     assert isnet.TEST_FIRM_VKNS == ("4810173324", "1234567805")
+
+
+def test_list_incoming_despatch_search_despatch_advice():
+    """Dolibarr syncDespatch: SearchDespatchAdvice + DespatchAdviceDirection=Incoming."""
+    import base64
+
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    ubl = b'<DespatchAdvice xmlns="urn:oasis:names:specification:ubl:schema:xsd:DespatchAdvice-2"><ID>IRS2026000000001</ID></DespatchAdvice>'
+    b64 = base64.b64encode(ubl).decode("ascii")
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:DespatchAdvice>"
+        "<ein:ETTN>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</ein:ETTN>"
+        "<ein:DespatchAdviceNumber>IRS2026000000001</ein:DespatchAdviceNumber>"
+        f"<ein:DespatchAdviceXML>{b64}</ein:DespatchAdviceXML>"
+        "<ein:Status>Basariyla_Tamamlandi</ein:Status>"
+        "</ein:DespatchAdvice>"
+        "</Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)) as mock_call:
+        rows = asyncio.get_event_loop().run_until_complete(
+            isnet.list_incoming_despatch(settings, password="")
+        )
+    assert mock_call.await_args.kwargs["action"] == "SearchDespatchAdvice"
+    req = mock_call.await_args.kwargs["request"]
+    assert req.get("DespatchAdviceDirection") == "Incoming"
+    assert req["ResultSet"].get("IsXMLIncluded") is True
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "dispatch"
+    assert rows[0]["invoice_id"] == "IRS2026000000001"
+    assert rows[0]["xml"] and b"DespatchAdvice" in rows[0]["xml"]
+
+
+def test_list_incoming_all_merges_invoice_and_despatch():
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    inv = [{"uuid": "i1", "invoice_id": "FAT1", "kind": "invoice", "xml": b"<Invoice/>"}]
+    disp = [{"uuid": "d1", "invoice_id": "IRS1", "kind": "dispatch", "xml": b"<DespatchAdvice/>"}]
+    with patch("isnet.list_incoming", AsyncMock(return_value=inv)), patch(
+        "isnet.list_incoming_despatch", AsyncMock(return_value=disp)
+    ):
+        rows = asyncio.get_event_loop().run_until_complete(
+            isnet.list_incoming_all(settings, password="")
+        )
+    assert len(rows) == 2
+    assert {r["kind"] for r in rows} == {"invoice", "dispatch"}

@@ -5,9 +5,21 @@ import axios from "axios";
 const DB_NAME = "tamkobi-sync-v1";
 const STORE = "collections";
 
+export const isIncomingGibInvoice = (inv) => {
+  if (!inv) return false;
+  if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return true;
+  return inv.invoice_type === "purchase" && Boolean(inv.gib_uuid || inv.gib_tracking_id);
+};
+
 export const invoiceTypeFilter = (type) => (inv) => {
   if (type === "export") return inv.trade_kind === "export" && inv.invoice_type !== "dispatch";
   if (type === "import") return inv.trade_kind === "import" && inv.invoice_type !== "dispatch";
+  if (type === "incoming") return isIncomingGibInvoice(inv) && inv.invoice_type !== "dispatch";
+  if (type === "outgoing_gib") {
+    if (inv.invoice_type === "dispatch") return false;
+    if (isIncomingGibInvoice(inv)) return false;
+    return ["e_invoice", "e_archive", "e_export"].includes(inv.e_type);
+  }
   if (!type || type === "all") return inv.invoice_type !== "dispatch";
   return inv.invoice_type === type;
 };
