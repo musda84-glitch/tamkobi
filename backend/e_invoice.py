@@ -53,6 +53,30 @@ def digits(value: Any) -> str:
 MANUAL_ISSUE_TYPES = frozenset({"paper", "e_export", "e_ihracat", "e_dispatch", "expense_slip"})
 
 
+def _portal_password_for_advance(settings: dict) -> tuple:
+    """Portal advance için şifre + ayar.
+
+    SOAP-only kayıtlarda şifre boş olabilir; test ortamında İşNet deneme
+    hesabı (12345678901 / 1234) ile Ziplenmiş → GİB iletimi ilerletilir.
+    """
+    password_fn: Optional[Callable] = _deps.get("password_fn")
+    pwd = ""
+    if password_fn:
+        try:
+            pwd = password_fn(settings) or ""
+        except Exception:
+            pwd = ""
+    merged = dict(settings or {})
+    if pwd:
+        return pwd, merged
+    if isnet.is_test_mode(merged):
+        merged.setdefault("mobile_username", isnet.TEST_PORTAL_USER)
+        if not digits(merged.get("username")):
+            merged["username"] = isnet.TEST_PORTAL_USER
+        return isnet.TEST_PORTAL_PASSWORD, merged
+    return "", merged
+
+
 async def resolve_buyer_mukellef(
     company_id: str,
     tax_id: str,
@@ -364,16 +388,18 @@ def validate_buyer(contact: Optional[dict], invoice: dict, e_type: str) -> Dict[
         raise HTTPException(status_code=400, detail="Alıcı ünvanı zorunludur (GİB).")
     if e_type == "e_invoice" and len(tax) not in (10, 11):
         raise HTTPException(status_code=400, detail="e-Fatura için alıcı VKN (10) veya TCKN (11) zorunludur.")
+    if e_type == "e_dispatch" and len(tax) not in (10, 11):
+        raise HTTPException(status_code=400, detail="e-İrsaliye için alıcı VKN (10) veya TCKN (11) zorunludur.")
     if e_type == "e_archive" and tax and len(tax) not in (10, 11):
         raise HTTPException(status_code=400, detail="Alıcı vergi kimlik numarası 10 veya 11 haneli olmalıdır.")
     return {
         "name": name,
         "tax_id": tax or ("11111111111" if e_type == "e_archive" else tax),
         "tax_office": (contact or {}).get("tax_office") or "",
-        "address": (contact or {}).get("address") or invoice.get("contact_address") or "",
-        "city": (contact or {}).get("city") or "",
+        "address": (contact or {}).get("address") or invoice.get("contact_address") or invoice.get("shipping_address") or "",
+        "city": (contact or {}).get("city") or invoice.get("city") or "",
         "email": (contact or {}).get("email") or "",
-        "phone": (contact or {}).get("phone") or "",
+        "phone": (contact or {}).get("phone") or invoice.get("customer_phone") or "",
         "is_e_invoice_user": bool((contact or {}).get("is_e_invoice_user")),
     }
 
@@ -427,8 +453,11 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
     contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
     requested = e_type if e_type is not None else inv.get("e_type")
     gib_meta: Optional[Dict[str, Any]] = None
+    # İrsaliye belgesi — GİB mükellef çözümlemesi e_archive'a çevirmesin
+    if inv.get("invoice_type") == "dispatch" or (requested or inv.get("e_type")) == "e_dispatch":
+        e_type = "e_dispatch"
     # Temel/Ticari onayı e_type=e_invoice gönderir — GİB e-arşiv dese bile korunur.
-    if honor_explicit_einvoice(requested):
+    elif honor_explicit_einvoice(requested):
         e_type = "e_invoice"
     elif should_resolve_e_type_from_gib(requested):
         tax = digits(
@@ -463,7 +492,7 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         inv = {**(refreshed or inv or {}), "e_type": e_type}
 
     et = e_type or (inv.get("e_type") if inv else None) or "e_archive"
-    scen = normalize_scenario(scenario or inv.get("gib_scenario"), et)
+    scen = "TEMELIRSALIYE" if et == "e_dispatch" else normalize_scenario(scenario or inv.get("gib_scenario"), et)
     # GİB Schematron: IADE / TEVKIFATIADE → TICARIFATURA yasak
     if ubl_export.is_return_invoice(inv) or ubl_export.gib_invoice_type_code(inv) in (
         "IADE",
@@ -479,7 +508,7 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
                     "Nota «… numaralı faturaya istinaden» ekleyin veya original_invoice_number girin."
                 ),
             )
-    if ubl_export.invoice_has_zero_vat(inv) and not ubl_export.resolve_tax_exemption(inv):
+    if et != "e_dispatch" and ubl_export.invoice_has_zero_vat(inv) and not ubl_export.resolve_tax_exemption(inv):
         line_ok = any(
             ubl_export.resolve_tax_exemption(inv, it)
             for it in (inv.get("items") or [])
@@ -515,7 +544,22 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         {"$set": {"einvoice_state": "queued", "gib_scenario": scen, "gib_status": "Kuyrukta", "queued_at": _now()}},
     )
     try:
-        await build_and_store_xml({**inv, "gib_scenario": scen}, company, contact, scen)
+        if et == "e_dispatch":
+            seller = {
+                "name": company.get("name"),
+                "tax_number": company.get("tax_number") or company.get("tax_id"),
+                "tax_office": company.get("tax_office"),
+                "city": company.get("city"),
+                "address": company.get("address"),
+                "email": company.get("email"),
+                "phone": company.get("phone"),
+            }
+            xml = ubl_export.build_despatch_ubl(
+                {**inv, "gib_scenario": scen}, seller, ubl_export._buyer_from(inv, contact), send_ready=False
+            )
+            await store_outgoing_xml(invoice_id, inv["company_id"], xml, {"scenario": scen, "source": "ubl_despatch"})
+        else:
+            await build_and_store_xml({**inv, "gib_scenario": scen}, company, contact, scen)
     except Exception:
         logger.exception("UBL arşivi yazılamadı: %s", invoice_id)
 
@@ -525,7 +569,9 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
 
     provider = settings.get("provider") or ""
     live_providers = ("n11faturam", "isnet", "isnet_portal")
-    if provider in live_providers and et in ("e_invoice", "e_archive"):
+    # e-İrsaliye yalnızca İşNet SOAP (portal da aynı WSDL)
+    live_etypes = ("e_invoice", "e_archive") + (("e_dispatch",) if provider in ("isnet", "isnet_portal") else ())
+    if provider in live_providers and et in live_etypes:
         if settings.get("status") != "configured":
             labels = {
                 "n11faturam": "n11 Faturam",
@@ -550,11 +596,28 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
                     "simüle GİB gönderimi yapılmaz."
                 ),
             )
+        if et == "e_dispatch" and settings.get("e_dispatch_enabled") is False:
+            await _db.invoices.update_one(
+                {"_id": invoice_id},
+                {"$set": {
+                    "einvoice_state": "error",
+                    "gib_status": "Hata: e-İrsaliye kapalı",
+                    "gib_error": "e_dispatch_disabled",
+                    "error_at": _now(),
+                }},
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="e-İrsaliye Ayarlar → İşNet panelinde kapalı. Açıp tekrar deneyin.",
+            )
         if not password_fn:
             raise HTTPException(status_code=500, detail="e-Fatura şifre çözücü yapılandırılmamış.")
-        pwd = password_fn(settings)
+        pwd = password_fn(settings) or ""
         if provider == "n11faturam":
             sender, label = n11faturam, "n11 Faturam"
+        elif et == "e_dispatch":
+            # Portal stub yerine SOAP SendDespatchAdviceXml
+            sender, label = isnet, "İşNet SOAP API"
         elif provider == "isnet_portal":
             sender, label = isnet_portal, "İşNet Web Portal"
         else:
@@ -664,7 +727,11 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
                 "gib_scenario": scen,
                 "invoice_number": gib_no or inv.get("invoice_number"),
             }
-            if provider in ("isnet", "isnet_portal"):
+            if et == "e_dispatch":
+                xml_str, ettn, _iid = isnet.build_despatch_ubl(
+                    archive_inv, company, contact, ettn=sent.get("ettn"),
+                )
+            elif provider in ("isnet", "isnet_portal"):
                 # İşNet: ubl_export üzerinden (TEVKIFAT/IADE); n11faturam değil
                 xml_str, ettn, _iid = isnet.build_ubl(
                     archive_inv, company, contact, ettn=sent.get("ettn"),
@@ -679,10 +746,15 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             )
         except Exception:
             logger.exception("%s UBL arşivi yazılamadı", provider)
-        msg = f"Fatura {label} üzerinden GİB'e iletildi. ETTN: {tracking}"
+        if et == "e_dispatch":
+            msg = f"e-İrsaliye {label} üzerinden İşNet/GİB'e iletildi. ETTN: {tracking}"
+            patch_extra = {"dispatch_status": "sent"}
+            await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch_extra})
+        else:
+            msg = f"Fatura {label} üzerinden GİB'e iletildi. ETTN: {tracking}"
         if gib_no:
-            msg = f"Fatura no {gib_no}. {msg}"
-        if gib_meta:
+            msg = f"{'İrsaliye' if et == 'e_dispatch' else 'Fatura'} no {gib_no}. {msg}"
+        if gib_meta and et != "e_dispatch":
             msg = f"{'E-Fatura' if et == 'e_invoice' else 'E-Arşiv'} (GİB). {msg}"
         if gib_mode.lower() in ("test", "sandbox", "demo"):
             msg = f"[Test] {msg}"
@@ -704,6 +776,24 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
             "gib_credits_left": remaining,
             "gib_lookup": gib_meta,
         }
+
+    if et == "e_dispatch":
+        await _db.invoices.update_one(
+            {"_id": invoice_id},
+            {"$set": {
+                "einvoice_state": "draft",
+                "gib_status": "Taslak (e-İrsaliye) — İşNet yapılandırın",
+                "gib_error": "isnet_required_for_despatch",
+                "error_at": _now(),
+            }},
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "e-İrsaliye yalnızca İşNet (SOAP) üzerinden gönderilir. "
+                "Ayarlar → e-Fatura entegratörünü İşNet olarak kaydedip test edin."
+            ),
+        )
 
     remaining = None
     # Simüle / kağıt dışı yerel GİB yolu — platform kontörü burada düşer
@@ -911,31 +1001,30 @@ async def refresh_one_invoice_status(invoice_id: str) -> Dict[str, Any]:
         detail_status=str(inv.get("gib_detail_status") or ""),
         process_status=str(inv.get("gib_process_status") or ""),
     )
-    password_fn: Optional[Callable] = _deps.get("password_fn")
-    pwd = ""
-    if pending_zip and password_fn:
-        try:
-            pwd = password_fn(settings) or ""
-        except Exception:
-            pwd = ""
-    if pending_zip and pwd:
-        try:
-            await isnet_portal.advance_outgoing_invoice(
-                settings,
-                pwd,
-                ettn=ettn,
-                invoice_number=hint_no,
-                e_type=e_type,
-                process_status=str(inv.get("gib_process_status") or ""),
-            )
-        except Exception:
-            logger.exception("refresh_one portal advance failed for %s", invoice_id)
+    # e_dispatch doğrulama SearchDespatchAdvice Outgoing ile
+    verify_type = e_type if e_type in ("e_invoice", "e_archive", "e_dispatch") else "e_archive"
+    if pending_zip and verify_type != "e_dispatch":
+        pwd, portal_settings = _portal_password_for_advance(settings)
+        if pwd:
+            try:
+                advanced = await isnet_portal.advance_outgoing_invoice(
+                    portal_settings,
+                    pwd,
+                    ettn=ettn,
+                    invoice_number=hint_no,
+                    e_type=e_type,
+                    process_status=str(inv.get("gib_process_status") or ""),
+                )
+                if advanced.get("invoice_number") and not hint_no:
+                    hint_no = str(advanced.get("invoice_number") or "")
+            except Exception:
+                logger.exception("refresh_one portal advance failed for %s", invoice_id)
     info = await isnet.try_verify_outgoing_in_portal(
         settings,
         ettn,
-        e_type=e_type,
+        e_type=verify_type,
         invoice_number=hint_no,
-        retries=4 if pending_zip else 3,
+        retries=5 if pending_zip else 3,
         wait_for_gib=bool(pending_zip),
     )
     if not info.get("ok"):
@@ -1293,32 +1382,33 @@ async def refresh_outbound_statuses(limit: int = 50) -> Dict[str, Any]:
             detail_status=str(inv.get("gib_detail_status") or ""),
             process_status=str(inv.get("gib_process_status") or ""),
         )
-        password_fn: Optional[Callable] = _deps.get("password_fn")
-        pwd = ""
-        if pending_zip and password_fn:
-            try:
-                pwd = password_fn(settings) or ""
-            except Exception:
-                pwd = ""
-        if pending_zip and pwd:
-            try:
-                await isnet_portal.advance_outgoing_invoice(
-                    settings,
-                    pwd,
-                    ettn=ettn,
-                    invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
-                    e_type=inv.get("e_type") or "e_archive",
-                    process_status=str(inv.get("gib_process_status") or ""),
-                )
-            except Exception:
-                logger.exception("outbound refresh portal advance failed for %s", inv.get("_id"))
+        e_type_inv = inv.get("e_type") or "e_archive"
+        hint_no = str(inv.get("gib_invoice_id") or inv.get("invoice_number") or "")
+        if pending_zip and e_type_inv != "e_dispatch":
+            pwd, portal_settings = _portal_password_for_advance(settings)
+            if pwd:
+                try:
+                    advanced = await isnet_portal.advance_outgoing_invoice(
+                        portal_settings,
+                        pwd,
+                        ettn=ettn,
+                        invoice_number=hint_no,
+                        e_type=e_type_inv,
+                        process_status=str(inv.get("gib_process_status") or ""),
+                    )
+                    if advanced.get("invoice_number") and (
+                        not hint_no or str(hint_no).upper().startswith("TKB")
+                    ):
+                        hint_no = str(advanced.get("invoice_number") or hint_no)
+                except Exception:
+                    logger.exception("outbound refresh portal advance failed for %s", inv.get("_id"))
         try:
             info = await isnet.try_verify_outgoing_in_portal(
                 settings,
                 ettn,
-                e_type=inv.get("e_type") or "e_archive",
-                invoice_number=str(inv.get("gib_invoice_id") or inv.get("invoice_number") or ""),
-                retries=4 if pending_zip else 2,
+                e_type=e_type_inv if e_type_inv in ("e_invoice", "e_archive", "e_dispatch") else "e_archive",
+                invoice_number=hint_no,
+                retries=5 if pending_zip else 2,
                 wait_for_gib=bool(pending_zip),
             )
         except Exception:

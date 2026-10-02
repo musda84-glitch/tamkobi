@@ -65,6 +65,8 @@ ARR_NS = "http://schemas.microsoft.com/2003/10/Serialization/Arrays"
 _ARRAY_ITEM = {
     "Invoices": "InvoiceXml",
     "ArchiveInvoices": "ArchiveInvoiceXml",
+    # SendDespatchAdviceXml — InvoiceXml ile aynı WCF dizi kalıbı
+    "DespatchAdvices": "DespatchAdviceXml",
     "InvoiceDetails": "InvoiceDetail",
     "TaxPayers": "TaxPayer",
     "InboxTagList": "string",
@@ -848,6 +850,47 @@ async def get_company_balance(settings: dict, tax_code: Optional[str] = None) ->
     }
 
 
+async def lookup_despatch_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
+    """GetDespatchTaxPayer — e-İrsaliye mükellefiyet / alias (NetteFatura-API)."""
+    _ = password
+    tax = re.sub(r"\D", "", str(tax_id or ""))
+    if len(tax) not in (10, 11):
+        raise HTTPException(status_code=400, detail="VKN 10 veya TCKN 11 haneli olmalıdır.")
+    body = await _soap_call(
+        settings,
+        endpoint=address_book_url(settings),
+        action="GetDespatchTaxPayer",
+        service_interface="IAddressBookService",
+        request={"TaxPayerTaxCode": tax},
+        timeout=30.0,
+    )
+    payers = _find_all(body, "TaxPayer")
+    if not payers:
+        return {"tax_id": tax, "is_e_dispatch_user": False, "alias": "", "name": ""}
+    payer = payers[0]
+    name = _find_text(payer, "TaxPayerName", "Title", "IdentifierName", "Name") or ""
+    aliases: List[str] = []
+    for tag in ("InboxTagList", "OutboxTagList", "Alias", "Aliases", "string"):
+        for el in _find_all(payer, tag):
+            if list(el):
+                for child in el:
+                    val = _text(child) or _find_text(child, "Alias", "Value", "Tag")
+                    if val and "@" in val and val not in aliases:
+                        aliases.append(val)
+            else:
+                val = _text(el)
+                if val and "@" in val and val not in aliases:
+                    aliases.append(val)
+    return {
+        "tax_id": tax,
+        "is_e_dispatch_user": bool(name or aliases),
+        "alias": aliases[0] if aliases else "",
+        "name": name or "",
+        "aliases": aliases,
+        "source": "isnet_despatch",
+    }
+
+
 async def lookup_user(settings: dict, password: str, tax_id: str) -> Dict[str, Any]:
     """GetTaxPayer — NetteFatura-API addressBook.getTaxPayer() / n11faturam.lookup_user."""
     _ = password
@@ -1201,13 +1244,26 @@ def _parse_send_xml_body(body: ET.Element, action: str) -> Dict[str, Any]:
                 raise HTTPException(status_code=400, detail=row_err)
             ettn = ettn or _find_text(result_el, "ETTN", "Ettn", "InvoiceETTN")
             invoice_id = invoice_id or _find_text(
-                result_el, "InvoiceNumber", "InvoiceId", "DocumentId", "ArchiveInvoiceNumber"
+                result_el,
+                "InvoiceNumber",
+                "DespatchAdviceNumber",
+                "InvoiceId",
+                "DocumentId",
+                "ArchiveInvoiceNumber",
             )
             message = message or _find_text(result_el, "Message")
     else:
         ettn = _find_text(body, "ETTN", "Ettn", "InvoiceETTN") or ""
         invoice_id = (
-            _find_text(body, "InvoiceNumber", "InvoiceId", "DocumentId", "ArchiveInvoiceNumber") or ""
+            _find_text(
+                body,
+                "InvoiceNumber",
+                "DespatchAdviceNumber",
+                "InvoiceId",
+                "DocumentId",
+                "ArchiveInvoiceNumber",
+            )
+            or ""
         )
         message = _find_text(body, "Message") or ""
     if not message:
@@ -1322,6 +1378,59 @@ async def send_invoice_xml(
     raise last_err or HTTPException(status_code=502, detail="İşNet UBL gönderimi başarısız.")
 
 
+async def send_despatch_xml(
+    settings: dict,
+    *,
+    ubl_xml: str,
+    receiver_alias: str = "",
+) -> Dict[str, Any]:
+    """SendDespatchAdviceXml — NetteFatura-API invoice.sendDespatchAdviceXml()."""
+    req_base = _company_request(settings)
+    if len(req_base["CompanyTaxCode"]) not in (10, 11):
+        raise HTTPException(
+            status_code=400, detail="İşNet e-İrsaliye gönderimi için şirket VKN (company_tax_id) gerekli."
+        )
+    content = _ensure_b64(ubl_xml)
+    if not content:
+        raise HTTPException(status_code=400, detail="e-İrsaliye UBL XML boş.")
+    item: Dict[str, Any] = {"DespatchAdviceContent": content}
+    alias = (receiver_alias or settings.get("alias") or "").strip()
+    if alias:
+        item["ReceiverTag"] = alias
+    request: Dict[str, Any] = {**req_base, "DespatchAdvices": [item]}
+    last_err: Optional[HTTPException] = None
+    # Önce Xml kalemi DespatchAdviceXml; WSDL farklıysa DespatchAdvice dene
+    for amap in (
+        _ARRAY_ITEM,
+        {**_ARRAY_ITEM, "DespatchAdvices": "DespatchAdvice"},
+    ):
+        try:
+            body = await _soap_call(
+                settings,
+                endpoint=soap_url(settings),
+                action="SendDespatchAdviceXml",
+                service_interface="IInvoiceService",
+                request=request,
+                timeout=90.0,
+                array_map=amap,
+            )
+            parsed = _parse_send_xml_body(body, "SendDespatchAdviceXml")
+            # İrsaliye no alanı DespatchAdviceNumber olabilir
+            if not parsed.get("invoice_id"):
+                parsed["invoice_id"] = _find_text(
+                    body, "DespatchAdviceNumber", "DocumentNumber", "InvoiceNumber"
+                ) or ""
+            return parsed
+        except HTTPException as e:
+            last_err = e
+            if _action_missing(e):
+                continue
+            if e.status_code == 502 and amap is _ARRAY_ITEM:
+                continue
+            raise
+    raise last_err or HTTPException(status_code=502, detail="İşNet e-İrsaliye gönderimi başarısız.")
+
+
 def is_provisional_invoice_number(number: str, local_ubl: str = "") -> bool:
     """Yerel TKB / UBL id — entegratör serisi değil."""
     no = (number or "").strip().upper()
@@ -1329,6 +1438,9 @@ def is_provisional_invoice_number(number: str, local_ubl: str = "") -> bool:
         return True
     if no.startswith("TKB"):
         return True
+    if no.startswith("IRS") and len(no) < 16:
+        # Yerel IRS sayacı — İşNet serisi genelde daha uzun / farklı prefix
+        pass
     loc = (local_ubl or "").strip().upper()
     return bool(loc and no == loc)
 
@@ -1374,6 +1486,152 @@ def build_ubl(
     return xml_bytes.decode("utf-8"), uuid_out, inv_id
 
 
+def build_despatch_ubl(
+    invoice: dict,
+    company: dict,
+    contact: Optional[dict],
+    ettn: Optional[str] = None,
+) -> tuple:
+    """İşNet SendDespatchAdviceXml UBL — (xml_str, ettn, despatch_id)."""
+    import ubl_export
+
+    inv = dict(invoice or {})
+    if ettn:
+        inv["gib_uuid"] = str(ettn).upper()
+    seller = {
+        "name": (company or {}).get("name"),
+        "tax_number": (company or {}).get("tax_number") or (company or {}).get("tax_id"),
+        "tax_office": (company or {}).get("tax_office"),
+        "address": (company or {}).get("address"),
+        "city": (company or {}).get("city"),
+        "district": (company or {}).get("district"),
+        "phone": (company or {}).get("phone"),
+        "email": (company or {}).get("email"),
+    }
+    buyer = ubl_export._buyer_from(inv, contact)
+    xml_bytes = ubl_export.build_despatch_ubl(inv, seller, buyer, send_ready=True)
+    root = ET.fromstring(xml_bytes)
+    cbc = "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}"
+    inv_id = ""
+    uuid_out = ""
+    id_el = root.find(f"{cbc}ID")
+    if id_el is not None and id_el.text:
+        inv_id = id_el.text.strip()
+    uuid_el = root.find(f"{cbc}UUID")
+    if uuid_el is not None and uuid_el.text:
+        uuid_out = uuid_el.text.strip()
+    return xml_bytes.decode("utf-8"), uuid_out, inv_id
+
+
+async def send_despatch_document(
+    settings: dict,
+    password: str,
+    invoice: dict,
+    contact: Optional[dict],
+    company: dict,
+) -> Dict[str, Any]:
+    """e-İrsaliye → SendDespatchAdviceXml (İşNet SOAP)."""
+    merged = {**settings}
+    seller_vkn = company_tax_code(merged) or company_tax_code(settings, company)
+    if not seller_vkn:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "İşNet e-İrsaliye için şirket VKN gerekli. "
+                "Ayarlar → e-Fatura (İşNet SOAP) içinde CompanyTaxCode / VKN kaydedin."
+            ),
+        )
+    merged["company_tax_id"] = seller_vkn
+
+    buyer_tax = re.sub(
+        r"\D",
+        "",
+        str(
+            (contact or {}).get("tax_number_or_id")
+            or (contact or {}).get("tax_id")
+            or invoice.get("contact_tax_id")
+            or ""
+        ),
+    )
+    if len(buyer_tax) not in (10, 11):
+        raise HTTPException(
+            status_code=400,
+            detail="e-İrsaliye için alıcı VKN/TCKN zorunlu. Cari kartını güncelleyin.",
+        )
+
+    receiver = (
+        (contact or {}).get("e_dispatch_alias")
+        or (contact or {}).get("e_invoice_alias")
+        or (contact or {}).get("gib_alias")
+        or settings.get("alias")
+        or ""
+    ).strip()
+    try:
+        looked = await lookup_despatch_user(merged, password or "", buyer_tax)
+        if looked.get("alias") and not receiver:
+            receiver = (looked.get("alias") or "").strip()
+        if not looked.get("is_e_dispatch_user"):
+            logger.info("isnet GetDespatchTaxPayer: alıcı e-irsaliye mükellefi değil tax=%s", buyer_tax)
+    except HTTPException as e:
+        logger.info("isnet GetDespatchTaxPayer failed tax=%s: %s", buyer_tax, e.detail)
+
+    company_for_ubl = {**(company or {}), "tax_number": seller_vkn}
+    try:
+        xml, _local_ettn, inv_id = build_despatch_ubl(dict(invoice or {}), company_for_ubl, contact)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("isnet build_despatch_ubl")
+        raise HTTPException(status_code=500, detail=f"e-İrsaliye UBL hatası: {e}") from e
+    local_ubl = (inv_id or "").strip()
+
+    info = await send_despatch_xml(merged, ubl_xml=xml, receiver_alias=str(receiver or ""))
+    uuid_out = (info.get("ettn") or "").strip()
+    if not is_ettn_uuid(uuid_out):
+        raise HTTPException(
+            status_code=502,
+            detail="İşNet e-İrsaliye geçerli ETTN (UUID) döndürmedi — NetteFatura kaydı doğrulanamadı.",
+        )
+
+    soap_inv_no = (info.get("invoice_id") or "").strip()
+    hint_no = "" if is_provisional_invoice_number(soap_inv_no, local_ubl) else soap_inv_no
+    verified = await try_verify_outgoing_in_portal(
+        merged,
+        uuid_out,
+        e_type="e_dispatch",
+        invoice_number=hint_no,
+        retries=4,
+        wait_for_gib=True,
+    )
+    portal_no = (verified.get("invoice_id") or "").strip()
+    official = ""
+    number_source = "ubl"
+    for cand, src in ((portal_no, "portal"), (soap_inv_no, "soap")):
+        if cand and not is_provisional_invoice_number(cand, local_ubl):
+            official, number_source = cand, src
+            break
+    inv_no = official or soap_inv_no or local_ubl or (invoice.get("invoice_number") or "").strip()
+    return {
+        "ettn": uuid_out,
+        "invoice_id": inv_no,
+        "official_invoice_id": official,
+        "number_source": number_source,
+        "ubl_id": local_ubl,
+        "document_url": verified.get("document_url") or info.get("document_url") or "",
+        "description": info.get("message") or "",
+        "provider": "isnet",
+        "seller_tax": seller_vkn,
+        "verified": bool(verified.get("ok")),
+        "verify_via": verified.get("via") or "",
+        "gib_status_raw": (verified.get("status") or "").strip(),
+        "gib_status_code": (verified.get("status_code") or "").strip(),
+        "detail_status": (verified.get("detail_status") or "").strip(),
+        "process_status": (verified.get("process_status") or "").strip(),
+        "mode": "test" if is_test_mode(merged) else "live",
+        "send_mode": info.get("action") or "SendDespatchAdviceXml",
+    }
+
+
 async def send_document(
     settings: dict,
     password: str,
@@ -1388,8 +1646,10 @@ async def send_document(
     UBL: isnet.build_ubl → ubl_export (IADE/TEVKIFAT); n11faturam değil.
     """
     e_type = invoice.get("e_type") or "e_archive"
+    if e_type == "e_dispatch" or invoice.get("invoice_type") == "dispatch":
+        return await send_despatch_document(settings, password, invoice, contact, company)
     if e_type not in ("e_invoice", "e_archive"):
-        raise HTTPException(status_code=400, detail="İşNet yalnızca e-Fatura ve e-Arşiv gönderir.")
+        raise HTTPException(status_code=400, detail="İşNet yalnızca e-Fatura, e-Arşiv ve e-İrsaliye gönderir.")
 
     merged = {**settings}
     seller_vkn = company_tax_code(merged) or company_tax_code(settings, company)
@@ -1534,18 +1794,29 @@ async def send_document(
         verified.get("status") or "",
         verified.get("status_code") or "",
     )
-    if pending and (password or "").strip():
+    advance_pwd = (password or "").strip()
+    portal_settings = merged
+    if not advance_pwd and is_test_mode(merged):
+        advance_pwd = TEST_PORTAL_PASSWORD
+        portal_settings = {
+            **merged,
+            "mobile_username": merged.get("mobile_username") or TEST_PORTAL_USER,
+            "username": merged.get("username") or TEST_PORTAL_USER,
+        }
+    if pending and advance_pwd:
         try:
             import isnet_portal as _portal
 
             advanced = await _portal.advance_outgoing_invoice(
-                merged,
-                password,
+                portal_settings,
+                advance_pwd,
                 ettn=uuid_out,
                 invoice_number=hint_no or soap_inv_no,
                 e_type=e_type,
                 process_status=verified.get("process_status") or "",
             )
+            if advanced.get("invoice_number") and not hint_no:
+                hint_no = str(advanced.get("invoice_number") or "")
             if advanced.get("ok"):
                 verified = await try_verify_outgoing_in_portal(
                     merged,
@@ -1795,8 +2066,8 @@ async def try_verify_outgoing_in_portal(
 
     # Kısa doğrulama vs gönderim sonrası GİB DetailStatus bekleme
     if wait_for_gib:
-        # ~0+1+2+4+6+8+10 ≈ 31s — Ziplenmiş ara durumdan 1300'e geçiş için
-        delays = (0.0, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0)
+        # ~0+1+2+3+5+8+10+12 ≈ 41s — Ziplenmiş → 1300 (portal advance sonrası)
+        delays = (0.0, 1.0, 2.0, 3.0, 5.0, 8.0, 10.0, 12.0)
     else:
         delays = (0.0, 0.8, 1.6, 3.0)[: max(1, int(retries or 1))]
     last_url = ""
@@ -1867,7 +2138,9 @@ async def try_verify_outgoing_in_portal(
 
         # 2) Search — önce ETTN ile (yerel TKB filtresi yanlış eşleşmeyi engellemesin)
         try:
-            if e_type == "e_archive":
+            if e_type == "e_dispatch":
+                rows = await search_outgoing_despatch(settings, ettn=ettn, invoice_number="")
+            elif e_type == "e_archive":
                 rows = await search_archive_invoice(settings, ettn=ettn, invoice_number="")
             else:
                 rows = await search_outgoing_invoice(settings, ettn=ettn, invoice_number="")
@@ -1880,7 +2153,11 @@ async def try_verify_outgoing_in_portal(
                     break
             # ETTN satırında no yoksa, istenen local no ile ikinci arama
             if not found_no and invoice_number:
-                if e_type == "e_archive":
+                if e_type == "e_dispatch":
+                    rows2 = await search_outgoing_despatch(
+                        settings, ettn="", invoice_number=invoice_number
+                    )
+                elif e_type == "e_archive":
                     rows2 = await search_archive_invoice(
                         settings, ettn="", invoice_number=invoice_number
                     )
@@ -2521,6 +2798,67 @@ async def list_incoming_despatch(settings: dict, password: str, days: int = 14) 
                 ),
             }
         )
+    return out
+
+
+async def search_outgoing_despatch(
+    settings: dict,
+    *,
+    ettn: str = "",
+    invoice_number: str = "",
+    min_date: str = "",
+    max_date: str = "",
+) -> List[Dict[str, Any]]:
+    """SearchDespatchAdvice (Outgoing) — giden e-İrsaliye durum/ETTN."""
+    req_base = _company_request(settings)
+    if len(req_base["CompanyTaxCode"]) not in (10, 11):
+        raise HTTPException(
+            status_code=400, detail="İşNet giden e-İrsaliye arama için şirket VKN gerekli."
+        )
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=90)
+    req: Dict[str, Any] = {
+        **req_base,
+        "DespatchAdviceDirection": "Outgoing",
+        "MinDespatchAdviceDate": (min_date or start.strftime("%Y-%m-%d")),
+        "MaxDespatchAdviceDate": (max_date or end.strftime("%Y-%m-%d")),
+        "PagingRequest": {"PageNumber": 1, "RecordsPerPage": 50},
+        "ResultSet": {
+            "IsArchiveIncluded": False,
+            "IsAttachmentIncluded": False,
+            "IsDespatchAdviceDetailIncluded": True,
+            "IsExternalUrlIncluded": False,
+            "IsHtmlIncluded": False,
+            "IsPDFIncluded": False,
+            "IsXMLIncluded": False,
+        },
+    }
+    e = (ettn or "").strip()
+    no = (invoice_number or "").strip()
+    if e:
+        req["Ettn"] = e
+    if no:
+        req["MinDespatchAdviceNumber"] = no
+        req["MaxDespatchAdviceNumber"] = no
+    body = await _soap_call(
+        settings,
+        endpoint=soap_url(settings),
+        action="SearchDespatchAdvice",
+        service_interface="IInvoiceService",
+        request=req,
+        timeout=60.0,
+    )
+    out: List[Dict[str, Any]] = []
+    for adv in _find_all(body, "DespatchAdvice", "DespatchAdviceInfo", "Document"):
+        row = _search_row_from_el(adv)
+        # İrsaliye numarası InvoiceNumber yerine DespatchAdviceNumber olabilir
+        if not row.get("invoice_id"):
+            row["invoice_id"] = _find_text(
+                adv, "DespatchAdviceNumber", "InvoiceNumber", "InvoiceId", "ID"
+            )
+        if not row.get("ettn"):
+            row["ettn"] = _find_text(adv, "ETTN", "Ettn", "UUID")
+        out.append(row)
     return out
 
 

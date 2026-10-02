@@ -959,6 +959,18 @@ def _portal_result_ok(data: Any) -> bool:
     return result in (0, "0", "Success", "success", True, "True", None)
 
 
+def _row_matches_invoice(row: dict, *, ettn: str, invoice_number: str) -> bool:
+    if not isinstance(row, dict):
+        return False
+    row_ettn = str(row.get("Ettn") or row.get("ETTN") or "").strip().lower()
+    row_no = str(row.get("InvoiceNumber") or row.get("DocumentNumber") or "").strip()
+    if ettn and row_ettn == ettn.lower():
+        return True
+    if invoice_number and row_no and row_no.upper() == invoice_number.upper():
+        return True
+    return False
+
+
 async def advance_outgoing_invoice(
     settings: dict,
     password: str,
@@ -968,9 +980,16 @@ async def advance_outgoing_invoice(
     e_type: str = "e_invoice",
     process_status: str = "",
 ) -> Dict[str, Any]:
-    """Onay/Imza/Ziplenmiş ara durum — portal REST ile onay + GİB gönderim dene."""
+    """Onay/Imza/Ziplenmiş ara durum — portal REST ile onay + GİB gönderim dene.
+
+    Ziplendi'de kalan faturalarda InvoiceNumber henüz yoksa staging listesinden
+    ETTN ile bulunur; e-Arşiv ETTN ile, e-Fatura numara veya ETTN ile gönderilir.
+    """
     ettn = (ettn or "").strip()
     invoice_number = (invoice_number or "").strip()
+    # Yerel TKB numarası portal SendStaging'de işe yaramaz
+    if invoice_number.upper().startswith("TKB"):
+        invoice_number = ""
     if not password:
         return {"ok": False, "skipped": True, "reason": "no_password"}
     try:
@@ -985,14 +1004,23 @@ async def advance_outgoing_invoice(
     api = mobile_api_base(settings)
     token = session["token"]
     cid: Any = float(company_id) if str(company_id).replace(".", "").isdigit() else company_id
-    proc = (process_status or "").lower().replace("ı", "i")
+    proc = (process_status or "").lower().replace("ı", "i").replace("İ", "i")
     actions: List[Dict[str, Any]] = []
     today = datetime.now(timezone.utc)
     date_from = (today - timedelta(days=30)).strftime("%d.%m.%Y")
     date_to = today.strftime("%d.%m.%Y")
+    # Onay / imza / ziplen / boş süreç — staging onay listesini tara
+    need_approve = (
+        not process_status
+        or "onay" in proc
+        or "imza" in proc
+        or "ziplen" in proc
+        or "gibe" in proc
+        or "gib" in proc
+    )
 
     async with httpx.AsyncClient(timeout=45.0, headers={"User-Agent": UA}) as client:
-        if "onay" in proc or not process_status:
+        if need_approve:
             st, data = await _mobile_post_json(
                 client,
                 f"{api}/api/Invoice/GetApprovableStagingInvoiceList",
@@ -1008,12 +1036,10 @@ async def advance_outgoing_invoice(
             portal_inv_id = None
             if isinstance(data, dict):
                 for row in data.get("Invoices") or []:
-                    if not isinstance(row, dict):
-                        continue
-                    row_ettn = str(row.get("Ettn") or row.get("ETTN") or "").strip().lower()
-                    row_no = str(row.get("InvoiceNumber") or "").strip()
-                    if (ettn and row_ettn == ettn.lower()) or (invoice_number and row_no == invoice_number):
+                    if _row_matches_invoice(row, ettn=ettn, invoice_number=invoice_number):
                         portal_inv_id = row.get("InvoiceId")
+                        if not invoice_number:
+                            invoice_number = str(row.get("InvoiceNumber") or "").strip()
                         break
             if portal_inv_id is not None:
                 st2, data2 = await _mobile_post_json(
@@ -1029,21 +1055,79 @@ async def advance_outgoing_invoice(
                 )
                 actions.append({"action": "approve", "status": st2, "ok": _portal_result_ok(data2), "result": data2})
 
+        # Numara yoksa staging / giden listeden ETTN ile dene
+        if not invoice_number and ettn:
+            for list_path in (
+                "/api/Invoice/GetStagingInvoiceList",
+                "/api/Invoice/GetOutgoingInvoiceList",
+                "/api/Invoice/GetOutgoingEArchiveList",
+            ):
+                st_l, data_l = await _mobile_post_json(
+                    client,
+                    f"{api}{list_path}",
+                    token,
+                    {
+                        "CompanyId": cid,
+                        "FirstInvoiceDate": date_from,
+                        "LastInvoiceDate": date_to,
+                        "PageIndex": 0,
+                        "PageSize": 100,
+                    },
+                )
+                rows = []
+                if isinstance(data_l, dict):
+                    rows = data_l.get("Invoices") or data_l.get("ArchiveInvoices") or data_l.get("Items") or []
+                for row in rows:
+                    if _row_matches_invoice(row, ettn=ettn, invoice_number=""):
+                        invoice_number = str(row.get("InvoiceNumber") or row.get("DocumentNumber") or "").strip()
+                        if invoice_number:
+                            actions.append({"action": "resolve_number", "status": st_l, "ok": True, "invoice_number": invoice_number})
+                            break
+                if invoice_number:
+                    break
+
+        send_attempts: List[Tuple[str, Dict[str, Any]]] = []
         if e_type == "e_archive":
-            send_url = f"{api}/api/Invoice/SendStagingArchive"
-            send_body: Dict[str, Any] = {"ETTN": ettn, "CompanyId": cid}
+            send_attempts.append(
+                (f"{api}/api/Invoice/SendStagingArchive", {"ETTN": ettn, "CompanyId": cid})
+            )
+            if invoice_number:
+                send_attempts.append(
+                    (
+                        f"{api}/api/Invoice/SendStagingArchive",
+                        {"ETTN": ettn, "CompanyId": cid, "InvoiceNumber": invoice_number},
+                    )
+                )
         else:
-            send_url = f"{api}/api/Invoice/SendStagingInvoice"
-            if not invoice_number:
-                return {"ok": False, "via": "portal", "actions": actions, "error": "InvoiceNumber gerekli"}
-            send_body = {"CompanyId": cid, "InvoiceNumber": invoice_number}
+            if invoice_number:
+                send_attempts.append(
+                    (f"{api}/api/Invoice/SendStagingInvoice", {"CompanyId": cid, "InvoiceNumber": invoice_number})
+                )
+            if ettn:
+                # Bazı Mobile API sürümleri ETTN ile gönderime izin verir
+                send_attempts.append(
+                    (f"{api}/api/Invoice/SendStagingInvoice", {"CompanyId": cid, "ETTN": ettn, "Ettn": ettn})
+                )
+                if invoice_number:
+                    send_attempts.append(
+                        (
+                            f"{api}/api/Invoice/SendStagingInvoice",
+                            {"CompanyId": cid, "InvoiceNumber": invoice_number, "ETTN": ettn},
+                        )
+                    )
 
-        if ettn or invoice_number:
+        if not send_attempts:
+            return {"ok": False, "via": "portal", "actions": actions, "error": "InvoiceNumber/ETTN gerekli"}
+
+        for send_url, send_body in send_attempts:
             st3, data3 = await _mobile_post_json(client, send_url, token, send_body)
-            actions.append({"action": "send", "status": st3, "ok": _portal_result_ok(data3), "result": data3})
+            ok_send = _portal_result_ok(data3)
+            actions.append({"action": "send", "status": st3, "ok": ok_send, "result": data3, "body_keys": list(send_body.keys())})
+            if ok_send:
+                break
 
-    ok = any(a.get("ok") for a in actions)
-    return {"ok": ok, "via": "portal", "actions": actions}
+    ok = any(a.get("ok") for a in actions if a.get("action") in ("approve", "send"))
+    return {"ok": ok, "via": "portal", "actions": actions, "invoice_number": invoice_number}
 
 
 async def _mobile_post_json(
