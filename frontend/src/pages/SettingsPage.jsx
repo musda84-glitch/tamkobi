@@ -103,6 +103,9 @@ const EInvoiceSettings = ({ companyId }) => {
         <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs max-w-xl" data-testid="einvoice-assigned-provider">
           <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Atanan entegratör</div>
           <div className="text-sm font-bold text-slate-900 mt-0.5">{s.provider_name || "İşNet Net-e Fatura — SOAP API"}</div>
+          <p className="text-[10px] text-slate-500 mt-1" data-testid="einvoice-isnet-scope">
+            e-Fatura · e-Arşiv · e-İrsaliye — tek SOAP (IP–VKN) bağlantısı; ikinci kayıt gerekmez.
+          </p>
         </div>
         <IsnetIntegrationPanel companyId={companyId} />
       </div>

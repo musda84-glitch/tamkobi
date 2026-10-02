@@ -29,6 +29,8 @@ export function supportsGibInbox(settings) {
 export function supportsEDispatch(settings) {
   if (!isEinvoiceConfigured(settings)) return false;
   const p = String(settings.provider || "").toLowerCase();
-  // e-İrsaliye: İşNet SOAP WSDL SendDespatchAdvice*; portal/n11 sonraki adım
-  return p === "isnet" || p === "isnet_portal";
+  // e-İrsaliye: İşNet SOAP WSDL SendDespatchAdvice* (aynı IP–VKN bağlantısı)
+  if (p !== "isnet" && p !== "isnet_portal") return false;
+  if ("e_dispatch_enabled" in settings) return settings.e_dispatch_enabled !== false;
+  return true;
 }

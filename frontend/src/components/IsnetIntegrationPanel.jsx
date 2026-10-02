@@ -2,14 +2,24 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Inbox, Loader2, Plug, Save } from "lucide-react";
+import { Inbox, Loader2, Plug, Save, Truck, Send, FileCheck2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
+const emptyDespatch = {
+  plate: "",
+  trailer: "",
+  driver_first: "",
+  driver_last: "",
+  driver_tckn: "",
+  carrier_name: "",
+  carrier_vkn: "",
+};
+
 /**
  * İşNet Net-e Fatura SOAP (IP–VKN) bağlantı paneli.
- * Resmi doküman: SOAP’ta kullanıcı/şifre yok; kimlik IP–VKN.
+ * e-Fatura / e-Arşiv / e-İrsaliye aynı SOAP kanalı — ikinci bağlantı yok.
  * Kaydet / test: /api/integrations/isnet/save|test
  */
 export default function IsnetIntegrationPanel({ companyId }) {
@@ -18,6 +28,8 @@ export default function IsnetIntegrationPanel({ companyId }) {
   const [testMode, setTestMode] = useState(true);
   const [hasPassword, setHasPassword] = useState(false);
   const [status, setStatus] = useState("simulated");
+  const [eDispatchEnabled, setEDispatchEnabled] = useState(true);
+  const [despatch, setDespatch] = useState(emptyDespatch);
   const [formData, setFormData] = useState({
     username: "",
     password: "",
@@ -44,6 +56,8 @@ export default function IsnetIntegrationPanel({ companyId }) {
       setTestMode((d.mode || "test") !== "live");
       setHasPassword(Boolean(d.has_password));
       setStatus(d.status || "simulated");
+      setEDispatchEnabled(d.e_dispatch_enabled !== false);
+      setDespatch({ ...emptyDespatch, ...(d.despatch_defaults || {}) });
     } catch (err) {
       toast.error(err.response?.data?.detail || "İşNet ayarları alınamadı.");
     } finally {
@@ -57,6 +71,11 @@ export default function IsnetIntegrationPanel({ companyId }) {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
+  const handleDespatchChange = (e) => {
+    const { name, value } = e.target;
+    setDespatch((prev) => ({ ...prev, [name]: value }));
+  };
+
   const body = () => ({
     company_id: companyId,
     test_mode: testMode,
@@ -66,6 +85,16 @@ export default function IsnetIntegrationPanel({ companyId }) {
     gib_alias: formData.gib_alias,
     company_tax_id: formData.company_tax_id,
     company_vendor_number: formData.company_vendor_number,
+    e_dispatch_enabled: eDispatchEnabled,
+    despatch_defaults: {
+      plate: despatch.plate,
+      trailer: despatch.trailer,
+      driver_first: despatch.driver_first,
+      driver_last: despatch.driver_last,
+      driver_tckn: despatch.driver_tckn,
+      carrier_name: despatch.carrier_name,
+      carrier_vkn: despatch.carrier_vkn,
+    },
   });
 
   const handleTestConnection = async () => {
@@ -87,6 +116,8 @@ export default function IsnetIntegrationPanel({ companyId }) {
       const r = await axios.post(`${API_URL}/integrations/isnet/save`, body());
       setStatus(r.data?.status || "configured");
       setHasPassword(Boolean(r.data?.has_password));
+      setEDispatchEnabled(r.data?.e_dispatch_enabled !== false);
+      setDespatch({ ...emptyDespatch, ...(r.data?.despatch_defaults || {}) });
       setFormData((prev) => ({ ...prev, password: "" }));
       toast.success("İşNet SOAP ayarları kaydedildi.");
     } catch (err) {
@@ -99,6 +130,9 @@ export default function IsnetIntegrationPanel({ companyId }) {
   if (booting) {
     return <div className="text-xs text-slate-400 p-4" data-testid="isnet-loading">Yükleniyor…</div>;
   }
+
+  const linkBtn =
+    "px-3 py-1.5 rounded-lg font-semibold border inline-flex items-center gap-1.5 transition";
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 text-xs max-w-xl" data-testid="isnet-integration-panel">
@@ -115,6 +149,19 @@ export default function IsnetIntegrationPanel({ companyId }) {
         >
           {status === "configured" ? "YAPILANDIRILDI" : "SİMÜLE"}
         </span>
+      </div>
+
+      <div
+        className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-[11px] text-indigo-950 space-y-1"
+        data-testid="isnet-coverage-note"
+      >
+        <p className="font-semibold">Bu bağlantı kapsar: e-Fatura · e-Arşiv · e-İrsaliye</p>
+        <p className="text-indigo-800/90">
+          Ayrı SOAP / ikinci entegratör kaydı gerekmez. Giden irsaliye <code className="font-mono text-[10px]">SendDespatchAdvice</code>,
+          gelen <code className="font-mono text-[10px]">SearchDespatchAdvice</code>; mükellef sorgusu{" "}
+          <code className="font-mono text-[10px]">GetDespatchTaxPayer</code> (e-Fatura listesinden ayrı).
+          Canlıda e-İrsaliye ürünü İşNet hesabınızda açık olmalıdır.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -134,13 +181,24 @@ export default function IsnetIntegrationPanel({ companyId }) {
         >
           Canlı Ortam
         </button>
-        <Link
-          to="/edoc-inbox"
-          className="ml-auto px-3 py-1.5 rounded-lg font-semibold border border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 inline-flex items-center gap-1.5"
-          data-testid="isnet-edoc-inbox-link"
-        >
+      </div>
+
+      <div className="flex flex-wrap gap-2" data-testid="isnet-quick-links">
+        <Link to="/edoc-inbox" className={`${linkBtn} border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100`} data-testid="isnet-edoc-inbox-link">
           <Inbox className="w-3.5 h-3.5" />
-          Gelen e-Belgeler
+          Gelen e-Fatura
+        </Link>
+        <Link to="/edoc-inbox?kind=dispatch" className={`${linkBtn} border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800 hover:bg-fuchsia-100`} data-testid="isnet-incoming-despatch-link">
+          <Truck className="w-3.5 h-3.5" />
+          Gelen e-İrsaliye
+        </Link>
+        <Link to="/dispatches" className={`${linkBtn} border-fuchsia-200 bg-white text-fuchsia-800 hover:bg-fuchsia-50`} data-testid="isnet-outgoing-despatch-link">
+          <Send className="w-3.5 h-3.5" />
+          Giden e-İrsaliye
+        </Link>
+        <Link to="/invoices" className={`${linkBtn} border-slate-200 bg-white text-slate-700 hover:bg-slate-50`} data-testid="isnet-invoices-link">
+          <FileCheck2 className="w-3.5 h-3.5" />
+          Faturalar
         </Link>
       </div>
 
@@ -166,6 +224,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
         <div>
           <label className="block font-semibold mb-1">
             GİB Posta Kutusu Etiketi (Alias) <span className="text-rose-600">*</span>
+            <span className="text-slate-400 font-normal"> — e-Fatura gönderici etiketi</span>
           </label>
           <input
             type="text"
@@ -207,6 +266,124 @@ export default function IsnetIntegrationPanel({ companyId }) {
             className={`${inputCls} font-mono`}
             data-testid="isnet-company-vendor-number"
           />
+        </div>
+
+        <div
+          className="rounded-xl border border-fuchsia-200 bg-fuchsia-50/40 p-3 space-y-3"
+          data-testid="isnet-despatch-section"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div className="text-xs font-bold text-fuchsia-900 flex items-center gap-1.5">
+                <Truck className="w-3.5 h-3.5" />
+                e-İrsaliye (aynı SOAP)
+              </div>
+              <p className="text-[10px] text-fuchsia-900/70 mt-0.5">
+                İkinci bağlantı yok. Alıcı e-İrsaliye mükellefi değilse kâğıt irsaliye kullanılır.
+              </p>
+            </div>
+            <label className="inline-flex items-center gap-2 font-semibold text-fuchsia-900 cursor-pointer" data-testid="isnet-despatch-enabled-label">
+              <input
+                type="checkbox"
+                checked={eDispatchEnabled}
+                onChange={(e) => setEDispatchEnabled(e.target.checked)}
+                className="rounded border-fuchsia-300"
+                data-testid="isnet-despatch-enabled"
+              />
+              Aktif
+            </label>
+          </div>
+
+          {eDispatchEnabled && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="isnet-despatch-defaults">
+              <div>
+                <label className="block font-semibold mb-1">Varsayılan plaka</label>
+                <input
+                  type="text"
+                  name="plate"
+                  value={despatch.plate}
+                  onChange={handleDespatchChange}
+                  placeholder="34ABC123"
+                  className={`${inputCls} font-mono uppercase`}
+                  data-testid="isnet-despatch-plate"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Dorse plaka</label>
+                <input
+                  type="text"
+                  name="trailer"
+                  value={despatch.trailer}
+                  onChange={handleDespatchChange}
+                  placeholder="opsiyonel"
+                  className={`${inputCls} font-mono uppercase`}
+                  data-testid="isnet-despatch-trailer"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Sürücü adı</label>
+                <input
+                  type="text"
+                  name="driver_first"
+                  value={despatch.driver_first}
+                  onChange={handleDespatchChange}
+                  className={inputCls}
+                  data-testid="isnet-despatch-driver-first"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Sürücü soyadı</label>
+                <input
+                  type="text"
+                  name="driver_last"
+                  value={despatch.driver_last}
+                  onChange={handleDespatchChange}
+                  className={inputCls}
+                  data-testid="isnet-despatch-driver-last"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Sürücü TCKN</label>
+                <input
+                  type="text"
+                  name="driver_tckn"
+                  value={despatch.driver_tckn}
+                  onChange={handleDespatchChange}
+                  placeholder="11 hane"
+                  className={`${inputCls} font-mono`}
+                  inputMode="numeric"
+                  maxLength={11}
+                  data-testid="isnet-despatch-driver-tckn"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Taşıyıcı VKN</label>
+                <input
+                  type="text"
+                  name="carrier_vkn"
+                  value={despatch.carrier_vkn}
+                  onChange={handleDespatchChange}
+                  placeholder="kendi araçsa boş"
+                  className={`${inputCls} font-mono`}
+                  inputMode="numeric"
+                  maxLength={11}
+                  data-testid="isnet-despatch-carrier-vkn"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block font-semibold mb-1">Taşıyıcı unvan</label>
+                <input
+                  type="text"
+                  name="carrier_name"
+                  value={despatch.carrier_name}
+                  onChange={handleDespatchChange}
+                  placeholder="Üçüncü firma nakliyede"
+                  className={inputCls}
+                  data-testid="isnet-despatch-carrier-name"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <details className="rounded-xl border border-dashed border-slate-200 p-3" data-testid="isnet-optional-portal">

@@ -21,5 +21,6 @@ test("inbox and e-dispatch support", () => {
   expect(supportsGibInbox({ provider: "isnet", status: "configured" })).toBe(true);
   expect(supportsGibInbox({ provider: "n11faturam", status: "configured" })).toBe(true);
   expect(supportsEDispatch({ provider: "isnet", status: "configured" })).toBe(true);
+  expect(supportsEDispatch({ provider: "isnet", status: "configured", e_dispatch_enabled: false })).toBe(false);
   expect(supportsEDispatch({ provider: "n11faturam", status: "configured" })).toBe(false);
 });
