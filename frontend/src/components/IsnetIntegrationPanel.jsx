@@ -7,6 +7,18 @@ import { API_URL } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
 
+/** İşNet resmi SOAP uçları — mode seçimine göre panelde gösterilir. */
+const ISNET_SOAP = {
+  test: {
+    invoice: "https://einvoiceservicetest.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc",
+    addressBook: "https://einvoiceservicetest.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc",
+  },
+  live: {
+    invoice: "https://einvoiceservice.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc",
+    addressBook: "https://einvoiceservice.isnet.net.tr/AddressBookService/ServiceContract/AddressBookService.svc",
+  },
+};
+
 const emptyDespatch = {
   plate: "",
   trailer: "",
@@ -181,6 +193,51 @@ export default function IsnetIntegrationPanel({ companyId }) {
         >
           Canlı Ortam
         </button>
+      </div>
+
+      <div
+        className={`rounded-xl border px-3 py-2.5 space-y-2 text-[11px] ${
+          testMode ? "border-amber-200 bg-amber-50/50 text-amber-950" : "border-emerald-200 bg-emerald-50/50 text-emerald-950"
+        }`}
+        data-testid="isnet-soap-endpoints"
+      >
+        <p className="font-bold underline decoration-from-font underline-offset-2" data-testid="isnet-soap-env-label">
+          {testMode ? "Test ortamı:" : "Canlı ortam:"}
+        </p>
+        <ul className="space-y-1.5 list-disc pl-4">
+          <li>
+            <span className="font-semibold">Fatura servisi (InvoiceService)</span>
+            <a
+              href={`${(testMode ? ISNET_SOAP.test : ISNET_SOAP.live).invoice}?wsdl`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-0.5 block font-mono text-[10px] break-all text-indigo-700 hover:underline"
+              data-testid="isnet-soap-invoice-url"
+            >
+              {(testMode ? ISNET_SOAP.test : ISNET_SOAP.live).invoice}
+            </a>
+          </li>
+          <li>
+            <span className="font-semibold">Adres defteri (AddressBookService)</span>
+            <a
+              href={`${(testMode ? ISNET_SOAP.test : ISNET_SOAP.live).addressBook}?wsdl`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-0.5 block font-mono text-[10px] break-all text-indigo-700 hover:underline"
+              data-testid="isnet-soap-addressbook-url"
+            >
+              {(testMode ? ISNET_SOAP.test : ISNET_SOAP.live).addressBook}
+            </a>
+          </li>
+        </ul>
+        {!testMode && (
+          <p className="text-[10px] text-emerald-900/80 pt-0.5" data-testid="isnet-live-ip-hint">
+            Canlıda çıkış IP’nizi VKN ile eşleştirmek için{" "}
+            <a href="mailto:efaturadestek@nettefatura.com.tr" className="underline font-semibold">
+              efaturadestek@nettefatura.com.tr
+            </a>
+          </p>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2" data-testid="isnet-quick-links">
