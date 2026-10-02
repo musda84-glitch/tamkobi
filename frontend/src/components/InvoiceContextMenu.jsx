@@ -359,6 +359,17 @@ export function canCancelInvoice(inv) {
   return false;
 }
 
+/** Resmi GİB fatura no (3 harf/rakam + 13 hane) veya entegratör serisi. */
+export function looksLikeOfficialGibInvoiceNumber(no) {
+  const s = String(no || "").trim().toUpperCase();
+  if (!s || s.length < 15 || s.length > 20) return false;
+  // Standart e-fatura: ABC2026000000001
+  if (/^[A-Z]{3}\d{13}$/.test(s)) return true;
+  // Entegratör / özel seri (ör. U052026000000090)
+  if (/^[A-Z0-9]{3}\d{13}$/.test(s)) return true;
+  return false;
+}
+
 /** GİB'e iletilmemiş satış/alış belgesi ⋮ menüden / satırdan düzenlenir. */
 export function canEditInvoice(inv) {
   if (!inv) return false;
@@ -368,8 +379,18 @@ export function canEditInvoice(inv) {
   if (isGibIssued(inv)) return false;
   // Resmi GİB fatura no atanmış e-belge (UUID olmasa bile) düzenlenmez
   const gibNo = String(inv.gib_invoice_id || "").trim();
-  if (gibNo && gibNo !== String(inv.invoice_number || "").trim()) return false;
-  if (["e_invoice", "e_archive", "e_export"].includes(String(inv.e_type || "")) && gibNo) return false;
+  const invNo = String(inv.invoice_number || "").trim();
+  if (gibNo && gibNo !== invNo) return false;
+  const eType = String(inv.e_type || "");
+  if (["e_invoice", "e_archive", "e_export"].includes(eType) && gibNo) return false;
+  // Onaylı e-belgede invoice_number resmi GİB serisi ise (gib_invoice_id kopyalanmamış olsa bile) düzenlenmez
+  if (
+    inv.status !== "draft"
+    && ["e_invoice", "e_archive", "e_export"].includes(eType)
+    && looksLikeOfficialGibInvoiceNumber(invNo)
+  ) {
+    return false;
+  }
   return true;
 }
 

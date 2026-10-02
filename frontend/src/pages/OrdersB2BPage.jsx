@@ -46,7 +46,7 @@ import { orderEditBlockedReason } from "../utils/orderEdit";
 import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
 import { eBelgeMenuItems, orderCanIssueEFatura, orderEBelgeType } from "../utils/orderEBelge";
-import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued } from "../utils/orderMoreMenu";
+import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued, orderGibInvoiceNumber } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import { orderBulkEInvoiceEligible, bulkApiErrorDetail, orderRowId } from "../utils/orderBulkActions";
 import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
@@ -824,21 +824,30 @@ export default function OrdersB2BPage() {
         setShipOrder(ord);
         return;
       case "earsiv_send":
-        openInvoicePdfs([ord]);
         if (ord.invoice_id) {
+          try {
+            const r = await printMiniInvoicesFromIntegrator([ord], { apiUrl: API_URL, axiosClient: axios });
+            if (r.ok) toast.success("Entegratör fatura PDF yazdırmaya açıldı.");
+            else if (r.message) toast.message(r.message);
+          } catch {
+            toast.message("Entegratör PDF alınamadı; GİB gönderimi deneniyor.");
+          }
           try {
             await axios.post(`${API_URL}/invoices/${ord.invoice_id}/send-to-gib`, {
               e_type: ord.e_type || orderEBelgeType(ord, contacts),
             });
             try {
               const st = await axios.post(`${API_URL}/e-invoice/${ord.invoice_id}/refresh-status`);
-              if (st.data?.invoice_number) toast.message(`GİB fatura no: ${st.data.invoice_number}`);
+              const gibNo = st.data?.invoice_number || st.data?.gib_invoice_id;
+              if (gibNo) toast.message(`GİB fatura no: ${gibNo}`);
             } catch { /* ignore */ }
-            toast.success("E-Arşiv yazdırma açıldı; GİB gönderimi tetiklendi.");
+            toast.success("GİB gönderimi tetiklendi.");
             loadData();
           } catch (err) {
-            toast.message(err.response?.data?.detail || "Yazdırma açıldı; GİB gönderimi atlandı.");
+            toast.message(err.response?.data?.detail || "GİB gönderimi atlandı.");
           }
+        } else {
+          toast.error("Önce fatura oluşturun.");
         }
         return;
       case "cargo_track_notify":
@@ -855,8 +864,8 @@ export default function OrdersB2BPage() {
         setCargoChangeOrder(ord);
         return;
       case "delete": {
-        if (ord.is_invoiced || ord.invoice_id) {
-          toast.error("Faturalanmış sipariş silinemez.");
+        if (ord.is_invoiced || ord.invoice_id || orderHasEInvoiceIssued(ord)) {
+          toast.error("Faturalanmış veya GİB'e gönderilmiş sipariş silinemez.");
           return;
         }
         if (!window.confirm(`${ord.order_number || "Sipariş"} silinsin mi?`)) return;
@@ -1376,6 +1385,14 @@ export default function OrdersB2BPage() {
                         <div className="text-[10px] text-slate-400 font-mono">{ord.order_number}</div>
                       ) : null}
                       {ord.customer_order_number ? <div className="text-[10px] text-slate-500 font-mono" data-testid={`order-customer-no-${ord.order_number}`}>Müşteri no: {ord.customer_order_number}</div> : null}
+                      {(() => {
+                        const gibNo = orderGibInvoiceNumber(ord);
+                        return gibNo ? (
+                          <div className="text-[10px] text-emerald-700 font-mono font-semibold mt-0.5" data-testid={`order-gib-no-${ord.order_number}`} title="GİB fatura numarası">
+                            GİB: {gibNo}
+                          </div>
+                        ) : null;
+                      })()}
                       <div className="mt-1 flex flex-wrap items-center gap-1">
                         <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
                           {channelTr(ord.channel)}
@@ -1495,7 +1512,7 @@ export default function OrdersB2BPage() {
                           </>
                         ) : (
                           <>
-                        {!ord.is_invoiced && !ord.invoice_id && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
+                        {!ord.is_invoiced && !ord.invoice_id && !orderHasEInvoiceIssued(ord) && canDeleteOrder ? <button onClick={async () => { if (!window.confirm(`${ord.order_number} silinsin mi?`)) return; try { await axios.delete(`${API_URL}/orders/${ord.id}`); toast.success("Sipariş silindi."); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Siparişi sil" data-testid={`order-delete-${ord.order_number}`}><Trash2 className="w-4 h-4" /></button> : <span className="inline-block w-8 h-8" aria-hidden="true" />}
                         {(() => {
                           const invBadge = orderInvoiceBadge(ord);
                           if (orderHasEInvoiceIssued(ord) && invBadge) {
