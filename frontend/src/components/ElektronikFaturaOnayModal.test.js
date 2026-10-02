@@ -1,7 +1,11 @@
 import { describe, expect, it } from "@jest/globals";
 import {
   buildIadeNote,
+  createOnayProgressApi,
+  DEFAULT_PRINT_FLOW,
+  DEFAULT_SEND_FLOW,
   isReturnInvoiceDoc,
+  makeFlowState,
   prefillReturnBillingRef,
 } from "./ElektronikFaturaOnayModal";
 
@@ -38,5 +42,30 @@ describe("buildIadeNote", () => {
     expect(buildIadeNote("u052026000000065", "2026-09-29")).toBe(
       "29.09.2026 tarihli U052026000000065 numaralı faturaya istinaden düzenlenen iade faturasıdır.",
     );
+  });
+});
+
+describe("onay progress flow helpers", () => {
+  it("makeFlowState starts all pending", () => {
+    const steps = makeFlowState(DEFAULT_SEND_FLOW);
+    expect(steps).toHaveLength(4);
+    expect(steps.every((s) => s.status === "pending")).toBe(true);
+    expect(makeFlowState(DEFAULT_PRINT_FLOW)).toHaveLength(3);
+  });
+
+  it("setStep marks prior steps done and target active", () => {
+    let flow = makeFlowState(DEFAULT_SEND_FLOW);
+    let items = [];
+    const setFlow = (fn) => { flow = typeof fn === "function" ? fn(flow) : fn; };
+    const setItems = (fn) => { items = typeof fn === "function" ? fn(items) : fn; };
+    const api = createOnayProgressApi(setFlow, setItems);
+    api.setStep("prepare", "active");
+    expect(flow.find((s) => s.id === "prepare").status).toBe("active");
+    api.setStep("send", "active");
+    expect(flow.find((s) => s.id === "prepare").status).toBe("done");
+    expect(flow.find((s) => s.id === "send").status).toBe("active");
+    api.initItems([{ id: "a", label: "F1", contact_name: "Cari" }]);
+    api.setItem("a", { status: "ok", detail: "Gönderildi" });
+    expect(items[0]).toMatchObject({ id: "a", status: "ok", detail: "Gönderildi", sublabel: "Cari" });
   });
 });

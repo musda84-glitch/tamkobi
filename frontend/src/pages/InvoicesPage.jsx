@@ -171,7 +171,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentAccount, setPaymentAccount] = useState("");
   const [ctxMenu, setCtxMenu] = useState(null);
-  const [eFaturaInvoice, setEFaturaInvoice] = useState(null);
+  /** null | { mode: 'send'|'print', invoice?, invoices? } */
+  const [eFaturaJob, setEFaturaJob] = useState(null);
   const [selected, setSelected] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [installmentInv, setInstallmentInv] = useState(null);
@@ -644,19 +645,23 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       if (eType && eType !== "auto") body.e_type = eType;
       if (opts.scenario === "TEMEL" || opts.scenario === "TICARI") body.scenario = opts.scenario;
       const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`, body);
-      toast.success(res.data.message);
+      if (!opts.silentToast) toast.success(res.data.message);
       // Portal/GİB fatura no + durumu gecikebilir — hemen bir kez daha çek
+      let refreshMsg = "";
       try {
         const st = await axios.post(`${API_URL}/e-invoice/${invId}/refresh-status`);
         if (st.data?.invoice_number) {
-          toast.message(`GİB fatura no: ${st.data.invoice_number}`);
+          refreshMsg = `GİB fatura no: ${st.data.invoice_number}`;
+          if (!opts.silentToast) toast.message(refreshMsg);
         } else if (st.data?.gib_status) {
-          toast.message(st.data.gib_status);
+          refreshMsg = st.data.gib_status;
+          if (!opts.silentToast) toast.message(refreshMsg);
         }
       } catch { /* liste yine yenilenecek */ }
-      loadData();
+      if (!opts.skipReload) loadData();
+      return { message: res.data?.message || "Gönderildi", refreshMsg };
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Fatura kesilemedi.");
+      if (!opts.silentToast) toast.error(err.response?.data?.detail || "Fatura kesilemedi.");
       throw err;
     }
   };
@@ -667,17 +672,56 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     if (openOnay) {
       closeCtx();
       // Menü mousedown/unmount sonrası açılsın (sipariş dropdown ile aynı güvenli timing).
-      window.setTimeout(() => setEFaturaInvoice(inv), 0);
+      window.setTimeout(() => setEFaturaJob({ mode: "send", invoice: inv }), 0);
       return;
     }
     return handleSendToGib(inv.id || inv._id, eType);
   };
 
-  const openInvoicePdfs = (list) => {
-    const ids = [...new Set(list.map((o) => o.id || o._id).filter(Boolean))];
-    if (!ids.length) { toast.error("Seçili faturalarda yazdırılacak belge yok."); return; }
-    ids.slice(0, 12).forEach((id) => window.open(`${API_URL}/invoices/${id}/pdf`, "_blank", "noopener"));
-    toast.success(ids.length > 12 ? `İlk 12 fatura açıldı (${ids.length} belge).` : `${ids.length} fatura yazdırmaya açıldı.`);
+  const openInvoicePdfsWithProgress = async (list, ctx) => {
+    const docs = (list || []).filter((o) => o?.id || o?._id);
+    if (!docs.length) throw new Error("Seçili faturalarda yazdırılacak belge yok.");
+    ctx?.setSteps?.([
+      { id: "prepare", label: "Belgeler hazırlanıyor" },
+      { id: "print", label: "Yazdırma pencereleri açılıyor" },
+      { id: "done", label: "Tamamlandı" },
+    ]);
+    ctx?.initItems?.(docs.map((d) => ({
+      id: d.id || d._id,
+      label: d.invoice_number || d.id,
+      sublabel: d.contact_name || "",
+    })));
+    ctx?.setStep?.("prepare", "active");
+    let ok = 0;
+    let fail = 0;
+    const capped = docs.slice(0, 12);
+    ctx?.completeStep?.("prepare", `${docs.length} belge${docs.length > 12 ? " (ilk 12 yazdırılacak)" : ""}`);
+    ctx?.setStep?.("print", "active");
+    for (const inv of capped) {
+      const id = inv.id || inv._id;
+      ctx?.setItem?.(id, { status: "running", detail: "PDF açılıyor…" });
+      try {
+        const w = window.open(`${API_URL}/invoices/${id}/pdf`, "_blank", "noopener");
+        if (!w) {
+          fail++;
+          ctx?.setItem?.(id, { status: "error", detail: "Açılır pencere engellendi" });
+          continue;
+        }
+        ok++;
+        ctx?.setItem?.(id, { status: "ok", detail: "Yazdırma penceresi açıldı" });
+      } catch (err) {
+        fail++;
+        ctx?.setItem?.(id, { status: "error", detail: bulkApiErrorDetail(err) || "Açılamadı" });
+      }
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    for (const inv of docs.slice(12)) {
+      const id = inv.id || inv._id;
+      ctx?.setItem?.(id, { status: "skipped", detail: "İlk 12 limitine takıldı" });
+    }
+    ctx?.completeStep?.("print", `${ok} açıldı${fail ? `, ${fail} hata` : ""}`);
+    ctx?.setStep?.("done", "done");
+    return { ok, fail, skipped: Math.max(0, docs.length - capped.length) };
   };
 
   const downloadInvoiceXmlBulk = async (list) => {
@@ -739,7 +783,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
 
     if (action === "einvoice_print" || action === "invoice_print") {
-      openInvoicePdfs(list);
+      if (!list.length) { toast.error("Fatura seçin."); return; }
+      setEFaturaJob({ mode: "print", invoices: list });
+      return;
+    }
+    if (action === "einvoice_send") {
+      const issuable = list.filter((inv) => canIssueInvoice(inv) && !isIncomingPurchaseInvoice(inv));
+      if (!issuable.length) {
+        toast.info("Seçili faturalarda e-belge gönderilecek uygun kayıt yok.");
+        return;
+      }
+      setEFaturaJob({ mode: "send", invoices: issuable });
       return;
     }
     if (action === "xml") {
@@ -821,11 +875,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     let ok = 0, fail = 0, skipped = 0, firstErr = "";
     for (const inv of list) {
       try {
-        if (action === "einvoice_send") {
-          if (!canIssueInvoice(inv) || isIncomingPurchaseInvoice(inv)) { skipped++; continue; }
-          await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/send-to-gib`, { e_type: "auto" });
-          try { await axios.post(`${API_URL}/e-invoice/${inv.id || inv._id}/refresh-status`); } catch { /* ignore */ }
-        } else if (action === "approve") {
+        if (action === "approve") {
           if (inv.status !== "draft" || isIncomingPurchaseInvoice(inv)) { skipped++; continue; }
           await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
         } else if (action === "cancel") {
@@ -1452,49 +1502,111 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         onFilterOutgoingGib={filterOutgoingGib}
         onFilterDispatch={filterDispatchList}
       />
-      {eFaturaInvoice && (
+      {eFaturaJob && (
         <ElektronikFaturaOnayModal
-          invoice={eFaturaInvoice}
+          mode={eFaturaJob.mode || "send"}
+          invoice={eFaturaJob.invoice || null}
+          invoices={eFaturaJob.invoices || (eFaturaJob.invoice ? [eFaturaJob.invoice] : [])}
           contacts={contacts}
           companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
-          onClose={() => setEFaturaInvoice(null)}
-          onConfirm={async ({ eType, scenario, alias, withholding, returnRef, exemption }) => {
-            const inv = eFaturaInvoice;
-            if (!inv) return;
-            const invId = inv.id || inv._id;
-            if (alias && inv.contact_id) {
+          onClose={() => {
+            setEFaturaJob(null);
+            loadData({ silent: true });
+          }}
+          onConfirm={async (payload, ctx) => {
+            if ((eFaturaJob.mode || "send") === "print") {
+              const list = eFaturaJob.invoices || (eFaturaJob.invoice ? [eFaturaJob.invoice] : []);
+              return openInvoicePdfsWithProgress(list, ctx);
+            }
+
+            const docs = (payload.documents && payload.documents.length)
+              ? payload.documents
+              : (eFaturaJob.invoices || (eFaturaJob.invoice ? [eFaturaJob.invoice] : []));
+            const { eType, scenario, alias, withholding, returnRef, exemption } = payload;
+
+            ctx?.setSteps?.([
+              { id: "prepare", label: "Hazırlık ve doğrulama" },
+              { id: "send", label: "Entegratöre / GİB’e gönderim" },
+              { id: "refresh", label: "GİB durum sorgusu" },
+              { id: "done", label: "Tamamlandı" },
+            ]);
+            ctx?.initItems?.(docs.map((d) => ({
+              id: d.id || d._id,
+              label: d.invoice_number || d.id,
+              sublabel: d.contact_name || "",
+            })));
+            ctx?.setStep?.("prepare", "active");
+
+            let ok = 0;
+            let fail = 0;
+            let skipped = 0;
+
+            for (const inv of docs) {
+              const invId = inv.id || inv._id;
+              if (!invId || !canIssueInvoice(inv) || isIncomingPurchaseInvoice(inv)) {
+                skipped++;
+                if (invId) ctx?.setItem?.(invId, { status: "skipped", detail: "Gönderime uygun değil" });
+                continue;
+              }
+              ctx?.setItem?.(invId, { status: "running", detail: "Hazırlanıyor…" });
               try {
-                await axios.put(`${API_URL}/contacts/${inv.contact_id}`, {
-                  e_invoice_alias: alias,
-                  is_e_invoice_user: eType === "e_invoice",
+                if (alias && inv.contact_id && docs.length === 1) {
+                  try {
+                    await axios.put(`${API_URL}/contacts/${inv.contact_id}`, {
+                      e_invoice_alias: alias,
+                      is_e_invoice_user: eType === "e_invoice",
+                    });
+                  } catch { /* gönderim yine denenecek */ }
+                }
+                const patch = {};
+                if (withholding) {
+                  patch.withholding_rate = Number(withholding.withholding_rate || 0);
+                  patch.withholding_code = withholding.withholding_code || null;
+                }
+                if (exemption?.tax_exemption_code) {
+                  patch.tax_exemption_code = exemption.tax_exemption_code;
+                  patch.tax_exemption_reason = exemption.tax_exemption_reason || null;
+                }
+                if (returnRef?.original_invoice_number) {
+                  patch.original_invoice_number = returnRef.original_invoice_number;
+                  patch.original_issue_date = returnRef.original_issue_date || null;
+                  if (returnRef.notes) patch.notes = returnRef.notes;
+                }
+                if (Object.keys(patch).length) {
+                  await axios.put(`${API_URL}/invoices/${invId}`, patch);
+                }
+                ctx?.setStep?.("send", "active", docs.length > 1 ? `${inv.invoice_number || invId}` : "");
+                ctx?.setItem?.(invId, { status: "running", detail: "GİB’e gönderiliyor…" });
+                const sent = await handleSendToGib(invId, eType, {
+                  scenario,
+                  silentToast: true,
+                  skipReload: true,
                 });
-              } catch {
-                /* gönderim yine denenecek */
-              }
-            }
-            const patch = {};
-            if (withholding) {
-              patch.withholding_rate = Number(withholding.withholding_rate || 0);
-              patch.withholding_code = withholding.withholding_code || null;
-            }
-            if (exemption?.tax_exemption_code) {
-              patch.tax_exemption_code = exemption.tax_exemption_code;
-              patch.tax_exemption_reason = exemption.tax_exemption_reason || null;
-            }
-            if (returnRef?.original_invoice_number) {
-              patch.original_invoice_number = returnRef.original_invoice_number;
-              patch.original_issue_date = returnRef.original_issue_date || null;
-              if (returnRef.notes) patch.notes = returnRef.notes;
-            }
-            if (Object.keys(patch).length) {
-              try {
-                await axios.put(`${API_URL}/invoices/${invId}`, patch);
+                ctx?.setStep?.("refresh", "active");
+                ok++;
+                ctx?.setItem?.(invId, {
+                  status: "ok",
+                  detail: sent?.refreshMsg || sent?.message || "Gönderildi",
+                });
               } catch (err) {
-                toast.error(err.response?.data?.detail || "İade / muafiyet / tevkifat kaydedilemedi.");
-                throw err;
+                fail++;
+                ctx?.setItem?.(invId, {
+                  status: "error",
+                  detail: bulkApiErrorDetail(err) || err?.response?.data?.detail || "Gönderilemedi",
+                });
               }
             }
-            await handleSendToGib(invId, eType, { scenario });
+
+            ctx?.completeStep?.("prepare");
+            ctx?.completeStep?.("send", `${ok} gönderildi${fail ? `, ${fail} hata` : ""}`);
+            ctx?.completeStep?.("refresh");
+            ctx?.setStep?.("done", "done");
+            setSelected([]);
+            await loadData({ silent: true });
+            if (!ok && fail) {
+              throw new Error(docs.length === 1 ? "Fatura kesilemedi." : `${fail} fatura gönderilemedi.`);
+            }
+            return { ok, fail, skipped };
           }}
         />
       )}
