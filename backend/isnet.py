@@ -1526,6 +1526,7 @@ async def send_document(
         e_type=e_type,
         invoice_number="" if is_provisional_invoice_number(soap_inv_no, local_ubl) else soap_inv_no,
         retries=4,
+        wait_for_gib=True,
     )
     portal_no = (verified.get("invoice_id") or "").strip()
     xml_no = ""
@@ -1688,6 +1689,16 @@ async def search_outgoing_invoice(
     return out
 
 
+def _is_pending_process_status(process: str = "", status: str = "", code: str = "") -> bool:
+    """Ziplenmiş / imza bekliyor — GİB DetailStatus henüz yok; poll devam etsin."""
+    blob = f"{process} {status}".lower().replace("ı", "i").replace("İ", "i")
+    if "ziplen" in blob or "imza_bekliyor" in blob or "imza bekliyor" in blob:
+        return True
+    if code in ("", "1") and ("gonderildi" in blob or "onay" in blob):
+        return False
+    return False
+
+
 async def try_verify_outgoing_in_portal(
     settings: dict,
     ettn: str,
@@ -1695,18 +1706,27 @@ async def try_verify_outgoing_in_portal(
     e_type: str = "e_archive",
     invoice_number: str = "",
     retries: int = 3,
+    wait_for_gib: bool = False,
 ) -> Dict[str, Any]:
     """NetteFatura-API ile uyum: viewer/search soft doğrulama; bulunamazsa hata fırlatmaz.
 
     Send*Xml Success+ETTN yeterli kabul edilir; portal indeksi gecikebilir.
     Fatura no için arama (ETTN) viewer'dan ayrı yapılır — viewer tek başına
     InvoiceNumber döndürmez.
+
+    wait_for_gib=True: süreç Status=Ziplendi iken DetailStatus (1300…) gelene kadar
+    daha uzun poll (NetteFatura testinde imza+GİB iletimi gecikebilir).
     """
     ettn = (ettn or "").strip()
     if not is_ettn_uuid(ettn):
         return {"ok": False, "document_url": "", "via": ""}
 
-    delays = (0.0, 0.8, 1.6, 3.0)[: max(1, int(retries or 1))]
+    # Kısa doğrulama vs gönderim sonrası GİB DetailStatus bekleme
+    if wait_for_gib:
+        # ~0+1+2+4+6+8+10 ≈ 31s — Ziplenmiş ara durumdan 1300'e geçiş için
+        delays = (0.0, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0)
+    else:
+        delays = (0.0, 0.8, 1.6, 3.0)[: max(1, int(retries or 1))]
     last_url = ""
     found_no = ""
     found_status = ""
@@ -1803,10 +1823,30 @@ async def try_verify_outgoing_in_portal(
         except HTTPException as e:
             logger.info("isnet soft-verify search miss ettn=%s try=%s: %s", ettn, attempt + 1, e.detail)
 
-        # Fatura no + nihai 1300 → hemen dön. Ziplendi ara durumsa DetailStatus için tekrar dene.
+        # Fatura no + nihai 1300 → hemen dön.
+        # Ziplendi / imza ara durum: wait_for_gib ise DetailStatus için poll devam.
         terminal = found_rank >= 100
+        pending_zip = _is_pending_process_status(
+            found_process, found_status, found_code
+        ) and found_rank < 60
         last_try = attempt >= len(delays) - 1
-        if found_no and (terminal or last_try):
+        if found_no and terminal:
+            return {
+                "ok": True,
+                "document_url": last_url,
+                "via": via or "search",
+                "invoice_id": found_no,
+                "status": found_status,
+                "status_code": found_code,
+                "detail_status": found_detail,
+                "process_status": found_process,
+                "attempt": attempt + 1,
+            }
+        if found_no and last_try:
+            break
+        if found_no and wait_for_gib and pending_zip:
+            continue
+        if found_no and not wait_for_gib and not pending_zip:
             return {
                 "ok": True,
                 "document_url": last_url,
@@ -1831,6 +1871,8 @@ async def try_verify_outgoing_in_portal(
             "detail_status": found_detail,
             "process_status": found_process,
             "attempt": len(delays),
+            "pending_gib": _is_pending_process_status(found_process, found_status, found_code)
+            and found_rank < 60,
         }
 
     return {
@@ -1842,6 +1884,7 @@ async def try_verify_outgoing_in_portal(
         "status_code": found_code,
         "detail_status": found_detail,
         "process_status": found_process,
+        "pending_gib": True,
     }
 
 
