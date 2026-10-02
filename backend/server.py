@@ -6756,6 +6756,25 @@ def _is_incoming_purchase_invoice(inv: dict) -> bool:
     return "gelen" in gs or gs == "received"
 
 
+def _is_incoming_product_matchable(inv: dict) -> bool:
+    """Gelen alış e-fatura / gelen e-irsaliye — satır stok kartı eşleştirme."""
+    if not inv or inv.get("status") == "cancelled":
+        return False
+    itype = inv.get("invoice_type")
+    et = inv.get("e_type")
+    is_doc = itype in ("purchase", "dispatch") or et == "e_dispatch"
+    if not is_doc:
+        return False
+    if inv.get("direction") == "incoming" or inv.get("source") == "edoc_inbox" or inv.get("edoc_id"):
+        return True
+    gs = str(inv.get("gib_status") or "").lower()
+    if itype == "purchase" and (et == "e_invoice" or "gelen" in gs or gs == "received"):
+        return True
+    if (itype == "dispatch" or et == "e_dispatch") and ("gelen" in gs or gs == "received"):
+        return True
+    return False
+
+
 def _incoming_purchase_response(inv: dict) -> str:
     r = str(inv.get("gib_response") or "").lower()
     if r in ("accepted", "rejected"):
@@ -7078,6 +7097,165 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
         await db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
     return await e_invoice.issue_invoice(invoice_id, e_type=req.get("e_type"), scenario=req.get("scenario"))
 
+
+
+async def _find_product_for_invoice_line(company_id: str, ln: dict):
+    """Barkod / SKU / ad / alias ile mevcut stok kartı."""
+    barcode = str(ln.get("barcode") or "").strip()
+    sku = str(ln.get("sku") or "").strip()
+    name = str(ln.get("name") or ln.get("description") or "").strip()
+    if barcode:
+        p = await db.products.find_one({
+            "company_id": company_id,
+            "$or": [{"barcode": barcode}, {"variants.barcode": barcode}],
+        })
+        if p:
+            return p
+    if sku:
+        p = await db.products.find_one({"company_id": company_id, "sku": sku})
+        if p:
+            return p
+        p = await db.products.find_one({"company_id": company_id, "supplier_codes": sku})
+        if p:
+            return p
+    if name:
+        p = await db.products.find_one({"company_id": company_id, "name": name})
+        if p:
+            return p
+        p = await db.products.find_one({
+            "company_id": company_id,
+            "marketplace_aliases": name.lower(),
+        })
+        if p:
+            return p
+    return None
+
+
+async def _set_invoice_item_product(inv: dict, idx: int, product_id: Optional[str]) -> dict:
+    items = list(inv.get("items") or [])
+    if not (0 <= idx < len(items)):
+        raise HTTPException(status_code=404, detail="Satır bulunamadı.")
+    p = None
+    if product_id:
+        p = await db.products.find_one({"_id": product_id, "company_id": inv.get("company_id")})
+        if not p:
+            raise HTTPException(status_code=404, detail="Stok kartı bulunamadı.")
+    item = dict(items[idx])
+    if p:
+        item["product_id"] = p["_id"]
+        item["is_service"] = False
+        item["matched_product_name"] = p.get("name")
+        sku = str(item.get("sku") or "").strip()
+        if sku and sku not in (p.get("supplier_codes") or []):
+            await db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"supplier_codes": sku}})
+        alias = str(item.get("name") or item.get("description") or "").strip().lower()
+        if alias:
+            await db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"marketplace_aliases": alias}})
+    else:
+        item["product_id"] = ""
+        item["matched_product_name"] = None
+    items[idx] = item
+    await db.invoices.update_one({"_id": inv["_id"]}, {"$set": {"items": items}})
+    inv = dict(inv)
+    inv["items"] = items
+    return inv
+
+
+async def _create_product_for_invoice_line(inv: dict, idx: int, *, markup: float = 1.4) -> dict:
+    items = list(inv.get("items") or [])
+    if not (0 <= idx < len(items)):
+        raise HTTPException(status_code=404, detail="Satır bulunamadı.")
+    ln = items[idx]
+    if ln.get("product_id"):
+        return inv
+    existing = await _find_product_for_invoice_line(inv["company_id"], ln)
+    if existing:
+        return await _set_invoice_item_product(inv, idx, existing["_id"])
+    name = str(ln.get("name") or ln.get("description") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Satır adı boş; stok kartı açılamaz.")
+    created = await create_product_from_marketplace({
+        "company_id": inv["company_id"],
+        "product_name": name,
+        "barcode": ln.get("barcode"),
+        "sku": ln.get("sku"),
+        "purchase_price": ln.get("unit_price"),
+        "sale_price": round(float(ln.get("unit_price") or 0) * float(markup or 1.4), 2),
+        "vat_rate": int(ln.get("vat_rate") or 20),
+        "category": "Tedarik",
+        "channel": "edoc",
+    })
+    pid = (created.get("product") or {}).get("id") or (created.get("product") or {}).get("_id")
+    return await _set_invoice_item_product(inv, idx, pid)
+
+
+@api_router.put("/invoices/{invoice_id}/items/match")
+async def match_invoice_item_product(invoice_id: str, req: Dict[str, Any]):
+    """Gelen fatura/irsaliye satırını stok kartına bağla."""
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if not _is_incoming_product_matchable(inv):
+        raise HTTPException(status_code=400, detail="Ürün eşleştirme yalnızca gelen alış faturası / gelen irsaliye için.")
+    idx = int(req.get("idx", -1))
+    inv = await _set_invoice_item_product(inv, idx, req.get("product_id") or None)
+    return {
+        "status": "success",
+        "invoice": clean_doc(inv),
+        "message": "Satır stok kartıyla eşleştirildi." if req.get("product_id") else "Satır eşleştirmesi kaldırıldı.",
+    }
+
+
+@api_router.post("/invoices/{invoice_id}/items/create-product")
+async def create_product_from_invoice_item(invoice_id: str, req: Dict[str, Any] = None):
+    """Tek satırdan stok kartı oluştur ve bağla."""
+    req = req or {}
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if not _is_incoming_product_matchable(inv):
+        raise HTTPException(status_code=400, detail="Stok kartı oluşturma yalnızca gelen alış faturası / gelen irsaliye için.")
+    idx = int(req.get("idx", -1))
+    inv = await _create_product_for_invoice_line(inv, idx, markup=float(req.get("markup") or 1.4))
+    return {
+        "status": "success",
+        "invoice": clean_doc(inv),
+        "message": "Stok kartı oluşturuldu ve satıra bağlandı.",
+    }
+
+
+@api_router.post("/invoices/{invoice_id}/items/create-missing-products")
+async def create_missing_products_for_invoice(invoice_id: str, req: Dict[str, Any] = None):
+    """Eşleşmeyen tüm satırlara stok kartı aç (kısayol)."""
+    req = req or {}
+    inv = await db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    if not _is_incoming_product_matchable(inv):
+        raise HTTPException(status_code=400, detail="Toplu stok kartı yalnızca gelen alış faturası / gelen irsaliye için.")
+    markup = float(req.get("markup") or 1.4)
+    created = 0
+    items = list(inv.get("items") or [])
+    for i, ln in enumerate(items):
+        if ln.get("product_id"):
+            continue
+        if not str(ln.get("name") or ln.get("description") or "").strip():
+            continue
+        inv = await _create_product_for_invoice_line(inv, i, markup=markup)
+        created += 1
+        items = list(inv.get("items") or [])
+    unmatched = sum(1 for ln in (inv.get("items") or []) if not ln.get("product_id"))
+    return {
+        "status": "success",
+        "invoice": clean_doc(inv),
+        "created_products": created,
+        "unmatched": unmatched,
+        "message": (
+            f"{created} stok kartı oluşturuldu ve satırlara bağlandı."
+            if created
+            else "Oluşturulacak eşleşmeyen satır yok."
+        ),
+    }
 
 
 @api_router.post("/invoices/{invoice_id}/accept-incoming")
