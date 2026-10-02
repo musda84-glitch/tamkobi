@@ -4,15 +4,10 @@ import axios from "axios";
 import { toast } from "sonner";
 import {
   FileText, Archive, Printer, Eye, MessageSquare, DollarSign, FileCheck2, CalendarClock,
-  Truck, Globe, CheckCircle2, XCircle, Download, FileCode2, ExternalLink, Trash2, Receipt, Pencil, Loader2, Copy, RefreshCw, Inbox, Send,
+  Truck, Globe, CheckCircle2, XCircle, Trash2, Receipt, Pencil, Loader2, Copy, RefreshCw,
 } from "lucide-react";
 import { canCopyInvoice, INVOICE_COPY_MODES } from "./invoiceCopyModes";
-import {
-  einvoiceProviderLabel,
-  isEinvoiceConfigured,
-  supportsGibInbox,
-  supportsEDispatch,
-} from "../utils/einvoiceIntegrator";
+import { supportsEDispatch } from "../utils/einvoiceIntegrator";
 import { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
 
 /** Listede gösterilecek no: GİB/entegratör numarası varsa onu kullan. */
@@ -412,11 +407,6 @@ export const InvoiceContextMenu = (props) => {
   } = props;
   const onAcceptIncoming = props.onAcceptIncoming;
   const onRejectIncoming = props.onRejectIncoming;
-  const onOpenGibInbox = props.onOpenGibInbox;
-  const onOpenIncomingDispatch = props.onOpenIncomingDispatch;
-  const onPullGibInbox = props.onPullGibInbox;
-  const onFilterOutgoingGib = props.onFilterOutgoingGib;
-  const onFilterDispatch = props.onFilterDispatch;
   const einvoiceSettings = props.einvoiceSettings || null;
   const apiBase = props.apiBase || "";
   const companyId = props.companyId || menu?.inv?.company_id || "";
@@ -631,31 +621,17 @@ export const InvoiceContextMenu = (props) => {
           ))}
         </div>
       )}
-      {!isPurchase && showGibDownloads && (
+      {!isPurchase && !incoming && (inv.gib_uuid || inv.gib_tracking_id) && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-edoc-downloads">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
-          {(inv.gib_uuid || inv.gib_tracking_id) && (
-            <Item
-              icon={RefreshCw}
-              color="text-emerald-600"
-              label="GİB Durumunu Güncelle"
-              sub="NetteFatura iletim (1300 Başarıyla Tamamlandı)"
-              onClick={() => refreshInvoiceGibStatus(apiBase, inv, { onUpdated: onGibStatusRefreshed })}
-              testId="ctx-refresh-gib-status"
-            />
-          )}
-          <Item icon={FileCode2} color="text-indigo-600" label="UBL XML İndir" sub="Entegratör GİB UBL-TR" onClick={() => downloadInvoiceXmlEdoc(apiBase, inv)} testId="ctx-download-xml" />
-          <Item icon={Download} color="text-indigo-600" label="PDF Önizle / İndir" sub="Entegratör e-belge PDF" onClick={() => downloadInvoicePdfEdoc(apiBase, inv)} testId="ctx-download-pdf" />
-          {(inv.gib_document_url || inv.gib_uuid || inv.gib_tracking_id) && (
-            <Item
-              icon={ExternalLink}
-              color="text-emerald-600"
-              label="Resmi GİB Belgesi"
-              sub="Entegratör görüntüleme linki"
-              onClick={() => openGibDocumentUrl(apiBase, inv)}
-              testId="ctx-gib-doc-url"
-            />
-          )}
+          <Item
+            icon={RefreshCw}
+            color="text-emerald-600"
+            label="GİB Durumunu Güncelle"
+            sub="NetteFatura iletim (1300 Başarıyla Tamamlandı)"
+            onClick={() => refreshInvoiceGibStatus(apiBase, inv, { onUpdated: onGibStatusRefreshed })}
+            testId="ctx-refresh-gib-status"
+          />
         </div>
       )}
       {showIssuedActions && ((onCancel && cancellable) || (onExpenseSlip && slipable)) && (
@@ -705,74 +681,6 @@ export const InvoiceContextMenu = (props) => {
       })()}
       {onDispatch && inv.invoice_type === "sales" && (
         <Item icon={Truck} color="text-fuchsia-600" label={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "İrsaliye Oluştur"} sub={inv.dispatch_number ? "Bu faturanın irsaliyesi var" : "Sevk irsaliyesi (KDV'siz) düzenle"} onClick={() => onDispatch(inv)} testId="ctx-dispatch" />
-      )}
-      {/* Alış faturalarında İŞNET/GİB kutu navigasyonu gösterilmez (satış menüsünde kalır). */}
-      {isEinvoiceConfigured(einvoiceSettings) && !isPurchase && (
-        <div className="border-t border-slate-100 mt-1 pt-1" data-testid="ctx-integrator-section">
-          <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-indigo-700">
-            {einvoiceProviderLabel(einvoiceSettings.provider).toUpperCase()} · GİB
-          </div>
-          {supportsGibInbox(einvoiceSettings) && onPullGibInbox && (
-            <Item
-              icon={Inbox}
-              color="text-indigo-600"
-              label="Gelen e-Fatura / e-İrsaliye Çek"
-              sub="SearchInvoice + SearchDespatchAdvice Incoming"
-              onClick={() => onPullGibInbox()}
-              testId="ctx-pull-gib-inbox"
-            />
-          )}
-          {supportsGibInbox(einvoiceSettings) && onOpenGibInbox && (
-            <Item
-              icon={Inbox}
-              color="text-indigo-600"
-              label="Gelen e-Fatura Kutusu"
-              sub="/edoc-inbox"
-              onClick={() => onOpenGibInbox()}
-              testId="ctx-open-gib-inbox"
-            />
-          )}
-          {supportsGibInbox(einvoiceSettings) && supportsEDispatch(einvoiceSettings) && onOpenIncomingDispatch && (
-            <Item
-              icon={Truck}
-              color="text-fuchsia-600"
-              label="Gelen e-İrsaliyeler"
-              sub="/edoc-inbox?kind=dispatch"
-              onClick={() => onOpenIncomingDispatch()}
-              testId="ctx-open-incoming-dispatch"
-            />
-          )}
-          {onFilterOutgoingGib && (
-            <Item
-              icon={Send}
-              color="text-emerald-600"
-              label="Giden e-Faturalar"
-              sub="e-Fatura / e-Arşiv listesi"
-              onClick={() => onFilterOutgoingGib()}
-              testId="ctx-filter-outgoing-gib"
-            />
-          )}
-          {supportsEDispatch(einvoiceSettings) && onFilterDispatch && (
-            <Item
-              icon={Truck}
-              color="text-fuchsia-600"
-              label="Giden e-İrsaliyeler"
-              sub="Sevk irsaliyeleri / e-İrsaliye"
-              onClick={() => onFilterDispatch()}
-              testId="ctx-filter-dispatch"
-            />
-          )}
-          {(inv.gib_uuid || inv.gib_tracking_id) && (
-            <Item
-              icon={RefreshCw}
-              color="text-emerald-600"
-              label="Bu Belgenin GİB Durumu"
-              sub="NetteFatura DetailStatus (1300)"
-              onClick={() => refreshInvoiceGibStatus(apiBase, inv, { onUpdated: onGibStatusRefreshed })}
-              testId="ctx-refresh-one-gib"
-            />
-          )}
-        </div>
       )}
       {inv.payment_status !== "paid" && inv.status !== "cancelled" && <Item icon={DollarSign} color="text-emerald-600" label="Tahsilat / Ödeme Ekle" onClick={() => onPayment(inv)} testId="ctx-payment" />}
       {onInstallments && inv.status !== "cancelled" && (
