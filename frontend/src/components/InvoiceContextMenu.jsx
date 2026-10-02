@@ -621,7 +621,7 @@ export const InvoiceContextMenu = (props) => {
           ))}
         </div>
       )}
-      {!isPurchase && showGibDownloads && (inv.gib_uuid || inv.gib_tracking_id) && (
+      {!isPurchase && !incoming && (inv.gib_uuid || inv.gib_tracking_id) && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-edoc-downloads">
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-500">E-BELGE</div>
           <Item
