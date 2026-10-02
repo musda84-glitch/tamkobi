@@ -1137,7 +1137,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           contacts={contacts}
           companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
           onClose={() => setEFaturaInvoice(null)}
-          onConfirm={async ({ eType, scenario, alias, withholding, returnRef }) => {
+          onConfirm={async ({ eType, scenario, alias, withholding, returnRef, exemption }) => {
             const inv = eFaturaInvoice;
             if (!inv) return;
             const invId = inv.id || inv._id;
@@ -1156,6 +1156,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               patch.withholding_rate = Number(withholding.withholding_rate || 0);
               patch.withholding_code = withholding.withholding_code || null;
             }
+            if (exemption?.tax_exemption_code) {
+              patch.tax_exemption_code = exemption.tax_exemption_code;
+              patch.tax_exemption_reason = exemption.tax_exemption_reason || null;
+            }
             if (returnRef?.original_invoice_number) {
               patch.original_invoice_number = returnRef.original_invoice_number;
               patch.original_issue_date = returnRef.original_issue_date || null;
@@ -1165,7 +1169,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
               try {
                 await axios.put(`${API_URL}/invoices/${invId}`, patch);
               } catch (err) {
-                toast.error(err.response?.data?.detail || "İade / tevkifat bilgisi kaydedilemedi.");
+                toast.error(err.response?.data?.detail || "İade / muafiyet / tevkifat kaydedilemedi.");
                 throw err;
               }
             }

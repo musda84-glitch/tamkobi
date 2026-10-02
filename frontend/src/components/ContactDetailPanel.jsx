@@ -958,7 +958,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             contacts={c ? [c] : []}
             companyId={activeCompany?.id || activeCompany?._id || c?.company_id}
             onClose={() => setEFaturaInvoice(null)}
-            onConfirm={async ({ eType, scenario, alias, withholding, returnRef }) => {
+            onConfirm={async ({ eType, scenario, alias, withholding, returnRef, exemption }) => {
               const inv = eFaturaInvoice;
               if (!inv) return;
               const invId = inv.id || inv._id;
@@ -977,6 +977,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 patch.withholding_rate = Number(withholding.withholding_rate || 0);
                 patch.withholding_code = withholding.withholding_code || null;
               }
+              if (exemption?.tax_exemption_code) {
+                patch.tax_exemption_code = exemption.tax_exemption_code;
+                patch.tax_exemption_reason = exemption.tax_exemption_reason || null;
+              }
               if (returnRef?.original_invoice_number) {
                 patch.original_invoice_number = returnRef.original_invoice_number;
                 patch.original_issue_date = returnRef.original_issue_date || null;
@@ -986,7 +990,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 try {
                   await axios.put(`${API_URL}/invoices/${invId}`, patch);
                 } catch (err) {
-                  toast.error(err.response?.data?.detail || "İade / tevkifat bilgisi kaydedilemedi.");
+                  toast.error(err.response?.data?.detail || "İade / muafiyet / tevkifat kaydedilemedi.");
                   throw err;
                 }
               }
