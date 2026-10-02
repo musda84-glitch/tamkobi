@@ -3,7 +3,7 @@ import axios from "axios";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { ScanButton } from "../components/CameraScanner";
 import { toast } from "sonner";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, canIssueInvoice, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel } from "../components/InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isIncomingPurchasePending, incomingPurchaseResponse, isGibIssued, canDeleteInvoice, canCancelInvoice, canIssueInvoice, refreshInvoiceGibStatus, invoiceETypeLabel, displayInvoiceNumber, formatGibStatusLabel, canMatchIncomingProducts, unmatchedIncomingLineCount } from "../components/InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "../components/InvoiceCopyMenu";
 import { invoiceToOpenAfterCopy } from "../components/invoiceCopyModes";
 import { InstallmentPlanModal } from "../components/InstallmentPlanModal";
@@ -54,7 +54,7 @@ import {
   ArrowDown,
   ArrowUpDown,
   ChevronDown,
-  FileCheck2, CheckCircle, XCircle, Trash2, Pencil, CalendarClock, Truck, RefreshCw } from "lucide-react";
+  FileCheck2, CheckCircle, XCircle, Trash2, Pencil, CalendarClock, Truck, RefreshCw, PackagePlus, Loader2 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 
 const pad2 = (x) => String(x).padStart(2, "0");
@@ -177,6 +177,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [expandedInvId, setExpandedInvId] = useState(null);
   const [expandedItemsById, setExpandedItemsById] = useState({});
   const [expandLoadingId, setExpandLoadingId] = useState(null);
+  const [lineMatchBusy, setLineMatchBusy] = useState("");
   const closeCtx = React.useCallback(() => setCtxMenu(null), []);
   const openCtxFromButton = (e, inv) => {
     e.preventDefault();
@@ -221,6 +222,77 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       setExpandedItemsById((prev) => ({ ...prev, [id]: [] }));
     } finally {
       setExpandLoadingId(null);
+    }
+  };
+
+  const applyMatchedInvoice = (invId, invoice) => {
+    if (!invoice) return;
+    const items = Array.isArray(invoice.items) ? invoice.items : [];
+    setExpandedItemsById((prev) => ({ ...prev, [invId]: items }));
+    setInvoices((prev) => prev.map((row) => {
+      const rid = invRowId(row);
+      if (rid !== invId) return row;
+      return { ...row, ...invoice, id: invoice.id || invoice._id || row.id, items };
+    }));
+  };
+
+  const reloadProducts = async () => {
+    try {
+      const r = await axios.get(`${API_URL}/products`, { params: { company_id: companyId } });
+      setProducts(Array.isArray(r.data) ? r.data : r.data?.items || []);
+    } catch { /* keep cache */ }
+  };
+
+  const matchIncomingLine = async (inv, idx, productId) => {
+    const id = invRowId(inv);
+    if (!id) return;
+    setLineMatchBusy(`${id}:${idx}`);
+    try {
+      const r = await axios.put(`${API_URL}/invoices/${id}/items/match`, { idx, product_id: productId || null });
+      applyMatchedInvoice(id, r.data?.invoice);
+      toast.success(r.data?.message || "Satır eşleştirildi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Eşleştirme başarısız.");
+    } finally {
+      setLineMatchBusy("");
+    }
+  };
+
+  const createProductForIncomingLine = async (inv, idx) => {
+    const id = invRowId(inv);
+    if (!id) return;
+    setLineMatchBusy(`${id}:create:${idx}`);
+    try {
+      const r = await axios.post(`${API_URL}/invoices/${id}/items/create-product`, { idx });
+      applyMatchedInvoice(id, r.data?.invoice);
+      toast.success(r.data?.message || "Stok kartı oluşturuldu.");
+      await reloadProducts();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Stok kartı oluşturulamadı.");
+    } finally {
+      setLineMatchBusy("");
+    }
+  };
+
+  const createMissingIncomingProducts = async (inv) => {
+    const id = invRowId(inv);
+    if (!id) return;
+    const n = unmatchedIncomingLineCount(itemsForInv(inv));
+    if (!n) {
+      toast.message("Eşleşmeyen satır yok.");
+      return;
+    }
+    if (!window.confirm(`${n} eşleşmeyen satır için stok kartı açılsın mı?`)) return;
+    setLineMatchBusy(`${id}:create-all`);
+    try {
+      const r = await axios.post(`${API_URL}/invoices/${id}/items/create-missing-products`, {});
+      applyMatchedInvoice(id, r.data?.invoice);
+      toast.success(r.data?.message || "Stok kartları oluşturuldu.");
+      await reloadProducts();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Toplu stok kartı açılamadı.");
+    } finally {
+      setLineMatchBusy("");
     }
   };
   const handleConvertDispatch = async (inv) => {
@@ -1170,7 +1242,28 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         ) : lineItems.length === 0 ? (
                           <div className="text-[11px] text-slate-400 pl-6" data-testid={`inv-lines-empty-${inv.invoice_number}`}>Bu belgede kalem yok.</div>
                         ) : (
-                          <div className="pl-6 overflow-x-auto">
+                          <div className="pl-6 space-y-2 overflow-x-auto">
+                            {canMatchIncomingProducts(inv) && unmatchedIncomingLineCount(lineItems) > 0 && (
+                              <div
+                                className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2"
+                                data-testid={`inv-stock-match-bar-${inv.invoice_number}`}
+                              >
+                                <PackagePlus className="w-4 h-4 text-amber-700 shrink-0" />
+                                <span className="text-[11px] text-amber-900 flex-1">
+                                  {unmatchedIncomingLineCount(lineItems)} satır stok kartıyla eşleşmedi. Satırdan seçin veya kart oluşturun.
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => createMissingIncomingProducts(inv)}
+                                  disabled={!!lineMatchBusy}
+                                  className="px-3 py-1.5 bg-amber-700 text-white rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"
+                                  data-testid={`inv-create-missing-products-${inv.invoice_number}`}
+                                >
+                                  {lineMatchBusy === `${rowId}:create-all` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackagePlus className="w-3.5 h-3.5" />}
+                                  Eşleşmeyenlere stok kartı oluştur
+                                </button>
+                              </div>
+                            )}
                             <table className="w-full text-[11px] text-slate-600" data-testid={`inv-lines-table-${inv.invoice_number}`}>
                               <thead>
                                 <tr className="text-slate-400 uppercase text-[10px]">
@@ -1178,7 +1271,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                                   <th className="py-1 px-2 text-center font-semibold w-20">Miktar</th>
                                   <th className="py-1 px-2 text-right font-semibold w-28">Birim</th>
                                   <th className="py-1 px-2 text-center font-semibold w-14">KDV</th>
-                                  <th className="py-1 pl-2 text-right font-semibold w-28">Tutar</th>
+                                  <th className="py-1 px-2 text-right font-semibold w-28">Tutar</th>
+                                  {canMatchIncomingProducts(inv) && (
+                                    <th className="py-1 pl-2 text-left font-semibold w-64">Stok Kartı</th>
+                                  )}
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100">
@@ -1188,7 +1284,38 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                                     <td className="py-1.5 px-2 text-center whitespace-nowrap">{it.quantity} {it.unit || ""}</td>
                                     <td className="py-1.5 px-2 text-right whitespace-nowrap">{fmtMoney(it.unit_price, inv.currency || "TRY")}</td>
                                     <td className="py-1.5 px-2 text-center">%{it.vat_rate ?? 0}</td>
-                                    <td className="py-1.5 pl-2 text-right font-semibold text-slate-900 whitespace-nowrap">{fmtMoney(it.total_incl ?? it.total, inv.currency || "TRY")}</td>
+                                    <td className="py-1.5 px-2 text-right font-semibold text-slate-900 whitespace-nowrap">{fmtMoney(it.total_incl ?? it.total, inv.currency || "TRY")}</td>
+                                    {canMatchIncomingProducts(inv) && (
+                                      <td className="py-1.5 pl-2">
+                                        <div className="flex items-center gap-1 min-w-[14rem]">
+                                          <div className="flex-1 min-w-0">
+                                            <SearchSelect
+                                              value={it.product_id || ""}
+                                              options={products}
+                                              getLabel={(p) => p.name}
+                                              getSub={(p) => `${p.sku || ""} · stok ${p.stock_quantity ?? "-"}`}
+                                              placeholder={it.product_id ? (it.matched_product_name || products.find((p) => (p.id || p._id) === it.product_id)?.name || "Eşleşti") : "Stok kartı seç…"}
+                                              onChange={(pid) => matchIncomingLine(inv, i, pid)}
+                                              testId={`inv-line-select-${inv.invoice_number}-${i}`}
+                                            />
+                                          </div>
+                                          {!it.product_id && (
+                                            <button
+                                              type="button"
+                                              onClick={() => createProductForIncomingLine(inv, i)}
+                                              disabled={!!lineMatchBusy}
+                                              className="p-1.5 bg-emerald-600 text-white rounded-lg disabled:opacity-50"
+                                              title="Bu kalemden stok kartı aç"
+                                              data-testid={`inv-line-create-${inv.invoice_number}-${i}`}
+                                            >
+                                              {lineMatchBusy === `${rowId}:create:${i}`
+                                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                : <PackagePlus className="w-3.5 h-3.5" />}
+                                            </button>
+                                          )}
+                                        </div>
+                                      </td>
+                                    )}
                                   </tr>
                                 ))}
                               </tbody>

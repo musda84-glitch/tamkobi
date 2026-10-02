@@ -205,6 +205,25 @@ export function isIncomingPurchaseInvoice(inv) {
   return /gelen|received/i.test(gs);
 }
 
+/** Gelen alış e-fatura veya gelen e-irsaliye — satır stok eşleştirme. */
+export function canMatchIncomingProducts(inv) {
+  if (!inv || inv.status === "cancelled") return false;
+  const isDoc =
+    inv.invoice_type === "purchase"
+    || inv.invoice_type === "dispatch"
+    || inv.e_type === "e_dispatch";
+  if (!isDoc) return false;
+  if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return true;
+  const gs = String(inv.gib_status || "");
+  if (inv.invoice_type === "purchase" && (inv.e_type === "e_invoice" || /gelen|received/i.test(gs))) return true;
+  if ((inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") && /gelen|received/i.test(gs)) return true;
+  return false;
+}
+
+export function unmatchedIncomingLineCount(items = []) {
+  return (items || []).filter((it) => it && !it.product_id && String(it.name || it.description || "").trim()).length;
+}
+
 /** Liste rozeti: gelen GİB alış asla «Kağıt Fatura» gösterilmez. */
 export function invoiceETypeLabel(inv) {
   if (!inv) return "—";

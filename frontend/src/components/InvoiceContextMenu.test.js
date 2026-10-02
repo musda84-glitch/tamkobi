@@ -12,6 +12,8 @@ import {
   invoiceETypeLabel,
   invoiceHasPayment,
   isIncomingPurchaseInvoice,
+  canMatchIncomingProducts,
+  unmatchedIncomingLineCount,
   placeContextMenu,
   suggestedIssueTypeFromGib,
   shouldResolveIssueFromGib,
@@ -100,6 +102,39 @@ describe("placeContextMenu", () => {
     expect(placed.top).toBe(8);
     expect(placed.maxHeight).toBe(720 - 16);
     expect(placed.top + placed.maxHeight).toBeLessThanOrEqual(720 - 8);
+  });
+});
+
+describe("canMatchIncomingProducts", () => {
+  test("allows incoming purchase and dispatch", () => {
+    expect(canMatchIncomingProducts({
+      invoice_type: "purchase",
+      direction: "incoming",
+      status: "approved",
+    })).toBe(true);
+    expect(canMatchIncomingProducts({
+      invoice_type: "dispatch",
+      direction: "incoming",
+      e_type: "e_dispatch",
+      status: "approved",
+    })).toBe(true);
+    expect(canMatchIncomingProducts({
+      invoice_type: "sales",
+      status: "approved",
+    })).toBe(false);
+    expect(canMatchIncomingProducts({
+      invoice_type: "purchase",
+      direction: "incoming",
+      status: "cancelled",
+    })).toBe(false);
+  });
+
+  test("counts unmatched lines", () => {
+    expect(unmatchedIncomingLineCount([
+      { name: "A" },
+      { name: "B", product_id: "p1" },
+      { name: "" },
+    ])).toBe(1);
   });
 });
 
