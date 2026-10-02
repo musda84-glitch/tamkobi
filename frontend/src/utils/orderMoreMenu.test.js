@@ -45,6 +45,13 @@ describe("orderMoreMenu", () => {
       order_number: "ORD-2026-0060",
       invoice_gib_status: "GİB'e Gönderildi",
     })).toBe("NX202623431210");
+    // Taslak / yalnızca invoice_id — GİB satırı yok
+    expect(orderGibInvoiceNumber({
+      invoice_number: "NX202600000682",
+      order_number: "ORD-1",
+      invoice_id: "inv1",
+      invoice_gib_status: "Taslak",
+    })).toBe("");
     expect(orderGibInvoiceNumber({ order_number: "B2B-1", invoice_number: "B2B-1" })).toBe("");
   });
 

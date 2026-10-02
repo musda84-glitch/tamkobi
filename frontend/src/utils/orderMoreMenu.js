@@ -62,10 +62,11 @@ export function orderGibInvoiceNumber(ord) {
   if (!ord) return "";
   const gib = String(ord.gib_invoice_id || "").trim();
   if (gib) return gib;
+  // Yerel fatura no yalnızca GİB gönderimi sonrası (resmi no henüz düşmemiş olabilir)
+  if (!orderHasEInvoiceIssued(ord)) return "";
   const no = String(ord.invoice_number || "").trim();
   if (!no || no === String(ord.order_number || "").trim()) return "";
-  if (orderHasEInvoiceIssued(ord) || ord.invoice_id) return no;
-  return "";
+  return no;
 }
 
 /** Sipariş fatura rozeti: taslak (sarı) → faturalaştı (yeşil buton) → faturalaşmış e-belge (kırmızı bilgi). */
