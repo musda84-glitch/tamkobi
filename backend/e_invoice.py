@@ -1234,8 +1234,22 @@ def _invoice_provider(inv: dict, settings: Optional[dict] = None) -> str:
     return (inv.get("integrator") or (settings or {}).get("provider") or "").strip()
 
 
+def _is_incoming_invoice(inv: dict) -> bool:
+    """Gelen alış e-fatura / edoc_inbox — İşNet InvoiceDirection=Incoming."""
+    if not inv:
+        return False
+    if inv.get("direction") == "incoming" or inv.get("source") == "edoc_inbox" or inv.get("edoc_id"):
+        return True
+    gs = str(inv.get("gib_status") or "").lower()
+    return "gelen" in gs or gs == "received"
+
+
+def _invoice_soap_direction(inv: dict) -> str:
+    return "Incoming" if _is_incoming_invoice(inv) else "Outgoing"
+
+
 async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
-    """GİB'e iletilmiş faturanın resmi PDF'i (İşNet). Yoksa None → yerel PDF."""
+    """GİB e-belge PDF (İşNet). Gelen faturalarda InvoiceDirection=Incoming."""
     inv = await _db.invoices.find_one({"_id": invoice_id})
     if not inv:
         return None
@@ -1264,6 +1278,7 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
         viewer = stored
     # İşNet fatura no: önce GİB'den dönen numara, sonra yerel
     inv_no = str(inv.get("gib_invoice_id") or inv.get("invoice_number") or "").strip()
+    direction = _invoice_soap_direction(inv)
     try:
         return await isnet.download_invoice_pdf(
             settings,
@@ -1271,6 +1286,7 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
             e_type=et or "e_archive",
             invoice_number=inv_no,
             viewer_url=viewer,
+            direction=direction,
         )
     except HTTPException as exc:
         logger.info("fetch_integrator_pdf: %s → %s", invoice_id, getattr(exc, "detail", exc))
@@ -1281,7 +1297,7 @@ async def fetch_integrator_pdf(invoice_id: str) -> Optional[bytes]:
 
 
 async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
-    """GİB'e iletilmiş faturanın resmi UBL XML'i (İşNet). Yoksa None → yerel UBL."""
+    """GİB UBL XML (İşNet). Gelen faturalarda InvoiceDirection=Incoming."""
     inv = await _db.invoices.find_one({"_id": invoice_id})
     if not inv:
         return None
@@ -1300,6 +1316,7 @@ async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
     if _is_http_url(stored) and not _is_n11_document_url(stored):
         viewer = stored
     inv_no = str(inv.get("gib_invoice_id") or inv.get("invoice_number") or "").strip()
+    direction = _invoice_soap_direction(inv)
     try:
         return await isnet.download_invoice_xml(
             settings,
@@ -1307,6 +1324,7 @@ async def fetch_integrator_xml(invoice_id: str) -> Optional[bytes]:
             e_type=et or "e_archive",
             invoice_number=inv_no,
             viewer_url=viewer,
+            direction=direction,
         )
     except HTTPException as exc:
         logger.info("fetch_integrator_xml: %s → %s", invoice_id, getattr(exc, "detail", exc))

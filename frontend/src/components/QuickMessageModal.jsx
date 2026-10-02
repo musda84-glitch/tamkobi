@@ -22,6 +22,11 @@ export const QuickMessageModal = ({ companyId, recipient, defaultSubject = "", d
   const [message, setMessage] = useState(defaultMessage);
   const [files, setFiles] = useState(() => (Array.isArray(initialFiles) ? initialFiles.filter(Boolean) : []));
   const [sending, setSending] = useState(false);
+  useEffect(() => {
+    if (Array.isArray(initialFiles) && initialFiles.length) {
+      setFiles(initialFiles.filter(Boolean));
+    }
+  }, [initialFiles]);
 
   const send = async (e) => {
     e.preventDefault();

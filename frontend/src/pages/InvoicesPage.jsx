@@ -166,6 +166,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [printInv, setPrintInv] = useState(null);
   const [editTpl, setEditTpl] = useState(false);
   const [notifyInvoice, setNotifyInvoice] = useState(null);
+  const [notifyFiles, setNotifyFiles] = useState([]);
   const [paymentModalInvoice, setPaymentModalInvoice] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentAccount, setPaymentAccount] = useState("");
@@ -1353,7 +1354,29 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           setPreviewInvoice(inv);
         }}
         onPrint={setPrintInv}
-        onNotify={setNotifyInvoice}
+        onNotify={async (inv) => {
+          setNotifyInvoice(inv);
+          setNotifyFiles([]);
+          if (!shouldUseIntegratorPdf("invoice", inv)) return;
+          const id = inv.id || inv._id;
+          if (!id) return;
+          try {
+            const r = await axios.get(`${API_URL}/invoices/${id}/pdf`, {
+              responseType: "blob",
+              params: { require_integrator: 1 },
+              headers: { Accept: "application/pdf" },
+            });
+            const source = String(r.headers?.["x-document-source"] || "").toLowerCase();
+            if (source && source !== "integrator") return;
+            const blob = r.data instanceof Blob ? r.data : new Blob([r.data], { type: "application/pdf" });
+            if (!blob || blob.size < 50) return;
+            const name = `${displayInvoiceNumber(inv)}.pdf`;
+            const file = new File([blob], name, { type: "application/pdf" });
+            setNotifyFiles([file]);
+          } catch {
+            /* e-posta ekleri isteğe bağlı; mesaj yine gönderilebilir */
+          }
+        }}
         onPayment={openPayment}
         onDispatch={handleCreateDispatch}
         onInstallments={setInstallmentInv}
@@ -1439,7 +1462,8 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
             defaultMessage={overdue ? TEMPLATES.reminder(notifyInvoice) : TEMPLATES.invoice(notifyInvoice)}
             context="invoice"
             refId={notifyInvoice.id}
-            onClose={() => setNotifyInvoice(null)}
+            initialFiles={notifyFiles}
+            onClose={() => { setNotifyInvoice(null); setNotifyFiles([]); }}
           />
         );
       })()}
