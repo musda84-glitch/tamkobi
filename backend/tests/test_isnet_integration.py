@@ -314,7 +314,7 @@ def test_send_document_accepts_soap_success_without_immediate_portal():
     contact = {"name": "Alıcı", "tax_number_or_id": "11111111111"}
 
     with patch(
-        "n11faturam.build_ubl",
+        "isnet.build_ubl",
         return_value=("<Invoice/>", "local-uuid", "TKB2026000000095"),
     ), patch(
         "isnet.send_invoice_xml",
@@ -360,7 +360,7 @@ def test_send_document_prefers_portal_number_over_ubl_tkb():
     }
 
     with patch(
-        "n11faturam.build_ubl",
+        "isnet.build_ubl",
         return_value=("<Invoice/>", "local-uuid", "TKB2026000000130"),
     ), patch(
         "isnet.send_invoice_xml",
@@ -401,7 +401,7 @@ def test_send_document_xml_fallback_when_search_has_no_number():
     contact = {"name": "Alıcı", "tax_number_or_id": "11111111111"}
 
     with patch(
-        "n11faturam.build_ubl",
+        "isnet.build_ubl",
         return_value=("<Invoice/>", "u", "TKB2026000000001"),
     ), patch(
         "isnet.send_invoice_xml",
@@ -490,6 +490,59 @@ def test_build_structured_invoice_return_is_iade():
     assert sales_return["InvoiceType"] == "IADE"
 
 
+def test_build_structured_invoice_withholding_is_tevkifat():
+    """Tevkifat seçili satış → İşNet InvoiceType TEVKIFAT."""
+    inv = {
+        "invoice_number": "U052026000000067",
+        "invoice_type": "sales",
+        "issue_date": "2026-10-02",
+        "withholding_rate": 0.5,
+        "withholding_code": "603",
+        "withholding_amount": 0.54,
+        "items": [{"name": "Bakım", "quantity": 1, "unit_price": 5.41, "vat_rate": 20}],
+        "subtotal": 5.41,
+        "vat_total": 1.08,
+        "grand_total": 5.95,
+        "gib_scenario": "TEMELFATURA",
+    }
+    payload = isnet.build_structured_invoice(
+        inv,
+        {"tax_number": "4810173324"},
+        {"name": "Alıcı", "tax_number_or_id": "1234567890"},
+        is_earchive=False,
+    )
+    assert payload["InvoiceType"] == "TEVKIFAT"
+
+
+def test_isnet_build_ubl_withholding_tevkifat():
+    """İşNet UBL yolu (ubl_export): tevkifat → TEVKIFAT + WithholdingTaxTotal; n11 değil."""
+    inv = {
+        "invoice_number": "U052026000000067",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "gib_scenario": "TEMELFATURA",
+        "issue_date": "2026-10-02",
+        "withholding_rate": 0.5,
+        "withholding_code": "603",
+        "withholding_amount": 0.54,
+        "items": [{"name": "Bakım", "quantity": 1, "unit_price": 5.41, "vat_rate": 20, "total": 5.41}],
+        "subtotal": 5.41,
+        "vat_total": 1.08,
+        "grand_total": 5.95,
+    }
+    company = {"name": "Demo", "tax_number": "4810173324", "city": "İstanbul", "address": "Cadde 1"}
+    contact = {"name": "İş Net", "tax_number_or_id": "4810173324", "city": "İstanbul"}
+    xml, ettn, inv_id = isnet.build_ubl(inv, company, contact)
+    assert inv_id == "U052026000000067"
+    assert ettn
+    assert "<cbc:InvoiceTypeCode>TEVKIFAT</cbc:InvoiceTypeCode>" in xml
+    assert "<cbc:InvoiceTypeCode>SATIS</cbc:InvoiceTypeCode>" not in xml
+    assert "<cac:WithholdingTaxTotal>" in xml
+    assert "<cbc:TaxTypeCode>603</cbc:TaxTypeCode>" in xml
+    assert "<ext:UBLExtensions>" in xml
+    assert "<cac:Signature>" in xml
+
+
 def test_serialize_structured_uses_invoice_element():
     xml = isnet._serialize_ein(
         {
@@ -538,7 +591,7 @@ def test_send_document_ubl_seller_uses_isnet_company_tax_id():
         built["seller"] = co.get("tax_number")
         return ("<Invoice/>", "u", "TKB2026000000001")
 
-    with patch("n11faturam.build_ubl", side_effect=_capture_ubl), patch(
+    with patch("isnet.build_ubl", side_effect=_capture_ubl), patch(
         "isnet.send_invoice_xml",
         AsyncMock(return_value={
             "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -569,7 +622,7 @@ def test_send_document_efatura_requires_receiver_or_lookup():
     company = {"tax_number": "4810173324"}
     contact = {"name": "Test Firma 05", "tax_number_or_id": "1234567805"}
 
-    with patch("n11faturam.build_ubl", return_value=("<Invoice/>", "u", "EF1")), patch(
+    with patch("isnet.build_ubl", return_value=("<Invoice/>", "u", "EF1")), patch(
         "isnet.lookup_user",
         AsyncMock(return_value={"alias": "", "is_e_invoice_user": True}),
     ):
@@ -592,7 +645,7 @@ def test_send_document_efatura_requires_receiver_or_lookup():
             "action": "SendInvoiceXmlWithoutInvoiceNumber",
         }
 
-    with patch("n11faturam.build_ubl", return_value=("<Invoice/>", "u", "EF1")), patch(
+    with patch("isnet.build_ubl", return_value=("<Invoice/>", "u", "EF1")), patch(
         "isnet.lookup_user",
         AsyncMock(return_value={"alias": "urn:mail:test05defaultpk@isnet.com"}),
     ), patch("isnet.send_invoice_xml", side_effect=_cap_send), patch(

@@ -1260,6 +1260,47 @@ def is_provisional_invoice_number(number: str, local_ubl: str = "") -> bool:
     return bool(loc and no == loc)
 
 
+def build_ubl(
+    invoice: dict,
+    company: dict,
+    contact: Optional[dict],
+    ettn: Optional[str] = None,
+) -> tuple:
+    """İşNet Send*Xml UBL — ubl_export (IADE / TEVKIFAT / WithholdingTaxTotal).
+
+    n11faturam.build_ubl kullanılmaz; GİB tip ve tevkifat alanları burada üretilir.
+    Dönüş: (xml_str, ettn, invoice_id) — send_document ile uyumlu.
+    """
+    import ubl_export
+
+    inv = dict(invoice or {})
+    if ettn:
+        inv["gib_uuid"] = str(ettn).upper()
+    seller = {
+        "name": (company or {}).get("name"),
+        "tax_number": (company or {}).get("tax_number") or (company or {}).get("tax_id"),
+        "tax_office": (company or {}).get("tax_office"),
+        "address": (company or {}).get("address"),
+        "city": (company or {}).get("city"),
+        "district": (company or {}).get("district"),
+        "phone": (company or {}).get("phone"),
+        "email": (company or {}).get("email"),
+    }
+    buyer = ubl_export._buyer_from(inv, contact)
+    xml_bytes = ubl_export.build_invoice_ubl(inv, seller, buyer, send_ready=True)
+    root = ET.fromstring(xml_bytes)
+    cbc = "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}"
+    inv_id = ""
+    uuid_out = ""
+    id_el = root.find(f"{cbc}ID")
+    if id_el is not None and id_el.text:
+        inv_id = id_el.text.strip()
+    uuid_el = root.find(f"{cbc}UUID")
+    if uuid_el is not None and uuid_el.text:
+        uuid_out = uuid_el.text.strip()
+    return xml_bytes.decode("utf-8"), uuid_out, inv_id
+
+
 async def send_document(
     settings: dict,
     password: str,
@@ -1271,6 +1312,7 @@ async def send_document(
 
     Kanıtlı yol: UBL Send*Xml (NetteFatura test/canlıya düşer).
     Numara: Send*XmlWithoutInvoiceNumber → SOAP/portal InvoiceNumber (TKB değil).
+    UBL: isnet.build_ubl → ubl_export (IADE/TEVKIFAT); n11faturam değil.
     """
     e_type = invoice.get("e_type") or "e_archive"
     if e_type not in ("e_invoice", "e_archive"):
@@ -1326,9 +1368,7 @@ async def send_document(
     company_for_ubl = {**(company or {})}
     company_for_ubl["tax_number"] = seller_vkn
     try:
-        import n11faturam
-
-        xml, _local_ettn, inv_id = n11faturam.build_ubl(invoice, company_for_ubl, contact)
+        xml, _local_ettn, inv_id = build_ubl(invoice, company_for_ubl, contact)
     except Exception as e:
         logger.exception("isnet build_ubl")
         raise HTTPException(status_code=500, detail=f"UBL oluşturma hatası: {e}") from e

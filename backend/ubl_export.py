@@ -14,6 +14,7 @@ _db = None
 INVOICE_NS = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
 CBC = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
 CAC = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
+EXT = "urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2"
 EDOC_TYPES = ("e_invoice", "e_archive")
 RETURN_INVOICE_TYPES = frozenset({"return", "sales_return", "purchase_return", "iade"})
 UNIT_CODES = {
@@ -27,6 +28,7 @@ UNIT_CODES = {
 ET.register_namespace("", INVOICE_NS)
 ET.register_namespace("cbc", CBC)
 ET.register_namespace("cac", CAC)
+ET.register_namespace("ext", EXT)
 
 
 def init(db):
@@ -66,18 +68,117 @@ def is_return_invoice(inv: Dict[str, Any]) -> bool:
     return _norm_invoice_type(inv.get("invoice_type")) in RETURN_INVOICE_TYPES
 
 
+def has_withholding(inv: Dict[str, Any]) -> bool:
+    """TamKobi tevkifat seçimi (withholding_rate / withholding_code) dolu mu?"""
+    try:
+        rate = float(inv.get("withholding_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    code = str(inv.get("withholding_code") or "").strip()
+    try:
+        amount = float(inv.get("withholding_amount") or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return rate > 0 or bool(code) or amount > 0
+
+
+def withholding_parts(inv: Dict[str, Any], vat_total: Optional[float] = None) -> Optional[Tuple[str, float, float, float]]:
+    """Tevkifat için (code, percent_0_100, taxable=vat, amount).
+
+    withholding_rate 0.5 → Percent 50 (5/10). TaxableAmount = KDV tutarı.
+    """
+    if not has_withholding(inv):
+        return None
+    code = str(inv.get("withholding_code") or "").strip() or "603"
+    try:
+        rate = float(inv.get("withholding_rate") or 0)
+    except (TypeError, ValueError):
+        rate = 0.0
+    if vat_total is None:
+        try:
+            vat_total = float(inv.get("vat_total") or 0)
+        except (TypeError, ValueError):
+            vat_total = 0.0
+    vat_total = float(vat_total or 0)
+    try:
+        amount = float(inv.get("withholding_amount") or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    if amount <= 0 and rate > 0 and vat_total > 0:
+        amount = round(vat_total * rate, 2)
+    percent = round(rate * 100.0, 2) if rate <= 1 else round(rate, 2)
+    if percent <= 0 and vat_total > 0 and amount > 0:
+        percent = round(amount / vat_total * 100.0, 2)
+    return code, percent, vat_total, amount
+
+
 def gib_invoice_type_code(inv: Dict[str, Any]) -> str:
     """GİB InvoiceTypeCode — İşNet/n11 UBL ve yapılandırılmış gönderim için.
 
     Açık invoice_type_code / gib_invoice_type varsa onu kullanır; yoksa
-    TamKobi invoice_type (return / sales_return / iade) → IADE, aksi SATIS.
+    TamKobi invoice_type (return…) → IADE, tevkifat → TEVKIFAT, aksi SATIS.
     """
-    allowed = ("SATIS", "IADE", "TEVKIFAT", "ISTISNA", "OZELMATRAH", "IHRACKAYITLI")
+    allowed = (
+        "SATIS",
+        "IADE",
+        "TEVKIFAT",
+        "TEVKIFATIADE",
+        "ISTISNA",
+        "OZELMATRAH",
+        "IHRACKAYITLI",
+    )
     raw = str(inv.get("invoice_type_code") or inv.get("gib_invoice_type") or "").strip()
     explicit = _norm_invoice_type(raw).upper()
     if explicit in allowed:
         return explicit
-    return "IADE" if is_return_invoice(inv) else "SATIS"
+    returning = is_return_invoice(inv)
+    withholding = has_withholding(inv)
+    if returning and withholding:
+        return "TEVKIFATIADE"
+    if returning:
+        return "IADE"
+    if withholding:
+        return "TEVKIFAT"
+    return "SATIS"
+
+
+def withholding_tax_total_xml(
+    inv: Dict[str, Any],
+    currency: str,
+    *,
+    vat_total: Optional[float] = None,
+    amount_override: Optional[float] = None,
+) -> str:
+    """cac:WithholdingTaxTotal UBL parçası (İşNet Send*Xml / n11 UBL)."""
+    parts = withholding_parts(inv, vat_total)
+    if not parts:
+        return ""
+    code, percent, taxable, amount = parts
+    if amount_override is not None:
+        amount = float(amount_override)
+    if amount <= 0 and taxable <= 0:
+        return ""
+    from xml.sax.saxutils import escape as _xml_esc
+
+    def _m(v: float) -> str:
+        return f"{float(v):.2f}"
+
+    return (
+        f"<cac:WithholdingTaxTotal>"
+        f"<cbc:TaxAmount currencyID=\"{_xml_esc(currency)}\">{_m(amount)}</cbc:TaxAmount>"
+        f"<cac:TaxSubtotal>"
+        f"<cbc:TaxableAmount currencyID=\"{_xml_esc(currency)}\">{_m(taxable)}</cbc:TaxableAmount>"
+        f"<cbc:TaxAmount currencyID=\"{_xml_esc(currency)}\">{_m(amount)}</cbc:TaxAmount>"
+        f"<cbc:Percent>{percent:g}</cbc:Percent>"
+        f"<cac:TaxCategory>"
+        f"<cac:TaxScheme>"
+        f"<cbc:Name>KDV TEVKİFATI</cbc:Name>"
+        f"<cbc:TaxTypeCode>{_xml_esc(code)}</cbc:TaxTypeCode>"
+        f"</cac:TaxScheme>"
+        f"</cac:TaxCategory>"
+        f"</cac:TaxSubtotal>"
+        f"</cac:WithholdingTaxTotal>"
+    )
 
 
 def return_billing_ref(inv: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
@@ -209,32 +310,52 @@ def _stable_uuid(inv: Dict[str, Any]) -> str:
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tamkobi-invoice:{raw}"))
 
 
-def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[str, Any]) -> bytes:
-    """UBL-TR Invoice XML (imzasız arşiv). parse_ubl ile okunabilir.
+def build_invoice_ubl(
+    inv: Dict[str, Any],
+    seller: Dict[str, Any],
+    buyer: Dict[str, Any],
+    *,
+    send_ready: bool = False,
+) -> bytes:
+    """UBL-TR Invoice XML. parse_ubl ile okunabilir.
 
-    İşNet test başarılı örnekleriyle uyum: SATIS/TICARIFATURA, IADE/TEMELFATURA + BillingReference.
+    İşNet test başarılı örnekleriyle uyum: SATIS/TICARIFATURA, IADE/TEMELFATURA + BillingReference,
+    TEVKIFAT + WithholdingTaxTotal.
+
+    send_ready=True: İşNet Send*Xml için UBLExtensions + Signature (+ e-Arşiv GONDERIMSEKLI).
     """
     e_type = inv.get("e_type") or "e_archive"
     profile = inv.get("_profile_override") or inv.get("gib_scenario")
     if profile not in ("TEMELFATURA", "TICARIFATURA", "EARSIVFATURA", "IHRACAT"):
         profile = "TICARIFATURA" if e_type == "e_invoice" else "EARSIVFATURA"
     type_code = gib_invoice_type_code(inv)
-    returning = type_code == "IADE" or is_return_invoice(inv)
+    returning = type_code in ("IADE", "TEVKIFATIADE") or is_return_invoice(inv)
     items = list(inv.get("items") or [])
     currency = (inv.get("currency") or "TRY").upper()
     subtotal = float(inv.get("subtotal") or 0)
     vat_total = float(inv.get("vat_total") or 0)
+    withhold_amt = float(inv.get("withholding_amount") or 0)
+    if withhold_amt <= 0 and has_withholding(inv):
+        wp = withholding_parts(inv, vat_total)
+        withhold_amt = float(wp[3]) if wp else 0.0
     grand = float(inv.get("grand_total") or 0)
+    if not grand:
+        grand = round(subtotal + vat_total - withhold_amt, 2)
     discount = float(inv.get("discount_total") or inv.get("general_discount_amount") or 0)
+    issue_date = _date(inv.get("issue_date"))
 
     root = ET.Element(_q(INVOICE_NS, "Invoice"))
+    if send_ready:
+        exts = ET.SubElement(root, _q(EXT, "UBLExtensions"))
+        ext_one = ET.SubElement(exts, _q(EXT, "UBLExtension"))
+        ET.SubElement(ext_one, _q(EXT, "ExtensionContent"))
     _cbc(root, "UBLVersionID", "2.1")
     _cbc(root, "CustomizationID", "TR1.2")
     _cbc(root, "ProfileID", profile)
     _cbc(root, "ID", inv.get("invoice_number") or "")
     _cbc(root, "CopyIndicator", "false")
     _cbc(root, "UUID", _stable_uuid(inv))
-    _cbc(root, "IssueDate", _date(inv.get("issue_date")))
+    _cbc(root, "IssueDate", issue_date)
     issue_time = (inv.get("issue_time") or "").strip()
     if not issue_time:
         issue_time = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -247,6 +368,23 @@ def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
         _cbc(root, "Note", f"ETTN/Takip: {inv['gib_tracking_id']}")
     _cbc(root, "DocumentCurrencyCode", currency)
     _cbc(root, "LineCountNumeric", str(len(items) or 1))
+
+    if send_ready and (e_type == "e_archive" or profile == "EARSIVFATURA"):
+        buyer_email = str(buyer.get("email") or inv.get("contact_email") or "").strip()
+        send_type = str(inv.get("earchive_send_type") or inv.get("sending_type") or "").strip().upper()
+        if send_type not in ("ELEKTRONIK", "KAGIT"):
+            send_type = "ELEKTRONIK" if buyer_email else "KAGIT"
+        if send_type == "ELEKTRONIK" and not buyer_email:
+            send_type = "KAGIT"
+        internet = str(inv.get("internet_sale") or "HAYIR").strip().upper()
+        if internet not in ("EVET", "HAYIR"):
+            internet = "HAYIR"
+        for doc_type, desc in (("GONDERIMSEKLI", send_type), ("INTERNETSATISI", internet)):
+            adr = _cac(root, "AdditionalDocumentReference")
+            _cbc(adr, "ID", str(uuid.uuid4()))
+            _cbc(adr, "IssueDate", issue_date)
+            _cbc(adr, "DocumentType", doc_type)
+            _cbc(adr, "DocumentDescription", desc)
 
     # İade: orijinal satış faturasına BillingReference (İşNet IADE örneği)
     if returning:
@@ -270,6 +408,7 @@ def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
         "city": seller.get("city"),
         "phone": seller.get("phone"),
         "email": seller.get("email"),
+        "district": seller.get("district"),
     }
     buyer_party = {
         "name": buyer.get("name") or inv.get("contact_name"),
@@ -280,6 +419,33 @@ def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
         "phone": buyer.get("phone"),
         "email": buyer.get("email"),
     }
+    if send_ready:
+        # İşNet Send*Xml: dolu Signature (ExtensionContent entegratörde imzalanır)
+        seller_tax = "".join(ch for ch in str(seller_party.get("tax_id") or "") if ch.isdigit())
+        seller_scheme = "VKN" if len(seller_tax) == 10 else "TCKN"
+        if len(seller_tax) not in (10, 11):
+            seller_tax, seller_scheme = (seller_tax.zfill(10)[:10] or "0000000000"), "VKN"
+        sig = _cac(root, "Signature")
+        _cbc(sig, "ID", seller_tax, schemeID="VKN_TCKN")
+        sparty = _cac(sig, "SignatoryParty")
+        sid = _cac(sparty, "PartyIdentification")
+        _cbc(sid, "ID", seller_tax, schemeID=seller_scheme)
+        addr = _cac(sparty, "PostalAddress")
+        _cbc(addr, "StreetName", str(seller.get("address") or "-") or "-")
+        district = (
+            seller.get("district") or seller.get("tax_office") or seller.get("city") or "Merkez"
+        )
+        district = str(district).strip() or "Merkez"
+        if district in ("-", "."):
+            district = str(seller.get("city") or "Merkez")
+        _cbc(addr, "CitySubdivisionName", district)
+        _cbc(addr, "CityName", str(seller.get("city") or "İstanbul"))
+        country = _cac(addr, "Country")
+        _cbc(country, "Name", "Türkiye")
+        dsa = _cac(sig, "DigitalSignatureAttachment")
+        eref = _cac(dsa, "ExternalReference")
+        _cbc(eref, "URI", "#Signature")
+
     _party("AccountingSupplierParty", seller_party, root)
     _party("AccountingCustomerParty", buyer_party, root)
 
@@ -302,6 +468,21 @@ def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
         _cbc(sch, "Name", "KDV")
         _cbc(sch, "TaxTypeCode", "0015")
 
+    # Tevkifat: WithholdingTaxTotal (TaxTypeCode = 601…615; 9015 değil)
+    wp = withholding_parts(inv, vat_total)
+    if wp:
+        code, percent, taxable, amount = wp
+        wtt = _cac(root, "WithholdingTaxTotal")
+        _cbc(wtt, "TaxAmount", _amt(amount), currencyID=currency)
+        wsub = _cac(wtt, "TaxSubtotal")
+        _cbc(wsub, "TaxableAmount", _amt(taxable), currencyID=currency)
+        _cbc(wsub, "TaxAmount", _amt(amount), currencyID=currency)
+        _cbc(wsub, "Percent", f"{percent:g}")
+        wcat = _cac(wsub, "TaxCategory")
+        wsch = _cac(wcat, "TaxScheme")
+        _cbc(wsch, "Name", "KDV TEVKİFATI")
+        _cbc(wsch, "TaxTypeCode", code)
+
     totals = _cac(root, "LegalMonetaryTotal")
     _cbc(totals, "LineExtensionAmount", _amt(subtotal + discount if discount else subtotal), currencyID=currency)
     if discount:
@@ -312,6 +493,8 @@ def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
 
     if not items:
         items = [{"name": "Kalem", "quantity": 1, "unit": "Adet", "unit_price": subtotal, "vat_rate": 20, "total": subtotal}]
+    wh_rate = float(inv.get("withholding_rate") or 0)
+    wh_code = str(inv.get("withholding_code") or "").strip()
     for i, it in enumerate(items, 1):
         line = _cac(root, "InvoiceLine")
         _cbc(line, "ID", str(i))
@@ -326,6 +509,18 @@ def build_invoice_ubl(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
         _cbc(lt, "TaxAmount", _amt(line_vat), currencyID=currency)
         ls = _cac(lt, "TaxSubtotal")
         _cbc(ls, "Percent", f"{rate:g}")
+        if wh_code and wh_rate > 0 and line_vat > 0:
+            line_wh = round(line_vat * wh_rate, 2)
+            lwt = _cac(line, "WithholdingTaxTotal")
+            _cbc(lwt, "TaxAmount", _amt(line_wh), currencyID=currency)
+            lws = _cac(lwt, "TaxSubtotal")
+            _cbc(lws, "TaxableAmount", _amt(line_vat), currencyID=currency)
+            _cbc(lws, "TaxAmount", _amt(line_wh), currencyID=currency)
+            _cbc(lws, "Percent", f"{(wh_rate * 100):g}")
+            lwcat = _cac(lws, "TaxCategory")
+            lwsch = _cac(lwcat, "TaxScheme")
+            _cbc(lwsch, "Name", "KDV TEVKİFATI")
+            _cbc(lwsch, "TaxTypeCode", wh_code)
         item_el = _cac(line, "Item")
         _cbc(item_el, "Name", str(it.get("name") or "Kalem")[:200])
         sku = (it.get("sku") or "").strip()
