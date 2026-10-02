@@ -12,7 +12,7 @@ import { GibContactLookup } from "../components/GibContactLookup";
 import { BarcodeRenderer } from "../components/BarcodeRenderer";
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
+import { PrintDocument, PrintTemplateEditor, shouldUseIntegratorPdf } from "../components/PrintDocument";
 import { ExpenseSlipPrint } from "../components/ExpenseSlipPrint";
 import { SearchSelect } from "../components/SearchSelect";
 import { DocumentLineEditor } from "../components/DocumentLineEditor";
@@ -1217,7 +1217,14 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         onClose={closeCtx}
         companyId={activeCompany?.id || activeCompany?._id}
         onIssue={handleIssueFromMenu}
-        onPreview={setPreviewInvoice}
+        onPreview={(inv) => {
+          // GİB'e iletilmiş e-belge: yerel şablon yerine entegratör PDF (İşNet)
+          if (shouldUseIntegratorPdf("invoice", inv)) {
+            setPrintInv(inv);
+            return;
+          }
+          setPreviewInvoice(inv);
+        }}
         onPrint={setPrintInv}
         onNotify={setNotifyInvoice}
         onPayment={openPayment}

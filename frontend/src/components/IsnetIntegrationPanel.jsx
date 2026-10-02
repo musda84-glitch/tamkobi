@@ -312,17 +312,21 @@ export default function IsnetIntegrationPanel({ companyId }) {
         <div>
           <label className="block font-semibold mb-1">
             Şube / Vendor No
-            <span className="text-slate-400 font-normal"> (opsiyonel — CompanyVendorNumber)</span>
+            <span className="text-slate-400 font-normal"> (CompanyVendorNumber)</span>
           </label>
           <input
             type="text"
             name="company_vendor_number"
             value={formData.company_vendor_number}
             onChange={handleChange}
-            placeholder="Varsa İşNet şube/vendor numarası"
+            placeholder="Örn. 05 — Test firma 05 / U05… fatura serisi"
             className={`${inputCls} font-mono`}
             data-testid="isnet-company-vendor-number"
           />
+          <p className="text-[10px] text-slate-500 mt-1">
+            U05… serisi faturalarda arama ve PDF için <span className="font-mono">05</span> gerekir.
+            Boş bırakılırsa fatura numarasından otomatik çıkarılır.
+          </p>
         </div>
 
         <div

@@ -1185,6 +1185,117 @@ def test_download_invoice_pdf_retries_fresh_link_when_stored_fails():
     assert link.await_count >= 1
 
 
+def test_infer_vendor_from_u05_series():
+    assert isnet.infer_vendor_from_invoice_number("U052026000000080") == "05"
+    assert isnet.infer_vendor_from_invoice_number("u052026000000001") == "05"
+    assert isnet.infer_vendor_from_invoice_number("TA202600000108") == ""
+    assert isnet.infer_vendor_from_invoice_number("") == ""
+    settings = {"company_tax_id": "1234567805"}
+    merged = isnet.with_inferred_vendor(settings, "U052026000000080")
+    assert merged["company_vendor_number"] == "05"
+    # Ayarda varsa üzerine yazma
+    kept = isnet.with_inferred_vendor(
+        {"company_tax_id": "1234567805", "company_vendor_number": "99"},
+        "U052026000000080",
+    )
+    assert kept["company_vendor_number"] == "99"
+    req = isnet._company_request(merged)
+    assert req["CompanyVendorNumber"] == "05"
+
+
+def test_search_row_extracts_invoice_html_pdf():
+    import base64
+
+    html = "<!DOCTYPE html><html><body>U05 e-Fatura</body></html>"
+    html_b64 = base64.b64encode(html.encode()).decode()
+    pdf_b64 = base64.b64encode(b"%PDF-1.4 demo").decode()
+    body = ET.fromstring(
+        "<Invoice xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:ETTN>9df33099-aaaa-bbbb-cccc-dddddddddddd</ein:ETTN>"
+        "<ein:InvoiceNumber>U052026000000080</ein:InvoiceNumber>"
+        "<ein:Status>Zarflanmadi</ein:Status>"
+        f"<ein:InvoiceHtml>{html_b64}</ein:InvoiceHtml>"
+        f"<ein:InvoicePdf>{pdf_b64}</ein:InvoicePdf>"
+        "</Invoice>"
+    )
+    row = isnet._search_row_from_el(body)
+    assert row["invoice_id"] == "U052026000000080"
+    assert row["invoice_html"] == html_b64
+    assert row["invoice_pdf"] == pdf_b64
+    decoded_pdf = isnet._decode_maybe_b64(row["invoice_pdf"], prefer_pdf=True)
+    assert decoded_pdf.startswith(b"%PDF")
+    decoded_html = isnet._decode_maybe_b64(row["invoice_html"])
+    assert b"U05 e-Fatura" in decoded_html
+
+
+def test_download_invoice_pdf_falls_back_to_search_invoice_pdf():
+    """Viewer boşken Search InvoicePdf (base64) kullanılır — U05 / Zarflanmadı."""
+    settings = {"company_tax_id": "1234567805", "mode": "test"}
+    pdf_bytes = b"%PDF-1.4 from-search"
+    import base64
+
+    pdf_b64 = base64.b64encode(pdf_bytes).decode()
+    search = AsyncMock(
+        return_value=[
+            {
+                "ettn": "9df33099-aaaa-bbbb-cccc-dddddddddddd",
+                "invoice_id": "U052026000000080",
+                "invoice_html": "",
+                "invoice_pdf": pdf_b64,
+            }
+        ]
+    )
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(side_effect=HTTPException(status_code=404, detail="viewer yok")),
+    ), patch("isnet.search_outgoing_invoice", search):
+        data = asyncio.get_event_loop().run_until_complete(
+            isnet.download_invoice_pdf(
+                settings,
+                "9df33099-aaaa-bbbb-cccc-dddddddddddd",
+                e_type="e_invoice",
+                invoice_number="U052026000000080",
+            )
+        )
+    assert data == pdf_bytes
+    # Vendor U05 → 05 ile Search çağrıldı
+    assert search.await_args.kwargs.get("include_documents") is True
+    called_settings = search.await_args.args[0] if search.await_args.args else search.await_args.kwargs.get("settings")
+    # settings positional
+    assert search.await_args.args[0].get("company_vendor_number") == "05"
+
+
+def test_download_invoice_pdf_falls_back_to_invoice_html():
+    """InvoicePdf yoksa InvoiceHtml → Chrome PDF."""
+    settings = {"company_tax_id": "1234567805", "company_vendor_number": "05", "mode": "test"}
+    html = "<!DOCTYPE html><html><body>resmi</body></html>"
+    search = AsyncMock(
+        return_value=[
+            {
+                "ettn": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "invoice_id": "U052026000000080",
+                "invoice_html": html,
+                "invoice_pdf": "",
+            }
+        ]
+    )
+    with patch(
+        "isnet.get_document_viewer_link",
+        AsyncMock(side_effect=HTTPException(status_code=404, detail="viewer yok")),
+    ), patch("isnet.search_outgoing_invoice", search), patch(
+        "isnet.html_to_pdf_bytes", return_value=b"%PDF-1.4 from-html"
+    ):
+        data = asyncio.get_event_loop().run_until_complete(
+            isnet.download_invoice_pdf(
+                settings,
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                e_type="e_invoice",
+                invoice_number="U052026000000080",
+            )
+        )
+    assert data.startswith(b"%PDF-1.4 from-html")
+
+
 def test_endpoints_match_official_isnet_docs():
     """İşNet resmi test/canlı SOAP URL’leri (destek e-postası ekindeki döküman)."""
     assert isnet.TEST_SOAP == "https://einvoiceservicetest.isnet.net.tr/InvoiceService/ServiceContract/InvoiceService.svc"
