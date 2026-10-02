@@ -11,6 +11,11 @@ import {
   efaturaOnayMessage,
   resolveOrderContact,
 } from "../utils/orderEBelge";
+import {
+  WITHHOLDING_OPTIONS,
+  invoiceNeedsWithholdingPrompt,
+  parseWithholdingValue,
+} from "../utils/invoiceWithholding";
 
 function digitsTax(raw) {
   return String(raw || "").replace(/\D/g, "");
@@ -61,6 +66,9 @@ export function ElektronikFaturaOnayModal({
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [gibMeta, setGibMeta] = useState(null);
+  const askWithholding = invoiceNeedsWithholdingPrompt(invoice || doc);
+  const [withholdingValue, setWithholdingValue] = useState("");
+  const [withholdingTouched, setWithholdingTouched] = useState(false);
 
   const fallbackEFatura = orderCanIssueEFatura(doc, contacts);
   const isEFatura = gibMeta ? !!gibMeta.is_e_invoice_user : fallbackEFatura;
@@ -115,8 +123,14 @@ export function ElektronikFaturaOnayModal({
   }, [companyId, doc, contacts]);
 
   const submit = (scenario) => {
+    if (askWithholding && !withholdingTouched) {
+      toast.error("KDV %0 satır var — tevkifat seçin veya «Tevkifat yok» deyin.");
+      setMenuOpen(false);
+      return;
+    }
     const sc = scenario === "TEMEL" ? "TEMEL" : "TICARI";
     setMenuOpen(false);
+    const wh = askWithholding ? parseWithholdingValue(withholdingValue) : null;
     const payload = {
       // Kullanıcı Temel/Ticari seçti → her zaman e-fatura senaryosu (lookup e-arşiv dese bile).
       eType: "e_invoice",
@@ -124,6 +138,7 @@ export function ElektronikFaturaOnayModal({
       suggestedEType,
       alias: gibMeta?.alias || undefined,
       gibMeta: gibMeta || undefined,
+      withholding: wh || undefined,
     };
     const confirmFn = onConfirm;
     // Modal hemen kapansın; uzun süren GİB/entegratör gönderimi arka planda devam etsin.
@@ -186,6 +201,40 @@ export function ElektronikFaturaOnayModal({
                   </span>
                 ) : null}
               </span>
+            </div>
+          )}
+          {askWithholding && (
+            <div
+              className="rounded-xl border border-indigo-200 bg-indigo-50/80 px-3 py-3 space-y-2"
+              data-testid="efatura-onay-withholding"
+            >
+              <label className="block text-sm font-semibold text-indigo-900" htmlFor="efatura-onay-wh-select">
+                KDV %0 satır var — Tevkifat (Hizmet Faturası)
+              </label>
+              <p className="text-[11px] text-indigo-800/80 leading-snug">
+                E-fatura kesmeden önce tevkifat kodunu seçin. Uygulanmayacaksa «Tevkifat yok» seçin.
+              </p>
+              <select
+                id="efatura-onay-wh-select"
+                value={withholdingValue}
+                onChange={(e) => {
+                  setWithholdingValue(e.target.value);
+                  setWithholdingTouched(true);
+                }}
+                className="w-full bg-white border border-indigo-200 rounded-lg p-2 text-sm font-medium text-slate-800"
+                data-testid="efatura-onay-withholding-select"
+              >
+                {!withholdingTouched && (
+                  <option value="" disabled>
+                    Tevkifat seçin…
+                  </option>
+                )}
+                {WITHHOLDING_OPTIONS.map(([v, l]) => (
+                  <option key={v || "yok"} value={v}>
+                    {l}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
         </div>

@@ -958,9 +958,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             contacts={c ? [c] : []}
             companyId={activeCompany?.id || activeCompany?._id || c?.company_id}
             onClose={() => setEFaturaInvoice(null)}
-            onConfirm={async ({ eType, scenario, alias }) => {
+            onConfirm={async ({ eType, scenario, alias, withholding }) => {
               const inv = eFaturaInvoice;
               if (!inv) return;
+              const invId = inv.id || inv._id;
               if (alias && inv.contact_id) {
                 try {
                   await axios.put(`${API_URL}/contacts/${inv.contact_id}`, {
@@ -969,6 +970,17 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   });
                 } catch {
                   /* gönderim yine denenecek */
+                }
+              }
+              if (withholding) {
+                try {
+                  await axios.put(`${API_URL}/invoices/${invId}`, {
+                    withholding_rate: Number(withholding.withholding_rate || 0),
+                    withholding_code: withholding.withholding_code || null,
+                  });
+                } catch (err) {
+                  toast.error(err.response?.data?.detail || "Tevkifat kaydedilemedi.");
+                  throw err;
                 }
               }
               await sendToGib(inv, eType, { scenario });

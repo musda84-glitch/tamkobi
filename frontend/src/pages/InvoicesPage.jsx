@@ -29,6 +29,7 @@ import { TimeInput } from "../components/TimeInput";
 import { fmtDate, fmtMoney, formatTrAmount } from "../utils/money";
 import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "../utils/documentLines";
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
+import { WITHHOLDING_OPTIONS } from "../utils/invoiceWithholding";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
 import {
@@ -352,7 +353,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     toast.success(`${prod.name} eklendi`);
   };
 
-  const WITHHOLDING = [["", "Tevkifat yok"], ["0.2|601", "2/10 – Yapım işleri (601)"], ["0.3|619", "3/10 – Makine/teçhizat bakım (619)"], ["0.5|602", "5/10 – Etüt, plan-proje, danışmanlık (602)"], ["0.5|603", "5/10 – Makine/teçhizat bakım (603)"], ["0.5|604", "5/10 – Yemek servisi (604)"], ["0.7|606", "7/10 – Temizlik, bahçe, çevre (606)"], ["0.7|608", "7/10 – Servis taşımacılığı (608)"], ["0.9|609", "9/10 – İşgücü temini (609)"], ["0.9|610", "9/10 – Yapı denetim (610)"], ["1|611", "10/10 – Fason tekstil (611)"], ["0.5|615", "5/10 – Reklam hizmetleri (615)"]];
+  const WITHHOLDING = WITHHOLDING_OPTIONS;
   const calculateTotals = () => invoiceMoneyTotals(formData.items, {
     generalDiscountRate: formData.general_discount_rate,
     generalDiscountAmount: formData.general_discount_amount,
@@ -1136,9 +1137,10 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           contacts={contacts}
           companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
           onClose={() => setEFaturaInvoice(null)}
-          onConfirm={async ({ eType, scenario, alias }) => {
+          onConfirm={async ({ eType, scenario, alias, withholding }) => {
             const inv = eFaturaInvoice;
             if (!inv) return;
+            const invId = inv.id || inv._id;
             if (alias && inv.contact_id) {
               try {
                 await axios.put(`${API_URL}/contacts/${inv.contact_id}`, {
@@ -1149,7 +1151,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 /* gönderim yine denenecek */
               }
             }
-            await handleSendToGib(inv.id || inv._id, eType, { scenario });
+            if (withholding) {
+              try {
+                await axios.put(`${API_URL}/invoices/${invId}`, {
+                  withholding_rate: Number(withholding.withholding_rate || 0),
+                  withholding_code: withholding.withholding_code || null,
+                });
+              } catch (err) {
+                toast.error(err.response?.data?.detail || "Tevkifat kaydedilemedi.");
+                throw err;
+              }
+            }
+            await handleSendToGib(invId, eType, { scenario });
           }}
         />
       )}
