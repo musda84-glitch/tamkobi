@@ -1041,17 +1041,23 @@ async def isnet_save_settings(req: Dict[str, Any]):
 
 @api_router.get("/integrations/isnet/egress")
 async def isnet_egress_ips():
-    """Canlı SOAP IP–VKN kaydı için sunucu çıkış IP’leri."""
-    ips = await isnet.detect_egress_ips()
-    return {
-        "egress_ips": ips,
-        "support_email": isnet.SUPPORT_EMAIL,
-        "message": (
-            f"Çıkış IP: {', '.join(ips)}. Canlı SOAP için VKN ile {isnet.SUPPORT_EMAIL} adresine iletin."
-            if ips
-            else f"Çıkış IP tespit edilemedi. Canlı kayıt: {isnet.SUPPORT_EMAIL}"
-        ),
-    }
+    """Canlı SOAP IP–VKN kaydı: üretim A kaydı + bu sürecin çıkış IP’si."""
+    info = await isnet.isnet_ip_registration_info()
+    prod = info.get("production_ips") or []
+    host = info.get("production_host") or isnet.DEFAULT_PUBLIC_HOST
+    if info.get("same_as_production") and prod:
+        msg = (
+            f"Üretim çıkış IP: {', '.join(prod)} ({host}). "
+            f"İşNet kaydı bu IP + VKN ile {isnet.SUPPORT_EMAIL}"
+        )
+    else:
+        eg = ", ".join(info.get("egress_ips") or []) or "tespit edilemedi"
+        prod_txt = ", ".join(prod) if prod else "tespit edilemedi"
+        msg = (
+            f"İşNet kaydı üretim IP olmalı: {prod_txt} ({host}). "
+            f"Bu ortamın çıkışı farklı ({eg}). Canlı SOAP’ı https://{host} üzerinden test edin."
+        )
+    return {**info, "message": msg}
 
 
 @api_router.post("/integrations/isnet/test")

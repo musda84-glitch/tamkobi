@@ -51,6 +51,16 @@ export default function IsnetIntegrationPanel({ companyId }) {
     company_vendor_number: "",
   });
   const [egressIps, setEgressIps] = useState([]);
+  const [prodIps, setProdIps] = useState([]);
+  const [prodHost, setProdHost] = useState("tamkobi.com");
+  const [sameAsProd, setSameAsProd] = useState(true);
+
+  const applyEgressPayload = (d) => {
+    setEgressIps(Array.isArray(d?.egress_ips) ? d.egress_ips : []);
+    setProdIps(Array.isArray(d?.production_ips) ? d.production_ips : []);
+    if (d?.production_host) setProdHost(d.production_host);
+    setSameAsProd(Boolean(d?.same_as_production));
+  };
 
   const load = useCallback(async () => {
     if (!companyId) return;
@@ -86,7 +96,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
     (async () => {
       try {
         const r = await axios.get(`${API_URL}/integrations/isnet/egress`);
-        if (!cancelled) setEgressIps(Array.isArray(r.data?.egress_ips) ? r.data.egress_ips : []);
+        if (!cancelled) applyEgressPayload(r.data);
       } catch {
         if (!cancelled) setEgressIps([]);
       }
@@ -138,7 +148,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
       if (!testMode) {
         try {
           const eg = await axios.get(`${API_URL}/integrations/isnet/egress`);
-          setEgressIps(Array.isArray(eg.data?.egress_ips) ? eg.data.egress_ips : []);
+          applyEgressPayload(eg.data);
         } catch { /* ignore */ }
       }
     } finally {
@@ -258,19 +268,35 @@ export default function IsnetIntegrationPanel({ companyId }) {
         {!testMode && (
           <div className="text-[10px] text-emerald-900/80 pt-0.5 space-y-1" data-testid="isnet-live-ip-hint">
             <p>
-              Canlı SOAP (einvoiceservice) IP–VKN firewall ister. Çıkış IP + VKN’yi{" "}
-              <a href="mailto:efaturadestek@nettefatura.com.tr" className="underline font-semibold">
-                efaturadestek@nettefatura.com.tr
+              Canlı SOAP, fatura kesen sunucunun sabit çıkış IP’sini ister.
+              İşNet onayı <span className="font-semibold">{prodHost}</span> içindir — canlı testi{" "}
+              <a href={`https://${prodHost}`} target="_blank" rel="noopener noreferrer" className="underline font-semibold">
+                https://{prodHost}
               </a>{" "}
-              adresine iletin.
+              üzerinden yapın.
             </p>
-            {egressIps.length > 0 ? (
+            {prodIps.length > 0 ? (
+              <p className="font-mono font-semibold text-emerald-950" data-testid="isnet-production-ips">
+                Üretim IP (kayda giden): {prodIps.join(", ")} ({prodHost})
+              </p>
+            ) : null}
+            {!sameAsProd && egressIps.length > 0 ? (
+              <p className="text-amber-900" data-testid="isnet-egress-ips">
+                Bu önizleme ortamının çıkışı farklıdır ({egressIps.join(", ")}) ve değişebilir; canlı HealthCheck burada zaman aşımına düşer.
+              </p>
+            ) : egressIps.length > 0 ? (
               <p className="font-mono font-semibold text-emerald-950" data-testid="isnet-egress-ips">
                 Sunucu çıkış IP: {egressIps.join(", ")}
               </p>
             ) : (
               <p className="text-emerald-800/70" data-testid="isnet-egress-ips-loading">Çıkış IP tespit ediliyor…</p>
             )}
+            <p>
+              Kayıt: VKN + üretim IP →{" "}
+              <a href="mailto:efaturadestek@nettefatura.com.tr" className="underline font-semibold">
+                efaturadestek@nettefatura.com.tr
+              </a>
+            </p>
           </div>
         )}
       </div>

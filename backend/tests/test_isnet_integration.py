@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import xml.etree.ElementTree as ET
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -196,15 +197,24 @@ def test_live_connection_failure_includes_egress_ip():
 
     with patch("isnet.soap_health_check", side_effect=_fail), patch(
         "isnet.detect_egress_ips", side_effect=_ips
+    ), patch("isnet.resolve_host_ipv4", return_value=["85.95.240.136"]), patch(
+        "isnet.public_app_host", return_value="tamkobi.com"
     ), patch("isnet.health_check", side_effect=_rest_ok):
         with pytest.raises(HTTPException) as e:
             asyncio.get_event_loop().run_until_complete(isnet.test_connection(settings, ""))
     assert e.value.status_code == 502
     detail = str(e.value.detail)
     assert "203.0.113.10" in detail
+    assert "85.95.240.136" in detail
+    assert "tamkobi.com" in detail
     assert "6131659091" in detail
     assert isnet.SUPPORT_EMAIL in detail
     assert "einvoiceapi" in detail or "REST" in detail
+
+
+def test_public_app_host_falls_back_from_localhost():
+    with patch.dict(os.environ, {"PUBLIC_APP_URL": "http://127.0.0.1"}, clear=False):
+        assert isnet.public_app_host() == "tamkobi.com"
 
 
 def test_login_401_raises():
