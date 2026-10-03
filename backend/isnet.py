@@ -258,8 +258,44 @@ async def login(settings: dict, password: str) -> Dict[str, Any]:
     raise HTTPException(status_code=400, detail=last_detail)
 
 
+DEFAULT_PUBLIC_HOST = "tamkobi.com"
+
+
+def public_app_host() -> str:
+    """İşNet’e bildirilmesi gereken üretim hostname (PUBLIC_APP_URL localhost ise tamkobi.com)."""
+    raw = (os.environ.get("ISNET_PUBLIC_HOST") or os.environ.get("PUBLIC_APP_URL") or DEFAULT_PUBLIC_HOST).strip()
+    host = raw
+    if "://" in raw or raw.startswith("http"):
+        from urllib.parse import urlparse
+
+        parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+        host = parsed.hostname or DEFAULT_PUBLIC_HOST
+    host = (host or "").strip().lower().rstrip(".")
+    if not host or host in ("127.0.0.1", "localhost", "0.0.0.0", "::1"):
+        return DEFAULT_PUBLIC_HOST
+    return host
+
+
+def resolve_host_ipv4(host: str) -> List[str]:
+    """DNS A kaydı — üretim sunucusunun sabit IP’si."""
+    host = (host or "").strip()
+    if not host:
+        return []
+    found: List[str] = []
+    try:
+        import socket
+
+        for _fam, _t, _p, _c, sockaddr in socket.getaddrinfo(host, None, socket.AF_INET):
+            ip = sockaddr[0]
+            if ip and ip not in found:
+                found.append(ip)
+    except Exception:
+        logger.exception("host IP çözümlemesi başarısız: %s", host)
+    return found
+
+
 async def detect_egress_ips() -> List[str]:
-    """Sunucunun İşNet’e görünen genel çıkış IP’lerini tespit et (IP–VKN kaydı için)."""
+    """Bu sürecin İşNet’e görünen genel çıkış IP’leri (önizleme ortamında değişebilir)."""
     urls = (
         "https://api.ipify.org",
         "https://icanhazip.com",
@@ -279,6 +315,21 @@ async def detect_egress_ips() -> List[str]:
     except Exception:
         logger.exception("egress IP tespiti başarısız")
     return found
+
+
+async def isnet_ip_registration_info() -> Dict[str, Any]:
+    """Canlı SOAP için: bu ortamın çıkışı + üretim A kaydı."""
+    egress = await detect_egress_ips()
+    host = public_app_host()
+    prod = resolve_host_ipv4(host)
+    overlap = bool(set(egress) & set(prod))
+    return {
+        "egress_ips": egress,
+        "production_host": host,
+        "production_ips": prod,
+        "same_as_production": overlap,
+        "support_email": SUPPORT_EMAIL,
+    }
 
 
 def _soap_unreachable_hint(exc: BaseException) -> str:
@@ -362,10 +413,24 @@ async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
                 if rest_ok
                 else ""
             )
-            hint = (
-                f" Canlıda IP–VKN için çıkış IP: {ip_txt} — VKN {tax} ile "
-                f"{SUPPORT_EMAIL} adresine iletin.{rest_note}"
-            )
+            host = public_app_host()
+            prod = resolve_host_ipv4(host)
+            prod_txt = ", ".join(prod) if prod else "tespit edilemedi"
+            overlap = bool(set(ips) & set(prod))
+            info["production_host"] = host
+            info["production_ips"] = prod
+            if overlap:
+                hint = (
+                    f" Canlı SOAP zaman aşımı — VKN {tax} + IP {ip_txt} kaydı henüz aktif olmayabilir. "
+                    f"{SUPPORT_EMAIL}{rest_note}"
+                )
+            else:
+                hint = (
+                    f" İşNet onayı üretim sunucusu içindir ({host}: {prod_txt}). "
+                    f"Bu ortamın çıkış IP’si farklı ({ip_txt}) ve değişebilir; canlı SOAP burada zaman aşımına düşer. "
+                    f"Canlı testi https://{host} üzerinden yapın. Kayıtlı IP değilse {SUPPORT_EMAIL} adresine "
+                    f"VKN {tax} + {prod_txt} iletin.{rest_note}"
+                )
         elif tax not in TEST_FIRM_VKNS:
             hint = (
                 f" Test VKN örnekleri: {', '.join(TEST_FIRM_VKNS)} "
@@ -376,28 +441,14 @@ async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
             detail=f"İşNet SOAP testi başarısız: {e.detail}.{hint}",
         ) from e
 
-    # 2) Opsiyonel portal REST login (şifre varsa)
-    username = (settings.get("username") or "").strip()
-    if username and password:
-        try:
-            healthy = await health_check(settings)
-            portal = await login(settings, password)
-            info["portal_ok"] = True
-            info["healthy"] = healthy
-            info["token_preview"] = portal.get("token_preview")
-            info["user_name"] = portal.get("user_name")
-            info["company_count"] = portal.get("company_count")
-            info["message"] = (info.get("message") or "SOAP OK") + " · Portal login OK"
-        except HTTPException as e:
-            info["portal_ok"] = False
-            info["portal_warning"] = str(e.detail)
-            info["message"] = (info.get("message") or "SOAP OK") + f" · Portal: {e.detail}"
-    else:
-        info["portal_ok"] = None
-        info["portal_hint"] = (
-            "SOAP IP–VKN ile çalışır; kullanıcı/şifre zorunlu değildir. "
-            f"Portal denemesi için isteğe bağlı API kullanıcı bilgisi girilebilir ({TEST_PORTAL})."
-        )
+    # SOAP IP–VKN yeter; portal REST (kullanıcı/şifre) ayrı üründür ve bu testi kirletmesin.
+    # Kayıtlı/opsiyonel şifre yanlış olsa bile HealthCheck + bakiye başarılıysa bağlantı OK.
+    _ = password
+    info["portal_ok"] = None
+    info["portal_hint"] = (
+        "SOAP IP–VKN ile çalışır; NetteFatura portal kullanıcı/şifresi gerekmez. "
+        "Gelen kutu için Ayarlar → İşNet Web Portal bağlantısını kullanın."
+    )
     return info
 
 

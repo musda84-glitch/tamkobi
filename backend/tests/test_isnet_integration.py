@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import xml.etree.ElementTree as ET
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -145,6 +146,35 @@ def test_connection_soap_ip_vkn_without_password():
     assert "password" not in (info.get("message") or "").lower() or "SOAP" in info["message"]
 
 
+def test_connection_ignores_portal_password_failure():
+    """SOAP OK iken portal şifre hatası mesaja karışmasın."""
+    settings = {
+        "company_tax_id": "6131659091",
+        "alias": "urn:mail:389265defaultgb@isnet.com",
+        "mode": "test",
+        "username": "6131659091",
+    }
+
+    async def _fake_health(_s):
+        return "true"
+
+    async def _fake_balance(_s, tax_code=None):
+        return {"balance": "1997570", "remaining_credit": "1997570", "message": "OK"}
+
+    async def _portal_fail(_s, password):
+        raise HTTPException(status_code=400, detail="İşNet kullanıcı adı veya şifre hatalı.")
+
+    with patch("isnet.soap_health_check", side_effect=_fake_health), patch(
+        "isnet.get_company_balance", side_effect=_fake_balance
+    ), patch("isnet.login", side_effect=_portal_fail):
+        info = asyncio.get_event_loop().run_until_complete(isnet.test_connection(settings, "wrong-pass"))
+    assert info["ok"] is True
+    assert info["soap_ok"] is True
+    assert "1997570" in (info.get("message") or "")
+    assert "şifre" not in (info.get("message") or "").lower()
+    assert "Portal:" not in (info.get("message") or "")
+
+
 def test_soap_unreachable_hint_timeout():
     assert "zaman aşımı" in isnet._soap_unreachable_hint(httpx.ConnectTimeout("x"))
 
@@ -167,15 +197,24 @@ def test_live_connection_failure_includes_egress_ip():
 
     with patch("isnet.soap_health_check", side_effect=_fail), patch(
         "isnet.detect_egress_ips", side_effect=_ips
+    ), patch("isnet.resolve_host_ipv4", return_value=["85.95.240.136"]), patch(
+        "isnet.public_app_host", return_value="tamkobi.com"
     ), patch("isnet.health_check", side_effect=_rest_ok):
         with pytest.raises(HTTPException) as e:
             asyncio.get_event_loop().run_until_complete(isnet.test_connection(settings, ""))
     assert e.value.status_code == 502
     detail = str(e.value.detail)
     assert "203.0.113.10" in detail
+    assert "85.95.240.136" in detail
+    assert "tamkobi.com" in detail
     assert "6131659091" in detail
     assert isnet.SUPPORT_EMAIL in detail
     assert "einvoiceapi" in detail or "REST" in detail
+
+
+def test_public_app_host_falls_back_from_localhost():
+    with patch.dict(os.environ, {"PUBLIC_APP_URL": "http://127.0.0.1"}, clear=False):
+        assert isnet.public_app_host() == "tamkobi.com"
 
 
 def test_login_401_raises():
