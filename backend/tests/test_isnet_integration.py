@@ -145,6 +145,35 @@ def test_connection_soap_ip_vkn_without_password():
     assert "password" not in (info.get("message") or "").lower() or "SOAP" in info["message"]
 
 
+def test_connection_ignores_portal_password_failure():
+    """SOAP OK iken portal şifre hatası mesaja karışmasın."""
+    settings = {
+        "company_tax_id": "6131659091",
+        "alias": "urn:mail:389265defaultgb@isnet.com",
+        "mode": "test",
+        "username": "6131659091",
+    }
+
+    async def _fake_health(_s):
+        return "true"
+
+    async def _fake_balance(_s, tax_code=None):
+        return {"balance": "1997570", "remaining_credit": "1997570", "message": "OK"}
+
+    async def _portal_fail(_s, password):
+        raise HTTPException(status_code=400, detail="İşNet kullanıcı adı veya şifre hatalı.")
+
+    with patch("isnet.soap_health_check", side_effect=_fake_health), patch(
+        "isnet.get_company_balance", side_effect=_fake_balance
+    ), patch("isnet.login", side_effect=_portal_fail):
+        info = asyncio.get_event_loop().run_until_complete(isnet.test_connection(settings, "wrong-pass"))
+    assert info["ok"] is True
+    assert info["soap_ok"] is True
+    assert "1997570" in (info.get("message") or "")
+    assert "şifre" not in (info.get("message") or "").lower()
+    assert "Portal:" not in (info.get("message") or "")
+
+
 def test_soap_unreachable_hint_timeout():
     assert "zaman aşımı" in isnet._soap_unreachable_hint(httpx.ConnectTimeout("x"))
 

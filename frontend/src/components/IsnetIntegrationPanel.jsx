@@ -128,7 +128,8 @@ export default function IsnetIntegrationPanel({ companyId }) {
     setLoading(true);
     try {
       const r = await axios.post(`${API_URL}/integrations/isnet/test`, body());
-      toast.success(r.data?.message || "İşNet SOAP (IP–VKN) bağlantı testi başarılı!");
+      const msg = String(r.data?.message || "").split(" · Portal:")[0].trim();
+      toast.success(msg || "İşNet SOAP (IP–VKN) bağlantı testi başarılı!");
     } catch (err) {
       const detail = err.response?.data?.detail;
       const msg = typeof detail === "string" ? detail : (detail?.message || "Bağlantı kurulamadı, bilgilerinizi kontrol edin.");
@@ -483,10 +484,11 @@ export default function IsnetIntegrationPanel({ companyId }) {
 
         <details className="rounded-xl border border-dashed border-slate-200 p-3" data-testid="isnet-optional-portal">
           <summary className="cursor-pointer font-semibold text-slate-700">
-            Opsiyonel — Portal API kullanıcı/şifre
+            Opsiyonel — Portal API kullanıcı/şifre (SOAP testinde kullanılmaz)
           </summary>
           <p className="text-[10px] text-slate-500 mt-1 mb-2">
-            SOAP gönderimi için gerekli değildir. Yalnızca ek portal REST kontrolü istenirse doldurun.
+            SOAP gönderimi IP–VKN ile yapılır; buradaki kullanıcı/şifre Bağlantıyı Test Et sonucunu etkilemez.
+            NetteFatura web girişi için Ayarlar’daki İşNet Web Portal panelini kullanın.
           </p>
           <div className="space-y-2">
             <div>

@@ -1060,7 +1060,6 @@ async def isnet_test_connection(req: Dict[str, Any]):
     company_id = (req.get("company_id") or "").strip() or "comp_nexus_main_01"
     existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
     fields = _isnet_payload(req, existing)
-    password = (req.get("password") or "").strip() or _einvoice_password(existing)
     settings = {
         **existing,
         "provider": "isnet",
@@ -1072,7 +1071,7 @@ async def isnet_test_connection(req: Dict[str, Any]):
         "company_tax_id": fields.get("company_tax_id") or existing.get("company_tax_id") or "",
         "company_vendor_number": fields.get("company_vendor_number") or existing.get("company_vendor_number") or "",
     }
-    info = await isnet.test_connection(settings, password or "")
+    info = await isnet.test_connection(settings, "")
     return info
 
 

@@ -376,28 +376,14 @@ async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
             detail=f"İşNet SOAP testi başarısız: {e.detail}.{hint}",
         ) from e
 
-    # 2) Opsiyonel portal REST login (şifre varsa)
-    username = (settings.get("username") or "").strip()
-    if username and password:
-        try:
-            healthy = await health_check(settings)
-            portal = await login(settings, password)
-            info["portal_ok"] = True
-            info["healthy"] = healthy
-            info["token_preview"] = portal.get("token_preview")
-            info["user_name"] = portal.get("user_name")
-            info["company_count"] = portal.get("company_count")
-            info["message"] = (info.get("message") or "SOAP OK") + " · Portal login OK"
-        except HTTPException as e:
-            info["portal_ok"] = False
-            info["portal_warning"] = str(e.detail)
-            info["message"] = (info.get("message") or "SOAP OK") + f" · Portal: {e.detail}"
-    else:
-        info["portal_ok"] = None
-        info["portal_hint"] = (
-            "SOAP IP–VKN ile çalışır; kullanıcı/şifre zorunlu değildir. "
-            f"Portal denemesi için isteğe bağlı API kullanıcı bilgisi girilebilir ({TEST_PORTAL})."
-        )
+    # SOAP IP–VKN yeter; portal REST (kullanıcı/şifre) ayrı üründür ve bu testi kirletmesin.
+    # Kayıtlı/opsiyonel şifre yanlış olsa bile HealthCheck + bakiye başarılıysa bağlantı OK.
+    _ = password
+    info["portal_ok"] = None
+    info["portal_hint"] = (
+        "SOAP IP–VKN ile çalışır; NetteFatura portal kullanıcı/şifresi gerekmez. "
+        "Gelen kutu için Ayarlar → İşNet Web Portal bağlantısını kullanın."
+    )
     return info
 
 
