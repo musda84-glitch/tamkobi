@@ -57,13 +57,26 @@ async def _next_number(company_id: str, instrument: str) -> str:
     return f"{prefix}-{year}-{n:04d}"
 
 
+def open_portfolio_balance(rows) -> float:
+    """Açık alınan çek/senet eksi açık verilen. BizimHesap snapshot'ı yok sayılır."""
+    received = 0.0
+    issued = 0.0
+    for r in rows or []:
+        if (r.get("status") or "open") != "open":
+            continue
+        amt = float(r.get("amount") or 0)
+        if r.get("direction") == "received":
+            received += amt
+        elif r.get("direction") == "issued":
+            issued += amt
+    return round(received - issued, 2)
+
+
 async def _refresh_contact_cheque(contact_id: str):
     if not contact_id:
         return
     rows = await _db.cheques.find({"contact_id": contact_id, "status": "open"}).to_list(5000)
-    received = round(sum(float(r.get("amount") or 0) for r in rows if r.get("direction") == "received"), 2)
-    issued = round(sum(float(r.get("amount") or 0) for r in rows if r.get("direction") == "issued"), 2)
-    await _db.contacts.update_one({"_id": contact_id}, {"$set": {"cheque_bond_balance": round(received - issued, 2)}})
+    await _db.contacts.update_one({"_id": contact_id}, {"$set": {"cheque_bond_balance": open_portfolio_balance(rows)}})
 
 
 def _contact_delta_on_create(direction: str, amount: float) -> float:

@@ -28,6 +28,7 @@ import { StatementShareBar, StatementPrint, buildStatementRows } from "./Stateme
 import { shareStatementLink } from "../utils/statementShare";
 import { buildContactPayForm, contactPayModalMeta } from "../utils/contactPayMenu";
 import { applyReceiptDraft, receiptScanHint } from "../utils/receiptScan";
+import { openChequeBalance } from "../utils/chequeBalance";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
 import { useNavigate } from "react-router-dom";
 import { fmtDate, fmtMoney } from "../utils/money";
@@ -502,12 +503,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const paid = Number(s.total_paid) || 0;
   const open = Number(s.open_amount) || 0;
   const summaryDiverge = Math.abs(Math.abs(bal) - Math.abs(open)) > 0.5;
+  const chequeBal = openChequeBalance(data.cheques);
   const summaryCards = [
     { key: "balance", label: "Cari hesap", hint: bal > 0 ? "Müşteri size borçlu" : bal < 0 ? "Siz bu cariye borçlusunuz" : "Hesap denk — borç yok", badge: bal > 0 ? "Alacak" : bal < 0 ? "Borç" : "Kapalı", value: bal, cls: bal > 0 ? "text-emerald-700" : bal < 0 ? "text-rose-700" : "text-slate-800", title: "Satış, alış ve kasa/banka hareketlerinin net bakiyesi. Artı = alacak, eksi = borç." },
     { key: "invoiced", label: "Satış faturaları", hint: "Onaylı satışların toplamı", badge: null, value: invoiced, cls: "text-slate-900", title: "Taslaklar hariç kesilmiş satış faturalarının tutarı." },
     { key: "paid", label: "Tahsil edilen", hint: "Bu faturalara yazılan tahsilat", badge: null, value: paid, cls: "text-emerald-700", title: "Satış faturalarına işlenmiş tahsilat. Kasa hareketi faturaya bağlanmadıysa cari hesaba yansır, buraya yansımaz." },
     { key: "open", label: "Kalan alacak", hint: "Fatura − tahsilat", badge: open > 0 ? "Açık" : "Kapalı", value: open, cls: open > 0 ? "text-rose-700" : "text-slate-800", title: "Satış faturası toplamı eksi tahsilat. Cari hesaptan farklı olabilir (alış faturası veya bağlanmamış ödeme)." },
-    { key: "cheques", label: "Çek / senet", hint: "Açık alınan − verilen", badge: (Number(c.cheque_bond_balance) || 0) !== 0 ? "Portföy" : null, value: Number(c.cheque_bond_balance) || 0, cls: "text-indigo-700", title: "Açık alınan çek/senet eksi açık verilen. Tahsil, ciro veya ödeme sonrası düşer." },
+    { key: "cheques", label: "Çek / senet", hint: "Açık alınan − verilen", badge: chequeBal !== 0 ? "Portföy" : null, value: chequeBal, cls: "text-indigo-700", title: "Açık alınan çek/senet eksi açık verilen. Tahsil, ciro veya ödeme sonrası düşer. BizimHesap aktarım bakiyesi sayılmaz." },
   ];
 
   return (
