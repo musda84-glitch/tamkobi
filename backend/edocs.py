@@ -203,6 +203,15 @@ def meta_summary(meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, str]]:
     return kept or None
 
 
+def _meta_get(meta: Dict[str, Any], *keys: str) -> str:
+    """n11 party_name/sender_tax_id ile İşNet sender_title/sender_vkn aynı işe yarıyor."""
+    for k in keys:
+        v = meta.get(k)
+        if v not in (None, ""):
+            return str(v).strip()
+    return ""
+
+
 def apply_meta(parsed: Dict[str, Any], meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Entegratörün liste yanıtındaki bilgileri UBL'de eksik kalan alanlara doldurur.
 
@@ -212,15 +221,15 @@ def apply_meta(parsed: Dict[str, Any], meta: Optional[Dict[str, Any]]) -> Dict[s
     if not meta:
         return parsed
     sup = parsed["supplier"]
-    sup["name"] = sup.get("name") or (meta.get("party_name") or "").strip()
-    sup["tax_id"] = sup.get("tax_id") or (meta.get("sender_tax_id") or "").strip()
-    parsed["number"] = parsed.get("number") or (meta.get("invoice_id") or "").strip()
-    parsed["uuid"] = parsed.get("uuid") or (meta.get("uuid") or "").strip()
-    parsed["issue_date"] = parsed.get("issue_date") or _iso_date(meta.get("issue_date") or "")
-    parsed["profile"] = parsed.get("profile") or (meta.get("profile") or "").strip()
+    sup["name"] = sup.get("name") or _meta_get(meta, "party_name", "sender_title", "sender_name")
+    sup["tax_id"] = sup.get("tax_id") or _meta_get(meta, "sender_tax_id", "sender_vkn")
+    parsed["number"] = parsed.get("number") or _meta_get(meta, "invoice_id")
+    parsed["uuid"] = parsed.get("uuid") or _meta_get(meta, "uuid", "ettn")
+    parsed["issue_date"] = parsed.get("issue_date") or _iso_date(_meta_get(meta, "issue_date"))
+    parsed["profile"] = parsed.get("profile") or _meta_get(meta, "profile")
     if not parsed.get("grand_total"):
         try:
-            parsed["grand_total"] = float(str(meta.get("payable") or "0").replace(",", "."))
+            parsed["grand_total"] = float((_meta_get(meta, "payable", "payable_amount") or "0").replace(",", "."))
         except ValueError:
             pass
     return parsed
@@ -270,6 +279,49 @@ async def upload_edoc(file: UploadFile = File(...), company_id: str = Form("comp
     return _clean(await _store(company_id, parsed, key, source, file.filename, data if source == "ubl_xml" else None))
 
 
+def _norm_uuid(value: Optional[str]) -> str:
+    raw = (value or "").strip().lower().strip("{}")
+    if not raw:
+        return ""
+    hex_only = re.sub(r"[^a-f0-9]", "", raw)
+    if len(hex_only) == 32:
+        return f"{hex_only[0:8]}-{hex_only[8:12]}-{hex_only[12:16]}-{hex_only[16:20]}-{hex_only[20:]}"
+    return raw
+
+
+def _norm_number(value: Optional[str]) -> str:
+    return (value or "").strip().lower()
+
+
+def identity_keys(parsed: dict, data: Optional[bytes] = None) -> List[str]:
+    """Aynı e-belgeyi yakalayan tüm anahtarlar (ETTN, fatura no, eski id: biçimi, SHA).
+
+    Yalnızca uuid: anahtarına bakınca, ETTN'siz ilk çekim + ETTN'li ikinci çekim
+    aynı GİB faturasını iki satır yapıyordu. Numara da kimliktir.
+    """
+    keys: List[str] = []
+    u = _norm_uuid(parsed.get("uuid"))
+    if u:
+        keys.append("uuid:" + u)
+    number = _norm_number(parsed.get("number"))
+    kind = parsed.get("kind") or "invoice"
+    if number:
+        keys.append(f"no:{kind}|{number}")
+        keys.append("id:" + "|".join([
+            number,
+            ((parsed.get("supplier") or {}).get("tax_id") or "").strip(),
+            (parsed.get("issue_date") or "")[:10],
+        ]))
+    existing = parsed.get("dedupe_key") or ""
+    if existing and not existing.startswith("one:") and existing not in keys:
+        keys.append(existing)
+    if data:
+        sha = "sha:" + hashlib.sha256(data).hexdigest()
+        if sha not in keys:
+            keys.append(sha)
+    return keys
+
+
 def dedupe_key(parsed: dict, data: Optional[bytes]) -> str:
     """Aynı belgenin tekrar kaydedilmesini engelleyen anahtar.
 
@@ -277,25 +329,101 @@ def dedupe_key(parsed: dict, data: Optional[bytes]) -> str:
     ekliyor, gelen kutusu aynı belgenin kopyalarıyla doluyordu. ETTN yoksa fatura
     numarası + tedarikçi VKN'si + tarih, o da yoksa belgenin özeti anahtar oluyor.
     """
-    if parsed.get("uuid"):
-        return "uuid:" + parsed["uuid"].strip().lower()
-    number = (parsed.get("number") or "").strip().lower()
-    if number:
-        return "id:" + "|".join([number, ((parsed.get("supplier") or {}).get("tax_id") or "").strip(), (parsed.get("issue_date") or "")[:10]])
-    # Numara yoksa geriye kalan alanlar tek başına kimlik değil: aynı tedarikçiden
-    # ya da aynı günden gelen iki ayrı belge birbirinin kopyası sayılır ve ikincisi
-    # sessizce yutulurdu. Kimlik yoksa belgenin kendi içeriği anahtar olur.
-    if data:
-        return "sha:" + hashlib.sha256(data).hexdigest()
+    keys = identity_keys(parsed, data)
+    if keys:
+        return keys[0]
     return "one:" + str(uuid.uuid4())
 
 
+def _kind_of(doc: dict) -> str:
+    return doc.get("kind") or "invoice"
+
+
 async def _existing(company_id: str, parsed: dict, key: str):
-    hit = await _db.incoming_edocs.find_one({"company_id": company_id, "dedupe_key": key})
-    if hit or not parsed.get("uuid"):
-        return hit
-    # dedupe_key alanı eklenmeden önce kaydedilmiş belgeler.
-    return await _db.incoming_edocs.find_one({"company_id": company_id, "uuid": parsed["uuid"]})
+    seen = []
+    for k in [key, *identity_keys(parsed)]:
+        if not k or k in seen:
+            continue
+        seen.append(k)
+        hit = await _db.incoming_edocs.find_one({"company_id": company_id, "dedupe_key": k})
+        if hit:
+            return hit
+    raw_uuid = (parsed.get("uuid") or "").strip()
+    want_kind = _kind_of(parsed)
+    for candidate in {raw_uuid, raw_uuid.lower(), _norm_uuid(raw_uuid)}:
+        if not candidate:
+            continue
+        hit = await _db.incoming_edocs.find_one({"company_id": company_id, "uuid": candidate})
+        if hit and _kind_of(hit) == want_kind:
+            return hit
+    number = (parsed.get("number") or "").strip()
+    if number:
+        for n in {number, number.lower(), number.upper()}:
+            rows = await _db.incoming_edocs.find({"company_id": company_id, "number": n}).to_list(20)
+            for hit in rows:
+                if _kind_of(hit) == want_kind:
+                    return hit
+    return None
+
+
+_DUP_STATUS_SCORE = {"approved": 4, "pending": 3, "rejected": 2, "ignored": 1}
+
+
+def _doc_score(d: dict) -> tuple:
+    return (
+        _DUP_STATUS_SCORE.get(d.get("status") or "", 0),
+        1 if d.get("invoice_id") else 0,
+        len(d.get("lines") or []),
+        1 if _norm_uuid(d.get("uuid")) else 0,
+        1 if ((d.get("supplier") or {}).get("name") or "") else 0,
+        str(d.get("received_at") or ""),
+    )
+
+
+async def merge_duplicate_edocs(company_id: str) -> int:
+    """Aynı ETTN veya aynı tür+numaradaki kopyaları tek kayda indirir.
+
+    Otomatik çekim ile manuel senkron yarışınca veya ETTN'siz/ETTN'li anahtar
+    kayınca gelen kutusu aynı faturayı iki kez gösteriyordu.
+    """
+    docs = await _db.incoming_edocs.find({"company_id": company_id}).to_list(2000)
+    parent: Dict[str, str] = {}
+
+    def find(x: str) -> str:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    key_to_id: Dict[str, str] = {}
+    by_id = {}
+    for d in docs:
+        did = d["_id"]
+        by_id[did] = d
+        parent.setdefault(did, did)
+        for k in identity_keys(d):
+            if k in key_to_id:
+                union(did, key_to_id[k])
+            key_to_id[k] = did
+    groups: Dict[str, List[str]] = {}
+    for did in by_id:
+        groups.setdefault(find(did), []).append(did)
+    removed = 0
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        ranked = sorted(members, key=lambda i: _doc_score(by_id[i]), reverse=True)
+        for extra in ranked[1:]:
+            await _db.incoming_edocs.delete_one({"_id": extra})
+            await _db.incoming_edoc_xml.delete_one({"_id": extra})
+            removed += 1
+    return removed
 
 
 async def _store(company_id: str, parsed: dict, key: str, source: str, filename: str, raw: Optional[bytes], meta: Optional[dict] = None):
@@ -327,6 +455,7 @@ def _clean(d: dict) -> dict:
 
 @router.get("/edocs/inbox")
 async def list_inbox(company_id: str = "comp_nexus_main_01", status: Optional[str] = None):
+    await merge_duplicate_edocs(company_id)
     q: Dict[str, Any] = {"company_id": company_id}
     if status:
         q["status"] = status

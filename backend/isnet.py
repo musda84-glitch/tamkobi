@@ -632,6 +632,31 @@ def _find_all(root: Optional[ET.Element], *names: str) -> List[ET.Element]:
     return [el for el in root.iter() if _local(el.tag).lower() in wanted]
 
 
+def _soap_list_items(root: Optional[ET.Element], preferred: str, *fallbacks: str) -> List[ET.Element]:
+    """Gelen kutu SOAP satırları.
+
+    SearchInvoice InvoiceInfo + içine gömülü UBL Invoice (veya Document sarmalayıcı)
+    döndürünce kök.iter() aynı faturayı iki kez veriyordu.
+    """
+    if root is None:
+        return []
+    pref = _find_all(root, preferred)
+    if pref:
+        return pref
+    wanted = {n.lower() for n in fallbacks}
+    found: List[ET.Element] = []
+
+    def walk(el: ET.Element, inside: bool) -> None:
+        hit = _local(el.tag).lower() in wanted
+        if hit and not inside:
+            found.append(el)
+        for child in list(el):
+            walk(child, inside or hit)
+
+    walk(root, False)
+    return found
+
+
 # Invoice.DetailStatus = GİB zarf/iletim kodu (WSDL InvoiceDetailStatus).
 # Invoice.Status = İşNet süreç durumu (Imza_Bekliyor, Gibe_Iletildi, …).
 _DETAIL_STATUS_CODE_BY_ENUM = {
@@ -3175,19 +3200,25 @@ async def list_incoming(settings: dict, password: str, days: int = 14) -> List[D
         timeout=60.0,
     )
     out: List[Dict[str, Any]] = []
-    for inv in _find_all(body, "Invoice", "InvoiceInfo", "Document"):
+    for inv in _soap_list_items(body, "InvoiceInfo", "Invoice", "Document"):
         uuid = _find_text(inv, "ETTN", "Ettn", "UUID", "InvoiceETTN")
         inv_id = _find_text(inv, "InvoiceNumber", "InvoiceId", "ID")
         raw_xml = _find_text(inv, "InvoiceXML", "XMLContent", "InvoiceContent", "XmlData", "UBL")
         xml_bytes = _decode_xml_payload(raw_xml) if raw_xml else None
+        sender_vkn = _find_text(inv, "SenderTaxCode", "SenderVKN", "VKN")
+        sender_title = _find_text(inv, "SenderName", "SenderTitle", "Title")
+        payable = _find_text(inv, "PayableAmount", "Payable", "Amount")
         out.append(
             {
                 "uuid": uuid,
                 "invoice_id": inv_id,
-                "sender_vkn": _find_text(inv, "SenderTaxCode", "SenderVKN", "VKN"),
-                "sender_title": _find_text(inv, "SenderName", "SenderTitle", "Title"),
+                "sender_vkn": sender_vkn,
+                "sender_tax_id": sender_vkn,
+                "sender_title": sender_title,
+                "party_name": sender_title,
                 "issue_date": _find_text(inv, "InvoiceDate", "IssueDate", "Date"),
-                "payable_amount": _find_text(inv, "PayableAmount", "Payable", "Amount"),
+                "payable_amount": payable,
+                "payable": payable,
                 "profile": _find_text(inv, "ProfileId", "Scenario", "Profile"),
                 "status": _find_text(inv, "Status", "State"),
                 "kind": "invoice",
@@ -3274,7 +3305,7 @@ async def list_incoming_despatch(settings: dict, password: str, days: int = 14) 
         timeout=60.0,
     )
     out: List[Dict[str, Any]] = []
-    for adv in _find_all(body, "DespatchAdvice", "DespatchAdviceInfo", "Document"):
+    for adv in _soap_list_items(body, "DespatchAdviceInfo", "DespatchAdvice", "Document"):
         uuid = _find_text(adv, "ETTN", "Ettn", "UUID")
         inv_id = _find_text(adv, "DespatchAdviceNumber", "InvoiceNumber", "InvoiceId", "ID")
         raw_xml = _find_text(
@@ -3295,18 +3326,22 @@ async def list_incoming_despatch(settings: dict, password: str, days: int = 14) 
         sender_title = _find_text(
             adv, "SenderName", "SenderTitle", "ReceiverName", "Title"
         )
+        payable = _find_text(
+            adv, "TotalValueAmount", "PayableAmount", "Payable", "Amount"
+        )
         out.append(
             {
                 "uuid": uuid,
                 "invoice_id": inv_id,
                 "sender_vkn": sender_vkn,
+                "sender_tax_id": sender_vkn,
                 "sender_title": sender_title,
+                "party_name": sender_title,
                 "issue_date": _find_text(
                     adv, "DespatchAdviceDate", "InvoiceDate", "IssueDate", "Date"
                 ),
-                "payable_amount": _find_text(
-                    adv, "TotalValueAmount", "PayableAmount", "Payable", "Amount"
-                ),
+                "payable_amount": payable,
+                "payable": payable,
                 "profile": _find_text(
                     adv, "DespatchAdviceScenarioType", "ProfileId", "Scenario", "Profile"
                 ),
