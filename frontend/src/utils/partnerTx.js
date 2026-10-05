@@ -25,3 +25,9 @@ export function isPartnerLedgerType(type) {
 export function isPartnerCashType(type) {
   return type === "capital_in" || type === "withdrawal";
 }
+
+/** Kart üzerindeki maaş satırı: tutar yoksa «Belirle». */
+export function partnerSalaryActionLabel(amount) {
+  const n = Number(amount) || 0;
+  return n > 0 ? null : "Belirle";
+}
