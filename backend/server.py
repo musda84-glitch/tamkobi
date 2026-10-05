@@ -403,6 +403,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
             "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
             "is_super_admin": bool(user.get("is_super_admin")),
             "employee_id": (emp or {}).get("_id") or user.get("employee_id"),
+            "skip_check_in": bool((emp or {}).get("skip_check_in")),
         },
         "companies": clean_docs(companies),
         "license": await saas.effective(user.get("active_company_id", "comp_nexus_main_01")),
@@ -2612,6 +2613,7 @@ async def get_me(request: Request):
             "role_name": role_doc.get("name"), "permissions": role_doc.get("permissions", {}), "features": rbac.role_features(role_doc),
             "is_super_admin": bool(user.get("is_super_admin")),
             "employee_id": (emp or {}).get("_id") or user.get("employee_id"),
+            "skip_check_in": bool((emp or {}).get("skip_check_in")),
         },
         "authenticated": True,
         "impersonation": await saas_extras.impersonation_info(request),
@@ -14332,6 +14334,8 @@ async def list_stations(company_id: Optional[str] = "comp_nexus_main_01"):
 
 async def _shopfloor_require_mesaim_check_in(emp: Dict[str, Any]) -> None:
     """Giriş yapmamış personel atölyede operatör olamaz."""
+    if attendance.employee_skips_check_in(emp):
+        return
     company = await db.companies.find_one({"_id": emp["company_id"]}) or {}
     schedule = attendance.merge_schedule(company, emp)
     today_s = attendance._today(schedule)
@@ -15331,7 +15335,7 @@ EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone
                       "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "location_tracking", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
                       "marital_status", "blood_type", "illnesses", "safety_info",
                       "meal_allowance", "transport_allowance", "sgk_number",
-                      "pay_start_date", "pay_day", "pay_recurring"}
+                      "pay_start_date", "pay_day", "pay_recurring", "skip_check_in"}
 EMPLOYEE_NUMERIC = {"salary", "daily_wage", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
 MEAL_CAT = "Yemek"
 TRANSPORT_CAT = "Yol / Ulaşım"
@@ -15525,6 +15529,8 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
             v = raw or None
         if k == "pay_recurring":
             v = bool(v) if v not in (None, "") else True
+        if k == "skip_check_in":
+            v = bool(v) if v not in (None, "") else False
         if k == "pay_day" and v not in (None, ""):
             try:
                 v = min(31, max(1, int(v)))
