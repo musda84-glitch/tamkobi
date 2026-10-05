@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Clock, EyeOff, MapPin, Pencil, Receipt, Trash2, Wallet, X, CalendarDays } from "lucide-react";
+import { ClipboardList, Clock, EyeOff, MapPin, Pencil, Receipt, Trash2, Wallet, X, CalendarDays } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { empIdOf } from "../utils/personnelIds";
@@ -31,6 +31,17 @@ import {
   payMovesPeriodHint,
   payMovesPeriodLabel,
 } from "../utils/personnelCard";
+import {
+  sortTaskMoves,
+  taskMoveCanDelete,
+  taskMoveCanEdit,
+  taskMoveDeleteConfirm,
+  taskMoveDetail,
+  taskMoveLine,
+  taskMovesHint,
+  taskMovesPath,
+  taskMoveTitle,
+} from "../utils/employeeTaskMoves";
 
 const PERIODS = ["30d", "month", "all"];
 
@@ -39,6 +50,7 @@ const TAB_TITLE = {
   location: "Konum hareketleri",
   overtime: "Mesai hareketleri",
   puantaj: "Personel puantajı",
+  tasks: "Atanan görevler",
 };
 
 export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChanged }) {
@@ -50,13 +62,17 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
   const [moves, setMoves] = useState([]);
   const [locMoves, setLocMoves] = useState([]);
   const [otMoves, setOtMoves] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [busy, setBusy] = useState(false);
   const [locBusy, setLocBusy] = useState(false);
   const [otBusy, setOtBusy] = useState(false);
+  const [taskBusy, setTaskBusy] = useState(false);
   const [ignoreBusy, setIgnoreBusy] = useState("");
   const [otBusyId, setOtBusyId] = useState("");
   const [payBusyId, setPayBusyId] = useState("");
+  const [taskBusyId, setTaskBusyId] = useState("");
   const [otEdit, setOtEdit] = useState(null);
+  const [taskEdit, setTaskEdit] = useState(null);
 
   const loadPay = useCallback(async () => {
     if (!empId) return;
@@ -103,6 +119,20 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
       setOtBusy(false);
     }
   }, [empId, month, period]);
+
+  const loadTasks = useCallback(async () => {
+    if (!empId) return;
+    setTaskBusy(true);
+    try {
+      const card = (await axios.get(`${API_URL}/personnel/employees/${empId}/card`)).data;
+      setTasks(sortTaskMoves(card?.tasks || []));
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Görevler yüklenemedi.");
+      setTasks([]);
+    } finally {
+      setTaskBusy(false);
+    }
+  }, [empId]);
 
   useEffect(() => { loadPay(); }, [loadPay]);
   useEffect(() => { loadLoc("30d", month); }, [empId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -213,9 +243,66 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
     }
   };
 
+  const openTaskEdit = (row) => {
+    setTaskEdit({
+      id: row.id,
+      title: row.title || "",
+      due_date: (row.due_date || "").slice(0, 10),
+      duration_days: row.duration_days != null && row.duration_days !== "" ? String(row.duration_days) : "",
+      done: !!row.done,
+      kind: row.kind || "field",
+    });
+  };
+
+  const saveTaskEdit = async () => {
+    if (!taskEdit?.id) return;
+    const path = taskMovesPath(empId, taskEdit.id);
+    if (!path) return;
+    setTaskBusyId(taskEdit.id);
+    try {
+      const body = {
+        title: taskEdit.title,
+        due_date: taskEdit.due_date || "",
+        done: !!taskEdit.done,
+      };
+      if (taskEdit.kind !== "office") {
+        body.duration_days = Number(taskEdit.duration_days) || 0;
+      }
+      const r = await axios.put(`${API_URL}${path}`, body);
+      toast.success(r.data?.message || "Görev güncellendi.");
+      setTaskEdit(null);
+      await loadTasks();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Görev kaydedilemedi.");
+    } finally {
+      setTaskBusyId("");
+    }
+  };
+
+  const deleteTask = async (row) => {
+    if (!taskMoveCanDelete(row, canEdit)) return;
+    const path = taskMovesPath(empId, row.id);
+    if (!path) return;
+    const ask = taskMoveDeleteConfirm(row);
+    if (!window.confirm(`${ask.title}\n${ask.message}`)) return;
+    setTaskBusyId(row.id);
+    try {
+      const r = await axios.delete(`${API_URL}${path}`);
+      toast.success(r.data?.message || "Görev silindi.");
+      await loadTasks();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Görev silinemedi.");
+    } finally {
+      setTaskBusyId("");
+    }
+  };
+
   const periodHint = () => {
     if (tab === "location") return locationMovesPeriodHint(locMoves.length, locMoves.length, "all");
     if (tab === "overtime") return overtimeMovesPeriodHint(otMoves.length, otMoves.length, "all");
+    if (tab === "tasks") return taskMovesHint(tasks.length);
     return payMovesPeriodHint(shownPay.length, moves.length, period);
   };
 
@@ -238,7 +325,7 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
             </button>
           </div>
           <div className="space-y-2" data-testid="emp-pay-moves-period">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-xl bg-slate-100 p-1" data-testid="emp-moves-tab">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1 rounded-xl bg-slate-100 p-1" data-testid="emp-moves-tab">
               <button
                 type="button"
                 onClick={() => setTab("pay")}
@@ -271,8 +358,16 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
               >
                 <MapPin className="w-3.5 h-3.5" /> Konum
               </button>
+              <button
+                type="button"
+                onClick={() => { setTab("tasks"); loadTasks(); }}
+                className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-extrabold ${tab === "tasks" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                data-testid="emp-moves-tab-tasks"
+              >
+                <ClipboardList className="w-3.5 h-3.5" /> Görevler
+              </button>
             </div>
-            {tab !== "puantaj" ? (
+            {tab !== "puantaj" && tab !== "tasks" ? (
             <>
             <div className="flex flex-wrap gap-2">
               {PERIODS.map((key) => (
@@ -303,6 +398,10 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
               {periodHint()}
             </div>
             </>
+            ) : tab === "tasks" ? (
+              <div className="text-[11px] text-slate-500" data-testid="emp-task-moves-count">
+                {taskMovesHint(tasks.length)}
+              </div>
             ) : null}
           </div>
         </div>
@@ -313,6 +412,58 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
               initialMonth={month}
               onLeaveYearChanged={onChanged}
             />
+          ) : tab === "tasks" ? (
+            <>
+              {taskBusy ? <div className="text-slate-400">Yükleniyor…</div> : null}
+              {!taskBusy && !tasks.length ? <div className="text-slate-400" data-testid="emp-task-moves-empty">Atanmış görev yok.</div> : null}
+              {tasks.map((row) => (
+                <div
+                  key={row.id || row.title}
+                  data-testid={`emp-task-move-${row.id || row.title}`}
+                  className="flex items-start gap-2 py-2.5 border-b border-slate-100"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className={`font-extrabold ${row.done ? "text-emerald-700" : "text-indigo-800"}`} data-testid={`emp-task-move-title-${row.id}`}>
+                      {taskMoveTitle(row)}
+                    </div>
+                    <div className="text-slate-500" data-testid={`emp-task-move-line-${row.id}`}>{taskMoveLine(row)}</div>
+                    {taskMoveDetail(row) ? (
+                      <div className="text-slate-400" data-testid={`emp-task-move-detail-${row.id}`}>{taskMoveDetail(row)}</div>
+                    ) : null}
+                  </div>
+                  {taskMoveCanEdit(row, canEdit) || taskMoveCanDelete(row, canEdit) ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      {taskMoveCanEdit(row, canEdit) ? (
+                        <button
+                          type="button"
+                          data-testid={`emp-task-move-edit-${row.id}`}
+                          aria-label="Düzenle"
+                          title="Düzenle"
+                          disabled={!!taskBusyId}
+                          onClick={() => openTaskEdit(row)}
+                          className="w-8 h-8 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 flex items-center justify-center disabled:opacity-50"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                      ) : null}
+                      {taskMoveCanDelete(row, canEdit) ? (
+                        <button
+                          type="button"
+                          data-testid={`emp-task-move-delete-${row.id}`}
+                          aria-label="Sil"
+                          title="Sil"
+                          disabled={!!taskBusyId}
+                          onClick={() => deleteTask(row)}
+                          className="w-8 h-8 rounded-full border border-rose-200 bg-rose-50 text-rose-700 flex items-center justify-center disabled:opacity-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </>
           ) : tab === "location" ? (
             <>
               {locBusy ? <div className="text-slate-400">Yükleniyor…</div> : null}
@@ -438,6 +589,78 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
           onSave={saveOtEdit}
           testIdPrefix="emp-moves-ot"
         />
+      </div>
+    ) : null}
+    {taskEdit ? (
+      <div className="fixed inset-0 z-[80] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" {...backdropDismissProps(() => setTaskEdit(null))}>
+        <div
+          className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-4 space-y-3 shadow-2xl text-xs"
+          onClick={(ev) => ev.stopPropagation()}
+          data-testid="emp-task-edit-modal"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h4 className="text-sm font-extrabold text-slate-900">Görevi düzenle</h4>
+              <div className="text-slate-500">{taskEdit.kind === "office" ? "İç görev" : "Dış görev"}</div>
+            </div>
+            <button type="button" onClick={() => setTaskEdit(null)} className="text-slate-400 p-1" data-testid="emp-task-edit-close">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <label className="block font-semibold text-slate-600">
+            Başlık
+            <input
+              value={taskEdit.title}
+              onChange={(e) => setTaskEdit((v) => ({ ...v, title: e.target.value }))}
+              className="mt-0.5 block w-full border rounded-lg p-2 bg-white text-slate-900"
+              data-testid="emp-task-edit-title"
+            />
+          </label>
+          <label className="block font-semibold text-slate-600">
+            Bitiş tarihi
+            <input
+              type="date"
+              value={taskEdit.due_date || ""}
+              onChange={(e) => setTaskEdit((v) => ({ ...v, due_date: e.target.value }))}
+              className="mt-0.5 block w-full border rounded-lg p-2 bg-white text-slate-900"
+              data-testid="emp-task-edit-due"
+            />
+          </label>
+          {taskEdit.kind !== "office" ? (
+            <label className="block font-semibold text-slate-600">
+              Süre (gün)
+              <input
+                type="number"
+                min="0"
+                value={taskEdit.duration_days}
+                onChange={(e) => setTaskEdit((v) => ({ ...v, duration_days: e.target.value }))}
+                className="mt-0.5 block w-full border rounded-lg p-2 bg-white text-slate-900"
+                data-testid="emp-task-edit-days"
+              />
+            </label>
+          ) : null}
+          <label className="inline-flex items-center gap-2 font-semibold text-slate-700" data-testid="emp-task-edit-done-wrap">
+            <input
+              type="checkbox"
+              checked={!!taskEdit.done}
+              onChange={(e) => setTaskEdit((v) => ({ ...v, done: e.target.checked }))}
+              data-testid="emp-task-edit-done"
+            />
+            Tamamlandı
+          </label>
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={() => setTaskEdit(null)} className="px-3 py-1.5 border rounded-lg font-semibold">Vazgeç</button>
+            <button
+              type="button"
+              onClick={saveTaskEdit}
+              disabled={!!taskBusyId || !String(taskEdit.title || "").trim()}
+              className="px-4 py-1.5 rounded-lg bg-indigo-600 text-white font-extrabold disabled:opacity-50"
+              data-testid="emp-task-edit-save"
+            >
+              Kaydet
+            </button>
+          </div>
+        </div>
       </div>
     ) : null}
     </>

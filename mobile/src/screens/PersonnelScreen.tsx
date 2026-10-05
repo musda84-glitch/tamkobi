@@ -19,6 +19,16 @@ import { TabStrip } from "../components/TabStrip";
 import { Chip, confirmAction } from "../components/chips";
 import { colors } from "../theme";
 import { movesSheetTitle } from "../utils/puantajMonth";
+import {
+  sortTaskMoves,
+  taskMoveCanMutate,
+  taskMoveDeleteConfirm,
+  taskMoveDetail,
+  taskMoveLine,
+  taskMovesHint,
+  taskMovesPath,
+  type MovesTask,
+} from "../utils/employeeTaskMoves";
 import { PUNCH_IN_COLOR, PUNCH_OUT_COLOR } from "../utils/labels";
 import { compressPickerAsset } from "../utils/compressUploadImage";
 import { smsComposerHref, smsSendFailed } from "../utils/quoteApproval";
@@ -314,6 +324,8 @@ export function PersonnelScreen() {
   const [movesTab, setMovesTab] = useState<MovesSheetTab>("pay");
   const [locMoves, setLocMoves] = useState<LocationMove[]>([]);
   const [locMovesBusy, setLocMovesBusy] = useState(false);
+  const [taskMoves, setTaskMoves] = useState<MovesTask[]>([]);
+  const [taskEdit, setTaskEdit] = useState<MovesTask | null>(null);
   const [balances, setBalances] = useState<Record<string, EmployeeBalance>>({});
   const [payItem, setPayItem] = useState<Payroll | null>(null);
   const [payAccount, setPayAccount] = useState("");
@@ -981,6 +993,8 @@ export function PersonnelScreen() {
     setMoves([]);
     setMovesCard(null);
     setLocMoves([]);
+    setTaskMoves([]);
+    setTaskEdit(null);
     setMovesTab("pay");
     setOtEditOpen(false);
   };
@@ -1066,6 +1080,8 @@ export function PersonnelScreen() {
     setMoves([]);
     setMovesCard(null);
     setLocMoves([]);
+    setTaskMoves([]);
+    setTaskEdit(null);
     setMovesTab("pay");
     setMovesPeriod("30d");
     const ym = month || new Date().toISOString().slice(0, 7);
@@ -1074,6 +1090,7 @@ export function PersonnelScreen() {
     try {
       const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
       applyMovesCard(card);
+      setTaskMoves(sortTaskMoves(card?.tasks || []));
       setError(null);
       void loadLocMoves(emp, "30d", ym);
     } catch (err) {
@@ -1081,6 +1098,58 @@ export function PersonnelScreen() {
       closeMoves();
     } finally {
       setMovesBusy(false);
+    }
+  };
+
+  const refreshMovesTasks = async (emp: Employee) => {
+    try {
+      const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
+      applyMovesCard(card);
+      setTaskMoves(sortTaskMoves(card?.tasks || []));
+    } catch (err) {
+      setError(apiErrorMessage(err, "Görevler yüklenemedi."));
+    }
+  };
+
+  const saveMovesTask = async () => {
+    const emp = movesEmp;
+    if (!emp || !taskEdit?.id) return;
+    const path = taskMovesPath(idOf(emp), taskEdit.id);
+    if (!path) return;
+    setBusy(true);
+    try {
+      await put(client, path, {
+        title: taskEdit.title,
+        due_date: taskEdit.due_date || "",
+        duration_days: taskEdit.kind === "office" ? undefined : Number(taskEdit.duration_days) || 0,
+        done: !!taskEdit.done,
+      });
+      setMessage("Görev güncellendi.");
+      setTaskEdit(null);
+      await refreshMovesTasks(emp);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Görev kaydedilemedi."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteMovesTask = async (row: MovesTask) => {
+    const emp = movesEmp;
+    if (!emp || !taskMoveCanMutate(row, canEdit)) return;
+    const path = taskMovesPath(idOf(emp), row.id);
+    if (!path) return;
+    setBusy(true);
+    try {
+      await del(client, path);
+      setMessage("Görev çöp kutusuna taşındı.");
+      await refreshMovesTasks(emp);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Görev silinemedi."));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -2061,18 +2130,20 @@ export function PersonnelScreen() {
             <TabStrip
               testID="emp-moves-tab"
               value={movesTab}
-              columns={3}
+              columns={2}
               onChange={(key) => {
                 setMovesTab(key);
                 if (key === "location" && movesEmp) void loadLocMoves(movesEmp, movesPeriod, movesMonth);
+                if (key === "tasks" && movesEmp) void refreshMovesTasks(movesEmp);
               }}
               items={[
                 { key: "pay", label: "Ödeme", icon: "cash" },
                 { key: "puantaj", label: "Puantaj", icon: "calendar" },
                 { key: "location", label: "Konum", icon: "location" },
+                { key: "tasks", label: "Görevler", icon: "clipboard-outline" },
               ]}
             />
-            {movesTab !== "puantaj" ? (
+            {movesTab !== "puantaj" && movesTab !== "tasks" ? (
               <>
             <Row style={{ flexWrap: "wrap", gap: 8 }}>
               {(["30d", "month", "all"] as PayMovesPeriod[]).map((key) => (
@@ -2119,6 +2190,8 @@ export function PersonnelScreen() {
                 : payMovesPeriodHint(filterPayMoves(moves, movesPeriod, new Date(), movesMonth).length, moves.length, movesPeriod)}
             </Muted>
               </>
+            ) : movesTab === "tasks" ? (
+              <Muted testID="emp-task-moves-count">{taskMovesHint(taskMoves.length)}</Muted>
             ) : null}
           </View>
         )}
@@ -2130,6 +2203,43 @@ export function PersonnelScreen() {
             initialMonth={movesMonth}
             onLeaveYearChanged={() => { void load(); }}
           />
+        ) : movesTab === "tasks" ? (
+          <>
+            {!taskMoves.length ? <Muted testID="emp-task-moves-empty">Atanmış görev yok.</Muted> : null}
+            {taskMoves.map((row) => (
+              <Card key={row.id || row.title} testID={`emp-task-move-${row.id || row.title}`}>
+                <Text style={{ fontWeight: "800", color: row.done ? colors.primaryHover : colors.indigo }}>{row.title || "Görev"}</Text>
+                <Muted>{taskMoveLine(row)}</Muted>
+                {taskMoveDetail(row) ? <Muted>{taskMoveDetail(row)}</Muted> : null}
+                {taskMoveCanMutate(row, canEdit) ? (
+                  <Row style={{ gap: 12, marginTop: 6 }}>
+                    <Pressable
+                      testID={`emp-task-move-edit-${row.id}`}
+                      onPress={() => setTaskEdit({
+                        id: row.id,
+                        title: row.title || "",
+                        due_date: (row.due_date || "").slice(0, 10),
+                        duration_days: row.duration_days != null ? Number(row.duration_days) : undefined,
+                        done: !!row.done,
+                        kind: row.kind,
+                      })}
+                    >
+                      <Text style={{ color: colors.indigo, fontWeight: "800" }}>Düzenle</Text>
+                    </Pressable>
+                    <Pressable
+                      testID={`emp-task-move-delete-${row.id}`}
+                      onPress={() => {
+                        const ask = taskMoveDeleteConfirm(row);
+                        confirmAction(ask.title, ask.message, () => { void deleteMovesTask(row); }, "Sil");
+                      }}
+                    >
+                      <Text style={{ color: colors.danger, fontWeight: "800" }}>Sil</Text>
+                    </Pressable>
+                  </Row>
+                ) : null}
+              </Card>
+            ))}
+          </>
         ) : movesTab === "location" ? (
           <>
             {locMovesBusy ? <Muted>Yükleniyor…</Muted> : null}
@@ -2404,6 +2514,52 @@ export function PersonnelScreen() {
           color={colors.indigo}
           loading={busy}
           onPress={saveMovesOvertimeEdit}
+        />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!taskEdit}
+        title="Görevi düzenle"
+        subtitle={taskEdit?.kind === "office" ? "İç görev" : "Dış görev"}
+        onClose={() => setTaskEdit(null)}
+        testID="emp-task-edit-modal"
+      >
+        <Field
+          label="Başlık"
+          testID="emp-task-edit-title"
+          value={taskEdit?.title || ""}
+          onChangeText={(value) => setTaskEdit((prev) => (prev ? { ...prev, title: value } : prev))}
+        />
+        <Field
+          label="Bitiş tarihi"
+          testID="emp-task-edit-due"
+          value={(taskEdit?.due_date || "").slice(0, 10)}
+          onChangeText={(value) => setTaskEdit((prev) => (prev ? { ...prev, due_date: value } : prev))}
+          placeholder="YYYY-AA-GG"
+        />
+        {taskEdit?.kind !== "office" ? (
+          <Field
+            label="Süre (gün)"
+            testID="emp-task-edit-days"
+            value={taskEdit?.duration_days != null ? String(taskEdit.duration_days) : ""}
+            onChangeText={(value) => setTaskEdit((prev) => (prev ? { ...prev, duration_days: Number(value) || 0 } : prev))}
+            keyboardType="number-pad"
+          />
+        ) : null}
+        <Pressable
+          testID="emp-task-edit-done"
+          onPress={() => setTaskEdit((prev) => (prev ? { ...prev, done: !prev.done } : prev))}
+          style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6 }}
+        >
+          <Ionicons name={taskEdit?.done ? "checkbox" : "square-outline"} size={20} color={colors.indigo} />
+          <Text style={{ fontWeight: "700", color: colors.text }}>Tamamlandı</Text>
+        </Pressable>
+        <PrimaryButton
+          title="Kaydet"
+          testID="emp-task-edit-save"
+          color={colors.indigo}
+          loading={busy}
+          onPress={saveMovesTask}
         />
       </B2BSheet>
 

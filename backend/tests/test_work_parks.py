@@ -19,6 +19,9 @@ from work_parks import (
     office_task_types_for_company,
     remove_office_task,
     remove_project_task,
+    patch_office_task,
+    patch_project_task,
+    task_patch_fields,
     station_names_from_parks,
     zone_names_from_list,
 )
@@ -93,6 +96,27 @@ def test_mark_office_task_done():
     missing, none = mark_office_task_done(tasks, "other")
     assert none is None
     assert missing[0]["id"] == "ot_kesim"
+
+
+def test_patch_office_and_project_task():
+    emp = {"_id": "e1", "full_name": "Ali"}
+    row = office_task_row(emp, {"id": "cnc", "name": "CNC"}, "eski", "ot_1")
+    fields = task_patch_fields({"title": "yeni başlık", "due_date": "2026-10-12", "done": True})
+    assert fields["title"] == "yeni başlık"
+    assert fields["due_date"] == "2026-10-12"
+    assert fields["done"] is True
+    kept, found = patch_office_task([row], "ot_1", fields)
+    assert found["title"] == "yeni başlık"
+    assert found["done"] is True
+    assert kept[0]["due_date"] == "2026-10-12"
+    rows = [
+        {"id": "t1", "assignee_id": "e1", "title": "Keşif", "done": False},
+        {"id": "t1", "assignee_id": "e2", "title": "Başka", "done": False},
+    ]
+    upd, hit = patch_project_task(rows, "t1", "e1", {"title": "Keşif 2", "duration_days": 3})
+    assert hit["title"] == "Keşif 2"
+    assert hit["duration_days"] == 3
+    assert upd[1]["title"] == "Başka"
 
 
 def test_remove_done_task_and_trash_doc():

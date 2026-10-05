@@ -177,5 +177,6 @@ export function movesSheetTitle(tab: string): string {
   if (tab === "location") return "Konum hareketleri";
   if (tab === "puantaj") return "Personel puantajı";
   if (tab === "overtime") return "Mesai hareketleri";
+  if (tab === "tasks") return "Atanan görevler";
   return "Ödeme hareketleri";
 }

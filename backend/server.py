@@ -16131,6 +16131,93 @@ async def _find_assigned_project(company_id: str, emp_id: str, task_id: str):
     return None, None
 
 
+@api_router.put("/personnel/employees/{emp_id}/tasks/{task_id}")
+async def update_employee_assigned_task(emp_id: str, task_id: str, req: Dict[str, Any] = Body(default=None)):
+    """Hareketler → Görevler: atanan görevi düzenle (başlık, bitiş, süre, tamamlandı)."""
+    import work_parks as wp
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    fields = wp.task_patch_fields(req or {})
+    if not fields:
+        raise HTTPException(status_code=400, detail="Güncellenecek alan yok.")
+    now = datetime.now(timezone.utc).isoformat()
+    office, found = wp.patch_office_task(emp.get("office_tasks") or [], task_id, fields)
+    if found:
+        patch: Dict[str, Any] = {"office_tasks": office, "updated_at": now}
+        if fields.get("done") is True:
+            duty = wp.clear_duty_if_task(emp.get("active_duty"), task_id)
+            if duty is None:
+                patch["active_duty"] = None
+        await db.employees.update_one({"_id": emp_id}, {"$set": patch})
+        return {
+            "status": "success",
+            "message": "Görev güncellendi.",
+            "task": wp.office_assignment_view(found),
+        }
+    proj, _task = await _find_assigned_project(emp.get("company_id"), emp_id, task_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Görev bulunamadı.")
+    updated, found = wp.patch_project_task(proj.get("tasks") or [], task_id, emp_id, fields)
+    if not found:
+        raise HTTPException(status_code=404, detail="Görev bulunamadı.")
+    await db.projects.update_one({"_id": proj["_id"]}, {"$set": {"tasks": updated, "updated_at": now}})
+    if fields.get("done") is True:
+        duty = wp.clear_duty_if_task(emp.get("active_duty"), task_id)
+        if duty is None:
+            await db.employees.update_one({"_id": emp_id}, {"$set": {"active_duty": None, "updated_at": now}})
+    return {
+        "status": "success",
+        "message": "Görev güncellendi.",
+        "task": attendance.assignment_from_project({**proj, "tasks": updated}, found),
+    }
+
+
+@api_router.delete("/personnel/employees/{emp_id}/tasks/{task_id}")
+async def delete_employee_assigned_task(emp_id: str, task_id: str):
+    """Hareketler → Görevler: atanan görevi çöp kutusuna taşı (açık veya tamamlanan)."""
+    import work_parks as wp
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    now = datetime.now(timezone.utc).isoformat()
+    office, found = wp.remove_office_task(emp.get("office_tasks") or [], task_id)
+    if found:
+        doc = wp.assigned_task_trash_doc(emp, found, source="office")
+        await trash.stash(
+            "assigned_tasks",
+            doc,
+            "assigned_task",
+            wp.assigned_task_trash_label(emp, found),
+            note="Personel hareketleri · görev silindi",
+        )
+        patch: Dict[str, Any] = {"office_tasks": office, "updated_at": now}
+        duty = wp.clear_duty_if_task(emp.get("active_duty"), task_id)
+        if duty is None:
+            patch["active_duty"] = None
+        await db.employees.update_one({"_id": emp_id}, {"$set": patch})
+        return {"status": "success", "message": "Görev çöp kutusuna taşındı.", "task_id": task_id}
+    proj, task = await _find_assigned_project(emp.get("company_id"), emp_id, task_id)
+    if not proj or not task:
+        raise HTTPException(status_code=404, detail="Görev bulunamadı.")
+    kept, found = wp.remove_project_task(proj.get("tasks") or [], task_id, emp_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Görev bulunamadı.")
+    doc = wp.assigned_task_trash_doc(emp, found, source="project", project=proj)
+    await trash.stash(
+        "assigned_tasks",
+        doc,
+        "assigned_task",
+        wp.assigned_task_trash_label(emp, found),
+        note=f"Personel hareketleri · {proj.get('project_number') or proj.get('name') or ''}".strip(),
+    )
+    await db.projects.update_one({"_id": proj["_id"]}, {"$set": {"tasks": kept, "updated_at": now}})
+    duty = wp.clear_duty_if_task(emp.get("active_duty"), task_id)
+    if duty is None:
+        await db.employees.update_one({"_id": emp_id}, {"$set": {"active_duty": None, "updated_at": now}})
+    return {"status": "success", "message": "Görev çöp kutusuna taşındı.", "task_id": task_id}
+
+
 @api_router.post("/personnel/me/tasks/{task_id}/photos")
 async def upload_my_task_photo(
     task_id: str,

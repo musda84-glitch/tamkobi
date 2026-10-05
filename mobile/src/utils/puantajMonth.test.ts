@@ -37,6 +37,7 @@ describe("puantajMonth", () => {
     expect(leaveYearArchiveLine({ year: 2025, used: 4, remaining: 10, carry_over: 2 })).toMatch(/2025/);
     expect(movesSheetTitle("puantaj")).toBe("Personel puantajı");
     expect(movesSheetTitle("location")).toBe("Konum hareketleri");
+    expect(movesSheetTitle("tasks")).toBe("Atanan görevler");
     const lateDay = {
       date: "2026-10-01",
       weekday: 3,
