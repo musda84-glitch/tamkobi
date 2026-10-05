@@ -1,10 +1,12 @@
 import asyncio
 import os
+import re
 import sys
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import expenses  # noqa: E402
 import tax_obligations  # noqa: E402
 
 
@@ -16,7 +18,7 @@ class FakeCursor:
         return self
 
     async def to_list(self, n):
-        return list(self.rows[:n])
+        return [dict(x) for x in self.rows[:n]]
 
 
 class FakeCollection:
@@ -24,10 +26,18 @@ class FakeCollection:
         self.docs = []
 
     def _match(self, d, q):
-        return all(d.get(k) == v for k, v in (q or {}).items() if not isinstance(v, dict))
+        for k, v in (q or {}).items():
+            if isinstance(v, dict) and "$regex" in v:
+                flags = re.I if "i" in str(v.get("$options") or "") else 0
+                if not re.search(v["$regex"], str(d.get(k) or ""), flags):
+                    return False
+            elif d.get(k) != v:
+                return False
+        return True
 
     async def find_one(self, q=None, projection=None):
-        return next((d for d in self.docs if self._match(d, q)), None)
+        d = next((x for x in self.docs if self._match(x, q)), None)
+        return dict(d) if d else None
 
     def find(self, q=None, projection=None):
         return FakeCursor([d for d in self.docs if self._match(d, q)])
@@ -48,6 +58,9 @@ class FakeCollection:
     async def delete_one(self, q):
         self.docs[:] = [d for d in self.docs if not self._match(d, q)]
 
+    async def count_documents(self, q=None):
+        return len([d for d in self.docs if self._match(d, q)])
+
 
 class FakeDb:
     def __init__(self):
@@ -58,6 +71,11 @@ class FakeDb:
         self.bank_connections = FakeCollection()
         self.partners = FakeCollection()
         self.partner_transactions = FakeCollection()
+        self.expenses = FakeCollection()
+        self.expense_categories = FakeCollection()
+        self.expense_budgets = FakeCollection()
+        self.contacts = FakeCollection()
+        self.employees = FakeCollection()
 
 
 def test_payroll_from_uploaded_bordro():
@@ -78,10 +96,24 @@ def test_month_summary_unpaid():
     assert s["unpaid_count"] == 1 and s["unpaid_total"] == 100 and s["paid_total"] == 40
 
 
-def test_import_and_pay():
+def test_enrich_documents():
+    docs = [{"id": "d1", "filename": "bordro.pdf"}]
+    obs = [
+        {"document_id": "d1", "amount": 100, "payment_status": "unpaid"},
+        {"document_id": "d1", "amount": 40, "payment_status": "paid"},
+    ]
+    enriched = tax_obligations.enrich_documents(docs, obs)
+    assert enriched[0]["obligation_count"] == 2
+    assert enriched[0]["unpaid_count"] == 1
+    assert enriched[0]["unpaid_total"] == 100
+    assert enriched[0]["total"] == 140
+
+
+def test_import_creates_expense_and_pay_as_masraf():
     db = FakeDb()
     tax_obligations.init(db)
-    db.bank_accounts.docs.append({"_id": "acc1", "account_name": "Kasa", "current_balance": 100000})
+    expenses.init(db)
+    db.bank_accounts.docs.append({"_id": "acc1", "account_name": "Kasa", "current_balance": 100000, "currency": "TRY"})
     draft = {
         "source_kind": "bordro",
         "period": "2026-09",
@@ -95,9 +127,44 @@ def test_import_and_pay():
     }
     imported = asyncio.run(tax_obligations.import_tax_doc({"company_id": "c1", "draft": draft}))
     assert len(imported["obligations"]) == 2
+    assert imported["document"]["filename"] == "matek bordro 2026-09.pdf"
+    assert len(db.expenses.docs) == 2
+    assert db.expenses.docs[0]["category"] == expenses.TAX_CATEGORY
+    assert db.expenses.docs[0]["source"] == "tax_obligation"
+    assert db.expenses.docs[0]["vat_rate"] == 0
+    assert imported["obligations"][0]["expense_id"]
     oid = imported["obligations"][0]["id"]
-    with patch("tax_obligations.assert_manual_allowed", new_callable=AsyncMock):
+    with patch("expenses.assert_manual_allowed", new_callable=AsyncMock):
         paid = asyncio.run(tax_obligations.pay_tax_obligation(oid, {"account_id": "acc1"}))
     assert paid["payment_status"] == "paid"
+    assert paid["expense_number"]
     assert db.bank_accounts.docs[0]["current_balance"] == 100000 - 58500
-    assert db.bank_transactions.docs[0]["source"] == "tax_obligation"
+    assert db.bank_transactions.docs[0]["source"] == "expense"
+    assert db.bank_transactions.docs[0]["category"].startswith("Masraf:")
+    assert db.expenses.docs[0]["payment_status"] == "paid"
+
+    listed = asyncio.run(tax_obligations.list_tax_obligations(company_id="c1", month="2026-09"))
+    assert len(listed["documents"]) == 1
+    assert listed["documents"][0]["obligation_count"] == 2
+    assert listed["documents"][0]["unpaid_count"] == 1
+
+
+def test_delete_document_removes_unpaid():
+    db = FakeDb()
+    tax_obligations.init(db)
+    expenses.init(db)
+    draft = {
+        "source_kind": "tahakkuk",
+        "period": "2026-09",
+        "filename": "kdv.pdf",
+        "obligations": [
+            {"kind": "kdv", "title": "KDV", "amount": 1000, "period": "2026-09", "due_date": "2026-10-26"},
+        ],
+    }
+    imported = asyncio.run(tax_obligations.import_tax_doc({"company_id": "c1", "draft": draft}))
+    doc_id = imported["document"]["id"]
+    out = asyncio.run(tax_obligations.delete_tax_document(doc_id))
+    assert out["deleted_obligations"] == 1
+    assert db.tax_documents.docs == []
+    assert db.tax_obligations.docs == []
+    assert db.expenses.docs == []
