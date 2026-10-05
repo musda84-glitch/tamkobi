@@ -92,8 +92,8 @@ MODULE_HELP = {
     "/mesai": "Puantaj, giriş-çıkış, fazla mesai. Benim Sayfam (/personelim) de bu yetkiye bağlıdır.",
     "/communication": "SMS, e-posta, WhatsApp Business merkezleri.",
     "/support": "Destek talepleri, ekler, yönetim paneli erişim ve silme onayı.",
-    "/ai-advisor": "AI finans danışmanı, PDF/Excel akıllı aktarım.",
-    "/accountant": "Mali müşavir paneli ve beyanname özetleri.",
+    "/ai-advisor": "AI finans danışmanı (sohbet ve nakit tahmini). Fatura, fiş, çek ve ekstre AI aktarımı ilgili modül yetkisiyle çalışır.",
+    "/accountant": "Mali müşavir paneli, KDV özeti ve AI ile evrak yükleme.",
     "/settings": "Firma ayarları, kullanıcı/rol, entegrasyonlar (yalnızca yöneticiler).",
     "/trash": "Silinen kayıtlar; 30 gün içinde geri alma.",
 }
@@ -290,6 +290,8 @@ FORCE_SYSTEM_PERMISSIONS = {
 
 # API path prefix -> module key (longest prefix wins)
 API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production", "/production"), ("/api/invoices", "/invoices"), ("/api/einvoice", "/invoices"), ("/api/gib", "/invoices"),
+                  ("/api/ai/invoice-extract", "/invoices"), ("/api/ai/expense-extract", "/expenses"), ("/api/ai/receipt-extract", "/expenses"), ("/api/ai/cheque-extract", "/cheques"),
+                  ("/api/ai/order-extract", "/orders"), ("/api/ai/product-extract", "/stock"), ("/api/ai/production-advisor", "/production"), ("/api/ai/production-summary", "/production"),
                   ("/api/contacts", "/contacts"), ("/api/installments", "/installments"), ("/api/reports", "/reports"), ("/api/banking", "/banking"), ("/api/expenses", "/expenses"), ("/api/loans", "/loans"), ("/api/cheques", "/cheques"), ("/api/products", "/stock"),
                   ("/api/purchase-orders", "/purchase-orders"), ("/api/warehouses/stock-counts", "/sayim"), ("/api/warehouses", "/warehouses"), ("/api/quotes", "/quotes"), ("/api/projects", "/projects"), ("/api/surveys", "/surveys"), ("/api/integrations/ecommerce", "/ecommerce"),
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/order-picks", "/sevk"), ("/api/orders", "/orders"), ("/api/vehicles", "/vehicles"), ("/api/pos", "/hizli-satis"), ("/api/stock-lots", "/stock"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
@@ -444,6 +446,30 @@ def module_for_path(path: str) -> Optional[str]:
     return best[1] if best else None
 
 
+def is_accountant_evrak_ai_path(path: str, method: str = "POST") -> bool:
+    """Mali müşavir paneli: fatura/fiş/çek/ekstre AI yükleme (danışman view olsa da)."""
+    p = str(path or "")
+    m = str(method or "POST").upper()
+    if m not in ("POST", "PUT", "PATCH"):
+        return False
+    if p.startswith("/api/ai/invoice-extract"):
+        return True
+    if p.startswith("/api/ai/expense-extract"):
+        return True
+    if p.startswith("/api/ai/receipt-extract"):
+        return True
+    if p.startswith("/api/ai/cheque-extract"):
+        return True
+    if p.startswith("/api/loans/extract"):
+        return True
+    if p.startswith("/api/banking/") and "import-statement" in p:
+        return True
+    stripped = p.rstrip("/")
+    if m == "POST" and stripped in ("/api/expenses", "/api/cheques"):
+        return True
+    return False
+
+
 def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], method: str = "POST") -> bool:
     """POST/PUT/PATCH: edit veya delete; DELETE (ve toplu silme): yalnızca delete. Atölye tablet işlemlerinde view de yeterli."""
     if not module:
@@ -470,6 +496,9 @@ def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], me
             return True
         # Üretim edit yetkisi olanlar da atölye iş emirlerini işletebilir
         return level_allows(perms.get("/production", "none"), "edit")
+    # Mali müşavir paneli: evrak AI yükleme (fatura/fiş/çek/ekstre) /ai-advisor gerektirmez.
+    if need == "edit" and is_accountant_evrak_ai_path(path, method_u) and level_allows(perms.get("/accountant", "none"), "edit"):
+        return True
     return False
 
 

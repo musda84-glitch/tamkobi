@@ -61,6 +61,7 @@ from seed_data import seed_all_data, seed_partners, seed_shopfloor_pins
 from seed_data import seed_all_data, seed_partners
 import demo
 from ai_service import get_financial_ai_advice, get_production_ai_advice, extract_invoice_from_text, extract_orders_from_text as ai_service_extract_orders, extract_b2b_cart_from_text as ai_service_extract_b2b_cart, extract_products_from_text as ai_service_extract_products, record_last_test as ai_record_last_test
+from invoice_status import is_cancelled_invoice
 from cheque_extract import extract_cheque_file, public_cheque_match, session_token_from_headers
 from expense_extract import extract_expense_file, public_expense_match
 from receipt_extract import extract_receipt_file
@@ -6374,7 +6375,7 @@ async def list_invoices(company_id: Optional[str] = "comp_nexus_main_01", type: 
     if project_id:
         query["project_id"] = project_id
     if not include_cancelled:
-        query["status"] = {"$ne": "cancelled"}
+        query["status"] = {"$nin": ["cancelled", "canceled", "void"]}
     invoices = await db.invoices.find(query).sort("created_at", -1).to_list(1000)
     return clean_docs(invoices)
 
@@ -10810,6 +10811,7 @@ async def accountant_summary(company_id: Optional[str] = "comp_nexus_main_01", m
         db.bank_transactions.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"type": 1, "amount": 1}).to_list(5000),
         db.payrolls.find({"company_id": company_id, "period": month}, {"gross_salary": 1, "net_salary": 1, "total_employer_cost": 1}).to_list(500),
     )
+    invs = [i for i in invs if not is_cancelled_invoice(i)]
     sales = [i for i in invs if i.get("invoice_type") == "sales"]
     purchases = [i for i in invs if i.get("invoice_type") == "purchase"]
     by_vat = {}
@@ -10838,6 +10840,7 @@ async def accountant_export(company_id: Optional[str] = "comp_nexus_main_01", mo
     if kind == "invoices":
         w.writerow(["Belge No", "Tarih", "Tür", "E-Belge", "Cari", "VKN", "Matrah", "KDV", "Toplam", "Ödeme", "GİB"])
         invs = await db.invoices.find({"company_id": company_id, "issue_date": {"$regex": f"^{month}"}}).sort("issue_date", 1).to_list(5000)
+        invs = [i for i in invs if not is_cancelled_invoice(i)]
         cids = list({i.get("contact_id") for i in invs if i.get("contact_id")})
         cmap = {}
         if cids:

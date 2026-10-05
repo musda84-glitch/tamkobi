@@ -70,6 +70,12 @@ class TestParseRange:
         with pytest.raises(HTTPException):
             edoc_backup.parse_range("nope", "2026-09-01")
 
+    def test_invoice_query_skips_cancelled(self):
+        import edoc_backup
+        q = edoc_backup.invoice_query("comp_1", "2026-10-01", "2026-10-31")
+        assert q["invoice_type"] == {"$ne": "dispatch"}
+        assert q["status"] == {"$nin": ["cancelled", "canceled", "void"]}
+
     def test_reminder_due(self):
         import edoc_backup
         now = datetime(2026, 9, 8, tzinfo=timezone.utc)

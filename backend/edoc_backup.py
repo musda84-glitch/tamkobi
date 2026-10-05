@@ -50,7 +50,12 @@ def parse_range(date_from: str, date_to: str) -> Tuple[str, str, int]:
 
 def invoice_query(company_id: str, date_from: str, date_to: str) -> Dict[str, Any]:
     nxt = (date.fromisoformat(date_to) + timedelta(days=1)).isoformat()
-    return {"company_id": company_id, "issue_date": {"$gte": date_from, "$lt": nxt}, "invoice_type": {"$ne": "dispatch"}}
+    return {
+        "company_id": company_id,
+        "issue_date": {"$gte": date_from, "$lt": nxt},
+        "invoice_type": {"$ne": "dispatch"},
+        "status": {"$nin": ["cancelled", "canceled", "void"]},
+    }
 
 
 def _unique(used: set, name: str) -> str:
@@ -71,8 +76,9 @@ def _unique(used: set, name: str) -> str:
 
 
 async def _list_invoices(company_id: str, date_from: str, date_to: str) -> List[dict]:
+    from invoice_status import is_cancelled_invoice
     rows = await _db.invoices.find(invoice_query(company_id, date_from, date_to)).sort("issue_date", 1).to_list(MAX_DOCS)
-    return rows
+    return [r for r in rows if not is_cancelled_invoice(r)]
 
 
 def _counts(invs: List[dict]) -> Dict[str, int]:

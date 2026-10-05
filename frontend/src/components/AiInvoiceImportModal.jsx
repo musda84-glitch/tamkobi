@@ -1,5 +1,5 @@
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { X, Sparkles, Upload, Loader2, FileText, Plus, Trash2, CheckCircle2 } from "lucide-react";
@@ -19,11 +19,12 @@ function normalizeDraft(raw) {
   return { ...raw, items };
 }
 
-export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, invoiceType = "purchase" }) => {
+export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, invoiceType = "purchase", initialFile = null }) => {
   const isSales = invoiceType === "sales";
   const { extractLabel, configured, enabled, ready: aiReady, lastTest, decryptFailed, loading: aiLoading } = useAiStatus();
   const ref = useRef(null);
   const suppressBackdropUntil = useRef(0);
+  const autoStarted = useRef(false);
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -97,6 +98,13 @@ export const AiInvoiceImportModal = ({ companyId, contacts, onClose, onDone, inv
       resetFileInput();
     }
   };
+
+  useEffect(() => {
+    if (!initialFile || autoStarted.current) return;
+    autoStarted.current = true;
+    upload(initialFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFile]);
 
   const openFilePicker = (e) => {
     e.preventDefault();

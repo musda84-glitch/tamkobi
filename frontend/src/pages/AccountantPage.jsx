@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Calculator, Download, FileText, Landmark, Users, Receipt, Archive, Loader2 } from "lucide-react";
 import { API_URL, BACKEND_URL, useAuth } from "../context/AuthContext";
 import { fmtDate, formatTrAmount } from "../utils/money";
+import { AiAccountantDocsPanel } from "../components/AiAccountantDocsPanel";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const MAX_BACKUP_DAYS = 62;
@@ -31,8 +32,9 @@ export default function AccountantPage() {
   const [dateTo, setDateTo] = useState(bounds.to);
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
+  const loadSummary = () => axios.get(`${API_URL}/accountant/summary?company_id=${companyId}&month=${month}`).then((r) => setD(r.data)).catch(() => toast.error("Özet yüklenemedi."));
   useEffect(() => { setDateFrom(bounds.from); setDateTo(bounds.to); }, [bounds.from, bounds.to]);
-  useEffect(() => { axios.get(`${API_URL}/accountant/summary?company_id=${companyId}&month=${month}`).then((r) => setD(r.data)).catch(() => toast.error("Özet yüklenemedi.")); }, [companyId, month]);
+  useEffect(() => { loadSummary(); }, [companyId, month]);
   const days = spanDays(dateFrom, dateTo);
   const rangeOk = days >= 1 && days <= MAX_BACKUP_DAYS;
   useEffect(() => {
@@ -70,6 +72,7 @@ export default function AccountantPage() {
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Mali Müşavir Paneli</h1><p className="text-xs sm:text-sm text-slate-500">Aylık KDV, fatura, kasa/banka ve bordro özeti — muhasebeciye tek tıkla dışa aktar</p></div>
         <div className="flex items-center gap-2"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="bg-white border rounded-lg p-2 text-xs" data-testid="acc-month-input" /><button onClick={() => exp("invoices")} className="flex items-center gap-1 px-3 py-2 bg-slate-900 text-white rounded-xl text-xs font-semibold" data-testid="acc-export-invoices"><Download className="w-3.5 h-3.5" /> Faturalar CSV</button><button onClick={() => exp("transactions")} className="flex items-center gap-1 px-3 py-2 border rounded-xl text-xs font-semibold" data-testid="acc-export-tx"><Download className="w-3.5 h-3.5" /> Kasa/Banka CSV</button></div>
       </div>
+      <AiAccountantDocsPanel companyId={companyId} onImported={loadSummary} />
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="acc-edoc-backup">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
