@@ -101,3 +101,22 @@ export const balanceSentence = (amount, currency = "TRY") => {
   const formatted = formatTrAmount(Number(amount));
   return `Güncel bakiyeniz: ${formatted} ${moneySuffix(currency)}`;
 };
+
+/** B2B sipariş önizleme: fiyatsız yazdırma. */
+export const b2bPreviewHidePrices = (mode) => mode === "plain" || mode === true || mode === "no-price";
+
+export const b2bPreviewLineQtyText = (it = {}) => {
+  const qty = it.quantity == null || it.quantity === "" ? "" : String(it.quantity);
+  const unit = String(it.unit || "Adet").trim() || "Adet";
+  return `${qty} ${unit}`.trim();
+};
+
+export const b2bPreviewLineMeta = (it = {}, hidePrices = false, formatAmount = formatTrAmount) => {
+  const qty = b2bPreviewLineQtyText(it);
+  if (b2bPreviewHidePrices(hidePrices) || it.unit_price == null) return qty;
+  return `${qty} · ${formatAmount(it.unit_price)} ₺`;
+};
+
+export const b2bPreviewPrintLabel = (hidePrices = false) => (
+  b2bPreviewHidePrices(hidePrices) ? "Fiyatsız yazdır" : "Yazdır"
+);
