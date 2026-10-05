@@ -1,4 +1,4 @@
-import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, cartQtyByProduct, draftLineNote, formatCartSheetLine, formatCartSheetMeta, heldCartsAsOrders, holdActiveCart, lineKey, normalizeNote, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart } from "./b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, cartHeading, cartKalemLabel, cartLinesQtyTotal, cartQtyByProduct, draftLineNote, formatCartSheetLine, formatCartSheetMeta, heldCartsAsOrders, holdActiveCart, lineKey, normalizeNote, parseStoredCart, productCartQty, resumeHeldCart, setCartLineQty, type B2BCart } from "./b2bCart";
 
 describe("b2bCart", () => {
   test("same product + different notes stay separate lines", () => {
@@ -16,6 +16,9 @@ describe("b2bCart", () => {
     expect(Object.keys(cart)).toHaveLength(1);
     expect(cart[lineKey("prod_01", "aynı not")].qty).toBe(4);
     expect(cartCount(cart)).toBe(4);
+    expect(cartKalemLabel(cartCount(cart))).toBe("4 kalem");
+    expect(cartHeading([{ qty: 1 }, { qty: 3 }])).toBe("Sepet (4 kalem)");
+    expect(cartLinesQtyTotal([{ qty: 1 }, { qty: 3 }])).toBe(4);
   });
 
   test("empty and missing notes share one line", () => {
