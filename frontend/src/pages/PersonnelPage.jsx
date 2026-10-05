@@ -643,7 +643,7 @@ export default function PersonnelPage() {
       {tab === "bonus" && <BonusPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} accounts={bankAccounts} onChanged={loadPersonnelData} />}
       {tab === "payroll" && (<>
       {/* Employees Cards — yatay şerit; alt bölüm Genişlet/Daralt */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3" data-testid="employee-cards-grid">
         {pagedEmployees.map((emp) => {
             const empKey = empIdOf(emp);
             const empReqs = requestsFor(emp);
