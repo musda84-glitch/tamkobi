@@ -39,6 +39,15 @@ def contact_matches_text(contact_name: str, counterparty: str = "", description:
     return False
 
 
+def match_actor_fields(user: Optional[Dict[str, Any]] = None) -> Dict[str, Optional[str]]:
+    """Eşleştirmeyi yapan kullanıcı (yoksa Sistem)."""
+    if user is None:
+        return {"matched_by_id": None, "matched_by_name": "Sistem"}
+    uid = user.get("id") or user.get("_id")
+    name = (user.get("name") or user.get("email") or "").strip() or "Kullanıcı"
+    return {"matched_by_id": str(uid) if uid else None, "matched_by_name": name}
+
+
 def pick_auto_match_source(
     rule: Optional[Dict[str, Any]],
     prior: Optional[Dict[str, Any]],

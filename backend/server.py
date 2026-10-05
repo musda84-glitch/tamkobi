@@ -8495,7 +8495,7 @@ async def create_bank_connection(conn: BankConnection):
     return {**_enrich_connection(doc, acc), "test_result": bank_providers.public_test_result(test)}
 
 @api_router.put("/banking/connections/{conn_id}")
-async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
+async def update_bank_connection(conn_id: str, updated: Dict[str, Any], request: Request):
     allowed = {k: v for k, v in updated.items() if k in {
         "client_id", "client_secret", "access_token", "refresh_token", "token_url",
         "api_key", "private_key", "customer_number", "bank_account_number", "base_url", "mode",
@@ -8531,7 +8531,7 @@ async def update_bank_connection(conn_id: str, updated: Dict[str, Any]):
     just_enabled = bool(allowed.get("auto_match")) and not bool(prev.get("auto_match"))
     auto_matched = 0
     if just_enabled and doc.get("linked_account_id"):
-        auto_matched, _ = await _auto_match_pending_for_account(doc["company_id"], doc["linked_account_id"])
+        auto_matched, _ = await _auto_match_pending_for_account(doc["company_id"], doc["linked_account_id"], actor=await _optional_actor(request))
         if auto_matched:
             await db.bank_connections.update_one({"_id": conn_id}, {"$inc": {"auto_matched_count": auto_matched}})
             doc = await db.bank_connections.find_one({"_id": conn_id})
@@ -8590,7 +8590,7 @@ async def _suggest_contact(company_id: str, counterparty: str, description: str)
     return None
 
 @api_router.post("/banking/connections/{conn_id}/sync")
-async def sync_bank_connection(conn_id: str, days: int = 7):
+async def sync_bank_connection(conn_id: str, request: Request, days: int = 7):
     doc = await db.bank_connections.find_one({"_id": conn_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Bağlantı bulunamadı.")
@@ -8659,7 +8659,7 @@ async def sync_bank_connection(conn_id: str, days: int = 7):
             "source": "bank_sync",
             "match_status": "unmatched",
         }).to_list(1000)
-        auto_matched, _ = await _auto_process_bank_txs(doc["company_id"], pending, via="auto", use_cari=True)
+        auto_matched, _ = await _auto_process_bank_txs(doc["company_id"], pending, via="auto", use_cari=True, actor=await _optional_actor(request))
     now = datetime.now(timezone.utc).isoformat()
     conn_set: Dict[str, Any] = {
         "status": "simulated" if result["simulated"] else "connected",
@@ -8757,8 +8757,18 @@ async def _learn_rule(company_id: str, description: str, contact_id: Optional[st
          "$setOnInsert": {"_id": str(uuid.uuid4()), "company_id": company_id, "pattern": pattern, "created_at": datetime.now(timezone.utc).isoformat()}},
         upsert=True)
 
-async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual") -> dict:
-    update = {"match_status": "matched", "matched_via": via, "matched_at": datetime.now(timezone.utc).isoformat()}
+async def _optional_actor(request: Optional[Request] = None):
+    if request is None:
+        return None
+    try:
+        return await get_current_user(request)
+    except HTTPException:
+        return None
+
+
+async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None) -> dict:
+    from bank_auto_match import match_actor_fields
+    update = {"match_status": "matched", "matched_via": via, "matched_at": datetime.now(timezone.utc).isoformat(), **match_actor_fields(actor)}
     if category:
         update["category"] = category
     amount = tx.get("amount", 0)
@@ -8844,7 +8854,7 @@ async def _unmatch(tx: dict) -> dict:
                 await db.bank_transactions.delete_one({"_id": counter["_id"]})
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {
         "$set": {"match_status": "unmatched", "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme"},
-        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "matched_via": "", "matched_at": ""}})
+        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": ""}})
     return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
 
 async def _prior_match_from_history(company_id: str, description: str, skip_id: Optional[str] = None):
@@ -8867,7 +8877,7 @@ async def _prior_match_from_history(company_id: str, description: str, skip_id: 
     return None
 
 
-async def _auto_match_by_rules(company_id: str, txs: list, via: str = "rule"):
+async def _auto_match_by_rules(company_id: str, txs: list, via: str = "rule", actor: Optional[dict] = None):
     from bank_auto_match import pick_auto_match_source
     matched, details = 0, []
     for tx in txs:
@@ -8893,7 +8903,7 @@ async def _auto_match_by_rules(company_id: str, txs: list, via: str = "rule"):
         learn = source != "rule"
         applied_via = via if source == "rule" else source
         try:
-            await _apply_match(tx, contact_id, None, category, learn=learn, target_account_id=target_id, via=applied_via)
+            await _apply_match(tx, contact_id, None, category, learn=learn, target_account_id=target_id, via=applied_via, actor=actor)
         except HTTPException:
             continue
         if source == "rule" and payload.get("_id"):
@@ -8944,11 +8954,11 @@ async def _prior_match_lookup(company_id: str) -> Dict[str, dict]:
     return out
 
 
-async def _auto_process_bank_txs(company_id: str, txs: list, *, via: str = "auto", use_cari: bool = True) -> tuple:
+async def _auto_process_bank_txs(company_id: str, txs: list, *, via: str = "auto", use_cari: bool = True, actor: Optional[dict] = None) -> tuple:
     """Öğrenilen kurallar → önceki eşleşmeler → cari adı önerisi sırasıyla otomatik işle."""
     if not txs:
         return 0, []
-    matched, details = await _auto_match_by_rules(company_id, txs, via=via if via != "auto" else "auto")
+    matched, details = await _auto_match_by_rules(company_id, txs, via=via if via != "auto" else "auto", actor=actor)
     done = {d["tx_id"] for d in details}
     prior = await _prior_match_lookup(company_id) if use_cari else {}
     for tx in txs:
@@ -8966,6 +8976,7 @@ async def _auto_process_bank_txs(company_id: str, txs: list, *, via: str = "auto
                     learn=True,
                     target_account_id=prior_hit.get("target_account_id"),
                     via="auto",
+                    actor=actor,
                 )
             except HTTPException:
                 pass
@@ -8992,7 +9003,7 @@ async def _auto_process_bank_txs(company_id: str, txs: list, *, via: str = "auto
         if not contact_id:
             continue
         try:
-            await _apply_match(tx, contact_id, None, None, learn=True, via="suggestion")
+            await _apply_match(tx, contact_id, None, None, learn=True, via="suggestion", actor=actor)
         except HTTPException:
             continue
         matched += 1
@@ -9006,21 +9017,22 @@ async def _auto_process_bank_txs(company_id: str, txs: list, *, via: str = "auto
     return matched, details
 
 
-async def _auto_match_pending_for_account(company_id: str, account_id: Optional[str] = None) -> tuple:
+async def _auto_match_pending_for_account(company_id: str, account_id: Optional[str] = None, actor: Optional[dict] = None) -> tuple:
     q = {"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}
     if account_id:
         q["account_id"] = account_id
     txs = await db.bank_transactions.find(q).to_list(1000)
-    return await _auto_process_bank_txs(company_id, txs, via="auto", use_cari=True)
+    return await _auto_process_bank_txs(company_id, txs, via="auto", use_cari=True, actor=actor)
 
 @api_router.post("/banking/transactions/{tx_id}/match")
-async def match_bank_transaction(tx_id: str, req: Dict[str, Any]):
+async def match_bank_transaction(request: Request, tx_id: str, req: Dict[str, Any]):
     tx = await db.bank_transactions.find_one({"_id": tx_id})
     if not tx:
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
     if tx.get("match_status") == "matched":
         raise HTTPException(status_code=400, detail="Bu hareket zaten eşleştirilmiş.")
-    return await _apply_match(tx, req.get("contact_id") or None, req.get("invoice_id") or None, req.get("category") or None, learn=bool(req.get("learn", True)), target_account_id=req.get("target_account_id") or None)
+    actor = await _optional_actor(request)
+    return await _apply_match(tx, req.get("contact_id") or None, req.get("invoice_id") or None, req.get("category") or None, learn=bool(req.get("learn", True)), target_account_id=req.get("target_account_id") or None, actor=actor)
 
 @api_router.post("/banking/transactions/{tx_id}/unmatch")
 async def unmatch_bank_transaction(tx_id: str):
@@ -9037,13 +9049,14 @@ async def list_matched_transactions(company_id: Optional[str] = "comp_nexus_main
     return clean_docs(txs)
 
 @api_router.post("/banking/transactions/auto-match")
-async def auto_match_transactions(company_id: Optional[str] = "comp_nexus_main_01", use_suggestions: bool = True, account_id: Optional[str] = None):
+async def auto_match_transactions(request: Request, company_id: Optional[str] = "comp_nexus_main_01", use_suggestions: bool = True, account_id: Optional[str] = None):
     """Bekleyen banka hareketlerini otomatik işle: kurallar, önceki eşleşmeler ve cari adı önerisi."""
     q = {"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}
     if account_id:
         q["account_id"] = account_id
     txs = await db.bank_transactions.find(q).to_list(1000)
-    matched, details = await _auto_process_bank_txs(company_id, txs, via="auto", use_cari=bool(use_suggestions))
+    actor = await _optional_actor(request)
+    matched, details = await _auto_process_bank_txs(company_id, txs, via="auto", use_cari=bool(use_suggestions), actor=actor)
     skipped = max(0, len(txs) - matched)
     return {"status": "success", "matched": matched, "skipped": skipped, "details": details,
             "message": f"{matched} hareket önceki eşleşme veya cari adına göre otomatik işlendi, {skipped} hareket manuel bekliyor."}

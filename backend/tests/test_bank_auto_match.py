@@ -1,4 +1,8 @@
-from bank_auto_match import contact_matches_text, match_pattern, pick_auto_match_source
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from bank_auto_match import contact_matches_text, match_actor_fields, match_pattern, pick_auto_match_source
 
 
 def test_match_pattern_strips_noise():
@@ -23,3 +27,13 @@ def test_pick_prefers_rule_then_history_then_cari():
     assert pick_auto_match_source(None, prior, sug) == ("history", prior)
     assert pick_auto_match_source(None, None, sug) == ("cari", sug)
     assert pick_auto_match_source(None, None, None) == (None, None)
+
+
+def test_match_actor_fields_user_and_system():
+    assert match_actor_fields(None) == {"matched_by_id": None, "matched_by_name": "Sistem"}
+    assert match_actor_fields({"id": "u1", "name": "Ayşe Yılmaz"}) == {
+        "matched_by_id": "u1",
+        "matched_by_name": "Ayşe Yılmaz",
+    }
+    assert match_actor_fields({"_id": "u2", "email": "admin@nexus.com"})["matched_by_name"] == "admin@nexus.com"
+    assert match_actor_fields({})["matched_by_name"] == "Kullanıcı"
