@@ -59,13 +59,23 @@ const CardStatementImportBody = ({ account, contacts = [], initialFile = null, o
   }, [contacts]);
 
   useEffect(() => {
-    if (!list.length && companyId) {
-      axios.get(`${API_URL}/contacts?company_id=${companyId}`).then((r) => setContactList(asContactList(r.data))).catch(() => {});
-    }
-    axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`).then((r) => {
-      const src = Array.isArray(r.data) ? r.data : [];
-      setCategories(src.map((c) => (typeof c === "string" ? c : c?.name)).filter(Boolean));
-    }).catch(() => {});
+    let cancelled = false;
+    const load = async () => {
+      try {
+        if (!list.length && companyId) {
+          const r = await axios.get(`${API_URL}/contacts?company_id=${companyId}`);
+          if (!cancelled) setContactList(asContactList(r?.data));
+        }
+      } catch { /* ignore */ }
+      try {
+        const r = await axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`);
+        if (cancelled) return;
+        const src = Array.isArray(r?.data) ? r.data : [];
+        setCategories(src.map((c) => (typeof c === "string" ? c : c?.name)).filter(Boolean));
+      } catch { /* ignore */ }
+    };
+    load();
+    return () => { cancelled = true; };
   }, [companyId, list.length]);
 
   const analyze = async (picked) => {
