@@ -651,7 +651,7 @@ export default function PersonnelPage() {
             return (
           <div
             key={empKey}
-            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_420px]" : "[contain-intrinsic-size:auto_220px]"}`}
+            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_280px]"}`}
             data-testid={`employee-card-${emp.tc_kimlik}`}
             data-expanded={cardOpen ? "1" : "0"}
           >

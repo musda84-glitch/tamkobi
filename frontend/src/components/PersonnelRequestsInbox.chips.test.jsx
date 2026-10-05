@@ -10,7 +10,7 @@ jest.mock("axios", () => {
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
 jest.mock("../context/AuthContext", () => ({ API_URL: "/api" }));
 jest.mock("../utils/dataRefresh", () => ({ useDataRefresh: () => ({}) }));
-jest.mock("react-router-dom", () => ({ useNavigate: () => jest.fn() }));
+jest.mock("react-router-dom", () => ({ useNavigate: () => jest.fn() }), { virtual: true });
 
 let host;
 
