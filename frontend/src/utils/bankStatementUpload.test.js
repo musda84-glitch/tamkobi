@@ -1,8 +1,12 @@
 import {
+  asContactList,
   canUploadBankStatement,
   defaultStatementKind,
   isCardAccount,
+  isStatementFile,
+  resolveStatementFile,
   statementAmountPositive,
+  statementRowsFromPayload,
 } from "./bankStatementUpload";
 
 describe("bankStatementUpload", () => {
@@ -28,5 +32,29 @@ describe("bankStatementUpload", () => {
     expect(statementAmountPositive(-25, false)).toBe(false);
     expect(statementAmountPositive(-50, true)).toBe(true);
     expect(statementAmountPositive(80, true)).toBe(false);
+  });
+
+  it("does not treat a click event as the uploaded file", () => {
+    const pdf = new File(["ekstre"], "hareket.pdf", { type: "application/pdf" });
+    const clickEvent = { type: "click", target: {}, preventDefault() {} };
+    expect(isStatementFile(clickEvent)).toBe(false);
+    expect(resolveStatementFile(clickEvent, pdf)).toBe(pdf);
+    expect(resolveStatementFile(pdf, null)).toBe(pdf);
+    expect(resolveStatementFile(clickEvent, null)).toBe(null);
+  });
+
+  it("normalizes AI payloads missing statement or transactions so render cannot throw", () => {
+    expect(statementRowsFromPayload(null, false)).toEqual({ statement: {}, rows: [], filename: "", mode: "" });
+    expect(statementRowsFromPayload("ok", false).statement).toEqual({});
+    const parsed = statementRowsFromPayload({ transactions: [{ date: "2026-01-02", description: "EFT", amount: -40 }] }, false);
+    expect(parsed.statement.bank).toBeUndefined();
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows[0].kind).toBe("islem");
+    expect(statementRowsFromPayload({ statement: null, transactions: { length: 3 } }, false).rows).toEqual([]);
+  });
+
+  it("keeps contacts as an array even when the parent passes null", () => {
+    expect(asContactList(null)).toEqual([]);
+    expect(asContactList([{ id: "c1" }])).toEqual([{ id: "c1" }]);
   });
 });
