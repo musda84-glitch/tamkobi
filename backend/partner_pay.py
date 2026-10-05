@@ -253,7 +253,12 @@ async def accrue_monthly_salaries(
             continue
         slots = salary_slots(p, today, explicit_period=explicit, force_start=force_start)
         if not slots:
-            skipped.append({"partner_id": p["_id"], "partner_name": p.get("name"), "reason": "not_due"})
+            start = parse_iso_date(p.get("salary_start_date"))
+            due_date = start.isoformat() if start and start > today else None
+            skipped.append({
+                "partner_id": p["_id"], "partner_name": p.get("name"),
+                "reason": "not_due", "due_date": due_date,
+            })
             continue
         for per, due in slots:
             exists = await db.partner_transactions.find_one({
@@ -279,8 +284,11 @@ async def accrue_monthly_salaries(
                 "date": due.isoformat(),
             })
     n = len(posted)
+    scheduled = next((s.get("due_date") for s in skipped if s.get("reason") == "not_due" and s.get("due_date")), None)
     if n:
         message = f"{n} maaş kaydı ortak alacağına yazıldı."
+    elif scheduled:
+        message = f"Kaydedildi. Hak ediş tarihinde ({scheduled}) alacağa yazılacak."
     else:
         message = f"{salary_period_label(explicit or period_of(today))} için yazılacak yeni maaş yok."
     return {
@@ -290,6 +298,7 @@ async def accrue_monthly_salaries(
         "posted": posted,
         "skipped": skipped,
         "posted_count": n,
+        "scheduled_date": scheduled,
         "message": message,
     }
 

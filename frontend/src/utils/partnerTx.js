@@ -46,6 +46,20 @@ export function todayIsoDate() {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
+/** Kaydet sonrası: vadesi gelmemişse tarihi söyle, gelmişse alacağa yazıldı. */
+export function partnerSalarySaveMessage(accrual, startDate) {
+  if (Number(accrual?.posted_count) > 0) return accrual.message || "Aylık maaş alacağa yazıldı.";
+  const due = accrual?.scheduled_date
+    || (accrual?.skipped || []).find((s) => s.reason === "not_due")?.due_date
+    || (!accrual ? startDate : "");
+  if (due) {
+    const [y, m, d] = String(due).slice(0, 10).split("-");
+    const label = d && m && y ? `${d}.${m}.${y}` : due;
+    return `Kaydedildi. ${label} tarihinde alacağa yazılacak.`;
+  }
+  return accrual?.message || "Aylık maaş kaydedildi.";
+}
+
 /** Kartta tutar + her ayın hak ediş günü. */
 export function partnerSalaryCardText(partner, formatAmount) {
   const n = Number(partner?.monthly_salary) || 0;
