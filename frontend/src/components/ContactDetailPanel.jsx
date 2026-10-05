@@ -464,7 +464,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   };
 
   const deleteInvoice = async (inv) => {
-    const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
+    const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
+    const kind = isDisp ? (inv.status === "draft" ? "taslak irsaliye" : "irsaliye") : (inv.status === "draft" ? "taslak fatura" : "kağıt fatura");
     if (!window.confirm(`${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`)) return;
     try {
       const r = await axios.delete(`${API_URL}/invoices/${inv.id}`);
@@ -476,7 +477,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   };
 
   const cancelInvoice = async (inv) => {
-    if (!window.confirm(`${inv.invoice_number} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`)) return;
+    const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
+    if (!window.confirm(isDisp
+      ? `${inv.invoice_number} numaralı e-irsaliye iptal edilsin mi?\nKayıt iptal edilir; bağlı sipariş irsaliye bağı kopar.`
+      : `${inv.invoice_number} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`)) return;
     try {
       const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/cancel`, {});
       toast.success(r.data.message || "Fatura iptal edildi.");
@@ -623,10 +627,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                           <button onClick={() => sendToGib(inv, inv.e_type)} disabled={busy === inv.id} className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition disabled:opacity-40" title={`${E_TYPE_TR[inv.e_type] || inv.e_type} olarak kes — başka tür için ⋮`} data-testid={`detail-gib-btn-${inv.invoice_number}`}>{busy === inv.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}</button>
                         ) : busy === inv.id ? <Loader2 className="w-4 h-4 animate-spin text-slate-400" /> : <span className="w-7 h-7" aria-hidden="true" />}
                         {canCancelInvoice(inv) ? (
-                          <button onClick={() => cancelInvoice(inv)} className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition" title="Faturayı iptal et" data-testid={`detail-inv-cancel-${inv.invoice_number}`}><XCircle className="w-4 h-4" /></button>
+                          <button onClick={() => cancelInvoice(inv)} className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition" title={inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch" ? "İrsaliyeyi iptal et" : "Faturayı iptal et"} data-testid={`detail-inv-cancel-${inv.invoice_number}`}><XCircle className="w-4 h-4" /></button>
                         ) : null}
                         {canDeleteInvoice(inv) ? (
-                          <button onClick={() => deleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : "Kağıt faturayı sil"} data-testid={`detail-inv-delete-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => deleteInvoice(inv)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") ? "İrsaliyeyi sil" : "Kağıt faturayı sil"} data-testid={`detail-inv-delete-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
                         ) : null}
 <button type="button" onClick={(e) => openInvCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title={incoming ? "Gelen e-fatura işlemleri" : "Fatura kesim & diğer işlemler"} data-testid={`detail-inv-more-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                       </div>

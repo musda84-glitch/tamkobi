@@ -6982,9 +6982,17 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
     return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
 
 def _invoice_delete_block_reason(inv: dict) -> Optional[str]:
-    """None = silinebilir. Taslak ve kağıt faturalar silinebilir; GİB e-belgeleri silinemez."""
+    """None = silinebilir. Taslak, kağıt ve GİB'e gitmemiş irsaliye silinebilir; GİB e-belgeleri silinemez."""
     if not inv:
         return "Fatura bulunamadı."
+    if inv.get("status") == "cancelled":
+        return "İptal edilmiş belge silinmez."
+    if _is_dispatch_doc(inv):
+        if inv.get("direction") == "incoming" or inv.get("source") == "edoc_inbox" or inv.get("edoc_id"):
+            return "Gelen e-İrsaliye silinemez."
+        if _doc_is_gib_issued(inv):
+            return "GİB'e iletilmiş e-İrsaliye silinemez. İptal kullanın."
+        return None
     if inv.get("status") == "draft":
         return None
     if inv.get("e_type") == "paper":
@@ -6992,6 +7000,36 @@ def _invoice_delete_block_reason(inv: dict) -> Optional[str]:
             return "Ödemesi olan kağıt fatura silinemez. Önce tahsilatı / ödemeyi geri alın."
         return None
     return "Kesilmiş e-fatura / e-arşiv silinemez. Muhasebe bütünlüğü için iptal ya da iade faturası düzenleyin."
+
+
+def _is_dispatch_doc(inv: dict) -> bool:
+    return bool(inv) and (inv.get("invoice_type") == "dispatch" or inv.get("e_type") == "e_dispatch")
+
+
+def _doc_is_gib_issued(inv: dict) -> bool:
+    """GİB'e iletilmiş / kuyruğa alınmış e-belge (hata durumu hariç)."""
+    if not inv:
+        return False
+    gs = str(inv.get("gib_status") or "")
+    if str(inv.get("einvoice_state") or "") == "error" or re.match(r"^\s*hata\s*:", gs, re.I):
+        return False
+    if inv.get("einvoice_state") in ("sent", "queued"):
+        return True
+    if inv.get("gib_uuid") or inv.get("gib_tracking_id"):
+        return True
+    return str(inv.get("gib_status_code") or "").strip() in ("1300", "1220", "1200")
+
+
+async def _unlink_dispatch_refs(dispatch_id: str):
+    """Sipariş ve faturadaki irsaliye bağını kopar."""
+    await db.orders.update_many(
+        {"dispatch_id": dispatch_id},
+        {"$unset": {"dispatch_id": "", "dispatch_number": ""}},
+    )
+    await db.invoices.update_many(
+        {"dispatch_id": dispatch_id, "invoice_type": {"$ne": "dispatch"}},
+        {"$unset": {"dispatch_id": "", "dispatch_number": ""}},
+    )
 
 
 async def _unlink_orders_from_invoice(invoice_id: str):
@@ -7015,6 +7053,8 @@ async def _soft_delete_invoice_doc(inv: dict, note: str = "") -> str:
     if applied:
         await _reverse_invoice_effects(inv)
     await _unlink_orders_from_invoice(invoice_id)
+    if _is_dispatch_doc(inv):
+        await _unlink_dispatch_refs(invoice_id)
     await _cancel_promissory_for_query({"invoice_id": invoice_id})
     inst_docs = await db.installments.find({"invoice_id": invoice_id}).to_list(500)
     related = [{"collection": "installments", "docs": inst_docs}] if inst_docs else None
@@ -7035,7 +7075,10 @@ async def delete_invoice(invoice_id: str):
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     is_draft = inv.get("status") == "draft"
-    kind = "Taslak fatura" if is_draft else "Kağıt fatura"
+    if _is_dispatch_doc(inv):
+        kind = "Taslak irsaliye" if is_draft else "İrsaliye"
+    else:
+        kind = "Taslak fatura" if is_draft else "Kağıt fatura"
     tid = await _soft_delete_invoice_doc(inv, note=kind)
     return {
         "status": "success",
@@ -7067,7 +7110,11 @@ def _invoice_cancel_block_reason(inv: dict) -> Optional[str]:
         return "Fatura zaten iptal edilmiş."
     if inv.get("status") == "draft":
         return "Taslak fatura iptal edilmez; silin (çöp kutusu)."
-    if inv.get("invoice_type") == "dispatch" or inv.get("e_type") in ("paper", "expense_slip", "e_dispatch"):
+    if _is_dispatch_doc(inv) or inv.get("e_type") == "e_dispatch":
+        if not _doc_is_gib_issued(inv):
+            return "GİB'e gitmemiş irsaliye iptal edilmez; silin."
+        return None
+    if inv.get("e_type") in ("paper", "expense_slip"):
         return "Yalnızca e-Fatura / e-Arşiv iptal edilebilir. Kağıt fatura için silme kullanın."
     if not _invoice_is_electronic(inv):
         return "Yalnızca e-Fatura / e-Arşiv iptal edilebilir. Kağıt fatura için silme kullanın."
@@ -7088,6 +7135,8 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None):
     if applied:
         await _reverse_invoice_effects(inv)
     await _unlink_orders_from_invoice(invoice_id)
+    if _is_dispatch_doc(inv):
+        await _unlink_dispatch_refs(invoice_id)
     await _cancel_promissory_for_query({"invoice_id": invoice_id})
     # Ödenmiş / bekleyen taksit planını iptal say; sipariş silinebilsin diye fatura bağını temizle.
     await db.installments.update_many(
@@ -7115,11 +7164,15 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None):
     elif inv.get("e_type") and inv.get("e_type") != "paper":
         updates["einvoice_state"] = "cancelled"
     await db.invoices.update_one({"_id": invoice_id}, {"$set": updates})
-    msg = f"{inv.get('invoice_number')} iptal edildi; cari/stok etkileri geri alındı, bağlı siparişler serbest bırakıldı."
-    if inv.get("e_type") not in (None, "paper") and not _is_incoming_purchase_invoice(inv):
-        msg += " GİB e-belge iptali ayrı süreçtir; gerekirse entegratörden iptal/iade düzenleyin."
-    if float(inv.get("paid_amount") or 0) > 0.01:
-        msg += " Tahsilat/ödeme kayıtları kasada durur; cari bakiyede alacak/borç olarak kalabilir."
+    if _is_dispatch_doc(inv):
+        msg = f"{inv.get('invoice_number')} irsaliyesi iptal edildi; bağlı sipariş irsaliye bağı koparıldı."
+        msg += " GİB e-İrsaliye iptali ayrı süreçtir; gerekirse entegratörden iptal düzenleyin."
+    else:
+        msg = f"{inv.get('invoice_number')} iptal edildi; cari/stok etkileri geri alındı, bağlı siparişler serbest bırakıldı."
+        if inv.get("e_type") not in (None, "paper") and not _is_incoming_purchase_invoice(inv):
+            msg += " GİB e-belge iptali ayrı süreçtir; gerekirse entegratörden iptal/iade düzenleyin."
+        if float(inv.get("paid_amount") or 0) > 0.01:
+            msg += " Tahsilat/ödeme kayıtları kasada durur; cari bakiyede alacak/borç olarak kalabilir."
     return {"status": "success", "message": msg}
 
 @api_router.post("/invoices/{invoice_id}/send-to-gib")

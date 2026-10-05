@@ -581,12 +581,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   }, [editParam]);
 
   const handleDeleteInvoice = async (inv) => {
-    const kind = inv.status === "draft" ? "taslak fatura" : "kağıt fatura";
+    const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
+    const kind = isDisp ? (inv.status === "draft" ? "taslak irsaliye" : "irsaliye") : (inv.status === "draft" ? "taslak fatura" : "kağıt fatura");
     if (!window.confirm(`${inv.invoice_number} numaralı ${kind} çöp kutusuna taşınsın mı?`)) return;
     try { const r = await axios.delete(`${API_URL}/invoices/${inv.id}`); toast.success(r.data.message); loadData(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
   const handleCancelInvoice = async (inv) => {
-    if (!window.confirm(`${inv.invoice_number} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`)) return;
+    const isDisp = inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch";
+    if (!window.confirm(isDisp
+      ? `${inv.invoice_number} numaralı e-irsaliye iptal edilsin mi?\nKayıt iptal edilir; bağlı sipariş irsaliye bağı kopar.`
+      : `${inv.invoice_number} numaralı e-fatura iptal edilsin mi?\nCari bakiyesi ve stok etkileri geri alınır; bağlı siparişler silinebilir hale gelir. İptal kaydı listeden gizlenir.`)) return;
     try {
       const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/cancel`, {});
       toast.success(r.data.message || "Fatura iptal edildi.");
@@ -1331,7 +1335,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                           <Eye className="w-4 h-4" />
                         </button>
                         {canDeleteInv && canDeleteInvoice(inv) ? (
-                          <button type="button" onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : "Kağıt faturayı sil"} data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
+                          <button type="button" onClick={() => handleDeleteInvoice(inv)} className="p-1.5 text-rose-600 hover:text-rose-800 hover:bg-rose-50 rounded-lg transition" title={inv.status === "draft" ? "Taslağı sil" : (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") ? "İrsaliyeyi sil" : "Kağıt faturayı sil"} data-testid={`delete-inv-btn-${inv.invoice_number}`}><Trash2 className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
                         {canEditInvoice(inv) ? (
                           <button
