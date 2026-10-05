@@ -6859,7 +6859,9 @@ async def _apply_lot_delta(item: dict, sign: float):
 
 
 async def _apply_invoice_effects(inv: dict):
-    """Onaylanan fatura: cari bakiyesi + (satışta) stok düşümü. Taslaklar için çağrılmaz."""
+    """Onaylanan fatura: cari bakiyesi + (satışta) stok düşümü. İrsaliye bakiyeye yazılmaz."""
+    if _is_dispatch_doc(inv):
+        return
     if inv.get("contact_id"):
         change = fx.try_amount(inv) if inv.get("invoice_type") == "sales" else -fx.try_amount(inv)
         await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
@@ -6872,7 +6874,9 @@ async def _apply_invoice_effects(inv: dict):
 
 
 async def _reverse_invoice_effects(inv: dict):
-    """Gelen e-fatura reddi: cariyi geri al; satış stok düşümünü veya gelen alış stok girişini tersine çevir."""
+    """Gelen e-fatura reddi: cariyi geri al; satış stok düşümünü veya gelen alış stok girişini tersine çevir. İrsaliye bakiyeye yazılmaz."""
+    if _is_dispatch_doc(inv):
+        return
     if inv.get("contact_id"):
         change = -float(inv.get("grand_total", 0)) if inv.get("invoice_type") == "sales" else float(inv.get("grand_total", 0))
         await db.contacts.update_one({"_id": inv["contact_id"]}, {"$inc": {"balance": change}})
@@ -7193,8 +7197,10 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
     if inv.get("status") == "draft" and not inv.get("effects_applied"):
-        await _apply_invoice_effects(inv)
-        await db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
+        # İrsaliye bakiyeye yazılmaz; effects_applied işaretleme de yapılmaz.
+        if not _is_dispatch_doc(inv):
+            await _apply_invoice_effects(inv)
+            await db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
     return await e_invoice.issue_invoice(invoice_id, e_type=req.get("e_type"), scenario=req.get("scenario"))
 
 
