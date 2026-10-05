@@ -175,6 +175,54 @@ export function puantajWageDecisionPath(day) {
   return id ? `/personnel/attendance/${id}/yevmiye-decision` : "";
 }
 
+export const PUANTAJ_EDIT_STATUSES = [
+  { value: "present", label: "Çalıştı" },
+  { value: "absent", label: "Devamsız" },
+  { value: "leave", label: "İzinli" },
+];
+
+export function puantajEditableStatus(status) {
+  if (status === "present" || status === "absent" || status === "leave") return status;
+  return "present";
+}
+
+export function puantajEditDraft(day) {
+  if (!day) return { date: "", status: "present", check_in: "", check_out: "", note: "" };
+  return {
+    date: day.date,
+    status: puantajEditableStatus(day.status),
+    check_in: day.check_in || "",
+    check_out: day.check_out || "",
+    note: day.note || "",
+  };
+}
+
+export function puantajEditValidate(form) {
+  if (!form?.date) return "Tarih gerekli.";
+  const status = puantajEditableStatus(form.status);
+  if (status === "present" && !String(form.check_in || "").trim()) return "Giriş saati gerekli.";
+  return null;
+}
+
+/** POST /personnel/attendance gövdesi — yönetici gün kaydı oluşturur/günceller. */
+export function puantajEditPayload(employeeId, form) {
+  const status = puantajEditableStatus(form?.status);
+  const body = {
+    employee_id: employeeId,
+    date: form?.date,
+    status,
+    note: String(form?.note || ""),
+  };
+  if (status === "present") {
+    body.check_in = String(form?.check_in || "").trim() || null;
+    body.check_out = String(form?.check_out || "").trim() || null;
+  } else {
+    body.check_in = null;
+    body.check_out = null;
+  }
+  return body;
+}
+
 export function leaveYearArchiveLine(row) {
   if (!row) return "";
   const y = row.year || "—";

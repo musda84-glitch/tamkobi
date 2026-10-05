@@ -133,6 +133,61 @@ export function puantajWageDecisionPath(day?: PuantajDay | null): string {
   return id ? `/personnel/attendance/${id}/yevmiye-decision` : "";
 }
 
+export const PUANTAJ_EDIT_STATUSES = [
+  { value: "present", label: "Çalıştı" },
+  { value: "absent", label: "Devamsız" },
+  { value: "leave", label: "İzinli" },
+] as const;
+
+export type PuantajEditForm = {
+  date: string;
+  status: string;
+  check_in: string;
+  check_out: string;
+  note: string;
+};
+
+export function puantajEditableStatus(status?: string | null): "present" | "absent" | "leave" {
+  if (status === "present" || status === "absent" || status === "leave") return status;
+  return "present";
+}
+
+export function puantajEditDraft(day?: PuantajDay | null): PuantajEditForm {
+  if (!day) return { date: "", status: "present", check_in: "", check_out: "", note: "" };
+  return {
+    date: day.date,
+    status: puantajEditableStatus(day.status),
+    check_in: day.check_in || "",
+    check_out: day.check_out || "",
+    note: day.note || "",
+  };
+}
+
+export function puantajEditValidate(form?: PuantajEditForm | null): string | null {
+  if (!form?.date) return "Tarih gerekli.";
+  const status = puantajEditableStatus(form.status);
+  if (status === "present" && !String(form.check_in || "").trim()) return "Giriş saati gerekli.";
+  return null;
+}
+
+export function puantajEditPayload(employeeId: string, form?: PuantajEditForm | null): Record<string, string | null> {
+  const status = puantajEditableStatus(form?.status);
+  const body: Record<string, string | null> = {
+    employee_id: employeeId,
+    date: form?.date || "",
+    status,
+    note: String(form?.note || ""),
+  };
+  if (status === "present") {
+    body.check_in = String(form?.check_in || "").trim() || null;
+    body.check_out = String(form?.check_out || "").trim() || null;
+  } else {
+    body.check_in = null;
+    body.check_out = null;
+  }
+  return body;
+}
+
 export function leaveYearArchiveLine(row?: {
   year?: number | string;
   used?: number;

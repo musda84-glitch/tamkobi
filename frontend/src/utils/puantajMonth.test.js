@@ -5,6 +5,9 @@ import {
   leaveYearBalance,
   monthDateList,
   puantajDayLine,
+  puantajEditDraft,
+  puantajEditPayload,
+  puantajEditValidate,
   puantajStatusLabel,
   puantajWageAskCopy,
   puantajWageAskReason,
@@ -81,5 +84,29 @@ describe("puantajMonth", () => {
     expect(puantajWageDecisionPath(day)).toBe("/personnel/attendance/att-1/yevmiye-decision");
     expect(puantajWageCanAsk({ ...day, wage_adjustment_status: "approved" })).toBe(false);
     expect(puantajWageCanAsk({ ...day, attendance_id: null, wage_ask: false })).toBe(false);
+  });
+
+  test("edit draft and payload for day records", () => {
+    const empty = puantajEditDraft({ date: "2026-10-06", status: "empty", weekday: 1, weekday_label: "Sal", status_label: "Kayıt yok" });
+    expect(empty.status).toBe("present");
+    expect(puantajEditValidate(empty)).toBe("Giriş saati gerekli.");
+    const form = { ...empty, check_in: "09:00", check_out: "18:30", note: "düzeltme" };
+    expect(puantajEditValidate(form)).toBeNull();
+    expect(puantajEditPayload("e1", form)).toEqual({
+      employee_id: "e1",
+      date: "2026-10-06",
+      status: "present",
+      note: "düzeltme",
+      check_in: "09:00",
+      check_out: "18:30",
+    });
+    expect(puantajEditPayload("e1", { date: "2026-10-06", status: "absent", check_in: "09:00", check_out: "18:00", note: "" })).toEqual({
+      employee_id: "e1",
+      date: "2026-10-06",
+      status: "absent",
+      note: "",
+      check_in: null,
+      check_out: null,
+    });
   });
 });
