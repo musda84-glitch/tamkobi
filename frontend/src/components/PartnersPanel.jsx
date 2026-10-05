@@ -11,9 +11,10 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
+import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL } from "../utils/partnerTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
-const TX_LABEL = { capital_in: "Sermaye Girişi", withdrawal: "Para Çekişi", profit_share: "Kâr Payı" };
+const TX_LABEL = PARTNER_TX_LABEL;
 
 /** Filter partner ledger rows to one partner (or keep all when unselected). */
 export const filterPartnerTxs = (txs, partnerId) => {
@@ -178,11 +179,21 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const saveTx = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post(`${API_URL}/banking/partners/transactions`, { ...txForm, amount: Number(txForm.amount), account_id: txForm.account_id || firstAcc });
+      const ledger = isPartnerLedgerType(txForm.type);
+      const payload = {
+        ...txForm,
+        amount: Number(txForm.amount),
+        account_id: ledger ? null : (txForm.account_id || firstAcc),
+      };
+      if (!ledger && !payload.account_id) {
+        toast.error("Kasa veya banka hesabı seçin.");
+        return;
+      }
+      const res = await axios.post(`${API_URL}/banking/partners/transactions`, payload);
       if (res.data?.status === "pending_approval") {
         toast.success(res.data.message);
       } else {
-        toast.success(txForm.type === "capital_in" ? "Sermaye girişi kaydedildi." : "Para çekişi kaydedildi.");
+        toast.success(`${TX_LABEL[txForm.type] || "İşlem"} kaydedildi.`);
       }
       setModal(null); setTxForm({ ...txForm, amount: "", description: "" }); load(); await bumpCash();
     } catch (err) { toast.error(err.response?.data?.detail || "İşlem kaydedilemedi."); }
@@ -228,11 +239,11 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           <div className="p-2 rounded-xl bg-amber-50 text-amber-600"><Users className="w-5 h-5" /></div>
           <div>
             <h2 className="text-base font-bold text-slate-900">Ortaklar Hesabı</h2>
-            <p className="text-xs text-slate-500">Ortak bazlı sermaye giriş/çıkışı ve kâr payı dağıtımı (131/331)</p>
+            <p className="text-xs text-slate-500">Ortak bazlı para giriş/çıkış, borç-alacak fişi ve kâr payı dağıtımı (131/331)</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={openTxModal} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-tx-btn"><ArrowDownRight className="w-4 h-4" /> Para Koy / Çek</button>
+          <button onClick={openTxModal} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-tx-btn"><ArrowDownRight className="w-4 h-4" /> Para Giriş / Çıkış</button>
           <button onClick={openVirmanModal} className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-virman-btn"><ArrowLeftRight className="w-4 h-4" /> Virman</button>
           <button onClick={openProfitModal} className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="distribute-profit-btn"><PieChart className="w-4 h-4" /> Kâr Payı Dağıt</button>
           <button onClick={() => setModal("add")} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-partner-btn"><Plus className="w-4 h-4" /> Ortak Ekle</button>
@@ -349,16 +360,25 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       )}
 
       {modal === "tx" && (
-        <Modal title="Ortak Para Koy / Çek" onClose={() => setModal(null)} testId="partner-tx-modal">
+        <Modal title="Ortak Para Giriş / Çıkış" onClose={() => setModal(null)} testId="partner-tx-modal">
           <form onSubmit={saveTx} className="space-y-3 text-xs">
             <div><label className="block font-semibold mb-1">Ortak</label><select className={inputCls} value={txForm.partner_id} onChange={(e) => setTxForm({ ...txForm, partner_id: e.target.value })} data-testid="partner-tx-partner-select">{partners.map((p) => <option key={p.id} value={p.id}>{p.name} (%{p.share_percent})</option>)}</select></div>
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "capital_in" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "capital_in" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`} data-testid="partner-tx-type-in"><ArrowDownRight className="w-4 h-4" /> Para Koy</button>
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "withdrawal" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "withdrawal" ? "bg-rose-600 text-white border-rose-600" : "bg-white"}`} data-testid="partner-tx-type-out"><ArrowUpRight className="w-4 h-4" /> Para Çek</button>
+              <button type="button" onClick={() => setTxForm({ ...txForm, type: "credit", account_id: "" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "credit" ? "bg-emerald-700 text-white border-emerald-700" : "bg-white"}`} data-testid="partner-tx-type-credit" title="Kasa/bankaya dokunmadan ortak bakiyesini artırır">Alacaklandır</button>
+              <button type="button" onClick={() => setTxForm({ ...txForm, type: "debit", account_id: "" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "debit" ? "bg-rose-700 text-white border-rose-700" : "bg-white"}`} data-testid="partner-tx-type-debit" title="Kasa/bankaya dokunmadan ortak bakiyesini düşürür">Borçlandır</button>
             </div>
-            <div><label className="block font-semibold mb-1">{txForm.type === "capital_in" ? "Kasa / Banka Hesabı" : "Kasa / Banka / Kart"}</label><PaymentTargetSelect companyId={companyId} accounts={liveAccounts} value={txForm.account_id} onChange={(v) => setTxForm({ ...txForm, account_id: v })} testId="partner-tx-account-select" includePartners={false} collectableOnly={txForm.type === "capital_in"} disabled={accountsLoading} emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined} className={inputCls} /></div>
+            {isPartnerCashType(txForm.type) ? (
+              <div><label className="block font-semibold mb-1">{txForm.type === "capital_in" ? "Kasa / Banka Hesabı" : "Kasa / Banka / Kart"}</label><PaymentTargetSelect companyId={companyId} accounts={liveAccounts} value={txForm.account_id} onChange={(v) => setTxForm({ ...txForm, account_id: v })} testId="partner-tx-account-select" includePartners={false} collectableOnly={txForm.type === "capital_in"} disabled={accountsLoading} emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined} className={inputCls} /></div>
+            ) : (
+              <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2" data-testid="partner-tx-ledger-hint">
+                {txForm.type === "credit" ? "Alacak fişi ortak bakiyesini artırır (para girişi)." : "Borç fişi ortak bakiyesini düşürür (para çıkışı)." }
+                {" "}Kasa/banka bakiyesi değişmez. Firma politikası açıksa diğer yöneticinin onayı gerekir.
+              </p>
+            )}
             <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" className={`${inputCls} font-bold`} value={txForm.amount} onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })} required data-testid="partner-tx-amount-input" /></div>
-            <div><label className="block font-semibold mb-1">Açıklama</label><input className={inputCls} value={txForm.description} onChange={(e) => setTxForm({ ...txForm, description: e.target.value })} placeholder="Örn: Sermaye artırımı" /></div>
+            <div><label className="block font-semibold mb-1">Açıklama</label><input className={inputCls} value={txForm.description} onChange={(e) => setTxForm({ ...txForm, description: e.target.value })} placeholder={isPartnerLedgerType(txForm.type) ? "Örn: Açılış bakiyesi / düzeltme" : "Örn: Sermaye artırımı"} /></div>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold" data-testid="save-partner-tx-btn">İşlemi Kaydet</button></div>
           </form>
         </Modal>

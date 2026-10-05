@@ -10,7 +10,7 @@ import rbac
 
 KIND_LABELS = {
     "distribute_profit": "Kâr payı dağıtımı",
-    "partner_tx": "Ortak para koy / çek",
+    "partner_tx": "Ortak para koy / çek / borç-alacak",
     "virman": "Virman",
 }
 

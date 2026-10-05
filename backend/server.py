@@ -8088,7 +8088,11 @@ async def list_partner_transactions(company_id: Optional[str] = "comp_nexus_main
     txs = await db.partner_transactions.find(query).sort("created_at", -1).to_list(500)
     return clean_docs(txs)
 
-PARTNER_TX_LABELS = {"capital_in": "Ortak Sermaye Girişi", "withdrawal": "Ortak Para Çekişi", "profit_share": "Ortak Kâr Payı Ödemesi"}
+PARTNER_TX_LABELS = partner_pay.TX_LABELS
+PARTNER_CASH_TYPES = partner_pay.CASH_TYPES
+PARTNER_LEDGER_TYPES = partner_pay.LEDGER_TYPES
+PARTNER_MUTABLE_TYPES = partner_pay.MUTABLE_TYPES
+
 
 async def _post_partner_cash_movement(company_id: str, account_id: str, tx_type: str, amount: float, partner_name: str, description: str, date: str, partner_tx_id: Optional[str] = None):
     acc = await db.bank_accounts.find_one({"_id": account_id})
@@ -8115,15 +8119,15 @@ async def _post_partner_cash_movement(company_id: str, account_id: str, tx_type:
     return acc.get("account_name")
 
 async def _reverse_partner_tx(tx: dict):
-    """Undo balance + bank movement effects of a capital_in / withdrawal partner transaction."""
+    """Undo balance + bank movement effects of a partner transaction."""
     amount = float(tx.get("amount", 0))
-    if tx["type"] == "capital_in":
-        await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {"balance": -amount, "total_capital_in": -amount}})
-    elif tx["type"] == "withdrawal":
-        await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {"balance": amount, "total_withdrawn": -amount}})
-    elif tx["type"] == "profit_share":
+    t = tx.get("type")
+    if t in PARTNER_MUTABLE_TYPES:
+        inc = partner_pay.balance_inc(t, amount)
+        await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {k: -v for k, v in inc.items()}})
+    elif t == "profit_share":
         await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {"total_profit_share": -amount, **({"balance": amount} if tx.get("is_paid") else {})}})
-    if tx.get("account_id") and (tx["type"] != "profit_share" or tx.get("is_paid")):
+    if tx.get("account_id") and (t != "profit_share" or tx.get("is_paid")) and t in PARTNER_CASH_TYPES:
         bt = await db.bank_transactions.find_one({"partner_tx_id": tx["_id"]}) or await db.bank_transactions.find_one({"source": "partner", "account_id": tx["account_id"], "amount": amount, "date": tx.get("date"), "description": {"$regex": f"^{re.escape(tx.get('partner_name', ''))}"}})
         if bt:
             inflow = bt.get("type") == "inflow"
@@ -8137,17 +8141,24 @@ async def update_partner_transaction(tx_id: str, req: Dict[str, Any]):
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
     if tx["type"] == "profit_share":
         raise HTTPException(status_code=400, detail="Kâr payı kayıtları düzenlenemez; silip yeniden dağıtın.")
+    if tx["type"] not in PARTNER_MUTABLE_TYPES:
+        raise HTTPException(status_code=400, detail="Bu hareket türü düzenlenemez.")
     amount = float(req.get("amount", tx["amount"]))
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
     date = req.get("date") or tx.get("date")
     description = req.get("description") if req.get("description") is not None else tx.get("description")
-    account_id = req.get("account_id") or tx.get("account_id")
     await _reverse_partner_tx(tx)
-    account_name = await _post_partner_cash_movement(tx["company_id"], account_id, tx["type"], amount, tx["partner_name"], description, date, partner_tx_id=tx_id)
-    inc = {"balance": amount, "total_capital_in": amount} if tx["type"] == "capital_in" else {"balance": -amount, "total_withdrawn": amount}
-    await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": inc})
-    await db.partner_transactions.update_one({"_id": tx_id}, {"$set": {"amount": amount, "date": date, "description": description, "account_id": account_id, "account_name": account_name, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    patch = {"amount": amount, "date": date, "description": description, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if tx["type"] in PARTNER_LEDGER_TYPES:
+        account_name = "Ortaklar Hesabı"
+        patch.update({"account_id": None, "account_name": account_name})
+    else:
+        account_id = req.get("account_id") or tx.get("account_id")
+        account_name = await _post_partner_cash_movement(tx["company_id"], account_id, tx["type"], amount, tx["partner_name"], description, date, partner_tx_id=tx_id)
+        patch.update({"account_id": account_id, "account_name": account_name})
+    await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": partner_pay.balance_inc(tx["type"], amount)})
+    await db.partner_transactions.update_one({"_id": tx_id}, {"$set": patch})
     return clean_doc(await db.partner_transactions.find_one({"_id": tx_id}))
 
 @api_router.delete("/banking/partners/transactions/{tx_id}")
@@ -8164,21 +8175,27 @@ async def _execute_partner_tx(req: Dict[str, Any]):
     if not partner:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
     tx_type = req.get("type")
-    if tx_type not in ("capital_in", "withdrawal"):
+    if tx_type not in PARTNER_MUTABLE_TYPES:
         raise HTTPException(status_code=400, detail="Geçersiz işlem türü.")
     amount = float(req.get("amount", 0))
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
     date = req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     description = req.get("description") or PARTNER_TX_LABELS[tx_type]
+    account_id = req.get("account_id") if tx_type in PARTNER_CASH_TYPES else None
+    if tx_type in PARTNER_CASH_TYPES and not account_id:
+        raise HTTPException(status_code=400, detail="Para koy/çek için kasa veya banka hesabı seçin.")
     tx = PartnerTransaction(company_id=partner["company_id"], partner_id=partner["_id"], partner_name=partner["name"], type=tx_type,
-                            amount=amount, account_id=req.get("account_id"), description=description, date=date)
+                            amount=amount, account_id=account_id, description=description, date=date)
     doc = tx.to_mongo()
-    account_name = await _post_partner_cash_movement(partner["company_id"], req.get("account_id"), tx_type, amount, partner["name"], description, date, partner_tx_id=doc["_id"])
-    doc["account_name"] = account_name
+    if tx_type in PARTNER_LEDGER_TYPES:
+        doc["account_name"] = "Ortaklar Hesabı"
+        doc["account_id"] = None
+    else:
+        account_name = await _post_partner_cash_movement(partner["company_id"], account_id, tx_type, amount, partner["name"], description, date, partner_tx_id=doc["_id"])
+        doc["account_name"] = account_name
 
-    inc = {"balance": amount, "total_capital_in": amount} if tx_type == "capital_in" else {"balance": -amount, "total_withdrawn": amount}
-    await db.partners.update_one({"_id": partner["_id"]}, {"$inc": inc})
+    await db.partners.update_one({"_id": partner["_id"]}, {"$inc": partner_pay.balance_inc(tx_type, amount)})
     await db.partner_transactions.insert_one(doc)
     return clean_doc(doc)
 
@@ -8188,21 +8205,28 @@ async def create_partner_transaction(req: Dict[str, Any], request: Request):
     partner = await db.partners.find_one({"_id": req.get("partner_id")})
     if not partner:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
-    if req.get("type") not in ("capital_in", "withdrawal"):
-        raise HTTPException(status_code=400, detail="Geçersiz işlem türü.")
+    tx_type = req.get("type")
+    if tx_type not in PARTNER_MUTABLE_TYPES:
+        raise HTTPException(status_code=400, detail="Geçersiz işlem türü. Para koy/çek veya borç/alacak fişi seçin.")
     if float(req.get("amount") or 0) <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+    if tx_type in PARTNER_CASH_TYPES and not req.get("account_id"):
+        raise HTTPException(status_code=400, detail="Para koy/çek için kasa veya banka hesabı seçin.")
+    # Borç/alacak fişi kasa bakiyesine dokunmaz; payload'da hesap bırakma.
+    payload = dict(req)
+    if tx_type in PARTNER_LEDGER_TYPES:
+        payload["account_id"] = None
     user = await get_current_user(request)
-    label = PARTNER_TX_LABELS.get(req.get("type"), req.get("type") or "İşlem")
+    label = PARTNER_TX_LABELS.get(tx_type, tx_type or "İşlem")
     pending = await cash_approval.maybe_queue(
-        db, company_id=partner["company_id"], kind="partner_tx", payload=req,
-        account_ids=[req.get("account_id")],
+        db, company_id=partner["company_id"], kind="partner_tx", payload=payload,
+        account_ids=[payload.get("account_id")] if payload.get("account_id") else [],
         summary=f"{partner.get('name')}: {label} {float(req.get('amount') or 0):,.2f} ₺",
         user=user,
     )
     if pending:
         return pending
-    return await _execute_partner_tx(req)
+    return await _execute_partner_tx(payload)
 
 
 async def _execute_distribute_profit(req: Dict[str, Any]):

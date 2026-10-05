@@ -161,6 +161,39 @@ def test_partner_tx_reject_does_not_move_money(admin, accountant, policy_on):
     assert round(acc_after["current_balance"] - before, 2) == 0
 
 
+def test_partner_ledger_debit_credit_queues(admin, accountant, policy_on):
+    """Ortak borç/alacak fişi kasa bakiyesine dokunmaz; onay bekler."""
+    partner = admin.get(f"{API}/banking/partners", params={"company_id": CID}, timeout=20).json()[0]
+    before = float(partner.get("balance") or 0)
+    r = admin.post(
+        f"{API}/banking/partners/transactions",
+        json={"partner_id": partner["id"], "type": "credit", "amount": 40, "description": "ledger-credit-test"},
+        timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "pending_approval"
+    rid = r.json()["request_id"]
+    mid = next(p for p in admin.get(f"{API}/banking/partners", params={"company_id": CID}, timeout=20).json() if p["id"] == partner["id"])
+    assert round(float(mid.get("balance") or 0) - before, 2) == 0
+    ok = accountant.post(f"{API}/banking/cash-approvals/{rid}/approve", timeout=20)
+    assert ok.status_code == 200, ok.text
+    after = next(p for p in admin.get(f"{API}/banking/partners", params={"company_id": CID}, timeout=20).json() if p["id"] == partner["id"])
+    assert round(float(after.get("balance") or 0) - before, 2) == 40
+
+    r2 = admin.post(
+        f"{API}/banking/partners/transactions",
+        json={"partner_id": partner["id"], "type": "debit", "amount": 15, "description": "ledger-debit-test"},
+        timeout=20,
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["status"] == "pending_approval"
+    rid2 = r2.json()["request_id"]
+    ok2 = accountant.post(f"{API}/banking/cash-approvals/{rid2}/approve", timeout=20)
+    assert ok2.status_code == 200, ok2.text
+    final = next(p for p in admin.get(f"{API}/banking/partners", params={"company_id": CID}, timeout=20).json() if p["id"] == partner["id"])
+    assert round(float(final.get("balance") or 0) - before, 2) == 25
+
+
 def test_virman_queues_then_approves(admin, accountant, policy_on):
     accs = [a for a in admin.get(f"{API}/banking/accounts", params={"company_id": CID}, timeout=20).json() if not a.get("is_integrated")]
     src, dst = accs[0], accs[1]

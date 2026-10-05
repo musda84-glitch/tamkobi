@@ -358,7 +358,7 @@ class PartnerTransaction(BaseDocument):
     company_id: str
     partner_id: str
     partner_name: str
-    type: str  # capital_in, withdrawal, profit_share
+    type: str  # capital_in, withdrawal, profit_share, credit, debit
     amount: float
     account_id: Optional[str] = None
     account_name: Optional[str] = None
