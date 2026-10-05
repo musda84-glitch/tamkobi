@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { FileUp, Loader2, Upload, Wallet, X } from "lucide-react";
+import { FileUp, Loader2, Sparkles, Upload, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
+import { useAiStatus } from "../hooks/useAiStatus";
+import { compressImageFile } from "../utils/compressImage";
 import { formatTrAmount } from "../utils/money";
 import { notifyDataChanged } from "../utils/dataRefresh";
 import { useEscape } from "../utils/useEscape";
@@ -11,9 +13,9 @@ import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { guessTaxSourceKind, TAX_SOURCE_KINDS, taxKindLabel, taxSourceById } from "../utils/taxObligations";
 
 const fmt = (n) => `${formatTrAmount(n || 0)} ₺`;
-const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-amber-500 outline-none";
 
 export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChanged }) {
+  const { extractLabel, ready: aiReady } = useAiStatus();
   const [kind, setKind] = useState("bordro");
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(taxPayables || { unpaid_count: 0, unpaid_total: 0 });
@@ -43,12 +45,13 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
     setKind(nextKind || kind);
     setBusy(true);
     try {
+      const compact = file.type?.startsWith("image/") ? await compressImageFile(file) : file;
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", compact);
       const r = await axios.post(
         `${API_URL}/tax-obligations/extract?company_id=${encodeURIComponent(companyId)}&source_kind=${encodeURIComponent(nextKind || "")}`,
         fd,
-        { timeout: 120000 },
+        { timeout: 180000 },
       );
       const d = r.data?.draft;
       if (!d?.obligations?.length) {
@@ -56,7 +59,7 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
         return;
       }
       setDraft({ ...d, selected: d.obligations.map((_, i) => i) });
-      toast.success(`${d.obligations.length} ödenecek satır okundu. Kontrol edip kaydedin.`);
+      toast.success(`AI ${d.obligations.length} ödenecek satır okudu. Kontrol edip kaydedin.`);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Belge okunamadı.");
     } finally {
@@ -125,10 +128,11 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-2 font-bold text-amber-800 text-xs">
-            <Wallet className="w-4 h-4" /> Ödenecek vergiler / SGK
+            <Sparkles className="w-4 h-4" /> AI ile ödenecek vergi / SGK yükle
+            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${aiReady ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"}`}>{extractLabel || "AI"}</span>
           </div>
           <p className="text-[11px] text-slate-500 mt-1 max-w-2xl">
-            Bordro, mizan veya tahakkuk PDF yükleyin. SGK, gelir vergisi, damga, KDV ve net maaş satırları ödenecek listesine düşer; kasa/bankadan ödersiniz.
+            Bordro, mizan veya tahakkuk PDF/fotoğrafını AI okur; SGK, gelir vergisi, damga, KDV ve net maaş satırları ödenecek listesine düşer.
           </p>
         </div>
         <div className="text-[11px] text-slate-600" data-testid="acc-tax-summary">
@@ -161,12 +165,12 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
         <input
           ref={fileRef}
           type="file"
-          accept="application/pdf,.pdf,text/plain,.txt"
+          accept="application/pdf,.pdf,image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,text/plain,.txt"
           className="hidden"
           onChange={(e) => ingest(e.target.files?.[0], kind)}
           data-testid="acc-tax-file"
         />
-        {busy ? <><Loader2 className="w-6 h-6 animate-spin text-amber-700" /><span>Belge okunuyor…</span></> : <><Upload className="w-6 h-6 text-amber-700" /><span className="font-semibold">{meta.hint}</span><span className="text-[11px] text-slate-400">Sürükleyin veya tıklayın · PDF · max 10 MB</span></>}
+        {busy ? <><Loader2 className="w-6 h-6 animate-spin text-amber-700" /><span>AI belgeyi okuyor…</span></> : <><Upload className="w-6 h-6 text-amber-700" /><span className="font-semibold">AI ile {meta.hint}</span><span className="text-[11px] text-slate-400">Sürükleyin veya tıklayın · PDF / fotoğraf · max 10 MB</span></>}
       </div>
 
       {rows.length > 0 && (

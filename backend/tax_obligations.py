@@ -113,9 +113,15 @@ async def extract_tax_doc(
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
     try:
-        out = extract_tax_file(data, name, file.content_type or "", source_kind)
+        out = await extract_tax_file(data, name, file.content_type or "", source_kind)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)[:220]) from e
+    except Exception as e:
+        err = str(e)
+        hint = ""
+        if "401" in err or "403" in err or "anahtar" in err.lower() or "api key" in err.lower():
+            hint = " Geçersiz veya süresi dolmuş API anahtarı. Platform → AI Entegrasyonu'ndan yeni anahtar kaydedip Bağlantıyı Test Et yapın."
+        raise HTTPException(status_code=400, detail=f"Belge okunamadı: {err[:160]}.{hint}") from e
     draft = out.get("draft") or {}
     if not draft.get("obligations"):
         raise HTTPException(status_code=400, detail="Belgeden ödenecek tutar okunamadı. Bordro, mizan veya tahakkuk PDF'i yükleyin.")

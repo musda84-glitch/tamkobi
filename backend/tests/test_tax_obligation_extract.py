@@ -4,10 +4,14 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tax_obligation_extract import (
+    SOURCE_KINDS,
     due_date_for,
     extract_tax_file,
     guess_source_kind,
+    map_obligation_kind,
+    merge_tax_drafts,
     normalize_import_lines,
+    normalize_tax_draft,
     parse_bordro,
     parse_mizan,
     parse_period,
@@ -105,6 +109,56 @@ def test_filename_routes_parse_tax_text():
     assert all(x["amount"] > 0 for x in lines)
 
 
-def test_extract_txt_file():
-    out = extract_tax_file(TAHAKKUK.encode("utf-8"), "kdv.txt", "text/plain")
+def test_map_obligation_kind():
+    assert map_obligation_kind("SGK") == "sgk"
+    assert map_obligation_kind("gv") == "gelir_vergisi"
+    assert map_obligation_kind("Katma Değer") == "kdv"
+    d = normalize_tax_draft({
+        "source_kind": "bordro",
+        "period": "2026-09",
+        "title": "Matek Bordro",
+        "summary": {"gross": "180.000,00", "net": 139634.4, "employer_cost": 211500, "count": 4},
+        "obligations": [
+            {"kind": "SGK primi", "amount": "58.500,00"},
+            {"kind": "gv", "title": "Gelir vergisi", "amount": 12000},
+            {"kind": "kdv", "amount": 0},
+        ],
+    }, "matek bordro 2026-09.pdf")
+    kinds = {o["kind"]: o["amount"] for o in d["obligations"]}
+    assert d["period"] == "2026-09"
+    assert kinds["sgk"] == 58500
+    assert kinds["gelir_vergisi"] == 12000
+    assert "kdv" not in kinds
+    assert d["summary"]["gross"] == 180000
+
+
+def test_merge_tax_drafts_fills_heuristic_when_ai_empty():
+    ai = normalize_tax_draft({"source_kind": "tahakkuk", "obligations": []})
+    heur = parse_tahakkuk(TAHAKKUK)
+    merged = merge_tax_drafts(ai, heur)
+    assert merged["obligations"][0]["amount"] == 18450
+    assert merged["obligations"][0]["kind"] == "kdv"
+
+
+def test_extract_txt_file_falls_back_without_ai():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    with patch("tax_obligation_extract._ai_tax_from_text", new_callable=AsyncMock, side_effect=RuntimeError("no ai")):
+        out = asyncio.run(extract_tax_file(TAHAKKUK.encode("utf-8"), "kdv.txt", "text/plain"))
     assert out["draft"]["obligations"][0]["amount"] == 18450
+
+
+def test_extract_prefers_ai_lines():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    ai_draft = normalize_tax_draft({
+        "source_kind": "tahakkuk",
+        "period": "2026-09",
+        "obligations": [{"kind": "kdv", "amount": 18450, "due_date": "2026-10-28"}],
+    })
+    with patch("tax_obligation_extract._ai_tax_from_text", new_callable=AsyncMock, return_value=ai_draft):
+        out = asyncio.run(extract_tax_file(TAHAKKUK.encode("utf-8"), "kdv.txt", "text/plain"))
+    assert out["source"].startswith("ai")
+    assert out["draft"]["obligations"][0]["kind"] == "kdv"
