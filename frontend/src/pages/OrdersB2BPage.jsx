@@ -45,7 +45,7 @@ import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
 import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
-import { eBelgeMenuItems, orderCanIssueEFatura, orderEBelgeType } from "../utils/orderEBelge";
+import { eBelgeMenuItems, orderEBelgeType } from "../utils/orderEBelge";
 import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued, orderGibInvoiceNumber } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
 import { orderBulkEInvoiceEligible, bulkApiErrorDetail, orderRowId } from "../utils/orderBulkActions";
@@ -456,7 +456,7 @@ export default function OrdersB2BPage() {
           if (o.is_invoiced || o.invoice_id) { skipped++; continue; }
           await axios.post(`${API_URL}/orders/${oid}/convert-to-invoice`, { e_type: "e_archive", as_draft: true });
         } else if (action === "einvoice_create") {
-          if (!orderBulkEInvoiceEligible(o) || o.is_invoiced || o.invoice_id) { skipped++; continue; }
+          if (!orderBulkEInvoiceEligible(o)) { skipped++; continue; }
           const eType = orderEBelgeType(o, contacts);
           await axios.post(`${API_URL}/e-invoice/create`, {
             order_id: oid,
@@ -464,8 +464,7 @@ export default function OrdersB2BPage() {
             scenario: eType === "e_invoice" ? "TICARI" : undefined,
           });
         } else if (action === "einvoice_send") {
-          if (!o.invoice_id) { skipped++; continue; }
-          if (orderHasEInvoiceIssued(o)) { skipped++; continue; }
+          if (!orderBulkEInvoiceEligible(o) || !o.invoice_id) { skipped++; continue; }
           const eType = o.e_type || orderEBelgeType(o, contacts);
           await axios.post(`${API_URL}/invoices/${o.invoice_id}/send-to-gib`, { e_type: eType });
         } else if (action === "approve") {
@@ -728,8 +727,12 @@ export default function OrdersB2BPage() {
     }
   };
 
-  /** Diğer işlemler: e-belge (GİB). Mükellef değilse zorla e-arşiv — Temel/Ticari seçimi hariç. */
+  /** Diğer işlemler: e-belge (GİB). Yalnızca faturalaşmış sipariş. Mükellef değilse e-arşiv. */
   const handleEBelgeInvoice = async (ord, eType, opts = {}) => {
+    if (!ord?.is_invoiced) {
+      toast.error("E-Fatura / E-Arşiv yalnızca faturalaşmış siparişlerden kesilir. Önce Faturalaştırın.");
+      return;
+    }
     const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
     const explicitScenario = opts.scenario === "TEMEL" || opts.scenario === "TICARI";
     const resolved = explicitScenario
@@ -1588,15 +1591,15 @@ export default function OrdersB2BPage() {
                               <button
                                 type="button"
                                 className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm"
-                                title="GİB e-belge işlemleri"
-                                aria-label="GİB e-belge işlemleri"
+                                title="Fatura işlemleri"
+                                aria-label="Fatura işlemleri"
                                 data-testid={`convert-inv-btn-${ord.order_number}`}
                               >
                                 <FileText className="w-4 h-4" />
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" sideOffset={8} collisionPadding={24} className="z-[80] w-56 rounded-xl p-1.5 shadow-lg" data-testid={`inv-type-chooser-${ord.order_number}`}>
-                              <div className="px-2 py-1 text-[10px] font-bold text-emerald-700 uppercase">GİB e-belge işlemleri</div>
+                              <div className="px-2 py-1 text-[10px] font-bold text-emerald-700 uppercase">Fatura işlemleri</div>
                               <DropdownMenuItem
                                 onSelect={() => handleFaturalastir(ord)}
                                 className="flex-col items-start gap-0 py-1.5"
@@ -1617,24 +1620,6 @@ export default function OrdersB2BPage() {
                                   {ord.dispatch_number ? "Bu siparişin irsaliyesi var" : "e-İrsaliye taslağı · fatura değil"}
                                 </span>
                               </DropdownMenuItem>
-                              {orderCanIssueEFatura(ord, contacts) && (
-                                <DropdownMenuItem
-                                  onSelect={() => handleEBelgeInvoice(ord, "e_invoice")}
-                                  className="flex-col items-start gap-0 py-1.5"
-                                  data-testid={`inv-type-e_invoice-${ord.order_number}`}
-                                >
-                                  <span className="text-xs font-semibold text-slate-800">E-Fatura kes</span>
-                                  <span className="text-[10px] text-slate-400">Mükellef alıcı · GİB&apos;e iletilir</span>
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuItem
-                                onSelect={() => handleEBelgeInvoice(ord, "e_archive")}
-                                className="flex-col items-start gap-0 py-1.5"
-                                data-testid={`inv-type-e_archive-${ord.order_number}`}
-                              >
-                                <span className="text-xs font-semibold text-slate-800">E-Arşiv kes</span>
-                                <span className="text-[10px] text-slate-400">Nihai tüketici / pazaryeri · GİB&apos;e iletilir</span>
-                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 onSelect={() => handleConvertToInvoice(ord.id || ord._id, "paper")}
                                 className="flex-col items-start gap-0 py-1.5"
@@ -1642,25 +1627,6 @@ export default function OrdersB2BPage() {
                               >
                                 <span className="text-xs font-semibold text-slate-800">Kağıt Fatura</span>
                                 <span className="text-[10px] text-slate-400">Matbu taslak · GİB&apos;e gitmez</span>
-                              </DropdownMenuItem>
-                              <div className="px-2 pt-1.5 pb-0.5 text-[10px] font-bold text-slate-400 uppercase border-t mt-1">Taslak kaydet</div>
-                              {orderCanIssueEFatura(ord, contacts) && (
-                                <DropdownMenuItem
-                                  onSelect={() => handleConvertToInvoice(ord.id || ord._id, "e_invoice")}
-                                  className="flex-col items-start gap-0 py-1.5"
-                                  data-testid={`inv-draft-e_invoice-${ord.order_number}`}
-                                >
-                                  <span className="text-xs font-semibold text-slate-800">E-Fatura taslağı</span>
-                                  <span className="text-[10px] text-slate-400">Sarı · sonra Faturalaştır</span>
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuItem
-                                onSelect={() => handleConvertToInvoice(ord.id || ord._id, "e_archive")}
-                                className="flex-col items-start gap-0 py-1.5"
-                                data-testid={`inv-draft-e_archive-${ord.order_number}`}
-                              >
-                                <span className="text-xs font-semibold text-slate-800">E-Arşiv taslağı</span>
-                                <span className="text-[10px] text-slate-400">Sarı · sonra Faturalaştır</span>
                               </DropdownMenuItem>
                               {ord.order_status === "pending" && (
                                 <DropdownMenuItem onSelect={() => setApproveOrder(ord)} className="border-t mt-1 rounded-lg font-semibold text-emerald-700" data-testid={`inv-chooser-approve-${ord.order_number}`}>

@@ -149,7 +149,7 @@ export function defaultMoreItems(
   ord?: OrderMoreOrder | null,
   opts: { eBelgeItems?: Array<{ eType: "e_invoice" | "e_archive"; label: string; testIdSuffix: string }> } = {},
 ): OrderMoreItem[] {
-  const rows = (opts.eBelgeItems || []).map((eb) =>
+  const rows = (ord?.is_invoiced ? (opts.eBelgeItems || []) : []).map((eb) => {
     item(`ebelge_${eb.eType}`, eb.label, "receipt", {
       testId: `e-belge-${eb.testIdSuffix}`,
       section: "E-Belge (GİB)",

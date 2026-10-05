@@ -292,17 +292,18 @@ export function canDeleteInvoice(inv) {
   return true;
 }
 
-/** Satış taslak/kağıt kesilebilir. Alış faturaları GİB'e kesilmez (satıcı keser). */
+/** Satış kağıt / onaylı fatura GİB'e kesilebilir. Taslak e-Fatura/e-Arşiv kesilmez. Alış faturaları GİB'e kesilmez (satıcı keser). */
 export function canIssueInvoice(inv) {
   if (!inv) return false;
   if (inv.invoice_type === "purchase" || isIncomingPurchaseInvoice(inv)) return false;
   if (inv.status === "cancelled" || inv.e_type === "expense_slip") return false;
-  // e-İrsaliye: İşNet SendDespatchAdviceXml
+  // e-İrsaliye: İşNet SendDespatchAdviceXml — taslak irsaliye gönderilebilir
   if (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch") {
     if (inv.status === "cancelled") return false;
     return inv.status === "draft" || !isGibIssued(inv);
   }
-  if (inv.status === "draft" || inv.e_type === "paper") return true;
+  if (inv.status === "draft") return false;
+  if (inv.e_type === "paper") return true;
   return !isGibIssued(inv);
 }
 
@@ -586,16 +587,22 @@ export const InvoiceContextMenu = (props) => {
             <p className="px-3 pb-2 text-[10px] text-amber-700">İşNet e-İrsaliye yapılandırılmamış veya kapalı.</p>
           )}
         </div>
+      ) : inv.status === "draft" && !isPurchase && !incoming ? (
+        <div className="border-b border-slate-100 pb-1" data-testid="ctx-draft-no-gib">
+          {onEdit && editable && (
+            <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
+          )}
+          <p className="px-3 py-2 text-[10px] text-slate-500" data-testid="ctx-draft-no-gib-note">
+            Taslak fatura GİB e-Fatura / e-Arşiv kesilmez. Önce onaylayın (Faturalaştırın).
+          </p>
+        </div>
       ) : canIssue ? (
         <div className="border-b border-slate-100 pb-1">
           {onEdit && editable && (
             <Item icon={Pencil} color="text-amber-700" label="Taslağı Düzenle" sub="Kalem, cari ve tutar" onClick={() => onEdit(inv)} testId="ctx-edit" />
           )}
           <div className="px-3 pt-1.5 pb-0.5 text-[10px] font-bold text-emerald-700">FATURAYI KES</div>
-          {inv.status === "draft" && (
-            <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-draft-issue-note">Taslak olarak kayıtlı. Kesildiğinde cariye işlenir.</p>
-          )}
-          {inv.e_type === "paper" && inv.status !== "draft" && (
+          {inv.e_type === "paper" && (
             <p className="px-3 pb-1 text-[10px] text-slate-500" data-testid="ctx-paper-info">Kağıt fatura (matbu) — GİB e-belgesi değildir; buradan kesilebilir.</p>
           )}
           {ISSUE_OPTIONS.map((o) => {
