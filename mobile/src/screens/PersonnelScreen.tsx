@@ -104,6 +104,7 @@ import {
   employeeDutyBoard,
   employeeStatusLabel,
   employeePresenceChip,
+  presenceTodayOf,
   openEmployeeTasks,
   remainingLeaveDays,
   workplaceDetailsSummary,
@@ -1483,7 +1484,7 @@ export function PersonnelScreen() {
               location_last_inside: emp.location_last_inside ?? cards[eid]?.employee?.location_last_inside,
               location_last_ok: emp.location_last_ok ?? cards[eid]?.employee?.location_last_ok,
               location_inside_at: emp.location_inside_at ?? cards[eid]?.employee?.location_inside_at,
-              today: attSum?.today || null,
+              today: presenceTodayOf(attSum),
             });
             const fromPays = yevmiyeAccrual({ payrolls: payrolls.filter((p) => p.employee_id === eid), employeeId: eid });
             const comp = employeeCompRows(emp, bal, {

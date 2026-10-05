@@ -28,6 +28,7 @@ import {
   payMoveDeleteConfirm,
   payMoveDeletePath,
   payMovesPeriodHint,
+  presenceTodayOf,
   remainingDue,
   remainingLeaveDays,
 } from "./personnelCard";
@@ -44,19 +45,61 @@ describe("personnelCard", () => {
     expect(remainingLeaveDays({ annual_leave_days: 14, used_leave_days: 3 })).toBe(11);
   });
 
-  test("shows live presence next to Aktif from GPS inside flag", () => {
-    expect(employeePresenceChip({ status: "active", location_last_inside: true, workplace: { kind: "office" } })).toMatchObject({
-      key: "work", label: "İş Yerinde Şuan", border: "#6EE7B7",
+  test("shows live presence next to Aktif: iş yeri, görev, mesai bitti, fazla mesai", () => {
+    const morning = new Date(2026, 9, 5, 10, 30);
+    const evening = new Date(2026, 9, 5, 19, 15);
+    expect(employeePresenceChip({ status: "active", location_last_inside: true, workplace: { kind: "office" }, now: morning })).toMatchObject({
+      key: "work", label: "İş Yerinde", border: "#6EE7B7",
     });
-    expect(employeePresenceChip({ status: "active", location_last_inside: true, workplace: { kind: "task" } }).label).toBe("Dış Görev Yerinde");
-    expect(employeePresenceChip({ status: "active", location_last_inside: false }).label).toBe("Şuan Dışarıda");
+    expect(employeePresenceChip({ status: "active", location_last_inside: true, workplace: { kind: "task" }, now: morning }).label).toBe("Görev Yerinde");
     expect(employeePresenceChip({
       status: "active",
       location_last_inside: true,
       today: { check_in: "09:00", check_out: "17:45" },
-    }).label).toBe("Şuan Dışarıda");
-    expect(employeePresenceChip({ status: "terminated", location_last_inside: true })).toBeNull();
-    expect(employeePresenceChip({ status: "active", location_last_ok: false })).toBeNull();
+      now: evening,
+    }).label).toBe("Mesai Bitti");
+    expect(employeePresenceChip({
+      status: "active",
+      location_last_inside: true,
+      today: { check_in: "09:00", scheduled_end: "18:00" },
+      now: evening,
+    }).label).toBe("Fazla Mesaide");
+    expect(employeePresenceChip({
+      status: "active",
+      location_last_inside: true,
+      today: { check_in: "09:00", assigned_overtime_start: "18:00", assigned_overtime_end: "20:30" },
+      now: evening,
+    }).label).toBe("Fazla Mesaide");
+    expect(employeePresenceChip({
+      status: "active",
+      location_last_inside: false,
+      today: { check_in: "09:00", check_out: "18:05", assigned_overtime_start: "18:00", assigned_overtime_end: "20:30" },
+      now: evening,
+    }).label).toBe("Mesai Bitti");
+    expect(employeePresenceChip({
+      status: "active",
+      location_last_inside: false,
+      workplace: { kind: "task" },
+      today: { check_in: "08:00" },
+      now: morning,
+    }).label).toBe("Görev Yerinde");
+    expect(employeePresenceChip({
+      status: "active",
+      location_last_inside: false,
+      today: { check_in: "09:00", scheduled_end: "18:00" },
+      now: evening,
+    }).label).toBe("Mesai Bitti");
+    expect(employeePresenceChip({ status: "terminated", location_last_inside: true, now: morning })).toBeNull();
+    expect(employeePresenceChip({ status: "active", location_last_ok: false, now: morning })).toBeNull();
+    expect(employeePresenceChip({
+      status: "active",
+      today: { check_in: "08:30", location_inside_at: "2026-10-05T05:30:00Z" },
+      now: morning,
+    })?.key).toBe("work");
+    expect(presenceTodayOf({
+      today: { check_in: "09:00" },
+      schedule: { start: "09:00", end: "18:00" },
+    })).toMatchObject({ check_in: "09:00", scheduled_end: "18:00" });
   });
 
   test("builds pay and location move lines like mobile", () => {

@@ -18,7 +18,7 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
 import { assignedOvertimeCellCaption, cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint, locationControllerLabel, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
-import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, employeePresenceChip, fmtCardMoney, remainingDue, remainingLeaveDays } from "../utils/personnelCard";
+import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, employeePresenceChip, fmtCardMoney, presenceTodayOf, remainingDue, remainingLeaveDays } from "../utils/personnelCard";
 import { punchLabelClass } from "../utils/punchLabels";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
@@ -208,7 +208,7 @@ export default function PersonnelPage() {
       const workMap = {};
       for (const s of attRes.data?.summary || []) {
         if (s.employee_id) {
-          todayMap[s.employee_id] = s.today || null;
+          todayMap[s.employee_id] = presenceTodayOf(s);
           workMap[s.employee_id] = s.workplace || null;
         }
       }
