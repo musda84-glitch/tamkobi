@@ -257,6 +257,7 @@ async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optio
     summary = {"count": len(rows), "total": round(sum(_try(r) for r in rows), 2), "vat_total": round(sum(r.get("vat_amount", 0) for r in rows), 2),
                "unpaid_total": round(sum(_try(r) for r in rows if r.get("payment_status") != "paid"), 2), "unpaid_count": sum(1 for r in rows if r.get("payment_status") != "paid"),
                "this_month_total": round(sum(_try(r) for r in all_rows if (r.get("date") or "").startswith(month)), 2),
+               "this_month_count": sum(1 for r in all_rows if (r.get("date") or "").startswith(month)),
                "recurring_count": sum(1 for r in all_rows if r.get("is_recurring")),
                "by_category": sorted([{"category": k, "total": v} for k, v in by_cat.items()], key=lambda x: -x["total"])}
     return {"expenses": rows, "summary": summary}

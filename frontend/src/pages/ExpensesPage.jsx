@@ -14,6 +14,7 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseScanHint } from "../utils/expenseScan";
+import { expenseDateRange } from "../utils/expenseDateRange";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
@@ -25,11 +26,24 @@ const EMPTY = { date: new Date().toISOString().slice(0, 10), category: "Diğer",
 const projectLabel = (p) => [p.project_number, p.name].filter(Boolean).join(" · ") || "Proje";
 const projectIdOf = (p) => String(p?.id || p?._id || "");
 const PRESETS = [["", "Tüm zamanlar"], ["month", "Bu ay"], ["last_month", "Geçen ay"], ["quarter", "Bu çeyrek"], ["year", "Bu yıl"]];
-const range = (p) => { const d = new Date(); const iso = (x) => x.toISOString().slice(0, 10); const m0 = new Date(d.getFullYear(), d.getMonth(), 1);
-  if (p === "month") return [iso(m0), iso(d)]; if (p === "last_month") return [iso(new Date(d.getFullYear(), d.getMonth() - 1, 1)), iso(new Date(d.getFullYear(), d.getMonth(), 0))];
-  if (p === "quarter") return [iso(new Date(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 1)), iso(d)]; if (p === "year") return [`${d.getFullYear()}-01-01`, iso(d)]; return ["", ""]; };
+const range = (p) => expenseDateRange(p);
 
-const Stat = ({ label, value, sub, cls = "", testid }) => <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4"><div className="text-[10px] uppercase font-semibold text-slate-400">{label}</div><div className={`text-lg font-bold ${cls}`} data-testid={testid}>{value}</div>{sub && <div className="text-[11px] text-slate-500">{sub}</div>}</div>;
+const Stat = ({ label, value, sub, cls = "", testid, onClick }) => {
+  const inner = (
+    <>
+      <div className="text-[10px] uppercase font-semibold text-slate-400">{label}</div>
+      <div className={`text-lg font-bold ${cls}`} data-testid={testid}>{value}</div>
+      {sub && <div className="text-[11px] text-slate-500">{sub}</div>}
+    </>
+  );
+  const box = "bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4 text-left w-full";
+  if (!onClick) return <div className={box}>{inner}</div>;
+  return (
+    <button type="button" onClick={onClick} className={`${box} hover:border-rose-200 hover:bg-rose-50/40 transition-colors cursor-pointer`} data-testid={`${testid}-btn`}>
+      {inner}
+    </button>
+  );
+};
 
 const accountLabel = (a) => {
   const name = a.account_name || a.bank_name || "Hesap";
@@ -204,6 +218,11 @@ export default function ExpensesPage() {
     resetKey: `${filters.q}|${filters.category}|${filters.status}|${filters.from}|${filters.to}|${filters.sort}`,
   });
   const s = data.summary;
+  const showThisMonth = () => {
+    const [from, to] = range("month");
+    setFilters((f) => ({ ...f, q: "", category: "all", status: "all", preset: "month", from, to }));
+    requestAnimationFrame(() => document.querySelector("[data-testid='exp-table']")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
   const del = async (x) => { if (!window.confirm(`${x.expense_number} silinsin mi?`)) return; try { const r = await axios.delete(`${API_URL}/expenses/${x.id}`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
   const pay = async () => { try { await axios.post(`${API_URL}/expenses/${payFor.id}/pay`, { ...splitPaymentTarget(payAcc) }); toast.success("Masraf ödendi, kasa/banka hareketi oluşturuldu."); setPayFor(null); await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
   const unpay = async (x) => { if (!window.confirm("Ödeme geri alınsın mı? Kasa/banka bakiyesi düzeltilir.")) return; try { await axios.post(`${API_URL}/expenses/${x.id}/unpay`); toast.success("Ödeme geri alındı."); await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
@@ -221,7 +240,14 @@ export default function ExpensesPage() {
       </div>
       {s && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Stat label="Bu Ay Toplam Masraf" value={`${fmt(s.this_month_total)} ₺`} cls="text-rose-600" testid="exp-stat-month" />
+          <Stat
+            label="Bu Ay Toplam Masraf"
+            value={`${fmt(s.this_month_total)} ₺`}
+            sub={`${s.this_month_count || 0} kayıt · tıklayınca satırlar listelenir`}
+            cls="text-rose-600"
+            testid="exp-stat-month"
+            onClick={showThisMonth}
+          />
           <Stat label="Filtre Toplamı" value={`${fmt(s.total)} ₺`} sub={`${s.count} kayıt · KDV ${fmt(s.vat_total)} ₺`} testid="exp-stat-total" />
           <Stat label="Ödenmemiş" value={`${fmt(s.unpaid_total)} ₺`} sub={`${s.unpaid_count} bekleyen`} cls="text-amber-600" testid="exp-stat-unpaid" />
           <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4 space-y-1.5" data-testid="exp-by-category"><div className="text-[10px] uppercase font-semibold text-slate-400">Kategori Dağılımı</div>
@@ -238,7 +264,7 @@ export default function ExpensesPage() {
         <input type="date" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value, preset: "" })} className={sel} /><span className="text-slate-400 text-xs">–</span><input type="date" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value, preset: "" })} className={sel} />
         <div className="flex items-center gap-1 text-xs"><ArrowUpDown className="w-3.5 h-3.5 text-slate-400" /><select value={filters.sort} onChange={(e) => setFilters({ ...filters, sort: e.target.value })} className={sel} data-testid="exp-sort"><option value="date_desc">Tarih (yeni)</option><option value="date_asc">Tarih (eski)</option><option value="amount_desc">Tutar (yüksek)</option><option value="amount_asc">Tutar (düşük)</option><option value="category">Kategori</option></select></div>
       </div>
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden" data-testid="exp-table">
         <table className="w-full text-left text-xs text-slate-600">
           <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold"><tr><th className="px-4 py-3">Masraf No / Tarih</th><th className="px-4 py-3">Kategori</th><th className="px-4 py-3">Açıklama</th><th className="px-4 py-3">Tedarikçi / Personel</th><th className="px-4 py-3 text-right">Net / KDV</th><th className="px-4 py-3 text-right">Toplam</th><th className="px-4 py-3">Ödeme</th><th className="px-4 py-3 text-center">İşlemler</th></tr></thead>
           <tbody className="divide-y divide-slate-100">
