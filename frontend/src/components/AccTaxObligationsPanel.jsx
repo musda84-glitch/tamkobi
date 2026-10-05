@@ -52,7 +52,7 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
       const fd = new FormData();
       fd.append("file", compact);
       const r = await axios.post(
-        `${API_URL}/tax-obligations/extract?company_id=${encodeURIComponent(companyId)}&source_kind=${encodeURIComponent(nextKind || "")}`,
+        `${API_URL}/tax-obligations/extract?company_id=${encodeURIComponent(companyId)}&source_kind=${encodeURIComponent(nextKind || "")}&month=${encodeURIComponent(month || "")}`,
         fd,
         { timeout: 180000 },
       );
@@ -61,8 +61,9 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
         toast.error("Belgeden ödenecek tutar okunamadı.");
         return;
       }
-      setDraft({ ...d, selected: d.obligations.map((_, i) => i) });
-      toast.success(`AI ${d.obligations.length} ödenecek satır okudu. Kontrol edip kaydedin.`);
+      await load();
+      setDraft({ ...d, selected: d.selected || d.obligations.map((_, i) => i) });
+      toast.success(`AI ${d.obligations.length} ödenecek satır okudu. Belge listede; kontrol edip kaydedin.`);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Belge okunamadı.");
     } finally {
@@ -75,8 +76,9 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
     if (!draft) return;
     setBusy(true);
     try {
-      const r = await axios.post(`${API_URL}/tax-obligations/import`, {
+      const r =       await axios.post(`${API_URL}/tax-obligations/import`, {
         company_id: companyId,
+        month,
         draft,
         selected: draft.selected,
       });
@@ -197,25 +199,41 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
           <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-900">
             <FileText className="w-3.5 h-3.5" /> Yüklenen belgeler ({documents.length})
           </div>
-          <span className="text-[10px] text-amber-800/80">Dönem: {month || "—"}</span>
+          <span className="text-[10px] text-amber-800/80">Seçili ay: {month || "—"} · tüm yüklemeler</span>
         </div>
         {documents.length === 0 ? (
           <p className="px-3 py-3 text-[11px] text-slate-500" data-testid="acc-tax-documents-empty">
-            Bu dönemde henüz belge yok. Yukarıdan PDF/fotoğraf yükleyip kaydedince dosya adları burada listelenir.
+            Henüz belge yok. PDF/fotoğraf yükleyince dosya adı burada görünür (onay sonrası satırlar masrafa döner).
           </p>
         ) : (
           <ul className="divide-y divide-slate-100">
-            {documents.map((doc) => (
+            {documents.map((doc) => {
+              const isDraft = doc.status === "draft" && doc.draft?.obligations?.length;
+              return (
               <li key={doc.id} className="px-3 py-2 flex flex-wrap items-center gap-2 text-xs" data-testid={`acc-tax-doc-${doc.id}`}>
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold text-slate-800 truncate">{doc.filename || doc.title || "Belge"}</div>
                   <div className="text-[10px] text-slate-500 capitalize">
                     {doc.source_kind || "—"}
                     {doc.period ? ` · ${doc.period}` : ""}
-                    {` · ${doc.obligation_count || 0} satır`}
-                    {(doc.unpaid_count || 0) > 0 ? ` · ödenmemiş ${fmt(doc.unpaid_total)}` : " · tamamı ödendi"}
+                    {isDraft
+                      ? " · onay bekliyor"
+                      : ` · ${doc.obligation_count || 0} satır${(doc.unpaid_count || 0) > 0 ? ` · ödenmemiş ${fmt(doc.unpaid_total)}` : " · tamamı ödendi"}`}
                   </div>
                 </div>
+                {isDraft ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = doc.draft;
+                      setDraft({ ...d, selected: d.selected || (d.obligations || []).map((_, i) => i) });
+                    }}
+                    className="px-2 py-1 rounded-lg bg-amber-700 text-white font-semibold"
+                    data-testid={`acc-tax-doc-open-${doc.id}`}
+                  >
+                    Satırları aç
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => removeDoc(doc)}
@@ -226,7 +244,8 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
                   <Trash2 className="w-3 h-3" /> Sil
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </div>

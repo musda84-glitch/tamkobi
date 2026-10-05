@@ -1,4 +1,5 @@
 """Mali müşavir: bordro / mizan / tahakkuk yükleme ve ödenecek vergi-SGK kayıtları."""
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -15,6 +16,7 @@ from tax_obligation_extract import (
 
 router = APIRouter(prefix="/api")
 _db = None
+_PERIOD_RE = re.compile(r"^20\d{2}-(0[1-9]|1[0-2])$")
 
 
 def init(db):
@@ -97,6 +99,60 @@ def payroll_from_documents(docs: list) -> Optional[dict]:
     }
 
 
+def coerce_period(*vals) -> Optional[str]:
+    for v in vals:
+        s = str(v or "").strip()[:7]
+        if _PERIOD_RE.match(s):
+            return s
+    return None
+
+
+def visible_obligations(rows: list, month: Optional[str]) -> list:
+    """Seçili ay + tüm ödenmemiş satırlar (bordro genelde önceki aydır)."""
+    if not month:
+        return rows
+    out = []
+    for r in rows:
+        if r.get("payment_status") != "paid":
+            out.append(r)
+            continue
+        if r.get("period") == month or str(r.get("due_date") or "").startswith(month):
+            out.append(r)
+    return out
+
+
+async def persist_extracted_document(company_id: str, draft: dict, filename: str, month: Optional[str] = None) -> dict:
+    """AI okuduğu anda belgeyi listede tutar (onay bekleyen taslak)."""
+    period = coerce_period(draft.get("period"), month)
+    if period:
+        draft["period"] = period
+        for ob in draft.get("obligations") or []:
+            if isinstance(ob, dict) and not coerce_period(ob.get("period")):
+                ob["period"] = period
+    doc_id = str(draft.get("document_id") or uuid.uuid4())
+    payload = {
+        "company_id": company_id,
+        "source_kind": draft.get("source_kind") if draft.get("source_kind") in SOURCE_KINDS else "tahakkuk",
+        "period": period,
+        "title": draft.get("title") or "",
+        "filename": filename or draft.get("filename") or "",
+        "document_no": draft.get("document_no") or "",
+        "summary": draft.get("summary") or {},
+        "status": "draft",
+        "updated_at": _now(),
+    }
+    draft["document_id"] = doc_id
+    draft["filename"] = payload["filename"]
+    payload["draft"] = dict(draft)
+    existing = await _db.tax_documents.find_one({"_id": doc_id})
+    if existing:
+        await _db.tax_documents.update_one({"_id": doc_id}, {"$set": payload})
+    else:
+        await _db.tax_documents.insert_one({"_id": doc_id, "created_at": _now(), **payload})
+    found = await _db.tax_documents.find_one({"_id": doc_id})
+    return _clean(dict(found) if found else {"_id": doc_id, **payload})
+
+
 def enrich_documents(docs: list, obligations: list) -> list:
     """Yüklenen belgelere satır sayısı / ödenmemiş özeti ekler."""
     by_doc: Dict[str, list] = {}
@@ -122,6 +178,7 @@ async def extract_tax_doc(
     file: UploadFile = File(...),
     company_id: str = Query("comp_nexus_main_01"),
     source_kind: str = Query(""),
+    month: str = Query(""),
 ):
     name = file.filename or "belge.pdf"
     data = await file.read()
@@ -140,8 +197,10 @@ async def extract_tax_doc(
     draft = out.get("draft") or {}
     if not draft.get("obligations"):
         raise HTTPException(status_code=400, detail="Belgeden ödenecek tutar okunamadı. Bordro, mizan veya tahakkuk PDF'i yükleyin.")
+    saved = await persist_extracted_document(company_id, draft, name, month)
     return {
         "draft": draft,
+        "document": saved,
         "source": out.get("source"),
         "filename": name,
         "company_id": company_id,
@@ -157,19 +216,30 @@ async def import_tax_doc(req: Dict[str, Any]):
     lines = normalize_import_lines(draft, selected)
     if not lines:
         raise HTTPException(status_code=400, detail="İçe aktarılacak ödenecek satır yok.")
-    period = draft.get("period") or lines[0].get("period")
-    doc = {
-        "_id": str(uuid.uuid4()),
+    period = coerce_period(draft.get("period"), req.get("month"), lines[0].get("period"))
+    existing_id = str(draft.get("document_id") or "").strip()
+    existing = await _db.tax_documents.find_one({"_id": existing_id}) if existing_id else None
+    doc = existing or {
+        "_id": existing_id or str(uuid.uuid4()),
+        "company_id": company_id,
+        "created_at": _now(),
+    }
+    doc.update({
         "company_id": company_id,
         "source_kind": source_kind,
         "period": period,
-        "title": draft.get("title") or "",
-        "filename": draft.get("filename") or req.get("filename") or "",
-        "document_no": draft.get("document_no") or "",
-        "summary": draft.get("summary") or {},
-        "created_at": _now(),
-    }
-    await _db.tax_documents.insert_one(doc)
+        "title": draft.get("title") or doc.get("title") or "",
+        "filename": draft.get("filename") or req.get("filename") or doc.get("filename") or "",
+        "document_no": draft.get("document_no") or doc.get("document_no") or "",
+        "summary": draft.get("summary") or doc.get("summary") or {},
+        "status": "imported",
+        "draft": None,
+        "updated_at": _now(),
+    })
+    if existing:
+        await _db.tax_documents.update_one({"_id": doc["_id"]}, {"$set": {k: v for k, v in doc.items() if k != "_id"}})
+    else:
+        await _db.tax_documents.insert_one(doc)
     created = []
     for line in lines:
         ob = {
@@ -213,22 +283,14 @@ async def list_tax_obligations(
     source_kind: Optional[str] = None,
 ):
     query: Dict[str, Any] = {"company_id": company_id}
-    if month:
-        query["period"] = month
     if status and status != "all":
         query["payment_status"] = status
     if source_kind and source_kind != "all":
         query["source_kind"] = source_kind
-    rows = [_clean(x) for x in await _db.tax_obligations.find(query).sort("due_date", 1).to_list(2000)]
-    docs_q: Dict[str, Any] = {"company_id": company_id}
-    if month:
-        docs_q["period"] = month
-    docs_raw = [_clean(x) for x in await _db.tax_documents.find(docs_q).sort("created_at", -1).to_list(200)]
-    # Belge özeti için ay filtresi olmadan da aynı dönemin satırlarını bağla
-    all_for_docs = rows
-    if month:
-        all_for_docs = [_clean(x) for x in await _db.tax_obligations.find({"company_id": company_id, "period": month}).to_list(2000)]
-    docs = enrich_documents(docs_raw, all_for_docs)
+    all_rows = [_clean(x) for x in await _db.tax_obligations.find(query).sort("due_date", 1).to_list(2000)]
+    rows = visible_obligations(all_rows, month)
+    docs_raw = [_clean(x) for x in await _db.tax_documents.find({"company_id": company_id}).sort("created_at", -1).to_list(200)]
+    docs = enrich_documents(docs_raw, all_rows)
     return {
         "obligations": rows,
         "documents": docs,
