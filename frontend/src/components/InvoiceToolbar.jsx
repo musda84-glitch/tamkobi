@@ -4,7 +4,7 @@ import { ExportButtons } from "./ExportButtons";
 import { InvoicesBulkMenu } from "./InvoicesBulkMenu";
 import { fmtDate, formatTrAmount } from "../utils/money";
 import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
-import { withoutCancelledInvoices } from "../utils/invoiceStatus";
+import { invoicesForDisplay } from "../utils/invoiceStatus";
 
 const INV_COLS = [{ key: "invoice_number", label: "Fatura No" }, { label: "Tarih", value: (r) => fmtDate(r.issue_date) }, { label: "Vade", value: (r) => fmtDate(r.due_date) }, { label: "Tür", value: (r) => r.trade_kind === "export" || r.e_type === "e_export" ? "İhracat" : r.trade_kind === "import" ? "İthalat" : r.invoice_type === "sales" ? "Satış" : r.invoice_type === "purchase" ? "Alış" : r.invoice_type === "dispatch" ? "İrsaliye" : r.invoice_type }, { key: "e_type", label: "Belge" }, { key: "contact_name", label: "Cari" }, { key: "contact_tax_id", label: "VKN" }, { key: "subtotal", label: "Ara Toplam", num: true }, { key: "vat_total", label: "KDV", num: true }, { key: "grand_total", label: "Genel Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? "Ödendi" : r.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi" }, { key: "gib_status", label: "GİB" }];
 
@@ -52,7 +52,8 @@ export const presetRange = (p) => {
 export const applyInvoiceFilters = (invoices, f) => {
   const q = f.q.trim().toLowerCase();
   const today = new Date().toISOString().slice(0, 10);
-  const list = withoutCancelledInvoices(invoices).filter((inv) => {
+  const source = invoicesForDisplay(invoices, !!f.showCancelled);
+  const list = source.filter((inv) => {
     if (q && !`${inv.invoice_number} ${inv.contact_name} ${inv.contact_tax_id || ""} ${inv.notes || ""}`.toLowerCase().includes(q)) return false;
     if (f.pay === "overdue") { if (inv.payment_status === "paid" || !inv.due_date || inv.due_date >= today) return false; }
     else if (f.pay !== "all" && (inv.payment_status || "unpaid") !== f.pay) return false;

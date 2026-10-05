@@ -20,3 +20,9 @@ export function isCancelledInvoice(inv) {
 export function withoutCancelledInvoices(rows) {
   return (Array.isArray(rows) ? rows : []).filter((inv) => !isCancelledInvoice(inv));
 }
+
+/** Liste: iptaller varsayılan gizli; showCancelled ile görünür. */
+export function invoicesForDisplay(rows, showCancelled = false) {
+  const list = Array.isArray(rows) ? rows : [];
+  return showCancelled ? list : withoutCancelledInvoices(list);
+}

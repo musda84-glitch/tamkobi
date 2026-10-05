@@ -29,7 +29,6 @@ import { TimeInput } from "../components/TimeInput";
 import { fmtDate, fmtMoney, formatTrAmount } from "../utils/money";
 import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "../utils/documentLines";
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
-import { isCancelledInvoice } from "../utils/invoiceStatus";
 import { WITHHOLDING_OPTIONS } from "../utils/invoiceWithholding";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { InvoiceGibBar } from "../components/InvoiceGibBar";
@@ -131,6 +130,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const [products, setProducts] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [filterType, setFilterType] = useState(initialType);
+  const [showCancelled, setShowCancelled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [einvoiceSettings, setEinvoiceSettings] = useState(null);
   const [gibBusy, setGibBusy] = useState("");
@@ -143,9 +143,15 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const contactFilter = searchParams.get("contact_id") || "";
-  const visibleInvoices = useMemo(() => applyInvoiceFilters(invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter), filters), [invoices, contactFilter, filters]);
+  const visibleInvoices = useMemo(
+    () => applyInvoiceFilters(
+      invoices.filter((inv) => !contactFilter || inv.contact_id === contactFilter),
+      { ...filters, showCancelled },
+    ),
+    [invoices, contactFilter, filters, showCancelled],
+  );
   const visibleTotal = useMemo(() => visibleInvoices.reduce((t, i) => t + (Number(i.local_total || ((i.currency || "TRY") === "TRY" ? i.grand_total : 0)) || Number(i.grand_total) || 0), 0), [visibleInvoices]);
-  const listResetKey = useMemo(() => `${filterType}|${contactFilter || ""}|${JSON.stringify(filters)}`, [filterType, contactFilter, filters]);
+  const listResetKey = useMemo(() => `${filterType}|${contactFilter || ""}|${showCancelled ? 1 : 0}|${JSON.stringify(filters)}`, [filterType, contactFilter, showCancelled, filters]);
   const { visible: pagedInvoices, hasMore: invoicesHasMore, sentinelRef: invoicesSentinelRef } = useInfiniteRows(visibleInvoices, { resetKey: listResetKey });
 
   const activeSortCol = invoiceSortCol(filters.sort);
@@ -419,7 +425,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       const [invRows, cntRows, prodRows, bankRes, projRes, quoteRes] = await Promise.all([
         cachedList("invoices", cid, {
-          filter: (inv) => !isCancelledInvoice(inv) && invoiceTypeFilter(filterType)(inv),
+          filter: invoiceTypeFilter(filterType),
           // Proforma sekmesinde tekliflerle birleştiriyoruz; onCached yalnızca faturaları basmasın.
           onCached: filterType === "proforma" ? undefined : setInvoices,
         }),
@@ -982,31 +988,50 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       )}
 
       {/* Filter Tabs */}
-      {!lockType && <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs overflow-x-auto">
-        {[
-          { id: "all", label: "Tüm Faturalar" },
-          { id: "sales", label: "Satış Faturaları" },
-          { id: "purchase", label: "Alış Faturaları" },
-          { id: "incoming", label: "Gelen e-Fatura" },
-          { id: "outgoing_gib", label: "Giden e-Fatura" },
-          { id: "proforma", label: "Proforma & Teklif" },
-          { id: "return", label: "İade Faturaları" },
-          { id: "export", label: "İhracat" },
-          { id: "import", label: "İthalat" },
-          { id: "dispatch", label: "Giden e-İrsaliye" }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setFilterType(tab.id)}
-            className={`px-3 py-1.5 rounded-lg font-medium transition ${
-              filterType === tab.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-            }`}
-            data-testid={`filter-tab-${tab.id}`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs">
+        {!lockType && (
+          <div className="flex items-center gap-2 overflow-x-auto min-w-0 flex-1">
+            {[
+              { id: "all", label: "Tüm Faturalar" },
+              { id: "sales", label: "Satış Faturaları" },
+              { id: "purchase", label: "Alış Faturaları" },
+              { id: "incoming", label: "Gelen e-Fatura" },
+              { id: "outgoing_gib", label: "Giden e-Fatura" },
+              { id: "proforma", label: "Proforma & Teklif" },
+              { id: "return", label: "İade Faturaları" },
+              { id: "export", label: "İhracat" },
+              { id: "import", label: "İthalat" },
+              { id: "dispatch", label: "Giden e-İrsaliye" }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setFilterType(tab.id)}
+                className={`px-3 py-1.5 rounded-lg font-medium transition shrink-0 ${
+                  filterType === tab.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                }`}
+                data-testid={`filter-tab-${tab.id}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <label
+          className={`inline-flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-lg cursor-pointer select-none transition ${
+            showCancelled ? "bg-slate-100 text-slate-900 font-medium" : "text-slate-600 hover:bg-slate-100"
+          } ${lockType ? "ml-auto" : ""}`}
+          data-testid="show-cancelled-invoices"
+        >
+          <input
+            type="checkbox"
+            checked={showCancelled}
+            onChange={(e) => setShowCancelled(e.target.checked)}
+            className="rounded border-slate-300 text-slate-900 accent-slate-900 w-3.5 h-3.5"
+            data-testid="show-cancelled-invoices-check"
+          />
+          İptal edilenleri göster
+        </label>
+      </div>
 
       {!lockType && (
         <InvoiceGibBar
