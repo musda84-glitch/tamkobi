@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from mysql_store import MySQLClient, chunk_list, DuplicateKeyError
 from client_ip import request_ip
 import partner_pay
+import employee_pay
 from order_edit import order_edit_block_reason
 from order_dedupe import (
     dedupe_orders_by_marketplace_key,
@@ -216,6 +217,7 @@ def clean_docs(docs: list) -> list:
 async def startup_event():
     asyncio.get_event_loop().create_task(pricing.scheduler_loop())
     asyncio.get_event_loop().create_task(partner_pay.scheduler_loop(db))
+    asyncio.get_event_loop().create_task(employee_pay.scheduler_loop(db, generate_payroll))
     try:
         await db._ensure()
         logger.info("MySQL connected %s:%s/%s", _mysql_cfg["host"], _mysql_cfg["port"], DB_NAME)
@@ -10158,7 +10160,7 @@ async def create_bonus(req: Dict[str, Any]):
     if account_id and partner_id:
         raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
     account_name, status_val = None, "pending"
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = attendance._ymd(req.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     bonus_id = str(uuid.uuid4())
     if partner_id:
         pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {labels[b_type]}", today, extra={"bonus_id": bonus_id})
@@ -10230,7 +10232,7 @@ async def update_bonus(bonus_id: str, req: Dict[str, Any]):
     partner_id = req.get("partner_id") or None
     if account_id and partner_id:
         raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = attendance._ymd(req.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     label = rec.get("type_label") or rec.get("type") or "Ödeme"
     period = upd.get("period") or rec.get("period")
     if partner_id:
@@ -15197,7 +15199,8 @@ async def create_employee(emp: Employee):
 EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "pay_type", "daily_wage", "start_date", "end_date", "status", "annual_leave_days", "used_leave_days",
                       "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "location_tracking", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
                       "marital_status", "blood_type", "illnesses", "safety_info",
-                      "meal_allowance", "transport_allowance", "sgk_number"}
+                      "meal_allowance", "transport_allowance", "sgk_number",
+                      "pay_start_date", "pay_day", "pay_recurring"}
 EMPLOYEE_NUMERIC = {"salary", "daily_wage", "payroll_salary", "second_salary", "overtime_hourly_rate", "meal_allowance", "transport_allowance"}
 MEAL_CAT = "Yemek"
 TRANSPORT_CAT = "Yol / Ulaşım"
@@ -15256,11 +15259,21 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
     transport = round(_emp_num(emp.get("transport_allowance")), 2)
     meal_due = _allowance_due(meal, MEAL_CAT, expenses, month)
     transport_due = _allowance_due(transport, TRANSPORT_CAT, expenses, month)
-    bonus_pending = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") not in ("advance", "borc", "bakiye") and b.get("status") != "paid"), 2)
+    bonus_pending = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") not in ("advance", "borc", "bakiye", "overtime") and b.get("status") != "paid"), 2)
     payroll_adv = round(sum(_emp_num(p.get("advance_payment")) for p in payrolls if p.get("status") != "paid"), 2)
     advances = round(sum(_emp_num(b.get("amount")) for b in bonuses if attendance.bonus_counts_as_advance(b) and str(b.get("period") or "").startswith(month)), 2)
     extra_advance = round(max(0.0, advances - payroll_adv), 2)
     bakiye_paid = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") == "bakiye" and b.get("status") != "rejected"), 2)
+    if unpaid_payroll <= 0.004 and emp.get("pay_start_date") and str(emp.get("pay_type") or "monthly") != "daily":
+        month_paid = any(str(p.get("period") or "") == month and p.get("status") == "paid" for p in payrolls)
+        if not month_paid:
+            try:
+                as_of = datetime.now(timezone.utc).date()
+                slots = partner_pay.salary_slots(employee_pay.pay_slot_emp(emp), as_of)
+            except Exception:  # noqa: BLE001
+                slots = []
+            if any(per == month for per, _due in slots):
+                unpaid_payroll = round(_emp_num(emp.get("salary")), 2)
     remaining = round(unpaid_payroll + unpaid_expenses + meal_due + transport_due + bonus_pending - extra_advance - bakiye_paid, 2)
     ot_earned = round(_emp_num(emp.get("_overtime_pay")), 2)
     ot_hours = round(_emp_num(emp.get("_overtime_hours")), 2)
@@ -15268,7 +15281,11 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
         _emp_num(b.get("amount")) for b in bonuses
         if b.get("type") == "overtime" and b.get("status") == "paid" and str(b.get("period") or "").startswith(month)
     ), 2)
-    overtime_due = round(max(0.0, ot_earned - ot_paid), 2)
+    ot_in_payroll = round(sum(
+        _emp_num(p.get("overtime_pay")) for p in payrolls
+        if str(p.get("period") or "").startswith(month) and p.get("status") != "rejected"
+    ), 2)
+    overtime_due = round(max(0.0, ot_earned - ot_paid - ot_in_payroll), 2)
     return {
         "remaining": remaining, "unpaid_payroll": unpaid_payroll, "unpaid_expenses": unpaid_expenses,
         "meal_due": meal_due, "transport_due": transport_due, "bonus_pending": bonus_pending, "advances": extra_advance,
@@ -15374,16 +15391,40 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
         if k == "iban":
             raw = str(v or "").strip()
             v = raw or None
+        if k == "pay_recurring":
+            v = bool(v) if v not in (None, "") else True
+        if k == "pay_day" and v not in (None, ""):
+            try:
+                v = min(31, max(1, int(v)))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Hak ediş günü 1-31 olmalı.")
+        if k == "pay_start_date":
+            if v in (None, ""):
+                v = None
+            else:
+                parsed = attendance._ymd(v)
+                if not parsed:
+                    raise HTTPException(status_code=400, detail="Hak ediş tarihi YYYY-MM-DD olmalı.")
+                v = parsed
         upd[k] = v
     # SGK sicili varsa IBAN zorunlu (güncelleme sonrası nihai durum)
     if upd:
         existing = await db.employees.find_one({"_id": emp_id}) or {}
+        if upd.get("pay_start_date"):
+            upd["pay_day"] = int(str(upd["pay_start_date"])[8:10])
         final_sgk = upd["sgk_number"] if "sgk_number" in upd else existing.get("sgk_number")
         final_iban = upd["iban"] if "iban" in upd else existing.get("iban")
         if str(final_sgk or "").strip() and not _norm_iban(final_iban):
             raise HTTPException(status_code=400, detail="SGK sicil numarası girildiğinde personel IBAN zorunludur (maaş yalnız bankadan ödenir).")
         upd["updated_at"] = datetime.now(timezone.utc).isoformat()
         await db.employees.update_one({"_id": emp_id}, {"$set": upd})
+        merged = {**(existing or {}), **upd}
+        if merged.get("pay_start_date") and (merged.get("meal_allowance") or merged.get("transport_allowance")):
+            await employee_pay.accrue_allowances(
+                db, merged.get("company_id") or existing.get("company_id"),
+                employee_id=emp_id, as_of=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                force_start=True, generate_payroll_fn=generate_payroll,
+            )
     res = await db.employees.find_one({"_id": emp_id})
     return clean_doc(res)
 
@@ -15451,6 +15492,137 @@ async def employee_card(emp_id: str):
             "pending_invite": invite_payload,
             "totals": {"paid_salary": round(sum(p.get("net_salary", 0) for p in payrolls if p.get("status") == "paid"), 2), "bonus_total": round(sum(b.get("amount", 0) for b in bonuses), 2)},
             "balance": await _employee_receivable({**emp, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]}, payrolls, bonuses, month)}
+
+
+@api_router.post("/personnel/employees/{emp_id}/settle")
+async def settle_employee(emp_id: str, req: Dict[str, Any]):
+    """Karttan tek seferde veya kalem kalem personel alacağı öde; hak ediş tarihi + aylık tekrar kaydet."""
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    payload = req or {}
+    pay_date = attendance._ymd(payload.get("date") or payload.get("pay_start_date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    fields = employee_pay.prepare_employee_pay({
+        "pay_start_date": pay_date,
+        "pay_recurring": payload["recurring"] if "recurring" in payload else emp.get("pay_recurring", True),
+    })
+    await db.employees.update_one({"_id": emp_id}, {"$set": {
+        "pay_start_date": fields.get("pay_start_date"),
+        "pay_day": fields.get("pay_day"),
+        "pay_recurring": fields.get("pay_recurring"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }})
+    emp = {**emp, **fields}
+    month = pay_date[:7]
+    company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
+    ot = await attendance.overtime_pay_for_period(company, emp, month)
+    payrolls = await db.payrolls.find({"employee_id": emp_id}).to_list(60)
+    bonuses = await db.bonus_payments.find({"employee_id": emp_id}).to_list(200)
+    balance = await _employee_receivable(
+        {**emp, "_overtime_pay": ot["amount"], "_overtime_hours": ot["overtime_hours"]},
+        payrolls, bonuses, month,
+    )
+    lines = employee_pay.due_lines(balance)
+    kinds = employee_pay.selected_kinds(payload, lines)
+    account_id = payload.get("account_id") or payload.get("bank_account_id")
+    partner_id = payload.get("partner_id")
+    if account_id and partner_id:
+        raise HTTPException(status_code=400, detail="Kasa/banka ve ortak hesabı aynı anda seçilemez.")
+    if not account_id and not partner_id:
+        raise HTTPException(status_code=400, detail="Kasa/Banka veya ortak hesabı seçin.")
+    pay_req = {"account_id": account_id, "partner_id": partner_id, "date": pay_date}
+    paid: List[str] = []
+    # Bordro fazla mesaiyi zaten içerir; maaş ile birlikte ayrıca mesai primi yazma.
+    if "salary" in kinds and "overtime" in kinds:
+        kinds = [k for k in kinds if k != "overtime"]
+
+    if "salary" in kinds:
+        await _assert_salary_bank_only(emp, account_id, partner_id)
+        pending = [p for p in payrolls if p.get("status") != "paid"]
+        if not pending:
+            await generate_payroll({"company_id": emp.get("company_id"), "period": month, "employee_id": emp_id})
+            payrolls = await db.payrolls.find({"employee_id": emp_id}).to_list(60)
+            pending = [p for p in payrolls if p.get("status") != "paid"]
+        for p in pending:
+            await pay_payroll(p["_id"], pay_req)
+            paid.append("salary")
+
+    if "expense" in kinds:
+        unpaid_exp = await db.expenses.find({"employee_id": emp_id}).to_list(500)
+        for exp in unpaid_exp:
+            if exp.get("payment_status") == "paid":
+                continue
+            await expenses.pay_expense(exp["_id"], pay_req)
+            paid.append("expense")
+
+    due_of = {r["key"]: r["amount"] for r in lines}
+    if "meal" in kinds and due_of.get("meal"):
+        await expenses.create_expense({
+            "company_id": emp.get("company_id"), "employee_id": emp_id,
+            "category": employee_pay.MEAL_CAT, "description": "Yemek ücreti",
+            "amount": due_of["meal"], "vat_rate": 0, "date": pay_date,
+            "account_id": None if partner_id else account_id,
+            "partner_id": partner_id,
+        })
+        paid.append("meal")
+    if "transport" in kinds and due_of.get("transport"):
+        await expenses.create_expense({
+            "company_id": emp.get("company_id"), "employee_id": emp_id,
+            "category": employee_pay.TRANSPORT_CAT, "description": "Yol / ulaşım ödemesi",
+            "amount": due_of["transport"], "vat_rate": 0, "date": pay_date,
+            "account_id": None if partner_id else account_id,
+            "partner_id": partner_id,
+        })
+        paid.append("transport")
+    if "overtime" in kinds and due_of.get("overtime"):
+        await create_bonus({
+            "employee_id": emp_id, "type": "overtime", "amount": due_of["overtime"],
+            "period": month, "note": "Fazla mesai ücreti", **pay_req,
+        })
+        paid.append("overtime")
+    if "bonus" in kinds:
+        for b in bonuses:
+            if b.get("status") == "paid":
+                continue
+            if b.get("type") in ("advance", "borc", "bakiye", "overtime"):
+                continue
+            await update_bonus(b["_id"], pay_req)
+            paid.append("bonus")
+
+    try:
+        advance = float(payload.get("advance") or 0)
+    except (TypeError, ValueError):
+        advance = 0.0
+    if advance > 0:
+        await create_bonus({"employee_id": emp_id, "type": "advance", "amount": advance, "period": month, "note": payload.get("advance_note") or "Avans", **pay_req})
+        paid.append("advance")
+
+    new_exp = payload.get("new_expense") if isinstance(payload.get("new_expense"), dict) else {}
+    try:
+        exp_amt = float(new_exp.get("amount") or 0)
+    except (TypeError, ValueError):
+        exp_amt = 0.0
+    if exp_amt > 0:
+        await expenses.create_expense({
+            "company_id": emp.get("company_id"), "employee_id": emp_id,
+            "category": new_exp.get("category") or "Personel Masrafı",
+            "description": (new_exp.get("description") or f"{emp.get('full_name')} masrafı").strip(),
+            "amount": exp_amt, "vat_rate": 0, "date": pay_date,
+            "account_id": None if partner_id else account_id,
+            "partner_id": partner_id,
+            "notes": new_exp.get("note") or "",
+        })
+        paid.append("new_expense")
+
+    if not paid:
+        raise HTTPException(status_code=400, detail="Ödenecek kalem yok.")
+    return {
+        "status": "success",
+        "paid": paid,
+        "date": pay_date,
+        "recurring": fields.get("pay_recurring"),
+        "message": f"{emp.get('full_name')} için {len(paid)} ödeme kalemi işlendi.",
+    }
 
 
 def _truthy_confirm(v) -> bool:
@@ -15918,7 +16090,11 @@ async def list_payrolls(company_id: Optional[str] = "comp_nexus_main_01", period
 async def generate_payroll(req: Dict[str, Any]):
     company_id = req.get("company_id", "comp_nexus_main_01")
     period = req.get("period", datetime.now().strftime("%Y-%m"))
-    employees = await db.employees.find({"company_id": company_id, "status": "active"}).to_list(100)
+    employee_id = req.get("employee_id")
+    q = {"company_id": company_id, "status": "active"}
+    if employee_id:
+        q = {"_id": employee_id}
+    employees = await db.employees.find(q).to_list(100)
     company = await db.companies.find_one({"_id": company_id}) or {}
 
     generated = []
@@ -15939,6 +16115,16 @@ async def generate_payroll(req: Dict[str, Any]):
         gross = float(emp.get("payroll_salary") or 0) or round(net * 1.40, 2)
         second = float(emp.get("second_salary") or 0)
         ot = await attendance.overtime_pay_for_period(company, emp, period)
+        ot_paid_bonus = round(sum(
+            float(b.get("amount") or 0)
+            for b in await db.bonus_payments.find({
+                "employee_id": str(emp.get("_id")),
+                "type": "overtime",
+                "status": "paid",
+                "period": period,
+            }).to_list(100)
+        ), 2)
+        ot_pay = round(max(0.0, float(ot.get("amount") or 0) - ot_paid_bonus), 2)
         existing = await db.payrolls.find_one({"company_id": company_id, "employee_id": str(emp["_id"]), "period": period})
         if existing and existing.get("status") == "paid":
             continue
@@ -15960,12 +16146,12 @@ async def generate_payroll(req: Dict[str, Any]):
             "overtime_hours": ot["overtime_hours"],
             "overtime_weekday_hours": ot["weekday_hours"],
             "overtime_holiday_hours": ot["holiday_hours"],
-            "overtime_pay": ot["amount"],
+            "overtime_pay": ot_pay,
             "overtime_rate": {**{k: ot[k] for k in ("method", "hourly_base", "weekday_rate", "holiday_rate", "multiplier", "holiday_multiplier")}, "divisor": attendance.merge_schedule(company, emp).get("monthly_hours_divisor", 225)},
             "bonus": bonus,
             "deduction": deduction,
             "advance_payment": advance,
-            "final_payable": round(net + ot["amount"] + second + bonus - deduction - advance, 2),
+            "final_payable": round(net + ot_pay + second + bonus - deduction - advance, 2),
             "status": "pending",
             "created_at": (existing or {}).get("created_at") or datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat()
@@ -15990,7 +16176,7 @@ async def pay_payroll(payroll_id: str, req: Dict[str, Any]):
     await _assert_salary_bank_only(emp, account_id, partner_id)
 
     amount = payroll.get("final_payable", 0.0)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = attendance._ymd(req.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     paid_from = None
 
     if partner_id:

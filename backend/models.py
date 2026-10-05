@@ -671,6 +671,9 @@ class Employee(BaseDocument):
     daily_wage: float = 0.0  # Günlük yevmiye
     meal_allowance: float = 0.0  # Aylık yemek
     transport_allowance: float = 0.0  # Aylık yol / ulaşım
+    pay_start_date: Optional[str] = None  # Hak ediş tarihi YYYY-MM-DD
+    pay_day: int = 1
+    pay_recurring: bool = True
     sgk_number: Optional[str] = None  # SGK sicil no — doluysa ana maaş yalnız bankadan
     iban: Optional[str] = None  # Personel banka IBAN
     birth_date: Optional[str] = None
