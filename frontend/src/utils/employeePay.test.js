@@ -2,6 +2,8 @@ import {
   employeeDueLines,
   employeePayKindLabel,
   employeePayKindsForSubmit,
+  employeePayModalStart,
+  employeePayModalTitle,
   employeePayTotal,
   payDayOf,
 } from "./employeePay";
@@ -36,5 +38,15 @@ describe("employeePay", () => {
   it("reads hak ediş günü from pay_start_date", () => {
     expect(payDayOf({ pay_start_date: "2026-11-01" })).toBe(1);
     expect(payDayOf({ pay_day: 15 })).toBe(15);
+  });
+
+  it("starts list pay buttons in split mode for a single kind", () => {
+    const lines = employeeDueLines(balance, {});
+    expect(employeePayModalStart("meal", lines)).toEqual({ mode: "split", selected: ["meal"] });
+    expect(employeePayModalStart("advance", lines)).toEqual({ mode: "split", selected: [] });
+    expect(employeePayModalStart(undefined, lines).mode).toBe("all");
+    expect(employeePayModalTitle("overtime", { full_name: "Ali" })).toBe("Mesai — Ali");
+    expect(employeePayModalTitle("advance", { full_name: "Ali" })).toBe("Avans — Ali");
+    expect(employeePayKindsForSubmit("split", lines.filter((l) => l.key !== "salary"), ["salary"])).toEqual(["salary"]);
   });
 });

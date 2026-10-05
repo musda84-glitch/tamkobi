@@ -45,5 +45,25 @@ export function employeePayTotal(lines, mode, selectedKeys) {
 export function employeePayKindsForSubmit(mode, lines, selectedKeys) {
   if (mode === "all") return (lines || []).map((l) => l.key);
   const keys = Array.isArray(selectedKeys) ? selectedKeys : [];
-  return (lines || []).filter((l) => keys.includes(l.key)).map((l) => l.key);
+  const have = new Set((lines || []).map((l) => l.key));
+  return keys.filter((k) => have.has(k) || k === "salary");
+}
+
+const PAY_KIND_KEYS = new Set(EMPLOYEE_PAY_KINDS.map((k) => k.key));
+
+/** Liste kartı Avans/Maaş/Yemek/Yol/Prim/Mesai tıklanınca Öde modalının başlangıcı. */
+export function employeePayModalStart(initialKind, lines) {
+  if (initialKind === "advance") return { mode: "split", selected: [] };
+  if (PAY_KIND_KEYS.has(initialKind)) return { mode: "split", selected: [initialKind] };
+  return { mode: "all", selected: (lines || []).map((l) => l.key) };
+}
+
+export function employeePayModalTitle(initialKind, emp) {
+  const name = emp?.full_name || "";
+  if (initialKind === "advance") return name ? `Avans — ${name}` : "Avans";
+  if (PAY_KIND_KEYS.has(initialKind)) {
+    const label = employeePayKindLabel(initialKind, emp);
+    return name ? `${label} — ${name}` : label;
+  }
+  return name ? `Ödeme — ${name}` : "Ödeme";
 }

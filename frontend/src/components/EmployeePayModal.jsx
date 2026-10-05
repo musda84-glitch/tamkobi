@@ -8,18 +8,18 @@ import { useEscape } from "../utils/useEscape";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { todayIsoDate } from "../utils/partnerTx";
-import { employeeDueLines, employeePayKindsForSubmit, employeePayTotal } from "../utils/employeePay";
+import { employeeDueLines, employeePayKindsForSubmit, employeePayModalStart, employeePayModalTitle, employeePayTotal } from "../utils/employeePay";
 import { notifyDataChanged } from "../utils/dataRefresh";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full border border-slate-200 rounded-lg p-2 text-xs bg-slate-50 focus:ring-2 focus:ring-emerald-500 outline-none";
 
-export const EmployeePayModal = ({ employee, companyId, accounts, card, onClose, onDone }) => {
+export const EmployeePayModal = ({ employee, companyId, accounts, card, initialKind, onClose, onDone }) => {
   useEscape(onClose);
   const e = employee || {};
-  const lines = useMemo(() => employeeDueLines(card?.balance, e), [card, e]);
-  const [mode, setMode] = useState("all");
-  const [selected, setSelected] = useState(() => lines.map((l) => l.key));
+  const lines = useMemo(() => employeeDueLines(card?.balance, employee), [card?.balance, employee]);
+  const [mode, setMode] = useState(() => employeePayModalStart(initialKind, employeeDueLines(card?.balance, employee)).mode);
+  const [selected, setSelected] = useState(() => employeePayModalStart(initialKind, employeeDueLines(card?.balance, employee)).selected);
   const [date, setDate] = useState(() => e.pay_start_date || todayIsoDate());
   const [recurring, setRecurring] = useState(e.pay_recurring !== false);
   const [accountId, setAccountId] = useState("");
@@ -28,9 +28,6 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, onClose,
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    setSelected(lines.map((l) => l.key));
-  }, [lines]);
-  useEffect(() => {
     if (accountId || !accounts?.[0]) return;
     const sgk = Boolean(String(e.sgk_number || "").trim());
     const bank = sgk ? (accounts || []).find((a) => String(a.type || "").toLowerCase() === "bank" && !a.is_integrated) : accounts[0];
@@ -38,14 +35,16 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, onClose,
   }, [accounts, accountId, e.sgk_number]);
 
   const total = employeePayTotal(lines, mode, selected) + (Number(advance) || 0) + (Number(newExp.amount) || 0);
+  const kinds = employeePayKindsForSubmit(mode, lines, selected);
+  const canPay = kinds.length > 0 || Number(advance) > 0 || Number(newExp.amount) > 0;
   const toggle = (key) => setSelected((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
 
   const submit = async (ev) => {
     ev.preventDefault();
     if (!date) { toast.error("Hak ediş tarihi girin."); return; }
     if (!accountId) { toast.error("Kasa / banka veya ortak hesabı seçin."); return; }
-    const kinds = employeePayKindsForSubmit(mode, lines, selected);
-    if (!kinds.length && !Number(advance) && !Number(newExp.amount)) {
+    const payKinds = employeePayKindsForSubmit(mode, lines, selected);
+    if (!payKinds.length && !Number(advance) && !Number(newExp.amount)) {
       toast.error("Ödenecek kalem seçin veya avans / masraf girin.");
       return;
     }
@@ -53,7 +52,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, onClose,
     try {
       const body = {
         mode,
-        kinds,
+        kinds: payKinds,
         date,
         recurring,
         ...splitPaymentTarget(accountId),
@@ -74,7 +73,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, onClose,
     <div className="fixed inset-0 z-[70] bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps((ev) => { ev.stopPropagation(); onClose(); })} data-testid="emp-pay-modal">
       <form onSubmit={submit} onClick={(ev) => ev.stopPropagation()} className="bg-white rounded-2xl w-full max-w-lg p-5 space-y-3 text-xs shadow-2xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between border-b pb-2">
-          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><Banknote className="w-4 h-4 text-emerald-600" /> Ödeme — {e.full_name}</h3>
+          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5"><Banknote className="w-4 h-4 text-emerald-600" /> {employeePayModalTitle(initialKind, e)}</h3>
           <button type="button" onClick={onClose} className="text-slate-400"><X className="w-5 h-5" /></button>
         </div>
         <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5" data-testid="emp-pay-mode">
@@ -134,7 +133,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, onClose,
           <span className="font-bold text-slate-800" data-testid="emp-pay-total">Toplam {fmt(total)} ₺</span>
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>
-            <button type="submit" disabled={busy || total <= 0 || !accountId} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="emp-pay-submit">{busy ? "…" : "Öde"}</button>
+            <button type="submit" disabled={busy || !canPay || !accountId} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="emp-pay-submit">{busy ? "…" : "Öde"}</button>
           </div>
         </div>
       </form>

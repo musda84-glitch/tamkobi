@@ -89,3 +89,20 @@ test("ayrı ayrı öde kalem kutularını açar", () => {
   expect(host.querySelector('[data-testid="emp-pay-kind-meal"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="emp-pay-kind-overtime"]')).not.toBeNull();
 });
+
+test("Yemek butonu ayrı ayrı öde ve yemek kalemini açar", () => {
+  render(
+    <EmployeePayModal
+      employee={{ id: "e1", full_name: "Ali" }}
+      companyId="c1"
+      accounts={[{ id: "acc1", type: "bank" }]}
+      card={card}
+      initialKind="meal"
+      onClose={() => {}}
+    />,
+  );
+  expect(host.textContent).toContain("Yemek — Ali");
+  const meal = host.querySelector('[data-testid="emp-pay-kind-meal"]');
+  expect(meal).not.toBeNull();
+  expect(meal.checked).toBe(true);
+});
