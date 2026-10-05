@@ -23,6 +23,16 @@ export function isWarehouseShipped(ord = {}) {
   return String(ord.cargo_tracking_number || "").toUpperCase().startsWith("DEPO-");
 }
 
+/** B2B takip kartı: ham "warehouse" kodunu Türkçe göster. */
+export function trackingCarrierLabel(carrier, trackingNumber = "") {
+  const raw = String(carrier || "").trim();
+  if (!raw) {
+    return String(trackingNumber || "").toUpperCase().startsWith("DEPO-") ? "Depodan sevk" : "";
+  }
+  if (raw.toLowerCase() === WAREHOUSE_SHIP_CODE) return "Depodan sevk";
+  return raw;
+}
+
 const SHIPPED_LIKE = new Set(["shipped", "in_transit"]);
 
 /** Durum seçicisinde shipped seçeneği: depodan sevk ise "Depo sevk edildi". */

@@ -3,6 +3,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
+import warehouse_ship as wship
+
 PUBLIC_TRACKING_URLS = {
     "yurtici": "https://www.yurticikargo.com/tr/online-servisler/gonderi-sorgula?code={n}",
     "aras": "https://kargotakip.araskargo.com.tr/mainpage.aspx?code={n}",
@@ -45,11 +47,12 @@ def build_b2b_tracking(order: dict, shipment: Optional[dict] = None) -> Optional
     ost = str(o.get("order_status") or "").strip().lower()
     if not num and ost not in ORDER_SHIPPED_LIKE:
         return None
-    carrier = sh.get("carrier_code") or o.get("cargo_carrier") or ""
+    carrier_code = sh.get("carrier_code") or o.get("cargo_carrier") or ""
+    carrier = wship.carrier_label(order=o, shipment=sh)
     url = (
         sh.get("tracking_url")
         or o.get("cargo_tracking_url")
-        or (PUBLIC_TRACKING_URLS.get(carrier, "").format(n=num) if num else None)
+        or (PUBLIC_TRACKING_URLS.get(carrier_code, "").format(n=num) if num else None)
     )
     status = resolve_tracking_status(o, sh)
     eta = sh.get("estimated_delivery")
@@ -66,7 +69,7 @@ def build_b2b_tracking(order: dict, shipment: Optional[dict] = None) -> Optional
             eta = None
     today = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Istanbul")).strftime("%Y-%m-%d")
     return {
-        "carrier": sh.get("carrier_name") or carrier or None,
+        "carrier": carrier,
         "tracking_number": num,
         "tracking_url": url,
         "status": status,

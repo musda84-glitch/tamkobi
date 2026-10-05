@@ -18,6 +18,15 @@ def test_tracking_and_flags():
     assert not ws.has_external_cargo({"cargo_carrier": "warehouse", "cargo_tracking_number": "x"})
 
 
+def test_carrier_label_turkish_for_warehouse():
+    assert ws.carrier_label(code="warehouse") == "Depodan sevk"
+    assert ws.carrier_label(name="warehouse") == "Depodan sevk"
+    assert ws.carrier_label(shipment={"carrier_code": "warehouse"}) == "Depodan sevk"
+    assert ws.carrier_label(order={"cargo_carrier": "warehouse", "cargo_tracking_number": "DEPO-B2B-2026-0065"}) == "Depodan sevk"
+    assert ws.carrier_label(order={"cargo_carrier_name": "Depodan sevk", "cargo_carrier": "warehouse"}) == "Depodan sevk"
+    assert ws.carrier_label(code="yurtici", name="Yurtiçi Kargo") == "Yurtiçi Kargo"
+
+
 def test_can_warehouse_ship_states():
     assert ws.can_warehouse_ship({"order_status": "approved"})[0] == "ok"
     assert ws.can_warehouse_ship({"order_status": "cancelled"})[0] == "closed"

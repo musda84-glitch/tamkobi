@@ -43,6 +43,22 @@ def test_build_card_shows_delivered_for_completed_warehouse():
     assert t["is_late"] is False
     assert (t.get("delivered_at") or "").startswith("2026-10-08")
     assert t["tracking_number"] == "DEPO-B2B-2026-0065"
+    assert t["carrier"] == "Depodan sevk"
+
+
+def test_build_card_warehouse_carrier_is_turkish():
+    t = build_b2b_tracking(
+        {
+            "order_status": "shipped",
+            "cargo_tracking_number": "DEPO-B2B-2026-0065",
+            "cargo_carrier": "warehouse",
+            "warehouse_shipped": True,
+        },
+        {"status": "in_transit", "carrier_code": "warehouse", "carrier_name": "warehouse", "tracking_number": "DEPO-B2B-2026-0065"},
+    )
+    assert t is not None
+    assert t["carrier"] == "Depodan sevk"
+    assert t["status"] == "in_transit"
 
 
 def test_pending_without_tracking_is_none():

@@ -31,6 +31,42 @@ def is_warehouse_shipped(order: Optional[Dict[str, Any]] = None) -> bool:
     return str(order.get("cargo_tracking_number") or "").upper().startswith("DEPO-")
 
 
+def carrier_label(
+    *,
+    order: Optional[Dict[str, Any]] = None,
+    shipment: Optional[Dict[str, Any]] = None,
+    code: Optional[str] = None,
+    name: Optional[str] = None,
+) -> Optional[str]:
+    """B2B/kargo kartı: warehouse kodunu Türkçe göster; ham 'warehouse' yazma."""
+    o = order or {}
+    sh = shipment or {}
+    disp = str(
+        name
+        or sh.get("carrier_name")
+        or o.get("cargo_carrier_name")
+        or ""
+    ).strip()
+    raw_code = str(
+        code
+        or sh.get("carrier_code")
+        or o.get("cargo_carrier")
+        or ""
+    ).strip()
+    code_l = raw_code.lower()
+    disp_l = disp.lower()
+    if (
+        code_l == WAREHOUSE_CARRIER
+        or disp_l == WAREHOUSE_CARRIER
+        or is_warehouse_shipped(o)
+        or str(o.get("cargo_tracking_number") or sh.get("tracking_number") or "").upper().startswith("DEPO-")
+    ):
+        return WAREHOUSE_CARRIER_NAME
+    if disp:
+        return disp
+    return raw_code or None
+
+
 def is_closed(order: Optional[Dict[str, Any]] = None) -> bool:
     return str((order or {}).get("order_status") or "").lower() in CLOSED_STATUSES
 
