@@ -10,11 +10,73 @@ import { statusTr } from "../utils/labels";
 import { orderStatusLabel } from "../utils/warehouseShip";
 import { B2BOrderPreview, PreviewOrderBtn } from "./B2BOrderPreview";
 import { formatOrderItemLabel, cartHeading, cartKalemLabel, cartLinesQtyTotal } from "../utils/b2bCart";
+import { lineUnitIncl } from "../utils/printFormLayout";
 import { LegalConsent } from "./LegalConsent";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
 export const fmt = (n, c = "TRY") => fmtMoney(n, c);
+
+const findB2bProduct = (products, productId) =>
+  (products || []).find((x) => String(x.id || x._id || "") === String(productId || ""));
+
+/** Sipariş düzenleme satırı: katalogdan görsel + KDV alanları. */
+export function b2bEditLineFromItem(item, products) {
+  const p = findB2bProduct(products, item?.product_id) || {};
+  const vat = item?.vat_rate != null && item?.vat_rate !== "" ? Number(item.vat_rate) : Number(p.vat_rate) || 20;
+  const hasOrderUnit = item?.unit_price != null && item?.unit_price !== "";
+  return {
+    product_id: item.product_id,
+    product_name: item.product_name || p.name || "",
+    sku: item.sku || p.sku || "",
+    quantity: Number(item.quantity) || 0,
+    unit_price: hasOrderUnit ? Number(item.unit_price) : Number(p.price) || 0,
+    vat_rate: vat,
+    unit_price_incl: item.unit_price_incl != null && item.unit_price_incl !== ""
+      ? Number(item.unit_price_incl)
+      : null,
+    total_incl: item.total_incl,
+    image_url: item.image_url || p.image_url || p.thumbnail_url || "",
+    note: item.note || item.line_note || "",
+    price: hasOrderUnit ? null : p.price,
+    price_gross: hasOrderUnit ? null : p.price_gross,
+    price_includes_vat: p.price_includes_vat,
+  };
+}
+
+/** Düzenleme satırında KDV dahil birim fiyat. */
+export function b2bEditUnitGross(line) {
+  if (!line) return 0;
+  if (line.unit_price_incl != null && line.unit_price_incl !== "") return Number(line.unit_price_incl) || 0;
+  if (line.unit_price != null && line.unit_price !== "" && (line.vat_rate != null || line.total_incl != null)) {
+    return lineUnitIncl({
+      unit_price: line.unit_price,
+      vat_rate: line.vat_rate,
+      quantity: line.quantity,
+      total_incl: line.total_incl,
+      unit_price_incl: line.unit_price_incl,
+    });
+  }
+  if (line.price_gross != null && line.price_gross !== "") return Number(line.price_gross) || 0;
+  return b2bGross({
+    price: line.price != null ? line.price : line.unit_price,
+    price_gross: line.price_gross,
+    vat_rate: line.vat_rate,
+    price_includes_vat: line.price_includes_vat,
+  });
+}
+
+export function b2bEditLineGross(line) {
+  return Math.round(b2bEditUnitGross(line) * (Number(line?.quantity) || 0) * 100) / 100;
+}
+
+export function b2bEditLinesGrossTotal(lines) {
+  return Math.round((lines || []).reduce((s, l) => s + b2bEditLineGross(l), 0) * 100) / 100;
+}
+
+export function b2bEditLinesQtyTotal(lines) {
+  return (lines || []).reduce((s, l) => s + (Number(l?.quantity) || 0), 0);
+}
 
 /** KDV dahil birim fiyat. price_gross yoksa vat_rate + price_includes_vat ile hesaplanır. */
 export const b2bGross = (p, field = "price") => {
@@ -242,22 +304,33 @@ const OrderActions = ({ o, onPreview, onEdit, onDelete, onCancel, busy }) => (
 
 const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
   useEscape(onClose);
-  const [lines, setLines] = useState(() => (order.items || []).map((i) => ({ product_id: i.product_id, product_name: i.product_name, sku: i.sku, quantity: i.quantity, unit_price: i.unit_price, note: i.note || i.line_note || "" })));
+  const [lines, setLines] = useState(() => (order.items || []).map((i) => b2bEditLineFromItem(i, products)));
   const [note, setNote] = useState(order.notes || "");
   const [addId, setAddId] = useState("");
   const [busy, setBusy] = useState(false);
   const setQty = (idx, qty) => setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, quantity: qty } : l)).filter((l) => l.quantity > 0));
   const addLine = () => {
-    const p = (products || []).find((x) => x.id === addId);
+    const p = findB2bProduct(products, addId);
     if (!p) return;
     setLines((ls) => {
       const hit = ls.find((l) => l.product_id === p.id && !String(l.note || "").trim());
       if (hit) return ls.map((l) => (l === hit ? { ...l, quantity: l.quantity + 1 } : l));
-      return [...ls, { product_id: p.id, product_name: p.name, sku: p.sku, quantity: 1, unit_price: p.price, note: "" }];
+      return [...ls, b2bEditLineFromItem({
+        product_id: p.id,
+        product_name: p.name,
+        sku: p.sku,
+        quantity: 1,
+        unit_price: p.price,
+        vat_rate: p.vat_rate,
+        unit_price_incl: p.price_gross,
+        image_url: p.image_url,
+        note: "",
+      }, products)];
     });
     setAddId("");
   };
-  const total = lines.reduce((s, l) => s + (Number(l.unit_price) || 0) * l.quantity, 0);
+  const total = b2bEditLinesGrossTotal(lines);
+  const kalemCount = b2bEditLinesQtyTotal(lines);
   const save = async () => {
     if (!lines.length) { toast.error("Siparişte en az bir ürün olmalı."); return; }
     setBusy(true);
@@ -272,13 +345,23 @@ const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
     <div className="fixed inset-0 z-[70] bg-slate-900/50 flex items-end sm:items-center justify-center p-0 sm:p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-white rounded-t-2xl sm:rounded-2xl max-w-lg w-full p-4 sm:p-5 space-y-3 text-xs shadow-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="b2b-edit-order-modal">
         <div className="flex justify-between items-start"><div><h3 className="text-sm font-bold text-slate-900">Siparişi düzenle</h3><p className="text-slate-500 font-mono">{order.order_number}</p></div><button type="button" onClick={onClose} className="text-slate-400" data-testid="b2b-edit-close"><X className="w-5 h-5" /></button></div>
-        <div className="divide-y">{lines.map((l, idx) => (
-          <div key={`${l.product_id}-${l.note || ""}-${idx}`} className="py-2 flex items-center gap-2" data-testid={`b2b-edit-line-${l.sku}`}>
+        <div className="divide-y">{lines.map((l, idx) => {
+          const unitGross = b2bEditUnitGross(l);
+          const lineGross = b2bEditLineGross(l);
+          const img = l.image_url;
+          return (
+          <div key={`${l.product_id}-${l.note || ""}-${idx}`} className="py-2 flex items-center gap-2" data-testid={`b2b-edit-line-${l.sku || idx}`}>
+            <div className="w-11 h-11 shrink-0 rounded-lg border bg-slate-50 overflow-hidden flex items-center justify-center" data-testid={`b2b-edit-line-img-${l.sku || idx}`}>
+              {img
+                ? <img src={resolveImageUrl(img)} alt="" className="w-full h-full object-contain" loading="lazy" decoding="async" />
+                : <Package className="w-5 h-5 text-slate-300" />}
+            </div>
             <div className="flex-1 min-w-0">
               <div className="font-semibold truncate">{l.product_name}</div>
-              <div className="text-slate-400">{fmt(l.unit_price)}</div>
+              <div className="text-slate-400" data-testid={`b2b-edit-line-price-${l.sku || idx}`}>{l.quantity} × {fmt(unitGross)} <span className="text-[10px]">KDV dahil</span></div>
               {l.note ? <div className="text-[10px] text-amber-800 truncate" title={l.note} data-testid={`b2b-edit-line-note-${l.sku}`}>Sipariş stok notu · {l.note}</div> : null}
             </div>
+            <b className="whitespace-nowrap shrink-0" data-testid={`b2b-edit-line-total-${l.sku || idx}`}>{fmt(lineGross)}</b>
             <div className="flex items-center gap-1 bg-slate-100 rounded-lg">
               <button type="button" onClick={() => setQty(idx, l.quantity - 1)} className="p-1.5" aria-label="Azalt" data-testid={`b2b-edit-dec-${l.sku}`}><Minus className="w-3.5 h-3.5" /></button>
               <span className="w-7 text-center font-bold">{l.quantity}</span>
@@ -286,7 +369,8 @@ const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
             </div>
             <button type="button" onClick={() => setQty(idx, 0)} className="text-rose-500 p-1" aria-label="Kaldır"><Trash2 className="w-3.5 h-3.5" /></button>
           </div>
-        ))}</div>
+          );
+        })}</div>
         {(products || []).length > 0 && (
           <div className="flex gap-1.5">
             <select value={addId} onChange={(e) => setAddId(e.target.value)} className="flex-1 border rounded-lg p-2 bg-slate-50" data-testid="b2b-edit-add-product">
@@ -297,7 +381,19 @@ const EditOrderModal = ({ order, products, token, onClose, onDone }) => {
           </div>
         )}
         <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Sipariş notu" className="w-full border rounded-xl p-2.5" data-testid="b2b-edit-note" />
-        <div className="flex items-center justify-between border-t pt-2"><b>Toplam {fmt(total)}</b><div className="flex gap-2"><button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">Vazgeç</button><button type="button" onClick={save} disabled={busy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="b2b-edit-save">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Kaydet"}</button></div></div>
+        <div className="space-y-1 border-t pt-2">
+          <div className="flex justify-between text-slate-500" data-testid="b2b-edit-kalem">
+            <span>Toplam kalem</span>
+            <span>{cartKalemLabel(kalemCount)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <b data-testid="b2b-edit-total">Toplam (KDV dahil) {fmt(total)}</b>
+            <div className="flex gap-2">
+              <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">Vazgeç</button>
+              <button type="button" onClick={save} disabled={busy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="b2b-edit-save">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Kaydet"}</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
