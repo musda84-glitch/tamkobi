@@ -4,6 +4,7 @@ import { Linking, Pressable, Text, View } from "react-native";
 import { colors } from "../../theme";
 import type { Order } from "../../types";
 import { trackingLabel } from "../../utils/b2bOrders";
+import { trackingCarrierLabel } from "../../utils/orderCargo";
 import { fmtDate } from "../../utils/money";
 
 export function B2BTrackingCard({ tracking, orderNumber }: { tracking?: Order["tracking"]; orderNumber?: string }) {
@@ -15,11 +16,12 @@ export function B2BTrackingCard({ tracking, orderNumber }: { tracking?: Order["t
   const fg = done ? colors.primaryHover : late ? colors.danger : "#0369A1";
   const bg = done ? colors.emerald50 : late ? colors.rose50 : "#E0F2FE";
   const steps = tracking.steps || [];
+  const carrier = trackingCarrierLabel(tracking.carrier, tracking.tracking_number);
   return (
     <View testID={`b2b-tracking-${orderNumber}`} style={{ backgroundColor: bg, borderRadius: 12, padding: 10, gap: 6 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <Text style={{ color: fg, fontWeight: "800", fontSize: 12, flex: 1 }}>
-          {trackingLabel(tracking.status)}{tracking.carrier ? ` · ${tracking.carrier}` : ""}
+          {trackingLabel(tracking.status)}{carrier ? ` · ${carrier}` : ""}
         </Text>
         {tracking.tracking_number ? (
           tracking.tracking_url ? (

@@ -4,6 +4,7 @@ import {
   isWarehouseShipped,
   orderStatusLabel,
   orderStatusSelectOptions,
+  trackingCarrierLabel,
   warehouseShipConfirm,
   warehouseShippedOptionLabel,
   warehouseShipPath,
@@ -37,6 +38,13 @@ test("confirm copy and path", () => {
   expect(text).toContain("Ersay • İstanbul");
   expect(text).toMatch(/sevk edildi/);
   expect(warehouseShipPath("ord_1")).toBe("/orders/ord_1/warehouse-ship");
+});
+
+test("trackingCarrierLabel shows Depodan sevk for warehouse code", () => {
+  expect(trackingCarrierLabel("warehouse")).toBe("Depodan sevk");
+  expect(trackingCarrierLabel("WAREHOUSE", "DEPO-B2B-2026-0065")).toBe("Depodan sevk");
+  expect(trackingCarrierLabel("", "DEPO-B2B-2026-0065")).toBe("Depodan sevk");
+  expect(trackingCarrierLabel("Yurtiçi Kargo")).toBe("Yurtiçi Kargo");
 });
 
 test("warehouse-shipped status select and badge say Depo sevk edildi", () => {
