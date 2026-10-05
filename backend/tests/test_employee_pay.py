@@ -61,6 +61,11 @@ def test_split_allows_advance_without_kinds():
     assert employee_pay.selected_kinds({"mode": "split", "kinds": [], "advance": 50}, rows) == []
 
 
+def test_split_keeps_explicit_salary_without_due():
+    rows = employee_pay.due_lines({"unpaid_payroll": 0, "meal_due": 10})
+    assert employee_pay.selected_kinds({"mode": "split", "kinds": ["salary"]}, rows) == ["salary"]
+
+
 def test_accrue_calls_payroll_generator():
     db = FakeDb()
     db.employees.docs.append({

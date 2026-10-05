@@ -77,6 +77,8 @@ def selected_kinds(req: Dict[str, Any], lines: List[Dict[str, Any]]) -> List[str
     if isinstance(raw, str):
         raw = [raw]
     picked = [str(k) for k in raw if k in available]
+    if "salary" in [str(k) for k in raw] and "salary" not in picked:
+        picked.append("salary")
     if not picked and not req.get("advance") and not (req.get("new_expense") or {}).get("amount"):
         raise HTTPException(status_code=400, detail="Ayrı ayrı ödeme için en az bir kalem seçin.")
     return picked

@@ -9,6 +9,7 @@ import { compressImageFile } from "../utils/compressImage";
 import { LeaveRequestsPanel, SalaryCalculator, BonusPanel } from "../components/PersonnelExtras";
 import { AttendancePanel } from "../components/AttendancePanel";
 import { EmployeeCardModal } from "../components/EmployeeCardModal";
+import { EmployeePayModal } from "../components/EmployeePayModal";
 import { EmployeeMovesModal } from "../components/EmployeeMovesModal";
 import { EmployeeAssignTaskModal } from "../components/EmployeeAssignTaskModal";
 import { AssignOvertimeModal } from "../components/AssignOvertimeModal";
@@ -91,11 +92,11 @@ export default function PersonnelPage() {
   const [selectedBankId, setSelectedBankId] = useState("");
   const [pendingReqs, setPendingReqs] = useState([]);
   const [busyReqId, setBusyReqId] = useState(null);
-  const [busySalaryId, setBusySalaryId] = useState(null);
   const [otAssign, setOtAssign] = useState(null);
   const [taskEmp, setTaskEmp] = useState(null);
   const [ledgerEmp, setLedgerEmp] = useState(null);
   const [yevmiyeEmp, setYevmiyeEmp] = useState(null);
+  const [settlePay, setSettlePay] = useState(null);
   const [roleOptions, setRoleOptions] = useState([]);
 
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
@@ -399,83 +400,12 @@ export default function PersonnelPage() {
     setPayPayrollItem(p);
   };
 
-  const payrollStubFor = (emp) => {
-    const eid = empIdOf(emp);
-    const list = payrolls.filter((p) => empIdOf(p) === eid || String(p.employee_id || "") === eid);
-    return list.find((p) => p.status !== "paid") || list[0] || {
-      employee_id: eid,
-      employee_name: emp.full_name,
-      period: new Date().toISOString().slice(0, 7),
-    };
-  };
-
-  const openAdvanceFor = (emp) => setQuickPay({ p: payrollStubFor(emp), type: "advance" });
-  const openBonusFor = (emp) => {
-    if (isDailyWage(emp)) {
+  const openSettleFor = (emp, kind) => {
+    if (kind === "bonus" && isDailyWage(emp)) {
       setYevmiyeEmp(emp);
       return;
     }
-    const due = Number(emp?.balance?.bonus_pending || 0) || 0;
-    setQuickPay({ p: payrollStubFor(emp), type: "bonus", amount: due > 0 ? due : "" });
-  };
-  const openOtPayFor = (emp) => {
-    const due = Number(emp?.balance?.overtime_due ?? emp?.balance?.overtime_pay ?? 0) || 0;
-    setQuickPay({ p: payrollStubFor(emp), type: "overtime", amount: due > 0 ? due : "" });
-  };
-
-  const openMealExpenseFor = (emp) => {
-    const bal = emp?.balance || {};
-    const due = Number(bal.meal_due ?? emp.meal_allowance ?? 0) || 0;
-    setQuickPay({
-      p: payrollStubFor(emp),
-      type: "expense",
-      category: "Yemek",
-      description: "Yemek ücreti",
-      amount: due > 0 ? due : "",
-      initialMode: "new",
-    });
-  };
-
-  const openTransportExpenseFor = (emp) => {
-    const bal = emp?.balance || {};
-    const due = Number(bal.transport_due ?? emp.transport_allowance ?? 0) || 0;
-    setQuickPay({
-      p: payrollStubFor(emp),
-      type: "expense",
-      category: "Yol / Ulaşım",
-      description: "Yol / ulaşım ödemesi",
-      amount: due > 0 ? due : "",
-      initialMode: "new",
-    });
-  };
-
-  const openSalaryFor = async (emp) => {
-    if (isDailyWage(emp)) {
-      setLedgerEmp(emp);
-      return;
-    }
-    const eid = empIdOf(emp);
-    let item = payrolls.find((p) => (empIdOf(p) === eid || String(p.employee_id || "") === eid) && p.status !== "paid");
-    if (!item) {
-      setBusySalaryId(eid);
-      try {
-        const period = new Date().toISOString().slice(0, 7);
-        await axios.post(`${API_URL}/personnel/generate-payroll`, { company_id: companyId, period });
-        const payRes = await axios.get(`${API_URL}/personnel/payrolls?company_id=${companyId}`);
-        setPayrolls(payRes.data);
-        item = (payRes.data || []).find((p) => (empIdOf(p) === eid || String(p.employee_id || "") === eid) && p.status !== "paid");
-        if (!item) {
-          toast.success("Bu dönemin maaşı zaten ödenmiş.");
-          return;
-        }
-      } catch (err) {
-        toast.error(err.response?.data?.detail || "Bordro hazırlanamadı.");
-        return;
-      } finally {
-        setBusySalaryId(null);
-      }
-    }
-    setPayPayrollItem(item);
+    setSettlePay({ emp, kind });
   };
 
   const openOvertimeFor = (emp) => setOtAssign({
@@ -960,7 +890,7 @@ export default function PersonnelPage() {
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 type="button"
-                onClick={() => openAdvanceFor(emp)}
+                onClick={() => openSettleFor(emp, "advance")}
                 className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200"
                 data-testid={`employee-advance-btn-${emp.tc_kimlik || empKey}`}
               >
@@ -968,34 +898,33 @@ export default function PersonnelPage() {
               </button>
               <button
                 type="button"
-                onClick={() => openSalaryFor(emp)}
-                disabled={busySalaryId === empKey}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 disabled:opacity-50"
+                onClick={() => openSettleFor(emp, "salary")}
+                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"
                 data-testid={`employee-salary-btn-${emp.tc_kimlik || empKey}`}
               >
                 <Banknote className="w-3.5 h-3.5" /> {employeePayActionTitle("salary", emp)}
               </button>
               <button
                 type="button"
-                onClick={() => openMealExpenseFor(emp)}
+                onClick={() => openSettleFor(emp, "meal")}
                 className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200"
-                title="Yemek ücreti — masraf olarak kaydedilir"
+                title="Yemek ücreti"
                 data-testid={`employee-meal-btn-${emp.tc_kimlik || empKey}`}
               >
                 <UtensilsCrossed className="w-3.5 h-3.5" /> Yemek
               </button>
               <button
                 type="button"
-                onClick={() => openTransportExpenseFor(emp)}
+                onClick={() => openSettleFor(emp, "transport")}
                 className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200"
-                title="Yol ödemesi — masraf olarak kaydedilir"
+                title="Yol ödemesi"
                 data-testid={`employee-transport-btn-${emp.tc_kimlik || empKey}`}
               >
                 <Bus className="w-3.5 h-3.5" /> Yol
               </button>
               <button
                 type="button"
-                onClick={() => openBonusFor(emp)}
+                onClick={() => openSettleFor(emp, "bonus")}
                 className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200"
                 data-testid={`employee-bonus-btn-${emp.tc_kimlik || empKey}`}
               >
@@ -1003,7 +932,7 @@ export default function PersonnelPage() {
               </button>
               <button
                 type="button"
-                onClick={() => openOtPayFor(emp)}
+                onClick={() => openSettleFor(emp, "overtime")}
                 className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
                 data-testid={`employee-otpay-btn-${emp.tc_kimlik || empKey}`}
               >
@@ -1496,6 +1425,17 @@ export default function PersonnelPage() {
         </div>
       )}
       {cardEmp && <EmployeeCardModal employee={cardEmp} companyId={companyId} accounts={bankAccounts} onClose={() => setCardEmp(null)} onChanged={loadPersonnelData} />}
+      {settlePay ? (
+        <EmployeePayModal
+          employee={settlePay.emp}
+          companyId={companyId}
+          accounts={bankAccounts}
+          card={{ employee: settlePay.emp, balance: settlePay.emp?.balance }}
+          initialKind={settlePay.kind}
+          onClose={() => setSettlePay(null)}
+          onDone={() => { setSettlePay(null); loadPersonnelData(); }}
+        />
+      ) : null}
       {movesEmp ? (
         <EmployeeMovesModal
           employee={movesEmp}
