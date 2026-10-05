@@ -580,6 +580,14 @@ def build_invoice_ubl(
             _cbc(adr, "DocumentType", doc_type)
             _cbc(adr, "DocumentDescription", desc)
 
+    disp_no = str(inv.get("dispatch_number") or "").strip()
+    if disp_no:
+        adr = _cac(root, "AdditionalDocumentReference")
+        _cbc(adr, "ID", disp_no)
+        _cbc(adr, "IssueDate", _date(inv.get("dispatch_date") or inv.get("issue_date")))
+        _cbc(adr, "DocumentTypeCode", "IRSALIYE")
+        _cbc(adr, "DocumentType", "İrsaliye")
+
     seller_party = {
         "name": seller.get("name"),
         "tax_id": seller.get("tax_number") or seller.get("tax_id"),
@@ -813,6 +821,18 @@ def build_despatch_ubl(
     if transport["plate"]:
         _cbc(root, "Note", f"Plaka: {transport['plate']}")
     _cbc(root, "LineCountNumeric", str(len(items)))
+
+    inv_ref = str(
+        inv.get("invoice_ref_number")
+        or inv.get("converted_invoice_number")
+        or ""
+    ).strip()
+    if inv_ref:
+        adr = _cac(root, "AdditionalDocumentReference")
+        _cbc(adr, "ID", inv_ref)
+        _cbc(adr, "IssueDate", _date(inv.get("invoice_ref_date") or inv.get("issue_date")))
+        _cbc(adr, "DocumentTypeCode", "FATURA")
+        _cbc(adr, "DocumentType", "Fatura")
 
     seller_party = {
         "name": seller.get("name"),

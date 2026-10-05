@@ -305,9 +305,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
   };
   const handleConvertDispatch = async (inv) => {
-    if (!window.confirm(`${inv.invoice_number} irsaliyesinden satış faturası oluşturulsun mu?`)) return;
-    try { const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/convert-to-invoice`, {}); toast.success(r.data.message); loadData(); }
-    catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); }
+    const existingNo = inv.invoice_ref_number || inv.converted_invoice_number;
+    const msg = existingNo
+      ? `${inv.invoice_number} mevcut faturaya bağlansın mı? (${existingNo})`
+      : `${inv.invoice_number} irsaliyesinden satış faturası oluşturulsun mu?\nSiparişte veya irsaliyede fatura varsa yeni fatura açılmaz, mevcut faturaya bağlanır.`;
+    if (!window.confirm(msg)) return;
+    try {
+      const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/convert-to-invoice`, {});
+      toast[r.data.status === "linked" || r.data.status === "exists" ? "info" : "success"](r.data.message);
+      loadData();
+    } catch (err) { toast.error(err.response?.data?.detail || "Dönüştürülemedi."); }
   };
   const handleCreateDispatch = async (inv) => {
     try { const r = await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/create-dispatch`); toast[r.data.status === "exists" ? "info" : "success"](r.data.message); loadData(); }
@@ -1346,7 +1353,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
                         <button type="button" onClick={(e) => openCtxFromButton(e, inv)} className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Fatura kesim & diğer işlemler" data-testid={`inv-more-btn-${inv.invoice_number}`}><MoreVertical className="w-4 h-4" /></button>
                         {inv.invoice_type === "dispatch" ? (
-                          <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
+                          <button onClick={() => handleConvertDispatch(inv)} disabled={!!inv.converted_invoice_id} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition disabled:opacity-30" title={inv.converted_invoice_id ? "Faturalandı" : (inv.invoice_ref_number || inv.invoice_id) ? "Mevcut faturaya bağla" : "İrsaliyeyi Faturaya Dönüştür"} data-testid={`dispatch-convert-btn-${inv.invoice_number}`}><FileCheck2 className="w-4 h-4" /></button>
                         ) : inv.invoice_type === "sales" && supportsEDispatch(einvoiceSettings) ? (
                           <button type="button" onClick={() => handleCreateDispatch(inv)} className="p-1.5 text-fuchsia-600 hover:text-fuchsia-800 hover:bg-fuchsia-50 rounded-lg transition" title={inv.dispatch_number ? `İrsaliye: ${inv.dispatch_number}` : "e-İrsaliye oluştur (bağlı entegratör)"} data-testid={`create-dispatch-btn-${inv.invoice_number}`}><Truck className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}

@@ -171,15 +171,14 @@ class TestDispatch:
         c = client.post(f"{API}/invoices/{disp['id']}/convert-to-invoice", json={}, timeout=TIMEOUT)
         assert c.status_code == 200, c.text
         cb = c.json()
-        assert cb["status"] == "success", cb
-        new_inv = cb["invoice"]
-        assert new_inv["invoice_number"].startswith("TA"), new_inv["invoice_number"]
-        assert new_inv["invoice_type"] == "sales"
-        assert new_inv["status"] == "draft"
-        assert new_inv.get("dispatch_number") == disp["invoice_number"]
+        # Faturadan üretilen irsaliye yeni fatura açmaz; kaynak faturaya bağlanır.
+        assert cb["status"] in ("linked", "exists"), cb
+        linked = cb["invoice"]
+        assert linked["id"] == src["id"] or linked.get("invoice_number") == src.get("invoice_number")
+        assert linked.get("dispatch_number") == disp["invoice_number"]
 
         c2 = client.post(f"{API}/invoices/{disp['id']}/convert-to-invoice", json={}, timeout=TIMEOUT)
-        assert c2.status_code == 200 and c2.json()["status"] == "exists", c2.text
+        assert c2.status_code == 200 and c2.json()["status"] in ("exists", "linked"), c2.text
 
         # dispatch on a dispatch -> 400
         bad = client.post(f"{API}/invoices/{disp['id']}/create-dispatch", timeout=TIMEOUT)
@@ -188,7 +187,7 @@ class TestDispatch:
         # cleanup (no DELETE /api/invoices endpoint -> direct mongo cleanup)
         import subprocess
         subprocess.run(["python", os.path.join(os.path.dirname(__file__), "cleanup_iteration14.py"),
-                        "--invoice-ids", src["id"], "--delete-ids", new_inv["id"], disp["id"]], check=True)
+                        "--invoice-ids", src["id"], "--delete-ids", disp["id"]], check=True)
         chk = client.get(f"{API}/invoices", params={"company_id": TEST_COMPANY_ID}, timeout=TIMEOUT).json()
         srcs = [i for i in chk if i["id"] == src["id"]]
         assert srcs and not srcs[0].get("dispatch_id"), "source invoice dispatch_id not cleaned"
