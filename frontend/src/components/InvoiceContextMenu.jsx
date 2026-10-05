@@ -297,10 +297,19 @@ export function isGibIssued(inv) {
   return /ileti|matbu|n11 faturam|e-ihracat.*ileti/i.test(gsBare) && !/onaylandı$/i.test(gsBare);
 }
 
-/** Taslak ve (ödenmemiş) kağıt faturalar silinebilir. Gelen GİB e-belge silinmez. */
+/** Taslak ve GİB'e gitmemiş irsaliye / (ödenmemiş) kağıt fatura silinebilir. Gelen GİB e-belge silinmez. */
+export function isDispatchDocument(inv) {
+  return Boolean(inv && (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch"));
+}
+
 export function canDeleteInvoice(inv) {
   if (!inv) return false;
+  if (inv.status === "cancelled") return false;
   if (isIncomingPurchaseInvoice(inv)) return false;
+  if (isDispatchDocument(inv)) {
+    if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return false;
+    return !isGibIssued(inv);
+  }
   if (inv.status === "draft") return true;
   if (inv.e_type !== "paper") return false;
   if (Number(inv.paid_amount || 0) > 0.01) return false;
@@ -364,12 +373,12 @@ export function invoiceHasPayment(inv) {
   return ["paid", "partially_paid", "partial"].includes(String(inv.payment_status || ""));
 }
 
-/** Onaylı e-Fatura / e-Arşiv / e-İhracat iptal edilebilir (silinmez). Kağıt silinir. Ödemeli olsa da menüde görünür. */
+/** Onaylı e-Fatura / e-Arşiv / e-İhracat / GİB'e gitmiş e-İrsaliye iptal edilebilir (silinmez). Kağıt silinir. */
 export function canCancelInvoice(inv) {
   if (!inv) return false;
   if (inv.status === "cancelled" || inv.status === "draft") return false;
-  if (inv.invoice_type === "dispatch") return false;
-  if (inv.e_type === "paper" || inv.e_type === "expense_slip" || inv.e_type === "e_dispatch") return false;
+  if (isDispatchDocument(inv)) return isGibIssued(inv);
+  if (inv.e_type === "paper" || inv.e_type === "expense_slip") return false;
   if (inv.e_type === "e_invoice" || inv.e_type === "e_archive" || inv.e_type === "e_export") return true;
   // Gelen GİB alış e-faturası
   if (isIncomingPurchaseInvoice(inv)) return true;
@@ -520,6 +529,7 @@ export const InvoiceContextMenu = (props) => {
   const incoming = isIncomingPurchaseInvoice(inv);
   const pending = isIncomingPurchasePending(inv);
   const issued = isGibIssued(inv);
+  const isDispatch = isDispatchDocument(inv);
   const canIssue = canIssueInvoice(inv);
   const isPurchase = inv.invoice_type === "purchase";
   const showGibDownloads = canDownloadGibDocuments(inv);
@@ -688,7 +698,7 @@ export const InvoiceContextMenu = (props) => {
       {showIssuedActions && ((onCancel && cancellable) || (onExpenseSlip && slipable)) && (
         <div className="border-b border-slate-100 pb-1" data-testid="ctx-issued-actions">
           {onCancel && cancellable && (
-            <Item icon={XCircle} color="text-amber-600" label="Faturayı İptal Et" sub={paid ? "Ödemeli e-belge: cari/stok geri alınır, sipariş serbest kalır" : "Cari/stok geri alınır; kayıt listeden gizlenir"} onClick={() => onCancel(inv)} testId="ctx-cancel" />
+            <Item icon={XCircle} color="text-amber-600" label={isDispatch ? "İrsaliyeyi İptal Et" : "Faturayı İptal Et"} sub={isDispatch ? "Kayıt iptal edilir; sipariş irsaliye bağı kopar" : paid ? "Ödemeli e-belge: cari/stok geri alınır, sipariş serbest kalır" : "Cari/stok geri alınır; kayıt listeden gizlenir"} onClick={() => onCancel(inv)} testId="ctx-cancel" />
           )}
           {onExpenseSlip && slipable && (
             <Item icon={Receipt} color="text-rose-600" label={inv.expense_slip_number ? `Gider Pusulası: ${inv.expense_slip_number}` : "Gider Pusulası Kes"} sub={inv.expense_slip_number ? "Bu fatura için kesilmiş pusula" : "Aynı cari ve kalemlerle alış pusulası"} onClick={() => onExpenseSlip(inv)} testId="ctx-expense-slip" />
@@ -740,10 +750,10 @@ export const InvoiceContextMenu = (props) => {
       {(onDelete && deletable) || (onCancel && cancellable && !showIssuedActions) ? (
         <div className="border-t border-slate-100 mt-1 pt-1" data-testid="ctx-danger-actions">
           {onCancel && cancellable && !showIssuedActions && (
-            <Item icon={XCircle} color="text-amber-600" label="Faturayı İptal Et" sub={paid ? "Ödemeli e-belge: cari/stok geri alınır, sipariş serbest kalır" : "Cari/stok geri alınır; kayıt listeden gizlenir"} onClick={() => onCancel(inv)} testId="ctx-cancel" />
+            <Item icon={XCircle} color="text-amber-600" label={isDispatch ? "İrsaliyeyi İptal Et" : "Faturayı İptal Et"} sub={isDispatch ? "Kayıt iptal edilir; sipariş irsaliye bağı kopar" : paid ? "Ödemeli e-belge: cari/stok geri alınır, sipariş serbest kalır" : "Cari/stok geri alınır; kayıt listeden gizlenir"} onClick={() => onCancel(inv)} testId="ctx-cancel" />
           )}
           {onDelete && deletable && (
-            <Item icon={Trash2} color="text-rose-600" label={inv.status === "draft" ? "Taslağı Sil" : "Kağıt Faturayı Sil"} sub="Çöp kutusuna taşınır (30 gün)" onClick={() => onDelete(inv)} testId="ctx-delete" />
+            <Item icon={Trash2} color="text-rose-600" label={inv.status === "draft" ? "Taslağı Sil" : isDispatch ? "İrsaliyeyi Sil" : "Kağıt Faturayı Sil"} sub="Çöp kutusuna taşınır (30 gün)" onClick={() => onDelete(inv)} testId="ctx-delete" />
           )}
         </div>
       ) : null}

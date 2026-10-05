@@ -83,6 +83,20 @@ def test_invoice_delete_block_reason_allows_draft_and_paper():
         {"status": "approved", "e_type": "paper", "paid_amount": 50, "payment_status": "partially_paid"}
     )
     assert server._invoice_delete_block_reason({"status": "approved", "e_type": "e_invoice"})
+    assert server._invoice_delete_block_reason({
+        "status": "draft", "invoice_type": "dispatch", "e_type": "e_dispatch",
+    }) is None
+    assert server._invoice_delete_block_reason({
+        "status": "approved", "invoice_type": "dispatch", "e_type": "e_dispatch",
+        "gib_status": "Hata: şema", "einvoice_state": "error",
+    }) is None
+    assert server._invoice_delete_block_reason({
+        "status": "approved",
+        "invoice_type": "dispatch",
+        "e_type": "e_dispatch",
+        "gib_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "einvoice_state": "sent",
+    })
 
 
 def test_delete_invoice_allows_paper_and_reverses_effects():

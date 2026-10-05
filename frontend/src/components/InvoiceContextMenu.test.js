@@ -406,3 +406,36 @@ describe("GİB suggested issue type", () => {
     expect(invoiceBuyerTaxId({})).toBe("");
   });
 });
+
+describe("dispatch cancel and delete", () => {
+  test("unsent dispatch can be deleted, not cancelled", () => {
+    const draft = { status: "draft", invoice_type: "dispatch", e_type: "e_dispatch", invoice_number: "IRS-2026-0006" };
+    const local = { status: "approved", invoice_type: "dispatch", e_type: "e_dispatch", gib_status: "Hata: şema" };
+    expect(canDeleteInvoice(draft)).toBe(true);
+    expect(canCancelInvoice(draft)).toBe(false);
+    expect(canDeleteInvoice(local)).toBe(true);
+    expect(canCancelInvoice(local)).toBe(false);
+  });
+
+  test("GİB-sent dispatch can be cancelled, not deleted", () => {
+    const sent = {
+      status: "approved",
+      invoice_type: "dispatch",
+      e_type: "e_dispatch",
+      gib_uuid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      einvoice_state: "sent",
+      gib_status: "GİB'e Gönderildi",
+    };
+    expect(canCancelInvoice(sent)).toBe(true);
+    expect(canDeleteInvoice(sent)).toBe(false);
+  });
+
+  test("incoming dispatch cannot be deleted", () => {
+    expect(canDeleteInvoice({
+      status: "draft",
+      invoice_type: "dispatch",
+      e_type: "e_dispatch",
+      direction: "incoming",
+    })).toBe(false);
+  });
+});

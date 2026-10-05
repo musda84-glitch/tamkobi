@@ -25,6 +25,16 @@ def test_cancel_block_reason_draft_paper_and_e_doc():
     assert server._invoice_cancel_block_reason({
         "status": "approved", "paid_amount": 0, "payment_status": "unpaid", "e_type": "e_archive",
     }) is None
+    assert "silin" in (server._invoice_cancel_block_reason({
+        "status": "approved", "invoice_type": "dispatch", "e_type": "e_dispatch",
+    }) or "").lower()
+    assert server._invoice_cancel_block_reason({
+        "status": "approved",
+        "invoice_type": "dispatch",
+        "e_type": "e_dispatch",
+        "gib_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "einvoice_state": "sent",
+    }) is None
 
 
 def test_cancel_invoice_reverses_and_marks_cancelled():
@@ -93,3 +103,39 @@ def test_cancel_invoice_rejects_draft_and_paper():
             _run(server.cancel_invoice("p1", {}))
     assert ei2.value.status_code == 400
     assert "e-Fatura" in ei2.value.detail
+
+
+def test_cancel_issued_dispatch_unlinks_refs():
+    import server
+
+    inv = {
+        "_id": "d_irs",
+        "status": "approved",
+        "invoice_type": "dispatch",
+        "e_type": "e_dispatch",
+        "invoice_number": "IRS-2026-0006",
+        "gib_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "einvoice_state": "sent",
+        "effects_applied": False,
+        "paid_amount": 0,
+    }
+    mock_db = MagicMock()
+    mock_db.invoices.find_one = AsyncMock(return_value=inv)
+    mock_db.invoices.update_one = AsyncMock()
+    mock_db.installments.update_many = AsyncMock()
+
+    with patch.object(server, "db", mock_db), patch.object(
+        server, "_reverse_invoice_effects", AsyncMock()
+    ), patch.object(
+        server, "_unlink_orders_from_invoice", AsyncMock()
+    ), patch.object(
+        server, "_unlink_dispatch_refs", AsyncMock()
+    ) as un_disp, patch.object(
+        server, "_cancel_promissory_for_query", AsyncMock()
+    ):
+        result = _run(server.cancel_invoice("d_irs", {}))
+
+    un_disp.assert_awaited_once_with("d_irs")
+    assert result["status"] == "success"
+    assert "irsaliye" in result["message"].lower()
+    assert mock_db.invoices.update_one.await_args.args[1]["$set"]["status"] == "cancelled"
