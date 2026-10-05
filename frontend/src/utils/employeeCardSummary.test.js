@@ -3,6 +3,9 @@ import {
   formatTrDate,
   performanceTone,
   remainingTone,
+  parseAnnualLeaveDays,
+  annualLeaveDaysError,
+  annualLeaveDaysPayload,
 } from "./employeeCardSummary";
 
 describe("employee card summary helpers", () => {
@@ -23,5 +26,15 @@ describe("employee card summary helpers", () => {
     expect(remainingTone(1500)).toBe("emerald");
     expect(remainingTone(0)).toBe("slate");
     expect(remainingTone(-200)).toBe("rose");
+  });
+
+  it("parses annual leave days for the card editor", () => {
+    expect(parseAnnualLeaveDays("20")).toBe(20);
+    expect(parseAnnualLeaveDays("14.9")).toBe(14);
+    expect(parseAnnualLeaveDays("-1")).toBeNull();
+    expect(parseAnnualLeaveDays("400")).toBeNull();
+    expect(annualLeaveDaysError("")).toBe("İzin gün sayısı gerekli.");
+    expect(annualLeaveDaysError("20")).toBeNull();
+    expect(annualLeaveDaysPayload(20)).toEqual({ annual_leave_days: 20 });
   });
 });

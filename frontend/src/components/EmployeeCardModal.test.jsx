@@ -132,3 +132,26 @@ test("sistem sekmesinde onaylı personel veri sıfırlama gönderir", async () =
   await act(async () => { host.querySelector('[data-testid="emp-data-reset-confirm"]').click(); await Promise.resolve(); await Promise.resolve(); });
   expect(axios.post).toHaveBeenCalledWith("/api/personnel/employees/emp_1/reset-data", { confirm: true });
 });
+
+test("izinler sekmesinde yıllık hak günü kaydeder", async () => {
+  axios.put.mockResolvedValue({ data: { annual_leave_days: 20 } });
+  render(<EmployeeCardModal employee={{ id: "emp_1", full_name: "Ali" }} companyId="c1" onClose={() => {}} />);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  act(() => host.querySelector('[data-testid="emp-tab-leaves"]').click());
+  const input = host.querySelector('[data-testid="emp-leave-annual-input"]');
+  expect(input).not.toBeNull();
+  expect(input.value).toBe("14");
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, "20");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="emp-leave-annual-save"]').click();
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  expect(axios.put).toHaveBeenCalledWith("/api/personnel/employees/emp_1", { annual_leave_days: 20 });
+});
