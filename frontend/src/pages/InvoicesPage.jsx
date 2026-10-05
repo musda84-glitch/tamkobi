@@ -29,6 +29,7 @@ import { TimeInput } from "../components/TimeInput";
 import { fmtDate, fmtMoney, formatTrAmount } from "../utils/money";
 import { computeLine, emptyLine, hydrateLine, invoiceMoneyTotals, lineFromProduct } from "../utils/documentLines";
 import { cachedList, invoiceTypeFilter } from "../utils/dataSync";
+import { isCancelledInvoice } from "../utils/invoiceStatus";
 import { WITHHOLDING_OPTIONS } from "../utils/invoiceWithholding";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { InvoiceGibBar } from "../components/InvoiceGibBar";
@@ -418,7 +419,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       const [invRows, cntRows, prodRows, bankRes, projRes, quoteRes] = await Promise.all([
         cachedList("invoices", cid, {
-          filter: invoiceTypeFilter(filterType),
+          filter: (inv) => !isCancelledInvoice(inv) && invoiceTypeFilter(filterType)(inv),
           // Proforma sekmesinde tekliflerle birleştiriyoruz; onCached yalnızca faturaları basmasın.
           onCached: filterType === "proforma" ? undefined : setInvoices,
         }),

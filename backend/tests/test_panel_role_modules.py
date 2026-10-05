@@ -64,6 +64,28 @@ def test_vehicles_module_registered():
     assert "/vehicles" not in PANEL_MODULE_FROM
 
 
+def test_ai_extract_maps_to_domain_not_advisor():
+    assert module_for_path("/api/ai/invoice-extract") == "/invoices"
+    assert module_for_path("/api/ai/invoice-extract/confirm") == "/invoices"
+    assert module_for_path("/api/ai/expense-extract") == "/expenses"
+    assert module_for_path("/api/ai/cheque-extract") == "/cheques"
+    assert module_for_path("/api/ai/financial-advisor") == "/ai-advisor"
+    assert module_for_path("/api/ai/cashflow-forecast") == "/ai-advisor"
+
+
+def test_accountant_evrak_ai_path_and_mutation():
+    from rbac import is_accountant_evrak_ai_path, mutation_allowed
+    assert is_accountant_evrak_ai_path("/api/ai/invoice-extract", "POST") is True
+    assert is_accountant_evrak_ai_path("/api/ai/invoice-extract/confirm", "POST") is True
+    assert is_accountant_evrak_ai_path("/api/expenses", "POST") is True
+    assert is_accountant_evrak_ai_path("/api/expenses/abc", "POST") is False
+    assert is_accountant_evrak_ai_path("/api/expenses", "DELETE") is False
+    advisor = {"/invoices": "view", "/expenses": "view", "/cheques": "view", "/accountant": "edit", "/ai-advisor": "none"}
+    assert mutation_allowed("/invoices", "/api/ai/invoice-extract", advisor, "POST") is True
+    assert mutation_allowed("/expenses", "/api/expenses", advisor, "POST") is True
+    assert mutation_allowed("/ai-advisor", "/api/ai/financial-advisor", advisor, "POST") is False
+
+
 def test_default_roles_cover_support_and_finance():
     by_code = {r["code"]: r for r in DEFAULT_ROLES}
     assert by_code["accountant"]["permissions"].get("/expenses") == "edit"
