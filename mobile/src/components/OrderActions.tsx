@@ -46,6 +46,8 @@ import {
   orderMoreMenuItems,
   orderNotifyMessage,
   orderNotifySubject,
+  invoicePrintShareMessage,
+  INVOICE_PRINT_SHARE_NOTE,
   todayYmd,
   type OrderMoreItem,
 } from "../utils/orderMoreMenu";
@@ -134,6 +136,7 @@ export function OrderActions({
   const [notifyEmail, setNotifyEmail] = useState(order.customer_email || "");
   const [notifyBody, setNotifyBody] = useState(() => orderNotifyMessage(order));
   const [notifyChannel, setNotifyChannel] = useState<"sms" | "email" | "whatsapp">(order.customer_phone ? "sms" : "email");
+  const [printShareOpen, setPrintShareOpen] = useState(false);
   const [dateOpen, setDateOpen] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState(todayYmd());
   const [carriers, setCarriers] = useState<CargoCatalogItem[]>(FALLBACK_CARGO_CATALOG);
@@ -837,7 +840,12 @@ export function OrderActions({
         sendInvoiceLink();
         return;
       case "earsiv_send":
-        printMiniInvoice();
+        if (!order.invoice_id) {
+          onError?.("Önce fatura oluşturun.");
+          return;
+        }
+        setMoreOpen(false);
+        setPrintShareOpen(true);
         return;
       case "digital_code_notify":
         onMessage?.("Dijital kod bildirimi bu kanalda henüz bağlanmadı.");
@@ -992,7 +1000,10 @@ export function OrderActions({
                 })}
               >
                 <Ionicons name={item.icon as keyof typeof Ionicons.glyphMap} size={18} color={item.color} />
-                <Text style={{ flex: 1, fontWeight: "600", fontSize: 13, color: colors.text }}>{item.label}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "600", fontSize: 13, color: colors.text }}>{item.label}</Text>
+                  {item.hint ? <Text style={{ fontSize: 10, color: "#94A3B8", marginTop: 1 }}>{item.hint}</Text> : null}
+                </View>
               </Pressable>
             </View>
           );
@@ -1095,6 +1106,55 @@ export function OrderActions({
           loading={busy === "return"}
           disabled={!!busy}
           onPress={saveReturn}
+        />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={printShareOpen}
+        title="Yazdır & Gönder"
+        subtitle={INVOICE_PRINT_SHARE_NOTE}
+        onClose={() => setPrintShareOpen(false)}
+        testID={`invoice-print-share-sheet-${num}`}
+      >
+        <PrimaryButton
+          title="Yazdır"
+          testID={`invoice-print-share-print-${num}`}
+          onPress={() => {
+            setPrintShareOpen(false);
+            printMiniInvoice();
+          }}
+        />
+        <View style={{ height: 8 }} />
+        <PrimaryButton
+          title="E-posta"
+          testID={`invoice-print-share-email-${num}`}
+          onPress={() => {
+            const pdfUrl = order.invoice_id
+              ? `${client.baseUrl.replace(/\/+$/, "")}/api/invoices/${order.invoice_id}/pdf`
+              : "";
+            setPrintShareOpen(false);
+            setNotifyPhone(order.customer_phone || "");
+            setNotifyEmail(order.customer_email || "");
+            setNotifyBody(invoicePrintShareMessage(order, pdfUrl));
+            setNotifyChannel("email");
+            setNotifyOpen(true);
+          }}
+        />
+        <View style={{ height: 8 }} />
+        <PrimaryButton
+          title="WhatsApp"
+          testID={`invoice-print-share-whatsapp-${num}`}
+          onPress={() => {
+            const pdfUrl = order.invoice_id
+              ? `${client.baseUrl.replace(/\/+$/, "")}/api/invoices/${order.invoice_id}/pdf`
+              : "";
+            setPrintShareOpen(false);
+            setNotifyPhone(order.customer_phone || "");
+            setNotifyEmail(order.customer_email || "");
+            setNotifyBody(invoicePrintShareMessage(order, pdfUrl));
+            setNotifyChannel("whatsapp");
+            setNotifyOpen(true);
+          }}
         />
       </B2BSheet>
 

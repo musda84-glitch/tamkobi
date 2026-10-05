@@ -9,6 +9,7 @@ import {
   orderMoreMenuItems,
   integrationEInvoiceMoreItems,
 } from "./orderMoreMenu";
+import { INVOICE_PRINT_SHARE_HINT } from "./invoicePrintShare";
 
 describe("orderMoreMenu", () => {
   it("classifies marketplace vs panel channels", () => {
@@ -98,6 +99,7 @@ describe("orderMoreMenu", () => {
     expect(labels).toContain("Pazaryeri Kargo Firmasını Değiştir");
     expect(labels).toContain("Siparişi Excel İndir");
     expect(labels).toContain("Siparişi PDF İndir");
+    expect(items.find((i) => i.id === "earsiv_send")?.hint).toBe(INVOICE_PRINT_SHARE_HINT);
   });
 
   it("panel draft (B2B/manual) shows Faturalaştır / İrsaliye / Kargola menu", () => {
@@ -169,6 +171,9 @@ describe("orderMoreMenu", () => {
     ]);
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("E-Fatura Oluştur");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Siparişi Excel İndir");
+    const share = orderMoreMenuItems(ord).items.find((i) => i.id === "earsiv_send");
+    expect(share.hint).toBe(INVOICE_PRINT_SHARE_HINT);
+    expect(share.title).toBe(INVOICE_PRINT_SHARE_HINT);
   });
 
   it("B2B + GİB e-fatura uses E-Fatura labeled ops menu", () => {
@@ -184,6 +189,8 @@ describe("orderMoreMenu", () => {
       "E-Fatura XML'i İndir",
       "E-Fatura PDF İndir",
     ]);
+    const share = orderMoreMenuItems(ord).items.find((i) => i.id === "earsiv_send");
+    expect(share.hint).toBe(INVOICE_PRINT_SHARE_HINT);
   });
 
   it("held / active cart menus expose no more-menu actions", () => {

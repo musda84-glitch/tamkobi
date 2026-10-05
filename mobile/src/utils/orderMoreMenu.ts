@@ -12,6 +12,8 @@ export type OrderMoreItem = {
   section?: string | null;
   color: string;
   eType?: "e_invoice" | "e_archive";
+  hint?: string;
+  title?: string;
 };
 
 export type OrderMoreOrder = {
@@ -64,7 +66,7 @@ function item(
   id: string,
   label: string,
   icon: OrderMoreIcon,
-  opts: { testId?: string; section?: string | null; color?: string; eType?: "e_invoice" | "e_archive"; hidden?: boolean } = {},
+  opts: { testId?: string; section?: string | null; color?: string; eType?: "e_invoice" | "e_archive"; hidden?: boolean; hint?: string; title?: string } = {},
 ): OrderMoreItem & { hidden?: boolean } {
   return {
     id,
@@ -74,9 +76,15 @@ function item(
     section: opts.section || null,
     color: opts.color || "#64748B",
     eType: opts.eType,
+    hint: opts.hint,
+    title: opts.title || opts.hint,
     hidden: !!opts.hidden,
   };
 }
+
+export const INVOICE_PRINT_SHARE_HINT = "Yazdırma, e-posta ve WhatsApp";
+export const INVOICE_PRINT_SHARE_NOTE =
+  "GİB gönderimi değildir. Yalnızca yazdırma, e-posta ve WhatsApp paylaşımı için kullanılır.";
 
 export function integrationEInvoiceMoreItems(): OrderMoreItem[] {
   return [
@@ -85,7 +93,7 @@ export function integrationEInvoiceMoreItems(): OrderMoreItem[] {
     item("mini_8x20", "Mini E-Arşiv Yazdır (8X20cm)", "document-text", { color: "#0284C7" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", "car", { color: "#0EA5E9" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", "car", { color: "#0EA5E9" }),
-    item("earsiv_send", "E-Arşiv Yazdır & Gönder", "mail", { color: "#059669" }),
+    item("earsiv_send", "E-Arşiv Yazdır & Gönder", "mail", { color: "#059669", hint: INVOICE_PRINT_SHARE_HINT, title: INVOICE_PRINT_SHARE_HINT }),
     item("cargo_track_notify", "Kargo Takip Kodu Bildir", "time", { color: "#0EA5E9" }),
     item("digital_code_notify", "Dijital Kod Bildir", "download", { color: "#E11D48" }),
     item("kargola", "Kargola", "car", { color: "#E11D48" }),
@@ -111,7 +119,7 @@ export function panelEInvoiceMoreItems(): OrderMoreItem[] {
     item("mini_8x20", "Mini E-Arşiv Yazdır (8X20cm)", "document-text", { color: "#0284C7" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", "car", { color: "#0EA5E9" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", "car", { color: "#0EA5E9" }),
-    item("earsiv_send", "E-Arşiv Yazdır & Gönder", "mail", { color: "#059669" }),
+    item("earsiv_send", "E-Arşiv Yazdır & Gönder", "mail", { color: "#059669", hint: INVOICE_PRINT_SHARE_HINT, title: INVOICE_PRINT_SHARE_HINT }),
     item("cargo_track_notify", "Kargo Takip Kodu Bildir", "time", { color: "#0EA5E9" }),
     item("invoice_link", "Fatura Linki Gönder", "link", { color: "#F43F5E" }),
     item("xml", "E-Fatura XML'i İndir", "code-slash", { color: "#0EA5E9" }),
@@ -228,6 +236,26 @@ export function orderNotifyMessage(order: {
 }): string {
   const carrier = order.cargo_carrier_name || order.cargo_carrier || "kargo";
   return `Sayın ${order.customer_name || "müşterimiz"}, ${order.order_number || "siparişiniz"} numaralı siparişiniz ${carrier} ile yola çıktı. Takip No: ${order.cargo_tracking_number || "-"}. İyi günler dileriz.`;
+}
+
+export function invoicePrintShareMessage(order: {
+  customer_name?: string;
+  invoice_number?: string;
+  gib_invoice_id?: string;
+  order_number?: string;
+  e_type?: string | null;
+  invoice_e_type?: string | null;
+}, pdfUrl?: string): string {
+  const eType = String(order.e_type || order.invoice_e_type || "").toLowerCase();
+  const kind = eType === "e_archive" ? "E-Arşiv" : "E-Fatura";
+  const no = String(order.gib_invoice_id || order.invoice_number || order.order_number || "belgeniz").trim();
+  const lines = [
+    `Sayın ${order.customer_name || "müşterimiz"},`,
+    "",
+    `${no} numaralı ${kind} belgeniz hazırdır.`,
+  ];
+  if (pdfUrl) lines.push("", `PDF: ${pdfUrl}`);
+  return lines.join("\n");
 }
 
 export function todayYmd(now = new Date()): string {
