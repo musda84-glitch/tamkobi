@@ -353,6 +353,9 @@ class Partner(BaseDocument):
     is_active: bool = True
     photo_url: Optional[str] = None
     monthly_salary: float = 0.0  # Aylık ortak maaşı — her ay ortak alacağına yazılır
+    salary_start_date: Optional[str] = None  # İlk hak ediş tarihi YYYY-MM-DD
+    salary_day: int = 1  # Her ayın hak ediş günü (1-31)
+    salary_recurring: bool = True
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class PartnerTransaction(BaseDocument):

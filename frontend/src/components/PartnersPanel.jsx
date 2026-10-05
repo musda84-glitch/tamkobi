@@ -11,7 +11,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
-import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerSalaryActionLabel } from "../utils/partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerSalaryCardText, todayIsoDate } from "../utils/partnerTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = PARTNER_TX_LABEL;
@@ -54,7 +54,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const [modal, setModal] = useState(null); // add | tx | profit | virman
   const [liveAccounts, setLiveAccounts] = useState(() => accounts || []);
   const [accountsLoading, setAccountsLoading] = useState(false);
-  const [partnerForm, setPartnerForm] = useState({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "" });
+  const [partnerForm, setPartnerForm] = useState({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "", salary_start_date: "", salary_recurring: true });
   const [txForm, setTxForm] = useState({ partner_id: "", type: "capital_in", amount: "", account_id: "", description: "" });
   const [profitForm, setProfitForm] = useState({ total_profit: "", pay_now: true, account_id: "", period: new Date().toISOString().slice(0, 7) });
   const [virmanForm, setVirmanForm] = useState({ source_account_id: "", target_account_id: "", amount: "", description: "Hesaplar arası transfer (Virman)" });
@@ -179,8 +179,10 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
         phone: partnerForm.phone,
         email: partnerForm.email,
         monthly_salary: Number(partnerForm.monthly_salary || 0),
+        salary_start_date: partnerForm.salary_start_date || undefined,
+        salary_recurring: partnerForm.salary_recurring !== false,
       });
-      toast.success("Ortak eklendi."); setModal(null); setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "" }); load();
+      toast.success("Ortak eklendi."); setModal(null); setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "", salary_start_date: "", salary_recurring: true }); load();
     } catch (err) { toast.error(err.response?.data?.detail || "Ortak eklenemedi."); }
   };
 
@@ -193,6 +195,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       phone: p.phone || "",
       email: p.email || "",
       monthly_salary: p.monthly_salary || "",
+      salary_start_date: p.salary_start_date || todayIsoDate(),
+      salary_recurring: p.salary_recurring !== false,
     });
     setModal("edit");
   };
@@ -203,6 +207,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       id: p.id,
       name: p.name || "",
       monthly_salary: p.monthly_salary || "",
+      salary_start_date: p.salary_start_date || todayIsoDate(),
+      salary_recurring: p.salary_recurring !== false,
     });
     setModal("salary");
   };
@@ -212,11 +218,13 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     try {
       const r = await axios.put(`${API_URL}/banking/partners/${partnerForm.id}`, {
         monthly_salary: Number(partnerForm.monthly_salary || 0),
+        salary_start_date: partnerForm.salary_start_date || todayIsoDate(),
+        salary_recurring: partnerForm.salary_recurring !== false,
       });
       const accrual = r.data?.salary_accrual;
       toast.success(accrual?.posted_count ? (accrual.message || "Aylık maaş alacağa yazıldı.") : "Aylık maaş kaydedildi.");
       setModal(null);
-      setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "" });
+      setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "", salary_start_date: "", salary_recurring: true });
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Maaş kaydedilemedi."); }
   };
@@ -230,10 +238,12 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
         phone: partnerForm.phone,
         email: partnerForm.email,
         monthly_salary: Number(partnerForm.monthly_salary || 0),
+        salary_start_date: partnerForm.salary_start_date || undefined,
+        salary_recurring: partnerForm.salary_recurring !== false,
       });
       toast.success("Ortak güncellendi.");
       setModal(null);
-      setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "" });
+      setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "", salary_start_date: "", salary_recurring: true });
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Ortak güncellenemedi."); }
   };
@@ -317,7 +327,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           <button onClick={openVirmanModal} className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-virman-btn"><ArrowLeftRight className="w-4 h-4" /> Virman</button>
           <button onClick={accrueSalaryNow} className="flex items-center gap-1.5 bg-white hover:bg-amber-50 text-amber-800 border border-amber-200 px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-accrue-salary-btn"><Banknote className="w-4 h-4" /> Aylık maaşı yaz</button>
           <button onClick={openProfitModal} className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="distribute-profit-btn"><PieChart className="w-4 h-4" /> Kâr Payı Dağıt</button>
-          <button onClick={() => { setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "" }); setModal("add"); }} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-partner-btn"><Plus className="w-4 h-4" /> Ortak Ekle</button>
+          <button onClick={() => { setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "", salary_start_date: todayIsoDate(), salary_recurring: true }); setModal("add"); }} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-partner-btn"><Plus className="w-4 h-4" /> Ortak Ekle</button>
         </div>
       </div>
 
@@ -397,7 +407,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 <Banknote className="w-3.5 h-3.5" /> Aylık maaş
               </span>
               <span className="text-[11px] font-bold text-amber-950" data-testid={`partner-salary-${p.id}`}>
-                {partnerSalaryActionLabel(p.monthly_salary) || `${fmt(p.monthly_salary)} ₺`}
+                {partnerSalaryCardText(p, fmt)}
               </span>
             </button>
             <div className="grid grid-cols-3 gap-1 text-[10px] text-slate-500">
@@ -437,8 +447,10 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             <div><label className="block font-semibold mb-1">Ad Soyad</label><input className={inputCls} value={partnerForm.name} onChange={(e) => setPartnerForm({ ...partnerForm, name: e.target.value })} required data-testid="partner-name-input" /></div>
             <div><label className="block font-semibold mb-1">Ortaklık Payı (%)</label><input type="number" step="0.01" className={inputCls} value={partnerForm.share_percent} onChange={(e) => setPartnerForm({ ...partnerForm, share_percent: e.target.value })} required data-testid="partner-share-input" />
               <p className="text-[10px] text-slate-400 mt-1">Mevcut toplam: %{summary?.total_share_percent || 0}</p></div>
-            <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><input type="number" step="0.01" min="0" className={inputCls} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} data-testid="partner-salary-input" />
-              <p className="text-[10px] text-slate-400 mt-1">Her ay bu tutar ortak alacağına yazılır; kasa/banka değişmez.</p></div>
+            <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><input type="number" step="0.01" min="0" className={inputCls} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} data-testid="partner-salary-input" /></div>
+            <div><label className="block font-semibold mb-1">Hak ediş tarihi</label><input type="date" className={inputCls} value={partnerForm.salary_start_date || ""} onChange={(e) => setPartnerForm({ ...partnerForm, salary_start_date: e.target.value })} data-testid="partner-salary-date-input" />
+              <p className="text-[10px] text-slate-400 mt-1">Bu tarihte alacağa yazılır. Her ay tekrarla açıksa aynı günde her ay tekrarlanır.</p></div>
+            <label className="flex items-center gap-2 text-slate-700"><input type="checkbox" checked={partnerForm.salary_recurring !== false} onChange={(e) => setPartnerForm({ ...partnerForm, salary_recurring: e.target.checked })} data-testid="partner-salary-recurring" /> Her ay tekrarla</label>
             <div className="grid grid-cols-2 gap-2">
               <div><label className="block font-semibold mb-1">Telefon</label><input className={inputCls} value={partnerForm.phone} onChange={(e) => setPartnerForm({ ...partnerForm, phone: e.target.value })} /></div>
               <div><label className="block font-semibold mb-1">E-posta</label><input className={inputCls} value={partnerForm.email} onChange={(e) => setPartnerForm({ ...partnerForm, email: e.target.value })} /></div>
@@ -454,8 +466,16 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             <div>
               <label className="block font-semibold mb-1">Aylık maaş (₺)</label>
               <input type="number" step="0.01" min="0" className={`${inputCls} font-bold`} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} autoFocus data-testid="card-partner-salary-input" />
-              <p className="text-[11px] text-slate-500 mt-1.5">Bu tutar her ay bir kez ortak alacağına (bakiyeye) yazılır. Kasa ve banka değişmez; ödeme istediğinizde para çekişi yaparsınız.</p>
             </div>
+            <div>
+              <label className="block font-semibold mb-1">Hak ediş tarihi</label>
+              <input type="date" required className={inputCls} value={partnerForm.salary_start_date || ""} onChange={(e) => setPartnerForm({ ...partnerForm, salary_start_date: e.target.value })} data-testid="card-partner-salary-date-input" />
+            </div>
+            <label className="flex items-start gap-2 text-slate-700">
+              <input type="checkbox" className="mt-0.5" checked={partnerForm.salary_recurring !== false} onChange={(e) => setPartnerForm({ ...partnerForm, salary_recurring: e.target.checked })} data-testid="card-partner-salary-recurring" />
+              <span>Her ay tekrarla <span className="text-slate-500 font-normal">(aynı günde otomatik alacağa yazılır)</span></span>
+            </label>
+            <p className="text-[11px] text-slate-500">Hak ediş tarihinde bu dönemin maaşı ortak alacağına yazılır. Kasa ve banka değişmez; ödeme istediğinizde para çekişi yaparsınız.</p>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-amber-600 text-white rounded-lg font-semibold" data-testid="save-partner-salary-btn">Kaydet ve alacağa yaz</button></div>
           </form>
         </Modal>
@@ -466,8 +486,10 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           <form onSubmit={savePartnerEdit} className="space-y-3 text-xs">
             <div><label className="block font-semibold mb-1">Ad Soyad</label><input className={inputCls} value={partnerForm.name} onChange={(e) => setPartnerForm({ ...partnerForm, name: e.target.value })} required data-testid="edit-partner-name-input" /></div>
             <div><label className="block font-semibold mb-1">Ortaklık Payı (%)</label><input type="number" step="0.01" className={inputCls} value={partnerForm.share_percent} onChange={(e) => setPartnerForm({ ...partnerForm, share_percent: e.target.value })} required data-testid="edit-partner-share-input" /></div>
-            <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><input type="number" step="0.01" min="0" className={inputCls} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} data-testid="edit-partner-salary-input" />
-              <p className="text-[10px] text-slate-400 mt-1">Kaydettiğinizde bu ayın maaşı henüz yazılmadıysa ortak alacağına eklenir.</p></div>
+            <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><input type="number" step="0.01" min="0" className={inputCls} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} data-testid="edit-partner-salary-input" /></div>
+            <div><label className="block font-semibold mb-1">Hak ediş tarihi</label><input type="date" className={inputCls} value={partnerForm.salary_start_date || ""} onChange={(e) => setPartnerForm({ ...partnerForm, salary_start_date: e.target.value })} data-testid="edit-partner-salary-date-input" /></div>
+            <label className="flex items-center gap-2 text-slate-700"><input type="checkbox" checked={partnerForm.salary_recurring !== false} onChange={(e) => setPartnerForm({ ...partnerForm, salary_recurring: e.target.checked })} data-testid="edit-partner-salary-recurring" /> Her ay tekrarla</label>
+            <p className="text-[10px] text-slate-400">Vadesi gelen aylar henüz yazılmadıysa ortak alacağına eklenir.</p>
             <div className="grid grid-cols-2 gap-2">
               <div><label className="block font-semibold mb-1">Telefon</label><input className={inputCls} value={partnerForm.phone} onChange={(e) => setPartnerForm({ ...partnerForm, phone: e.target.value })} /></div>
               <div><label className="block font-semibold mb-1">E-posta</label><input className={inputCls} value={partnerForm.email} onChange={(e) => setPartnerForm({ ...partnerForm, email: e.target.value })} /></div>

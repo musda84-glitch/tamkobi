@@ -1,4 +1,4 @@
-import { isPartnerCashType, isPartnerLedgerType, partnerSalaryActionLabel, partnerTxIncreasesBalance, partnerTxSign, PARTNER_TX_LABEL } from "./partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, partnerSalaryActionLabel, partnerSalaryCardText, partnerTxIncreasesBalance, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
 
 describe("partnerTx", () => {
   it("labels debit and credit slips", () => {
@@ -34,5 +34,13 @@ describe("partnerTx", () => {
     expect(partnerSalaryActionLabel(0)).toBe("Belirle");
     expect(partnerSalaryActionLabel("")).toBe("Belirle");
     expect(partnerSalaryActionLabel(12500)).toBe(null);
+  });
+
+  it("shows monthly entitlement day on the partner card", () => {
+    expect(partnerSalaryCardText({ monthly_salary: 150000, salary_start_date: "2026-10-05", salary_recurring: true }, (n) => String(n))).toBe("150000 ₺ · her ayın 5'i");
+    expect(partnerSalaryCardText({ monthly_salary: 150000, salary_day: 15, salary_recurring: false }, (n) => String(n))).toBe("150000 ₺");
+    expect(partnerSalaryCardText({ monthly_salary: 0 })).toBe("Belirle");
+    expect(salaryDayOf({ salary_start_date: "2026-10-05" })).toBe(5);
+    expect(salaryDayOf({ salary_day: 31 })).toBe(31);
   });
 });

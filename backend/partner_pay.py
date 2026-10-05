@@ -1,10 +1,15 @@
 """Cashless ortak (partner) current-account movements used as a payment source."""
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+import asyncio
+import calendar
+import logging
+from datetime import datetime, timezone, date as dt_date
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
 from models import PartnerTransaction
+
+logger = logging.getLogger("partner_pay")
 
 TX_LABELS = {
     "capital_in": "Ortak Sermaye Girişi",
@@ -36,6 +41,126 @@ def normalize_period(period: Optional[str] = None) -> str:
     if len(raw) >= 7 and raw[4] == "-":
         return raw[:7]
     return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def parse_iso_date(raw: Optional[str]) -> Optional[dt_date]:
+    s = (raw or "").strip()[:10]
+    if len(s) != 10 or s[4] != "-" or s[7] != "-":
+        return None
+    try:
+        return dt_date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def period_of(d: dt_date) -> str:
+    return f"{d.year:04d}-{d.month:02d}"
+
+
+def add_months(period: str, n: int = 1) -> str:
+    y, m = int(period[:4]), int(period[5:7])
+    idx = y * 12 + (m - 1) + n
+    return f"{idx // 12:04d}-{(idx % 12) + 1:02d}"
+
+
+def periods_inclusive(start: str, end: str, cap: int = 36) -> List[str]:
+    if start > end:
+        return []
+    out: List[str] = []
+    cur = start
+    for _ in range(max(1, cap)):
+        out.append(cur)
+        if cur >= end:
+            break
+        cur = add_months(cur, 1)
+    return out
+
+
+def salary_day_of(partner: Dict[str, Any]) -> int:
+    start = parse_iso_date(partner.get("salary_start_date"))
+    if start:
+        return start.day
+    try:
+        n = int(partner.get("salary_day") or 1)
+    except (TypeError, ValueError):
+        n = 1
+    return min(max(n, 1), 31)
+
+
+def salary_due_on(period: str, day: int) -> dt_date:
+    y, m = int(period[:4]), int(period[5:7])
+    last = calendar.monthrange(y, m)[1]
+    return dt_date(y, m, min(max(int(day or 1), 1), last))
+
+
+def salary_slots(
+    partner: Dict[str, Any],
+    as_of: dt_date,
+    *,
+    explicit_period: Optional[str] = None,
+    force_start: bool = False,
+) -> List[Tuple[str, dt_date]]:
+    """Dönem + hak ediş tarihi. Tekrar kapalıysa yalnızca başlangıç ayı."""
+    day = salary_day_of(partner)
+    start = parse_iso_date(partner.get("salary_start_date"))
+    recurring = partner.get("salary_recurring") is not False
+
+    def due_for(per: str) -> dt_date:
+        due = salary_due_on(per, day)
+        if start and per == period_of(start):
+            return start
+        return due
+
+    if explicit_period:
+        per = normalize_period(explicit_period)
+        if start and period_of(start) > per:
+            return []
+        return [(per, due_for(per))]
+
+    end_p = period_of(as_of)
+    start_p = period_of(start) if start else end_p
+    last_p = end_p if recurring else start_p
+    slots: List[Tuple[str, dt_date]] = []
+    for per in periods_inclusive(start_p, last_p):
+        due = due_for(per)
+        if due > as_of and not (force_start and start and per == period_of(start)):
+            continue
+        slots.append((per, due))
+    if force_start and start and period_of(start) > end_p:
+        slots.append((period_of(start), start))
+    return slots
+
+
+def prepare_partner_salary(doc: Dict[str, Any], *, fill_start: bool = True) -> Dict[str, Any]:
+    """Aylık maaş / hak ediş alanlarını doğrula. fill_start: tutar varken tarih yoksa bugün yaz."""
+    if "monthly_salary" in doc:
+        try:
+            doc["monthly_salary"] = max(0.0, float(doc.get("monthly_salary") or 0))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Aylık maaş geçersiz.")
+    if "salary_recurring" in doc:
+        doc["salary_recurring"] = bool(doc["salary_recurring"])
+    if "salary_start_date" in doc:
+        raw = doc.get("salary_start_date")
+        if raw in ("", None):
+            doc["salary_start_date"] = None
+        else:
+            d = parse_iso_date(raw)
+            if not d:
+                raise HTTPException(status_code=400, detail="Hak ediş tarihi geçersiz.")
+            doc["salary_start_date"] = d.isoformat()
+            doc["salary_day"] = d.day
+    elif "salary_day" in doc:
+        try:
+            doc["salary_day"] = min(31, max(1, int(doc["salary_day"])))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Hak ediş günü geçersiz.")
+    if fill_start and float(doc.get("monthly_salary") or 0) > 0 and not doc.get("salary_start_date"):
+        today = datetime.now(timezone.utc).date()
+        doc["salary_start_date"] = today.isoformat()
+        doc["salary_day"] = today.day
+        doc.setdefault("salary_recurring", True)
+    return doc
 
 
 def balance_inc(tx_type: str, amount: float) -> Dict[str, float]:
@@ -94,10 +219,20 @@ async def reverse_one(db, query: Dict[str, Any]) -> bool:
 
 
 async def accrue_monthly_salaries(
-    db, company_id: str, period: Optional[str] = None, partner_id: Optional[str] = None
+    db,
+    company_id: str,
+    period: Optional[str] = None,
+    partner_id: Optional[str] = None,
+    as_of: Optional[str] = None,
+    force_start: bool = False,
 ) -> Dict[str, Any]:
-    """Aylık maaşı ortak alacağına yazar (kasa dokunmaz). Aynı dönem ikinci kez yazılmaz."""
-    period = normalize_period(period)
+    """Aylık maaşı hak ediş tarihinde ortak alacağına yazar. Aynı dönem ikinci kez yazılmaz.
+
+    period verilirse yalnızca o ay. Aksi halde salary_start_date'den bugüne vadesi gelen aylar
+    (tekrar açıksa) yazılır. force_start, henüz gelmemiş ilk hak ediş ayını da kaydeder.
+    """
+    today = parse_iso_date(as_of) or datetime.now(timezone.utc).date()
+    explicit = normalize_period(period) if period else None
     q: Dict[str, Any] = {"company_id": company_id}
     if partner_id:
         q["_id"] = partner_id
@@ -105,8 +240,6 @@ async def accrue_monthly_salaries(
     partners = await cursor.to_list(100) if hasattr(cursor, "to_list") else list(cursor)
     posted: List[dict] = []
     skipped: List[dict] = []
-    date = f"{period}-01"
-    label = salary_period_label(period)
     for p in partners:
         if p.get("is_active") is False:
             skipped.append({"partner_id": p["_id"], "partner_name": p.get("name"), "reason": "inactive"})
@@ -118,21 +251,79 @@ async def accrue_monthly_salaries(
         if amount <= 0:
             skipped.append({"partner_id": p["_id"], "partner_name": p.get("name"), "reason": "no_salary"})
             continue
-        exists = await db.partner_transactions.find_one({
-            "company_id": company_id,
-            "partner_id": p["_id"],
-            "type": "salary",
-            "salary_period": period,
-        })
-        if exists:
-            skipped.append({"partner_id": p["_id"], "partner_name": p.get("name"), "reason": "already"})
+        slots = salary_slots(p, today, explicit_period=explicit, force_start=force_start)
+        if not slots:
+            skipped.append({"partner_id": p["_id"], "partner_name": p.get("name"), "reason": "not_due"})
             continue
-        desc = f"{label} aylık ortak maaşı"
-        await move(
-            db, company_id, p["_id"], amount, "salary", desc, date=date,
-            extra={"salary_period": period, "source": "monthly_salary"},
-        )
-        posted.append({"partner_id": p["_id"], "partner_name": p.get("name"), "amount": round(amount, 2)})
+        for per, due in slots:
+            exists = await db.partner_transactions.find_one({
+                "company_id": company_id,
+                "partner_id": p["_id"],
+                "type": "salary",
+                "salary_period": per,
+            })
+            if exists:
+                skipped.append({"partner_id": p["_id"], "partner_name": p.get("name"), "reason": "already", "period": per})
+                continue
+            label = salary_period_label(per)
+            desc = f"{label} aylık ortak maaşı"
+            await move(
+                db, company_id, p["_id"], amount, "salary", desc, date=due.isoformat(),
+                extra={"salary_period": per, "salary_date": due.isoformat(), "source": "monthly_salary"},
+            )
+            posted.append({
+                "partner_id": p["_id"],
+                "partner_name": p.get("name"),
+                "amount": round(amount, 2),
+                "period": per,
+                "date": due.isoformat(),
+            })
     n = len(posted)
-    message = f"{n} ortağa {label} maaşı alacağa yazıldı." if n else f"{label} için yazılacak yeni maaş yok."
-    return {"status": "success", "period": period, "posted": posted, "skipped": skipped, "posted_count": n, "message": message}
+    if n:
+        message = f"{n} maaş kaydı ortak alacağına yazıldı."
+    else:
+        message = f"{salary_period_label(explicit or period_of(today))} için yazılacak yeni maaş yok."
+    return {
+        "status": "success",
+        "period": explicit or period_of(today),
+        "as_of": today.isoformat(),
+        "posted": posted,
+        "skipped": skipped,
+        "posted_count": n,
+        "message": message,
+    }
+
+
+async def accrue_due_for_all_companies(db, as_of: Optional[str] = None) -> Dict[str, Any]:
+    cursor = db.partners.find({})
+    partners = await cursor.to_list(5000) if hasattr(cursor, "to_list") else list(cursor)
+    seen = set()
+    posted = 0
+    companies = 0
+    for p in partners:
+        try:
+            if float(p.get("monthly_salary") or 0) <= 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        cid = p.get("company_id")
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        companies += 1
+        r = await accrue_monthly_salaries(db, cid, as_of=as_of)
+        posted += int(r.get("posted_count") or 0)
+    return {"posted_count": posted, "companies": companies}
+
+
+async def scheduler_loop(db):
+    """Saatte bir: vadesi gelen ortak maaşlarını alacağa yazar."""
+    await asyncio.sleep(40)
+    while True:
+        try:
+            r = await accrue_due_for_all_companies(db)
+            if r.get("posted_count"):
+                logger.info("partner salary scheduler posted %s", r["posted_count"])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("partner salary scheduler: %s", e)
+        await asyncio.sleep(3600)
