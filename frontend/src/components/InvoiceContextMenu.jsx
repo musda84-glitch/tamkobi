@@ -18,7 +18,18 @@ export function displayInvoiceNumber(inv) {
   return String(inv.invoice_number || inv.id || inv._id || "—");
 }
 
-/** GİB Durumu sütunu — test ortamı ve boş durumlar. */
+/** GİB Durumu sütunu — test ortamı, boş durumlar ve İngilizce entegratör kodları. */
+const GIB_STATUS_TR = {
+  received: "Alındı",
+  accepted: "Onaylandı",
+  rejected: "Reddedildi",
+  pending: "Beklemede",
+  queued: "Kuyrukta",
+  sent: "Gönderildi",
+  error: "Hata",
+  delivered: "Teslim edildi",
+};
+
 export function formatGibStatusLabel(inv) {
   if (!inv) return "Taslak";
   const raw = String(inv.gib_status || "").trim();
@@ -40,8 +51,13 @@ export function formatGibStatusLabel(inv) {
   if (isReal1300) {
     return isTest || /^test\b/i.test(raw) ? "Test · Başarıyla Tamamlandı" : "Başarıyla Tamamlandı";
   }
-  if (isTest && !/^test\b/i.test(raw)) return `Test · ${raw}`;
-  return raw;
+  const mapped = GIB_STATUS_TR[low];
+  let label = mapped || bare;
+  if (mapped === "Alındı" && (inv.invoice_type === "dispatch" || inv.e_type === "e_dispatch")) {
+    label = "Gelen e-İrsaliye Alındı";
+  }
+  if (isTest && !/^test\b/i.test(label) && !/^test\b/i.test(raw)) return `Test · ${label}`;
+  return mapped ? label : raw;
 }
 
 async function blobErrorDetail(err, fallback = "İşlem başarısız.") {
@@ -556,7 +572,7 @@ export const InvoiceContextMenu = (props) => {
           </div>
         ) : (
           <div className="px-3 py-2 text-[11px] text-slate-500 border-b border-slate-100" data-testid="ctx-incoming-info">
-            Gelen e-fatura — kesilmez. Durum: <span className="font-semibold text-slate-700">{inv.gib_status || incomingPurchaseResponse(inv)}</span>
+            Gelen e-fatura — kesilmez. Durum: <span className="font-semibold text-slate-700">{formatGibStatusLabel(inv) || incomingPurchaseResponse(inv)}</span>
           </div>
         )
       ) : isPurchase ? (

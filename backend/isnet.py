@@ -1913,8 +1913,13 @@ async def send_despatch_document(
         logger.info("isnet GetDespatchTaxPayer failed tax=%s: %s", buyer_tax, e.detail)
 
     company_for_ubl = {**(company or {}), "tax_number": seller_vkn}
+    inv_for_ubl = dict(invoice or {})
+    defaults = merged.get("despatch_defaults") if isinstance(merged.get("despatch_defaults"), dict) else {}
+    if defaults:
+        nested = inv_for_ubl.get("despatch_defaults") if isinstance(inv_for_ubl.get("despatch_defaults"), dict) else {}
+        inv_for_ubl["despatch_defaults"] = {**defaults, **nested}
     try:
-        xml, _local_ettn, inv_id = build_despatch_ubl(dict(invoice or {}), company_for_ubl, contact)
+        xml, _local_ettn, inv_id = build_despatch_ubl(inv_for_ubl, company_for_ubl, contact)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
