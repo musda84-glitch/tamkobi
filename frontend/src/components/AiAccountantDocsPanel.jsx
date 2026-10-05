@@ -48,12 +48,17 @@ export function AiAccountantDocsPanel({ companyId, onImported }) {
   useEffect(() => {
     if (!companyId) return;
     let cancelled = false;
-    axios.get(`${API_URL}/contacts?company_id=${companyId}`).then((r) => {
-      if (!cancelled) setContacts(Array.isArray(r.data) ? r.data : []);
-    }).catch(() => {});
-    axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => {
-      if (!cancelled) setAccounts(Array.isArray(r.data) ? r.data : []);
-    }).catch(() => {});
+    const load = async () => {
+      try {
+        const r = await axios.get(`${API_URL}/contacts?company_id=${companyId}`);
+        if (!cancelled) setContacts(Array.isArray(r?.data) ? r.data : []);
+      } catch { /* ignore */ }
+      try {
+        const r = await axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`);
+        if (!cancelled) setAccounts(Array.isArray(r?.data) ? r.data : []);
+      } catch { /* ignore */ }
+    };
+    load();
     return () => { cancelled = true; };
   }, [companyId]);
 
