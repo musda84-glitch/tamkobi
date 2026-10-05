@@ -1,4 +1,4 @@
-import { isCancelledInvoice, withoutCancelledInvoices } from "./invoiceStatus";
+import { isCancelledInvoice, withoutCancelledInvoices, invoicesForDisplay } from "./invoiceStatus";
 
 test("active invoices stay visible", () => {
   expect(isCancelledInvoice({ status: "approved", gib_status: "Gelen E-Fatura Onaylandı" })).toBe(false);
@@ -23,4 +23,7 @@ test("invoice list filter drops cancelled OP02026000000546", () => {
   const shown = withoutCancelledInvoices(rows);
   expect(shown.some((i) => /iptal/i.test(i.gib_status))).toBe(false);
   expect(shown.map((i) => i.gib_status).sort()).toEqual(["Gelen E-Fatura Onaylandı", "Onaylandı"]);
+  expect(invoicesForDisplay(rows, false).map((i) => i.gib_status).sort()).toEqual(["Gelen E-Fatura Onaylandı", "Onaylandı"]);
+  expect(invoicesForDisplay(rows, true)).toHaveLength(3);
+  expect(invoicesForDisplay(rows, true).some((i) => i.status === "cancelled")).toBe(true);
 });
