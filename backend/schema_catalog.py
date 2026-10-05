@@ -398,6 +398,18 @@ COLLECTIONS = {
         "keys": ("_id", "company_id", "employee_id", "period", "net_salary", "final_payable", "status"),
         "refs": ("employees._id",),
     },
+    "tax_documents": {
+        "scope": SCOPE_TENANT,
+        "description": "Mali müşavir bordro / mizan / tahakkuk yüklemeleri.",
+        "keys": ("_id", "company_id", "source_kind", "period", "filename", "summary"),
+        "refs": ("companies._id",),
+    },
+    "tax_obligations": {
+        "scope": SCOPE_TENANT,
+        "description": "Yüklenen belgelerden ödenecek vergi, SGK ve net maaş satırları.",
+        "keys": ("_id", "company_id", "document_id", "kind", "period", "amount", "due_date", "payment_status", "account_id"),
+        "refs": ("tax_documents._id", "bank_accounts._id"),
+    },
     "leave_requests": {
         "scope": SCOPE_TENANT,
         "description": "İzin talepleri.",
