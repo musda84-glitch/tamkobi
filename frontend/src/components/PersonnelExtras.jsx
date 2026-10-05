@@ -2,14 +2,14 @@
 import React, { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { CalendarDays, Plus, Check, X, Calculator, Gift, Trash2, Loader2 } from "lucide-react";
+import { CalendarDays, Plus, Check, X, Calculator, Gift, Trash2, Loader2, Ban } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { formatTrAmount } from "../utils/money";
+import { LEAVE_TYPES, leaveRowActions, leaveStatusView } from "../utils/leaveRequests";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
-const LEAVE_TYPES = { annual: "Yıllık İzin", sick: "Hastalık", unpaid: "Ücretsiz", other: "Diğer" };
 
 export const LeaveRequestsPanel = ({ companyId, employees, onChanged }) => {
   const [leaves, setLeaves] = useState([]);
@@ -19,6 +19,24 @@ export const LeaveRequestsPanel = ({ companyId, employees, onChanged }) => {
   useEffect(() => { load(); }, [load]);
   const save = async (e) => { e.preventDefault(); try { await axios.post(`${API_URL}/personnel/leaves`, { ...form, employee_id: form.employee_id || employees[0]?.id }); toast.success("İzin talebi oluşturuldu."); setShow(false); load(); } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } };
   const decide = async (id, status) => { try { await axios.post(`${API_URL}/personnel/leaves/${id}/decide`, { status }); toast.success(status === "approved" ? "İzin onaylandı." : "İzin reddedildi."); load(); onChanged?.(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
+  const cancelLeave = async (l) => {
+    if (!window.confirm("Bu izin iptal edilsin mi? Onaylı yıllık izinse kullanılan gün iade edilir.")) return;
+    try {
+      await axios.post(`${API_URL}/personnel/leaves/${l.id}/cancel`);
+      toast.success("İzin iptal edildi.");
+      load();
+      onChanged?.();
+    } catch (err) { toast.error(err.response?.data?.detail || "İptal edilemedi."); }
+  };
+  const removeLeave = async (l) => {
+    if (!window.confirm("İzin kaydı çöp kutusuna taşınsın mı?")) return;
+    try {
+      await axios.delete(`${API_URL}/personnel/leaves/${l.id}`);
+      toast.success("İzin silindi.");
+      load();
+      onChanged?.();
+    } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+  };
   return (
     <div className="space-y-4" data-testid="leave-requests-panel">
       <div className="flex items-center justify-between"><h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><CalendarDays className="w-4 h-4 text-indigo-600" /> İzin Talepleri</h3><button onClick={() => setShow(true)} className="flex items-center gap-1 px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold" data-testid="new-leave-btn"><Plus className="w-4 h-4" /> İzin Talebi</button></div>
@@ -36,13 +54,24 @@ export const LeaveRequestsPanel = ({ companyId, employees, onChanged }) => {
         <table className="w-full text-left text-xs"><thead className="bg-slate-50 border-b text-slate-500 uppercase text-[10px] font-semibold"><tr><th className="px-4 py-2">Çalışan</th><th className="px-4 py-2">Tür</th><th className="px-4 py-2">Tarih</th><th className="px-4 py-2 text-right">Gün</th><th className="px-4 py-2">Durum</th><th className="px-4 py-2"></th></tr></thead>
           <tbody className="divide-y divide-slate-100">
             {leaves.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-400">İzin talebi yok.</td></tr>}
-            {leaves.map((l) => (
+            {leaves.map((l) => {
+              const st = leaveStatusView(l.status);
+              const acts = leaveRowActions(l.status);
+              return (
               <tr key={l.id} data-testid={`leave-row-${l.id}`}>
                 <td className="px-4 py-2 font-semibold text-slate-900">{l.employee_name}</td><td className="px-4 py-2">{LEAVE_TYPES[l.type]}</td><td className="px-4 py-2 font-mono text-slate-500">{l.start_date} → {l.end_date}</td><td className="px-4 py-2 text-right font-bold">{l.days}</td>
-                <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${l.status === "approved" ? "bg-emerald-50 text-emerald-700" : l.status === "rejected" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{l.status === "approved" ? "Onaylandı" : l.status === "rejected" ? "Reddedildi" : "Bekliyor"}</span></td>
-                <td className="px-4 py-2 text-right">{l.status === "pending" && <div className="flex justify-end gap-1"><button onClick={() => decide(l.id, "approved")} className="p-1.5 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100" data-testid={`approve-leave-${l.id}`}><Check className="w-3.5 h-3.5" /></button><button onClick={() => decide(l.id, "rejected")} className="p-1.5 bg-rose-50 text-rose-700 rounded-lg hover:bg-rose-100" data-testid={`reject-leave-${l.id}`}><X className="w-3.5 h-3.5" /></button></div>}</td>
+                <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${st.className}`}>{st.label}</span></td>
+                <td className="px-4 py-2 text-right">
+                  <div className="flex justify-end gap-1">
+                    {acts.approve && <button type="button" onClick={() => decide(l.id, "approved")} className="p-1.5 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100" title="Onayla" data-testid={`approve-leave-${l.id}`}><Check className="w-3.5 h-3.5" /></button>}
+                    {acts.reject && <button type="button" onClick={() => decide(l.id, "rejected")} className="p-1.5 bg-rose-50 text-rose-700 rounded-lg hover:bg-rose-100" title="Reddet" data-testid={`reject-leave-${l.id}`}><X className="w-3.5 h-3.5" /></button>}
+                    {acts.cancel && <button type="button" onClick={() => cancelLeave(l)} className="p-1.5 bg-amber-50 text-amber-700 rounded-lg hover:bg-amber-100" title="İptal" data-testid={`cancel-leave-${l.id}`}><Ban className="w-3.5 h-3.5" /></button>}
+                    {acts.remove && <button type="button" onClick={() => removeLeave(l)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Sil" data-testid={`delete-leave-${l.id}`}><Trash2 className="w-3.5 h-3.5" /></button>}
+                  </div>
+                </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody></table>
       </div>
     </div>
