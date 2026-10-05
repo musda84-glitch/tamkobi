@@ -85,6 +85,44 @@ def test_accrue_calls_payroll_generator():
     assert called and called[0]["employee_id"] == "e1" and called[0]["period"] == "2026-10"
 
 
+def test_period_entitled_and_allowance_due_gate():
+    emp = {
+        "_id": "e1", "pay_start_date": "2026-11-01", "pay_day": 1, "pay_recurring": True,
+        "meal_allowance": 5000, "transport_allowance": 2000,
+    }
+    assert employee_pay.period_is_entitled(emp, "2026-11", as_of="2026-10-20") is False
+    assert employee_pay.entitlement_allowance_due(emp, 5000, "Yemek", [], "2026-11", as_of="2026-10-20") == 0.0
+    assert employee_pay.period_is_entitled(emp, "2026-11", as_of="2026-11-01") is True
+    assert employee_pay.entitlement_allowance_due(emp, 5000, "Yemek", [], "2026-11", as_of="2026-11-01") == 5000.0
+    assert employee_pay.entitlement_allowance_due(
+        emp, 5000, "Yemek",
+        [{"category": "Yemek", "date": "2026-11-01", "total": 1500}],
+        "2026-11", as_of="2026-11-01",
+    ) == 3500.0
+
+
+def test_allowance_save_message_scheduled():
+    msg = employee_pay.allowance_save_message(
+        {"posted_count": 0, "scheduled_date": "2026-11-01", "skipped": [{"reason": "not_due", "due_date": "2026-11-01"}]},
+        "2026-11-01",
+    )
+    assert "01.11.2026" in msg and "alacağa yazılacak" in msg
+    assert "yazıldı" in employee_pay.allowance_save_message({"posted_count": 2, "message": "2 hak ediş masrafı yazıldı."})
+
+
+def test_accrue_skips_before_entitlement_day():
+    db = FakeDb()
+    db.employees.docs.append({
+        "_id": "e1", "company_id": "c1", "full_name": "Ali", "status": "active",
+        "meal_allowance": 5000, "transport_allowance": 2000,
+        "pay_start_date": "2026-11-01", "pay_day": 1, "pay_recurring": True,
+    })
+    r = asyncio.run(employee_pay.accrue_allowances(db, "c1", employee_id="e1", as_of="2026-10-05"))
+    assert r["posted_count"] == 0
+    assert r["scheduled_date"] == "2026-11-01"
+    assert not db.expenses.docs
+
+
 def test_accrue_meal_once_on_entitlement_day():
     db = FakeDb()
     db.employees.docs.append({
@@ -92,11 +130,12 @@ def test_accrue_meal_once_on_entitlement_day():
         "meal_allowance": 2500, "transport_allowance": 1500,
         "pay_start_date": "2026-10-05", "pay_day": 5, "pay_recurring": True,
     })
-    r = asyncio.run(employee_pay.accrue_allowances(db, "c1", employee_id="e1", as_of="2026-10-05", force_start=True))
+    r = asyncio.run(employee_pay.accrue_allowances(db, "c1", employee_id="e1", as_of="2026-10-05"))
     assert r["posted_count"] == 2
     cats = {e["category"] for e in db.expenses.docs}
     assert cats == {"Yemek", "Yol / Ulaşım"}
     assert all(e["payment_status"] == "unpaid" for e in db.expenses.docs)
+    assert all(e["date"] == "2026-10-05" for e in db.expenses.docs)
     r2 = asyncio.run(employee_pay.accrue_allowances(db, "c1", employee_id="e1", as_of="2026-10-20"))
     assert r2["posted_count"] == 0
     assert len(db.expenses.docs) == 2

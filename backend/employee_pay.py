@@ -92,6 +92,68 @@ def pay_slot_emp(emp: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def period_is_entitled(emp: Dict[str, Any], month: str, as_of: Optional[str] = None) -> bool:
+    """Ay için hak ediş günü gelmiş mi? (maaş slotları ile aynı)."""
+    if not emp or not emp.get("pay_start_date"):
+        return False
+    today = partner_pay.parse_iso_date(as_of) or datetime.now(timezone.utc).date()
+    slots = partner_pay.salary_slots(pay_slot_emp(emp), today)
+    return any(per == month for per, _due in slots)
+
+
+def allowance_due(amount: Any, category: str, expenses: Optional[List[dict]], month: str) -> float:
+    """Ay içinde aynı kategoride yazılmış masraf düşülmüş kalan hak."""
+    try:
+        amt = round(float(amount if amount is not None and amount != "" else 0), 2)
+    except (TypeError, ValueError):
+        amt = 0.0
+    if amt <= 0:
+        return 0.0
+    recorded = 0.0
+    for e in expenses or []:
+        if e.get("category") != category:
+            continue
+        if not str(e.get("date") or "").startswith(month):
+            continue
+        try:
+            recorded += float(e.get("total") or 0)
+        except (TypeError, ValueError):
+            pass
+    return round(max(0.0, amt - round(recorded, 2)), 2)
+
+
+def entitlement_allowance_due(
+    emp: Dict[str, Any],
+    amount: Any,
+    category: str,
+    expenses: Optional[List[dict]],
+    month: str,
+    as_of: Optional[str] = None,
+) -> float:
+    """Hak ediş günü gelmeden yemek/yol alacağı 0 (maaş gibi)."""
+    if not period_is_entitled(emp, month, as_of=as_of):
+        return 0.0
+    return allowance_due(amount, category, expenses, month)
+
+
+def allowance_save_message(accrual: Optional[Dict[str, Any]], start_date: Optional[str] = None) -> str:
+    """Kayıt sonrası kullanıcı mesajı — ortak maaş akışıyla aynı dil."""
+    if not accrual:
+        return "Kaydedildi."
+    if int(accrual.get("posted_count") or 0) > 0:
+        return accrual.get("message") or "Yemek/yol hak edişi yazıldı."
+    due = accrual.get("scheduled_date") or next(
+        (s.get("due_date") for s in (accrual.get("skipped") or []) if s.get("reason") == "not_due" and s.get("due_date")),
+        None,
+    ) or start_date
+    if due:
+        raw = str(due)[:10]
+        parts = raw.split("-")
+        label = f"{parts[2]}.{parts[1]}.{parts[0]}" if len(parts) == 3 else raw
+        return f"Kaydedildi. {label} tarihinde yemek/yol alacağa yazılacak."
+    return accrual.get("message") or "Kaydedildi."
+
+
 async def accrue_allowances(
     db,
     company_id: str,
@@ -119,7 +181,9 @@ async def accrue_allowances(
             continue
         slots = partner_pay.salary_slots(pay_slot_emp(emp), today, force_start=force_start)
         if not slots:
-            skipped.append({"employee_id": emp.get("_id"), "reason": "not_due"})
+            start = partner_pay.parse_iso_date(emp.get("pay_start_date"))
+            due_date = start.isoformat() if start and start > today else None
+            skipped.append({"employee_id": emp.get("_id"), "reason": "not_due", "due_date": due_date})
             continue
         for per, due in slots:
             if generate_payroll_fn:
@@ -172,13 +236,21 @@ async def accrue_allowances(
                 }
                 await db.expenses.insert_one(doc)
                 posted.append({"employee_id": emp["_id"], "kind": kind, "amount": amount, "period": per, "date": due.isoformat()})
+    scheduled = next((s.get("due_date") for s in skipped if s.get("reason") == "not_due" and s.get("due_date")), None)
+    if posted:
+        message = f"{len(posted)} hak ediş masrafı yazıldı."
+    elif scheduled:
+        message = f"Kaydedildi. Hak ediş tarihinde ({scheduled}) alacağa yazılacak."
+    else:
+        message = "Yazılacak yeni yemek/yol hakkı yok."
     return {
         "status": "success",
         "as_of": today.isoformat(),
         "posted": posted,
         "skipped": skipped,
         "posted_count": len(posted),
-        "message": f"{len(posted)} hak ediş masrafı yazıldı." if posted else "Yazılacak yeni yemek/yol hakkı yok.",
+        "scheduled_date": scheduled,
+        "message": message,
     }
 
 

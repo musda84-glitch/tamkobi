@@ -67,3 +67,18 @@ export function employeePayModalTitle(initialKind, emp) {
   }
   return name ? `Ödeme — ${name}` : "Ödeme";
 }
+
+/** Ücret kaydı sonrası: yemek/yol hak edişinde yazıldıysa veya planlandıysa mesaj. */
+export function employeeAllowanceSaveMessage(accrual, startDate, fallback = "Ücret ve mesai bilgileri kaydedildi.") {
+  if (!accrual) return fallback;
+  if (Number(accrual?.posted_count) > 0) return accrual.message || "Yemek/yol hak edişi yazıldı.";
+  const due = accrual?.scheduled_date
+    || (accrual?.skipped || []).find((s) => s.reason === "not_due")?.due_date
+    || startDate;
+  if (due) {
+    const [y, m, d] = String(due).slice(0, 10).split("-");
+    const label = d && m && y ? `${d}.${m}.${y}` : due;
+    return `Kaydedildi. ${label} tarihinde yemek/yol alacağa yazılacak.`;
+  }
+  return accrual?.message || fallback;
+}
