@@ -4167,6 +4167,7 @@ def _b2b_catalog_product(p: Dict[str, Any], disc: float) -> Dict[str, Any]:
         "stock_quantity": qty if track else None,
         "gtip": str(p.get("gtip") or "").strip(),
         "origin_country": str(p.get("origin_country") or "").strip(),
+        "manufacturer_code": str(p.get("manufacturer_code") or "").strip(),
     }
 
 
@@ -4294,6 +4295,8 @@ async def b2b_portal(token: str):
                 it["origin_country"] = p.get("origin_country")
             if not it.get("category") and p.get("category"):
                 it["category"] = p.get("category")
+            if not it.get("manufacturer_code") and p.get("manufacturer_code"):
+                it["manufacturer_code"] = p.get("manufacturer_code")
     orders = _sort_b2b_cart_orders(orders)
     invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]

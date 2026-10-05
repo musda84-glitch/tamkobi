@@ -63,10 +63,11 @@ describe("printFormLayout", () => {
 
   it("surfaces stock label fields for B2B preview", () => {
     expect(b2bPreviewStockBits(
-      { gtip: "9403.20" },
-      { tags: ["BEYAZ", "70x20"], category: "Raflar", origin_country: "TR", raf_yeri: "A-1" },
+      { sku: "DRC_70_BYZ", barcode: "8684284244477", gtip: "9403.20" },
+      { tags: ["BEYAZ", "70x20", "2026", "fazla"], category: "Raflar", origin_country: "TR", raf_yeri: "A-1" },
     )).toEqual({
-      tags: ["BEYAZ", "70x20"],
+      identity: "SKU DRC_70_BYZ · Barkod 8684284244477",
+      tags: ["BEYAZ", "70x20", "2026"],
       bits: ["Raflar", "GTIP 9403.20", "TR", "Raf A-1"],
     });
   });
