@@ -3387,8 +3387,9 @@ def _b2b_tracking(o: dict, sh: Optional[dict]) -> Optional[dict]:
     num = (sh or {}).get("tracking_number") or o.get("cargo_tracking_number")
     if not num and o.get("order_status") not in ("shipped", "delivered"):
         return None
-    carrier = (sh or {}).get("carrier_code") or o.get("cargo_carrier") or ""
-    url = (sh or {}).get("tracking_url") or o.get("cargo_tracking_url") or (PUBLIC_TRACKING_URLS.get(carrier, "").format(n=num) if num else None)
+    carrier_code = (sh or {}).get("carrier_code") or o.get("cargo_carrier") or ""
+    carrier = wship.carrier_label(order=o, shipment=sh)
+    url = (sh or {}).get("tracking_url") or o.get("cargo_tracking_url") or (PUBLIC_TRACKING_URLS.get(carrier_code, "").format(n=num) if num else None)
     status = (sh or {}).get("status") or ("delivered" if o.get("order_status") == "delivered" else "in_transit" if num else "created")
     eta = (sh or {}).get("estimated_delivery")
     shipped_at = ((sh or {}).get("created_at") or o.get("updated_at") or o.get("order_date") or "")[:10]
@@ -3398,7 +3399,7 @@ def _b2b_tracking(o: dict, sh: Optional[dict]) -> Optional[dict]:
         except ValueError:
             eta = None
     today = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Istanbul")).strftime("%Y-%m-%d")
-    return {"carrier": (sh or {}).get("carrier_name") or carrier or None, "tracking_number": num, "tracking_url": url, "status": status,
+    return {"carrier": carrier, "tracking_number": num, "tracking_url": url, "status": status,
             "step": SHIPMENT_STEPS.index(status) if status in SHIPMENT_STEPS else (0 if status != "returned" else -1), "steps": SHIPMENT_STEPS,
             "estimated_delivery": eta, "delivered_at": (sh or {}).get("delivered_at"), "shipped_at": shipped_at or None,
             "is_late": bool(eta and status != "delivered" and eta < today), "events": ((sh or {}).get("events") or [])[-5:]}

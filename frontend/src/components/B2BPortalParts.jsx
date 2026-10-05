@@ -7,7 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
-import { orderStatusLabel } from "../utils/warehouseShip";
+import { orderStatusLabel, trackingCarrierLabel } from "../utils/warehouseShip";
 import { B2BOrderPreview, PreviewOrderBtn } from "./B2BOrderPreview";
 import { formatOrderItemLabel, cartHeading, cartKalemLabel, cartLinesQtyTotal } from "../utils/b2bCart";
 import { lineUnitIncl } from "../utils/printFormLayout";
@@ -319,10 +319,11 @@ export const ProductionCard = ({ p, orderNumber }) => {
 export const TrackingCard = ({ t, orderNumber }) => {
   if (!t) return <span className="text-slate-400 text-xs">Kargo bekleniyor</span>;
   const done = t.status === "delivered";
+  const carrier = trackingCarrierLabel(t.carrier, t.tracking_number);
   return (
     <div className={`rounded-xl border p-2.5 text-xs space-y-1.5 ${done ? "bg-emerald-50 border-emerald-200" : t.is_late ? "bg-rose-50 border-rose-200" : "bg-sky-50 border-sky-200"}`} data-testid={`b2b-tracking-${orderNumber}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className={`inline-flex items-center gap-1 font-bold ${done ? "text-emerald-700" : t.is_late ? "text-rose-700" : "text-sky-800"}`}>{done ? <PackageCheck className="w-4 h-4" /> : <Truck className="w-4 h-4" />} {STEP_LABELS[t.status] || t.status}{t.carrier ? <span className="font-normal text-slate-500"> · {t.carrier}</span> : null}</span>
+        <span className={`inline-flex items-center gap-1 font-bold ${done ? "text-emerald-700" : t.is_late ? "text-rose-700" : "text-sky-800"}`}>{done ? <PackageCheck className="w-4 h-4" /> : <Truck className="w-4 h-4" />} {STEP_LABELS[t.status] || t.status}{carrier ? <span className="font-normal text-slate-500"> · {carrier}</span> : null}</span>
         {t.tracking_number && (t.tracking_url ? <a href={t.tracking_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono font-semibold text-indigo-700 underline decoration-dotted" data-testid={`b2b-tracking-link-${orderNumber}`}>{t.tracking_number} <ExternalLink className="w-3 h-3" /></a> : <span className="font-mono font-semibold">{t.tracking_number}</span>)}
       </div>
       {t.step >= 0 && <div className="flex items-center gap-1" aria-label="Kargo adımları">{t.steps.map((s, i) => <div key={s} className={`h-1.5 flex-1 rounded-full ${i <= t.step ? (done ? "bg-emerald-500" : "bg-sky-500") : "bg-slate-200"}`} title={STEP_LABELS[s]} />)}</div>}
