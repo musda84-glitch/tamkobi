@@ -1,4 +1,4 @@
-import { edocKindTr, edocRowSubtitle, edocRowTitle, edocStatusTr, isEdocProcessable, pendingEdocCount } from "./edocInbox";
+import { EDOC_FILTERS, edocKindTr, edocRowSubtitle, edocRowTitle, edocStatusTr, isEdocProcessable, pendingEdocCount } from "./edocInbox";
 
 describe("edocInbox", () => {
   it("labels status and kind like the web inbox", () => {
@@ -33,5 +33,6 @@ describe("edocInbox", () => {
     expect(isEdocProcessable({ status: "approved", grand_total: 10, supplier: { name: "A" }, lines: [{}] })).toBe(false);
     expect(pendingEdocCount({ pending: 4, approved: 2 })).toBe(4);
     expect(pendingEdocCount(null)).toBe(0);
+    expect(EDOC_FILTERS.map((f) => f.key)).toEqual(["pending", "rejected", "ignored"]);
   });
 });
