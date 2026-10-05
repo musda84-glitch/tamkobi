@@ -88,8 +88,15 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
     return acc.get("account_name")
 
 
+_STATEMENT_SOURCES = ("card_statement", "bank_statement")
+
+
+def _from_statement(exp: dict) -> bool:
+    return (exp or {}).get("source") in _STATEMENT_SOURCES
+
+
 async def _reverse_payment(exp: dict):
-    if exp.get("source") == "card_statement":
+    if _from_statement(exp):
         return
     bt = await _db.bank_transactions.find_one({"expense_id": exp["_id"]})
     if bt:
@@ -110,20 +117,28 @@ async def record_card_spend(
     contact_id: Optional[str] = None,
     contact_name: Optional[str] = None,
     bank_tx_id: Optional[str] = None,
+    source: str = "card_statement",
 ) -> dict:
-    """Paid expense already reflected on the card statement — do not post another bank payment."""
+    """Paid expense already reflected on the statement — do not post another bank payment."""
     calc = _calc({"amount": abs(float(amount or 0)), "vat_rate": 0, "vat_included": True})
     if calc["total"] <= 0:
         return {}
     contact = await _db.contacts.find_one({"_id": contact_id}) if contact_id else None
     cat = (category or "Diğer").strip() or "Diğer"
+    src = source or "card_statement"
+    note = (
+        "Hesap ekstresinden aktarıldı. KDV oranı ekstreden tespit edilmedi; gerekirse düzenleyin."
+        if src == "bank_statement"
+        else "Kredi kartı ekstresinden aktarıldı. KDV oranı ekstreden tespit edilmedi; gerekirse düzenleyin."
+    )
+    default_desc = "Hesap harcaması" if src == "bank_statement" else "Kart harcaması"
     doc = {
         "_id": str(uuid.uuid4()),
         "company_id": company_id,
         "expense_number": await _next_number(company_id),
         "date": date,
         "category": cat,
-        "description": (description or "Kart harcaması").strip()[:200],
+        "description": (description or default_desc).strip()[:200],
         **calc,
         "currency": "TRY",
         "payment_status": "paid",
@@ -135,10 +150,10 @@ async def record_card_spend(
         "employee_id": None,
         "employee_name": None,
         "document_no": "",
-        "notes": "Kredi kartı ekstresinden aktarıldı. KDV oranı ekstreden tespit edilmedi; gerekirse düzenleyin.",
+        "notes": note,
         "is_recurring": False,
         "recurrence": "monthly",
-        "source": "card_statement",
+        "source": src,
         "bank_transaction_id": bank_tx_id,
         "created_at": _now(),
     }
@@ -299,8 +314,8 @@ async def unpay_expense(expense_id: str):
     exp = await _db.expenses.find_one({"_id": expense_id})
     if not exp or exp.get("payment_status") != "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş masraf bulunamadı.")
-    if exp.get("source") == "card_statement":
-        raise HTTPException(status_code=400, detail="Kart ekstresi masrafının ödemesi kart hareketinden gelir; geri alınamaz.")
+    if _from_statement(exp):
+        raise HTTPException(status_code=400, detail="Ekstreden aktarılan masrafın ödemesi hesap hareketinden gelir; geri alınamaz.")
     await _reverse_payment(exp)
     await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None}})
     return _clean(await _db.expenses.find_one({"_id": expense_id}))

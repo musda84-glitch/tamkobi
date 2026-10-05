@@ -1,4 +1,4 @@
-"""Krediler (loans) + kredi kartı ekstresi: AI ile PDF'den ödeme planı / ekstre hareketi aktarımı."""
+"""Krediler (loans) + kart/banka ekstresi: AI ile PDF/Excel'den ödeme planı / hareket aktarımı."""
 import io
 import json
 import uuid
@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from bank_guard import assert_manual_allowed
 from ai_service import make_chat
-from emergentintegrations.llm.chat import UserMessage
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from card_match import match_statement_contact, sanitize_card_fields
 import expenses as expenses_mod
@@ -33,6 +32,44 @@ def _clean(d):
     return d
 
 
+def _is_card(acc: Optional[Dict[str, Any]]) -> bool:
+    return (acc or {}).get("type") == "credit_card"
+
+
+def _bytes_to_statement_text(filename: str, content_type: str, data: bytes) -> str:
+    name = (filename or "").lower()
+    ctype = (content_type or "").lower()
+    if name.endswith(".xls") and not name.endswith(".xlsx") and not name.endswith(".xlsm"):
+        raise HTTPException(status_code=400, detail="Eski .xls dosyalarını Excel’de .xlsx olarak kaydedip yeniden yükleyin.")
+    is_pdf = name.endswith(".pdf") or ctype == "application/pdf"
+    is_sheet = name.endswith((".xlsx", ".xlsm", ".csv")) or ctype in (
+        "text/csv",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+    )
+    is_text = name.endswith(".txt") or ctype.startswith("text/") or ctype in ("application/json",)
+    if not (is_pdf or is_sheet or is_text):
+        raise HTTPException(status_code=400, detail="PDF, Excel (.xlsx), CSV veya metin yükleyebilirsiniz.")
+    if is_pdf:
+        from pypdf import PdfReader
+        try:
+            text = "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages[:15])
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"PDF okunamadı: {str(e)[:100]}")
+        if len(text.strip()) < 30:
+            raise HTTPException(status_code=400, detail="PDF'de okunabilir metin yok (taranmış görüntü). Bankanızın metin tabanlı PDF'ini yükleyin.")
+        return text
+    if is_sheet:
+        import migration
+        header, body = migration._read_table(filename or "ekstre.csv", data)
+        lines = [" | ".join(header)] + [" | ".join("" if c is None else str(c) for c in r) for r in body[:400]]
+        text = "\n".join(lines)
+        if len(text.strip()) < 20:
+            raise HTTPException(status_code=400, detail="Dosyada okunabilir hareket satırı yok.")
+        return text
+    return data.decode("utf-8", "ignore")
+
+
 async def _pdf_text(file: UploadFile) -> str:
     if file.content_type not in ("application/pdf", "text/plain"):
         raise HTTPException(status_code=400, detail="Sadece PDF yükleyebilirsiniz.")
@@ -49,6 +86,13 @@ async def _pdf_text(file: UploadFile) -> str:
     if len(text.strip()) < 30:
         raise HTTPException(status_code=400, detail="PDF'de okunabilir metin yok (taranmış görüntü). Bankanızın metin tabanlı PDF'ini yükleyin.")
     return text
+
+
+async def _statement_text(file: UploadFile) -> str:
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya en fazla 10 MB olabilir.")
+    return _bytes_to_statement_text(file.filename or "", file.content_type or "", data)
 
 
 async def _ask_json(system: str, text: str) -> dict:
@@ -76,34 +120,40 @@ CARD_SYSTEM = """Sen Türk bankası KREDİ KARTI EKSTRESİ okuyan bir asistansı
 "transactions": [{"date": "YYYY-MM-DD", "description": str, "amount": number (harcama pozitif, ödeme/iade negatif), "installment": str|null, "category": "Yakıt"|"Yemek"|"Market"|"Ofis Malzemesi"|"Yol / Ulaşım"|"Yazılım / Abonelik"|"Pazarlama / Reklam"|"Kargo / Nakliye"|"Vergi / Harç / SGK"|"Diğer", "merchant": str|null}], "confidence": number}
 Türkçe sayı formatını çevir, tarihleri ISO yap. Ödeme/iade satırlarını negatif tutar ile ver. merchant alanına üye işyeri / cari adayını yaz."""
 
+BANK_SYSTEM = """Sen Türk bankası VADESİZ HESAP EKSTRESİ / HESAP HAREKETLERİ belgesi okuyan bir asistansın. Sadece şu JSON'u döndür (markdown yok):
+{"bank": str|null, "iban": str|null, "account_no": str|null, "statement_date": "YYYY-MM-DD"|null, "period_start": "YYYY-MM-DD"|null, "period_end": "YYYY-MM-DD"|null, "opening_balance": number|null, "closing_balance": number|null,
+"transactions": [{"date": "YYYY-MM-DD", "description": str, "amount": number (hesaba giren / tahsilat pozitif, hesaptan çıkan / ödeme negatif), "category": "Yakıt"|"Yemek"|"Market"|"Ofis Malzemesi"|"Yol / Ulaşım"|"Yazılım / Abonelik"|"Pazarlama / Reklam"|"Kargo / Nakliye"|"Vergi / Harç / SGK"|"Maaş"|"Havale / EFT"|"Diğer", "merchant": str|null}], "confidence": number}
+Türkçe sayı formatını (1.234,56) number'a çevir, tarihleri ISO yap. Bakiye satırlarını, açılış/kapanış özetini ve virman açıklamalarını işlem olarak ekleme. merchant alanına karşı taraf / cari adayını yaz."""
 
-def _kind_for_line(amount: float, contact: Optional[Dict[str, Any]]) -> str:
-    if float(amount or 0) < 0:
+
+def _kind_for_line(amount: float, contact: Optional[Dict[str, Any]], *, is_card: bool = True) -> str:
+    if is_card and float(amount or 0) < 0:
         return "islem"
     if contact:
         return "cari_odeme"
-    return "masraf"
+    return "masraf" if is_card else "islem"
 
 
 def _tx_key(t: Dict[str, Any]):
     return (t.get("date"), (t.get("description") or "")[:200], round(abs(float(t.get("amount") or 0)), 2))
 
 
-async def _existing_statement_keys(account_id: str):
-    rows = await _db.bank_transactions.find(
-        {"account_id": account_id, "source": "card_statement"},
-        {"date": 1, "description": 1, "amount": 1},
-    ).to_list(5000)
+async def _existing_statement_keys(account_id: str, *, all_sources: bool = False):
+    """Kart: yalnızca ekstre kaynakları. Banka: manuel hareketler de tekrar yüklenmesin."""
+    q: Dict[str, Any] = {"account_id": account_id}
+    if not all_sources:
+        q["source"] = {"$in": ["card_statement", "bank_statement"]}
+    rows = await _db.bank_transactions.find(q, {"date": 1, "description": 1, "amount": 1}).to_list(5000)
     return {_tx_key(b) for b in rows}
 
 
-async def _enrich_statement_lines(company_id: str, txs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def _enrich_statement_lines(company_id: str, txs: List[Dict[str, Any]], *, is_card: bool = True) -> List[Dict[str, Any]]:
     contacts = await _db.contacts.find({"company_id": company_id}).to_list(10000)
     out = []
     for t in txs:
         blob = " ".join(filter(None, [t.get("description"), t.get("merchant")]))
         hit = match_statement_contact(blob, contacts)
-        kind = _kind_for_line(t.get("amount") or 0, hit)
+        kind = _kind_for_line(t.get("amount") or 0, hit, is_card=is_card)
         out.append({
             **t,
             "kind": kind,
@@ -116,24 +166,41 @@ async def _enrich_statement_lines(company_id: str, txs: List[Dict[str, Any]]) ->
     return out
 
 
-async def _apply_statement_account(account_id: str, statement: Dict[str, Any], acc: Dict[str, Any]):
+async def _apply_statement_account(account_id: str, statement: Dict[str, Any], acc: Dict[str, Any], *, apply_card_balance: Optional[bool] = None):
+    if apply_card_balance is None:
+        apply_card_balance = _is_card(acc)
     upd: Dict[str, Any] = {"last_statement": statement, "last_statement_at": _now()}
-    if statement.get("total_debt") is not None:
-        upd["current_balance"] = -abs(float(statement["total_debt"]))
-    if statement.get("limit"):
-        upd["card_limit"] = float(statement["limit"])
-    last4 = sanitize_card_fields({"card_last4": statement.get("card_last4")}).get("card_last4")
-    if last4 and not acc.get("card_last4"):
-        upd["card_last4"] = last4
+    if apply_card_balance:
+        if statement.get("total_debt") is not None:
+            upd["current_balance"] = -abs(float(statement["total_debt"]))
+        if statement.get("limit"):
+            upd["card_limit"] = float(statement["limit"])
+        last4 = sanitize_card_fields({"card_last4": statement.get("card_last4")}).get("card_last4")
+        if last4 and not acc.get("card_last4"):
+            upd["card_last4"] = last4
     await _db.bank_accounts.update_one({"_id": account_id}, {"$set": upd})
+
+
+def _line_outflow(amount: float, *, is_card: bool) -> bool:
+    return float(amount or 0) > 0 if is_card else float(amount or 0) < 0
+
+
+def _line_category(category: str, *, outflow: bool, is_card: bool) -> str:
+    cat = (category or "Diğer").strip() or "Diğer"
+    if is_card:
+        return f"Kart: {cat}" if outflow else "Kart Ödemesi / İade"
+    if cat != "Diğer":
+        return cat
+    return "Hesaptan Çıkış" if outflow else "Hesaba Giriş"
 
 
 async def _insert_statement_line(acc: Dict[str, Any], t: Dict[str, Any]) -> Dict[str, Any]:
     account_id = acc["_id"]
+    is_card = _is_card(acc)
     amount = float(t.get("amount") or 0)
-    outflow = amount > 0
+    outflow = _line_outflow(amount, is_card=is_card)
     abs_amt = abs(amount)
-    kind = t.get("kind") or _kind_for_line(amount, None)
+    kind = t.get("kind") or _kind_for_line(amount, None, is_card=is_card)
     contact_id = t.get("contact_id") or None
     contact = await _db.contacts.find_one({"_id": contact_id}) if contact_id else None
     contact_name = contact["name"] if contact else (t.get("contact_name") or None)
@@ -141,24 +208,28 @@ async def _insert_statement_line(acc: Dict[str, Any], t: Dict[str, Any]) -> Dict
     desc = ((t.get("description") or "") + (f" ({t['installment']})" if t.get("installment") else ""))[:200]
     tx_id = str(uuid.uuid4())
     matched = bool(contact) or kind == "masraf"
+    source = "card_statement" if is_card else "bank_statement"
     await _db.bank_transactions.insert_one({
         "_id": tx_id,
         "company_id": acc["company_id"],
         "account_id": account_id,
         "account_name": acc.get("account_name"),
         "type": "outflow" if outflow else "inflow",
-        "category": f"Kart: {category}" if outflow else "Kart Ödemesi / İade",
+        "category": _line_category(category, outflow=outflow, is_card=is_card),
         "amount": abs_amt,
         "currency": acc.get("currency", "TRY"),
         "description": desc,
         "contact_id": contact["_id"] if contact else None,
         "contact_name": contact_name,
-        "source": "card_statement",
+        "source": source,
         "match_status": "matched" if matched else "unmatched",
         "kind": kind,
         "date": t.get("date"),
         "created_at": _now(),
     })
+    if not is_card:
+        change = -abs_amt if outflow else abs_amt
+        await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": change}})
     created: Dict[str, Any] = {"tx_id": tx_id, "kind": kind}
     if kind == "cari_odeme" and contact:
         c_change = abs_amt if outflow else -abs_amt
@@ -176,6 +247,7 @@ async def _insert_statement_line(acc: Dict[str, Any], t: Dict[str, Any]) -> Dict
             contact_id=contact["_id"] if contact else None,
             contact_name=contact_name,
             bank_tx_id=tx_id,
+            source=source,
         )
         if exp:
             await _db.bank_transactions.update_one({"_id": tx_id}, {"$set": {"expense_id": exp.get("id")}})
@@ -296,20 +368,38 @@ async def delete_loan(loan_id: str):
     return {"status": "success", "message": "Kredi çöp kutusuna taşındı."}
 
 
-# ---------------- Credit card statement import ----------------
+# ---------------- Credit card / bank statement import ----------------
+def _normalize_tx_rows(raw_txs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [{
+        "date": t.get("date"),
+        "description": (t.get("description") or "")[:200],
+        "amount": float(t.get("amount") or 0),
+        "installment": t.get("installment"),
+        "category": t.get("category") or "Diğer",
+        "merchant": t.get("merchant"),
+    } for t in (raw_txs or []) if t.get("amount") is not None]
+
+
 @router.post("/banking/accounts/{account_id}/import-statement")
 async def import_statement(account_id: str, file: UploadFile = File(...), dry_run: bool = Query(True)):
     acc = await _db.bank_accounts.find_one({"_id": account_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
-    text = await _pdf_text(file)
-    d = await _ask_json(CARD_SYSTEM, text)
-    txs = [{"date": t.get("date"), "description": (t.get("description") or "")[:200], "amount": float(t.get("amount") or 0), "installment": t.get("installment"), "category": t.get("category") or "Diğer", "merchant": t.get("merchant")} for t in (d.get("transactions") or []) if t.get("amount") is not None]
-    existing = await _existing_statement_keys(account_id)
+    is_card = _is_card(acc)
+    if not is_card:
+        await assert_manual_allowed(_db, account_id)
+    text = await _statement_text(file)
+    d = await _ask_json(CARD_SYSTEM if is_card else BANK_SYSTEM, text)
+    txs = _normalize_tx_rows(d.get("transactions") or [])
+    existing = await _existing_statement_keys(account_id, all_sources=not is_card)
     for t in txs:
         t["duplicate"] = _tx_key(t) in existing
-    txs = await _enrich_statement_lines(acc["company_id"], txs)
-    result = {"statement": {k: d.get(k) for k in ("bank", "card_last4", "statement_date", "due_date", "total_debt", "minimum_payment", "limit", "confidence")}, "transactions": txs, "filename": file.filename}
+    txs = await _enrich_statement_lines(acc["company_id"], txs, is_card=is_card)
+    if is_card:
+        statement = {k: d.get(k) for k in ("bank", "card_last4", "statement_date", "due_date", "total_debt", "minimum_payment", "limit", "confidence")}
+    else:
+        statement = {k: d.get(k) for k in ("bank", "iban", "account_no", "statement_date", "period_start", "period_end", "opening_balance", "closing_balance", "confidence")}
+    result = {"mode": "card" if is_card else "bank", "statement": statement, "transactions": txs, "filename": file.filename}
     if dry_run:
         return result
     inserted = 0
@@ -318,8 +408,16 @@ async def import_statement(account_id: str, file: UploadFile = File(...), dry_ru
             continue
         await _insert_statement_line(acc, t)
         inserted += 1
-    await _apply_statement_account(account_id, result["statement"], acc)
-    return {**result, "inserted": inserted, "message": f"{inserted} hareket aktarıldı" + (f", kart borcu {d['total_debt']} ₺ olarak güncellendi." if d.get("total_debt") is not None else ".")}
+    acc = await _db.bank_accounts.find_one({"_id": account_id}) or acc
+    await _apply_statement_account(account_id, result["statement"], acc, apply_card_balance=is_card)
+    extra = ""
+    if is_card and d.get("total_debt") is not None:
+        extra = f", kart borcu {d['total_debt']} ₺ olarak güncellendi."
+    elif not is_card:
+        extra = "."
+    else:
+        extra = "."
+    return {**result, "inserted": inserted, "message": f"{inserted} hareket aktarıldı" + extra}
 
 
 @router.post("/banking/accounts/{account_id}/import-statement/confirm")
@@ -327,9 +425,12 @@ async def confirm_statement(account_id: str, req: Dict[str, Any]):
     acc = await _db.bank_accounts.find_one({"_id": account_id})
     if not acc:
         raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+    is_card = _is_card(acc)
+    if not is_card:
+        await assert_manual_allowed(_db, account_id)
     statement = req.get("statement") or {}
     lines = req.get("lines") or req.get("transactions") or []
-    existing = await _existing_statement_keys(account_id)
+    existing = await _existing_statement_keys(account_id, all_sources=not is_card)
     inserted, expenses_n, contacts_n = 0, 0, 0
     details = []
     for raw in lines:
@@ -339,7 +440,7 @@ async def confirm_statement(account_id: str, req: Dict[str, Any]):
             "amount": float(raw.get("amount") or 0),
             "installment": raw.get("installment"),
             "category": raw.get("category") or "Diğer",
-            "kind": raw.get("kind") or "masraf",
+            "kind": raw.get("kind") or ("masraf" if is_card else "islem"),
             "contact_id": raw.get("contact_id") or None,
             "contact_name": raw.get("contact_name"),
             "included": bool(raw.get("included", True)),
@@ -354,12 +455,14 @@ async def confirm_statement(account_id: str, req: Dict[str, Any]):
             contacts_n += 1
         details.append(created)
         existing.add(_tx_key(t))
-    await _apply_statement_account(account_id, statement, acc)
+    acc = await _db.bank_accounts.find_one({"_id": account_id}) or acc
+    await _apply_statement_account(account_id, statement, acc, apply_card_balance=is_card)
     return {
         "inserted": inserted,
         "expenses_created": expenses_n,
         "contacts_matched": contacts_n,
         "details": details,
         "statement": statement,
+        "mode": "card" if is_card else "bank",
         "message": f"{inserted} hareket aktarıldı" + (f", {expenses_n} masraf oluşturuldu" if expenses_n else "") + (f", {contacts_n} cari eşleşti" if contacts_n else "") + ".",
     }
