@@ -9,7 +9,7 @@ import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, 
 import { B2BAiCart } from "../components/B2BAiCart";
 import { B2BCatalogCard } from "../components/B2BCatalogCard";
 import { ScanButton } from "../components/CameraScanner";
-import { addCartLine, cartHasItems, discardHeldCart, heldCartTabs, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
+import { addCartLine, cartHasItems, cartHeading, discardHeldCart, heldCartTabs, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
 import { applyB2BScan, matchesB2BQuery } from "../utils/b2bSearch";
 import { B2B_CATALOG_PAGE, catalogGrowVisible, catalogVisibleCount } from "../utils/b2bCatalogWindow";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
@@ -485,8 +485,8 @@ export default function B2BPortalPage() {
 
             {allowOrders && (
               <div className="hidden lg:block lg:col-span-3 order-3 bg-white rounded-2xl border p-4 space-y-3 h-fit lg:sticky lg:top-4" data-testid="b2b-cart">
-                <div className="font-bold text-slate-900 flex items-center gap-2">
-                  <ShoppingCart className="w-4 h-4" /> Sepet ({lines.length})
+                <div className="font-bold text-slate-900 flex items-center gap-2" data-testid="b2b-cart-heading">
+                  <ShoppingCart className="w-4 h-4" /> {cartHeading(lines)}
                 </div>
                 {heldTabs.length > 0 && (
                   <div className="flex flex-wrap gap-1.5" data-testid="b2b-held-tabs">

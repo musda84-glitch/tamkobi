@@ -89,6 +89,19 @@ export function cartCount(cart) {
   return Object.values(cart || {}).reduce((s, line) => s + (Number(line?.qty) || 0), 0);
 }
 
+/** Sepet satır listesindeki toplam adet (kalem sayısı). */
+export function cartLinesQtyTotal(lines) {
+  return (Array.isArray(lines) ? lines : []).reduce((s, l) => s + (Number(l?.qty) || 0), 0);
+}
+
+export function cartKalemLabel(count) {
+  return `${Math.max(0, Number(count) || 0)} kalem`;
+}
+
+export function cartHeading(lines) {
+  return `Sepet (${cartKalemLabel(cartLinesQtyTotal(lines))})`;
+}
+
 export function heldStorageKey(token) {
   return `b2b_held_carts_${String(token || "")}`;
 }

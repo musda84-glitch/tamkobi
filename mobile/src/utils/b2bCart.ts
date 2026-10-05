@@ -117,6 +117,18 @@ export function cartCount(cart: B2BCart | null | undefined): number {
   return Object.values(cart || {}).reduce((s, line) => s + (Number(line.qty) || 0), 0);
 }
 
+export function cartLinesQtyTotal(lines?: Array<{ qty?: number }> | null): number {
+  return (Array.isArray(lines) ? lines : []).reduce((s, l) => s + (Number(l?.qty) || 0), 0);
+}
+
+export function cartKalemLabel(count?: number | null): string {
+  return `${Math.max(0, Number(count) || 0)} kalem`;
+}
+
+export function cartHeading(lines?: Array<{ qty?: number }> | null): string {
+  return `Sepet (${cartKalemLabel(cartLinesQtyTotal(lines))})`;
+}
+
 export function cartHasItems(cart: B2BCart | null | undefined): boolean {
   return Object.values(cart || {}).some((l) => (Number(l?.qty) || 0) > 0);
 }

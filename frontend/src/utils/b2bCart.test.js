@@ -1,6 +1,5 @@
 
-import { describe, expect, it } from "vitest";
-import { addCartLine, cartHasItems, draftLineNote, heldCartsAsOrders, holdActiveCart, lineKey, mergePortalOrderLists, normalizeNote, parseStoredCart, resumeHeldCart, setCartLineQty } from "./b2bCart";
+import { addCartLine, cartHasItems, cartHeading, cartKalemLabel, cartLinesQtyTotal, draftLineNote, heldCartsAsOrders, holdActiveCart, lineKey, mergePortalOrderLists, normalizeNote, parseStoredCart, resumeHeldCart, setCartLineQty } from "./b2bCart";
 
 describe("b2bCart", () => {
   it("same product + different notes stay separate lines", () => {
@@ -116,5 +115,12 @@ describe("b2bCart", () => {
     expect(merged[0].order_number).toBe("Aktif sepet");
     expect(merged[0].is_active_cart).toBe(true);
     expect(merged[1].order_number).toBe("B2B-1");
+  });
+
+  it("shows total kalem count from line quantities", () => {
+    expect(cartLinesQtyTotal([{ qty: 1 }, { qty: 4 }])).toBe(5);
+    expect(cartKalemLabel(5)).toBe("5 kalem");
+    expect(cartHeading([{ qty: 1 }, { qty: 2 }])).toBe("Sepet (3 kalem)");
+    expect(cartHeading([])).toBe("Sepet (0 kalem)");
   });
 });

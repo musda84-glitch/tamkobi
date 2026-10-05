@@ -8,7 +8,7 @@ import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
 import { B2BOrderPreview, PreviewOrderBtn } from "./B2BOrderPreview";
-import { formatOrderItemLabel } from "../utils/b2bCart";
+import { formatOrderItemLabel, cartHeading, cartKalemLabel, cartLinesQtyTotal } from "../utils/b2bCart";
 import { LegalConsent } from "./LegalConsent";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
@@ -133,6 +133,10 @@ export const CartBody = ({ lines, sub, vat, note, setNote, setQty, submit, busy,
     ))}</div>
     {lines.length > 0 && <>
       <div className="text-xs space-y-1 border-t pt-2">
+        <div className="flex justify-between text-slate-500" data-testid={`b2b-cart-kalem${suffix}`}>
+          <span>Toplam kalem</span>
+          <span>{cartKalemLabel(cartLinesQtyTotal(lines))}</span>
+        </div>
         <div className="flex justify-between text-slate-500"><span>Ara Toplam</span><span>{fmt(sub)}</span></div>
         <div className="flex justify-between text-slate-500"><span>KDV</span><span>{fmt(vat)}</span></div>
         <div className="flex justify-between font-black text-base border-t pt-1"><span>Toplam (KDV dahil)</span><span data-testid={`b2b-cart-total${suffix}`}>{fmt(sub + vat)}</span></div>
@@ -173,7 +177,7 @@ export const MobileCartBar = ({ lines, total, open, setOpen, children, heldCount
       {open && (
         <div className="lg:hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-end" {...backdropDismissProps(() => setOpen(false))}>
           <div className="bg-white w-full rounded-t-3xl p-4 pb-6 space-y-3 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()} data-testid="b2b-mobile-cart-sheet">
-            <div className="flex items-center justify-between"><div className="font-bold text-slate-900 flex items-center gap-2"><ShoppingCart className="w-4 h-4" /> Sepet ({lines.length})</div><button onClick={() => setOpen(false)} className="p-2 text-slate-400" aria-label="Kapat" data-testid="b2b-mobile-cart-close"><X className="w-5 h-5" /></button></div>
+            <div className="flex items-center justify-between"><div className="font-bold text-slate-900 flex items-center gap-2" data-testid="b2b-mobile-cart-heading"><ShoppingCart className="w-4 h-4" /> {cartHeading(lines)}</div><button onClick={() => setOpen(false)} className="p-2 text-slate-400" aria-label="Kapat" data-testid="b2b-mobile-cart-close"><X className="w-5 h-5" /></button></div>
             {children}
           </div>
         </div>

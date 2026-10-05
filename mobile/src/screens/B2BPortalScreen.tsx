@@ -16,7 +16,7 @@ import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, Kpi, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { colors } from "../theme";
 import type { B2BPortal, B2BProduct, Order } from "../types";
-import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, cartQtyByProduct, discardHeldCart, formatCartSheetMeta, formatOrderItemLabel, heldCartTabs, heldCartsAsOrders, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty, type B2BCart, type HeldCart } from "../utils/b2bCart";
+import { addCartLine, b2bFlashChrome, cartCount, cartHasItems, cartKalemLabel, cartQtyByProduct, discardHeldCart, formatCartSheetMeta, formatOrderItemLabel, heldCartTabs, heldCartsAsOrders, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty, type B2BCart, type HeldCart } from "../utils/b2bCart";
 import { isLegalAccepted, legalAcceptPayload, seedLegalAccept, toggleLegalAccept, type LegalAcceptMap } from "../utils/b2bLegal";
 import { applyB2BScan, canAddProduct, categorySelectGroups, filterCatalog, hasListDiscount, normalizeScanText, parseDraftQty, qtyDraftAfterAdd, qtyDraftOnBlur, qtyDraftOnFocus } from "../utils/b2bCatalog";
 import {
@@ -1065,11 +1065,14 @@ export function B2BPortalScreen() {
             ))}
             {showPrices ? (
               <View>
+                <Muted testID="b2b-cart-kalem">Toplam {cartKalemLabel(count)}</Muted>
                 <Muted>Ara toplam {fmtMoney(sub)} · KDV {fmtMoney(vat)}</Muted>
                 <Text style={{ fontWeight: "800", color: colors.text, fontSize: 18 }}>{fmtMoney(cartTotal)}</Text>
                 {minOrder > 0 ? <Muted>Minimum sipariş {fmtMoney(minOrder)}</Muted> : null}
               </View>
-            ) : null}
+            ) : (
+              <Muted testID="b2b-cart-kalem">Toplam {cartKalemLabel(count)}</Muted>
+            )}
             <Field label="Sipariş notu (teslimat, adres…)" value={note} onChangeText={setNote} testID="b2b-order-note" />
             <Field label="Sizin sipariş no" value={customerOrderNo} onChangeText={setCustomerOrderNo} testID="b2b-po-number" autoCapitalize="none" />
             {(data?.legal || []).length ? (
