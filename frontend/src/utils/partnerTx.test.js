@@ -18,7 +18,15 @@ describe("partnerTx", () => {
   it("classifies ledger vs cash types", () => {
     expect(isPartnerLedgerType("debit")).toBe(true);
     expect(isPartnerLedgerType("credit")).toBe(true);
+    expect(isPartnerLedgerType("salary")).toBe(true);
     expect(isPartnerCashType("capital_in")).toBe(true);
     expect(isPartnerCashType("debit")).toBe(false);
+    expect(isPartnerCashType("salary")).toBe(false);
+  });
+
+  it("treats monthly salary like a receivable credit", () => {
+    expect(PARTNER_TX_LABEL.salary).toMatch(/maaş/i);
+    expect(partnerTxIncreasesBalance("salary")).toBe(true);
+    expect(partnerTxSign("salary")).toBe("+");
   });
 });

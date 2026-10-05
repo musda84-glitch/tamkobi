@@ -352,13 +352,14 @@ class Partner(BaseDocument):
     total_profit_share: float = 0.0
     is_active: bool = True
     photo_url: Optional[str] = None
+    monthly_salary: float = 0.0  # Aylık ortak maaşı — her ay ortak alacağına yazılır
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class PartnerTransaction(BaseDocument):
     company_id: str
     partner_id: str
     partner_name: str
-    type: str  # capital_in, withdrawal, profit_share, credit, debit
+    type: str  # capital_in, withdrawal, profit_share, credit, debit, salary
     amount: float
     account_id: Optional[str] = None
     account_name: Optional[str] = None

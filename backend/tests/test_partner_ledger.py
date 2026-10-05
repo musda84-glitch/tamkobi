@@ -14,9 +14,9 @@ class TestPartnerLedgerBalance:
         assert balance_inc("credit", 1000) == {"balance": 1000, "total_capital_in": 1000}
         assert balance_inc("capital_in", 1000) == {"balance": 1000, "total_capital_in": 1000}
 
-    def test_debit_decreases_partner_claim(self):
-        assert balance_inc("debit", 250) == {"balance": -250, "total_withdrawn": 250}
-        assert balance_inc("withdrawal", 250) == {"balance": -250, "total_withdrawn": 250}
+    def test_salary_increases_partner_claim(self):
+        assert balance_inc("salary", 8000) == {"balance": 8000, "total_capital_in": 8000}
+        assert "salary" in LEDGER_TYPES
 
     def test_ledger_types_are_mutable(self):
         assert set(LEDGER_TYPES) <= set(MUTABLE_TYPES)

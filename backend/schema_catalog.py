@@ -340,7 +340,7 @@ COLLECTIONS = {
     "partners": {
         "scope": SCOPE_TENANT,
         "description": "Ortaklar ve sermaye bakiyesi.",
-        "keys": ("_id", "company_id", "name", "share_percent", "balance"),
+        "keys": ("_id", "company_id", "name", "share_percent", "balance", "monthly_salary"),
         "refs": ("companies._id",),
     },
     "partner_transactions": {

@@ -8063,7 +8063,17 @@ async def create_partner(partner: Partner):
 
 @api_router.put("/banking/partners/{partner_id}")
 async def update_partner(partner_id: str, updated: Dict[str, Any]):
-    allowed = {k: v for k, v in updated.items() if k in {"name", "share_percent", "phone", "email", "is_active", "photo_url"}}
+    allowed = {k: v for k, v in updated.items() if k in {"name", "share_percent", "phone", "email", "is_active", "photo_url", "monthly_salary"}}
+    if "monthly_salary" in allowed:
+        try:
+            allowed["monthly_salary"] = max(0.0, float(allowed["monthly_salary"] or 0))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Aylık maaş geçersiz.")
+    if "share_percent" in allowed:
+        try:
+            allowed["share_percent"] = float(allowed["share_percent"] or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Ortaklık payı geçersiz.")
     await db.partners.update_one({"_id": partner_id}, {"$set": allowed})
     res = await db.partners.find_one({"_id": partner_id})
     if not res:
@@ -8290,6 +8300,15 @@ async def distribute_profit(req: Dict[str, Any], request: Request):
         if pending:
             return pending
     return await _execute_distribute_profit(req)
+
+
+@api_router.post("/banking/partners/accrue-salary")
+async def accrue_partner_salary(req: Dict[str, Any]):
+    """Tanımlı aylık maaşı ilgili dönemin ortak alacağına yazar. Aynı ay tekrar yazılmaz."""
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    return await partner_pay.accrue_monthly_salaries(
+        db, company_id, period=req.get("period"), partner_id=req.get("partner_id")
+    )
 
 
 CASH_APPROVAL_EXECUTORS = {
