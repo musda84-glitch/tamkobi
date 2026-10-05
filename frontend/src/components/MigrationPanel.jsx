@@ -47,8 +47,27 @@ const BizimHesapCard = ({ companyId, onImported }) => {
   useEffect(() => { if (cfg?.configured) loadWarehouses(); }, [cfg?.configured, loadWarehouses]);
   const save = async () => { setBusy("save"); setErr(""); try { await axios.put(`${API_URL}/migration/bizimhesap/config`, { company_id: companyId, token, firm_id: firmId }); toast.success("BizimHesap bağlantı bilgileri kaydedildi."); setToken(""); load(); } catch (e) { const m = errDetail(e, "Kaydedilemedi."); setErr(m); toast.error(m); } finally { setBusy(""); } };
   const runTest = async () => { setBusy("test"); setErr(""); setTest(null); try { const r = await axios.post(`${API_URL}/migration/bizimhesap/test`, { company_id: companyId, token: token || undefined, firm_id: firmId || undefined }, { timeout: 120000 }); setTest(r.data); setWarehouses(r.data.warehouses || []); if (r.data.warehouses?.[0]) setWh(r.data.warehouses[0].id); if (r.data.product_error) { setErr(r.data.product_error); toast.success(`Bağlantı kuruldu: ${r.data.warehouses.length} depo. Ürün listesi alınamadı.`); } else { toast.success(`Bağlantı başarılı: ${r.data.product_count} ürün${r.data.with_photo ? ` · ${r.data.with_photo} resimli` : ""}, ${r.data.warehouses.length} depo.`); } } catch (e) { const m = errDetail(e, "Bağlantı testi başarısız."); setErr(m); toast.error(m); } finally { setBusy(""); } };
-  const [custOpt, setCustOpt] = useState({ only_with_balance: false, invert_sign: false, contact_type: "auto" });
-  const importCustomers = async () => { if (!window.confirm("BizimHesap carileri (ünvan, VKN, iletişim, bakiye) aktarılsın mı? Mevcut cariler VKN/ünvan eşleşmesiyle güncellenir ve müşteri/tedarikçi türleri yeniden belirlenir; işlem Aktarım Günlüğü'nden geri alınabilir.")) return; setBusy("cust"); setErr(""); try { const r = await axios.post(`${API_URL}/migration/bizimhesap/import-customers`, { company_id: companyId, ...custOpt, on_duplicate: "update" }, { timeout: 180000 }); toast.success(r.data.message); load(); try { onImported?.(); } catch { /* ignore */ } } catch (e) { const m = errDetail(e, "Cari aktarımı başarısız."); setErr(m); toast.error(m); } finally { setBusy(""); } };
+  const [custOpt, setCustOpt] = useState({ only_with_balance: false, invert_sign: false, contact_type: "auto", include_cheques: false });
+  const importCustomers = async () => {
+    if (!window.confirm("BizimHesap carileri (ünvan, VKN, iletişim, bakiye) aktarılsın mı? Mevcut cariler VKN/ünvan eşleşmesiyle güncellenir ve müşteri/tedarikçi türleri yeniden belirlenir; işlem Aktarım Günlüğü'nden geri alınabilir.")) return;
+    let includeCheques = !!custOpt.include_cheques;
+    if (!includeCheques) {
+      includeCheques = window.confirm("Çek/senet bakiyeleri de aktarılsın mı?\n\nTamam: BizimHesap'taki çek/senet bakiyesi cari karta yazılır (cari bakiyeye eklenmez).\nİptal: Yalnızca cari bakiye aktarılır, çek bakiyesi alınmaz.");
+    }
+    setCustOpt((o) => ({ ...o, include_cheques: includeCheques }));
+    setBusy("cust");
+    setErr("");
+    try {
+      const r = await axios.post(`${API_URL}/migration/bizimhesap/import-customers`, { company_id: companyId, ...custOpt, include_cheques: includeCheques, on_duplicate: "update" }, { timeout: 180000 });
+      toast.success(r.data.message);
+      load();
+      try { onImported?.(); } catch { /* ignore */ }
+    } catch (e) {
+      const m = errDetail(e, "Cari aktarımı başarısız.");
+      setErr(m);
+      toast.error(m);
+    } finally { setBusy(""); }
+  };
   const doImport = async () => {
     if (stockOpt.with_stock && !wh) {
       const m = whList.length ? "Stok miktarı için depo seçin." : "Depo listesi yok. Önce Bağlantıyı Test Et veya Depoları yenile; ya da ‘Stok miktarlarını çek’i kapatıp yalnızca kartları aktarın.";
@@ -130,13 +149,14 @@ const BizimHesapCard = ({ companyId, onImported }) => {
           <b className="text-slate-800">Cariler & Bakiyeler</b>
           <label className="flex items-center gap-1"><input type="checkbox" checked={custOpt.only_with_balance} onChange={(e) => setCustOpt({ ...custOpt, only_with_balance: e.target.checked })} data-testid="bh-cust-onlybal" /> Sadece bakiyesi olanlar</label>
           <label className="flex items-center gap-1" title="BizimHesap'ta bakiye işareti ters görünüyorsa"><input type="checkbox" checked={custOpt.invert_sign} onChange={(e) => setCustOpt({ ...custOpt, invert_sign: e.target.checked })} data-testid="bh-cust-invert" /> Bakiye işaretini ters çevir</label>
+          <label className="flex items-center gap-1" title="İşaretliyse çek/senet bakiyesi cari karta yazılır (cari bakiyeye eklenmez). İşaretsizse aktarımda sorulur."><input type="checkbox" checked={custOpt.include_cheques} onChange={(e) => setCustOpt({ ...custOpt, include_cheques: e.target.checked })} data-testid="bh-cust-cheques" /> Çek/senet bakiyesini al</label>
           <label className="flex items-center gap-1" title="Otomatik: BizimHesap'ın cari türü, yoksa cari kodu (320 satıcı / 120 alıcı), o da yoksa bakiye işareti">Cari türü
             <select value={custOpt.contact_type} onChange={(e) => setCustOpt({ ...custOpt, contact_type: e.target.value })} className="bg-white border border-slate-200 rounded-lg p-1" data-testid="bh-cust-type">
               <option value="auto">Otomatik ayır</option><option value="customer">Hepsi müşteri</option><option value="supplier">Hepsi tedarikçi</option><option value="both">Hepsi müşteri &amp; tedarikçi</option>
             </select>
           </label>
           <button onClick={importCustomers} disabled={busy === "cust"} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="bh-import-customers">{busy === "cust" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Carileri Aktar</button>
-          {cfg?.last_customer_import && <span className="text-[10px] text-slate-400">Son: {new Date(cfg.last_customer_import.at).toLocaleString("tr-TR")} · {cfg.last_customer_import.inserted} yeni / {cfg.last_customer_import.updated} güncel · toplam bakiye {Number(cfg.last_customer_import.total_balance).toLocaleString("tr-TR")} ₺</span>}
+          {cfg?.last_customer_import && <span className="text-[10px] text-slate-400">Son: {new Date(cfg.last_customer_import.at).toLocaleString("tr-TR")} · {cfg.last_customer_import.inserted} yeni / {cfg.last_customer_import.updated} güncel · toplam bakiye {Number(cfg.last_customer_import.total_balance).toLocaleString("tr-TR")} ₺{cfg.last_customer_import.include_cheques === true ? ` · çek ${Number(cfg.last_customer_import.total_cheque || 0).toLocaleString("tr-TR")} ₺` : cfg.last_customer_import.include_cheques === false ? " · çek bakiyesi alınmadı" : ""}</span>}
         </div>)}
     </div>
   );
