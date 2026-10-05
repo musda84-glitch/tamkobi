@@ -11,7 +11,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
-import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL } from "../utils/partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerSalaryActionLabel } from "../utils/partnerTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = PARTNER_TX_LABEL;
@@ -197,6 +197,30 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     setModal("edit");
   };
 
+  const openSalary = (p, e) => {
+    e.stopPropagation();
+    setPartnerForm({
+      id: p.id,
+      name: p.name || "",
+      monthly_salary: p.monthly_salary || "",
+    });
+    setModal("salary");
+  };
+
+  const saveSalary = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await axios.put(`${API_URL}/banking/partners/${partnerForm.id}`, {
+        monthly_salary: Number(partnerForm.monthly_salary || 0),
+      });
+      const accrual = r.data?.salary_accrual;
+      toast.success(accrual?.posted_count ? (accrual.message || "Aylık maaş alacağa yazıldı.") : "Aylık maaş kaydedildi.");
+      setModal(null);
+      setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "" });
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Maaş kaydedilemedi."); }
+  };
+
   const savePartnerEdit = async (e) => {
     e.preventDefault();
     try {
@@ -353,19 +377,29 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               </div>
               <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                 <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded-md px-2 py-0.5 text-xs font-bold">%{p.share_percent}</span>
-                <button type="button" onClick={(e) => openEditPartner(p, e)} className="p-1.5 text-slate-300 hover:text-indigo-600" title="Düzenle / maaş" data-testid={`edit-partner-${p.name}`}><Pencil className="w-4 h-4" /></button>
+                <button type="button" onClick={(e) => openEditPartner(p, e)} className="p-1.5 text-slate-500 hover:text-indigo-600" title="Düzenle" data-testid={`edit-partner-${p.name}`}><Pencil className="w-4 h-4" /></button>
               </div>
             </div>
             <div className="pt-2 border-t border-slate-100 flex items-end justify-between">
               <div>
                 <div className="text-[10px] uppercase text-slate-400 font-semibold">Ortak Bakiyesi</div>
                 <div className="text-lg font-bold text-slate-900">{fmt(p.balance)} ₺</div>
-                {Number(p.monthly_salary) > 0 && (
-                  <div className="text-[10px] text-slate-500 mt-0.5" data-testid={`partner-salary-${p.id}`}>Aylık maaş: <b className="text-slate-700">{fmt(p.monthly_salary)} ₺</b></div>
-                )}
               </div>
               <button onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
             </div>
+            <button
+              type="button"
+              onClick={(e) => openSalary(p, e)}
+              className="w-full flex items-center justify-between gap-2 rounded-lg border border-amber-100 bg-amber-50/70 px-2.5 py-1.5 text-left hover:bg-amber-50"
+              data-testid={`partner-salary-btn-${p.id}`}
+            >
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-900">
+                <Banknote className="w-3.5 h-3.5" /> Aylık maaş
+              </span>
+              <span className="text-[11px] font-bold text-amber-950" data-testid={`partner-salary-${p.id}`}>
+                {partnerSalaryActionLabel(p.monthly_salary) || `${fmt(p.monthly_salary)} ₺`}
+              </span>
+            </button>
             <div className="grid grid-cols-3 gap-1 text-[10px] text-slate-500">
               <div>Giriş: <b className="text-emerald-700">{fmt(p.total_capital_in)}</b></div>
               <div>Çekiş: <b className="text-rose-700">{fmt(p.total_withdrawn)}</b></div>
@@ -410,6 +444,19 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               <div><label className="block font-semibold mb-1">E-posta</label><input className={inputCls} value={partnerForm.email} onChange={(e) => setPartnerForm({ ...partnerForm, email: e.target.value })} /></div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="save-partner-btn">Kaydet</button></div>
+          </form>
+        </Modal>
+      )}
+
+      {modal === "salary" && (
+        <Modal title={`${partnerForm.name || "Ortak"} — Aylık maaş`} onClose={() => setModal(null)} testId="partner-salary-modal">
+          <form onSubmit={saveSalary} className="space-y-3 text-xs">
+            <div>
+              <label className="block font-semibold mb-1">Aylık maaş (₺)</label>
+              <input type="number" step="0.01" min="0" className={`${inputCls} font-bold`} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} autoFocus data-testid="card-partner-salary-input" />
+              <p className="text-[11px] text-slate-500 mt-1.5">Bu tutar her ay bir kez ortak alacağına (bakiyeye) yazılır. Kasa ve banka değişmez; ödeme istediğinizde para çekişi yaparsınız.</p>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-amber-600 text-white rounded-lg font-semibold" data-testid="save-partner-salary-btn">Kaydet ve alacağa yaz</button></div>
           </form>
         </Modal>
       )}

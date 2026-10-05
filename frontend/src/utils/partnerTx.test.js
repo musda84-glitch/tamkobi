@@ -1,4 +1,4 @@
-import { isPartnerCashType, isPartnerLedgerType, partnerTxIncreasesBalance, partnerTxSign, PARTNER_TX_LABEL } from "./partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, partnerSalaryActionLabel, partnerTxIncreasesBalance, partnerTxSign, PARTNER_TX_LABEL } from "./partnerTx";
 
 describe("partnerTx", () => {
   it("labels debit and credit slips", () => {
@@ -28,5 +28,11 @@ describe("partnerTx", () => {
     expect(PARTNER_TX_LABEL.salary).toMatch(/maaş/i);
     expect(partnerTxIncreasesBalance("salary")).toBe(true);
     expect(partnerTxSign("salary")).toBe("+");
+  });
+
+  it("prompts to set salary on the partner card when amount is empty", () => {
+    expect(partnerSalaryActionLabel(0)).toBe("Belirle");
+    expect(partnerSalaryActionLabel("")).toBe("Belirle");
+    expect(partnerSalaryActionLabel(12500)).toBe(null);
   });
 });

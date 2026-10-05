@@ -8059,6 +8059,9 @@ async def create_partner(partner: Partner):
         raise HTTPException(status_code=400, detail="Toplam ortaklık payı %100'ü aşamaz.")
     doc = partner.to_mongo()
     await db.partners.insert_one(doc)
+    if float(doc.get("monthly_salary") or 0) > 0:
+        await partner_pay.accrue_monthly_salaries(db, partner.company_id, partner_id=doc["_id"])
+        doc = await db.partners.find_one({"_id": doc["_id"]}) or doc
     return clean_doc(doc)
 
 @api_router.put("/banking/partners/{partner_id}")
@@ -8078,7 +8081,15 @@ async def update_partner(partner_id: str, updated: Dict[str, Any]):
     res = await db.partners.find_one({"_id": partner_id})
     if not res:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
-    return clean_doc(res)
+    out = clean_doc(res)
+    if "monthly_salary" in allowed and float(allowed.get("monthly_salary") or 0) > 0:
+        out["salary_accrual"] = await partner_pay.accrue_monthly_salaries(
+            db, res.get("company_id") or "", partner_id=partner_id
+        )
+        refreshed = await db.partners.find_one({"_id": partner_id})
+        if refreshed:
+            out = {**clean_doc(refreshed), "salary_accrual": out["salary_accrual"]}
+    return out
 
 @api_router.delete("/banking/partners/{partner_id}")
 async def delete_partner(partner_id: str):
