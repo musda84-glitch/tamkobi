@@ -149,7 +149,9 @@ export function AccTaxObligationsPanel({ companyId, month, taxPayables, onChange
             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${aiReady ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"}`}>{extractLabel || "AI"}</span>
           </div>
           <p className="text-[11px] text-slate-500 mt-1 max-w-2xl">
-            Bordro, mizan veya tahakkuk yükleyin. Satırlar hem burada hem <b>Masraflar → Vergi / Harç / SGK</b> altında görünür; <b>Öde</b> ile kasa/bankadan masraf ödemesi yaparsınız.
+            Bordro, mizan veya tahakkuk yükleyin. Satırlar hem burada hem{" "}
+            <Link to="/expenses" className="text-amber-800 font-semibold underline underline-offset-2" data-testid="acc-tax-expenses-link">Masraflar → Vergi / Harç / SGK</Link>
+            {" "}altında görünür; <b>Masraf öde</b> ile kasa/bankadan ödersiniz.
           </p>
         </div>
         <div className="text-[11px] text-slate-600" data-testid="acc-tax-summary">
