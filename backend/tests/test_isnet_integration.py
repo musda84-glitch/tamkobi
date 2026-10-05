@@ -175,6 +175,13 @@ def test_connection_ignores_portal_password_failure():
     assert "Portal:" not in (info.get("message") or "")
 
 
+def test_healthcheck_envelope_has_no_request_wrapper():
+    xml = isnet.soap_envelope_xml("HealthCheck", None)
+    assert "<tem:HealthCheck>" in xml
+    assert "<tem:request>" not in xml
+    assert isnet.soap_action_header("IInvoiceService", "HealthCheck") == '"http://tempuri.org/IInvoiceService/HealthCheck"'
+
+
 def test_soap_unreachable_hint_timeout():
     assert "zaman aşımı" in isnet._soap_unreachable_hint(httpx.ConnectTimeout("x"))
 

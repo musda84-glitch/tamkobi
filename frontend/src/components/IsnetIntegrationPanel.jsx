@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Inbox, Loader2, Plug, Save, Truck, Send, FileCheck2 } from "lucide-react";
+import { Inbox, Loader2, Plug, Save, Truck, Send, FileCheck2, Download } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -151,6 +151,31 @@ export default function IsnetIntegrationPanel({ companyId }) {
           applyEgressPayload(eg.data);
         } catch { /* ignore */ }
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSupportPack = async () => {
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API_URL}/integrations/isnet/support-pack`, { params: { company_id: companyId } });
+      const d = r.data || {};
+      const save = (name, content, mime) => {
+        const blob = new Blob([content || ""], { type: mime });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      };
+      save("isnet-healthcheck-request.xml", d.request_xml, "application/xml");
+      save("isnet-healthcheck-response.txt", d.response_txt, "text/plain");
+      toast.success("İşNet destek dosyaları indirildi (request.xml + response.txt).");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Destek paketi alınamadı.");
     } finally {
       setLoading(false);
     }
@@ -551,6 +576,17 @@ export default function IsnetIntegrationPanel({ companyId }) {
         </details>
 
         <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          <button
+            type="button"
+            onClick={handleSupportPack}
+            disabled={loading}
+            className="px-4 py-2 border border-slate-200 rounded-xl font-semibold disabled:opacity-60 inline-flex items-center gap-1.5"
+            data-testid="isnet-support-pack-btn"
+            title="İşNet desteğe request.xml ve response.txt indir"
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            Destek dosyası
+          </button>
           <button
             type="button"
             onClick={handleTestConnection}
