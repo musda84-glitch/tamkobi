@@ -28,8 +28,42 @@ export const ORDER_BULK_ACTIONS = [
 
 export const bulkActionNeedsSelection = (id) => id !== "refresh";
 
-/** Toplu e-belge: yalnızca faturalaşmış ve henüz GİB'e kesilmemiş siparişler. */
-export const orderBulkEInvoiceEligible = (ord) => !!ord && !!ord.is_invoiced && !orderHasEInvoiceIssued(ord);
+/** YYYY-AA-GG (yerel gün). */
+export function todayYmd(now = new Date()) {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+export function ymdPrefix(value) {
+  const s = String(value || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
+}
+
+/** Fatura / sipariş belge tarihi (GİB IssueDate). */
+export function orderDocumentDate(ord) {
+  return (
+    ymdPrefix(ord?.invoice_date)
+    || ymdPrefix(ord?.issue_date)
+    || ymdPrefix(ord?.order_date)
+    || ymdPrefix(ord?.created_at)
+  );
+}
+
+export function orderHasOldDocumentDate(ord, today = todayYmd()) {
+  const d = orderDocumentDate(ord);
+  return !!d && d < today;
+}
+
+export function ordersHaveOldDocumentDate(list, today = todayYmd()) {
+  return (list || []).some((o) => orderHasOldDocumentDate(o, today));
+}
+
+/** Toplu e-belge: faturalaşmış, faturası var, henüz GİB'e kesilmemiş. */
+export const orderBulkEInvoiceEligible = (ord) => (
+  !!ord && !!ord.is_invoiced && !!ord.invoice_id && !orderHasEInvoiceIssued(ord)
+);
 
 /** API hata metni (toast için). */
 export const bulkApiErrorDetail = (err) => {

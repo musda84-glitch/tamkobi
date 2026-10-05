@@ -1,5 +1,14 @@
 import { buildMiniInvoiceHtml, miniInvoiceSize } from "./miniInvoicePrint";
-import { ORDER_BULK_ACTIONS, bulkActionNeedsSelection, orderBulkEInvoiceEligible, orderRowId } from "./orderBulkActions";
+import {
+  ORDER_BULK_ACTIONS,
+  bulkActionNeedsSelection,
+  orderBulkEInvoiceEligible,
+  orderDocumentDate,
+  orderHasOldDocumentDate,
+  ordersHaveOldDocumentDate,
+  orderRowId,
+  todayYmd,
+} from "./orderBulkActions";
 
 test("bulk menu lists the order actions and only refresh works with an empty selection", () => {
   expect(ORDER_BULK_ACTIONS.map((a) => a.label)).toEqual([
@@ -34,8 +43,21 @@ test("order bulk helpers resolve row id and skip issued e-invoices", () => {
   expect(orderBulkEInvoiceEligible({ einvoice_state: "sent" })).toBe(false);
   expect(orderBulkEInvoiceEligible({ order_status: "pending" })).toBe(false);
   expect(orderBulkEInvoiceEligible({ is_invoiced: false })).toBe(false);
+  expect(orderBulkEInvoiceEligible({ is_invoiced: true })).toBe(false);
   expect(orderBulkEInvoiceEligible({ is_invoiced: true, invoice_id: "inv1" })).toBe(true);
   expect(orderBulkEInvoiceEligible({ is_invoiced: true, einvoice_state: "sent" })).toBe(false);
+});
+
+test("old document dates trigger the bulk e-invoice date prompt", () => {
+  expect(todayYmd(new Date("2026-10-05T12:00:00"))).toBe("2026-10-05");
+  expect(orderDocumentDate({ invoice_date: "2026-09-01" })).toBe("2026-09-01");
+  expect(orderDocumentDate({ order_date: "2026-09-02T18:00:00Z" })).toBe("2026-09-02");
+  expect(orderHasOldDocumentDate({ invoice_date: "2026-10-04" }, "2026-10-05")).toBe(true);
+  expect(orderHasOldDocumentDate({ invoice_date: "2026-10-05" }, "2026-10-05")).toBe(false);
+  expect(ordersHaveOldDocumentDate([
+    { invoice_date: "2026-10-05" },
+    { order_date: "2026-09-20" },
+  ], "2026-10-05")).toBe(true);
 });
 
 test("mini invoice slip uses the requested paper size", () => {

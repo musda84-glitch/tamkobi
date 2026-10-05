@@ -48,7 +48,8 @@ import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printO
 import { eBelgeMenuItems, orderEBelgeType } from "../utils/orderEBelge";
 import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued, orderGibInvoiceNumber } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
-import { orderBulkEInvoiceEligible, bulkApiErrorDetail, orderRowId } from "../utils/orderBulkActions";
+import { orderBulkEInvoiceEligible, bulkApiErrorDetail, orderRowId, todayYmd } from "../utils/orderBulkActions";
+import { BulkEInvoiceConfirmModal } from "../components/BulkEInvoiceConfirmModal";
 import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
@@ -196,6 +197,8 @@ export default function OrdersB2BPage() {
   const [returnOrder, setReturnOrder] = useState(null);
   const [approveOrder, setApproveOrder] = useState(null);
   const [eFaturaOrder, setEFaturaOrder] = useState(null);
+  const [eFaturaOrders, setEFaturaOrders] = useState(null);
+  const [bulkEInvoiceConfirm, setBulkEInvoiceConfirm] = useState(null);
   const [shipOrder, setShipOrder] = useState(null);
   const [cargoChangeOrder, setCargoChangeOrder] = useState(null);
   const [selected, setSelected] = useState([]);
@@ -354,6 +357,15 @@ export default function OrdersB2BPage() {
     }
     const list = selectedOrders();
     if (!list.length) { toast.error("Sipariş seçin."); return; }
+    if (action === "einvoice_create") {
+      const eligible = list.filter(orderBulkEInvoiceEligible);
+      if (!eligible.length) {
+        toast.info("E-Fatura yalnızca faturalaşmış siparişlerden kesilir. Önce Faturalaştırın.");
+        return;
+      }
+      setBulkEInvoiceConfirm({ orders: eligible });
+      return;
+    }
     if (action === "labels" || action === "cargo_label" || action === "cargo_label_alt") { setBulkLabels(list); return; }
     if (action === "thermal" || action === "cargo_mini") {
       if (printThermalLabels(list, activeCompany, { size: "100x150" })) {
@@ -455,14 +467,6 @@ export default function OrdersB2BPage() {
         if (action === "invoice" || action === "invoice_create") {
           if (o.is_invoiced || o.invoice_id) { skipped++; continue; }
           await axios.post(`${API_URL}/orders/${oid}/convert-to-invoice`, { e_type: "e_archive", as_draft: true });
-        } else if (action === "einvoice_create") {
-          if (!orderBulkEInvoiceEligible(o)) { skipped++; continue; }
-          const eType = orderEBelgeType(o, contacts);
-          await axios.post(`${API_URL}/e-invoice/create`, {
-            order_id: oid,
-            e_type: eType,
-            scenario: eType === "e_invoice" ? "TICARI" : undefined,
-          });
         } else if (action === "einvoice_send") {
           if (!orderBulkEInvoiceEligible(o) || !o.invoice_id) { skipped++; continue; }
           const eType = o.e_type || orderEBelgeType(o, contacts);
@@ -764,12 +768,42 @@ export default function OrdersB2BPage() {
         e_type: resolved,
         scenario,
       });
-      toast.success(res.data.message || `${label} GİB'e iletildi.`);
-      loadData();
+      if (!opts.silentToast) toast.success(res.data.message || `${label} GİB'e iletildi.`);
+      if (!opts.skipReload) loadData();
+      return res.data;
     } catch (err) {
-      toast.error(err.response?.data?.detail || `${label} kesilemedi.`);
+      if (!opts.silentToast) toast.error(err.response?.data?.detail || `${label} kesilemedi.`);
       throw err;
     }
+  };
+
+  const confirmBulkEInvoiceDates = async ({ setDateToToday, orders: list }) => {
+    const rows = Array.isArray(list) ? list : [];
+    if (!rows.length) {
+      setBulkEInvoiceConfirm(null);
+      return;
+    }
+    if (setDateToToday) {
+      const today = todayYmd();
+      setBulkBusy(true);
+      try {
+        for (const o of rows) {
+          if (!o.invoice_id) continue;
+          try {
+            await axios.put(`${API_URL}/invoices/${o.invoice_id}`, { issue_date: today });
+          } catch (err) {
+            toast.error(bulkApiErrorDetail(err) || `${o.order_number || "Fatura"} tarihi güncellenemedi.`);
+          }
+        }
+      } finally {
+        setBulkBusy(false);
+      }
+      setBulkEInvoiceConfirm(null);
+      setEFaturaOrders(rows.map((o) => ({ ...o, invoice_date: today, issue_date: today })));
+      return;
+    }
+    setBulkEInvoiceConfirm(null);
+    setEFaturaOrders(rows);
   };
 
   const handleUpdateOrderStatus = async (orderId, newStatus) => {
@@ -1084,15 +1118,58 @@ export default function OrdersB2BPage() {
         />
       )}
       {approveOrder && <ApproveOrderModal order={approveOrder} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setApproveOrder(null)} onDone={loadData} />}
-      {eFaturaOrder && (
+      {bulkEInvoiceConfirm && (
+        <BulkEInvoiceConfirmModal
+          orders={bulkEInvoiceConfirm.orders}
+          busy={bulkBusy}
+          onClose={() => setBulkEInvoiceConfirm(null)}
+          onConfirm={confirmBulkEInvoiceDates}
+        />
+      )}
+      {(eFaturaOrder || eFaturaOrders) && (
         <ElektronikFaturaOnayModal
-          order={eFaturaOrder}
+          order={eFaturaOrder || null}
+          invoices={eFaturaOrders || undefined}
           contacts={contacts}
           companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
-          onClose={() => setEFaturaOrder(null)}
-          onConfirm={async ({ eType, scenario, alias }) => {
+          onClose={() => {
+            setEFaturaOrder(null);
+            setEFaturaOrders(null);
+            if (eFaturaOrders) loadData();
+          }}
+          onConfirm={async (payload, ctx) => {
+            const bulkList = eFaturaOrders;
+            if (bulkList?.length) {
+              const { eType, scenario } = payload || {};
+              ctx?.setStep?.("prepare", "active");
+              let ok = 0;
+              let fail = 0;
+              ctx?.setStep?.("send", "active");
+              for (const ord of bulkList) {
+                const key = orderRowId(ord) || ord.invoice_id;
+                try {
+                  ctx?.setItem?.(key, { status: "running", detail: "Gönderiliyor…" });
+                  await handleEBelgeInvoice(ord, eType, {
+                    scenario,
+                    skipConfirm: true,
+                    silentToast: true,
+                    skipReload: true,
+                  });
+                  ok++;
+                  ctx?.setItem?.(key, { status: "ok", detail: "Gönderildi" });
+                } catch (err) {
+                  fail++;
+                  ctx?.setItem?.(key, { status: "error", detail: bulkApiErrorDetail(err) || "Kesilemedi" });
+                }
+              }
+              ctx?.setStep?.("refresh", "done");
+              loadData();
+              setSelected([]);
+              return { ok, fail, skipped: 0 };
+            }
             const ord = eFaturaOrder;
             if (!ord) return;
+            const { eType, scenario, alias } = payload || {};
             if (alias && ord.contact_id) {
               try {
                 await axios.put(`${API_URL}/contacts/${ord.contact_id}`, {
