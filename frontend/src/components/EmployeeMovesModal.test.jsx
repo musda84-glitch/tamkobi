@@ -70,3 +70,50 @@ test("düzenleme yoksa Sil göstermez", async () => {
   expect(host.querySelector('[data-testid="emp-pay-move-pay_cedeeef3"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="emp-pay-move-del-pay_cedeeef3"]')).toBeNull();
 });
+
+test("görevler sekmesi listeler, düzenler ve siler", async () => {
+  const tasksCard = {
+    tasks: [
+      { id: "ot_1", title: "Ambar sayım", kind: "office", done: false },
+      { id: "t_field", title: "Montaj", kind: "field", done: false, due_date: "2026-10-20", project_name: "Villa" },
+    ],
+  };
+  axios.get.mockImplementation((url) => {
+    if (String(url).includes("/location-moves")) return Promise.resolve({ data: { items: [] } });
+    if (String(url).includes("/overtime-moves")) return Promise.resolve({ data: { items: [] } });
+    if (String(url).includes("/card")) return Promise.resolve({ data: { ...card, ...tasksCard } });
+    return Promise.resolve({ data: {} });
+  });
+  axios.put.mockResolvedValue({ data: { message: "Görev güncellendi." } });
+  axios.delete.mockResolvedValue({ data: { message: "Görev çöp kutusuna taşındı." } });
+  render(<EmployeeMovesModal employee={{ id: "emp_1", full_name: "Yaşar" }} onClose={() => {}} />);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(host.querySelector('[data-testid="emp-moves-tab-tasks"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="emp-moves-tab-tasks"]').click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(host.querySelector('[data-testid="emp-task-move-ot_1"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="emp-task-move-t_field"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="emp-task-move-edit-ot_1"]').click();
+    await Promise.resolve();
+  });
+  expect(host.querySelector('[data-testid="emp-task-edit-modal"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="emp-task-edit-save"]').click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(axios.put).toHaveBeenCalledWith(
+    "/api/personnel/employees/emp_1/tasks/ot_1",
+    expect.objectContaining({ title: "Ambar sayım" }),
+  );
+  await act(async () => {
+    host.querySelector('[data-testid="emp-task-move-delete-ot_1"]').click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(axios.delete).toHaveBeenCalledWith("/api/personnel/employees/emp_1/tasks/ot_1");
+});

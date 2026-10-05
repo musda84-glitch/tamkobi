@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 
 def _slug(name: str, used: set, prefix: str = "item") -> str:
@@ -254,6 +254,70 @@ def remove_project_task(tasks: Any, task_id: str, emp_id: str) -> tuple[list, Op
             found = t
             continue
         out.append(t)
+    return out, found
+
+
+def task_patch_fields(req: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Personel görev düzenleme: title / due_date / duration_days / done."""
+    raw = req or {}
+    out: Dict[str, Any] = {}
+    if "title" in raw:
+        title = str(raw.get("title") or "").strip()
+        if title:
+            out["title"] = title[:200]
+    if "due_date" in raw:
+        due = str(raw.get("due_date") or "").strip()[:10]
+        out["due_date"] = due or None
+    if "duration_days" in raw:
+        try:
+            days = int(raw.get("duration_days") or 0)
+        except (TypeError, ValueError):
+            days = 0
+        out["duration_days"] = days if days > 0 else None
+    if "done" in raw:
+        done = bool(raw.get("done"))
+        out["done"] = done
+        out["status"] = "completed" if done else None
+    return out
+
+
+def patch_office_task(tasks: Any, task_id: str, fields: Optional[Dict[str, Any]] = None) -> tuple[list, Optional[dict]]:
+    tid = str(task_id or "")
+    patch = {k: v for k, v in (task_patch_fields(fields) or {}).items()}
+    out: list = []
+    found: Optional[dict] = None
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        if tid and str(t.get("id") or "") == tid:
+            found = {**t, **patch}
+            out.append(found)
+        else:
+            out.append(t)
+    return out, found
+
+
+def patch_project_task(
+    tasks: Any,
+    task_id: str,
+    emp_id: str,
+    fields: Optional[Dict[str, Any]] = None,
+) -> tuple[list, Optional[dict]]:
+    tid = str(task_id or "")
+    eid = str(emp_id or "")
+    patch = {k: v for k, v in (task_patch_fields(fields) or {}).items()}
+    out: list = []
+    found: Optional[dict] = None
+    for t in tasks or []:
+        if not isinstance(t, dict):
+            continue
+        same = tid and str(t.get("id") or t.get("_id") or "") == tid
+        mine = not eid or str(t.get("assignee_id") or "") == eid
+        if same and mine:
+            found = {**t, **patch}
+            out.append(found)
+        else:
+            out.append(t)
     return out, found
 
 
