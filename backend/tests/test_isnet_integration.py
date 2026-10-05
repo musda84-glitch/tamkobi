@@ -1634,3 +1634,28 @@ def test_build_despatch_ubl_requires_plate_when_send_ready():
     plate = ship.find("cac:ShipmentStage/cac:TransportMeans/cac:RoadTransport/cbc:LicensePlateID", ns)
     assert plate is not None and plate.text == "34ABC123"
     assert delivery.find("cbc:ActualDespatchDate", ns) is None
+
+
+def test_build_despatch_ubl_includes_invoice_document_reference():
+    import ubl_export
+
+    inv = {
+        "invoice_number": "IRS-2026-0006",
+        "issue_date": "2026-10-05",
+        "despatch_plate": "34ABC123",
+        "invoice_ref_number": "TA202600000013",
+        "invoice_ref_date": "2026-10-04",
+        "items": [{"name": "X", "quantity": 1, "unit": "Adet", "unit_price": 1, "total": 1}],
+    }
+    seller = {"name": "F", "tax_number": "4810173324", "address": "A", "city": "İstanbul", "tax_office": "X"}
+    buyer = {"name": "A", "tax_number_or_id": "1234567890", "address": "B", "city": "Ankara"}
+    xml = ubl_export.build_despatch_ubl(inv, seller, buyer, send_ready=True)
+    ns = {
+        "cac": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+        "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+    }
+    root = ET.fromstring(xml)
+    adr = root.find("cac:AdditionalDocumentReference", ns)
+    assert adr is not None
+    assert adr.find("cbc:ID", ns).text == "TA202600000013"
+    assert adr.find("cbc:DocumentTypeCode", ns).text == "FATURA"

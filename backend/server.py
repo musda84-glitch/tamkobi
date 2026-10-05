@@ -138,6 +138,7 @@ import password_reset
 import data_export
 import legal_docs
 import ubl_export
+import dispatch_invoice
 import edoc_backup
 import data_sync
 import setup_install
@@ -6702,6 +6703,15 @@ async def convert_dispatch_to_invoice(dispatch_id: str, req: Optional[Dict[str, 
         ex = await db.invoices.find_one({"_id": d["converted_invoice_id"]})
         if ex:
             return {"status": "exists", "invoice": clean_doc(ex), "message": f"Bu irsaliye zaten faturalandı: {ex['invoice_number']}"}
+    existing = await dispatch_invoice.find_existing_invoice_for_dispatch(db, d)
+    if existing:
+        linked = await dispatch_invoice.link_dispatch_to_invoice(db, d, existing)
+        num = (linked or existing).get("invoice_number")
+        return {
+            "status": "linked",
+            "invoice": clean_doc(linked or existing),
+            "message": f"{d.get('invoice_number')} mevcut faturaya bağlandı: {num}",
+        }
     req = req or {}
     products = {p["_id"]: p for p in await db.products.find({"company_id": d["company_id"]}, {"vat_rate": 1}).to_list(3000)}
     items = []
