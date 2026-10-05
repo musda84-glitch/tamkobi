@@ -22,6 +22,7 @@ from mysql_store import MySQLClient, chunk_list, DuplicateKeyError
 from client_ip import request_ip
 import partner_pay
 import employee_pay
+import employee_data_reset
 from order_edit import order_edit_block_reason
 from order_dedupe import (
     dedupe_orders_by_marketplace_key,
@@ -15749,6 +15750,24 @@ async def terminate_employee(emp_id: str, data: Dict[str, Any]):
     )
     res = await db.employees.find_one({"_id": emp_id})
     return {"status": "success", "message": f"{emp.get('full_name') or 'Personel'} işten çıkarıldı.", "employee": clean_doc(res)}
+
+
+@api_router.post("/personnel/employees/{emp_id}/reset-data")
+async def reset_employee_data(emp_id: str, data: Dict[str, Any]):
+    """Ödemeler, masraflar, fazla mesai, giriş-çıkış ve puantajı onayla siler; kart/kullanıcı durur."""
+    emp = await db.employees.find_one({"_id": emp_id})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    try:
+        counts = await employee_data_reset.reset_operational_data(db, emp, confirm=(data or {}).get("confirm"))
+    except employee_data_reset.ConfirmRequired as e:
+        raise HTTPException(status_code=400, detail=str(e) or "Personel verilerini sıfırlamak için onay gerekli.")
+    return {
+        "status": "success",
+        "message": employee_data_reset.reset_message(emp, counts),
+        "counts": counts,
+        "hint": employee_data_reset.RESET_HINT,
+    }
 
 
 @api_router.get("/personnel/me")
