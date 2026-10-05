@@ -48,6 +48,9 @@ TEST_ADDRESS_BOOK = (
 )
 LIVE_PORTAL = "https://nettefatura.isnet.net.tr"
 TEST_PORTAL = "https://efatura.isnet.net.tr"
+# Canlı SOAP WCF host (REST einvoiceapi ayrı IP'dir)
+LIVE_SOAP_HOST = "einvoiceservice.isnet.net.tr"
+LIVE_REST_HOST = "einvoiceapi.isnet.net.tr"
 # İşNet destek — canlıda firewall IP–VKN tanımı için
 SUPPORT_EMAIL = "efaturadestek@nettefatura.com.tr"
 # İşNet test portalı (http://efatura.isnet.net.tr) — resmi deneme hesabı
@@ -332,7 +335,89 @@ async def isnet_ip_registration_info() -> Dict[str, Any]:
     }
 
 
+def _sync_tls_probe(host: str, port: int, timeout: float) -> Dict[str, Any]:
+    """TCP + TLS el sıkışması (İşNet SOAP WCF: ClientHello sonrası ServerHello gelmezse IP allow-list)."""
+    import socket
+    import ssl as sslmod
+
+    out: Dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "ips": [],
+        "tcp_ok": False,
+        "tls_ok": False,
+        "tls_version": None,
+        "error": None,
+        "elapsed_ms": 0,
+    }
+    t0 = time.time()
+    try:
+        infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        ips: List[str] = []
+        for inf in infos:
+            ip = inf[4][0]
+            if ip and ip not in ips:
+                ips.append(ip)
+        out["ips"] = ips
+        target = (ips[0], port) if ips else (host, port)
+        sock = socket.create_connection(target, timeout=timeout)
+        out["tcp_ok"] = True
+        ctx = sslmod.create_default_context()
+        ssock = ctx.wrap_socket(sock, server_hostname=host)
+        out["tls_ok"] = True
+        out["tls_version"] = ssock.version()
+        try:
+            ssock.close()
+        except Exception:
+            pass
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    out["elapsed_ms"] = int((time.time() - t0) * 1000)
+    return out
+
+
+async def probe_tls_endpoint(host: str, port: int = 443, timeout: float = 8.0) -> Dict[str, Any]:
+    return await asyncio.to_thread(_sync_tls_probe, host, port, timeout)
+
+
+async def diagnose_live_soap_path() -> Dict[str, Any]:
+    """Canlı SOAP vs REST: TCP açık / TLS yok = SOAP WCF firewall (portal kaydı yetmez)."""
+    soap = await probe_tls_endpoint(LIVE_SOAP_HOST, 443, 8.0)
+    rest = await probe_tls_endpoint(LIVE_REST_HOST, 443, 8.0)
+    return {
+        "soap": soap,
+        "rest": rest,
+        "soap_tls_blackhole": bool(soap.get("tcp_ok") and not soap.get("tls_ok")),
+        "rest_ok": bool(rest.get("tls_ok")),
+    }
+
+
+def live_soap_tls_blackhole_hint(tax: str, egress_txt: str, rest_ok: bool) -> str:
+    rest_bit = (
+        " einvoiceapi (REST, 213.143.252.136) açık — portal/REST IP kaydı SOAP WCF’yi açmaz."
+        if rest_ok
+        else ""
+    )
+    return (
+        f" TCP 443 açık ama TLS ServerHello yok: {LIVE_SOAP_HOST} (InvoiceService). "
+        f"Çıkış IP {egress_txt}, VKN {tax}.{rest_bit} "
+        f"Destekten SOAP WCF allow-list’i (InvoiceService / {LIVE_SOAP_HOST}) ve "
+        f"sunucudan `openssl s_client -connect {LIVE_SOAP_HOST}:443` ile Server Hello isteyin. "
+        f"{SUPPORT_EMAIL}"
+    )
+
+
 def _soap_unreachable_hint(exc: BaseException) -> str:
+    """Timeout / connect hatalarını kısa Türkçe özetle."""
+    name = type(exc).__name__
+    text = str(exc) or name
+    if isinstance(exc, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+        return "bağlantı zaman aşımı (TLS/HealthCheck yanıt vermedi)"
+    if isinstance(exc, httpx.ConnectError):
+        return f"bağlantı kurulamadı ({text[:120]})"
+    if "timed out" in text.lower() or "timeout" in text.lower():
+        return "bağlantı zaman aşımı (TLS/HealthCheck yanıt vermedi)"
+    return text[:180]
     """Timeout / connect hatalarını kısa Türkçe özetle."""
     name = type(exc).__name__
     text = str(exc) or name
@@ -409,7 +494,8 @@ async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
                 rest_ok = False
             info["live_rest_ok"] = rest_ok
             rest_note = (
-                " Live REST (einvoiceapi) erişilebilir; sorun canlı SOAP (einvoiceservice) IP–VKN kaydında."
+                " Live REST (einvoiceapi / 213.143.252.136) erişilebilir; canlı SOAP WCF ayrı hosttur "
+                f"({LIVE_SOAP_HOST})."
                 if rest_ok
                 else ""
             )
@@ -419,9 +505,13 @@ async def test_connection(settings: dict, password: str = "") -> Dict[str, Any]:
             overlap = bool(set(ips) & set(prod))
             info["production_host"] = host
             info["production_ips"] = prod
-            if overlap:
+            diag = await diagnose_live_soap_path()
+            info["live_path"] = diag
+            if diag.get("soap_tls_blackhole"):
+                hint = live_soap_tls_blackhole_hint(tax, ip_txt, bool(diag.get("rest_ok") or rest_ok))
+            elif overlap:
                 hint = (
-                    f" Canlı SOAP zaman aşımı — VKN {tax} + IP {ip_txt} kaydı henüz aktif olmayabilir. "
+                    f" Canlı SOAP zaman aşımı — VKN {tax} + IP {ip_txt}. "
                     f"{SUPPORT_EMAIL}{rest_note}"
                 )
             else:

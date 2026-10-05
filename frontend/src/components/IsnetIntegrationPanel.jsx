@@ -268,7 +268,11 @@ export default function IsnetIntegrationPanel({ companyId }) {
         {!testMode && (
           <div className="text-[10px] text-emerald-900/80 pt-0.5 space-y-1" data-testid="isnet-live-ip-hint">
             <p>
-              Canlı SOAP, fatura kesen sunucunun sabit çıkış IP’sini ister.
+              Canlı fatura kesimi SOAP WCF ister: <span className="font-mono">einvoiceservice.isnet.net.tr</span>
+              (InvoiceService). Portal/REST onayı <span className="font-mono">einvoiceapi.isnet.net.tr</span> içindir;
+              ikisi farklı IP’dir. Destek «sorun yok» dediyse SOAP InvoiceService allow-list’ini sorun.
+            </p>
+            <p>
               İşNet onayı <span className="font-semibold">{prodHost}</span> içindir — canlı testi{" "}
               <a href={`https://${prodHost}`} target="_blank" rel="noopener noreferrer" className="underline font-semibold">
                 https://{prodHost}
@@ -292,7 +296,7 @@ export default function IsnetIntegrationPanel({ companyId }) {
               <p className="text-emerald-800/70" data-testid="isnet-egress-ips-loading">Çıkış IP tespit ediliyor…</p>
             )}
             <p>
-              Kayıt: VKN + üretim IP →{" "}
+              Kayıt metni: VKN + üretim IP + «InvoiceService / einvoiceservice.isnet.net.tr SOAP WCF» →{" "}
               <a href="mailto:efaturadestek@nettefatura.com.tr" className="underline font-semibold">
                 efaturadestek@nettefatura.com.tr
               </a>

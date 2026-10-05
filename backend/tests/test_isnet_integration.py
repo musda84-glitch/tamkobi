@@ -195,21 +195,39 @@ def test_live_connection_failure_includes_egress_ip():
     async def _rest_ok(_s):
         return True
 
+    async def _diag():
+        return {
+            "soap": {"host": "einvoiceservice.isnet.net.tr", "tcp_ok": True, "tls_ok": False, "ips": ["213.143.252.122"]},
+            "rest": {"host": "einvoiceapi.isnet.net.tr", "tcp_ok": True, "tls_ok": True, "ips": ["213.143.252.136"]},
+            "soap_tls_blackhole": True,
+            "rest_ok": True,
+        }
+
     with patch("isnet.soap_health_check", side_effect=_fail), patch(
         "isnet.detect_egress_ips", side_effect=_ips
     ), patch("isnet.resolve_host_ipv4", return_value=["85.95.240.136"]), patch(
         "isnet.public_app_host", return_value="tamkobi.com"
-    ), patch("isnet.health_check", side_effect=_rest_ok):
+    ), patch("isnet.health_check", side_effect=_rest_ok), patch(
+        "isnet.diagnose_live_soap_path", side_effect=_diag
+    ):
         with pytest.raises(HTTPException) as e:
             asyncio.get_event_loop().run_until_complete(isnet.test_connection(settings, ""))
     assert e.value.status_code == 502
     detail = str(e.value.detail)
     assert "203.0.113.10" in detail
-    assert "85.95.240.136" in detail
-    assert "tamkobi.com" in detail
     assert "6131659091" in detail
+    assert "TLS ServerHello yok" in detail
+    assert "einvoiceservice.isnet.net.tr" in detail
+    assert "InvoiceService" in detail
     assert isnet.SUPPORT_EMAIL in detail
-    assert "einvoiceapi" in detail or "REST" in detail
+
+
+def test_live_soap_tls_blackhole_hint_mentions_rest_vs_soap():
+    h = isnet.live_soap_tls_blackhole_hint("6131659091", "85.95.240.136", True)
+    assert "213.143.252.136" in h
+    assert "InvoiceService" in h
+    assert "6131659091" in h
+    assert "85.95.240.136" in h
 
 
 def test_public_app_host_falls_back_from_localhost():
