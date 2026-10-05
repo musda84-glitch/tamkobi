@@ -28,6 +28,7 @@ import {
   payMoveDeleteConfirm,
   payMoveDeletePath,
   payMovesPeriodHint,
+  remainingDue,
   remainingLeaveDays,
 } from "./personnelCard";
 
@@ -123,6 +124,12 @@ describe("personnelCard", () => {
     expect(ask.message).toMatch(/puantaj/i);
     expect(ask.message).toMatch(/sistem kullanıcısı durur/i);
     expect(ask.check).toContain("Ali Yılmaz");
+  });
+
+  test("identity column remaining receivable is always a number", () => {
+    expect(remainingDue(undefined)).toBe(0);
+    expect(remainingDue({ remaining: 1234.5 })).toBe(1234.5);
+    expect(remainingDue({ remaining: -80 })).toBe(-80);
   });
 
   test("list Öde button matches employee-card remaining plus overtime", () => {

@@ -18,7 +18,7 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
 import { assignedOvertimeCellCaption, cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint, locationControllerLabel, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
-import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, employeePresenceChip, fmtCardMoney, remainingLeaveDays } from "../utils/personnelCard";
+import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, employeePresenceChip, fmtCardMoney, remainingDue, remainingLeaveDays } from "../utils/personnelCard";
 import { punchLabelClass } from "../utils/punchLabels";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
@@ -651,17 +651,18 @@ export default function PersonnelPage() {
             return (
           <div
             key={empKey}
-            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_360px]" : "[contain-intrinsic-size:auto_160px]"}`}
+            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_420px]" : "[contain-intrinsic-size:auto_220px]"}`}
             data-testid={`employee-card-${emp.tc_kimlik}`}
             data-expanded={cardOpen ? "1" : "0"}
           >
           <div className="px-4 pt-3 pb-2 flex flex-col gap-2">
             <div className="flex flex-wrap items-start gap-3 justify-between">
-              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+              <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+              <div className="flex items-start gap-2.5 min-w-0">
                 <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 text-[11px] font-black text-slate-500" data-testid={`employee-photo-${emp.tc_kimlik || empKey}`}>
                   {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="w-full h-full object-cover" /> : (emp.full_name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <h3 className="font-bold text-slate-900 text-sm">{emp.full_name}</h3>
                     {isDailyWage(emp) ? <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`employee-yevmiye-badge-${empKey}`}>Yevmiye</span> : null}
@@ -692,8 +693,90 @@ export default function PersonnelPage() {
                     Kalan izin: {emp.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {emp.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
                     {emp.performance?.overall != null ? ` · performans %${emp.performance.overall}` : ""}
                   </div>
+                  <div className="text-[11px] mt-0.5" data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
+                    <span className="text-slate-400">Kalan alacak: </span>
+                    <span className={`font-extrabold ${(Number(emp.balance?.remaining) || 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>
+                      {fmtCardMoney(remainingDue(emp.balance))}
+                    </span>
+                    {emp.balance?.advances ? (
+                      <span className="text-amber-800 font-extrabold"> · Avans {fmtCardMoney(emp.balance.advances)}</span>
+                    ) : null}
+                  </div>
                 </div>
               </div>
+
+            {emp.workplace?.kind === "task" ? (
+              <div className="w-full text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1" data-testid={`employee-workplace-${empKey}`}>
+                Görev · {workplaceShort(emp.workplace)}
+              </div>
+            ) : null}
+
+            <EmployeeRequestChips
+              items={empReqs}
+              compact
+              testId={`employee-card-requests-${emp.tc_kimlik || empKey}`}
+              busyId={busyReqId}
+              onDecideLeave={decideLeave}
+              onDecideEarly={decideEarly}
+              onDecideIntraday={decideIntraday}
+              onDecideAdvance={decideAdvance}
+              onDecideYevmiye={decideYevmiye}
+              onDecideLocationExit={decideLocationExit}
+              onDecideOvertimeConfirm={decideOvertimeConfirm}
+              onDecideGeoConfirm={decideGeoConfirm}
+              onDecideDispute={decideDispute}
+              onDecideWorkOrderTrash={decideWorkOrderTrash}
+              onViewDispute={() => setTab("attendance")}
+            />
+
+            <div className="flex flex-wrap items-center gap-1.5" data-testid={`employee-card-actions-${empKey}`}>
+              <button
+                type="button"
+                onClick={() => setMovesEmp(emp)}
+                className="flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200"
+                data-testid={`emp-card-moves-btn-${empKey}`}
+              >
+                <Receipt className="w-3.5 h-3.5" /> Hareketler
+              </button>
+              <button
+                type="button"
+                onClick={() => openSettleFor(emp)}
+                className="flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"
+                title="Maaş, mesai, prim, yemek, yol, masraf ve avans"
+                data-testid={`employee-pay-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Banknote className="w-3.5 h-3.5" /> {employeePayButtonLabel(emp)}
+              </button>
+              <span className="flex flex-wrap gap-1.5" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
+                <button
+                  type="button"
+                  onClick={() => setTaskEmp(emp)}
+                  className="flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
+                  data-testid={`employee-task-btn-${emp.tc_kimlik || empKey}`}
+                >
+                  <ClipboardList className="w-3.5 h-3.5" /> Görev
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openOvertimeFor(emp)}
+                  className="flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
+                  data-testid={`employee-overtime-btn-${emp.tc_kimlik || empKey}`}
+                >
+                  <Timer className="w-3.5 h-3.5" /> F. Mesai
+                </button>
+              </span>
+              <button
+                type="button"
+                onClick={() => setCardEmp(emp)}
+                className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold"
+                data-testid={`employee-card-btn-${emp.tc_kimlik}`}
+              >
+                Personel Kartı
+              </button>
+            </div>
+              </div>
+
+              <div className="flex flex-col items-end gap-1.5 shrink-0">
               <div className="flex items-center flex-wrap justify-end gap-1 shrink-0">
                 {empReqs.length > 0 && (
                   <span className="relative mr-0.5" title={`${empReqs.length} bekleyen talep`}>
@@ -730,7 +813,7 @@ export default function PersonnelPage() {
                 const otOn = otCap !== "--:--";
                 return (
                   <div
-                    className="w-full sm:w-auto sm:min-w-[220px] rounded-lg border p-0.5 bg-slate-50 border-slate-200"
+                    className="w-[220px] max-w-full rounded-lg border p-0.5 bg-slate-50 border-slate-200"
                     data-testid={`employee-card-loc-${empKey}`}
                   >
                     <div className="grid grid-cols-2 gap-0.5">
@@ -799,75 +882,7 @@ export default function PersonnelPage() {
                   </div>
                 );
               })()}
-            </div>
-
-            {emp.workplace?.kind === "task" ? (
-              <div className="w-full text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1" data-testid={`employee-workplace-${empKey}`}>
-                Görev · {workplaceShort(emp.workplace)}
               </div>
-            ) : null}
-
-            <EmployeeRequestChips
-              items={empReqs}
-              testId={`employee-card-requests-${emp.tc_kimlik || empKey}`}
-              busyId={busyReqId}
-              onDecideLeave={decideLeave}
-              onDecideEarly={decideEarly}
-              onDecideIntraday={decideIntraday}
-              onDecideAdvance={decideAdvance}
-              onDecideYevmiye={decideYevmiye}
-              onDecideLocationExit={decideLocationExit}
-              onDecideOvertimeConfirm={decideOvertimeConfirm}
-              onDecideGeoConfirm={decideGeoConfirm}
-              onDecideDispute={decideDispute}
-              onDecideWorkOrderTrash={decideWorkOrderTrash}
-              onViewDispute={() => setTab("attendance")}
-            />
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setMovesEmp(emp)}
-                className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200"
-                data-testid={`emp-card-moves-btn-${empKey}`}
-              >
-                <Receipt className="w-3.5 h-3.5" /> Hareketler
-              </button>
-              <button
-                type="button"
-                onClick={() => openSettleFor(emp)}
-                className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"
-                title="Maaş, mesai, prim, yemek, yol, masraf ve avans"
-                data-testid={`employee-pay-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <Banknote className="w-3.5 h-3.5" /> {employeePayButtonLabel(emp)}
-              </button>
-              <span className="flex flex-wrap gap-1.5" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
-                <button
-                  type="button"
-                  onClick={() => setTaskEmp(emp)}
-                  className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
-                  data-testid={`employee-task-btn-${emp.tc_kimlik || empKey}`}
-                >
-                  <ClipboardList className="w-3.5 h-3.5" /> Görev
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openOvertimeFor(emp)}
-                  className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
-                  data-testid={`employee-overtime-btn-${emp.tc_kimlik || empKey}`}
-                >
-                  <Timer className="w-3.5 h-3.5" /> F. Mesai
-                </button>
-              </span>
-              <button
-                type="button"
-                onClick={() => setCardEmp(emp)}
-                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold"
-                data-testid={`employee-card-btn-${emp.tc_kimlik}`}
-              >
-                Personel Kartı
-              </button>
             </div>
 
             {cardOpen ? (
@@ -915,21 +930,6 @@ export default function PersonnelPage() {
                     </div>
                   ))}
                 </div>
-                {emp.balance?.remaining != null || emp.balance?.advances ? (
-                  <div className="flex items-center justify-between text-[11px] px-0.5">
-                    {emp.balance?.remaining != null ? (
-                      <span data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
-                        <span className="text-slate-400">Kalan alacak </span>
-                        <span className={`font-extrabold ${(Number(emp.balance.remaining) || 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>
-                          {fmtCardMoney(emp.balance.remaining)}
-                        </span>
-                      </span>
-                    ) : <span />}
-                    {emp.balance?.advances ? (
-                      <span className="text-amber-800 font-extrabold">Avans {fmtCardMoney(emp.balance.advances)}</span>
-                    ) : null}
-                  </div>
-                ) : null}
               </div>
             ) : null}
           </div>

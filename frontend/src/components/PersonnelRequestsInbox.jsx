@@ -38,6 +38,7 @@ export function EmployeeRequestChips({
   onDecideWorkOrderTrash,
   onViewDispute,
   maxVisible = 3,
+  compact = false,
 }) {
   const [open, setOpen] = useState(false);
   const rows = items || [];
@@ -49,7 +50,7 @@ export function EmployeeRequestChips({
     ? `${firstMeta.label} · ${first.title || "Talep"}${rows.length > 1 ? ` · +${rows.length - 1}` : ""}`
     : "Talep yok";
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 space-y-1.5" data-testid={testId}>
+    <div className={`rounded-lg border border-amber-200 bg-amber-50 ${compact ? "px-1.5 py-1 space-y-1" : "px-2 py-1.5 space-y-1.5"}`} data-testid={testId}>
       <button
         type="button"
         onClick={() => setOpen((cur) => !cur)}
