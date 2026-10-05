@@ -1428,9 +1428,7 @@ def test_list_incoming_despatch_search_despatch_advice():
         "</Body>"
     )
     with patch("isnet._soap_call", AsyncMock(return_value=body)) as mock_call:
-        rows = asyncio.get_event_loop().run_until_complete(
-            isnet.list_incoming_despatch(settings, password="")
-        )
+        rows = asyncio.run(isnet.list_incoming_despatch(settings, password=""))
     assert mock_call.await_args.kwargs["action"] == "SearchDespatchAdvice"
     req = mock_call.await_args.kwargs["request"]
     assert req.get("DespatchAdviceDirection") == "Incoming"
@@ -1439,6 +1437,30 @@ def test_list_incoming_despatch_search_despatch_advice():
     assert rows[0]["kind"] == "dispatch"
     assert rows[0]["invoice_id"] == "IRS2026000000001"
     assert rows[0]["xml"] and b"DespatchAdvice" in rows[0]["xml"]
+
+
+def test_list_incoming_does_not_duplicate_nested_ubl_invoice():
+    """SearchInvoice InvoiceInfo + gömülü UBL Invoice aynı belgeyi iki satır yapmasın."""
+    settings = {"company_tax_id": "4810173324", "mode": "test"}
+    ubl = (
+        '<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2">'
+        "<ID>ALE2026000007781</ID>"
+        "<UUID>11111111-2222-3333-4444-555555555555</UUID>"
+        "</Invoice>"
+    )
+    body = ET.fromstring(
+        "<Body xmlns:ein='http://schemas.datacontract.org/2004/07/EInvoice.Service.Model'>"
+        "<ein:InvoiceInfo>"
+        "<ein:ETTN>11111111-2222-3333-4444-555555555555</ein:ETTN>"
+        "<ein:InvoiceNumber>ALE2026000007781</ein:InvoiceNumber>"
+        f"<ein:InvoiceXML>{ubl}</ein:InvoiceXML>"
+        "</ein:InvoiceInfo>"
+        "</Body>"
+    )
+    with patch("isnet._soap_call", AsyncMock(return_value=body)):
+        rows = asyncio.run(isnet.list_incoming(settings, password=""))
+    assert len(rows) == 1
+    assert rows[0]["invoice_id"] == "ALE2026000007781"
 
 
 def test_list_incoming_all_merges_invoice_and_despatch():

@@ -9,6 +9,7 @@ import {
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { fmtDate, formatTrAmount } from "../utils/money";
+import { uniqueInboxItems } from "../utils/edocInbox";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const STATUS = {
@@ -270,7 +271,7 @@ export default function EdocInboxPage() {
   };
 
   const filteredItems = useMemo(() => {
-    const items = data?.items || [];
+    const items = uniqueInboxItems(data?.items || []);
     if (kindFilter === "dispatch") return items.filter((d) => d.kind === "dispatch");
     if (kindFilter === "invoice") return items.filter((d) => d.kind !== "dispatch");
     return items;

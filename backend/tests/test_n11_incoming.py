@@ -434,6 +434,13 @@ class TestIngest:
         assert doc["supplier"]["name"] == "Liste Tedarik Ltd." and doc["supplier"]["tax_id"] == "5555555555"
         assert doc["grand_total"] == 1250.0 and doc["issue_date"] == "2026-09-03" and doc["uuid"] == "meta-uuid"
 
+    def test_isnet_meta_aliases_fill_gaps(self, db):
+        bare = b'<Invoice><ID>NO-PARTY-3</ID><InvoiceLine><Item><Name>Hizmet</Name></Item></InvoiceLine></Invoice>'
+        doc = asyncio.run(edocs.ingest_ubl_bytes("comp1", bare, source="isnet", meta={
+            "sender_title": "İşNet Tedarik", "sender_vkn": "1111111111", "payable_amount": "99.5"}))
+        assert doc["supplier"]["name"] == "İşNet Tedarik" and doc["supplier"]["tax_id"] == "1111111111"
+        assert doc["grand_total"] == 99.5
+
     def test_meta_does_not_overwrite_ubl(self, db):
         doc = asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL, meta={"party_name": "Yanlış", "payable": "1"}))
         assert doc["supplier"]["name"] == "Anadolu Tedarik A.Ş." and doc["grand_total"] == 1080.0
@@ -448,6 +455,48 @@ class TestIngest:
     def test_ayni_numarasiz_belge_yine_tekrarlanmaz(self, db):
         assert asyncio.run(edocs.ingest_ubl_bytes("comp1", _no_number("Ofis Sandalyesi"))) is not None
         assert asyncio.run(edocs.ingest_ubl_bytes("comp1", _no_number("Ofis Sandalyesi"))) is None
+
+    def test_uuid_sonra_gelince_numarali_kopya_acilmaz(self, db):
+        # İlk çekimde ETTN yok, ikincide var: eski kod uuid: anahtarına bakıp
+        # aynı GİB faturasını ikinci kez yazıyordu.
+        no_uuid = UBL.replace(b"<cbc:UUID>11111111-2222-3333-4444-555555555555</cbc:UUID>", b"")
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", no_uuid)) is not None
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL)) is None
+        assert len(db.incoming_edocs.docs) == 1
+
+    def test_numara_sonra_gelince_ettn_kopya_acilmaz(self, db):
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL)) is not None
+        no_uuid = UBL.replace(b"<cbc:UUID>11111111-2222-3333-4444-555555555555</cbc:UUID>", b"")
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", no_uuid)) is None
+        assert len(db.incoming_edocs.docs) == 1
+
+    def test_uuid_buyuk_kucuk_harf_ayni_belge(self, db):
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL)) is not None
+        alt = UBL.replace(
+            b"11111111-2222-3333-4444-555555555555",
+            b"11111111-2222-3333-4444-555555555555".upper(),
+        )
+        assert asyncio.run(edocs.ingest_ubl_bytes("comp1", alt)) is None
+        assert len(db.incoming_edocs.docs) == 1
+
+    def test_list_inbox_merges_duplicate_rows(self, db):
+        asyncio.run(edocs.ingest_ubl_bytes("comp1", UBL))
+        original = db.incoming_edocs.docs[0]
+        db.incoming_edocs.docs.append({
+            **original,
+            "_id": "dup-2",
+            "dedupe_key": "id:abc2026000000042|1234567801|2026-09-01",
+            "uuid": "",
+            "status": "approved",
+            "invoice_id": "inv-keep",
+            "received_at": "2026-09-02T00:00:00",
+        })
+        db.incoming_edoc_xml.docs.append({"_id": "dup-2", "company_id": "comp1", "xml": "<Invoice/>"})
+        r = asyncio.run(edocs.list_inbox("comp1"))
+        assert len(r["items"]) == 1
+        assert r["items"][0]["id"] == "dup-2"
+        assert r["counts"]["approved"] == 1
+        assert len(db.incoming_edocs.docs) == 1
 
 
 class TestRepair:
