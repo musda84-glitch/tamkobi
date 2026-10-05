@@ -378,6 +378,20 @@ export function payMoveDeleteConfirm(row) {
   };
 }
 
+export function empDataResetPath(empId) {
+  const id = String(empId || "").trim();
+  return id ? `/personnel/employees/${id}/reset-data` : "";
+}
+
+export function empDataResetConfirm(emp) {
+  const name = emp?.full_name || "Personel";
+  return {
+    title: "Personel verilerini sıfırla",
+    message: `${name} için ödemeler, masraflar, fazla mesai, giriş-çıkış ve puantaj kayıtları silinecek. Personel kartı, belgeler ve sistem kullanıcısı durur.`,
+    check: `${name} adlı personelin bu kayıtlarını sıfırlamayı onaylıyorum.`,
+  };
+}
+
 export function fmtPayMoveAmount(n) {
   return `${formatTrAmount(Number(n) || 0)} ₺`;
 }

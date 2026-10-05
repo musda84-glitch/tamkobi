@@ -4,6 +4,8 @@ import {
   employeeCompRows,
   employeePayMoves,
   employeePresenceChip,
+  empDataResetConfirm,
+  empDataResetPath,
   filterPayMoves,
   fmtLocationMoveAt,
   locationMoveBg,
@@ -108,5 +110,16 @@ describe("personnelCard", () => {
     expect(payMoveCanDelete({ id: "pay-2026-11", kind: "payroll" }, true)).toBe(false);
     expect(payMoveCanDelete({ id: "pay_cedeeef3", kind: "payroll" }, false)).toBe(false);
     expect(payMoveDeleteConfirm({ kind: "payroll", status: "paid" }).message).toContain("geri alınır");
+  });
+
+  test("personnel data reset path and confirm copy", () => {
+    expect(empDataResetPath("emp_1")).toBe("/personnel/employees/emp_1/reset-data");
+    expect(empDataResetPath("")).toBe("");
+    const ask = empDataResetConfirm({ full_name: "Ali Yılmaz" });
+    expect(ask.title).toMatch(/sıfırla/i);
+    expect(ask.message).toMatch(/ödemeler/i);
+    expect(ask.message).toMatch(/puantaj/i);
+    expect(ask.message).toMatch(/sistem kullanıcısı durur/i);
+    expect(ask.check).toContain("Ali Yılmaz");
   });
 });
