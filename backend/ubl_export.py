@@ -369,6 +369,28 @@ def _tax_id(raw: Any) -> Tuple[str, str]:
     return "VKN", digits
 
 
+def _fill_address(addr, party: Dict[str, Any], *, send_ready: bool = False):
+    """UBL Address (DeliveryAddress / DespatchAddress / PostalAddress)."""
+    street = (party.get("address") or party.get("street") or "").strip()
+    if send_ready and not street:
+        street = "-"
+    if street:
+        _cbc(addr, "StreetName", street[:200])
+    district = str(party.get("district") or party.get("tax_office") or party.get("city") or "").strip()
+    if send_ready and (not district or district in ("-", ".")):
+        district = str(party.get("city") or "Merkez").strip() or "Merkez"
+    if district:
+        _cbc(addr, "CitySubdivisionName", district[:60])
+    city = str(party.get("city") or "").strip()
+    if send_ready and not city:
+        city = "İstanbul"
+    if city:
+        _cbc(addr, "CityName", city[:60])
+    country = _cac(addr, "Country")
+    _cbc(country, "Name", "Türkiye")
+    return addr
+
+
 def _party(parent_tag, party: Dict[str, Any], parent, *, send_ready: bool = False):
     """UBL Party. send_ready: İşNet .NET parse için kimlik/adres/vergi dairesi boş bırakılmaz."""
     wrap = _cac(parent, parent_tag)
@@ -712,6 +734,7 @@ def _buyer_from(inv: Dict[str, Any], contact: Optional[Dict[str, Any]]) -> Dict[
         "tax_office": c.get("tax_office") or "",
         "address": c.get("address") or inv.get("shipping_address") or "",
         "city": c.get("city") or inv.get("city") or "",
+        "district": c.get("district") or inv.get("district") or "",
         "phone": c.get("phone") or inv.get("customer_phone") or "",
         "email": c.get("email") or "",
     }
@@ -837,29 +860,10 @@ def build_despatch_ubl(
 
     shipment = _cac(root, "Shipment")
     _cbc(shipment, "ID", "1")
-    delivery = _cac(shipment, "Delivery")
-    _cbc(delivery, "ActualDespatchDate", issue_date)
-    _cbc(delivery, "ActualDespatchTime", issue_time[:8] if len(issue_time) >= 8 else issue_time)
-    carrier_party = _cac(delivery, "CarrierParty")
-    if transport["carrier_vkn"] or transport["carrier_name"]:
-        if transport["carrier_vkn"]:
-            cident = _cac(carrier_party, "PartyIdentification")
-            scheme = "VKN" if len(transport["carrier_vkn"]) == 10 else "TCKN"
-            _cbc(cident, "ID", transport["carrier_vkn"], schemeID=scheme)
-        if transport["carrier_name"]:
-            cpn = _cac(carrier_party, "PartyName")
-            _cbc(cpn, "Name", transport["carrier_name"][:200])
-    else:
-        # Taşıyıcı yoksa satıcı
-        cident = _cac(carrier_party, "PartyIdentification")
-        scheme, tid = _tax_id(seller_party.get("tax_id"))
-        _cbc(cident, "ID", tid or "0000000000", schemeID=scheme or "VKN")
-        cpn = _cac(carrier_party, "PartyName")
-        _cbc(cpn, "Name", str(seller_party.get("name") or "Taşıyıcı")[:200])
-
-    if transport["plate"] or transport["driver_tckn"] or transport["driver_first"]:
+    # GİB: nakliye = Shipment + ShipmentStage (plaka) + Delivery (adres, taşıyıcı, fiili sevk)
+    if transport["plate"] or transport["driver_tckn"] or transport["driver_first"] or send_ready:
         stage = _cac(shipment, "ShipmentStage")
-        _cbc(stage, "ID", "1")
+        _cbc(stage, "TransportModeCode", "3")  # 3 = karayolu (GİB kod listesi)
         if transport["plate"]:
             means = _cac(stage, "TransportMeans")
             road = _cac(means, "RoadTransport")
@@ -870,11 +874,36 @@ def build_despatch_ubl(
             driver = _cac(stage, "DriverPerson")
             _cbc(driver, "FirstName", (transport["driver_first"] or "Sürücü")[:60])
             _cbc(driver, "FamilyName", (transport["driver_last"] or "-")[:60])
+            _cbc(driver, "Title", "Şoför")
             if transport["driver_tckn"]:
-                # UBL-TR: Person altında NationalityID / IdentityDocumentReference yerine
-                # yaygın kullanım: PartyIdentification benzeri Note + TCKN attribute yok;
-                # İşNet REST DriverList TCKN — UBL'de ID schemeID=TCKN
                 _cbc(driver, "NationalityID", transport["driver_tckn"], schemeID="TCKN")
+
+    delivery = _cac(shipment, "Delivery")
+    _fill_address(_cac(delivery, "DeliveryAddress"), buyer_party, send_ready=True)
+    carrier_party = _cac(delivery, "CarrierParty")
+    if transport["carrier_vkn"] or transport["carrier_name"]:
+        if transport["carrier_vkn"]:
+            cident = _cac(carrier_party, "PartyIdentification")
+            scheme = "VKN" if len(transport["carrier_vkn"]) == 10 else "TCKN"
+            _cbc(cident, "ID", transport["carrier_vkn"], schemeID=scheme)
+        if transport["carrier_name"]:
+            cpn = _cac(carrier_party, "PartyName")
+            _cbc(cpn, "Name", transport["carrier_name"][:200])
+        else:
+            cpn = _cac(carrier_party, "PartyName")
+            _cbc(cpn, "Name", str(seller_party.get("name") or "Taşıyıcı")[:200])
+        _fill_address(_cac(carrier_party, "PostalAddress"), seller_party, send_ready=True)
+    else:
+        cident = _cac(carrier_party, "PartyIdentification")
+        scheme, tid = _tax_id(seller_party.get("tax_id"))
+        _cbc(cident, "ID", tid or "0000000000", schemeID=scheme or "VKN")
+        cpn = _cac(carrier_party, "PartyName")
+        _cbc(cpn, "Name", str(seller_party.get("name") or "Taşıyıcı")[:200])
+        _fill_address(_cac(carrier_party, "PostalAddress"), seller_party, send_ready=True)
+    despatch = _cac(delivery, "Despatch")
+    _cbc(despatch, "ActualDespatchDate", issue_date)
+    _cbc(despatch, "ActualDespatchTime", issue_time[:8] if len(issue_time) >= 8 else issue_time)
+    _fill_address(_cac(despatch, "DespatchAddress"), seller_party, send_ready=True)
 
     for i, it in enumerate(items, 1):
         line = _cac(root, "DespatchLine")

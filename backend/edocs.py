@@ -814,7 +814,7 @@ async def approve_inbox_document(doc_id: str, req: Optional[Dict[str, Any]] = No
         gib_status = "Gelen E-Fatura Onaylandı" if auto_accept else "Gelen E-Fatura (Yanıt Bekleniyor)"
         gib_response = "accepted" if auto_accept else None
     elif ubl_like:
-        gib_status, gib_response = "received", None
+        gib_status, gib_response = "Gelen e-İrsaliye Alındı", None
     else:
         gib_status, gib_response = None, None
     inv = {"_id": str(uuid.uuid4()), "company_id": d["company_id"], "invoice_number": d.get("number") or f"GELEN-{uuid.uuid4().hex[:6].upper()}", "invoice_type": "dispatch" if d["kind"] == "dispatch" else "purchase", "e_type": "e_dispatch" if d["kind"] == "dispatch" else "e_invoice",

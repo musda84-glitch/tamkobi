@@ -63,6 +63,13 @@ describe("formatGibStatusLabel", () => {
       "Zarf Kuyruğa Eklendi"
     );
   });
+
+  test("translates received to Turkish, dispatch-specific", () => {
+    expect(formatGibStatusLabel({ gib_status: "received" })).toBe("Alındı");
+    expect(formatGibStatusLabel({ gib_status: "received", invoice_type: "dispatch" })).toBe("Gelen e-İrsaliye Alındı");
+    expect(formatGibStatusLabel({ gib_status: "RECEIVED", e_type: "e_dispatch" })).toBe("Gelen e-İrsaliye Alındı");
+    expect(formatGibStatusLabel({ gib_status: "accepted" })).toBe("Onaylandı");
+  });
 });
 
 describe("placeContextMenu", () => {

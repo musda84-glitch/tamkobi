@@ -1606,6 +1606,31 @@ def test_build_despatch_ubl_requires_plate_when_send_ready():
         assert False, "expected ValueError"
     except ValueError as e:
         assert "plaka" in str(e).lower()
-    inv["despatch_plate"] = "34ABC123"
+    inv = {
+        "invoice_number": "IRS1",
+        "issue_date": "2026-10-05",
+        "issue_time": "14:30:00",
+        "despatch_plate": "34ABC123",
+        "items": [{"name": "X", "quantity": 1, "unit": "Adet", "unit_price": 1, "total": 1}],
+    }
     xml = ubl_export.build_despatch_ubl(inv, seller, buyer, send_ready=True)
     assert b"TEMELIRSALIYE" in xml
+    ns = {
+        "cac": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+        "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+    }
+    root = ET.fromstring(xml)
+    ship = root.find("cac:Shipment", ns)
+    assert ship is not None
+    delivery = ship.find("cac:Delivery", ns)
+    assert delivery is not None
+    assert delivery.find("cac:DeliveryAddress/cbc:CityName", ns).text == "Ankara"
+    assert delivery.find("cac:CarrierParty/cac:PartyName/cbc:Name", ns) is not None
+    despatch = delivery.find("cac:Despatch", ns)
+    assert despatch is not None
+    assert despatch.find("cbc:ActualDespatchDate", ns).text == "2026-10-05"
+    assert despatch.find("cbc:ActualDespatchTime", ns).text == "14:30:00"
+    assert despatch.find("cac:DespatchAddress/cbc:CityName", ns).text == "İstanbul"
+    plate = ship.find("cac:ShipmentStage/cac:TransportMeans/cac:RoadTransport/cbc:LicensePlateID", ns)
+    assert plate is not None and plate.text == "34ABC123"
+    assert delivery.find("cbc:ActualDespatchDate", ns) is None
