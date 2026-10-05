@@ -95,8 +95,13 @@ export default function PersonnelPage() {
   const [yevmiyeEmp, setYevmiyeEmp] = useState(null);
   const [settlePay, setSettlePay] = useState(null);
   const [roleOptions, setRoleOptions] = useState([]);
+  const [expandedCards, setExpandedCards] = useState({});
 
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+
+  const toggleCardExpanded = useCallback((key) => {
+    setExpandedCards((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   const emptyEmployee = {
     full_name: "",
@@ -637,102 +642,86 @@ export default function PersonnelPage() {
       {tab === "salary" && <SalaryCalculator />}
       {tab === "bonus" && <BonusPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} accounts={bankAccounts} onChanged={loadPersonnelData} />}
       {tab === "payroll" && (<>
-      {/* Employees Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      {/* Employees Cards — yatay şerit; alt bölüm genişlet/daralt */}
+      <div className="grid grid-cols-1 gap-3">
         {pagedEmployees.map((emp) => {
             const empKey = empIdOf(emp);
             const empReqs = requestsFor(emp);
+            const cardOpen = Boolean(expandedCards[empKey]);
             return (
           <div
             key={empKey}
-            className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-sm space-y-3 flex flex-col justify-between [content-visibility:auto] [contain-intrinsic-size:auto_420px]"
+            className={`bg-white px-4 py-3 rounded-2xl border border-slate-200/90 shadow-sm flex flex-col gap-2 [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_320px]" : "[contain-intrinsic-size:auto_140px]"}`}
             data-testid={`employee-card-${emp.tc_kimlik}`}
+            data-expanded={cardOpen ? "1" : "0"}
           >
-            <div className="space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-start gap-2.5 min-w-0">
-                  <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 text-[11px] font-black text-slate-500" data-testid={`employee-photo-${emp.tc_kimlik || empKey}`}>
-                    {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="w-full h-full object-cover" /> : (emp.full_name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
+            <div className="flex flex-wrap items-start gap-3 justify-between">
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 text-[11px] font-black text-slate-500" data-testid={`employee-photo-${emp.tc_kimlik || empKey}`}>
+                  {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="w-full h-full object-cover" /> : (emp.full_name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <h3 className="font-bold text-slate-900 text-sm">{emp.full_name}</h3>
+                    {isDailyWage(emp) ? <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`employee-yevmiye-badge-${empKey}`}>Yevmiye</span> : null}
+                    <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">Aktif</span>
+                    {(() => {
+                      const presence = employeePresenceChip({
+                        status: emp.status,
+                        workplace: emp.workplace || attWork[empKey],
+                        location_last_inside: emp.location_last_inside,
+                        location_last_ok: emp.location_last_ok,
+                        location_inside_at: emp.location_inside_at,
+                        today: attToday[empKey],
+                      });
+                      return presence ? (
+                        <span
+                          data-testid={`emp-presence-${empKey}`}
+                          className="text-[10px] px-2 py-0.5 rounded-full font-semibold border"
+                          style={{ color: presence.color, backgroundColor: presence.bg, borderColor: presence.border }}
+                        >
+                          {presence.label}
+                        </span>
+                      ) : null;
+                    })()}
                   </div>
-                  <div className="min-w-0">
-                  <h3 className="font-bold text-slate-900 text-sm">{emp.full_name}</h3>
-                  {isDailyWage(emp) ? <span className="inline-block mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`employee-yevmiye-badge-${empKey}`}>Yevmiye</span> : null}
                   <div className="text-xs text-indigo-600 font-semibold">{emp.position}</div>
                   <div className="text-[11px] text-slate-400">{emp.department}</div>
+                  <div className="text-[11px] text-slate-500 mt-0.5" data-testid={`employee-leave-${empKey}`}>
+                    Kalan izin: {emp.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {emp.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
+                    {emp.performance?.overall != null ? ` · performans %${emp.performance.overall}` : ""}
                   </div>
                 </div>
-                <div className="flex items-center flex-wrap justify-end gap-1 shrink-0">
-                  {empReqs.length > 0 && (
-                    <span className="relative mr-0.5" title={`${empReqs.length} bekleyen talep`}>
-                      <Bell className="w-3.5 h-3.5 text-amber-600" />
-                      <span className="absolute -top-1.5 -right-1.5 min-w-[0.9rem] h-3.5 px-0.5 rounded-full bg-rose-600 text-white text-[8px] font-bold flex items-center justify-center">
-                        {empReqs.length}
-                      </span>
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => openEditEmployee(emp)}
-                    className="p-1.5 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                    title="Düzenle"
-                    data-testid={`employee-edit-${emp.tc_kimlik || emp.id || emp._id}`}
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
-                  {canDeletePersonnel ? (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteEmployee(emp)}
-                    className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50"
-                    title="Sil"
-                    data-testid={`employee-delete-${emp.tc_kimlik || emp.id || emp._id}`}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                  ) : null}
-                  <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">
-                    Aktif
-                  </span>
-                  {(() => {
-                    const presence = employeePresenceChip({
-                      status: emp.status,
-                      workplace: emp.workplace || attWork[empKey],
-                      location_last_inside: emp.location_last_inside,
-                      location_last_ok: emp.location_last_ok,
-                      location_inside_at: emp.location_inside_at,
-                      today: attToday[empKey],
-                    });
-                    return presence ? (
-                      <span
-                        data-testid={`emp-presence-${empKey}`}
-                        className="text-[10px] px-2 py-0.5 rounded-full font-semibold border"
-                        style={{ color: presence.color, backgroundColor: presence.bg, borderColor: presence.border }}
-                      >
-                        {presence.label}
-                      </span>
-                    ) : null;
-                  })()}
-                </div>
               </div>
-              {emp.workplace?.kind === "task" ? (
-                <div className="w-full text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1" data-testid={`employee-workplace-${empKey}`}>
-                  Görev · {workplaceShort(emp.workplace)}
-                </div>
-              ) : null}
-
-              <div className="text-xs text-slate-600 space-y-1 pt-2 border-t border-slate-100">
-                <div className="flex items-center gap-1.5">
-                  <Phone className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{emp.phone || '-'}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{emp.email || '-'}</span>
-                </div>
-                <div className="text-[11px] text-slate-500" data-testid={`employee-leave-${empKey}`}>
-                  Kalan izin: {emp.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {emp.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
-                  {emp.performance?.overall != null ? ` · performans %${emp.performance.overall}` : ""}
-                </div>
+              <div className="flex items-center flex-wrap justify-end gap-1 shrink-0">
+                {empReqs.length > 0 && (
+                  <span className="relative mr-0.5" title={`${empReqs.length} bekleyen talep`}>
+                    <Bell className="w-3.5 h-3.5 text-amber-600" />
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[0.9rem] h-3.5 px-0.5 rounded-full bg-rose-600 text-white text-[8px] font-bold flex items-center justify-center">
+                      {empReqs.length}
+                    </span>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => openEditEmployee(emp)}
+                  className="p-1.5 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                  title="Düzenle"
+                  data-testid={`employee-edit-${emp.tc_kimlik || emp.id || emp._id}`}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+                {canDeletePersonnel ? (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteEmployee(emp)}
+                  className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50"
+                  title="Sil"
+                  data-testid={`employee-delete-${emp.tc_kimlik || emp.id || emp._id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+                ) : null}
               </div>
               {(() => {
                 const punch = todayAttendanceParts(attToday[empKey]);
@@ -740,10 +729,10 @@ export default function PersonnelPage() {
                 const otOn = otCap !== "--:--";
                 return (
                   <div
-                    className="rounded-lg border p-0.5 bg-slate-50 border-slate-200"
+                    className="w-full sm:w-auto sm:min-w-[220px] rounded-lg border p-0.5 bg-slate-50 border-slate-200"
                     data-testid={`employee-card-loc-${empKey}`}
                   >
-                    <div className="grid grid-cols-3 gap-0.5">
+                    <div className="grid grid-cols-2 gap-0.5">
                       <div
                         className={`min-w-0 rounded-md px-1.5 py-0.5 text-left bg-white ${otOn ? "text-indigo-700" : "text-slate-400"}`}
                         data-testid={`employee-card-assigned-ot-${empKey}`}
@@ -754,7 +743,7 @@ export default function PersonnelPage() {
                           {otCap}
                         </div>
                       </div>
-                      <div className="min-w-0 col-span-2" data-testid={`employee-card-today-${empKey}`}>
+                      <div className="min-w-0" data-testid={`employee-card-today-${empKey}`}>
                       <button
                         type="button"
                         onClick={() => setPunchConfirm({ id: empKey, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", attToday[empKey]) })}
@@ -811,6 +800,12 @@ export default function PersonnelPage() {
               })()}
             </div>
 
+            {emp.workplace?.kind === "task" ? (
+              <div className="w-full text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1" data-testid={`employee-workplace-${empKey}`}>
+                Görev · {workplaceShort(emp.workplace)}
+              </div>
+            ) : null}
+
             <EmployeeRequestChips
               items={empReqs}
               testId={`employee-card-requests-${emp.tc_kimlik || empKey}`}
@@ -828,93 +823,124 @@ export default function PersonnelPage() {
               onViewDispute={() => setTab("attendance")}
             />
 
-            <div className="grid grid-cols-3 gap-1 pt-2 border-t border-slate-100" data-testid={`employee-comp-${empKey}`}>
-              {employeeCompGroups(employeeCompRows(emp, emp.balance)).map((group) => (
-                <div
-                  key={group.key}
-                  className="min-w-0 rounded-lg bg-slate-50 px-1.5 py-1 space-y-0.5"
-                  data-testid={`employee-comp-group-${group.key}-${empKey}`}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setMovesEmp(emp)}
+                className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200"
+                data-testid={`emp-card-moves-btn-${empKey}`}
+              >
+                <Receipt className="w-3.5 h-3.5" /> Hareketler
+              </button>
+              <button
+                type="button"
+                onClick={() => openSettleFor(emp)}
+                className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"
+                title="Maaş, mesai, prim, yemek, yol, masraf ve avans"
+                data-testid={`employee-pay-btn-${emp.tc_kimlik || empKey}`}
+              >
+                <Banknote className="w-3.5 h-3.5" /> {employeePayButtonLabel(emp)}
+              </button>
+              <span className="flex flex-wrap gap-1.5" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
+                <button
+                  type="button"
+                  onClick={() => setTaskEmp(emp)}
+                  className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
+                  data-testid={`employee-task-btn-${emp.tc_kimlik || empKey}`}
                 >
-                  <div className="text-[9px] font-extrabold uppercase tracking-wide text-slate-400">{group.title}</div>
-                  {group.rows.map((row) => (
-                    <div key={row.key} className="flex items-baseline justify-between gap-1">
-                      <span
-                        className="min-w-0 truncate text-[10px] text-slate-500"
-                        data-testid={row.key === "bonus" && row.days != null ? `employee-comp-bonus-days-${empKey}` : undefined}
-                      >
-                        {employeeCompRowCaption(row, isDailyWage(emp))}
-                      </span>
-                      <span
-                        className={`shrink-0 text-[11px] font-extrabold ${row.key === "total" ? "text-emerald-700" : "text-slate-900"}`}
-                        data-testid={
-                          row.key === "total" ? `employee-remaining-${empKey}`
-                            : row.key === "bonus" ? `employee-bonus-due-${emp.tc_kimlik || empKey}`
-                              : row.key === "overtime" ? `employee-ot-due-${emp.tc_kimlik || empKey}`
-                                : `employee-comp-${row.key}-${empKey}`
-                        }
-                      >
-                        {fmtCardMoney(row.value)}
-                      </span>
+                  <ClipboardList className="w-3.5 h-3.5" /> Görev
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openOvertimeFor(emp)}
+                  className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
+                  data-testid={`employee-overtime-btn-${emp.tc_kimlik || empKey}`}
+                >
+                  <Timer className="w-3.5 h-3.5" /> F. Mesai
+                </button>
+              </span>
+              <button
+                type="button"
+                onClick={() => setCardEmp(emp)}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold"
+                data-testid={`employee-card-btn-${emp.tc_kimlik}`}
+              >
+                Personel Kartı
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleCardExpanded(empKey)}
+                className="ml-auto flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-600 hover:bg-slate-50 border border-slate-200"
+                aria-expanded={cardOpen}
+                data-testid={`employee-card-expand-${emp.tc_kimlik || empKey}`}
+              >
+                {cardOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                {cardOpen ? "Daralt" : "Genişlet"}
+              </button>
+            </div>
+
+            {cardOpen ? (
+              <div className="space-y-2 pt-1 border-t border-slate-100" data-testid={`employee-card-details-${emp.tc_kimlik || empKey}`}>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+                  <div className="flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 text-slate-400" />
+                    <span>{emp.phone || '-'}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-slate-400" />
+                    <span>{emp.email || '-'}</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1" data-testid={`employee-comp-${empKey}`}>
+                  {employeeCompGroups(employeeCompRows(emp, emp.balance)).map((group) => (
+                    <div
+                      key={group.key}
+                      className="min-w-0 rounded-lg bg-slate-50 px-2.5 py-1.5 space-y-0.5"
+                      data-testid={`employee-comp-group-${group.key}-${empKey}`}
+                    >
+                      <div className="text-[9px] font-extrabold uppercase tracking-wide text-slate-400">{group.title}</div>
+                      {group.rows.map((row) => (
+                        <div key={row.key} className="flex items-baseline justify-between gap-2">
+                          <span
+                            className="min-w-0 truncate text-[10px] text-slate-500"
+                            data-testid={row.key === "bonus" && row.days != null ? `employee-comp-bonus-days-${empKey}` : undefined}
+                          >
+                            {employeeCompRowCaption(row, isDailyWage(emp))}
+                          </span>
+                          <span
+                            className={`shrink-0 text-[11px] font-extrabold ${row.key === "total" ? "text-emerald-700" : "text-slate-900"}`}
+                            data-testid={
+                              row.key === "total" ? `employee-remaining-${empKey}`
+                                : row.key === "bonus" ? `employee-bonus-due-${emp.tc_kimlik || empKey}`
+                                  : row.key === "overtime" ? `employee-ot-due-${emp.tc_kimlik || empKey}`
+                                    : `employee-comp-${row.key}-${empKey}`
+                            }
+                          >
+                            {fmtCardMoney(row.value)}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>
-              ))}
-            </div>
-            {emp.balance?.remaining != null || emp.balance?.advances ? (
-              <div className="flex items-center justify-between text-[11px] px-0.5">
-                {emp.balance?.remaining != null ? (
-                  <span data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
-                    <span className="text-slate-400">Kalan alacak </span>
-                    <span className={`font-extrabold ${(Number(emp.balance.remaining) || 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>
-                      {fmtCardMoney(emp.balance.remaining)}
-                    </span>
-                  </span>
-                ) : <span />}
-                {emp.balance?.advances ? (
-                  <span className="text-amber-800 font-extrabold">Avans {fmtCardMoney(emp.balance.advances)}</span>
+                {emp.balance?.remaining != null || emp.balance?.advances ? (
+                  <div className="flex items-center justify-between text-[11px] px-0.5">
+                    {emp.balance?.remaining != null ? (
+                      <span data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
+                        <span className="text-slate-400">Kalan alacak </span>
+                        <span className={`font-extrabold ${(Number(emp.balance.remaining) || 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>
+                          {fmtCardMoney(emp.balance.remaining)}
+                        </span>
+                      </span>
+                    ) : <span />}
+                    {emp.balance?.advances ? (
+                      <span className="text-amber-800 font-extrabold">Avans {fmtCardMoney(emp.balance.advances)}</span>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             ) : null}
-            <div className="space-y-1.5">
-            <div className="grid grid-cols-2 gap-1.5">
-            <button
-              type="button"
-              onClick={() => setMovesEmp(emp)}
-              className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200"
-              data-testid={`emp-card-moves-btn-${empKey}`}
-            >
-              <Receipt className="w-3.5 h-3.5" /> Hareketler
-            </button>
-            <button
-              type="button"
-              onClick={() => openSettleFor(emp)}
-              className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"
-              title="Maaş, mesai, prim, yemek, yol, masraf ve avans"
-              data-testid={`employee-pay-btn-${emp.tc_kimlik || empKey}`}
-            >
-              <Banknote className="w-3.5 h-3.5" /> {employeePayButtonLabel(emp)}
-            </button>
-            </div>
-              <div className="grid grid-cols-2 gap-1.5" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
-              <button
-                type="button"
-                onClick={() => setTaskEmp(emp)}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
-                data-testid={`employee-task-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <ClipboardList className="w-3.5 h-3.5" /> Görev
-              </button>
-              <button
-                type="button"
-                onClick={() => openOvertimeFor(emp)}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border-violet-200"
-                data-testid={`employee-overtime-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <Timer className="w-3.5 h-3.5" /> F. Mesai
-              </button>
-              </div>
-            </div>
-            <button onClick={() => setCardEmp(emp)} className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold" data-testid={`employee-card-btn-${emp.tc_kimlik}`}>Personel Kartı</button>
           </div>
             );
           })}
