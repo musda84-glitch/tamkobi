@@ -51,7 +51,7 @@ export function employeePayKindsForSubmit(mode, lines, selectedKeys) {
 
 const PAY_KIND_KEYS = new Set(EMPLOYEE_PAY_KINDS.map((k) => k.key));
 
-/** Liste kartı Avans/Maaş/Yemek/Yol/Prim/Mesai tıklanınca Öde modalının başlangıcı. */
+/** Öde modalı: belirli kalem veya tüm bakiye. */
 export function employeePayModalStart(initialKind, lines) {
   if (initialKind === "advance") return { mode: "split", selected: [] };
   if (PAY_KIND_KEYS.has(initialKind)) return { mode: "split", selected: [initialKind] };

@@ -18,12 +18,12 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
 import { assignedOvertimeCellCaption, cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint, locationControllerLabel, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
-import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePresenceChip, fmtCardMoney, remainingLeaveDays } from "../utils/personnelCard";
+import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, employeePresenceChip, fmtCardMoney, remainingLeaveDays } from "../utils/personnelCard";
 import { punchLabelClass } from "../utils/punchLabels";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
-import { employeePayActionTitle, isDailyWage, payrollWageLine, totalMonthlyLoad, yevmiyeDaysOf } from "../utils/personnelWage";
+import { isDailyWage, payrollWageLine, totalMonthlyLoad, yevmiyeDaysOf } from "../utils/personnelWage";
 import { BLOOD_TYPE_OPTIONS, hasExtraEmployeeDetails, MARITAL_STATUS_OPTIONS } from "../utils/employeeDetails";
 import { workplaceShort } from "../utils/workplace";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
@@ -42,12 +42,9 @@ import {
   Trash2,
   CalendarDays,
   Gift,
-  Wallet,
   Banknote,
   ClipboardList,
   Timer,
-  UtensilsCrossed,
-  Bus,
   Bell,
   Upload,
   Image as ImageIcon,
@@ -879,66 +876,25 @@ export default function PersonnelPage() {
               </div>
             ) : null}
             <div className="space-y-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
             <button
               type="button"
               onClick={() => setMovesEmp(emp)}
-              className="w-full flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200"
+              className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200"
               data-testid={`emp-card-moves-btn-${empKey}`}
             >
               <Receipt className="w-3.5 h-3.5" /> Hareketler
             </button>
-            <div className="grid grid-cols-2 gap-1.5">
-              <button
-                type="button"
-                onClick={() => openSettleFor(emp, "advance")}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200"
-                data-testid={`employee-advance-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <Wallet className="w-3.5 h-3.5" /> Avans
-              </button>
-              <button
-                type="button"
-                onClick={() => openSettleFor(emp, "salary")}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"
-                data-testid={`employee-salary-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <Banknote className="w-3.5 h-3.5" /> {employeePayActionTitle("salary", emp)}
-              </button>
-              <button
-                type="button"
-                onClick={() => openSettleFor(emp, "meal")}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200"
-                title="Yemek ücreti"
-                data-testid={`employee-meal-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <UtensilsCrossed className="w-3.5 h-3.5" /> Yemek
-              </button>
-              <button
-                type="button"
-                onClick={() => openSettleFor(emp, "transport")}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200"
-                title="Yol ödemesi"
-                data-testid={`employee-transport-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <Bus className="w-3.5 h-3.5" /> Yol
-              </button>
-              <button
-                type="button"
-                onClick={() => openSettleFor(emp, "bonus")}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200"
-                data-testid={`employee-bonus-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <Gift className="w-3.5 h-3.5" /> {employeePayActionTitle("bonus", emp)}
-              </button>
-              <button
-                type="button"
-                onClick={() => openSettleFor(emp, "overtime")}
-                className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
-                data-testid={`employee-otpay-btn-${emp.tc_kimlik || empKey}`}
-              >
-                <Timer className="w-3.5 h-3.5" /> Mesai öde
-              </button>
-              </div>
+            <button
+              type="button"
+              onClick={() => openSettleFor(emp)}
+              className="flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"
+              title="Maaş, mesai, prim, yemek, yol, masraf ve avans"
+              data-testid={`employee-pay-btn-${emp.tc_kimlik || empKey}`}
+            >
+              <Banknote className="w-3.5 h-3.5" /> {employeePayButtonLabel(emp)}
+            </button>
+            </div>
               <div className="grid grid-cols-2 gap-1.5" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
               <button
                 type="button"

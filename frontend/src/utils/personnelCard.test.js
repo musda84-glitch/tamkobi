@@ -4,6 +4,8 @@ import {
   employeeCompRows,
   employeePayMoves,
   employeePresenceChip,
+  employeePayButtonDue,
+  employeePayButtonLabel,
   empDataResetConfirm,
   empDataResetPath,
   filterPayMoves,
@@ -121,5 +123,12 @@ describe("personnelCard", () => {
     expect(ask.message).toMatch(/puantaj/i);
     expect(ask.message).toMatch(/sistem kullanıcısı durur/i);
     expect(ask.check).toContain("Ali Yılmaz");
+  });
+
+  test("list Öde button matches employee-card remaining plus overtime", () => {
+    expect(employeePayButtonLabel({})).toBe("Öde");
+    expect(employeePayButtonDue({ balance: { remaining: 40000, overtime_due: 1500 } })).toBe(41500);
+    expect(employeePayButtonLabel({ balance: { remaining: 40000, overtime_due: 1500 } })).toMatch(/^Öde · /);
+    expect(employeePayButtonLabel({ balance: { remaining: 0, overtime_due: 0 } })).toBe("Öde");
   });
 });

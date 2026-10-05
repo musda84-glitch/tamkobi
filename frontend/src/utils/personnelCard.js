@@ -20,6 +20,17 @@ export function remainingDue(balance, unpaidFallback = 0) {
   return unpaidFallback;
 }
 
+/** Liste / kart Öde butonu: kalan alacak + fazla mesai. */
+export function employeePayButtonDue(emp) {
+  const remaining = remainingDue(emp?.balance);
+  return remaining + overtimeDue(emp?.balance);
+}
+
+export function employeePayButtonLabel(emp) {
+  const due = employeePayButtonDue(emp);
+  return due ? `Öde · ${formatTrAmount(due)} ₺` : "Öde";
+}
+
 export function remainingLeaveDays(emp) {
   return (Number(emp?.annual_leave_days) || 14) - (Number(emp?.used_leave_days) || 0);
 }

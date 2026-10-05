@@ -13,7 +13,7 @@ import { EmployeeYevmiyeModal } from "./EmployeeYevmiyeModal";
 import { EmployeeMovesModal } from "./EmployeeMovesModal";
 import { EmployeePuantajPanel } from "./EmployeePuantajPanel";
 import { empStatusLabel, formatTrDate, performanceTone, remainingTone } from "../utils/employeeCardSummary";
-import { employeePresenceChip, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, empDataResetConfirm, empDataResetPath } from "../utils/personnelCard";
+import { employeePayButtonLabel, employeePresenceChip, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, empDataResetConfirm, empDataResetPath } from "../utils/personnelCard";
 import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
 import { isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
@@ -264,7 +264,6 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   };
   const btn = "px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border whitespace-nowrap w-full inline-flex items-center justify-center";
   const remaining = Number(card?.balance?.remaining) || 0;
-  const payDue = remaining + (Number(card?.balance?.overtime_due) || 0);
   const ot = card?.overtime || {};
   const perf = card?.performance || {};
   return (
@@ -305,7 +304,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
           <div className="space-y-1.5">
           <div className="grid grid-cols-2 gap-1.5">
             <button type="button" onClick={() => setMovesOpen(true)} className={`${btn} bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200`} data-testid="emp-card-moves-btn"><Receipt className="w-3.5 h-3.5 inline mr-1" />Hareketler</button>
-            <button type="button" onClick={() => setUnifyPay(true)} className={`${btn} bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200`} title="Maaş, mesai, prim, yemek, yol, masraf ve avans" data-testid="emp-card-pay-btn"><Banknote className="w-3.5 h-3.5 inline mr-1" />Öde{payDue ? ` · ${fmt(payDue)} ₺` : ""}</button>
+            <button type="button" onClick={() => setUnifyPay(true)} className={`${btn} bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200`} title="Maaş, mesai, prim, yemek, yol, masraf ve avans" data-testid="emp-card-pay-btn"><Banknote className="w-3.5 h-3.5 inline mr-1" />{employeePayButtonLabel({ balance: card?.balance })}</button>
           </div>
           <div className="grid grid-cols-2 gap-1.5" data-testid="emp-card-work-actions">
             <button type="button" onClick={() => setTaskOpen(true)} className={`${btn} bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200`} data-testid="emp-card-task-btn"><ClipboardList className="w-3.5 h-3.5 inline mr-1" />Görev ata</button>
