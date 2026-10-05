@@ -348,6 +348,36 @@ export function overtimeMoveDeleteConfirm() {
   };
 }
 
+export function payMoveCanDelete(row, canEdit = true) {
+  return !!canEdit && !!payMoveDeletePath(row);
+}
+
+export function payMoveDeletePath(row) {
+  const id = String(row?.id || "").trim();
+  if (!id || /^pay-\d{4}-\d{2}$/.test(id)) return null;
+  if (row?.kind === "payroll") return `/personnel/payrolls/${id}`;
+  if (row?.kind === "bonus") return `/personnel/bonuses/${id}`;
+  return null;
+}
+
+export function payMoveDeleteConfirm(row) {
+  const paid = row?.status === "paid";
+  if (row?.kind === "payroll") {
+    return {
+      title: "Maaş kaydını sil",
+      message: paid
+        ? "Bu maaş kaydı silinsin mi? Ödeme kasa/banka veya ortak bakiyesine geri alınır."
+        : "Bu bekleyen maaş kaydı silinsin mi?",
+    };
+  }
+  return {
+    title: "Ödeme kaydını sil",
+    message: paid
+      ? "Bu kayıt silinsin mi? Ödeme kasa/banka veya ortak bakiyesine geri alınır."
+      : "Bu ödeme kaydı silinsin mi?",
+  };
+}
+
 export function fmtPayMoveAmount(n) {
   return `${formatTrAmount(Number(n) || 0)} ₺`;
 }
