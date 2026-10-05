@@ -642,8 +642,8 @@ export default function PersonnelPage() {
       {tab === "salary" && <SalaryCalculator />}
       {tab === "bonus" && <BonusPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} employees={employees} accounts={bankAccounts} onChanged={loadPersonnelData} />}
       {tab === "payroll" && (<>
-      {/* Employees Cards — yatay şerit; alt bölüm genişlet/daralt */}
-      <div className="grid grid-cols-1 gap-3">
+      {/* Employees Cards — yatay şerit; alt bölüm Genişlet/Daralt */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         {pagedEmployees.map((emp) => {
             const empKey = empIdOf(emp);
             const empReqs = requestsFor(emp);
@@ -651,10 +651,11 @@ export default function PersonnelPage() {
             return (
           <div
             key={empKey}
-            className={`bg-white px-4 py-3 rounded-2xl border border-slate-200/90 shadow-sm flex flex-col gap-2 [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_320px]" : "[contain-intrinsic-size:auto_140px]"}`}
+            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_360px]" : "[contain-intrinsic-size:auto_160px]"}`}
             data-testid={`employee-card-${emp.tc_kimlik}`}
             data-expanded={cardOpen ? "1" : "0"}
           >
+          <div className="px-4 pt-3 pb-2 flex flex-col gap-2">
             <div className="flex flex-wrap items-start gap-3 justify-between">
               <div className="flex items-start gap-2.5 min-w-0 flex-1">
                 <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 text-[11px] font-black text-slate-500" data-testid={`employee-photo-${emp.tc_kimlik || empKey}`}>
@@ -867,16 +868,6 @@ export default function PersonnelPage() {
               >
                 Personel Kartı
               </button>
-              <button
-                type="button"
-                onClick={() => toggleCardExpanded(empKey)}
-                className="ml-auto flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-600 hover:bg-slate-50 border border-slate-200"
-                aria-expanded={cardOpen}
-                data-testid={`employee-card-expand-${emp.tc_kimlik || empKey}`}
-              >
-                {cardOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                {cardOpen ? "Daralt" : "Genişlet"}
-              </button>
             </div>
 
             {cardOpen ? (
@@ -941,6 +932,17 @@ export default function PersonnelPage() {
                 ) : null}
               </div>
             ) : null}
+          </div>
+            <button
+              type="button"
+              onClick={() => toggleCardExpanded(empKey)}
+              className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-50 border-t border-slate-100"
+              aria-expanded={cardOpen}
+              data-testid={`employee-card-expand-${emp.tc_kimlik || empKey}`}
+            >
+              {cardOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              {cardOpen ? "Daralt" : "Genişlet"}
+            </button>
           </div>
             );
           })}
