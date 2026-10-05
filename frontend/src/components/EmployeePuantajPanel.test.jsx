@@ -85,3 +85,26 @@ test("geç ücret hücresi kes / kesme sorar", async () => {
     { withCredentials: true },
   );
 });
+
+test("gün satırı Düzenle ile giriş-çıkış kaydeder", async () => {
+  await render(<EmployeePuantajPanel employeeId="e1" initialMonth="2026-10" />);
+  expect(host.querySelector('[data-testid="emp-puantaj-edit-2026-10-01"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="emp-puantaj-edit-2026-10-01"]').click();
+  });
+  expect(host.querySelector('[data-testid="emp-puantaj-edit-modal-2026-10-01"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="emp-puantaj-edit-in"]')?.value).toBe("09:10");
+  expect(host.querySelector('[data-testid="emp-puantaj-edit-out"]')?.value).toBe("18:00");
+  axios.post.mockResolvedValueOnce({ data: { message: "Puantaj kaydı güncellendi." } });
+  await act(async () => {
+    host.querySelector('[data-testid="emp-puantaj-edit-save"]').click();
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(axios.post).toHaveBeenCalledWith("/api/personnel/attendance", expect.objectContaining({
+    employee_id: "e1",
+    date: "2026-10-01",
+    status: "present",
+    check_in: "09:10",
+    check_out: "18:00",
+  }));
+});

@@ -4,6 +4,9 @@ import {
   monthDateList,
   movesSheetTitle,
   puantajDayLine,
+  puantajEditDraft,
+  puantajEditPayload,
+  puantajEditValidate,
   puantajStatusLabel,
   puantajStatusTone,
   puantajWageAskCopy,
@@ -56,5 +59,16 @@ describe("puantajMonth", () => {
     expect(puantajWageAskCopy(lateDay, (n) => String(n)).kes).toBe("Ücret kes");
     expect(puantajWageAskCopy(lateDay, (n) => String(n)).kesme).toBe("Ücret kesme");
     expect(puantajWageDecisionPath(lateDay)).toBe("/personnel/attendance/att-1/yevmiye-decision");
+    const empty = puantajEditDraft({ date: "2026-10-06", weekday: 1, weekday_label: "Sal", status: "empty", status_label: "Kayıt yok" });
+    expect(empty.status).toBe("present");
+    expect(puantajEditValidate(empty)).toBe("Giriş saati gerekli.");
+    expect(puantajEditPayload("e1", { ...empty, check_in: "09:00", check_out: "18:30", note: "düzeltme" })).toEqual({
+      employee_id: "e1",
+      date: "2026-10-06",
+      status: "present",
+      note: "düzeltme",
+      check_in: "09:00",
+      check_out: "18:30",
+    });
   });
 });

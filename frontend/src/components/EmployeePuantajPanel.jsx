@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Archive, CalendarDays, List, Loader2 } from "lucide-react";
+import { Archive, CalendarDays, List, Loader2, Pencil } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { fmtDmy } from "../utils/dateFormat";
 import {
   buildPuantajCalendarCells,
   leaveYearArchiveLine,
+  puantajEditDraft,
+  puantajEditPayload,
+  puantajEditValidate,
+  PUANTAJ_EDIT_STATUSES,
   PUANTAJ_WEEKDAYS,
   puantajStatusTone,
   puantajWageAskCopy,
@@ -17,6 +21,7 @@ import {
 import { attendanceCalendarMonth } from "../utils/attendanceSelf";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { punchLabelClass } from "../utils/punchLabels";
 
 const toneClass = {
   emerald: "bg-emerald-50 text-emerald-800 border-emerald-200",
@@ -42,6 +47,9 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [wageAsk, setWageAsk] = useState(null);
   const [wageBusy, setWageBusy] = useState(false);
+  const [editDay, setEditDay] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [editBusy, setEditBusy] = useState(false);
 
   const load = useCallback(async (m = month) => {
     if (!employeeId) return;
@@ -104,6 +112,31 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
   };
 
   const wageAskCopy = wageAsk ? puantajWageAskCopy(wageAsk, formatTrAmount) : null;
+
+  const openEdit = (day) => {
+    setEditDay(day);
+    setEditForm(puantajEditDraft(day));
+  };
+
+  const saveEdit = async () => {
+    const invalid = puantajEditValidate(editForm);
+    if (invalid) {
+      toast.error(invalid);
+      return;
+    }
+    setEditBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}/personnel/attendance`, puantajEditPayload(employeeId, editForm));
+      toast.success(r.data?.message || "Puantaj kaydı güncellendi.");
+      setEditDay(null);
+      setEditForm(null);
+      await load(month);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Puantaj kaydedilemedi.");
+    } finally {
+      setEditBusy(false);
+    }
+  };
 
   return (
     <div className="space-y-3" data-testid="emp-puantaj-panel">
@@ -182,11 +215,12 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
                   <th className="px-3 py-2 text-right">Mesai</th>
                   <th className="px-3 py-2 text-right">Ücret</th>
                   <th className="px-3 py-2">Not</th>
+                  <th className="px-3 py-2 text-right"> </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {!days.length ? (
-                  <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-400">Bu ay için gün satırı yok.</td></tr>
+                  <tr><td colSpan={9} className="px-3 py-6 text-center text-slate-400">Bu ay için gün satırı yok.</td></tr>
                 ) : null}
                 {days.map((d) => (
                   <tr key={d.date} data-testid={`emp-puantaj-day-${d.date}`} className={d.status === "off" ? "bg-slate-50/60" : d.status === "absent" ? "bg-rose-50/40" : d.status === "leave" ? "bg-amber-50/40" : ""}>
@@ -216,6 +250,18 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
                       ) : "—"}
                     </td>
                     <td className="px-3 py-1.5 text-slate-500 truncate max-w-[140px]" title={d.note || d.leave_label || puantajWageAskReason(d) || ""}>{d.leave_label || d.note || puantajWageAskReason(d) || "—"}</td>
+                    <td className="px-2 py-1.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => openEdit(d)}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        title="Günü düzenle"
+                        data-testid={`emp-puantaj-edit-${d.date}`}
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        Düzenle
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -231,19 +277,21 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
           </div>
           <div className="grid grid-cols-7 gap-1">
             {cells.map((d, i) => (
-              <div
-                key={d ? d.date : `blank-${i}`}
-                className={`min-h-[52px] rounded-lg border p-1 ${!d ? "border-transparent" : `${toneClass[puantajStatusTone(d.status)] || toneClass.slate}`}`}
-                data-testid={d ? `emp-puantaj-cal-${d.date}` : undefined}
+              d ? (
+              <button
+                type="button"
+                key={d.date}
+                onClick={() => openEdit(d)}
+                className={`min-h-[52px] rounded-lg border p-1 text-left ${toneClass[puantajStatusTone(d.status)] || toneClass.slate}`}
+                data-testid={`emp-puantaj-cal-${d.date}`}
               >
-                {d ? (
-                  <>
-                    <div className="text-[11px] font-extrabold">{Number(d.date.slice(8, 10))}</div>
-                    <div className="text-[9px] font-semibold leading-tight">{d.status === "present" ? `${d.check_in || "—"}→${d.check_out || "—"}` : d.status_label}</div>
-                    {d.overtime_hours ? <div className="text-[9px] font-bold text-indigo-700">+{d.overtime_hours}sa</div> : null}
-                  </>
-                ) : null}
-              </div>
+                <div className="text-[11px] font-extrabold">{Number(d.date.slice(8, 10))}</div>
+                <div className="text-[9px] font-semibold leading-tight">{d.status === "present" ? `${d.check_in || "—"}→${d.check_out || "—"}` : d.status_label}</div>
+                {d.overtime_hours ? <div className="text-[9px] font-bold text-indigo-700">+{d.overtime_hours}sa</div> : null}
+              </button>
+              ) : (
+              <div key={`blank-${i}`} className="min-h-[52px] rounded-lg border p-1 border-transparent" />
+              )
             ))}
           </div>
         </div>
@@ -282,6 +330,95 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
           <div className="text-[11px] text-indigo-700/70">Henüz arşivlenmiş yıllık dönem yok.</div>
         )}
       </div>
+
+      {editDay && editForm ? (
+        <div
+          className="fixed inset-0 z-[70] bg-slate-900/50 flex items-center justify-center p-4"
+          {...backdropDismissProps((ev) => { ev.stopPropagation(); if (!editBusy) { setEditDay(null); setEditForm(null); } })}
+          data-testid={`emp-puantaj-edit-modal-${editDay.date}`}
+        >
+          <form
+            className="bg-white rounded-2xl w-full max-w-sm p-4 shadow-2xl space-y-3"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => { e.preventDefault(); saveEdit(); }}
+          >
+            <div>
+              <div className="text-sm font-extrabold text-slate-900">Puantaj düzenle</div>
+              <div className="text-[11px] font-semibold text-slate-500">
+                {fmtDmy(editDay.date)} {editDay.weekday_label}
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-1" data-testid="emp-puantaj-edit-status">
+              {PUANTAJ_EDIT_STATUSES.map((s) => (
+                <button
+                  type="button"
+                  key={s.value}
+                  onClick={() => setEditForm((cur) => (cur ? { ...cur, status: s.value } : cur))}
+                  className={`py-1.5 rounded-lg border text-[11px] font-extrabold ${editForm.status === s.value ? "bg-indigo-50 text-indigo-800 border-indigo-200" : "bg-white text-slate-500 border-slate-200"}`}
+                  data-testid={`emp-puantaj-edit-status-${s.value}`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            {editForm.status === "present" ? (
+              <div className="grid grid-cols-2 gap-2">
+                <label className={`text-[10px] font-bold block ${punchLabelClass("Giriş saati")}`}>
+                  Giriş
+                  <input
+                    type="time"
+                    value={editForm.check_in || ""}
+                    onChange={(e) => setEditForm((cur) => (cur ? { ...cur, check_in: e.target.value } : cur))}
+                    className="mt-0.5 block w-full border rounded-lg p-1.5 bg-slate-50"
+                    data-testid="emp-puantaj-edit-in"
+                  />
+                </label>
+                <label className={`text-[10px] font-bold block ${punchLabelClass("Çıkış saati")}`}>
+                  Çıkış
+                  <input
+                    type="time"
+                    value={editForm.check_out || ""}
+                    onChange={(e) => setEditForm((cur) => (cur ? { ...cur, check_out: e.target.value } : cur))}
+                    className="mt-0.5 block w-full border rounded-lg p-1.5 bg-slate-50"
+                    data-testid="emp-puantaj-edit-out"
+                  />
+                </label>
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-500">Devamsız / izinli günde giriş-çıkış saati tutulmaz.</p>
+            )}
+            <label className="text-[10px] font-bold block text-slate-500">
+              Not
+              <input
+                type="text"
+                value={editForm.note || ""}
+                onChange={(e) => setEditForm((cur) => (cur ? { ...cur, note: e.target.value } : cur))}
+                className="mt-0.5 block w-full border rounded-lg p-1.5 bg-slate-50 font-normal text-slate-800"
+                data-testid="emp-puantaj-edit-note"
+              />
+            </label>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={editBusy}
+                onClick={() => { setEditDay(null); setEditForm(null); }}
+                className="px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-white border text-slate-700"
+                data-testid="emp-puantaj-edit-cancel"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="submit"
+                disabled={editBusy}
+                className="px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                data-testid="emp-puantaj-edit-save"
+              >
+                {editBusy ? "Kaydediliyor…" : "Kaydet"}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       {wageAsk && wageAskCopy ? (
         <div

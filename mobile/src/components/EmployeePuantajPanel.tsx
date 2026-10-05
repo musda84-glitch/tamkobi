@@ -6,19 +6,15 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import { attendanceCalendarMonth } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
-import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
-import { get, post } from "../api/client";
-import { apiErrorMessage, useAuth } from "../auth/AuthContext";
-import { colors } from "../theme";
-import { attendanceCalendarMonth } from "../utils/attendanceSelf";
-import { fmtDmy } from "../utils/calendar";
 import { formatTrAmount } from "../utils/money";
 import {
   buildPuantajCalendarCells,
   leaveYearArchiveLine,
+  PUANTAJ_EDIT_STATUSES,
   PUANTAJ_WEEKDAYS,
+  puantajEditDraft,
+  puantajEditPayload,
+  puantajEditValidate,
   puantajStatusTone,
   puantajToneColors,
   puantajWageAskCopy,
@@ -26,9 +22,11 @@ import {
   puantajWageCanAsk,
   puantajWageDecisionPath,
   type PuantajDay,
+  type PuantajEditForm,
   type PuantajPayload,
 } from "../utils/puantajMonth";
 import { Field, Muted, PrimaryButton, Row } from "./kit";
+import { TimeField } from "./TimeField";
 
 function DayBadge({ status, label }: { status?: string | null; label?: string | null }) {
   const tone = puantajToneColors(puantajStatusTone(status));
@@ -58,6 +56,9 @@ export function EmployeePuantajPanel({
   const [message, setMessage] = useState<string | null>(null);
   const [wageAsk, setWageAsk] = useState<PuantajDay | null>(null);
   const [wageBusy, setWageBusy] = useState(false);
+  const [editDay, setEditDay] = useState<PuantajDay | null>(null);
+  const [editForm, setEditForm] = useState<PuantajEditForm | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
 
   const load = useCallback(async (m = month) => {
     if (!employeeId) return;
@@ -122,6 +123,33 @@ export function EmployeePuantajPanel({
   };
 
   const wageAskCopy = wageAsk ? puantajWageAskCopy(wageAsk, formatTrAmount) : null;
+
+  const openEdit = (day: PuantajDay) => {
+    setEditDay(day);
+    setEditForm(puantajEditDraft(day));
+  };
+
+  const saveEdit = async () => {
+    const invalid = puantajEditValidate(editForm);
+    if (invalid) {
+      setError(invalid);
+      return;
+    }
+    if (!employeeId || !editForm) return;
+    setEditBusy(true);
+    try {
+      const r = await post<{ message?: string }>(client, "/personnel/attendance", puantajEditPayload(employeeId, editForm));
+      setMessage(r?.message || "Puantaj kaydı güncellendi.");
+      setError(null);
+      setEditDay(null);
+      setEditForm(null);
+      await load(month);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Puantaj kaydedilemedi."));
+    } finally {
+      setEditBusy(false);
+    }
+  };
 
   return (
     <View testID="emp-puantaj-panel" style={{ gap: 10 }}>
@@ -256,6 +284,13 @@ export function EmployeePuantajPanel({
                   )
                 ) : null}
                 {d.status === "present" && puantajWageAskReason(d) ? <Muted>{puantajWageAskReason(d)}</Muted> : null}
+                <Pressable
+                  testID={`emp-puantaj-edit-${d.date}`}
+                  onPress={() => openEdit(d)}
+                  style={{ alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}
+                >
+                  <Text style={{ fontWeight: "800", fontSize: 11, color: colors.indigo }}>Düzenle</Text>
+                </Pressable>
               </View>
             );
           })}
@@ -271,8 +306,10 @@ export function EmployeePuantajPanel({
             {cells.map((d, i) => {
               const tone = d ? puantajToneColors(puantajStatusTone(d.status)) : null;
               return (
-                <View
+                <Pressable
                   key={d ? d.date : `blank-${i}`}
+                  disabled={!d}
+                  onPress={() => { if (d) openEdit(d); }}
                   testID={d ? `emp-puantaj-cal-${d.date}` : undefined}
                   style={{
                     width: "14.28%",
@@ -295,7 +332,7 @@ export function EmployeePuantajPanel({
                       ) : null}
                     </>
                   ) : null}
-                </View>
+                </Pressable>
               );
             })}
           </View>
@@ -350,6 +387,82 @@ export function EmployeePuantajPanel({
               loading={wageBusy}
               testID={`emp-puantaj-wage-kes-${wageAsk.date}`}
               onPress={() => { void decideWageCut(wageAsk, "approve"); }}
+            />
+          </Row>
+        </View>
+      ) : null}
+
+      {editDay && editForm ? (
+        <View
+          testID={`emp-puantaj-edit-modal-${editDay.date}`}
+          style={{ padding: 12, borderRadius: 12, backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border, gap: 8 }}
+        >
+          <Text style={{ fontWeight: "800", fontSize: 13, color: colors.text }}>
+            Puantaj düzenle · {fmtDmy(editDay.date)} {editDay.weekday_label}
+          </Text>
+          <Row testID="emp-puantaj-edit-status" style={{ gap: 6 }}>
+            {PUANTAJ_EDIT_STATUSES.map((s) => (
+              <Pressable
+                key={s.value}
+                testID={`emp-puantaj-edit-status-${s.value}`}
+                onPress={() => setEditForm((cur) => (cur ? { ...cur, status: s.value } : cur))}
+                style={{
+                  flex: 1,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: editForm.status === s.value ? colors.indigo : colors.border,
+                  backgroundColor: editForm.status === s.value ? "#EEF2FF" : "#fff",
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ fontWeight: "800", fontSize: 11, color: editForm.status === s.value ? colors.indigo : colors.muted }}>{s.label}</Text>
+              </Pressable>
+            ))}
+          </Row>
+          {editForm.status === "present" ? (
+            <>
+              <TimeField
+                label="Giriş saati"
+                testID="emp-puantaj-edit-in"
+                value={editForm.check_in}
+                nowKind="check_in"
+                onChangeText={(v) => setEditForm((cur) => (cur ? { ...cur, check_in: v } : cur))}
+              />
+              <TimeField
+                label="Çıkış saati"
+                testID="emp-puantaj-edit-out"
+                optional
+                value={editForm.check_out}
+                nowKind="check_out"
+                onChangeText={(v) => setEditForm((cur) => (cur ? { ...cur, check_out: v } : cur))}
+              />
+            </>
+          ) : (
+            <Muted>Devamsız / izinli günde giriş-çıkış saati tutulmaz.</Muted>
+          )}
+          <Field
+            dense
+            label="Not"
+            testID="emp-puantaj-edit-note"
+            value={editForm.note}
+            onChangeText={(v) => setEditForm((cur) => (cur ? { ...cur, note: v } : cur))}
+          />
+          <Row style={{ gap: 6 }}>
+            <PrimaryButton
+              title="Vazgeç"
+              compact
+              testID="emp-puantaj-edit-cancel"
+              onPress={() => { setEditDay(null); setEditForm(null); }}
+            />
+            <PrimaryButton
+              title={editBusy ? "Kaydediliyor…" : "Kaydet"}
+              color={colors.indigo}
+              compact
+              loading={editBusy}
+              disabled={editBusy}
+              testID="emp-puantaj-edit-save"
+              onPress={() => { void saveEdit(); }}
             />
           </Row>
         </View>
