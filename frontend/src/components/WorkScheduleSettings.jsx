@@ -155,7 +155,7 @@ export const WorkScheduleSettings = ({ companyId, onSaved }) => {
 /* Personel: ücretler + kişiye özel mesai (Personel Kartı ve Puantaj'dan ortak kullanılır) */
 export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, onClose }) => {
   const ws = employee.work_schedule || {};
-  const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0 });
+  const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0, pay_start_date: employee.pay_start_date || "", pay_recurring: employee.pay_recurring !== false });
   const [s, setS] = useState({
     start: ws.start || "",
     end: ws.end || "",
@@ -189,6 +189,8 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         second_salary: Number(pay.second_salary) || 0,
         meal_allowance: Number(pay.meal_allowance) || 0,
         transport_allowance: Number(pay.transport_allowance) || 0,
+        pay_start_date: pay.pay_start_date || null,
+        pay_recurring: pay.pay_recurring !== false,
         overtime_method: pay.overtime_method || null,
         overtime_hourly_rate: pay.overtime_hourly_rate === "" ? null : Number(pay.overtime_hourly_rate),
         work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule,
@@ -219,6 +221,15 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">2. maaş (aylık, gayri resmi)</label><input type="number" min="0" value={pay.second_salary} onChange={(e) => setPay({ ...pay, second_salary: e.target.value })} className={`${inp} w-full`} data-testid="emp-second-salary" /></div>
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Yemek (aylık, ₺)</label><input type="number" min="0" value={pay.meal_allowance} onChange={(e) => setPay({ ...pay, meal_allowance: e.target.value })} className={`${inp} w-full`} data-testid="emp-meal-allowance" /></div>
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Yol / ulaşım (aylık, ₺)</label><input type="number" min="0" value={pay.transport_allowance} onChange={(e) => setPay({ ...pay, transport_allowance: e.target.value })} className={`${inp} w-full`} data-testid="emp-transport-allowance" /></div>
+          <div>
+            <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Hak ediş tarihi</label>
+            <input type="date" value={pay.pay_start_date || ""} onChange={(e) => setPay({ ...pay, pay_start_date: e.target.value })} className={`${inp} w-full`} data-testid="emp-pay-start-date" />
+            <p className="text-[10px] text-slate-400 mt-0.5">Maaş, yemek ve yol bu tarihte hak edilir.</p>
+          </div>
+          <label className="flex items-center gap-1.5 self-end pb-1 text-[11px] text-slate-700">
+            <input type="checkbox" checked={pay.pay_recurring !== false} onChange={(e) => setPay({ ...pay, pay_recurring: e.target.checked })} data-testid="emp-pay-form-recurring" />
+            Her ay tekrarla
+          </label>
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Fazla mesai yöntemi</label><select value={pay.overtime_method} onChange={(e) => setPay({ ...pay, overtime_method: e.target.value })} className={`${inp} w-full`} data-testid="emp-ot-method"><option value="">{`Firma varsayılanı (${companySchedule?.overtime_method === "fixed" ? "sabit" : "yasal"})`}</option><option value="legal">Yasal (brüt/225 × katsayı)</option><option value="fixed">Sabit saatlik ücret</option></select></div>
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Sabit saatlik mesai ücreti (₺)</label><input type="number" min="0" value={pay.overtime_hourly_rate} onChange={(e) => setPay({ ...pay, overtime_hourly_rate: e.target.value })} className={`${inp} w-full`} data-testid="emp-ot-rate" /></div>
           <div className="text-[10px] text-slate-500 self-end pb-1">Yasal saatlik mesai: <b className="text-slate-800">{legalRate.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ₺</b> (brüt {grossForRate.toLocaleString("tr-TR")} / {companySchedule?.monthly_hours_divisor || 225} × {companySchedule?.overtime_multiplier || 1.5})</div>
