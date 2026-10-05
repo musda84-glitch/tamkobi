@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Timer, Save, Loader2, X, RotateCcw, Bell, Banknote, MapPin } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { isDailyWage, monthlyLoad } from "../utils/personnelWage";
+import { employeeAllowanceSaveMessage } from "../utils/employeePay";
 import { TimeInput } from "./TimeInput";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
@@ -195,8 +196,14 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         overtime_hourly_rate: pay.overtime_hourly_rate === "" ? null : Number(pay.overtime_hourly_rate),
         work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule,
       };
-      await axios.put(`${API_URL}/personnel/employees/${employee.id || employee._id || employee.employee_id}`, body);
-      toast.success(mode === "clear" ? "Personel firma mesai saatlerine döndü." : "Ücret ve mesai bilgileri kaydedildi."); onSaved?.(); onClose?.();
+      const r = await axios.put(`${API_URL}/personnel/employees/${employee.id || employee._id || employee.employee_id}`, body);
+      toast.success(
+        mode === "clear"
+          ? "Personel firma mesai saatlerine döndü."
+          : employeeAllowanceSaveMessage(r.data?.allowance_accrual, pay.pay_start_date),
+      );
+      onSaved?.();
+      onClose?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
   };
   return (
@@ -234,7 +241,7 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
           <div><label className="block text-[10px] font-semibold text-slate-500 mb-0.5">Sabit saatlik mesai ücreti (₺)</label><input type="number" min="0" value={pay.overtime_hourly_rate} onChange={(e) => setPay({ ...pay, overtime_hourly_rate: e.target.value })} className={`${inp} w-full`} data-testid="emp-ot-rate" /></div>
           <div className="text-[10px] text-slate-500 self-end pb-1">Yasal saatlik mesai: <b className="text-slate-800">{legalRate.toLocaleString("tr-TR", { maximumFractionDigits: 2 })} ₺</b> (brüt {grossForRate.toLocaleString("tr-TR")} / {companySchedule?.monthly_hours_divisor || 225} × {companySchedule?.overtime_multiplier || 1.5})</div>
         </div>
-        <p className="text-[10px] text-slate-500">{pay.pay_type === "daily" || isDailyWage(employee) ? "Yevmiyeli bordro: gelen gün × günlük ücret + mesai + 2. maaş + prim − kesinti − avans." : "Bordro: net + mesai + 2. maaş + prim − kesinti − avans."} Yemek ve yol karttan belirlenir; ödenmemiş tutar kalan alacağa eklenir, masraf kaydında önerilir.</p>
+        <p className="text-[10px] text-slate-500">{pay.pay_type === "daily" || isDailyWage(employee) ? "Yevmiyeli bordro: gelen gün × günlük ücret + mesai + 2. maaş + prim − kesinti − avans." : "Bordro: net + mesai + 2. maaş + prim − kesinti − avans."} Yemek ve yol hak ediş tarihinde maaş gibi alacağa yazılır; her ay tekrarla açıksa sonraki aylarda tekrarlanır.</p>
       </div>
       <div className="border border-slate-200 rounded-xl p-3 space-y-2">
         <div className="font-bold text-slate-800 flex items-center gap-1.5"><Timer className="w-3.5 h-3.5 text-indigo-600" /> Kişiye Özel Mesai Saatleri <span className="font-normal text-slate-400">— boş bırakılan alanlar firma ayarından alınır ({companySchedule?.start}–{companySchedule?.end})</span></div>

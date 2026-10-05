@@ -15283,8 +15283,25 @@ async def create_employee(emp: Employee):
             raise HTTPException(status_code=400, detail="SGK sicil numarası girildiğinde personel IBAN zorunludur (maaş yalnız bankadan ödenir).")
     elif "sgk_number" in doc:
         doc["sgk_number"] = None
+    if doc.get("pay_start_date") or doc.get("meal_allowance") or doc.get("transport_allowance"):
+        pay_fields = employee_pay.prepare_employee_pay({
+            "pay_start_date": doc.get("pay_start_date"),
+            "pay_day": doc.get("pay_day"),
+            "pay_recurring": doc.get("pay_recurring"),
+        }, fill_start=bool(doc.get("meal_allowance") or doc.get("transport_allowance")))
+        for k in ("pay_start_date", "pay_day", "pay_recurring"):
+            if k in pay_fields:
+                doc[k] = pay_fields[k]
     await db.employees.insert_one(doc)
-    return clean_doc(doc)
+    out = clean_doc(doc)
+    if doc.get("pay_start_date") and (float(doc.get("meal_allowance") or 0) > 0 or float(doc.get("transport_allowance") or 0) > 0):
+        out["allowance_accrual"] = await employee_pay.accrue_allowances(
+            db, doc.get("company_id") or "",
+            employee_id=doc["_id"],
+            as_of=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            generate_payroll_fn=generate_payroll,
+        )
+    return out
 
 EMPLOYEE_UPDATABLE = {"full_name", "tc_kimlik", "department", "position", "phone", "email", "salary", "pay_type", "daily_wage", "start_date", "end_date", "status", "annual_leave_days", "used_leave_days",
                       "payroll_salary", "second_salary", "overtime_method", "overtime_hourly_rate", "work_schedule", "location_tracking", "photo_url", "notes", "iban", "birth_date", "address", "emergency_contact",
@@ -15347,8 +15364,9 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
     unpaid_expenses = round(sum(_emp_num(e.get("total")) for e in expenses if e.get("payment_status") != "paid"), 2)
     meal = round(_emp_num(emp.get("meal_allowance")), 2)
     transport = round(_emp_num(emp.get("transport_allowance")), 2)
-    meal_due = _allowance_due(meal, MEAL_CAT, expenses, month)
-    transport_due = _allowance_due(transport, TRANSPORT_CAT, expenses, month)
+    # Yemek/yol yalnızca hak ediş günü gelince alacağa düşer (maaş slotları ile aynı).
+    meal_due = employee_pay.entitlement_allowance_due(emp, meal, MEAL_CAT, expenses, month)
+    transport_due = employee_pay.entitlement_allowance_due(emp, transport, TRANSPORT_CAT, expenses, month)
     bonus_pending = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") not in ("advance", "borc", "bakiye", "overtime") and b.get("status") != "paid"), 2)
     payroll_adv = round(sum(_emp_num(p.get("advance_payment")) for p in payrolls if p.get("status") != "paid"), 2)
     advances = round(sum(_emp_num(b.get("amount")) for b in bonuses if attendance.bonus_counts_as_advance(b) and str(b.get("period") or "").startswith(month)), 2)
@@ -15500,8 +15518,25 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
     # SGK sicili varsa IBAN zorunlu (güncelleme sonrası nihai durum)
     if upd:
         existing = await db.employees.find_one({"_id": emp_id}) or {}
+        allowance_keys = {"meal_allowance", "transport_allowance", "pay_start_date", "pay_day", "pay_recurring"}
+        if allowance_keys & upd.keys():
+            pay_fields = employee_pay.prepare_employee_pay({
+                "pay_start_date": upd["pay_start_date"] if "pay_start_date" in upd else existing.get("pay_start_date"),
+                "pay_day": upd["pay_day"] if "pay_day" in upd else existing.get("pay_day"),
+                "pay_recurring": upd["pay_recurring"] if "pay_recurring" in upd else existing.get("pay_recurring"),
+            }, fill_start=(
+                ("meal_allowance" in upd or "transport_allowance" in upd)
+                and not existing.get("pay_start_date")
+                and "pay_start_date" not in upd
+            ))
+            for k in ("pay_start_date", "pay_day", "pay_recurring"):
+                if k in pay_fields and (k in upd or pay_fields.get(k) != existing.get(k)):
+                    upd[k] = pay_fields[k]
         if upd.get("pay_start_date"):
-            upd["pay_day"] = int(str(upd["pay_start_date"])[8:10])
+            try:
+                upd["pay_day"] = int(str(upd["pay_start_date"])[8:10])
+            except (TypeError, ValueError):
+                pass
         final_sgk = upd["sgk_number"] if "sgk_number" in upd else existing.get("sgk_number")
         final_iban = upd["iban"] if "iban" in upd else existing.get("iban")
         if str(final_sgk or "").strip() and not _norm_iban(final_iban):
@@ -15509,12 +15544,17 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
         upd["updated_at"] = datetime.now(timezone.utc).isoformat()
         await db.employees.update_one({"_id": emp_id}, {"$set": upd})
         merged = {**(existing or {}), **upd}
-        if merged.get("pay_start_date") and (merged.get("meal_allowance") or merged.get("transport_allowance")):
-            await employee_pay.accrue_allowances(
+        res = await db.employees.find_one({"_id": emp_id})
+        out = clean_doc(res)
+        if allowance_keys & upd.keys() and merged.get("pay_start_date") and (
+            float(merged.get("meal_allowance") or 0) > 0 or float(merged.get("transport_allowance") or 0) > 0
+        ):
+            out["allowance_accrual"] = await employee_pay.accrue_allowances(
                 db, merged.get("company_id") or existing.get("company_id"),
                 employee_id=emp_id, as_of=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                force_start=True, generate_payroll_fn=generate_payroll,
+                generate_payroll_fn=generate_payroll,
             )
+        return out
     res = await db.employees.find_one({"_id": emp_id})
     return clean_doc(res)
 

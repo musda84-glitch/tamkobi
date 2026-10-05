@@ -1,4 +1,5 @@
 import {
+  employeeAllowanceSaveMessage,
   employeeDueLines,
   employeePayKindLabel,
   employeePayKindsForSubmit,
@@ -48,5 +49,15 @@ describe("employeePay", () => {
     expect(employeePayModalTitle("overtime", { full_name: "Ali" })).toBe("Mesai — Ali");
     expect(employeePayModalTitle("advance", { full_name: "Ali" })).toBe("Avans — Ali");
     expect(employeePayKindsForSubmit("split", lines.filter((l) => l.key !== "salary"), ["salary"])).toEqual(["salary"]);
+  });
+
+  it("formats yemek/yol hak ediş save toast like partner salary", () => {
+    expect(employeeAllowanceSaveMessage(null, "2026-11-01")).toBe("Ücret ve mesai bilgileri kaydedildi.");
+    expect(employeeAllowanceSaveMessage({ posted_count: 0, scheduled_date: "2026-11-01" }, "2026-11-01")).toBe(
+      "Kaydedildi. 01.11.2026 tarihinde yemek/yol alacağa yazılacak.",
+    );
+    expect(employeeAllowanceSaveMessage({ posted_count: 2, message: "2 hak ediş masrafı yazıldı." })).toBe(
+      "2 hak ediş masrafı yazıldı.",
+    );
   });
 });
