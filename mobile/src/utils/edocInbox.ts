@@ -45,10 +45,8 @@ export type EdocInboxList = {
 
 export const EDOC_FILTERS = [
   { key: "pending", label: "Bekleyen" },
-  { key: "approved", label: "İçeri alınan" },
   { key: "rejected", label: "Reddedilen" },
   { key: "ignored", label: "Dikkate alınmayan" },
-  { key: "", label: "Tümü" },
 ] as const;
 
 export function edocStatusTr(status?: string | null): string {

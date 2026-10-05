@@ -9,7 +9,7 @@ import {
 import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { fmtDate, formatTrAmount } from "../utils/money";
-import { uniqueInboxItems } from "../utils/edocInbox";
+import { INBOX_STATUS_FILTERS, inboxItemsOfKind, inboxKindFromQuery, inboxStatusKey, processStockChoice } from "../utils/edocInbox";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const STATUS = {
@@ -48,7 +48,7 @@ function isProcessable(doc) {
 export default function EdocInboxPage() {
   const { activeCompany } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const kindFilter = String(searchParams.get("kind") || "all").toLowerCase();
+  const kindFilter = inboxKindFromQuery(searchParams.get("kind"));
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("pending");
@@ -56,11 +56,10 @@ export default function EdocInboxPage() {
   const [contacts, setContacts] = useState([]);
   const [products, setProducts] = useState([]);
   const [busy, setBusy] = useState("");
+  const [createStockCards, setCreateStockCards] = useState(false);
   const [opts, setOpts] = useState({
     update_stock: true,
     update_cost: true,
-    allow_unmatched: true,
-    auto_create_products: true,
   });
   const [pullNote, setPullNote] = useState(null);
   const [xml, setXml] = useState(null);
@@ -69,7 +68,7 @@ export default function EdocInboxPage() {
   const integrator = providerLabel(einvoice?.provider, einvoice?.provider_name);
 
   const load = useCallback(() => axios
-    .get(`${API_URL}/edocs/inbox`, { params: { company_id: companyId, status: status || undefined } })
+    .get(`${API_URL}/edocs/inbox`, { params: { company_id: companyId, status: inboxStatusKey(status) } })
     .then((r) => {
       setData(r.data);
       setSel((prev) => (prev ? r.data.items.find((i) => i.id === prev.id) || null : null));
@@ -215,11 +214,13 @@ export default function EdocInboxPage() {
     return { data: { message: "Satır eşleştirildi." } };
   }));
 
-  const processOne = (docId) => act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/process`, opts).then((r) => {
+  const processPayload = () => ({ ...opts, ...processStockChoice(createStockCards) });
+
+  const processOne = (docId) => act(() => axios.post(`${API_URL}/edocs/inbox/${docId}/process`, processPayload()).then((r) => {
     setSel((prev) => (prev?.id === docId ? null : prev));
-    setStatus("approved");
+    setStatus("pending");
     return r;
-  }), "Belge içeri alındı.");
+  }), "Gelen faturaya alındı. Faturalar listesinde görünür.");
 
   const rejectOne = (docId) => {
     const reason = window.prompt("Ret nedeni (opsiyonel):", "");
@@ -254,28 +255,24 @@ export default function EdocInboxPage() {
   }), "Eşleşmeyen stok kartları oluşturuldu.");
 
   const processPending = () => {
-    if (!window.confirm("Bekleyen okunabilir belgeler toplu içeri alınacak (tedarikçi yoksa oluşturulur; işaretliyse eksik stok kartları açılır). Devam?")) return;
-    act(() => axios.post(`${API_URL}/edocs/inbox/process-pending`, opts, {
+    const stockHint = createStockCards ? "eşleşmeyen kalemler için stok kartı açılır" : "stok kartı açılmaz, eşleşmeyenler hizmet kalemi olur";
+    if (!window.confirm(`Bekleyen okunabilir belgeler gelen faturaya alınacak (${stockHint}). Devam?`)) return;
+    act(() => axios.post(`${API_URL}/edocs/inbox/process-pending`, processPayload(), {
       params: { company_id: companyId },
     }).then((r) => {
-      setStatus("approved");
+      setStatus("pending");
       return r;
-    }), "Toplu içeri alma tamamlandı.");
+    }), "Toplu içeri alma tamamlandı. Gelen faturalar Faturalar listesinde.");
   };
 
   const setKindFilter = (kind) => {
     const next = new URLSearchParams(searchParams);
-    if (!kind || kind === "all") next.delete("kind");
-    else next.set("kind", kind);
+    if (kind === "dispatch") next.set("kind", "dispatch");
+    else next.delete("kind");
     setSearchParams(next, { replace: true });
   };
 
-  const filteredItems = useMemo(() => {
-    const items = uniqueInboxItems(data?.items || []);
-    if (kindFilter === "dispatch") return items.filter((d) => d.kind === "dispatch");
-    if (kindFilter === "invoice") return items.filter((d) => d.kind !== "dispatch");
-    return items;
-  }, [data, kindFilter]);
+  const filteredItems = useMemo(() => inboxItemsOfKind(data?.items || [], kindFilter), [data, kindFilter]);
 
   return (
     <div className="space-y-4" data-testid="edoc-inbox-page">
@@ -285,7 +282,7 @@ export default function EdocInboxPage() {
             <Inbox className="w-6 h-6 text-indigo-600" /> Gelen e-Belgeler
           </h1>
           <p className="text-xs text-slate-500">
-            {integrator} gelen kutusu otomatik çekilir; XML/PDF belgeler <b>İçeri Al</b> ile alış faturasına dönüşür. Manuel çekim veya yükleme de aynı akışı kullanır.
+            {integrator} gelen kutusu bekleyenlere düşer. Tedarikçi ve stok eşleşmesini burada yapın; içeri alınca yalnızca Faturalar → Gelen e-Fatura’da görünür.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -301,7 +298,7 @@ export default function EdocInboxPage() {
           </button>
           {status === "pending" && (data?.counts?.pending || 0) > 0 && (
             <button type="button" onClick={processPending} disabled={busy === "act"} className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="edoc-process-pending">
-              <Download className="w-4 h-4" /> Bekleyenleri içeri al
+              <Download className="w-4 h-4" /> Bekleyenleri gelen faturaya al
             </button>
           )}
           <label className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer" data-testid="edoc-upload-label">
@@ -349,29 +346,22 @@ export default function EdocInboxPage() {
       )}
 
       <div className="flex flex-wrap gap-2 text-xs">
-        {[["pending", "Bekleyen"], ["approved", "İçeri alınan"], ["rejected", "Reddedilen"], ["ignored", "Dikkate alınmayan"], ["", "Tümü"]].map(([k, l]) => (
-          <button key={k || "all"} type="button" onClick={() => setStatus(k)} className={`px-3 py-1.5 rounded-lg border font-semibold ${status === k ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200 text-slate-600"}`} data-testid={`edoc-filter-${k || "all"}`}>
-            {l}{k && data ? ` (${data.counts?.[k] ?? 0})` : ""}
+        {INBOX_STATUS_FILTERS.map(([k, l]) => (
+          <button key={k} type="button" onClick={() => setStatus(k)} className={`px-3 py-1.5 rounded-lg border font-semibold ${status === k ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200 text-slate-600"}`} data-testid={`edoc-filter-${k}`}>
+            {l}{data ? ` (${data.counts?.[k] ?? 0})` : ""}
           </button>
         ))}
       </div>
 
       <div className="flex flex-wrap gap-2 text-xs" data-testid="edoc-kind-filters">
-        {[
-          ["all", "Tüm belgeler"],
-          ["invoice", "Gelen e-Fatura"],
-          ["dispatch", "Gelen e-İrsaliye"],
-        ].map(([k, l]) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setKindFilter(k)}
-            className={`px-3 py-1.5 rounded-lg border font-semibold ${kindFilter === k || (k === "all" && !["invoice", "dispatch"].includes(kindFilter)) ? "bg-indigo-700 text-white border-indigo-700" : "bg-white border-slate-200 text-slate-600"}`}
-            data-testid={`edoc-kind-${k}`}
-          >
-            {l}
-          </button>
-        ))}
+        <button
+          type="button"
+          onClick={() => setKindFilter(kindFilter === "dispatch" ? "invoice" : "dispatch")}
+          className={`px-3 py-1.5 rounded-lg border font-semibold ${kindFilter === "dispatch" ? "bg-indigo-700 text-white border-indigo-700" : "bg-white border-slate-200 text-slate-600"}`}
+          data-testid="edoc-kind-dispatch"
+        >
+          Gelen e-İrsaliye
+        </button>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-3 text-xs">
@@ -379,7 +369,7 @@ export default function EdocInboxPage() {
           {!data ? (
             <div className="p-6 text-slate-400">Yükleniyor…</div>
           ) : filteredItems.length === 0 ? (
-            <div className="p-8 text-center text-slate-400" data-testid="edoc-empty">Belge yok. {integrator} üzerinden çekin veya UBL XML / PDF yükleyin.</div>
+            <div className="p-8 text-center text-slate-400" data-testid="edoc-empty">Belge yok. {integrator} üzerinden çekin veya UBL XML / PDF yükleyin. İçeri alınanlar Faturalar → Gelen e-Fatura’dadır.</div>
           ) : filteredItems.map((d) => (
             <div key={d.id} className={`flex items-stretch ${sel?.id === d.id ? "bg-indigo-50/60" : "hover:bg-slate-50"}`}>
               <button type="button" onClick={() => { setSel(d); setXml(null); }} className="flex-1 text-left p-3" data-testid={`edoc-item-${d.id}`}>
@@ -549,7 +539,7 @@ export default function EdocInboxPage() {
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2" data-testid="edoc-stock-match-bar">
                   <PackagePlus className="w-4 h-4 text-amber-700 shrink-0" />
                   <span className="text-[11px] text-amber-900 flex-1">
-                    {(sel.lines || []).filter((l) => !l.product_id).length} satır stok kartıyla eşleşmedi. Satırdan seçin veya kart oluşturun.
+                    {(sel.lines || []).filter((l) => !l.product_id).length} satır stok kartıyla eşleşmedi. Gelen faturaya almadan önce satırdan eşleştirin veya kart açın.
                   </span>
                   <button
                     type="button"
@@ -564,27 +554,25 @@ export default function EdocInboxPage() {
               )}
 
               {sel.status === "pending" ? (
-                <div className="flex flex-wrap items-center gap-3 pt-2 border-t">
-                  <label className="flex items-center gap-1" title="İçeri alırken eşleşmeyen satırlar için stok kartı açılır">
-                    <input
-                      type="checkbox"
-                      checked={opts.auto_create_products}
-                      onChange={(e) => setOpts({ ...opts, auto_create_products: e.target.checked, allow_unmatched: e.target.checked ? false : opts.allow_unmatched })}
-                      data-testid="edoc-opt-auto-products"
-                    />
-                    Stok kartı olmayanları otomatik kaydet
-                  </label>
+                <div className="space-y-3 pt-2 border-t">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2" data-testid="edoc-stock-choice">
+                    <div className="text-[11px] font-semibold text-slate-700">Gelen faturaya alırken stok kartı</div>
+                    <label className="flex items-start gap-2">
+                      <input type="radio" name="edoc-stock-choice" className="mt-0.5" checked={!createStockCards} onChange={() => setCreateStockCards(false)} data-testid="edoc-opt-no-stock-cards" />
+                      <span>Stok kartı açmadan al — eşleşmeyen kalemler hizmet satırı olur</span>
+                    </label>
+                    <label className="flex items-start gap-2">
+                      <input type="radio" name="edoc-stock-choice" className="mt-0.5" checked={createStockCards} onChange={() => setCreateStockCards(true)} data-testid="edoc-opt-auto-products" />
+                      <span>Stok kartı açarak al — eşleşmeyen kalemler için kart oluşturulur</span>
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
                   <label className="flex items-center gap-1">
                     <input type="checkbox" checked={opts.update_stock} onChange={(e) => setOpts({ ...opts, update_stock: e.target.checked })} data-testid="edoc-opt-stock" /> Stok girişi yap
                   </label>
                   <label className="flex items-center gap-1">
                     <input type="checkbox" checked={opts.update_cost} onChange={(e) => setOpts({ ...opts, update_cost: e.target.checked })} /> Alış fiyatını güncelle
                   </label>
-                  {!opts.auto_create_products && (
-                    <label className="flex items-center gap-1">
-                      <input type="checkbox" checked={opts.allow_unmatched} onChange={(e) => setOpts({ ...opts, allow_unmatched: e.target.checked })} data-testid="edoc-opt-unmatched" /> Eşleşmeyenleri hizmet kalemi olarak al
-                    </label>
-                  )}
                   <div className="ml-auto flex flex-wrap gap-2">
                     <button
                       type="button"
@@ -611,11 +599,12 @@ export default function EdocInboxPage() {
                       disabled={busy === "act" || !isProcessable(sel)}
                       className="px-5 py-2 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
                       data-testid="edoc-process"
-                      title="Onayla ve alış faturasına içeri al"
+                      title="Eşleştirmeyi kaydeder ve Faturalar → Gelen e-Fatura’ya alır"
                     >
                       {busy === "act" ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                      Onayla / İçeri Al
+                      Gelen faturaya al
                     </button>
+                  </div>
                   </div>
                 </div>
               ) : (

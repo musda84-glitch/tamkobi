@@ -114,9 +114,9 @@ export function EdocInboxScreen() {
       <Row style={{ flexWrap: "wrap" }}>
         {EDOC_FILTERS.map((f) => (
           <Chip
-            key={f.key || "all"}
-            testID={`edoc-filter-${f.key || "all"}`}
-            label={f.key && data?.counts ? `${f.label} (${Number((data.counts as Record<string, number | undefined>)[f.key]) || 0})` : f.label}
+            key={f.key}
+            testID={`edoc-filter-${f.key}`}
+            label={data?.counts ? `${f.label} (${Number((data.counts as Record<string, number | undefined>)[f.key]) || 0})` : f.label}
             active={status === f.key}
             onPress={() => setStatus(f.key)}
           />
