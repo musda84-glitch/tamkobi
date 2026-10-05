@@ -18,6 +18,7 @@ import { BuildStamp } from "./BuildStamp";
 import AppSidebarNav from "./AppSidebarNav";
 import { DataExportIconButton } from "./DataExportPanel";
 import { SupportContactBar } from "./SupportContactBar";
+import { PanelBoundary } from "./saas/PanelBoundary";
 import { useNavCounts } from "../hooks/useNavCounts";
 
 import {
@@ -379,7 +380,9 @@ export default function MainLayout({ children, onOpenQuickAction }) {
           ) : lockedModule ? (
             <ModuleLockedPanel path={location.pathname} license={license} companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />
           ) : (
-            children
+            <PanelBoundary key={location.pathname} label="Sayfa">
+              {children}
+            </PanelBoundary>
           )}
         </main>
       </div>

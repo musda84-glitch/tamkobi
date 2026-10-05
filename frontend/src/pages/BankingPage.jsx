@@ -8,7 +8,7 @@ import { cachedList } from "../utils/dataSync";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
-import { canUploadBankStatement } from "../utils/bankStatementUpload";
+import { asContactList, canUploadBankStatement } from "../utils/bankStatementUpload";
 import { matchActorTitle, matchStatusLabel } from "../utils/bankMatchLabel";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
@@ -132,7 +132,7 @@ export default function BankingPage() {
       ]);
       setAccounts(accRes.data);
       setTransactions(transactions);
-      setContacts(contacts);
+      setContacts(asContactList(contacts));
       setPartnerSummary(psRes.data);
       // Virman: entegre olmayan tüm hesaplar (kasa/banka/POS/kredi kartı). Ortaklar hesap değil, listede yok.
       const manual = accRes.data.filter((a) => !a.is_integrated);
@@ -497,12 +497,12 @@ export default function BankingPage() {
                       </div>
                     )}
                     {isCard && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit" data-testid={`card-no-collect-${accId}`}>Tahsilat kapalı · masraf / ekstre</div>}
-                    {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺` : "Limit —"}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ""}</span><button onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
+                    {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺` : "Limit —"}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ""}</span><button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
                     {canUploadBankStatement(acc) && (
                       <div className="mt-1 flex items-center justify-end">
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }}
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }}
                           className="text-[10px] font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 px-2 py-0.5 rounded-md"
                           title="PDF, Excel veya CSV hesap hareketi yükle"
                           data-testid={`bank-stmt-btn-${accId}`}
@@ -974,7 +974,7 @@ export default function BankingPage() {
       {stmtAccount && (
         <CardStatementImport
           account={stmtAccount}
-          contacts={contacts}
+          contacts={asContactList(contacts)}
           initialFile={stmtFile}
           onClose={() => { setStmtAccount(null); setStmtFile(null); }}
           onDone={bumpCashData}
