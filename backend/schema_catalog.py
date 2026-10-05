@@ -316,7 +316,7 @@ COLLECTIONS = {
     "bank_transactions": {
         "scope": SCOPE_TENANT,
         "description": "Tahsilat, tediye, virman.",
-        "keys": ("_id", "company_id", "account_id", "type", "amount", "contact_id", "related_invoice_id", "date"),
+        "keys": ("_id", "company_id", "account_id", "type", "amount", "contact_id", "related_invoice_id", "date", "matched_by_id"),
         "refs": ("bank_accounts._id", "contacts._id", "invoices._id"),
     },
     "bank_connections": {

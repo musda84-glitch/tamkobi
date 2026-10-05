@@ -336,6 +336,10 @@ class BankTransaction(BaseDocument):
     match_status: Optional[str] = None  # unmatched, matched
     suggested_contact_id: Optional[str] = None
     suggested_contact_name: Optional[str] = None
+    matched_via: Optional[str] = None
+    matched_at: Optional[str] = None
+    matched_by_id: Optional[str] = None
+    matched_by_name: Optional[str] = None
     date: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
