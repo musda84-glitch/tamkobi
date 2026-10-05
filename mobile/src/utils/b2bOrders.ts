@@ -37,6 +37,24 @@ export function trackingLabel(status?: string | null): string {
   return TRACK_STEP_TR[s] || s || "Kargo bekleniyor";
 }
 
+/** Üretimdeyken kargo yerine aşamalar; kargo çıktıysa veya teslimde üretim gizlenir. */
+export function orderShowsProduction(o: Pick<Order, "order_status" | "tracking" | "production"> | null | undefined): boolean {
+  const p = o?.production;
+  if (!p?.status) return false;
+  const ost = String(o?.order_status || "").toLowerCase();
+  if (["cancelled", "delivered", "completed", "shipped", "returned", "partially_returned"].includes(ost)) return false;
+  if (o?.tracking && !p.active) return false;
+  return true;
+}
+
+export function b2bOrderStatusLabel(
+  o: Pick<Order, "order_status" | "tracking" | "production"> | null | undefined,
+  fallback: string,
+): string {
+  if (orderShowsProduction(o)) return o?.production?.status_label || "Üretimde";
+  return fallback;
+}
+
 export function invoiceRemaining(i: Pick<B2BInvoice, "grand_total" | "paid_amount">): number {
   return Math.max(0, Number(i.grand_total || 0) - Number(i.paid_amount || 0));
 }

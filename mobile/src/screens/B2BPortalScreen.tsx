@@ -9,6 +9,7 @@ import { B2BAiCartPanel } from "../components/b2b/B2BAiCartPanel";
 import { B2BMobileCartBar } from "../components/b2b/B2BMobileCartBar";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { B2BTopBar } from "../components/b2b/B2BTopBar";
+import { B2BProductionCard } from "../components/b2b/B2BProductionCard";
 import { B2BTrackingCard } from "../components/b2b/B2BTrackingCard";
 import { BarcodeScannerModal } from "../components/BarcodeScannerModal";
 import { confirmAction } from "../components/chips";
@@ -29,6 +30,8 @@ import {
   installmentRemaining,
   installmentTitle,
   invoiceRemaining,
+  b2bOrderStatusLabel,
+  orderShowsProduction,
   payStatus,
   previewLineCode,
   previewLineImage,
@@ -889,17 +892,24 @@ export function B2BPortalScreen() {
                 );
               }
               const extra = cancelBadge(o);
+              const showProd = orderShowsProduction(o);
+              const statusLabel = b2bOrderStatusLabel(o, orderStatusLabel(o, statusTr(o.order_status)));
+              const statusTone = o.order_status === "cancelled" ? "red" : o.order_status === "delivered" || o.production?.status === "completed" ? "green" : showProd ? "amber" : "amber";
               return (
                 <Card key={oid} testID={`b2b-order-${o.order_number}`}>
                   <Row style={{ justifyContent: "space-between" }}>
                     <Text style={{ fontWeight: "800", color: colors.text }}>{o.order_number}</Text>
-                    <Badge label={orderStatusLabel(o, statusTr(o.order_status))} tone={o.order_status === "cancelled" ? "red" : o.order_status === "delivered" ? "green" : "amber"} />
+                    <Badge label={statusLabel} tone={statusTone} />
                   </Row>
                   {extra ? <Badge label={extra} tone="amber" /> : null}
                   <Muted>{fmtDate(o.order_date)}{o.customer_order_number ? ` · Sizin no ${o.customer_order_number}` : ""}</Muted>
                   <Muted>{(o.items || []).map((it) => formatOrderItemLabel(it as { quantity?: number; product_name?: string; name?: string; note?: string })).join(", ")}</Muted>
                   <Text style={{ fontWeight: "800", color: colors.text }}>{fmtMoney(b2bOrderGross(o))}</Text>
-                  <B2BTrackingCard tracking={o.tracking} orderNumber={o.order_number} />
+                  {showProd && o.production ? (
+                    <B2BProductionCard production={o.production} orderNumber={o.order_number} />
+                  ) : (
+                    <B2BTrackingCard tracking={o.tracking} orderNumber={o.order_number} />
+                  )}
                   <Row style={{ flexWrap: "wrap", gap: 6, marginTop: 6 }}>
                     <Pressable testID={`b2b-order-preview-${o.order_number}`} onPress={() => setPreview(o)}>
                       <Text style={{ color: colors.indigo, fontWeight: "800" }}>Önizle</Text>

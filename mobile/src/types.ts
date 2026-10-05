@@ -230,6 +230,25 @@ export type Order = {
     shipped_at?: string;
     is_late?: boolean;
   } | null;
+  production?: {
+    status?: string;
+    status_label?: string;
+    active?: boolean;
+    order_code?: string | null;
+    product_name?: string | null;
+    done?: number;
+    total?: number;
+    current_step_name?: string | null;
+    steps?: Array<{
+      no?: number;
+      name?: string;
+      station?: string;
+      status?: string;
+      done?: boolean;
+      current?: boolean;
+      note?: string;
+    }>;
+  } | null;
 };
 
 export type Product = {

@@ -62,7 +62,11 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
             </div>
             <div className="text-right text-slate-500">
               <div>{(order.order_date || "").slice(0, 10)}</div>
-              <div className="font-semibold text-slate-700">{orderStatusLabel(order, statusTr(order.order_status))}</div>
+              <div className="font-semibold text-slate-700">
+                {order?.production?.active
+                  ? (order.production.status_label || "Üretimde")
+                  : orderStatusLabel(order, statusTr(order.order_status))}
+              </div>
             </div>
           </div>
           <div className="divide-y border rounded-xl overflow-hidden">
