@@ -6,6 +6,10 @@ import {
   monthDateList,
   puantajDayLine,
   puantajStatusLabel,
+  puantajWageAskCopy,
+  puantajWageAskReason,
+  puantajWageCanAsk,
+  puantajWageDecisionPath,
 } from "./puantajMonth";
 
 describe("puantajMonth", () => {
@@ -53,5 +57,29 @@ describe("puantajMonth", () => {
     expect(leaveYearArchiveLine({ year: 2025, used: 10, remaining: 4, carry_over: 4 })).toBe(
       "2025 · kullanılan 10g · kalan 4g · devir 4g",
     );
+  });
+
+  test("asks kes / kesme when late wage is still undecided", () => {
+    const day = {
+      date: "2026-10-01",
+      status: "present",
+      attendance_id: "att-1",
+      late_minutes: 10,
+      wage: 1058.66,
+      wage_full: 1080,
+      wage_proposed: 1058.66,
+      wage_ask: true,
+    };
+    expect(puantajWageCanAsk(day)).toBe(true);
+    expect(puantajWageAskReason(day)).toBe("10 dk geç");
+    expect(puantajWageAskCopy(day, (n) => String(n))).toMatchObject({
+      title: "Ücret kesintisi",
+      kes: "Ücret kes",
+      kesme: "Ücret kesme",
+    });
+    expect(puantajWageAskCopy(day, (n) => String(n)).body).toContain("1058.66");
+    expect(puantajWageDecisionPath(day)).toBe("/personnel/attendance/att-1/yevmiye-decision");
+    expect(puantajWageCanAsk({ ...day, wage_adjustment_status: "approved" })).toBe(false);
+    expect(puantajWageCanAsk({ ...day, attendance_id: null, wage_ask: false })).toBe(false);
   });
 });

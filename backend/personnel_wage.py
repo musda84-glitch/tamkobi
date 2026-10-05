@@ -155,6 +155,75 @@ def calculated_day_wage(emp: dict | None, rec: dict | None = None, schedule: dic
     return round(full, 2)
 
 
+def pending_yevmiye_adjustment(
+    emp: dict | None,
+    rec: dict | None = None,
+    schedule: dict | None = None,
+    now: str | None = None,
+) -> dict | None:
+    """Geç/erken kesintisi için yönetici onayı bekleyen yevmiye kaydı (bonus şart değil)."""
+    rec = rec or {}
+    emp = emp or {}
+    full = _num(rec.get("yevmiye_full_amount"), reference_daily_wage(emp)) or reference_daily_wage(emp)
+    late = int(rec.get("late_minutes") or 0)
+    early = int(rec.get("early_leave_minutes") or 0)
+    snap = rec.get("schedule_snapshot") if isinstance(rec.get("schedule_snapshot"), dict) else None
+    proposed = yevmiye_adjusted_amount(full, late, early, scheduled_work_minutes(schedule, snap))
+    if not yevmiye_adjustment_needed(late, early) or proposed >= full:
+        return None
+    prev = rec.get("yevmiye_adjustment_request") or {}
+    prev_status = str(prev.get("status") or "").strip().lower()
+    if prev_status in ("approved", "rejected") and int(prev.get("late_minutes") or 0) == late and int(prev.get("early_leave_minutes") or 0) == early:
+        return None
+    if prev_status == "pending":
+        return {
+            **prev,
+            "status": "pending",
+            "full_amount": full,
+            "proposed_amount": proposed,
+            "late_minutes": late,
+            "early_leave_minutes": early,
+        }
+    return {
+        "status": "pending",
+        "full_amount": full,
+        "proposed_amount": proposed,
+        "late_minutes": late,
+        "early_leave_minutes": early,
+        "requested_at": prev.get("requested_at") or now,
+    }
+
+
+def puantaj_day_wage_fields(emp: dict | None, rec: dict | None = None, schedule: dict | None = None) -> dict:
+    """Puantaj gün satırı: görünen ücret + kes/kesme sorusu alanları."""
+    rec = rec or {}
+    wage = calculated_day_wage(emp, rec, schedule)
+    full = _num(rec.get("yevmiye_full_amount"), reference_daily_wage(emp)) or reference_daily_wage(emp)
+    adj = rec.get("yevmiye_adjustment_request") or {}
+    status = str(adj.get("status") or "").strip().lower()
+    late = int(rec.get("late_minutes") or 0)
+    early = int(rec.get("early_leave_minutes") or 0)
+    snap = rec.get("schedule_snapshot") if isinstance(rec.get("schedule_snapshot"), dict) else None
+    proposed = round(full, 2)
+    if adj.get("proposed_amount") is not None:
+        try:
+            proposed = round(float(adj.get("proposed_amount")), 2)
+        except (TypeError, ValueError):
+            proposed = round(full, 2)
+    elif yevmiye_adjustment_needed(late, early):
+        proposed = yevmiye_adjusted_amount(full, late, early, scheduled_work_minutes(schedule, snap))
+    decided = status in ("approved", "rejected")
+    ask = (not decided) and yevmiye_adjustment_needed(late, early) and proposed + 0.009 < full
+    return {
+        "wage": wage,
+        "wage_full": round(full, 2) if full else 0.0,
+        "wage_proposed": proposed,
+        "wage_adjustment_status": status,
+        "wage_ask": bool(ask),
+        "early_leave_minutes": early,
+    }
+
+
 def _num(v: Any, default: float = 0.0) -> float:
     try:
         return float(v)

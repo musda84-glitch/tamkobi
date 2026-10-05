@@ -2025,8 +2025,14 @@ def enrich_puantaj_day_wages(days: list, records: list, employee: dict, schedule
             d["overtime_pay"] = 0.0
             continue
         rec = by_date.get(d.get("date") or "")
-        wage = personnel_wage.calculated_day_wage(employee, rec, schedule)
+        fields = personnel_wage.puantaj_day_wage_fields(employee, rec, schedule)
+        wage = fields["wage"]
         d["wage"] = wage
+        d["wage_full"] = fields["wage_full"]
+        d["wage_proposed"] = fields["wage_proposed"]
+        d["wage_adjustment_status"] = fields["wage_adjustment_status"]
+        d["wage_ask"] = fields["wage_ask"]
+        d["early_leave_minutes"] = fields["early_leave_minutes"]
         wage_total += wage
         ot_h = float(d.get("overtime_hours") or 0)
         if ot_h > 0:
@@ -2133,6 +2139,7 @@ def build_employee_month_days(
             "hours": float((rec or {}).get("hours") or 0),
             "overtime_hours": round(assigned if assigned > 0 else computed, 2),
             "late_minutes": int((rec or {}).get("late_minutes") or 0),
+            "early_leave_minutes": int((rec or {}).get("early_leave_minutes") or 0),
             "leave_type": (lv or {}).get("type") if lv else (rec or {}).get("status") if (rec or {}).get("status") == "leave" else None,
             "leave_label": LEAVE_TYPES.get((lv or {}).get("type"), (lv or {}).get("type")) if lv else None,
             "note": (rec or {}).get("note") or (lv or {}).get("reason"),
@@ -3757,7 +3764,16 @@ async def decide_yevmiye_adjustment(att_id: str, req: Dict[str, Any], request: R
         raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     adj = rec.get("yevmiye_adjustment_request") or {}
     if adj.get("status") != "pending":
-        raise HTTPException(status_code=400, detail="Bekleyen yevmiye düzeltmesi yok.")
+        if str(adj.get("status") or "").strip().lower() in ("approved", "rejected"):
+            raise HTTPException(status_code=400, detail="Bekleyen yevmiye düzeltmesi yok.")
+        emp_for_adj = await _db.employees.find_one({"_id": rec.get("employee_id")}) or {}
+        company = await _db.companies.find_one({"_id": rec.get("company_id") or emp_for_adj.get("company_id")}) or {}
+        schedule = merge_schedule(company, emp_for_adj)
+        payload = personnel_wage.pending_yevmiye_adjustment(emp_for_adj, rec, schedule, now=_now())
+        if not payload:
+            raise HTTPException(status_code=400, detail="Bekleyen yevmiye düzeltmesi yok.")
+        adj = payload
+        rec["yevmiye_adjustment_request"] = adj
     decision = (req.get("decision") or "").strip().lower()
     if decision not in ("approve", "reject", "approved", "rejected"):
         raise HTTPException(status_code=400, detail="decision: approve veya reject olmalı.")
@@ -3772,7 +3788,10 @@ async def decide_yevmiye_adjustment(att_id: str, req: Dict[str, Any], request: R
         "decided_by": str(user.get("_id") or user.get("id") or ""),
         "final_amount": final_amt,
     }
-    await _db.attendance.update_one({"_id": att_id}, {"$set": {"yevmiye_adjustment_request": adj, "updated_at": _now()}})
+    patch = {"yevmiye_adjustment_request": adj, "updated_at": _now()}
+    if full_amt and not rec.get("yevmiye_full_amount"):
+        patch["yevmiye_full_amount"] = full_amt
+    await _db.attendance.update_one({"_id": att_id}, {"$set": patch})
     bid = rec.get("yevmiye_bonus_id")
     if bid:
         note = f"Görev yevmiye · {personnel_wage.wage_line(1, final_amt)}"

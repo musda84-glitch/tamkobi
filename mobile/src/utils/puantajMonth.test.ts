@@ -6,6 +6,10 @@ import {
   puantajDayLine,
   puantajStatusLabel,
   puantajStatusTone,
+  puantajWageAskCopy,
+  puantajWageAskReason,
+  puantajWageCanAsk,
+  puantajWageDecisionPath,
 } from "./puantajMonth";
 
 describe("puantajMonth", () => {
@@ -33,5 +37,23 @@ describe("puantajMonth", () => {
     expect(leaveYearArchiveLine({ year: 2025, used: 4, remaining: 10, carry_over: 2 })).toMatch(/2025/);
     expect(movesSheetTitle("puantaj")).toBe("Personel puantajı");
     expect(movesSheetTitle("location")).toBe("Konum hareketleri");
+    const lateDay = {
+      date: "2026-10-01",
+      weekday: 3,
+      weekday_label: "Per",
+      status: "present",
+      status_label: "Çalıştı",
+      attendance_id: "att-1",
+      late_minutes: 10,
+      wage: 1058.66,
+      wage_full: 1080,
+      wage_proposed: 1058.66,
+      wage_ask: true,
+    };
+    expect(puantajWageCanAsk(lateDay)).toBe(true);
+    expect(puantajWageAskReason(lateDay)).toBe("10 dk geç");
+    expect(puantajWageAskCopy(lateDay, (n) => String(n)).kes).toBe("Ücret kes");
+    expect(puantajWageAskCopy(lateDay, (n) => String(n)).kesme).toBe("Ücret kesme");
+    expect(puantajWageDecisionPath(lateDay)).toBe("/personnel/attendance/att-1/yevmiye-decision");
   });
 });

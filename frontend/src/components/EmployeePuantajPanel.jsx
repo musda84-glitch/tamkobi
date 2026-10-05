@@ -9,9 +9,14 @@ import {
   leaveYearArchiveLine,
   PUANTAJ_WEEKDAYS,
   puantajStatusTone,
+  puantajWageAskCopy,
+  puantajWageAskReason,
+  puantajWageCanAsk,
+  puantajWageDecisionPath,
 } from "../utils/puantajMonth";
 import { attendanceCalendarMonth } from "../utils/attendanceSelf";
 import { formatTrAmount } from "../utils/money";
+import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const toneClass = {
   emerald: "bg-emerald-50 text-emerald-800 border-emerald-200",
@@ -35,6 +40,8 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
+  const [wageAsk, setWageAsk] = useState(null);
+  const [wageBusy, setWageBusy] = useState(false);
 
   const load = useCallback(async (m = month) => {
     if (!employeeId) return;
@@ -76,6 +83,27 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
       setArchiveBusy(false);
     }
   };
+
+  const decideWageCut = async (day, decision) => {
+    const path = puantajWageDecisionPath(day);
+    if (!path) {
+      toast.error("Puantaj kaydı bulunamadı.");
+      return;
+    }
+    setWageBusy(true);
+    try {
+      const r = await axios.post(`${API_URL}${path}`, { decision }, { withCredentials: true });
+      toast.success(r.data?.message || (decision === "approve" ? "Ücret kesildi." : "Ücret kesilmedi."));
+      setWageAsk(null);
+      await load(month);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Karar kaydedilemedi.");
+    } finally {
+      setWageBusy(false);
+    }
+  };
+
+  const wageAskCopy = wageAsk ? puantajWageAskCopy(wageAsk, formatTrAmount) : null;
 
   return (
     <div className="space-y-3" data-testid="emp-puantaj-panel">
@@ -171,9 +199,23 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
                     <td className="px-3 py-1.5 text-right font-semibold">{d.hours || "—"}</td>
                     <td className="px-3 py-1.5 text-right font-bold text-indigo-700">{d.overtime_hours ? `+${d.overtime_hours}` : "—"}</td>
                     <td className="px-3 py-1.5 text-right font-bold text-emerald-800 whitespace-nowrap" data-testid={`emp-puantaj-wage-${d.date}`}>
-                      {d.status === "present" && d.wage != null ? `${formatTrAmount(d.wage)} ₺` : "—"}
+                      {d.status === "present" && d.wage != null ? (
+                        puantajWageCanAsk(d) ? (
+                          <button
+                            type="button"
+                            onClick={() => setWageAsk(d)}
+                            className="inline-flex items-center justify-end rounded-md px-1.5 py-0.5 font-bold text-amber-800 bg-amber-50 border border-amber-200 hover:bg-amber-100"
+                            title="Ücret kes / kesme"
+                            data-testid={`emp-puantaj-wage-open-${d.date}`}
+                          >
+                            {formatTrAmount(d.wage)} ₺
+                          </button>
+                        ) : (
+                          `${formatTrAmount(d.wage)} ₺`
+                        )
+                      ) : "—"}
                     </td>
-                    <td className="px-3 py-1.5 text-slate-500 truncate max-w-[140px]" title={d.note || d.leave_label || ""}>{d.leave_label || d.note || (d.late_minutes ? `${d.late_minutes} dk geç` : "—")}</td>
+                    <td className="px-3 py-1.5 text-slate-500 truncate max-w-[140px]" title={d.note || d.leave_label || puantajWageAskReason(d) || ""}>{d.leave_label || d.note || puantajWageAskReason(d) || "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -240,6 +282,48 @@ export function EmployeePuantajPanel({ employeeId, initialMonth, onLeaveYearChan
           <div className="text-[11px] text-indigo-700/70">Henüz arşivlenmiş yıllık dönem yok.</div>
         )}
       </div>
+
+      {wageAsk && wageAskCopy ? (
+        <div
+          className="fixed inset-0 z-[70] bg-slate-900/50 flex items-center justify-center p-4"
+          {...backdropDismissProps((ev) => { ev.stopPropagation(); if (!wageBusy) setWageAsk(null); })}
+          data-testid={`emp-puantaj-wage-ask-${wageAsk.date}`}
+        >
+          <div className="bg-white rounded-2xl w-full max-w-sm p-4 shadow-2xl space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-extrabold text-slate-900">{wageAskCopy.title}</div>
+            <div className="text-xs font-semibold text-slate-600">{wageAskCopy.body} Ücreti kessin mi?</div>
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              <button
+                type="button"
+                disabled={wageBusy}
+                onClick={() => decideWageCut(wageAsk, "reject")}
+                className="px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                data-testid={`emp-puantaj-wage-kesme-${wageAsk.date}`}
+              >
+                {wageAskCopy.kesme}
+              </button>
+              <button
+                type="button"
+                disabled={wageBusy}
+                onClick={() => decideWageCut(wageAsk, "approve")}
+                className="px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50"
+                data-testid={`emp-puantaj-wage-kes-${wageAsk.date}`}
+              >
+                {wageAskCopy.kes}
+              </button>
+              <button
+                type="button"
+                disabled={wageBusy}
+                onClick={() => setWageAsk(null)}
+                className="px-3 py-1.5 rounded-lg text-[11px] font-extrabold bg-white border text-slate-700"
+                data-testid="emp-puantaj-wage-ask-close"
+              >
+                Vazgeç
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
