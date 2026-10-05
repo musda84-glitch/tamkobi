@@ -150,6 +150,11 @@ export function productCartQty(cart: B2BCart | null | undefined, productId: stri
   return Object.values(cart || {}).reduce((s, line) => s + (line.productId === id ? Number(line.qty) || 0 : 0), 0);
 }
 
+export function catalogAddChrome(inCart?: number | null): { qty: number; inCart: boolean; label: string } {
+  const qty = Math.max(0, Number(inCart) || 0);
+  return { qty, inCart: qty > 0, label: qty > 0 ? "Sepette" : "Ekle" };
+}
+
 export type HeldCart = {
   id: string;
   seq: number;

@@ -59,6 +59,15 @@ export const lineTotalIncl = (it = {}) => {
   return round2(net * (1 + Number(it.vat_rate || 0) / 100));
 };
 
+/** Birim fiyat KDV dahil. */
+export const lineUnitIncl = (it = {}) => {
+  if (it.unit_price_incl != null && it.unit_price_incl !== "") return round2(it.unit_price_incl);
+  const qty = Number(it.quantity) || 0;
+  if (qty > 0 && it.total_incl != null && it.total_incl !== "") return round2(Number(it.total_incl) / qty);
+  const net = Number(it.unit_price || 0);
+  return round2(net * (1 + Number(it.vat_rate || 0) / 100));
+};
+
 export const lineVatAmount = (it = {}) => {
   if (it.vat_amount != null && it.vat_amount !== "") return round2(it.vat_amount);
   const net = Number(it.total || 0);
@@ -114,7 +123,26 @@ export const b2bPreviewLineQtyText = (it = {}) => {
 export const b2bPreviewLineMeta = (it = {}, hidePrices = false, formatAmount = formatTrAmount) => {
   const qty = b2bPreviewLineQtyText(it);
   if (b2bPreviewHidePrices(hidePrices) || it.unit_price == null) return qty;
-  return `${qty} · ${formatAmount(it.unit_price)} ₺`;
+  return `${qty} · ${formatAmount(lineUnitIncl(it))} ₺`;
+};
+
+/** Stok etiketi alanları: etiket 1–3, kategori, GTIP, menşe, raf. */
+export const b2bPreviewStockBits = (it = {}, product = {}) => {
+  const tags = (Array.isArray(product?.tags) ? product.tags : Array.isArray(it?.tags) ? it.tags : [])
+    .map((t) => String(t || "").trim())
+    .filter(Boolean);
+  const bits = [];
+  const variant = String(it.variant_name || product.variant_name || "").trim();
+  const category = String(it.category || product.category || "").trim();
+  const gtip = String(it.gtip || product.gtip || "").trim();
+  const origin = String(it.origin_country || product.origin_country || "").trim();
+  const shelf = printShelfLabel(it, product);
+  if (variant) bits.push(variant);
+  if (category) bits.push(category);
+  if (gtip) bits.push(`GTIP ${gtip}`);
+  if (origin) bits.push(origin);
+  if (shelf) bits.push(`Raf ${shelf}`);
+  return { tags, bits };
 };
 
 export const b2bPreviewPrintLabel = (hidePrices = false) => (

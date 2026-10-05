@@ -9,7 +9,7 @@ import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, 
 import { B2BAiCart } from "../components/B2BAiCart";
 import { B2BCatalogCard } from "../components/B2BCatalogCard";
 import { ScanButton } from "../components/CameraScanner";
-import { addCartLine, cartHasItems, cartHeading, discardHeldCart, heldCartTabs, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
+import { addCartLine, cartHasItems, cartHeading, cartQtyByProduct, discardHeldCart, heldCartTabs, heldStorageKey, holdActiveCart, lineKey, mergePortalOrderLists, parseHeldCarts, parseStoredCart, resumeHeldCart, setCartLineQty } from "../utils/b2bCart";
 import { applyB2BScan, matchesB2BQuery } from "../utils/b2bSearch";
 import { B2B_CATALOG_PAGE, catalogGrowVisible, catalogVisibleCount } from "../utils/b2bCatalogWindow";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
@@ -138,6 +138,7 @@ export default function B2BPortalPage() {
     if (!allowOrders) return;
     setCart((c) => addCartLine(c, p.id, qty, String(lineNote || "").trim()));
   }, [allowOrders]);
+  const cartQtyMap = useMemo(() => cartQtyByProduct(cart), [cart]);
 
   if (err) {
     return (
@@ -459,6 +460,7 @@ export default function B2BPortalPage() {
                     showPrices={showPrices}
                     showStock={showStock}
                     allowOrders={allowOrders}
+                    inCart={cartQtyMap[p.id] || 0}
                     onAdd={addWithQty}
                   />
                 ))}

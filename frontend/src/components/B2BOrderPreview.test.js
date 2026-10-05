@@ -21,8 +21,8 @@ describe("B2B order preview stock note", () => {
   });
 
   it("omits unit and line prices for fiyatsız print", () => {
-    const it = { quantity: 4, unit: "Adet", unit_price: 12.5, total: 50 };
-    expect(b2bPreviewLineMeta(it, false)).toContain("12,50");
+    const it = { quantity: 4, unit: "Adet", unit_price: 12.5, total: 50, vat_rate: 10, total_incl: 55 };
+    expect(b2bPreviewLineMeta(it, false)).toContain("13,75");
     expect(b2bPreviewLineMeta(it, true)).toBe("4 Adet");
     expect(b2bPreviewLineMeta(it, true)).not.toMatch(/₺/);
     expect(b2bPreviewPrintLabel(true)).toBe("Fiyatsız yazdır");

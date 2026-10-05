@@ -19,6 +19,7 @@ describe("b2bCart", () => {
     expect(cartKalemLabel(cartCount(cart))).toBe("4 kalem");
     expect(cartHeading([{ qty: 1 }, { qty: 3 }])).toBe("Sepet (4 kalem)");
     expect(cartLinesQtyTotal([{ qty: 1 }, { qty: 3 }])).toBe(4);
+    expect(cartQtyByProduct(cart)).toEqual({ prod_01: 4 });
   });
 
   test("empty and missing notes share one line", () => {

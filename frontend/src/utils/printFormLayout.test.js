@@ -1,4 +1,4 @@
-import { balanceSentence, b2bPreviewHidePrices, b2bPreviewLineMeta, b2bPreviewPrintLabel, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotal, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "./printFormLayout";
+import { balanceSentence, b2bPreviewHidePrices, b2bPreviewLineMeta, b2bPreviewPrintLabel, b2bPreviewStockBits, isOrderQuotePrint, lineTotalIncl, lineUnitIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotal, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "./printFormLayout";
 
 test("order and quote use the compact print form", () => {
   expect(isOrderQuotePrint("order")).toBe(true);
@@ -40,6 +40,8 @@ test("mixed vat rates stay on separate lines", () => {
 test("line total includes vat and shelf reads only a real location", () => {
   expect(lineTotalIncl({ total: 100, vat_rate: 20 })).toBe(120);
   expect(lineTotalIncl({ total: 100, total_incl: 110, vat_rate: 20 })).toBe(110);
+  expect(lineUnitIncl({ unit_price: 227.27, vat_rate: 10, quantity: 7, total_incl: 1750 })).toBe(250);
+  expect(lineUnitIncl({ unit_price: 100, vat_rate: 20 })).toBe(120);
   expect(printDiscountLabel(0)).toBe("0");
   expect(printDiscountLabel(12.5)).toBe("12,5");
   expect(printShelfLabel({ name: "Ürün" }, { barcode: "868" })).toBe("");
@@ -56,5 +58,18 @@ test("b2b preview can print without prices", () => {
   expect(b2bPreviewHidePrices("plain")).toBe(true);
   expect(b2bPreviewHidePrices(false)).toBe(false);
   expect(b2bPreviewLineMeta({ quantity: 2, unit: "Adet", unit_price: 10 }, true)).toBe("2 Adet");
+  expect(b2bPreviewLineMeta({
+    quantity: 7, unit: "Adet", unit_price: 227.27, vat_rate: 10, total_incl: 1750,
+  })).toBe("7 Adet · 250,00 ₺");
   expect(b2bPreviewPrintLabel(true)).toBe("Fiyatsız yazdır");
+});
+
+test("b2b preview surfaces stock label fields", () => {
+  expect(b2bPreviewStockBits(
+    { gtip: "9403.20" },
+    { tags: ["BEYAZ", "70x20"], category: "Raflar", origin_country: "TR", raf_yeri: "A-1" },
+  )).toEqual({
+    tags: ["BEYAZ", "70x20"],
+    bits: ["Raflar", "GTIP 9403.20", "TR", "Raf A-1"],
+  });
 });

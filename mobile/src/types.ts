@@ -327,6 +327,8 @@ export type B2BProduct = {
   vat_rate?: number;
   in_stock?: boolean;
   stock_quantity?: number | null;
+  gtip?: string;
+  origin_country?: string;
 };
 
 export type B2BContact = {
