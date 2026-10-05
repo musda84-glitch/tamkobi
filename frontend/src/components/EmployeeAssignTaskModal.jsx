@@ -359,7 +359,7 @@ export function EmployeeAssignTaskModal({ employee, companyId, onClose, onSaved 
           <button type="button" onClick={onClose} className="px-3 py-1.5 border rounded-lg">İptal</button>
           <button
             type="submit"
-            disabled={busy || loading || (kind === "office" ? !parks.length : (!projectOptions.length && !form.project_id))}
+            disabled={busy || loading || (kind === "office" ? !officeTypes.length : (!projectOptions.length && !form.project_id))}
             className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold disabled:opacity-50"
             data-testid="emp-task-save"
           >
