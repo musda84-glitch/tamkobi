@@ -154,6 +154,20 @@ def test_non_recurring_posts_only_start_month():
     assert db.partner_transactions.docs[0]["salary_period"] == "2026-10"
 
 
+def test_future_entitlement_waits_until_due_date():
+    db = FakeDb()
+    db.partners.docs.append(_salaried(salary_start_date="2026-11-01", salary_day=1))
+    r = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-10-05"))
+    assert r["posted_count"] == 0
+    assert db.partner_transactions.docs == []
+    assert r["scheduled_date"] == "2026-11-01"
+    assert r["skipped"][0]["reason"] == "not_due"
+    r2 = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-11-01"))
+    assert r2["posted_count"] == 1
+    assert db.partner_transactions.docs[0]["date"] == "2026-11-01"
+    assert db.partners.docs[0]["balance"] == 10000
+
+
 def test_force_start_posts_future_entitlement():
     db = FakeDb()
     db.partners.docs.append(_salaried(salary_start_date="2026-12-15", salary_day=15))

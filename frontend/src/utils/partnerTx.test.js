@@ -1,4 +1,4 @@
-import { isPartnerCashType, isPartnerLedgerType, partnerSalaryActionLabel, partnerSalaryCardText, partnerTxIncreasesBalance, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxIncreasesBalance, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
 
 describe("partnerTx", () => {
   it("labels debit and credit slips", () => {
@@ -42,5 +42,14 @@ describe("partnerTx", () => {
     expect(partnerSalaryCardText({ monthly_salary: 0 })).toBe("Belirle");
     expect(salaryDayOf({ salary_start_date: "2026-10-05" })).toBe(5);
     expect(salaryDayOf({ salary_day: 31 })).toBe(31);
+  });
+
+  it("tells the user a future hak ediş date posts later", () => {
+    expect(partnerSalarySaveMessage({ posted_count: 0, scheduled_date: "2026-11-01" }, "2026-11-01")).toBe(
+      "Kaydedildi. 01.11.2026 tarihinde alacağa yazılacak.",
+    );
+    expect(partnerSalarySaveMessage({ posted_count: 1, message: "1 maaş kaydı ortak alacağına yazıldı." })).toBe(
+      "1 maaş kaydı ortak alacağına yazıldı.",
+    );
   });
 });

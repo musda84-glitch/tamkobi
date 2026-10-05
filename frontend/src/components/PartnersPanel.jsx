@@ -11,7 +11,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
-import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerSalaryCardText, todayIsoDate } from "../utils/partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerSalaryCardText, partnerSalarySaveMessage, todayIsoDate } from "../utils/partnerTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = PARTNER_TX_LABEL;
@@ -222,7 +222,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
         salary_recurring: partnerForm.salary_recurring !== false,
       });
       const accrual = r.data?.salary_accrual;
-      toast.success(accrual?.posted_count ? (accrual.message || "Aylık maaş alacağa yazıldı.") : "Aylık maaş kaydedildi.");
+      toast.success(partnerSalarySaveMessage(accrual, partnerForm.salary_start_date));
       setModal(null);
       setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "", salary_start_date: "", salary_recurring: true });
       load();
@@ -470,13 +470,14 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             <div>
               <label className="block font-semibold mb-1">Hak ediş tarihi</label>
               <input type="date" required className={inputCls} value={partnerForm.salary_start_date || ""} onChange={(e) => setPartnerForm({ ...partnerForm, salary_start_date: e.target.value })} data-testid="card-partner-salary-date-input" />
+              <p className="text-[11px] text-slate-500 mt-1">Bu tarihte ortak alacağına işlenir; tarih gelmeden bakiye değişmez.</p>
             </div>
             <label className="flex items-start gap-2 text-slate-700">
               <input type="checkbox" className="mt-0.5" checked={partnerForm.salary_recurring !== false} onChange={(e) => setPartnerForm({ ...partnerForm, salary_recurring: e.target.checked })} data-testid="card-partner-salary-recurring" />
               <span>Her ay tekrarla <span className="text-slate-500 font-normal">(aynı günde otomatik alacağa yazılır)</span></span>
             </label>
-            <p className="text-[11px] text-slate-500">Hak ediş tarihinde bu dönemin maaşı ortak alacağına yazılır. Kasa ve banka değişmez; ödeme istediğinizde para çekişi yaparsınız.</p>
-            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-amber-600 text-white rounded-lg font-semibold" data-testid="save-partner-salary-btn">Kaydet ve alacağa yaz</button></div>
+            <p className="text-[11px] text-slate-500">Kasa ve banka değişmez; ödeme istediğinizde para çekişi yaparsınız.</p>
+            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-amber-600 text-white rounded-lg font-semibold" data-testid="save-partner-salary-btn">Kaydet</button></div>
           </form>
         </Modal>
       )}
@@ -489,7 +490,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><input type="number" step="0.01" min="0" className={inputCls} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} data-testid="edit-partner-salary-input" /></div>
             <div><label className="block font-semibold mb-1">Hak ediş tarihi</label><input type="date" className={inputCls} value={partnerForm.salary_start_date || ""} onChange={(e) => setPartnerForm({ ...partnerForm, salary_start_date: e.target.value })} data-testid="edit-partner-salary-date-input" /></div>
             <label className="flex items-center gap-2 text-slate-700"><input type="checkbox" checked={partnerForm.salary_recurring !== false} onChange={(e) => setPartnerForm({ ...partnerForm, salary_recurring: e.target.checked })} data-testid="edit-partner-salary-recurring" /> Her ay tekrarla</label>
-            <p className="text-[10px] text-slate-400">Vadesi gelen aylar henüz yazılmadıysa ortak alacağına eklenir.</p>
+            <p className="text-[10px] text-slate-400">Hak ediş tarihi gelince alacağa yazılır; geçmiş vadeler varsa o anda eklenir.</p>
             <div className="grid grid-cols-2 gap-2">
               <div><label className="block font-semibold mb-1">Telefon</label><input className={inputCls} value={partnerForm.phone} onChange={(e) => setPartnerForm({ ...partnerForm, phone: e.target.value })} /></div>
               <div><label className="block font-semibold mb-1">E-posta</label><input className={inputCls} value={partnerForm.email} onChange={(e) => setPartnerForm({ ...partnerForm, email: e.target.value })} /></div>

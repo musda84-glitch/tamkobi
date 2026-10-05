@@ -8065,7 +8065,7 @@ async def create_partner(partner: Partner):
     await db.partners.insert_one(doc)
     if float(doc.get("monthly_salary") or 0) > 0:
         await partner_pay.accrue_monthly_salaries(
-            db, partner.company_id, partner_id=doc["_id"], force_start=True
+            db, partner.company_id, partner_id=doc["_id"]
         )
         doc = await db.partners.find_one({"_id": doc["_id"]}) or doc
     return clean_doc(doc)
@@ -8102,7 +8102,7 @@ async def update_partner(partner_id: str, updated: Dict[str, Any]):
     out = clean_doc(res)
     if salary_keys & updated.keys() and float(res.get("monthly_salary") or 0) > 0:
         out["salary_accrual"] = await partner_pay.accrue_monthly_salaries(
-            db, res.get("company_id") or "", partner_id=partner_id, force_start=True
+            db, res.get("company_id") or "", partner_id=partner_id
         )
         refreshed = await db.partners.find_one({"_id": partner_id})
         if refreshed:
