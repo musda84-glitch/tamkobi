@@ -1,5 +1,5 @@
 
-import { addCartLine, cartHasItems, cartHeading, cartKalemLabel, cartLinesQtyTotal, draftLineNote, heldCartsAsOrders, holdActiveCart, lineKey, mergePortalOrderLists, normalizeNote, parseStoredCart, resumeHeldCart, setCartLineQty } from "./b2bCart";
+import { addCartLine, cartHasItems, cartHeading, cartKalemLabel, cartLinesQtyTotal, cartQtyByProduct, catalogAddChrome, draftLineNote, heldCartsAsOrders, holdActiveCart, lineKey, mergePortalOrderLists, normalizeNote, parseStoredCart, resumeHeldCart, setCartLineQty } from "./b2bCart";
 
 describe("b2bCart", () => {
   it("same product + different notes stay separate lines", () => {
@@ -122,5 +122,23 @@ describe("b2bCart", () => {
     expect(cartKalemLabel(5)).toBe("5 kalem");
     expect(cartHeading([{ qty: 1 }, { qty: 2 }])).toBe("Sepet (3 kalem)");
     expect(cartHeading([])).toBe("Sepet (0 kalem)");
+  });
+
+  it("catalog add chrome shows cart qty and changes color", () => {
+    let cart = addCartLine({}, "prod_01", 2, "");
+    cart = addCartLine(cart, "prod_01", 3, "özel");
+    expect(cartQtyByProduct(cart)).toEqual({ prod_01: 5 });
+    expect(catalogAddChrome(0)).toEqual({
+      qty: 0,
+      inCart: false,
+      buttonClass: "bg-emerald-600 hover:bg-emerald-700",
+      label: "Ekle",
+    });
+    expect(catalogAddChrome(5)).toMatchObject({
+      qty: 5,
+      inCart: true,
+      label: "Sepette",
+      buttonClass: "bg-slate-800 hover:bg-slate-900",
+    });
   });
 });

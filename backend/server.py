@@ -4165,6 +4165,8 @@ def _b2b_catalog_product(p: Dict[str, Any], disc: float) -> Dict[str, Any]:
         "vat_rate": vat,
         "in_stock": (qty > 0) if track else True,
         "stock_quantity": qty if track else None,
+        "gtip": str(p.get("gtip") or "").strip(),
+        "origin_country": str(p.get("origin_country") or "").strip(),
     }
 
 
@@ -4284,6 +4286,14 @@ async def b2b_portal(token: str):
                 it["barcode"] = p.get("barcode") or ""
             if not it.get("sku"):
                 it["sku"] = p.get("sku") or ""
+            if not it.get("tags") and p.get("tags"):
+                it["tags"] = p.get("tags")
+            if not it.get("gtip") and p.get("gtip"):
+                it["gtip"] = p.get("gtip")
+            if not it.get("origin_country") and p.get("origin_country"):
+                it["origin_country"] = p.get("origin_country")
+            if not it.get("category") and p.get("category"):
+                it["category"] = p.get("category")
     orders = _sort_b2b_cart_orders(orders)
     invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]

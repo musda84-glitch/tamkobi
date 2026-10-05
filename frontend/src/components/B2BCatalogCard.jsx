@@ -1,7 +1,8 @@
 import React, { memo, useEffect, useState } from "react";
-import { Package, ShoppingCart } from "lucide-react";
+import { Check, Package, ShoppingCart } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { fmt, b2bGross } from "./B2BPortalParts";
+import { catalogAddChrome } from "../utils/b2bCart";
 import { parseDraftQty, qtyDraftAfterAdd, qtyDraftOnBlur, qtyDraftOnFocus } from "../utils/b2bSearch";
 
 /** Tek ürün kartı: not/adet yerel — yazınca tüm ızgara yeniden boyanmaz. */
@@ -10,6 +11,7 @@ export const B2BCatalogCard = memo(function B2BCatalogCard({
   showPrices,
   showStock,
   allowOrders,
+  inCart = 0,
   onAdd,
 }) {
   const [qty, setQty] = useState("1");
@@ -21,6 +23,7 @@ export const B2BCatalogCard = memo(function B2BCatalogCard({
 
   const addOk = !(showStock && !p.in_stock);
   const listCut = showPrices && b2bGross(p) < b2bGross(p, "list_price");
+  const addChrome = catalogAddChrome(inCart);
   const handleAdd = () => {
     onAdd?.(p, parseDraftQty(qty), String(note || "").trim());
     setQty(qtyDraftAfterAdd());
@@ -35,6 +38,14 @@ export const B2BCatalogCard = memo(function B2BCatalogCard({
         {p.image_url
           ? <img src={resolveImageUrl(p.image_url)} alt="" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-contain" />
           : <Package className="w-8 h-8 text-slate-300" />}
+        {addChrome.inCart ? (
+          <span
+            className="absolute top-1.5 right-1.5 inline-flex items-center gap-0.5 min-h-[22px] px-1.5 rounded-full bg-slate-800 text-white text-[10px] font-black shadow"
+            data-testid={`b2b-in-cart-${p.sku}`}
+          >
+            <Check className="w-3 h-3" /> {addChrome.qty}
+          </span>
+        ) : null}
       </div>
       <div className="min-w-0">
         <div className="text-xs font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</div>
@@ -101,10 +112,18 @@ export const B2BCatalogCard = memo(function B2BCatalogCard({
               type="button"
               onClick={handleAdd}
               disabled={!addOk}
-              className="flex-1 min-w-0 flex items-center justify-center gap-0.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] sm:text-xs font-bold disabled:opacity-40"
+              className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-2 text-white rounded-xl text-[10px] sm:text-xs font-bold disabled:opacity-40 ${addChrome.buttonClass}`}
               data-testid={`b2b-add-${p.sku}`}
             >
-              <ShoppingCart className="w-3.5 h-3.5 shrink-0" /> Ekle
+              <span className="relative inline-flex shrink-0">
+                <ShoppingCart className="w-3.5 h-3.5" />
+                {addChrome.inCart ? (
+                  <span className="absolute -top-2 -right-2 min-w-[16px] h-4 px-0.5 rounded-full bg-amber-400 text-slate-900 text-[9px] font-black leading-4 text-center" data-testid={`b2b-add-qty-badge-${p.sku}`}>
+                    {addChrome.qty}
+                  </span>
+                ) : null}
+              </span>
+              {addChrome.label}
             </button>
           </div>
         </>

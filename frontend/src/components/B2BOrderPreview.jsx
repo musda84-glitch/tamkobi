@@ -8,7 +8,7 @@ import { statusTr } from "../utils/labels";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { pickLineNote } from "../utils/pickLineNote";
-import { b2bPreviewHidePrices, b2bPreviewLineMeta, b2bPreviewPrintLabel, printQtyTotalLabel } from "../utils/printFormLayout";
+import { b2bPreviewHidePrices, b2bPreviewLineMeta, b2bPreviewPrintLabel, b2bPreviewStockBits, lineTotalIncl, printQtyTotalLabel } from "../utils/printFormLayout";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 
@@ -70,6 +70,8 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
               const code = lineCode(it, products);
               const sku = String(it.sku || "").trim();
               const stockNote = pickLineNote(it);
+              const prod = (products || []).find((x) => x.id === it.product_id || x._id === it.product_id) || {};
+              const stockBits = b2bPreviewStockBits(it, prod);
               return (
                 <div key={it.product_id || i} className="p-3 flex gap-3 items-start bg-white" data-testid={`b2b-preview-line-${i}`}>
                   <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg border bg-slate-50 overflow-hidden shrink-0 flex items-center justify-center">
@@ -79,13 +81,27 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
                     <div className="font-bold text-slate-900 leading-tight">{it.product_name}</div>
                     <div className="text-slate-500 mt-0.5" data-testid={`b2b-preview-line-meta-${i}`}>{b2bPreviewLineMeta(it, plain)}</div>
                     {sku && sku !== code && <div className="text-[10px] text-slate-400 font-mono mt-0.5">SKU {sku}</div>}
+                    {stockBits.tags.length || stockBits.bits.length ? (
+                      <div className="mt-1 space-y-1" data-testid={`b2b-preview-line-label-${i}`}>
+                        {stockBits.tags.length ? (
+                          <div className="flex flex-wrap gap-0.5">
+                            {stockBits.tags.map((t) => (
+                              <span key={t} className="text-[9px] px-1 py-0 rounded bg-slate-100 text-slate-600">{t}</span>
+                            ))}
+                          </div>
+                        ) : null}
+                        {stockBits.bits.length ? (
+                          <div className="text-[10px] text-slate-500">{stockBits.bits.join(" · ")}</div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {stockNote ? (
                       <div className="mt-1 px-2 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-snug whitespace-pre-wrap" data-testid={`b2b-preview-line-note-${i}`}>
                         <span className="font-semibold text-amber-700/80">Sipariş stok notu · </span>
                         {stockNote}
                       </div>
                     ) : null}
-                    {plain ? null : <div className="mt-1 font-semibold" data-testid={`b2b-preview-line-total-${i}`}>{fmt(it.total)} ₺</div>}
+                    {plain ? null : <div className="mt-1 font-semibold" data-testid={`b2b-preview-line-total-${i}`}>{fmt(lineTotalIncl(it))} ₺</div>}
                   </div>
                   {code ? (
                     <div className="w-[150px] sm:w-[180px] shrink-0" data-testid={`b2b-preview-barcode-${i}`}>

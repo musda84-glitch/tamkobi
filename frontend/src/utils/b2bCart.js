@@ -89,6 +89,30 @@ export function cartCount(cart) {
   return Object.values(cart || {}).reduce((s, line) => s + (Number(line?.qty) || 0), 0);
 }
 
+/** Sepetteki ürün id → toplam adet (not satırları toplanır). */
+export function cartQtyByProduct(cart) {
+  const m = {};
+  Object.values(cart || {}).forEach((line) => {
+    const id = String(line?.productId || "");
+    if (!id) return;
+    m[id] = (m[id] || 0) + (Number(line?.qty) || 0);
+  });
+  return m;
+}
+
+/** Katalog Ekle butonu: sepetteki adet rozeti ve renk. */
+export function catalogAddChrome(inCart) {
+  const qty = Math.max(0, Number(inCart) || 0);
+  return {
+    qty,
+    inCart: qty > 0,
+    buttonClass: qty > 0
+      ? "bg-slate-800 hover:bg-slate-900"
+      : "bg-emerald-600 hover:bg-emerald-700",
+    label: qty > 0 ? "Sepette" : "Ekle",
+  };
+}
+
 /** Sepet satır listesindeki toplam adet (kalem sayısı). */
 export function cartLinesQtyTotal(lines) {
   return (Array.isArray(lines) ? lines : []).reduce((s, l) => s + (Number(l?.qty) || 0), 0);

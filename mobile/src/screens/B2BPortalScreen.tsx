@@ -40,7 +40,7 @@ import { statusTr } from "../utils/labels";
 import { resolveMediaUrl } from "../utils/media";
 import { fmtDate, fmtMoney, idOf, setPriceDecimals } from "../utils/money";
 import { pickLineNote } from "../utils/orderPick";
-import { printQtyTotalLabel } from "../utils/printFormLayout";
+import { lineTotalIncl, lineUnitIncl, printQtyTotalLabel, b2bPreviewStockBits } from "../utils/printFormLayout";
 
 type TabId = "catalog" | "orders" | "statement" | "installments";
 
@@ -200,7 +200,7 @@ const CatalogTile = memo(function CatalogTile({
                 flex: 1,
                 minHeight: 44,
                 borderRadius: 12,
-                backgroundColor: added ? colors.primaryHover : colors.primary,
+                backgroundColor: inCart > 0 ? colors.text : (added ? colors.primaryHover : colors.primary),
                 flexDirection: "row",
                 alignItems: "center",
                 justifyContent: "center",
@@ -208,8 +208,10 @@ const CatalogTile = memo(function CatalogTile({
                 opacity: addOk ? 1 : 0.5,
               }}
             >
-              <Ionicons name={added ? "checkmark-circle" : "cart-outline"} size={16} color="#fff" />
-              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>{added ? "Eklendi" : "Ekle"}</Text>
+              <Ionicons name={inCart > 0 ? "cart" : (added ? "checkmark-circle" : "cart-outline")} size={16} color="#fff" />
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>
+                {inCart > 0 ? `Sepette ${inCart}` : added ? "Eklendi" : "Ekle"}
+              </Text>
             </Pressable>
           </Row>
         </View>
@@ -1160,23 +1162,31 @@ export function B2BPortalScreen() {
             <Muted>{fmtDate(preview.order_date)} · {statusTr(preview.order_status)}</Muted>
             {preview.customer_order_number ? <Text testID="b2b-preview-customer-order-no" style={{ fontWeight: "700" }}>Sizin no {preview.customer_order_number}</Text> : null}
             {(preview.items || []).map((it, i) => {
-              const rec = it as { product_id?: string; product_name?: string; quantity?: number; unit?: string; unit_price?: number; total?: number; image_url?: string; sku?: string; barcode?: string; note?: string; line_note?: string; stock_note?: string; notes?: string };
+              const rec = it as { product_id?: string; product_name?: string; quantity?: number; unit?: string; unit_price?: number; total?: number; total_incl?: number; vat_rate?: number; image_url?: string; sku?: string; barcode?: string; note?: string; line_note?: string; stock_note?: string; notes?: string; tags?: string[]; gtip?: string; origin_country?: string; category?: string };
               const img = resolveMediaUrl(baseUrl, previewLineImage(rec, products));
               const code = previewLineCode(rec, products);
               const stockNote = pickLineNote(rec);
+              const prod = products.find((x) => x.id === rec.product_id) || {};
+              const stockBits = b2bPreviewStockBits(rec, prod as Record<string, unknown>);
+              const unitIncl = rec.unit_price != null ? lineUnitIncl(rec) : null;
               return (
                 <Row key={String(rec.product_id || i)} testID={`b2b-preview-line-${i}`}>
                   {img ? <Image source={{ uri: img }} style={{ width: 48, height: 48, borderRadius: 8 }} /> : <Ionicons name="cube-outline" size={24} color={colors.muted} />}
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontWeight: "800" }}>{rec.product_name}</Text>
-                    <Muted>{rec.quantity} {rec.unit || "Adet"}{rec.unit_price != null ? ` · ${fmtMoney(rec.unit_price)}` : ""}{code ? ` · ${code}` : ""}</Muted>
+                    <Muted>{rec.quantity} {rec.unit || "Adet"}{unitIncl != null ? ` · ${fmtMoney(unitIncl)}` : ""}{code ? ` · ${code}` : ""}</Muted>
+                    {stockBits.tags.length || stockBits.bits.length ? (
+                      <Muted testID={`b2b-preview-line-label-${i}`}>
+                        {[...stockBits.tags, ...stockBits.bits].join(" · ")}
+                      </Muted>
+                    ) : null}
                     {stockNote ? (
                       <Text style={{ fontSize: 12, fontWeight: "700", color: "#92400e", marginTop: 2 }} testID={`b2b-preview-line-note-${i}`}>
                         Sipariş stok notu · {stockNote}
                       </Text>
                     ) : null}
                   </View>
-                  <Text style={{ fontWeight: "800" }}>{fmtMoney(rec.total)}</Text>
+                  <Text style={{ fontWeight: "800" }}>{fmtMoney(lineTotalIncl(rec))}</Text>
                 </Row>
               );
             })}

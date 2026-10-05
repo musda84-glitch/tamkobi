@@ -1,7 +1,9 @@
 import {
   balanceSentence,
+  b2bPreviewStockBits,
   isOrderQuotePrint,
   lineTotalIncl,
+  lineUnitIncl,
   printDiscountLabel,
   printNetAmount,
   printQtyLabel,
@@ -52,10 +54,21 @@ describe("printFormLayout", () => {
   it("includes VAT in line totals and reads only a real shelf", () => {
     expect(lineTotalIncl({ total: 100, vat_rate: 20 })).toBe(120);
     expect(lineTotalIncl({ total: 100, total_incl: 110, vat_rate: 20 })).toBe(110);
+    expect(lineUnitIncl({ unit_price: 227.27, vat_rate: 10, quantity: 7, total_incl: 1750 })).toBe(250);
     expect(printDiscountLabel(0)).toBe("0");
     expect(printDiscountLabel(12.5)).toBe("12,5");
     expect(printShelfLabel({ name: "Ürün" }, { barcode: "868" })).toBe("");
     expect(printShelfLabel({}, { raf_yeri: "A-12" })).toBe("A-12");
+  });
+
+  it("surfaces stock label fields for B2B preview", () => {
+    expect(b2bPreviewStockBits(
+      { gtip: "9403.20" },
+      { tags: ["BEYAZ", "70x20"], category: "Raflar", origin_country: "TR", raf_yeri: "A-1" },
+    )).toEqual({
+      tags: ["BEYAZ", "70x20"],
+      bits: ["Raflar", "GTIP 9403.20", "TR", "Raf A-1"],
+    });
   });
 
   it("writes the balance sentence with currency suffix", () => {

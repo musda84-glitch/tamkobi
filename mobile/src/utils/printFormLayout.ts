@@ -63,6 +63,14 @@ export const lineTotalIncl = (it: Record<string, unknown> = {}): number => {
   return round2(net * (1 + Number(it.vat_rate || 0) / 100));
 };
 
+export const lineUnitIncl = (it: Record<string, unknown> = {}): number => {
+  if (it.unit_price_incl != null && it.unit_price_incl !== "") return round2(Number(it.unit_price_incl));
+  const qty = Number(it.quantity) || 0;
+  if (qty > 0 && it.total_incl != null && it.total_incl !== "") return round2(Number(it.total_incl) / qty);
+  const net = Number(it.unit_price || 0);
+  return round2(net * (1 + Number(it.vat_rate || 0) / 100));
+};
+
 export const lineVatAmount = (it: Record<string, unknown> = {}): number => {
   if (it.vat_amount != null && it.vat_amount !== "") return round2(Number(it.vat_amount));
   const net = Number(it.total || 0);
@@ -107,4 +115,24 @@ export const balanceSentence = (amount: unknown, currency = "TRY"): string => {
   const formatted = Number(amount).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const suffix = !currency || currency === "TRY" ? "₺" : String(currency);
   return `Güncel bakiyeniz: ${formatted} ${suffix}`;
+};
+
+export const b2bPreviewStockBits = (
+  it: Record<string, unknown> = {},
+  product: Record<string, unknown> = {},
+): { tags: string[]; bits: string[] } => {
+  const rawTags = Array.isArray(product?.tags) ? product.tags : Array.isArray(it?.tags) ? it.tags : [];
+  const tags = rawTags.map((t) => String(t || "").trim()).filter(Boolean);
+  const bits: string[] = [];
+  const variant = String(it.variant_name || product.variant_name || "").trim();
+  const category = String(it.category || product.category || "").trim();
+  const gtip = String(it.gtip || product.gtip || "").trim();
+  const origin = String(it.origin_country || product.origin_country || "").trim();
+  const shelf = printShelfLabel(it, product);
+  if (variant) bits.push(variant);
+  if (category) bits.push(category);
+  if (gtip) bits.push(`GTIP ${gtip}`);
+  if (origin) bits.push(origin);
+  if (shelf) bits.push(`Raf ${shelf}`);
+  return { tags, bits };
 };
