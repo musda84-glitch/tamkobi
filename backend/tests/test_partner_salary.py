@@ -98,3 +98,76 @@ def test_accrue_other_month_is_separate():
     assert r["posted_count"] == 1
     assert db.partners.docs[0]["balance"] == 20000
     assert {t["salary_period"] for t in db.partner_transactions.docs} == {"2026-10", "2026-11"}
+
+
+def _salaried(pid="p1", **kw):
+    p = _partner(pid)
+    salary = kw.pop("salary", None)
+    if salary is not None:
+        p["monthly_salary"] = salary
+    p.update(kw)
+    return p
+
+
+def test_prepare_rejects_bad_entitlement_date():
+    import pytest
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as ei:
+        partner_pay.prepare_partner_salary({"monthly_salary": 1, "salary_start_date": "2026-13-40"}, fill_start=False)
+    assert ei.value.status_code == 400
+
+
+def test_salary_due_clamps_end_of_month():
+    assert partner_pay.salary_due_on("2026-02", 31).isoformat() == "2026-02-28"
+    assert partner_pay.salary_due_on("2026-10", 5).isoformat() == "2026-10-05"
+    assert partner_pay.parse_iso_date("2026-10-05").day == 5
+    assert partner_pay.parse_iso_date("nope") is None
+
+
+def test_accrue_uses_entitlement_date():
+    db = FakeDb()
+    db.partners.docs.append(_salaried(salary_start_date="2026-10-05", salary_day=5))
+    r = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", period="2026-10"))
+    assert r["posted_count"] == 1
+    tx = db.partner_transactions.docs[0]
+    assert tx["date"] == "2026-10-05"
+    assert tx["salary_date"] == "2026-10-05"
+
+
+def test_monthly_repeat_catchup_skips_not_due():
+    db = FakeDb()
+    db.partners.docs.append(_salaried(salary_start_date="2026-08-05", salary_day=5, salary_recurring=True))
+    r = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-10-03"))
+    assert r["posted_count"] == 2
+    assert {t["salary_period"] for t in db.partner_transactions.docs} == {"2026-08", "2026-09"}
+    assert {t["date"] for t in db.partner_transactions.docs} == {"2026-08-05", "2026-09-05"}
+    r2 = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-10-20"))
+    assert r2["posted_count"] == 1
+    assert {t["salary_period"] for t in db.partner_transactions.docs} == {"2026-08", "2026-09", "2026-10"}
+
+
+def test_non_recurring_posts_only_start_month():
+    db = FakeDb()
+    db.partners.docs.append(_salaried(salary_start_date="2026-10-05", salary_recurring=False))
+    r = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-12-20"))
+    assert r["posted_count"] == 1
+    assert db.partner_transactions.docs[0]["salary_period"] == "2026-10"
+
+
+def test_force_start_posts_future_entitlement():
+    db = FakeDb()
+    db.partners.docs.append(_salaried(salary_start_date="2026-12-15", salary_day=15))
+    r = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-10-05", force_start=True))
+    assert r["posted_count"] == 1
+    assert db.partner_transactions.docs[0]["date"] == "2026-12-15"
+    r2 = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-10-05"))
+    assert r2["posted_count"] == 0
+
+
+def test_scheduler_posts_due_across_companies():
+    db = FakeDb()
+    db.partners.docs.append(_salaried("a", company_id="c1", salary_start_date="2026-10-01"))
+    db.partners.docs.append(_salaried("b", company_id="c2", salary=2500, salary_start_date="2026-10-01"))
+    r = asyncio.run(partner_pay.accrue_due_for_all_companies(db, as_of="2026-10-05"))
+    assert r["companies"] == 2
+    assert r["posted_count"] == 2

@@ -215,6 +215,7 @@ def clean_docs(docs: list) -> list:
 @app.on_event("startup")
 async def startup_event():
     asyncio.get_event_loop().create_task(pricing.scheduler_loop())
+    asyncio.get_event_loop().create_task(partner_pay.scheduler_loop(db))
     try:
         await db._ensure()
         logger.info("MySQL connected %s:%s/%s", _mysql_cfg["host"], _mysql_cfg["port"], DB_NAME)
@@ -8058,20 +8059,35 @@ async def create_partner(partner: Partner):
     if sum(p.get("share_percent", 0) for p in existing) + partner.share_percent > 100.01:
         raise HTTPException(status_code=400, detail="Toplam ortaklık payı %100'ü aşamaz.")
     doc = partner.to_mongo()
+    partner_pay.prepare_partner_salary(doc)
     await db.partners.insert_one(doc)
     if float(doc.get("monthly_salary") or 0) > 0:
-        await partner_pay.accrue_monthly_salaries(db, partner.company_id, partner_id=doc["_id"])
+        await partner_pay.accrue_monthly_salaries(
+            db, partner.company_id, partner_id=doc["_id"], force_start=True
+        )
         doc = await db.partners.find_one({"_id": doc["_id"]}) or doc
     return clean_doc(doc)
 
 @api_router.put("/banking/partners/{partner_id}")
 async def update_partner(partner_id: str, updated: Dict[str, Any]):
-    allowed = {k: v for k, v in updated.items() if k in {"name", "share_percent", "phone", "email", "is_active", "photo_url", "monthly_salary"}}
-    if "monthly_salary" in allowed:
-        try:
-            allowed["monthly_salary"] = max(0.0, float(allowed["monthly_salary"] or 0))
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="Aylık maaş geçersiz.")
+    salary_keys = {"monthly_salary", "salary_start_date", "salary_day", "salary_recurring"}
+    allowed = {k: v for k, v in updated.items() if k in {"name", "share_percent", "phone", "email", "is_active", "photo_url"} | salary_keys}
+    existing = await db.partners.find_one({"_id": partner_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+    if salary_keys & allowed.keys():
+        merged = {
+            "monthly_salary": allowed.get("monthly_salary", existing.get("monthly_salary")),
+            "salary_start_date": allowed.get("salary_start_date", existing.get("salary_start_date")),
+            "salary_day": allowed.get("salary_day", existing.get("salary_day")),
+            "salary_recurring": allowed.get("salary_recurring", existing.get("salary_recurring")),
+        }
+        if "salary_start_date" not in allowed:
+            merged.pop("salary_start_date", None)
+        partner_pay.prepare_partner_salary(merged, fill_start="monthly_salary" in allowed and not existing.get("salary_start_date"))
+        for k in ("monthly_salary", "salary_start_date", "salary_day", "salary_recurring"):
+            if k in merged:
+                allowed[k] = merged[k]
     if "share_percent" in allowed:
         try:
             allowed["share_percent"] = float(allowed["share_percent"] or 0)
@@ -8082,9 +8098,9 @@ async def update_partner(partner_id: str, updated: Dict[str, Any]):
     if not res:
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
     out = clean_doc(res)
-    if "monthly_salary" in allowed and float(allowed.get("monthly_salary") or 0) > 0:
+    if salary_keys & updated.keys() and float(res.get("monthly_salary") or 0) > 0:
         out["salary_accrual"] = await partner_pay.accrue_monthly_salaries(
-            db, res.get("company_id") or "", partner_id=partner_id
+            db, res.get("company_id") or "", partner_id=partner_id, force_start=True
         )
         refreshed = await db.partners.find_one({"_id": partner_id})
         if refreshed:
