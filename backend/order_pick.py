@@ -636,6 +636,14 @@ async def complete_pick(order_id: str, req: Dict[str, Any] = None):
             {"_id": order_id},
             {"$set": {"pick_status": "delivered", "order_status": "delivered", "delivered_at": now}},
         )
+        # Kargo kartı "Yolda" kalmasın — bağlı shipment varsa teslim et.
+        try:
+            await _db.cargo_shipments.update_many(
+                {"order_id": order_id, "status": {"$nin": ["delivered", "returned"]}},
+                {"$set": {"status": "delivered", "delivered_at": now, "updated_at": now}},
+            )
+        except Exception:
+            pass
         updated = await _db.orders.find_one({"_id": order_id}) or {**o, "order_status": "delivered"}
         if _push_order_to_shopphp:
             try:
