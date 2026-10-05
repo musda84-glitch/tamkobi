@@ -31,6 +31,7 @@ import { buildContactPayForm, contactPayModalMeta } from "../utils/contactPayMen
 import { applyReceiptDraft, receiptScanHint } from "../utils/receiptScan";
 import { openChequeBalance } from "../utils/chequeBalance";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
+import { orderStatusLabel, orderStatusSelectOptions } from "../utils/warehouseShip";
 import { useNavigate } from "react-router-dom";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { DocumentLineEditor } from "./DocumentLineEditor";
@@ -57,8 +58,6 @@ function mailDeliveryBadge(m) {
   if (m.opened_at) return { text: "Okundu", cls: "text-sky-700 bg-sky-50" };
   return { text: "Gönderildi", cls: "text-emerald-700 bg-emerald-50" };
 }
-
-const ORDER_STATUS_OPTIONS = [["pending", "Beklemede"], ["approved", "Onaylandı"], ["preparing", "Hazırlanıyor"], ["shipped", "Kargolandı"], ["completed", "Teslim edildi"], ["returned", "İade Edildi"], ["partially_returned", "Kısmi İade"]];
 
 function chequeReceipt(ch) {
   const kind = ch.instrument === "promissory" ? "Senet" : "Çek";
@@ -719,17 +718,18 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   const marketplace = orderChannelLocked(o);
                   const isCart = !!(o.is_held_cart || o.is_active_cart || o.order_status === "held_cart" || o.order_status === "active_cart");
                   const canDelete = !o.is_invoiced && !o.invoice_id;
+                  const statusOpts = orderStatusSelectOptions(o);
                   return (
                     <tr key={o.id} className={isCart ? "opacity-70 bg-slate-50/80" : undefined} data-testid={`detail-order-${o.order_number}`}>
                       <td className="py-2 font-mono font-semibold">{o.held_label || o.order_number}</td>
                       <td className="py-2 text-slate-500">{channelTr(o.channel)}</td>
                       <td className="py-2">
                         {marketplace || isCart ? (
-                          <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold" title={marketplace ? "Durum pazaryerinden güncellenir" : undefined}>{statusTr(o.order_status)}</span>
+                          <span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold" title={marketplace ? "Durum pazaryerinden güncellenir" : undefined}>{orderStatusLabel(o, statusTr(o.order_status))}</span>
                         ) : (
                           <select value={o.order_status || "pending"} onChange={(e) => changeOrderStatus(o, e.target.value)} className="bg-slate-100 border border-slate-200 rounded p-1 text-[11px] font-semibold" data-testid={`detail-order-status-${o.order_number}`}>
-                            {ORDER_STATUS_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                            {o.order_status && !ORDER_STATUS_OPTIONS.some(([k]) => k === o.order_status) && <option value={o.order_status}>{statusTr(o.order_status)}</option>}
+                            {statusOpts.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                            {o.order_status && !statusOpts.some(([k]) => k === o.order_status) && <option value={o.order_status}>{orderStatusLabel(o, statusTr(o.order_status))}</option>}
                           </select>
                         )}
                       </td>
@@ -1248,7 +1248,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {orderDetail && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setOrderDetail(null))}>
             <div className="bg-white rounded-2xl max-w-5xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="order-detail-modal">
-              <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900">Sipariş {orderDetail.order_number}</h3><p className="text-slate-500">{new Date(orderDetail.order_date).toLocaleString("tr-TR")} • {channelTr(orderDetail.channel)} • <b>{statusTr(orderDetail.order_status)}</b></p></div><button onClick={() => setOrderDetail(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900">Sipariş {orderDetail.order_number}</h3><p className="text-slate-500">{new Date(orderDetail.order_date).toLocaleString("tr-TR")} • {channelTr(orderDetail.channel)} • <b>{orderStatusLabel(orderDetail, statusTr(orderDetail.order_status))}</b></p></div><button onClick={() => setOrderDetail(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div className="text-slate-600"><b>Teslimat:</b> {orderDetail.shipping_address}, {orderDetail.city} {orderDetail.customer_phone && `• ${orderDetail.customer_phone}`}</div>
               {orderDetail.cargo_tracking_number && <div className="text-slate-600"><b>Kargo:</b> {orderDetail.cargo_carrier} • <span className="font-mono">{orderDetail.cargo_tracking_number}</span></div>}
               <div className="overflow-x-auto"><table className="w-full min-w-[640px]"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="py-1 text-left">Stok adı</th><th className="py-1 text-right">Miktar</th><th className="py-1 text-right">KDV'siz</th><th className="py-1 text-right">KDV'li</th><th className="py-1 text-center">İsk %</th><th className="py-1 text-center">KDV</th><th className="py-1 text-right">Hariç</th><th className="py-1 text-right">Dahil</th></tr></thead>

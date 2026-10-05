@@ -11,6 +11,8 @@ import {
   FALLBACK_CARGO_CATALOG,
   canWarehouseShip,
   isWarehouseShipped,
+  orderStatusLabel,
+  warehouseShippedOptionLabel,
   mergeShipCarriers,
   shipCreateConfirm,
   warehouseShipConfirm,
@@ -110,5 +112,13 @@ describe("orderCargo", () => {
     expect(text).toContain("Ersay • İstanbul");
     expect(text).toMatch(/depodan sevk/);
     expect(warehouseShipPath("ord_1")).toBe("/orders/ord_1/warehouse-ship");
+  });
+
+  it("shows Depo sevk edildi for warehouse-shipped status", () => {
+    expect(warehouseShippedOptionLabel({})).toBe("Kargolandı");
+    expect(warehouseShippedOptionLabel({ warehouse_shipped: true })).toBe("Depo sevk edildi");
+    expect(orderStatusLabel({ order_status: "shipped" }, "Kargolandı")).toBe("Kargolandı");
+    expect(orderStatusLabel({ order_status: "shipped", warehouse_shipped: true }, "Kargolandı")).toBe("Depo sevk edildi");
+    expect(orderStatusLabel({ order_status: "completed", warehouse_shipped: true }, "Teslim edildi")).toBe("Teslim edildi");
   });
 });

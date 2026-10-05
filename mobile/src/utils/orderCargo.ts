@@ -134,6 +134,7 @@ export function shipCreateConfirm(
 
 export const WAREHOUSE_SHIP_CODE = "warehouse";
 export const WAREHOUSE_SHIP_NAME = "Depodan sevk edildi";
+export const WAREHOUSE_SHIP_STATUS_LABEL = "Depo sevk edildi";
 
 /** Teslim/tamamlandı ve iptal/iade — depodan sevk "shipped"e geri almaz. */
 export const WAREHOUSE_SHIP_CLOSED = new Set([
@@ -157,6 +158,21 @@ export function isWarehouseShipped(order?: Pick<Order, "cargo_carrier" | "cargo_
   if (order.warehouse_shipped || String(order.ship_method || "") === WAREHOUSE_SHIP_CODE) return true;
   if (String(order.cargo_carrier || "").toLowerCase() === WAREHOUSE_SHIP_CODE) return true;
   return String(order.cargo_tracking_number || "").toUpperCase().startsWith("DEPO-");
+}
+
+const SHIPPED_LIKE = new Set(["shipped", "in_transit"]);
+
+export function warehouseShippedOptionLabel(order?: Parameters<typeof isWarehouseShipped>[0]): string {
+  return isWarehouseShipped(order) ? WAREHOUSE_SHIP_STATUS_LABEL : "Kargolandı";
+}
+
+export function orderStatusLabel(
+  order?: (Parameters<typeof isWarehouseShipped>[0] & Pick<Order, "order_status">) | null,
+  fallback = "",
+): string {
+  const st = String(order?.order_status || "").toLowerCase();
+  if (isWarehouseShipped(order) && SHIPPED_LIKE.has(st)) return WAREHOUSE_SHIP_STATUS_LABEL;
+  return fallback;
 }
 
 export function canWarehouseShip(order?: Pick<Order, "order_status" | "cargo_carrier" | "cargo_tracking_number"> & {

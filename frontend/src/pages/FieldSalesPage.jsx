@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
+import { orderStatusLabel } from "../utils/warehouseShip";
 import { lineFromProduct } from "../utils/documentLines";
 import { ScanButton } from "../components/CameraScanner";
 import { scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
@@ -378,7 +379,7 @@ export default function FieldSalesPage() {
               <div className="min-w-0">
                 <div className="font-mono text-xs text-slate-400">{o.order_number}</div>
                 <div className="font-semibold truncate">{o.customer_name}</div>
-                <div className="text-xs text-slate-500">{(o.items || []).length} kalem · {statusTr(o.order_status)}</div>
+                <div className="text-xs text-slate-500">{(o.items || []).length} kalem · {orderStatusLabel(o, statusTr(o.order_status))}</div>
               </div>
               <div className="font-bold shrink-0">{fmt(o.total_amount)} ₺</div>
             </div>
