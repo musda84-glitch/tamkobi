@@ -874,6 +874,9 @@ async def bh_import_customers(req: Dict[str, Any]):
                   "currency": "TRY" if str(c.get("currency") or "TL").upper() in ("TL", "TRY") else str(c.get("currency")).upper()}
         if include_cheques:
             fields["cheque_bond_balance"] = cheque
+        else:
+            # Önceki aktarımdan kalan BizimHesap çek bakiyesini (ör. ERSAY) sil.
+            fields["cheque_bond_balance"] = 0.0
         data = {k: v for k, v in fields.items() if v is not None}
         ctype = bh_contact_type(c, bal, forced_type)
         types[ctype] = types.get(ctype, 0) + 1

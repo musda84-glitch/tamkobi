@@ -4800,6 +4800,11 @@ async def get_contact_overview(contact_id: str):
     quotes = await db.quotes.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     surveys = await db.surveys.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     cheques_rows = [cheques._annotate(x, datetime.now(timezone.utc).strftime("%Y-%m-%d")) for x in await db.cheques.find({"contact_id": contact_id}).sort("due_date", 1).to_list(200)]
+    live_cheque = cheques.open_portfolio_balance(cheques_rows)
+    if abs(float(contact.get("cheque_bond_balance") or 0) - live_cheque) > 0.005:
+        # BizimHesap chequeandbond snapshot'ı (ör. ERSAY 177.924,83) gerçek portföy değilse sıfırla.
+        await db.contacts.update_one({"_id": contact_id}, {"$set": {"cheque_bond_balance": live_cheque}})
+        contact["cheque_bond_balance"] = live_cheque
     projects = await db.projects.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails[:50]] + [{**clean_doc(w), "channel": "whatsapp"} for w in wa], key=lambda x: x.get("created_at", ""), reverse=True)
     sales = [i for i in invoices if i.get("invoice_type") == "sales" and i.get("status") not in ("draft", "cancelled")]
