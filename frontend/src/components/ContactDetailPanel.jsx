@@ -18,6 +18,7 @@ import { InvoiceContextMenu, isIncomingPurchaseInvoice, isGibIssued, canDeleteIn
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { ElektronikFaturaOnayModal } from "./ElektronikFaturaOnayModal";
+import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
@@ -969,7 +970,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             contacts={c ? [c] : []}
             companyId={activeCompany?.id || activeCompany?._id || c?.company_id}
             onClose={() => setEFaturaInvoice(null)}
-            onConfirm={async ({ eType, scenario, alias, withholding, returnRef, exemption }) => {
+            onConfirm={async ({ eType, scenario, alias, withholding, returnRef, exemption, stampNow }) => {
               const inv = eFaturaInvoice;
               if (!inv) return;
               const invId = inv.id || inv._id;
@@ -984,6 +985,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 }
               }
               const patch = {};
+              if (stampNow) {
+                Object.assign(patch, nowIssueDateTime());
+              }
               if (withholding) {
                 patch.withholding_rate = Number(withholding.withholding_rate || 0);
                 patch.withholding_code = withholding.withholding_code || null;

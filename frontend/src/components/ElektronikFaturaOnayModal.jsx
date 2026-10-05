@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Circle,
   AlertCircle,
+  CalendarClock,
   Printer,
 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
@@ -31,6 +32,7 @@ import {
   TAX_EXEMPTION_LABELS,
   invoiceNeedsExemptionPrompt,
 } from "../utils/invoiceExemption";
+import { formatIssueStamp, nowIssueDateTime, showEfaturaStampNow } from "../utils/invoiceIssueNow";
 
 function digitsTax(raw) {
   return String(raw || "").replace(/\D/g, "");
@@ -250,6 +252,9 @@ export function ElektronikFaturaOnayModal({
   );
   const [withholdingValue, setWithholdingValue] = useState("");
   const [withholdingTouched, setWithholdingTouched] = useState(false);
+  const offerStampNow = showEfaturaStampNow({ isBulk, isPrint, mode });
+  const [stampNow, setStampNow] = useState(true);
+  const stampPreview = nowIssueDateTime();
   const isReturnInvoice = !isPrint && !isBulk && isReturnInvoiceDoc(doc);
   const prefilled = prefillReturnBillingRef(doc);
   const [returnInvoiceNo, setReturnInvoiceNo] = useState(prefilled.number);
@@ -455,6 +460,7 @@ export function ElektronikFaturaOnayModal({
       returnRef,
       documents: bulkDocs.length ? bulkDocs : doc ? [doc] : [],
       mode: "send",
+      stampNow: !!(offerStampNow && stampNow),
     };
     runJob(payload);
   };
@@ -523,6 +529,31 @@ export function ElektronikFaturaOnayModal({
                     ) : null}
                   </span>
                 </div>
+              )}
+              {offerStampNow && (
+                <label
+                  className="flex items-start gap-2.5 rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2.5 cursor-pointer"
+                  data-testid="efatura-onay-stamp-now"
+                >
+                  <input
+                    type="checkbox"
+                    checked={stampNow}
+                    onChange={(e) => setStampNow(e.target.checked)}
+                    className="mt-0.5 accent-sky-700"
+                    data-testid="efatura-onay-stamp-now-check"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5 text-sm font-semibold text-sky-950">
+                      <CalendarClock className="w-4 h-4 shrink-0" />
+                      Tarih ve saati şimdi ile değiştir
+                    </span>
+                    <span className="block text-[11px] text-sky-800/90 mt-0.5 leading-snug">
+                      {stampNow
+                        ? `GİB’e ${formatIssueStamp(stampPreview.issue_date, stampPreview.issue_time)} yazılır.`
+                        : `Belgedeki tarih kalır: ${formatIssueStamp(doc?.issue_date, doc?.issue_time)}.`}
+                    </span>
+                  </span>
+                </label>
               )}
               {(isBulk || bulkDocs.length > 1) && (
                 <div
