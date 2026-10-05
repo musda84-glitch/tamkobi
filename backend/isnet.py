@@ -984,19 +984,15 @@ def _serialize_ein(
     return xml_esc(str(obj))
 
 
-async def _soap_call(
-    settings: dict,
-    *,
-    endpoint: str,
+def soap_envelope_xml(
     action: str,
-    service_interface: str,
     request: Optional[dict] = None,
-    timeout: float = 60.0,
+    *,
     array_map: Optional[Dict[str, str]] = None,
-) -> ET.Element:
-    _ = settings
-    inner = _serialize_ein(request or {}, array_map=array_map)
-    envelope = (
+) -> str:
+    """InvoiceService SOAP zarfı (NetteFatura-API ile aynı)."""
+    inner = _serialize_ein(request or {}, array_map=array_map) if request is not None else ""
+    return (
         '<?xml version="1.0" encoding="utf-8"?>'
         '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" '
         f'xmlns:tem="{SOAP_NS}" xmlns:ein="{EIN_NS}" xmlns:arr="{ARR_NS}">'
@@ -1008,10 +1004,27 @@ async def _soap_call(
         "</soapenv:Body>"
         "</soapenv:Envelope>"
     )
-    # NetteFatura-API: SOAPAction = http://tempuri.org/IInvoiceService/{Action}
+
+
+def soap_action_header(service_interface: str, action: str) -> str:
+    return f'"{SOAP_NS}{service_interface}/{action}"'
+
+
+async def _soap_call(
+    settings: dict,
+    *,
+    endpoint: str,
+    action: str,
+    service_interface: str,
+    request: Optional[dict] = None,
+    timeout: float = 60.0,
+    array_map: Optional[Dict[str, str]] = None,
+) -> ET.Element:
+    _ = settings
+    envelope = soap_envelope_xml(action, request, array_map=array_map)
     headers = {
         "Content-Type": "text/xml; charset=utf-8",
-        "SOAPAction": f'"{SOAP_NS}{service_interface}/{action}"',
+        "SOAPAction": soap_action_header(service_interface, action),
     }
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
@@ -1053,6 +1066,76 @@ async def soap_health_check(settings: dict) -> str:
         timeout=20.0,
     )
     return _find_text(body, "HealthCheckResult", "Result") or "OK"
+
+
+async def build_isnet_support_pack(settings: Optional[dict] = None) -> Dict[str, Any]:
+    """İşNet desteğe gönderilecek HealthCheck request + response (TLS timeout dahil)."""
+    settings = settings or {"mode": "live"}
+    endpoint = LIVE_SOAP
+    envelope = soap_envelope_xml("HealthCheck", None)
+    headers = {
+        "Content-Type": "text/xml; charset=utf-8",
+        "SOAPAction": soap_action_header("IInvoiceService", "HealthCheck"),
+    }
+    egress = await detect_egress_ips()
+    diag = await diagnose_live_soap_path()
+    captured_at = datetime.now(timezone.utc).isoformat()
+    http_status = None
+    body_text = ""
+    error = ""
+    elapsed_ms = 0
+    t0 = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.post(endpoint, content=envelope.encode("utf-8"), headers=headers)
+        elapsed_ms = int((time.time() - t0) * 1000)
+        http_status = resp.status_code
+        body_text = (resp.text or "")[:4000]
+    except Exception as e:
+        elapsed_ms = int((time.time() - t0) * 1000)
+        error = f"{type(e).__name__}: {e}"
+    rest_text = ""
+    rest_status = None
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            rr = await client.get(f"{LIVE_API}/api/Account/GetHealthCheck")
+        rest_status = rr.status_code
+        rest_text = (rr.text or "")[:500]
+    except Exception as e:
+        rest_text = f"{type(e).__name__}: {e}"
+    soap_probe = diag.get("soap") or {}
+    response_txt = (
+        f"captured_at_utc={captured_at}\n"
+        f"client_egress_ip={', '.join(egress) or '?'}\n"
+        f"declared_isnet_ip=85.95.240.136\n"
+        f"vkn={company_tax_code(settings) or '?'}\n"
+        f"method=POST\n"
+        f"url={endpoint}\n"
+        f"SOAPAction={headers['SOAPAction']}\n"
+        f"http_status={http_status if http_status is not None else 'NONE (TLS/TCP, HTTP oluşmadı)'}\n"
+        f"elapsed_ms={elapsed_ms}\n"
+        f"error={error or '-'}\n"
+        f"soap_host={LIVE_SOAP_HOST}\n"
+        f"soap_resolved_ip={', '.join(soap_probe.get('ips') or []) or '?'}\n"
+        f"soap_tcp_ok={soap_probe.get('tcp_ok')}\n"
+        f"soap_tls_ok={soap_probe.get('tls_ok')}\n"
+        f"soap_tls_error={soap_probe.get('error') or '-'}\n"
+        f"rest_get={LIVE_API}/api/Account/GetHealthCheck status={rest_status} body={rest_text!r}\n"
+        f"\n--- HTTP body ---\n"
+        f"{body_text or '(boş — TLS ServerHello gelmediği için HTTP/SOAP yanıtı yok)'}\n"
+    )
+    return {
+        "request_xml": envelope,
+        "request_headers": headers,
+        "endpoint": endpoint,
+        "response_txt": response_txt,
+        "egress_ips": egress,
+        "live_path": diag,
+        "http_status": http_status,
+        "error": error,
+        "elapsed_ms": elapsed_ms,
+        "support_email": SUPPORT_EMAIL,
+    }
 
 
 async def get_company_balance(settings: dict, tax_code: Optional[str] = None) -> Dict[str, Any]:

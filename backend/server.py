@@ -1060,6 +1060,14 @@ async def isnet_egress_ips():
     return {**info, "message": msg}
 
 
+@api_router.get("/integrations/isnet/support-pack")
+async def isnet_support_pack(company_id: Optional[str] = "comp_nexus_main_01"):
+    """İşNet desteğe eklenecek HealthCheck request.xml + response.txt."""
+    existing = await db.einvoice_settings.find_one({"company_id": company_id}) or {}
+    pack = await isnet.build_isnet_support_pack({**existing, "mode": "live"})
+    return pack
+
+
 @api_router.post("/integrations/isnet/test")
 async def isnet_test_connection(req: Dict[str, Any]):
     """Formdaki veya kayıtlı İşNet bilgileriyle SOAP (IP–VKN) bağlantı testi."""
