@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Camera, Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, PieChart, X, Trash2 } from "lucide-react";
+import { Camera, Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, PieChart, X, Trash2, Pencil, Banknote } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { PartnerTxTable } from "./PartnerTxTable";
@@ -54,7 +54,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const [modal, setModal] = useState(null); // add | tx | profit | virman
   const [liveAccounts, setLiveAccounts] = useState(() => accounts || []);
   const [accountsLoading, setAccountsLoading] = useState(false);
-  const [partnerForm, setPartnerForm] = useState({ name: "", share_percent: "", phone: "", email: "" });
+  const [partnerForm, setPartnerForm] = useState({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "" });
   const [txForm, setTxForm] = useState({ partner_id: "", type: "capital_in", amount: "", account_id: "", description: "" });
   const [profitForm, setProfitForm] = useState({ total_profit: "", pay_now: true, account_id: "", period: new Date().toISOString().slice(0, 7) });
   const [virmanForm, setVirmanForm] = useState({ source_account_id: "", target_account_id: "", amount: "", description: "Hesaplar arası transfer (Virman)" });
@@ -70,6 +70,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
   const load = useCallback(async () => {
     try {
+      await axios.post(`${API_URL}/banking/partners/accrue-salary`, { company_id: companyId }).catch(() => null);
       const [p, s, t] = await Promise.all([
         axios.get(`${API_URL}/banking/partners?company_id=${companyId}`),
         axios.get(`${API_URL}/banking/partners/summary?company_id=${companyId}`),
@@ -171,9 +172,54 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const savePartner = async (e) => {
     e.preventDefault();
     try {
-      await axios.post(`${API_URL}/banking/partners`, { company_id: companyId, ...partnerForm, share_percent: Number(partnerForm.share_percent || 0) });
-      toast.success("Ortak eklendi."); setModal(null); setPartnerForm({ name: "", share_percent: "", phone: "", email: "" }); load();
+      await axios.post(`${API_URL}/banking/partners`, {
+        company_id: companyId,
+        name: partnerForm.name,
+        share_percent: Number(partnerForm.share_percent || 0),
+        phone: partnerForm.phone,
+        email: partnerForm.email,
+        monthly_salary: Number(partnerForm.monthly_salary || 0),
+      });
+      toast.success("Ortak eklendi."); setModal(null); setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "" }); load();
     } catch (err) { toast.error(err.response?.data?.detail || "Ortak eklenemedi."); }
+  };
+
+  const openEditPartner = (p, e) => {
+    e.stopPropagation();
+    setPartnerForm({
+      id: p.id,
+      name: p.name || "",
+      share_percent: p.share_percent ?? "",
+      phone: p.phone || "",
+      email: p.email || "",
+      monthly_salary: p.monthly_salary || "",
+    });
+    setModal("edit");
+  };
+
+  const savePartnerEdit = async (e) => {
+    e.preventDefault();
+    try {
+      await axios.put(`${API_URL}/banking/partners/${partnerForm.id}`, {
+        name: partnerForm.name,
+        share_percent: Number(partnerForm.share_percent || 0),
+        phone: partnerForm.phone,
+        email: partnerForm.email,
+        monthly_salary: Number(partnerForm.monthly_salary || 0),
+      });
+      toast.success("Ortak güncellendi.");
+      setModal(null);
+      setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "" });
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Ortak güncellenemedi."); }
+  };
+
+  const accrueSalaryNow = async () => {
+    try {
+      const r = await axios.post(`${API_URL}/banking/partners/accrue-salary`, { company_id: companyId });
+      toast.success(r.data?.message || "Aylık maaşlar yazıldı.");
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Maaş yazılamadı."); }
   };
 
   const saveTx = async (e) => {
@@ -239,14 +285,15 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           <div className="p-2 rounded-xl bg-amber-50 text-amber-600"><Users className="w-5 h-5" /></div>
           <div>
             <h2 className="text-base font-bold text-slate-900">Ortaklar Hesabı</h2>
-            <p className="text-xs text-slate-500">Ortak bazlı para giriş/çıkış, borç-alacak fişi ve kâr payı dağıtımı (131/331)</p>
+            <p className="text-xs text-slate-500">Ortak bazlı para giriş/çıkış, borç-alacak fişi, aylık maaş ve kâr payı dağıtımı (131/331)</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={openTxModal} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-tx-btn"><ArrowDownRight className="w-4 h-4" /> Para Giriş / Çıkış</button>
           <button onClick={openVirmanModal} className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-virman-btn"><ArrowLeftRight className="w-4 h-4" /> Virman</button>
+          <button onClick={accrueSalaryNow} className="flex items-center gap-1.5 bg-white hover:bg-amber-50 text-amber-800 border border-amber-200 px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-accrue-salary-btn"><Banknote className="w-4 h-4" /> Aylık maaşı yaz</button>
           <button onClick={openProfitModal} className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="distribute-profit-btn"><PieChart className="w-4 h-4" /> Kâr Payı Dağıt</button>
-          <button onClick={() => setModal("add")} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-partner-btn"><Plus className="w-4 h-4" /> Ortak Ekle</button>
+          <button onClick={() => { setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "" }); setModal("add"); }} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-partner-btn"><Plus className="w-4 h-4" /> Ortak Ekle</button>
         </div>
       </div>
 
@@ -304,12 +351,18 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 <div className="text-[11px] text-slate-500">{p.email || p.phone || "—"}</div>
                 </div>
               </div>
-              <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded-md px-2 py-0.5 text-xs font-bold">%{p.share_percent}</span>
+              <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded-md px-2 py-0.5 text-xs font-bold">%{p.share_percent}</span>
+                <button type="button" onClick={(e) => openEditPartner(p, e)} className="p-1.5 text-slate-300 hover:text-indigo-600" title="Düzenle / maaş" data-testid={`edit-partner-${p.name}`}><Pencil className="w-4 h-4" /></button>
+              </div>
             </div>
             <div className="pt-2 border-t border-slate-100 flex items-end justify-between">
               <div>
                 <div className="text-[10px] uppercase text-slate-400 font-semibold">Ortak Bakiyesi</div>
                 <div className="text-lg font-bold text-slate-900">{fmt(p.balance)} ₺</div>
+                {Number(p.monthly_salary) > 0 && (
+                  <div className="text-[10px] text-slate-500 mt-0.5" data-testid={`partner-salary-${p.id}`}>Aylık maaş: <b className="text-slate-700">{fmt(p.monthly_salary)} ₺</b></div>
+                )}
               </div>
               <button onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
             </div>
@@ -350,11 +403,29 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             <div><label className="block font-semibold mb-1">Ad Soyad</label><input className={inputCls} value={partnerForm.name} onChange={(e) => setPartnerForm({ ...partnerForm, name: e.target.value })} required data-testid="partner-name-input" /></div>
             <div><label className="block font-semibold mb-1">Ortaklık Payı (%)</label><input type="number" step="0.01" className={inputCls} value={partnerForm.share_percent} onChange={(e) => setPartnerForm({ ...partnerForm, share_percent: e.target.value })} required data-testid="partner-share-input" />
               <p className="text-[10px] text-slate-400 mt-1">Mevcut toplam: %{summary?.total_share_percent || 0}</p></div>
+            <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><input type="number" step="0.01" min="0" className={inputCls} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} data-testid="partner-salary-input" />
+              <p className="text-[10px] text-slate-400 mt-1">Her ay bu tutar ortak alacağına yazılır; kasa/banka değişmez.</p></div>
             <div className="grid grid-cols-2 gap-2">
               <div><label className="block font-semibold mb-1">Telefon</label><input className={inputCls} value={partnerForm.phone} onChange={(e) => setPartnerForm({ ...partnerForm, phone: e.target.value })} /></div>
               <div><label className="block font-semibold mb-1">E-posta</label><input className={inputCls} value={partnerForm.email} onChange={(e) => setPartnerForm({ ...partnerForm, email: e.target.value })} /></div>
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="save-partner-btn">Kaydet</button></div>
+          </form>
+        </Modal>
+      )}
+
+      {modal === "edit" && (
+        <Modal title="Ortağı Düzenle" onClose={() => setModal(null)} testId="edit-partner-modal">
+          <form onSubmit={savePartnerEdit} className="space-y-3 text-xs">
+            <div><label className="block font-semibold mb-1">Ad Soyad</label><input className={inputCls} value={partnerForm.name} onChange={(e) => setPartnerForm({ ...partnerForm, name: e.target.value })} required data-testid="edit-partner-name-input" /></div>
+            <div><label className="block font-semibold mb-1">Ortaklık Payı (%)</label><input type="number" step="0.01" className={inputCls} value={partnerForm.share_percent} onChange={(e) => setPartnerForm({ ...partnerForm, share_percent: e.target.value })} required data-testid="edit-partner-share-input" /></div>
+            <div><label className="block font-semibold mb-1">Aylık maaş (₺)</label><input type="number" step="0.01" min="0" className={inputCls} value={partnerForm.monthly_salary} onChange={(e) => setPartnerForm({ ...partnerForm, monthly_salary: e.target.value })} data-testid="edit-partner-salary-input" />
+              <p className="text-[10px] text-slate-400 mt-1">Kaydettiğinizde bu ayın maaşı henüz yazılmadıysa ortak alacağına eklenir.</p></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><label className="block font-semibold mb-1">Telefon</label><input className={inputCls} value={partnerForm.phone} onChange={(e) => setPartnerForm({ ...partnerForm, phone: e.target.value })} /></div>
+              <div><label className="block font-semibold mb-1">E-posta</label><input className={inputCls} value={partnerForm.email} onChange={(e) => setPartnerForm({ ...partnerForm, email: e.target.value })} /></div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg font-semibold" data-testid="save-edit-partner-btn">Kaydet</button></div>
           </form>
         </Modal>
       )}

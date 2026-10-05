@@ -42,6 +42,9 @@ export const PARTNER_TX_TR: Record<string, string> = {
   capital_in: "Sermaye Girişi",
   withdrawal: "Para Çekişi",
   profit_share: "Kâr Payı",
+  credit: "Alacak Fişi",
+  debit: "Borç Fişi",
+  salary: "Aylık Maaş",
 };
 
 export type BankAccount = {

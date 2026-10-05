@@ -6,11 +6,12 @@ export const PARTNER_TX_LABEL = {
   profit_share: "Kâr Payı",
   credit: "Alacak Fişi",
   debit: "Borç Fişi",
+  salary: "Aylık Maaş",
 };
 
-/** Artı: ortak alacağı artar (para koy / alacak fişi). */
+/** Artı: ortak alacağı artar (para koy / alacak fişi / maaş). */
 export function partnerTxIncreasesBalance(type) {
-  return type === "capital_in" || type === "credit";
+  return type === "capital_in" || type === "credit" || type === "salary";
 }
 
 export function partnerTxSign(type) {
@@ -18,7 +19,7 @@ export function partnerTxSign(type) {
 }
 
 export function isPartnerLedgerType(type) {
-  return type === "credit" || type === "debit";
+  return type === "credit" || type === "debit" || type === "salary";
 }
 
 export function isPartnerCashType(type) {
