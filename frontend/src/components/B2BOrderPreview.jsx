@@ -68,10 +68,11 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
             {items.map((it, i) => {
               const img = lineImage(it, products);
               const code = lineCode(it, products);
-              const sku = String(it.sku || "").trim();
+              const prod = (products || []).find((x) => String(x.id || x._id || "") === String(it.product_id || it.productId || "")) || {};
+              const sku = String(it.sku || prod.sku || "").trim();
               const stockNote = pickLineNote(it);
-              const prod = (products || []).find((x) => x.id === it.product_id || x._id === it.product_id) || {};
               const stockBits = b2bPreviewStockBits(it, prod);
+              const hasLabel = !!(stockBits.identity || stockBits.tags.length || stockBits.bits.length);
               return (
                 <div key={it.product_id || i} className="p-3 flex gap-3 items-start bg-white" data-testid={`b2b-preview-line-${i}`}>
                   <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg border bg-slate-50 overflow-hidden shrink-0 flex items-center justify-center">
@@ -80,13 +81,17 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-slate-900 leading-tight">{it.product_name}</div>
                     <div className="text-slate-500 mt-0.5" data-testid={`b2b-preview-line-meta-${i}`}>{b2bPreviewLineMeta(it, plain)}</div>
-                    {sku && sku !== code && <div className="text-[10px] text-slate-400 font-mono mt-0.5">SKU {sku}</div>}
-                    {stockBits.tags.length || stockBits.bits.length ? (
+                    {hasLabel ? (
                       <div className="mt-1 space-y-1" data-testid={`b2b-preview-line-label-${i}`}>
+                        {stockBits.identity ? (
+                          <div className="text-[10px] text-slate-600 font-mono leading-snug">{stockBits.identity}</div>
+                        ) : sku ? (
+                          <div className="text-[10px] text-slate-400 font-mono">SKU {sku}</div>
+                        ) : null}
                         {stockBits.tags.length ? (
                           <div className="flex flex-wrap gap-0.5">
                             {stockBits.tags.map((t) => (
-                              <span key={t} className="text-[9px] px-1 py-0 rounded bg-slate-100 text-slate-600">{t}</span>
+                              <span key={t} className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">{t}</span>
                             ))}
                           </div>
                         ) : null}

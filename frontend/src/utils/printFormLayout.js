@@ -126,23 +126,32 @@ export const b2bPreviewLineMeta = (it = {}, hidePrices = false, formatAmount = f
   return `${qty} · ${formatAmount(lineUnitIncl(it))} ₺`;
 };
 
-/** Stok etiketi alanları: etiket 1–3, kategori, GTIP, menşe, raf. */
+/** Stok etiketi alanları: SKU, barkod, etiket 1–3, kategori, GTIP, menşe, raf. */
 export const b2bPreviewStockBits = (it = {}, product = {}) => {
+  const sku = String(it.sku || product.sku || "").trim();
+  const barcode = String(it.barcode || product.barcode || "").trim();
+  const identity = [
+    sku ? `SKU ${sku}` : "",
+    barcode && barcode !== sku ? `Barkod ${barcode}` : "",
+  ].filter(Boolean).join(" · ");
   const tags = (Array.isArray(product?.tags) ? product.tags : Array.isArray(it?.tags) ? it.tags : [])
     .map((t) => String(t || "").trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, 3);
   const bits = [];
   const variant = String(it.variant_name || product.variant_name || "").trim();
   const category = String(it.category || product.category || "").trim();
   const gtip = String(it.gtip || product.gtip || "").trim();
   const origin = String(it.origin_country || product.origin_country || "").trim();
+  const maker = String(it.manufacturer_code || product.manufacturer_code || "").trim();
   const shelf = printShelfLabel(it, product);
   if (variant) bits.push(variant);
   if (category) bits.push(category);
   if (gtip) bits.push(`GTIP ${gtip}`);
   if (origin) bits.push(origin);
+  if (maker) bits.push(maker);
   if (shelf) bits.push(`Raf ${shelf}`);
-  return { tags, bits };
+  return { identity, tags, bits };
 };
 
 export const b2bPreviewPrintLabel = (hidePrices = false) => (

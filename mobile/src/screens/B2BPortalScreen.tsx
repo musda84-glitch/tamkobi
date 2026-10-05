@@ -1175,9 +1175,9 @@ export function B2BPortalScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontWeight: "800" }}>{rec.product_name}</Text>
                     <Muted>{rec.quantity} {rec.unit || "Adet"}{unitIncl != null ? ` · ${fmtMoney(unitIncl)}` : ""}{code ? ` · ${code}` : ""}</Muted>
-                    {stockBits.tags.length || stockBits.bits.length ? (
+                    {stockBits.identity || stockBits.tags.length || stockBits.bits.length ? (
                       <Muted testID={`b2b-preview-line-label-${i}`}>
-                        {[...stockBits.tags, ...stockBits.bits].join(" · ")}
+                        {[stockBits.identity, ...stockBits.tags, ...stockBits.bits].filter(Boolean).join(" · ")}
                       </Muted>
                     ) : null}
                     {stockNote ? (
