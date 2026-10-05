@@ -122,6 +122,8 @@ test("identity column stacks requests, actions and remaining receivable", async 
   expect(host.querySelector('[data-testid="employee-card-requests-14479874352"]')?.textContent).toContain("Talepler");
   expect(host.querySelector('[data-testid="employee-card-actions-emp_1"]')?.textContent).toMatch(/Hareketler/);
   expect(host.querySelector('[data-testid="employee-card-actions-emp_1"]')?.textContent).toMatch(/Personel Kartı/);
+  expect(host.querySelector('[data-testid="employee-cards-grid"]')?.className).toContain("grid-cols-1");
+  expect(host.querySelector('[data-testid="employee-cards-grid"]')?.className).not.toMatch(/xl:grid-cols-2/);
   expect(host.querySelector('[data-testid="employee-card-details-14479874352"]')).toBeNull();
   await act(async () => {
     host.querySelector('[data-testid="employee-card-expand-14479874352"]').click();
