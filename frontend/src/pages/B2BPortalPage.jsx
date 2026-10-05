@@ -5,7 +5,7 @@ import { useParams } from "react-router-dom";
 import { ShoppingCart, Package, FileText, Truck, CalendarClock, Loader2, Search, CheckCircle2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { getPriceDecimals, setPriceDecimals } from "../utils/money";
-import { fmt, b2bGross, b2bNet, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
+import { fmt, b2bGross, b2bNet, b2bOrderGross, B2BHeader, CartBody, MobileCartBar, OrdersList, StatementList } from "../components/B2BPortalParts";
 import { B2BAiCart } from "../components/B2BAiCart";
 import { B2BCatalogCard } from "../components/B2BCatalogCard";
 import { ScanButton } from "../components/CameraScanner";
@@ -371,7 +371,7 @@ export default function B2BPortalPage() {
             <span>
               Siparişiniz alındı: <b>{done.order_number}</b>
               {done.customer_order_number ? <> · sizin no <b>{done.customer_order_number}</b></> : null}
-              {" — "}{fmt(done.total_amount)} ₺. Onaylandığında kargo takip numarası burada görünecek.
+              {" — "}<b data-testid="b2b-order-success-total">{fmt(b2bOrderGross(done))} ₺</b>. Onaylandığında kargo takip numarası burada görünecek.
             </span>
           </div>
         )}
