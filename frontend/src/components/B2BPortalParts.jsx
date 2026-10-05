@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound } from "lucide-react";
+import { ShoppingCart, Truck, Trash2, Building2, X, ExternalLink, Package, PackageCheck, Clock, Pencil, Ban, Plus, Minus, Loader2, KeyRound, Factory, CheckCircle2, Circle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
@@ -251,6 +251,71 @@ export const MobileCartBar = ({ lines, total, open, setOpen, children, heldCount
 
 const STEP_LABELS = { created: "Hazırlanıyor", picked_up: "Kargoya Verildi", in_transit: "Yolda", out_for_delivery: "Dağıtımda", delivered: "Teslim Edildi", returned: "İade" };
 
+/** Üretimdeyken kargo yerine aşamalar; kargo çıktıysa veya teslimde üretim gizlenir. */
+export function orderShowsProduction(o) {
+  const p = o?.production;
+  if (!p?.status) return false;
+  const ost = String(o?.order_status || "").toLowerCase();
+  if (["cancelled", "delivered", "completed", "shipped", "returned", "partially_returned"].includes(ost)) return false;
+  if (o?.tracking && !p.active) return false;
+  return true;
+}
+
+export const ProductionCard = ({ p, orderNumber }) => {
+  if (!p) return null;
+  const doneAll = p.status === "completed" || (p.total > 0 && p.done >= p.total);
+  return (
+    <div
+      className={`rounded-xl border p-2.5 text-xs space-y-1.5 ${doneAll ? "bg-emerald-50 border-emerald-200" : "bg-amber-50 border-amber-200"}`}
+      data-testid={`b2b-production-${orderNumber}`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className={`inline-flex items-center gap-1 font-bold ${doneAll ? "text-emerald-700" : "text-amber-800"}`}>
+          <Factory className="w-4 h-4" /> {p.status_label || "Üretimde"}
+          {p.product_name ? <span className="font-normal text-slate-500"> · {p.product_name}</span> : null}
+        </span>
+        {p.total > 0 ? (
+          <span className="text-[11px] text-slate-500 font-semibold" data-testid={`b2b-production-progress-${orderNumber}`}>
+            {p.done}/{p.total}
+          </span>
+        ) : null}
+      </div>
+      {p.total > 0 && (
+        <div className="flex items-center gap-1" aria-label="Üretim adımları">
+          {(p.steps || []).map((s) => (
+            <div
+              key={`${s.no}-${s.name}`}
+              className={`h-1.5 flex-1 rounded-full ${s.done ? "bg-emerald-500" : s.current ? "bg-amber-500" : "bg-slate-200"}`}
+              title={s.name}
+            />
+          ))}
+        </div>
+      )}
+      {(p.steps || []).length > 0 && (
+        <ul className="space-y-0.5" data-testid={`b2b-production-steps-${orderNumber}`}>
+          {(p.steps || []).map((s) => (
+            <li
+              key={`${s.no}-${s.name}`}
+              className={`flex items-start gap-1.5 text-[11px] leading-tight ${s.done ? "text-emerald-700" : s.current ? "text-amber-800 font-semibold" : "text-slate-500"}`}
+              data-testid={`b2b-production-step-${orderNumber}-${s.no}`}
+            >
+              {s.done ? <CheckCircle2 className="w-3 h-3 shrink-0 mt-0.5" /> : s.current ? <Factory className="w-3 h-3 shrink-0 mt-0.5" /> : <Circle className="w-3 h-3 shrink-0 mt-0.5 text-slate-300" />}
+              <span className="min-w-0">
+                <span className="font-mono text-slate-400 mr-1">{s.no}.</span>
+                {s.name}
+                {s.station ? <span className="ml-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1 py-0.5 rounded">{s.station}</span> : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {p.current_step_name && !doneAll ? (
+        <div className="text-[11px] text-amber-800">Şu an: <b>{p.current_step_name}</b></div>
+      ) : null}
+    </div>
+  );
+};
+
 export const TrackingCard = ({ t, orderNumber }) => {
   if (!t) return <span className="text-slate-400 text-xs">Kargo bekleniyor</span>;
   const done = t.status === "delivered";
@@ -269,23 +334,41 @@ export const TrackingCard = ({ t, orderNumber }) => {
   );
 };
 
+/** Kargo hücresi: üretimde aşamalar, aksi halde kargo kartı. */
+export const OrderProgressCell = ({ o }) => {
+  if (o?.is_held_cart) return <span className="text-slate-400 text-[11px]">—</span>;
+  if (orderShowsProduction(o)) return <ProductionCard p={o.production} orderNumber={o.order_number} />;
+  return <TrackingCard t={o.tracking} orderNumber={o.order_number} />;
+};
+
 const Th = ({ children, right }) => <th className={`p-3 ${right ? "text-right" : "text-left"}`}>{children}</th>;
 const pendingStatus = (s) => ["pending", "new"].includes(s);
 const approvedStatus = (s) => ["approved", "preparing"].includes(s);
 
-const OrderStatusBadge = ({ o }) => (
-  <div className="flex flex-col items-start gap-1">
-    {o.is_held_cart ? (
-      <span className={`px-1.5 py-0.5 rounded font-semibold ${o.is_active_cart ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`} data-testid={`b2b-held-badge-${o.id}`}>
-        {o.is_active_cart ? "Aktif sepet" : (o.held_seq ? `Bekleyen sepet #${o.held_seq}` : "Bekleyen sepet")}
-      </span>
-    ) : (
-      <span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{orderStatusLabel(o, statusTr(o.order_status))}</span>
-    )}
-    {o.cancel_request?.status === "pending" && <span className="bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded font-semibold" data-testid={`b2b-cancel-pending-${o.order_number}`}>İptal talebi iletildi</span>}
-    {o.cancel_request?.status === "rejected" && <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">İptal talebi reddedildi</span>}
-  </div>
-);
+const OrderStatusBadge = ({ o }) => {
+  const showProd = orderShowsProduction(o);
+  const statusText = showProd
+    ? (o.production?.status_label || "Üretimde")
+    : orderStatusLabel(o, statusTr(o.order_status));
+  const statusClass = showProd
+    ? (o.production?.status === "completed" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800")
+    : "bg-slate-100";
+  return (
+    <div className="flex flex-col items-start gap-1">
+      {o.is_held_cart ? (
+        <span className={`px-1.5 py-0.5 rounded font-semibold ${o.is_active_cart ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`} data-testid={`b2b-held-badge-${o.id}`}>
+          {o.is_active_cart ? "Aktif sepet" : (o.held_seq ? `Bekleyen sepet #${o.held_seq}` : "Bekleyen sepet")}
+        </span>
+      ) : (
+        <span className={`px-1.5 py-0.5 rounded font-semibold ${statusClass}`} data-testid={showProd ? `b2b-prod-status-${o.order_number}` : undefined}>
+          {statusText}
+        </span>
+      )}
+      {o.cancel_request?.status === "pending" && <span className="bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded font-semibold" data-testid={`b2b-cancel-pending-${o.order_number}`}>İptal talebi iletildi</span>}
+      {o.cancel_request?.status === "rejected" && <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">İptal talebi reddedildi</span>}
+    </div>
+  );
+};
 
 const OrderActions = ({ o, onPreview, onEdit, onDelete, onCancel, busy }) => (
   <div className="flex flex-wrap gap-1.5" data-testid={`b2b-order-actions-${o.order_number}`}>
@@ -450,7 +533,7 @@ export const OrdersList = ({ orders, heldRows = [], token, products, company, on
           {o.customer_order_number ? <div className="text-slate-500">Sizin no: <span className="font-mono font-semibold">{o.customer_order_number}</span></div> : null}
           <div className="text-slate-500">{(o.order_date || "").slice(0, 10)} · {(o.items || []).map((i) => formatOrderItemLabel(i)).join(", ")}</div>
           <div className="flex items-center justify-between gap-2"><span className="font-bold text-sm">{fmt(b2bOrderGross(o))}</span></div>
-          {!o.is_held_cart && <TrackingCard t={o.tracking} orderNumber={o.order_number} />}
+          {!o.is_held_cart && <OrderProgressCell o={o} />}
           <OrderActions
             o={o}
             onPreview={setPreview}
@@ -463,7 +546,7 @@ export const OrdersList = ({ orders, heldRows = [], token, products, company, on
       {rows.length > 0 && (
         <table className="hidden md:table w-full text-xs">
           <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] border-b">
-            <tr><Th>Sipariş</Th><Th>Sizin no</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Kargo</Th><Th>İşlem</Th></tr>
+            <tr><Th>Sipariş</Th><Th>Sizin no</Th><Th>Tarih</Th><Th>Kalem</Th><Th right>Tutar</Th><Th>Durum</Th><Th>Takip</Th><Th>İşlem</Th></tr>
           </thead>
           <tbody className="divide-y">
             {rows.map((o) => (
@@ -474,7 +557,7 @@ export const OrdersList = ({ orders, heldRows = [], token, products, company, on
                 <td className="p-3">{(o.items || []).map((i) => formatOrderItemLabel(i)).join(", ")}</td>
                 <td className="p-3 text-right font-bold">{fmt(b2bOrderGross(o))}</td>
                 <td className="p-3"><OrderStatusBadge o={o} /></td>
-                <td className="p-3 min-w-[220px]">{o.is_held_cart ? <span className="text-slate-400 text-[11px]">—</span> : <TrackingCard t={o.tracking} orderNumber={o.order_number} />}</td>
+                <td className="p-3 min-w-[220px]"><OrderProgressCell o={o} /></td>
                 <td className="p-3">
                   <OrderActions
                     o={o}

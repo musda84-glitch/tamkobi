@@ -23,6 +23,7 @@ from client_ip import request_ip
 import partner_pay
 import employee_pay
 import employee_data_reset
+import b2b_production
 from order_edit import order_edit_block_reason
 from order_dedupe import (
     dedupe_orders_by_marketplace_key,
@@ -3382,6 +3383,95 @@ def _b2b_tracking(o: dict, sh: Optional[dict]) -> Optional[dict]:
     """Portal için canlı kargo bilgisi: takip linki, durum adımı ve tahmini teslim."""
     return _b2b_track_mod.build_b2b_tracking(o, sh)
 
+
+async def _enrich_b2b_orders_production(orders: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Portal siparişlerine üretim durumu + aşama listesi ekle."""
+    if not orders:
+        return orders
+    await _enrich_orders_production_flags(orders)
+    candidates = [
+        o for o in orders
+        if not (o.get("is_held_cart") or o.get("is_active_cart") or o.get("order_status") in ("held_cart", "active_cart"))
+        and (
+            o.get("production_order_id")
+            or o.get("production_recipe_id")
+            or o.get("sent_to_production_at")
+            or o.get("has_production_order")
+        )
+    ]
+    if not candidates:
+        return orders
+
+    po_ids = [str(o.get("production_order_id") or "").strip() for o in candidates if o.get("production_order_id")]
+    po_ids = [x for x in po_ids if x]
+    recipe_ids = [str(o.get("production_recipe_id") or "").strip() for o in candidates if o.get("production_recipe_id")]
+    recipe_ids = list({x for x in recipe_ids if x})
+
+    pos_by_id: Dict[str, Dict[str, Any]] = {}
+    if po_ids:
+        for po in await db.production_orders.find({"_id": {"$in": po_ids}}).to_list(len(po_ids) + 10):
+            pos_by_id[str(po["_id"])] = po
+
+    pos_by_recipe: Dict[str, Dict[str, Any]] = {}
+    if recipe_ids:
+        for po in await db.production_orders.find(
+            {"recipe_id": {"$in": recipe_ids}, "status": {"$ne": "cancelled"}},
+        ).sort("created_at", -1).to_list(len(recipe_ids) * 3 + 20):
+            rid = str(po.get("recipe_id") or "").strip()
+            if rid and rid not in pos_by_recipe:
+                pos_by_recipe[rid] = po
+
+    recipes_by_id: Dict[str, Dict[str, Any]] = {}
+    need_recipe = [rid for rid in recipe_ids if rid]
+    if need_recipe:
+        for r in await db.recipes.find({"_id": {"$in": need_recipe}}).to_list(len(need_recipe) + 10):
+            recipes_by_id[str(r["_id"])] = r
+
+    linked: Dict[str, Dict[str, Any]] = {}
+    for o in candidates:
+        oid = str(o.get("id") or o.get("_id") or "").strip()
+        if not oid:
+            continue
+        pid = str(o.get("production_order_id") or "").strip()
+        rid = str(o.get("production_recipe_id") or "").strip()
+        po = pos_by_id.get(pid) if pid else None
+        if not po and rid:
+            po = pos_by_recipe.get(rid)
+        if po:
+            linked[oid] = po
+            if not o.get("production_order_id"):
+                o["production_order_id"] = po.get("_id") or po.get("id")
+
+    all_po_ids = list({str(po.get("_id") or po.get("id")) for po in linked.values() if po.get("_id") or po.get("id")})
+    wos_by_po: Dict[str, List[Dict[str, Any]]] = {}
+    if all_po_ids:
+        wos = await db.work_orders.find(
+            {"order_id": {"$in": all_po_ids}},
+            {
+                "order_id": 1, "status": 1, "step_name": 1, "step_no": 1, "original_step_no": 1,
+                "station": 1, "step_note": 1, "note": 1, "material_name": 1,
+            },
+        ).to_list(5000)
+        for w in wos:
+            wos_by_po.setdefault(str(w.get("order_id") or ""), []).append(w)
+
+    for o in candidates:
+        oid = str(o.get("id") or o.get("_id") or "").strip()
+        po = linked.get(oid)
+        rid = str(o.get("production_recipe_id") or (po or {}).get("recipe_id") or "").strip()
+        recipe = recipes_by_id.get(rid) if rid else None
+        po_id = str((po or {}).get("_id") or (po or {}).get("id") or "").strip()
+        prod = b2b_production.build_b2b_production(
+            production_order=po,
+            work_orders=wos_by_po.get(po_id) if po_id else None,
+            recipe=recipe,
+            sent_to_production=bool(o.get("sent_to_production_at") or o.get("has_production_order")),
+        )
+        if prod:
+            o["production"] = prod
+            o["has_production_order"] = True
+    return orders
+
 @api_router.post("/contacts/{contact_id}/b2b-access")
 async def contact_b2b_access(contact_id: str, req: Dict[str, Any]):
     c = await db.contacts.find_one({"_id": contact_id})
@@ -4280,6 +4370,7 @@ async def b2b_portal(token: str):
                 it["category"] = p.get("category")
             if not it.get("manufacturer_code") and p.get("manufacturer_code"):
                 it["manufacturer_code"] = p.get("manufacturer_code")
+    await _enrich_b2b_orders_production(orders)
     orders = _sort_b2b_cart_orders(orders)
     invoices = [{"invoice_number": i.get("invoice_number"), "issue_date": i.get("issue_date"), "due_date": i.get("due_date"), "grand_total": i.get("grand_total"), "paid_amount": i.get("paid_amount", 0), "payment_status": i.get("payment_status"), "e_type": i.get("e_type")} for i in await db.invoices.find({"contact_id": c["_id"], "status": {"$nin": ["cancelled", "draft"]}}).sort("issue_date", -1).to_list(100)]
     insts = [_decorate_installment(x) for x in await db.installments.find({"contact_id": c["_id"], "status": {"$ne": "paid"}}).sort("due_date", 1).to_list(100)]
