@@ -71,12 +71,16 @@ def test_ai_extract_maps_to_domain_not_advisor():
     assert module_for_path("/api/ai/cheque-extract") == "/cheques"
     assert module_for_path("/api/ai/financial-advisor") == "/ai-advisor"
     assert module_for_path("/api/ai/cashflow-forecast") == "/ai-advisor"
+    assert module_for_path("/api/tax-obligations") == "/accountant"
+    assert module_for_path("/api/tax-obligations/extract") == "/accountant"
 
 
 def test_accountant_evrak_ai_path_and_mutation():
     from rbac import is_accountant_evrak_ai_path, mutation_allowed
     assert is_accountant_evrak_ai_path("/api/ai/invoice-extract", "POST") is True
     assert is_accountant_evrak_ai_path("/api/ai/invoice-extract/confirm", "POST") is True
+    assert is_accountant_evrak_ai_path("/api/tax-obligations/extract", "POST") is True
+    assert is_accountant_evrak_ai_path("/api/tax-obligations/import", "POST") is True
     assert is_accountant_evrak_ai_path("/api/expenses", "POST") is True
     assert is_accountant_evrak_ai_path("/api/expenses/abc", "POST") is False
     assert is_accountant_evrak_ai_path("/api/expenses", "DELETE") is False

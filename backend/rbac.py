@@ -93,7 +93,7 @@ MODULE_HELP = {
     "/communication": "SMS, e-posta, WhatsApp Business merkezleri.",
     "/support": "Destek talepleri, ekler, yönetim paneli erişim ve silme onayı.",
     "/ai-advisor": "AI finans danışmanı (sohbet ve nakit tahmini). Fatura, fiş, çek ve ekstre AI aktarımı ilgili modül yetkisiyle çalışır.",
-    "/accountant": "Mali müşavir paneli, KDV özeti ve AI ile evrak yükleme.",
+    "/accountant": "Mali müşavir paneli, KDV özeti, bordro/mizan/tahakkuk yükleme ve ödenecek vergiler.",
     "/settings": "Firma ayarları, kullanıcı/rol, entegrasyonlar (yalnızca yöneticiler).",
     "/trash": "Silinen kayıtlar; 30 gün içinde geri alma.",
 }
@@ -290,7 +290,7 @@ FORCE_SYSTEM_PERMISSIONS = {
 
 # API path prefix -> module key (longest prefix wins)
 API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production", "/production"), ("/api/invoices", "/invoices"), ("/api/einvoice", "/invoices"), ("/api/gib", "/invoices"),
-                  ("/api/ai/invoice-extract", "/invoices"), ("/api/ai/expense-extract", "/expenses"), ("/api/ai/receipt-extract", "/expenses"), ("/api/ai/cheque-extract", "/cheques"),
+                  ("/api/ai/invoice-extract", "/invoices"), ("/api/ai/expense-extract", "/expenses"), ("/api/ai/receipt-extract", "/expenses"), ("/api/ai/cheque-extract", "/cheques"), ("/api/tax-obligations", "/accountant"),
                   ("/api/ai/order-extract", "/orders"), ("/api/ai/product-extract", "/stock"), ("/api/ai/production-advisor", "/production"), ("/api/ai/production-summary", "/production"),
                   ("/api/contacts", "/contacts"), ("/api/installments", "/installments"), ("/api/reports", "/reports"), ("/api/banking", "/banking"), ("/api/expenses", "/expenses"), ("/api/loans", "/loans"), ("/api/cheques", "/cheques"), ("/api/products", "/stock"),
                   ("/api/purchase-orders", "/purchase-orders"), ("/api/warehouses/stock-counts", "/sayim"), ("/api/warehouses", "/warehouses"), ("/api/quotes", "/quotes"), ("/api/projects", "/projects"), ("/api/surveys", "/surveys"), ("/api/integrations/ecommerce", "/ecommerce"),
@@ -461,6 +461,8 @@ def is_accountant_evrak_ai_path(path: str, method: str = "POST") -> bool:
     if p.startswith("/api/ai/cheque-extract"):
         return True
     if p.startswith("/api/loans/extract"):
+        return True
+    if p.startswith("/api/tax-obligations"):
         return True
     if p.startswith("/api/banking/") and "import-statement" in p:
         return True

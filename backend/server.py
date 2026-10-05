@@ -84,6 +84,7 @@ import cargo_providers
 import cargo_label
 import rbac
 import expenses
+import tax_obligations
 import vehicles
 import contact_payments
 import finance
@@ -10873,12 +10874,14 @@ async def upsert_attendance(req: Dict[str, Any]):
 @api_router.get("/accountant/summary")
 async def accountant_summary(company_id: Optional[str] = "comp_nexus_main_01", month: Optional[str] = None):
     month = month or datetime.now(timezone.utc).strftime("%Y-%m")
-    invs, txs, payrolls = await asyncio.gather(
+    invs, txs, payrolls, tax_obs, tax_docs = await asyncio.gather(
         db.invoices.find({"company_id": company_id, "issue_date": {"$regex": f"^{month}"}},
                          {"invoice_type": 1, "status": 1, "e_type": 1, "invoice_number": 1, "issue_date": 1, "contact_name": 1,
                           "subtotal": 1, "vat_total": 1, "grand_total": 1, "paid_amount": 1, "payment_status": 1, "gib_status": 1, "items": 1}).to_list(5000),
         db.bank_transactions.find({"company_id": company_id, "date": {"$regex": f"^{month}"}}, {"type": 1, "amount": 1}).to_list(5000),
         db.payrolls.find({"company_id": company_id, "period": month}, {"gross_salary": 1, "net_salary": 1, "total_employer_cost": 1}).to_list(500),
+        db.tax_obligations.find({"company_id": company_id, "period": month}).to_list(2000),
+        db.tax_documents.find({"company_id": company_id, "period": month}).to_list(200),
     )
     invs = [i for i in invs if not is_cancelled_invoice(i)]
     sales = [i for i in invs if i.get("invoice_type") == "sales"]
@@ -10897,7 +10900,8 @@ async def accountant_summary(company_id: Optional[str] = "comp_nexus_main_01", m
             "purchases": {"count": len(purchases), "subtotal": sum(i.get("subtotal", 0) for i in purchases), "vat": ded_vat, "total": sum(i.get("grand_total", 0) for i in purchases)},
             "vat": {"calculated": calc_vat, "deductible": ded_vat, "payable": max(0.0, calc_vat - ded_vat), "carryover": max(0.0, ded_vat - calc_vat), "by_rate": sorted(by_vat.values(), key=lambda x: -float(x["rate"]))},
             "cash": {"inflow": sum(t.get("amount", 0) for t in txs if t.get("type") == "inflow"), "outflow": sum(t.get("amount", 0) for t in txs if t.get("type") == "outflow"), "count": len(txs)},
-            "payroll": {"count": len(payrolls), "gross": sum(p.get("gross_salary", 0) for p in payrolls), "net": sum(p.get("net_salary", 0) for p in payrolls), "employer_cost": sum(p.get("total_employer_cost", p.get("gross_salary", 0)) for p in payrolls)},
+            "payroll": tax_obligations.payroll_from_documents(tax_docs) or {"count": len(payrolls), "gross": sum(p.get("gross_salary", 0) for p in payrolls), "net": sum(p.get("net_salary", 0) for p in payrolls), "employer_cost": sum(p.get("total_employer_cost", p.get("gross_salary", 0)) for p in payrolls), "source": "personnel"},
+            "tax_payables": tax_obligations.month_summary(tax_obs),
             "e_docs": {"gib_sent": sum(1 for i in invs if i.get("status") == "sent"), "draft": sum(1 for i in invs if i.get("status") == "draft"), "dispatch": sum(1 for i in invs if i.get("invoice_type") == "dispatch")},
             "invoices": slim}
 
@@ -17027,6 +17031,7 @@ data_sync.init(db)
 rbac.set_license_guard(saas.guard)
 demo.init(db)
 expenses.init(db)
+tax_obligations.init(db)
 vehicles.init(db)
 fx.init(db)
 finance.init(db)
@@ -17132,6 +17137,7 @@ app.include_router(setup_install.router)
 app.include_router(db_admin.router)
 app.include_router(rbac.router)
 app.include_router(expenses.router)
+app.include_router(tax_obligations.router)
 app.include_router(vehicles.router)
 app.include_router(fx.router)
 app.include_router(finance.router)
