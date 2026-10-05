@@ -25,6 +25,9 @@ import {
   overtimeMoveDetail,
   overtimeMoveLine,
   overtimeMovesPeriodHint,
+  payMoveCanDelete,
+  payMoveDeleteConfirm,
+  payMoveDeletePath,
   payMovesPeriodHint,
   payMovesPeriodLabel,
 } from "../utils/personnelCard";
@@ -52,6 +55,7 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
   const [otBusy, setOtBusy] = useState(false);
   const [ignoreBusy, setIgnoreBusy] = useState("");
   const [otBusyId, setOtBusyId] = useState("");
+  const [payBusyId, setPayBusyId] = useState("");
   const [otEdit, setOtEdit] = useState(null);
 
   const loadPay = useCallback(async () => {
@@ -188,6 +192,24 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
       toast.error(err.response?.data?.detail || "Mesai silinemedi.");
     } finally {
       setOtBusyId("");
+    }
+  };
+
+  const deletePayMove = async (row) => {
+    const path = payMoveDeletePath(row);
+    if (!payMoveCanDelete(row, canEdit) || !path) return;
+    const ask = payMoveDeleteConfirm(row);
+    if (!window.confirm(`${ask.title}\n${ask.message}`)) return;
+    setPayBusyId(row.id);
+    try {
+      const r = await axios.delete(`${API_URL}${path}`);
+      toast.success(r.data?.message || "Kayıt silindi.");
+      await loadPay();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Silinemedi.");
+    } finally {
+      setPayBusyId("");
     }
   };
 
@@ -381,10 +403,25 @@ export function EmployeeMovesModal({ employee, canEdit = true, onClose, onChange
               {busy ? <div className="text-slate-400">Yükleniyor…</div> : null}
               {!busy && !shownPay.length ? <div className="text-slate-400">Bu dönemde ödeme hareketi yok.</div> : null}
               {shownPay.map((row) => (
-                <div key={row.id} data-testid={`emp-pay-move-${row.id}`} className="py-2.5 border-b border-slate-100">
-                  <div className="font-extrabold text-slate-900">{row.title}</div>
-                  <div className="text-slate-500">{row.subtitle}</div>
-                  <div className={`font-extrabold ${row.title === "Avans" ? "text-amber-700" : "text-slate-900"}`}>{fmtPayMoveAmount(row.amount)}</div>
+                <div key={row.id} data-testid={`emp-pay-move-${row.id}`} className="flex items-start gap-2 py-2.5 border-b border-slate-100">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-extrabold text-slate-900">{row.title}</div>
+                    <div className="text-slate-500">{row.subtitle}</div>
+                    <div className={`font-extrabold ${row.title === "Avans" ? "text-amber-700" : "text-slate-900"}`}>{fmtPayMoveAmount(row.amount)}</div>
+                  </div>
+                  {payMoveCanDelete(row, canEdit) ? (
+                    <button
+                      type="button"
+                      data-testid={`emp-pay-move-del-${row.id}`}
+                      aria-label="Sil"
+                      title="Sil"
+                      disabled={!!payBusyId}
+                      onClick={() => deletePayMove(row)}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-rose-200 bg-rose-50 text-[10px] font-extrabold text-rose-700 shrink-0 disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3 h-3" /> Sil
+                    </button>
+                  ) : null}
                 </div>
               ))}
             </>

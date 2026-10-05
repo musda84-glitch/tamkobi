@@ -20,6 +20,9 @@ import {
   overtimeMoveLine,
   overtimeMoveSourceLabel,
   overtimeMovesPeriodHint,
+  payMoveCanDelete,
+  payMoveDeleteConfirm,
+  payMoveDeletePath,
   payMovesPeriodHint,
   remainingLeaveDays,
 } from "./personnelCard";
@@ -94,5 +97,16 @@ describe("personnelCard", () => {
     expect(overtimeMoveCanDelete({ can_delete: true, assigned_hours: 2 }, true)).toBe(true);
     expect(overtimeMoveCanDelete({ kind: "computed", assigned_hours: 0 }, true)).toBe(false);
     expect(overtimeMoveCanEdit({ can_edit: true }, false)).toBe(false);
+  });
+
+  test("gates pay-move delete for payroll and bonus rows", () => {
+    expect(payMoveCanDelete({ id: "pay_cedeeef3", kind: "payroll", status: "pending" }, true)).toBe(true);
+    expect(payMoveDeletePath({ id: "pay_cedeeef3", kind: "payroll" })).toBe("/personnel/payrolls/pay_cedeeef3");
+    expect(payMoveDeleteConfirm({ kind: "payroll", status: "pending" }).message).toContain("bekleyen maaş");
+    expect(payMoveCanDelete({ id: "b1", kind: "bonus", status: "paid" }, true)).toBe(true);
+    expect(payMoveDeletePath({ id: "b1", kind: "bonus" })).toBe("/personnel/bonuses/b1");
+    expect(payMoveCanDelete({ id: "pay-2026-11", kind: "payroll" }, true)).toBe(false);
+    expect(payMoveCanDelete({ id: "pay_cedeeef3", kind: "payroll" }, false)).toBe(false);
+    expect(payMoveDeleteConfirm({ kind: "payroll", status: "paid" }).message).toContain("geri alınır");
   });
 });

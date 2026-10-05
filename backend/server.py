@@ -16278,6 +16278,7 @@ async def pay_payroll(payroll_id: str, req: Dict[str, Any]):
             "currency": "TRY",
             "description": desc,
             "date": today,
+            "payroll_id": payroll_id,
             "created_at": datetime.now(timezone.utc).isoformat()
         })
         paid_from = acc_name
@@ -16288,6 +16289,21 @@ async def pay_payroll(payroll_id: str, req: Dict[str, Any]):
     )
 
     return {"status": "success", "message": f"{payroll.get('employee_name')} için maaş ödemesi gerçekleştirildi."}
+
+@api_router.delete("/personnel/payrolls/{payroll_id}")
+async def delete_payroll(payroll_id: str):
+    payroll = await db.payrolls.find_one({"_id": payroll_id})
+    if not payroll:
+        raise HTTPException(status_code=404, detail="Bordro kaydı bulunamadı.")
+    amount = float(payroll.get("final_payable") or payroll.get("net_salary") or 0)
+    if payroll.get("status") == "paid":
+        if payroll.get("partner_id"):
+            await partner_pay.reverse_one(db, {"payroll_id": payroll_id})
+        elif payroll.get("account_id"):
+            await db.bank_accounts.update_one({"_id": payroll["account_id"]}, {"$inc": {"current_balance": amount}})
+    label = f"{payroll.get('employee_name')} · {payroll.get('period')} · {amount:,.2f} ₺"
+    await trash.soft_delete("payrolls", payroll, "payroll", label, note=payroll.get("status") or "")
+    return {"status": "success", "message": "Maaş kaydı çöp kutusuna taşındı."}
 
 # ----------------- AI FİNANSAL DANIŞMAN -----------------
 class AIChatRequest(BaseModel):
@@ -17071,6 +17087,15 @@ async def _restore_bonus(doc, _related):
     elif doc.get("account_id"):
         await db.bank_accounts.update_one({"_id": doc["account_id"]}, {"$inc": {"current_balance": -amount}})
 
+async def _restore_payroll(doc, _related):
+    if doc.get("status") != "paid":
+        return
+    amount = float(doc.get("final_payable") or doc.get("net_salary") or 0)
+    if doc.get("partner_id"):
+        await partner_pay.withdraw(db, doc.get("company_id"), doc["partner_id"], amount, f"{doc.get('employee_name')} - {doc.get('period')} Maaş Ödemesi", extra={"payroll_id": doc["_id"]})
+    elif doc.get("account_id"):
+        await db.bank_accounts.update_one({"_id": doc["account_id"]}, {"$inc": {"current_balance": -amount}})
+
 async def _restore_expense(doc, _related):
     if doc.get("payment_status") == "paid" and not doc.get("netted_in_settlement") and (doc.get("account_id") or doc.get("partner_id")):
         await expenses._post_payment(doc, doc.get("account_id"), doc.get("paid_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), partner_id=doc.get("partner_id"))
@@ -17129,7 +17154,7 @@ async def _restore_assigned_task(doc, _related):
     await db.assigned_tasks.delete_one({"_id": doc.get("_id")})
 
 
-for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("expense", _restore_expense), ("recipe", _restore_recipe), ("cheque", cheques.restore_cheque), ("invoice", _restore_invoice), ("assigned_task", _restore_assigned_task)):
+for _t, _fn in (("bank_transaction", _restore_bank_tx), ("partner_transaction", _restore_partner_tx), ("leave", _restore_leave), ("bonus", _restore_bonus), ("payroll", _restore_payroll), ("expense", _restore_expense), ("recipe", _restore_recipe), ("cheque", cheques.restore_cheque), ("invoice", _restore_invoice), ("assigned_task", _restore_assigned_task)):
     trash.register_hook(_t, _fn)
 
 app.include_router(api_router)
