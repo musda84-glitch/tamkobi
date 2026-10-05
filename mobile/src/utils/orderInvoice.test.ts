@@ -17,7 +17,8 @@ describe("orderInvoice draft / post / e-belge", () => {
     expect(hasOrderDraftInvoice({ invoice_id: "inv1" })).toBe(true);
     expect(canCreateOrderDraftInvoice({ invoice_id: "inv1" })).toBe(false);
     expect(canPostOrderDraftInvoice({ invoice_id: "inv1" })).toBe(true);
-    expect(canIssueOrderEBelge({ invoice_id: "inv1" })).toBe(true);
+    expect(canIssueOrderEBelge({ invoice_id: "inv1" })).toBe(false);
+    expect(canIssueOrderEBelge({ is_invoiced: true, invoice_id: "inv1" })).toBe(true);
   });
 
   it("gates Faturala create vs post", () => {

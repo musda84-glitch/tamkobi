@@ -28,8 +28,8 @@ export const ORDER_BULK_ACTIONS = [
 
 export const bulkActionNeedsSelection = (id) => id !== "refresh";
 
-/** Toplu e-belge oluştur/gönder: GİB'e iletilmiş siparişler atlanır. */
-export const orderBulkEInvoiceEligible = (ord) => !!ord && !orderHasEInvoiceIssued(ord);
+/** Toplu e-belge: yalnızca faturalaşmış ve henüz GİB'e kesilmemiş siparişler. */
+export const orderBulkEInvoiceEligible = (ord) => !!ord && !!ord.is_invoiced && !orderHasEInvoiceIssued(ord);
 
 /** API hata metni (toast için). */
 export const bulkApiErrorDetail = (err) => {

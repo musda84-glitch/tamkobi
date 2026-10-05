@@ -78,13 +78,14 @@ describe("orderMoreMenu web variants", () => {
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).not.toContain("Paketli Siparişin Kargo Firmasını Değiştir");
   });
 
-  it("default menu keeps E-Belge + edit / irsaliye / iade", () => {
+  it("default uninvoiced marketplace menu has no E-Fatura / E-Arşiv kes", () => {
     const ord = { channel: "trendyol", is_invoiced: false };
     expect(orderMoreMenuKind(ord)).toBe("default");
     const labels = orderMoreMenuItems(ord, {
       eBelgeItems: [{ eType: "e_archive", label: "E-Arşiv kes (GİB)", testIdSuffix: "earsiv" }],
     }).items.map((i) => i.label);
-    expect(labels[0]).toBe("E-Arşiv kes (GİB)");
+    expect(labels).not.toContain("E-Arşiv kes (GİB)");
+    expect(labels).not.toContain("E-Fatura kes (GİB)");
     expect(labels).toContain("Siparişi Düzenle");
     expect(labels).toContain("İade Al");
     expect(labels).toContain("Siparişi Sil");

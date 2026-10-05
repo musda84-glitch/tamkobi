@@ -24,8 +24,9 @@ export function canPostOrderDraftInvoice(o: OrderInvoiceFlags | null | undefined
   return hasOrderDraftInvoice(o);
 }
 
+/** GİB e-Fatura/e-Arşiv: yalnızca cariye faturalaşmış sipariş. */
 export function canIssueOrderEBelge(o: OrderInvoiceFlags | null | undefined): boolean {
-  return !!o && !o.is_invoiced;
+  return !!o?.is_invoiced;
 }
 
 export function orderInvoiceBadgeLabel(o: OrderInvoiceFlags | null | undefined): string | null {

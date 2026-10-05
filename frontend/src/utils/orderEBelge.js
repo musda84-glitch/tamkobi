@@ -1,5 +1,7 @@
 /** Sipariş e-belge türü: cari GİB e-fatura mükellefi değilse (bilgi yoksa) e-arşiv. */
 
+import { orderHasEInvoiceIssued } from "./orderMoreMenu";
+
 export function contactIsEInvoiceUser(contact) {
   return !!contact?.is_e_invoice_user;
 }
@@ -43,7 +45,13 @@ export function efaturaOnayMessage(ord, contacts = []) {
     : "Bu müşteri e-fatura mükellefi değildir, e-arşiv faturası oluşturulacak. Onaylıyor musunuz?";
 }
 
+/** Taslak sipariş/fatura GİB e-Fatura / e-Arşiv kesmez; önce Faturalaştır. */
+export function orderCanShowEBelgeMenu(ord) {
+  return !!ord?.is_invoiced && !orderHasEInvoiceIssued(ord);
+}
+
 export function eBelgeMenuItems(ord, contacts = []) {
+  if (!orderCanShowEBelgeMenu(ord)) return [];
   const type = orderEBelgeType(ord, contacts);
   if (type === "e_invoice") {
     return [

@@ -192,11 +192,37 @@ describe("purchase invoices are not issued via FATURAYI KES", () => {
     })).toBe(false);
   });
 
-  test("sales drafts can still be issued", () => {
+  test("sales drafts cannot issue e-Fatura / e-Arşiv", () => {
     expect(canIssueInvoice({
       status: "draft",
       invoice_type: "sales",
       e_type: "e_archive",
+    })).toBe(false);
+    expect(canIssueInvoice({
+      status: "draft",
+      invoice_type: "sales",
+      e_type: "e_invoice",
+    })).toBe(false);
+    expect(canIssueInvoice({
+      status: "draft",
+      invoice_type: "sales",
+      e_type: "paper",
+    })).toBe(false);
+  });
+
+  test("posted paper sales invoices can still issue GİB e-belge", () => {
+    expect(canIssueInvoice({
+      status: "approved",
+      invoice_type: "sales",
+      e_type: "paper",
+    })).toBe(true);
+  });
+
+  test("draft e-dispatch can still be sent", () => {
+    expect(canIssueInvoice({
+      status: "draft",
+      invoice_type: "dispatch",
+      e_type: "e_dispatch",
     })).toBe(true);
   });
 

@@ -137,6 +137,16 @@ describe("orderMoreMenu", () => {
     expect(items.map((i) => i.label)).not.toContain("Siparişi Excel İndir");
   });
 
+  it("default uninvoiced marketplace menu hides E-Fatura / E-Arşiv kes", () => {
+    const ord = { channel: "trendyol", is_invoiced: false, order_number: "TY-2" };
+    const labels = orderMoreMenuItems(ord, {
+      eBelgeItems: [{ eType: "e_archive", label: "E-Arşiv kes (GİB)", testIdSuffix: "earsiv" }],
+    }).items.map((i) => i.label);
+    expect(labels).not.toContain("E-Arşiv kes (GİB)");
+    expect(labels).not.toContain("E-Fatura kes (GİB)");
+    expect(labels).toContain("Siparişi Düzenle");
+  });
+
   it("panel invoiced ignores eBelgeItems — tek E-Fatura Oluştur satırı", () => {
     const ord = { channel: "b2b", is_invoiced: true, e_type: "paper", order_number: "B2B-3" };
     expect(orderMoreMenuItems(ord, {

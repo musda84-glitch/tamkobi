@@ -32,7 +32,10 @@ test("order bulk helpers resolve row id and skip issued e-invoices", () => {
   expect(orderRowId({ id: "a" })).toBe("a");
   expect(orderRowId({ _id: "b" })).toBe("b");
   expect(orderBulkEInvoiceEligible({ einvoice_state: "sent" })).toBe(false);
-  expect(orderBulkEInvoiceEligible({ order_status: "pending" })).toBe(true);
+  expect(orderBulkEInvoiceEligible({ order_status: "pending" })).toBe(false);
+  expect(orderBulkEInvoiceEligible({ is_invoiced: false })).toBe(false);
+  expect(orderBulkEInvoiceEligible({ is_invoiced: true, invoice_id: "inv1" })).toBe(true);
+  expect(orderBulkEInvoiceEligible({ is_invoiced: true, einvoice_state: "sent" })).toBe(false);
 });
 
 test("mini invoice slip uses the requested paper size", () => {

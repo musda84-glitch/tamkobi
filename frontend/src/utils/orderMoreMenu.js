@@ -200,9 +200,9 @@ export function panelInvoicedMoreItems() {
   ];
 }
 
-/** Varsayılan menü (entegrasyon taslak vb.). */
+/** Varsayılan menü (entegrasyon taslak vb.). Taslak siparişte e-Fatura/e-Arşiv kesimi yok. */
 export function defaultMoreItems(ord, { eBelgeItems = [] } = {}) {
-  const rows = eBelgeItems.map((eb) =>
+  const rows = (ord?.is_invoiced ? eBelgeItems : []).map((eb) =>
     item(`ebelge_${eb.eType}`, eb.label, Stamp, {
       testId: `e-belge-${eb.testIdSuffix}`,
       section: "E-Belge (GİB)",
