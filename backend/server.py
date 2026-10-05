@@ -10060,6 +10060,16 @@ async def create_leave(req: Dict[str, Any]):
     await db.leave_requests.insert_one(doc)
     return clean_doc(doc)
 
+async def _restore_approved_annual_leave(leave: dict):
+    if leave.get("status") == "approved" and leave.get("type") == "annual":
+        try:
+            days = float(leave.get("days") or 0)
+        except (TypeError, ValueError):
+            days = 0.0
+        if days:
+            await db.employees.update_one({"_id": leave["employee_id"]}, {"$inc": {"used_leave_days": -days}})
+
+
 @api_router.post("/personnel/leaves/{leave_id}/decide")
 async def decide_leave(leave_id: str, req: Dict[str, Any]):
     leave = await db.leave_requests.find_one({"_id": leave_id})
@@ -10073,13 +10083,27 @@ async def decide_leave(leave_id: str, req: Dict[str, Any]):
     await db.leave_requests.update_one({"_id": leave_id}, {"$set": {"status": status_val, "decided_at": datetime.now(timezone.utc).isoformat(), "decision_note": req.get("note", "")}})
     return clean_doc(await db.leave_requests.find_one({"_id": leave_id}))
 
+@api_router.post("/personnel/leaves/{leave_id}/cancel")
+async def cancel_leave(leave_id: str):
+    leave = await db.leave_requests.find_one({"_id": leave_id})
+    if not leave:
+        raise HTTPException(status_code=404, detail="İzin bulunamadı.")
+    if leave.get("status") not in ("pending", "approved"):
+        raise HTTPException(status_code=400, detail="Yalnızca bekleyen veya onaylı izin iptal edilebilir.")
+    await _restore_approved_annual_leave(leave)
+    await db.leave_requests.update_one({"_id": leave_id}, {"$set": {
+        "status": "cancelled",
+        "decided_at": datetime.now(timezone.utc).isoformat(),
+        "decision_note": "İptal edildi",
+    }})
+    return clean_doc(await db.leave_requests.find_one({"_id": leave_id}))
+
 @api_router.delete("/personnel/leaves/{leave_id}")
 async def delete_leave(leave_id: str):
     leave = await db.leave_requests.find_one({"_id": leave_id})
     if not leave:
         raise HTTPException(status_code=404, detail="İzin bulunamadı.")
-    if leave.get("status") == "approved" and leave.get("type") == "annual":
-        await db.employees.update_one({"_id": leave["employee_id"]}, {"$inc": {"used_leave_days": -leave["days"]}})
+    await _restore_approved_annual_leave(leave)
     await trash.soft_delete("leave_requests", leave, "leave", f"{leave.get('employee_name')} · {leave.get('start_date')} → {leave.get('end_date')}", note=f"{leave.get('days')} gün · {leave.get('status')}")
     return {"status": "success", "message": "İzin çöp kutusuna taşındı."}
 

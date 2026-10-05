@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { CalendarDays, Plus, Loader2, Trash2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 
-const STATUS = { pending: ["Bekliyor", "bg-amber-100 text-amber-700"], approved: ["Onaylandı", "bg-emerald-100 text-emerald-700"], rejected: ["Reddedildi", "bg-rose-100 text-rose-700"] };
+const STATUS = { pending: ["Bekliyor", "bg-amber-100 text-amber-700"], approved: ["Onaylandı", "bg-emerald-100 text-emerald-700"], rejected: ["Reddedildi", "bg-rose-100 text-rose-700"], cancelled: ["İptal edildi", "bg-slate-100 text-slate-600"] };
 const inp = "bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm sm:text-xs";
 
 export const MyLeavePanel = ({ enabled }) => {
