@@ -3374,33 +3374,13 @@ async def public_statement_pdf(token: str):
     return _statement_pdf_response(view)
 
 # ---- B2B Müşteri Portalı
-PUBLIC_TRACKING_URLS = {
-    "yurtici": "https://www.yurticikargo.com/tr/online-servisler/gonderi-sorgula?code={n}", "aras": "https://kargotakip.araskargo.com.tr/mainpage.aspx?code={n}",
-    "mng": "https://kargotakip.mngkargo.com.tr/?takipNo={n}", "ptt": "https://gonderitakip.ptt.gov.tr/Track/Verify?q={n}", "surat": "https://suratkargo.com.tr/KargoTakip/?kargotakipno={n}",
-    "hepsijet": "https://www.hepsijet.com/gonderi-takibi/{n}", "trendyolexpress": "https://www.trendyolexpress.com/kargo-takip?trackingNumber={n}", "ups": "https://www.ups.com/track?loc=tr_TR&tracknum={n}",
-}
-SHIPMENT_STEPS = ["created", "picked_up", "in_transit", "out_for_delivery", "delivered"]
+import b2b_tracking as _b2b_track_mod
+PUBLIC_TRACKING_URLS = _b2b_track_mod.PUBLIC_TRACKING_URLS
+SHIPMENT_STEPS = _b2b_track_mod.SHIPMENT_STEPS
 
 def _b2b_tracking(o: dict, sh: Optional[dict]) -> Optional[dict]:
     """Portal için canlı kargo bilgisi: takip linki, durum adımı ve tahmini teslim."""
-    num = (sh or {}).get("tracking_number") or o.get("cargo_tracking_number")
-    if not num and o.get("order_status") not in ("shipped", "delivered"):
-        return None
-    carrier = (sh or {}).get("carrier_code") or o.get("cargo_carrier") or ""
-    url = (sh or {}).get("tracking_url") or o.get("cargo_tracking_url") or (PUBLIC_TRACKING_URLS.get(carrier, "").format(n=num) if num else None)
-    status = (sh or {}).get("status") or ("delivered" if o.get("order_status") == "delivered" else "in_transit" if num else "created")
-    eta = (sh or {}).get("estimated_delivery")
-    shipped_at = ((sh or {}).get("created_at") or o.get("updated_at") or o.get("order_date") or "")[:10]
-    if not eta and status != "delivered" and shipped_at:
-        try:
-            eta = (datetime.strptime(shipped_at, "%Y-%m-%d") + timedelta(days=3)).strftime("%Y-%m-%d")
-        except ValueError:
-            eta = None
-    today = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Istanbul")).strftime("%Y-%m-%d")
-    return {"carrier": (sh or {}).get("carrier_name") or carrier or None, "tracking_number": num, "tracking_url": url, "status": status,
-            "step": SHIPMENT_STEPS.index(status) if status in SHIPMENT_STEPS else (0 if status != "returned" else -1), "steps": SHIPMENT_STEPS,
-            "estimated_delivery": eta, "delivered_at": (sh or {}).get("delivered_at"), "shipped_at": shipped_at or None,
-            "is_late": bool(eta and status != "delivered" and eta < today), "events": ((sh or {}).get("events") or [])[-5:]}
+    return _b2b_track_mod.build_b2b_tracking(o, sh)
 
 @api_router.post("/contacts/{contact_id}/b2b-access")
 async def contact_b2b_access(contact_id: str, req: Dict[str, Any]):
