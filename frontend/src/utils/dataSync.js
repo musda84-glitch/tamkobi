@@ -8,17 +8,38 @@ const STORE = "collections";
 export const isIncomingGibInvoice = (inv) => {
   if (!inv) return false;
   if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return true;
-  return inv.invoice_type === "purchase" && Boolean(inv.gib_uuid || inv.gib_tracking_id);
+  if (inv.invoice_type === "purchase" && Boolean(inv.gib_uuid || inv.gib_tracking_id)) return true;
+  if (inv.invoice_type === "purchase" && inv.e_type === "e_invoice") return true;
+  return inv.invoice_type === "purchase" && /gelen|received/i.test(String(inv.gib_status || ""));
+};
+
+export const isOutgoingGibInvoice = (inv) => {
+  if (!inv || inv.invoice_type === "dispatch") return false;
+  if (isIncomingGibInvoice(inv)) return false;
+  return ["e_invoice", "e_archive", "e_export"].includes(inv.e_type);
+};
+
+/** Satış/Alış sekmelerinden GİB giden veya gelen e-belgeleri ayırır. */
+export const isGibSentOrReceivedInvoice = (inv) => {
+  if (!inv) return false;
+  if (isIncomingGibInvoice(inv) || isOutgoingGibInvoice(inv)) return true;
+  const gs = String(inv.gib_status || "").replace(/^test\s*·\s*/i, "").trim();
+  if (inv.einvoice_state === "error" || /^\s*hata\s*:/i.test(gs)) return false;
+  if (inv.einvoice_state === "sent" || inv.einvoice_state === "queued") return true;
+  return Boolean(inv.gib_uuid || inv.gib_tracking_id);
 };
 
 export const invoiceTypeFilter = (type) => (inv) => {
   if (type === "export") return inv.trade_kind === "export" && inv.invoice_type !== "dispatch";
   if (type === "import") return inv.trade_kind === "import" && inv.invoice_type !== "dispatch";
   if (type === "incoming") return isIncomingGibInvoice(inv) && inv.invoice_type !== "dispatch";
-  if (type === "outgoing_gib") {
-    if (inv.invoice_type === "dispatch") return false;
-    if (isIncomingGibInvoice(inv)) return false;
-    return ["e_invoice", "e_archive", "e_export"].includes(inv.e_type);
+  if (type === "outgoing_gib") return isOutgoingGibInvoice(inv);
+  // Satış / Alış: yalnızca GİB'e gönderilmemiş ve GİB'den alınmamış yerel faturalar.
+  if (type === "sales") {
+    return inv.invoice_type === "sales" && !isGibSentOrReceivedInvoice(inv);
+  }
+  if (type === "purchase") {
+    return inv.invoice_type === "purchase" && !isGibSentOrReceivedInvoice(inv);
   }
   if (!type || type === "all") return inv.invoice_type !== "dispatch";
   return inv.invoice_type === type;

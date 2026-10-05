@@ -21,10 +21,26 @@ test("invoiceTypeFilter matches invoice_type", () => {
 test("invoiceTypeFilter incoming and outgoing_gib", () => {
   expect(invoiceTypeFilter("incoming")({ invoice_type: "purchase", direction: "incoming" })).toBe(true);
   expect(invoiceTypeFilter("incoming")({ invoice_type: "purchase", edoc_id: "x" })).toBe(true);
+  expect(invoiceTypeFilter("incoming")({ invoice_type: "purchase", e_type: "e_invoice" })).toBe(true);
   expect(invoiceTypeFilter("incoming")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(false);
   expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(true);
   expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "purchase", direction: "incoming", e_type: "e_invoice" })).toBe(false);
   expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "dispatch", e_type: "e_dispatch" })).toBe(false);
+});
+
+test("sales and purchase tabs hide GIB sent/received invoices", () => {
+  expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "paper" })).toBe(true);
+  expect(invoiceTypeFilter("sales")({ invoice_type: "sales" })).toBe(true);
+  expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(false);
+  expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "e_archive", einvoice_state: "sent" })).toBe(false);
+  expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "paper", gib_uuid: "u1" })).toBe(false);
+  expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", e_type: "paper" })).toBe(true);
+  expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", direction: "incoming" })).toBe(false);
+  expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", source: "edoc_inbox" })).toBe(false);
+  expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", edoc_id: "x" })).toBe(false);
+  expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", gib_uuid: "u1" })).toBe(false);
+  expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", e_type: "e_invoice" })).toBe(false);
+  expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", gib_status: "Gelen e-Fatura" })).toBe(false);
 });
 
 test("mergeDelta patches product flags by id", () => {
