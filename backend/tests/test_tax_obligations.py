@@ -148,6 +148,12 @@ def test_import_creates_expense_and_pay_as_masraf():
     assert listed["documents"][0]["obligation_count"] == 2
     assert listed["documents"][0]["unpaid_count"] == 1
 
+    # Ekim görünümünde Eylül bordrosu da listelenir (ay filtresi belgeyi gizlemez).
+    listed_oct = asyncio.run(tax_obligations.list_tax_obligations(company_id="c1", month="2026-10"))
+    assert len(listed_oct["documents"]) == 1
+    assert listed_oct["documents"][0]["filename"] == "matek bordro 2026-09.pdf"
+    assert any(r["payment_status"] != "paid" for r in listed_oct["obligations"])
+
 
 def test_delete_document_removes_unpaid():
     db = FakeDb()
@@ -168,3 +174,42 @@ def test_delete_document_removes_unpaid():
     assert db.tax_documents.docs == []
     assert db.tax_obligations.docs == []
     assert db.expenses.docs == []
+
+
+def test_extract_persists_draft_visible_any_month():
+    db = FakeDb()
+    tax_obligations.init(db)
+    expenses.init(db)
+    draft = {
+        "source_kind": "bordro",
+        "period": "2026-09",
+        "title": "Bordro 2026-09",
+        "obligations": [{"kind": "sgk", "title": "SGK primi", "amount": 1000, "period": "2026-09"}],
+    }
+    saved = asyncio.run(tax_obligations.persist_extracted_document("c1", draft, "bordro.pdf", "2026-10"))
+    assert saved["filename"] == "bordro.pdf"
+    assert saved["status"] == "draft"
+    assert draft["document_id"] == saved["id"]
+    listed = asyncio.run(tax_obligations.list_tax_obligations(company_id="c1", month="2026-10"))
+    assert len(listed["documents"]) == 1
+    assert listed["documents"][0]["status"] == "draft"
+    imported = asyncio.run(tax_obligations.import_tax_doc({
+        "company_id": "c1",
+        "month": "2026-10",
+        "draft": {**draft, "filename": "bordro.pdf"},
+        "selected": [0],
+    }))
+    assert imported["document"]["id"] == saved["id"]
+    assert len(db.tax_documents.docs) == 1
+    assert db.tax_documents.docs[0]["status"] == "imported"
+
+
+def test_visible_obligations_keeps_unpaid_other_month():
+    rows = [
+        {"period": "2026-09", "payment_status": "unpaid", "amount": 10},
+        {"period": "2026-08", "payment_status": "paid", "amount": 5, "due_date": "2026-08-26"},
+        {"period": "2026-10", "payment_status": "paid", "amount": 7, "due_date": "2026-10-26"},
+    ]
+    vis = tax_obligations.visible_obligations(rows, "2026-10")
+    assert len(vis) == 2
+    assert {r["amount"] for r in vis} == {10, 7}
