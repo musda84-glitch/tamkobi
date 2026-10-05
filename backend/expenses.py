@@ -12,11 +12,60 @@ router = APIRouter(prefix="/api")
 _db = None
 
 DEFAULT_CATEGORIES = ["Kira", "Elektrik / Su / Doğalgaz", "İnternet / Telefon", "Yakıt", "Yemek", "Yol / Ulaşım", "Ofis Malzemesi", "Personel Masrafı", "Vergi / Harç / SGK", "Bakım / Onarım", "Pazarlama / Reklam", "Yazılım / Abonelik", "Kargo / Nakliye", "Muhasebe / Danışmanlık", "Diğer"]
+TAX_CATEGORY = "Vergi / Harç / SGK"
 
 
 def init(db):
     global _db
     _db = db
+
+
+async def create_tax_payable_expense(ob: dict) -> dict:
+    """Bordro/mizan/tahakkuk satırından ödenmemiş Vergi/SGK masrafı oluşturur."""
+    amount = round(float(ob.get("amount") or 0), 2)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Masraf tutarı sıfırdan büyük olmalı.")
+    calc = _calc({"amount": amount, "vat_rate": 0})
+    company_id = ob["company_id"]
+    period = (ob.get("period") or "").strip()
+    date_s = (ob.get("due_date") or "").strip() or (f"{period}-01" if len(period) == 7 else "") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    desc = (ob.get("title") or f"Vergi / SGK: {ob.get('kind') or 'yükümlülük'}").strip()[:200]
+    note_bits = [x for x in (ob.get("source_kind"), ob.get("filename"), period) if x]
+    doc = {
+        "_id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "expense_number": await _next_number(company_id),
+        "date": date_s,
+        "category": TAX_CATEGORY,
+        "description": desc,
+        **calc,
+        "currency": "TRY",
+        "fx_rate": 1.0,
+        "fx_date": date_s,
+        "fx_source": "try",
+        "local_total": calc["total"],
+        "payment_status": "unpaid",
+        "account_id": None,
+        "partner_id": None,
+        "account_name": None,
+        "paid_date": None,
+        "contact_id": None,
+        "contact_name": None,
+        "employee_id": None,
+        "employee_name": None,
+        "project_id": None,
+        "document_no": ob.get("document_no") or "",
+        "notes": ("Mali müşavir yüklemesi · " + " · ".join(note_bits)) if note_bits else "Mali müşavir vergi/SGK yükümlülüğü",
+        "is_recurring": False,
+        "recurrence": "monthly",
+        "receipt_url": None,
+        "source": "tax_obligation",
+        "tax_obligation_id": ob.get("_id") or ob.get("id"),
+        "tax_document_id": ob.get("document_id"),
+        "created_at": _now(),
+    }
+    await _db.expenses.insert_one(doc)
+    return _clean(dict(doc))
 
 
 def _now():

@@ -406,9 +406,9 @@ COLLECTIONS = {
     },
     "tax_obligations": {
         "scope": SCOPE_TENANT,
-        "description": "Yüklenen belgelerden ödenecek vergi, SGK ve net maaş satırları.",
-        "keys": ("_id", "company_id", "document_id", "kind", "period", "amount", "due_date", "payment_status", "account_id"),
-        "refs": ("tax_documents._id", "bank_accounts._id"),
+        "description": "Yüklenen belgelerden ödenecek vergi, SGK ve net maaş satırları (Masraflar Vergi/SGK ile bağlı).",
+        "keys": ("_id", "company_id", "document_id", "kind", "period", "amount", "due_date", "payment_status", "account_id", "expense_id"),
+        "refs": ("tax_documents._id", "bank_accounts._id", "expenses._id"),
     },
     "leave_requests": {
         "scope": SCOPE_TENANT,

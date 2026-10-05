@@ -115,7 +115,7 @@ export default function AccountantPage() {
             <span>Ödenecek vergi/SGK</span>
             <span>{fmt(d.tax_payables?.unpaid_total)} ₺</span>
           </div>
-          <p className="text-[11px] text-slate-400 pt-1">Bordro, mizan veya tahakkuk belgesini altta AI ile yükleyin.</p>
+          <p className="text-[11px] text-slate-400 pt-1">Altta yükleyin → belgeler listelenir; Öde ile Masraflar (Vergi/SGK) üzerinden ödersiniz.</p>
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-4 text-xs lg:col-span-2" data-testid="acc-vat-table"><div className="font-bold text-slate-900 mb-2">KDV Oranına Göre Dağılım</div><table className="w-full"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1">Oran</th><th className="text-right py-1">Satış Matrah</th><th className="text-right py-1">Hesaplanan</th><th className="text-right py-1">Alış Matrah</th><th className="text-right py-1">İndirilecek</th></tr></thead><tbody className="divide-y divide-slate-100">{d.vat.by_rate.map((r) => <tr key={r.rate}><td className="py-1.5 font-bold">%{r.rate}</td><td className="py-1.5 text-right">{fmt(r.sales_base)}</td><td className="py-1.5 text-right text-emerald-700">{fmt(r.sales_vat)}</td><td className="py-1.5 text-right">{fmt(r.purchase_base)}</td><td className="py-1.5 text-right text-rose-700">{fmt(r.purchase_vat)}</td></tr>)}</tbody></table><div className="mt-2 text-slate-500">E-Belgeler: GİB'e gönderilen {d.e_docs.gib_sent} • Taslak {d.e_docs.draft} • İrsaliye {d.e_docs.dispatch}</div></div>
       </div>

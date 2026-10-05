@@ -5,13 +5,12 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
-from bank_guard import assert_manual_allowed
+import expenses
 import partner_pay
 from tax_obligation_extract import (
     SOURCE_KINDS,
     extract_tax_file,
     normalize_import_lines,
-    obligation_title,
 )
 
 router = APIRouter(prefix="/api")
@@ -36,41 +35,37 @@ def _clean(d):
     return out
 
 
-async def _post_payment(ob: dict, account_id: Optional[str], pay_date: str, partner_id: Optional[str] = None):
-    desc = f"{ob.get('title') or obligation_title(ob.get('kind'))} {ob.get('period') or ''}".strip()
-    amount = float(ob.get("amount") or 0)
-    if partner_id:
-        name = await partner_pay.withdraw(
-            _db, ob["company_id"], partner_id, amount, desc, pay_date,
-            extra={"tax_obligation_id": ob["_id"]},
-        )
-        return f"{name} (Ortak)"
-    if not account_id:
-        raise HTTPException(status_code=400, detail="Kasa/Banka veya ortak hesabı seçin.")
-    acc = await _db.bank_accounts.find_one({"_id": account_id})
-    if not acc:
-        raise HTTPException(status_code=404, detail="Kasa/Banka hesabı bulunamadı.")
-    await assert_manual_allowed(_db, account_id)
-    await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -amount}})
-    await _db.bank_transactions.insert_one({
-        "_id": str(uuid.uuid4()),
-        "company_id": ob["company_id"],
-        "account_id": account_id,
-        "account_name": acc.get("account_name"),
-        "type": "outflow",
-        "category": f"Vergi / SGK: {ob.get('kind')}",
-        "amount": amount,
-        "currency": "TRY",
-        "description": desc,
-        "source": "tax_obligation",
-        "tax_obligation_id": ob["_id"],
-        "date": pay_date,
-        "created_at": _now(),
-    })
-    return acc.get("account_name")
+async def _ensure_expense(ob: dict) -> str:
+    """Yükümlülüğe bağlı masraf yoksa oluşturur; expense_id döner."""
+    eid = ob.get("expense_id")
+    if eid:
+        existing = await _db.expenses.find_one({"_id": eid})
+        if existing:
+            return eid
+    exp = await expenses.create_tax_payable_expense(ob)
+    eid = exp["id"]
+    await _db.tax_obligations.update_one({"_id": ob["_id"]}, {"$set": {"expense_id": eid}})
+    ob["expense_id"] = eid
+    return eid
 
 
-async def _reverse_payment(ob: dict):
+async def _delete_linked_expense(ob: dict):
+    eid = ob.get("expense_id")
+    if not eid:
+        exp = await _db.expenses.find_one({"tax_obligation_id": ob["_id"]})
+        eid = exp["_id"] if exp else None
+    if not eid:
+        return
+    exp = await _db.expenses.find_one({"_id": eid})
+    if not exp:
+        return
+    if exp.get("payment_status") == "paid":
+        raise HTTPException(status_code=400, detail="Ödenmiş masraf bağlı; önce ödemeyi geri alın.")
+    await _db.expenses.delete_one({"_id": eid})
+
+
+async def _reverse_legacy_bank(ob: dict):
+    """Eski (masrafsız) vergi ödemesi kasa hareketini geri alır."""
     bt = await _db.bank_transactions.find_one({"tax_obligation_id": ob["_id"]})
     if bt:
         await _db.bank_accounts.update_one({"_id": bt["account_id"]}, {"$inc": {"current_balance": bt["amount"]}})
@@ -100,6 +95,26 @@ def payroll_from_documents(docs: list) -> Optional[dict]:
         "employer_cost": round(sum(float((d.get("summary") or {}).get("employer_cost") or 0) for d in bordros), 2),
         "source": "upload",
     }
+
+
+def enrich_documents(docs: list, obligations: list) -> list:
+    """Yüklenen belgelere satır sayısı / ödenmemiş özeti ekler."""
+    by_doc: Dict[str, list] = {}
+    for r in obligations:
+        did = r.get("document_id")
+        if did:
+            by_doc.setdefault(did, []).append(r)
+    out = []
+    for d in docs:
+        linked = by_doc.get(d.get("id") or d.get("_id"), [])
+        unpaid = [r for r in linked if r.get("payment_status") != "paid"]
+        row = dict(d)
+        row["obligation_count"] = len(linked)
+        row["unpaid_count"] = len(unpaid)
+        row["unpaid_total"] = round(sum(float(r.get("amount") or 0) for r in unpaid), 2)
+        row["total"] = round(sum(float(r.get("amount") or 0) for r in linked), 2)
+        out.append(row)
+    return out
 
 
 @router.post("/tax-obligations/extract")
@@ -169,16 +184,25 @@ async def import_tax_doc(req: Dict[str, Any]):
             "due_date": line.get("due_date"),
             "account_code": line.get("account_code") or "",
             "filename": doc["filename"],
+            "document_no": doc.get("document_no") or "",
             "payment_status": "unpaid",
             "account_id": None,
             "partner_id": None,
             "account_name": None,
             "paid_date": None,
+            "expense_id": None,
             "created_at": _now(),
         }
         await _db.tax_obligations.insert_one(ob)
+        exp = await expenses.create_tax_payable_expense(ob)
+        await _db.tax_obligations.update_one({"_id": ob["_id"]}, {"$set": {"expense_id": exp["id"]}})
+        ob["expense_id"] = exp["id"]
         created.append(_clean(dict(ob)))
-    return {"document": _clean(dict(doc)), "obligations": created}
+    return {
+        "document": _clean(dict(doc)),
+        "obligations": created,
+        "message": f"{len(created)} satır Masraflar → {expenses.TAX_CATEGORY} altına düştü. Ödemeyi buradan veya Masraflar'dan yapabilirsiniz.",
+    }
 
 
 @router.get("/tax-obligations")
@@ -199,7 +223,12 @@ async def list_tax_obligations(
     docs_q: Dict[str, Any] = {"company_id": company_id}
     if month:
         docs_q["period"] = month
-    docs = [_clean(x) for x in await _db.tax_documents.find(docs_q).sort("created_at", -1).to_list(200)]
+    docs_raw = [_clean(x) for x in await _db.tax_documents.find(docs_q).sort("created_at", -1).to_list(200)]
+    # Belge özeti için ay filtresi olmadan da aynı dönemin satırlarını bağla
+    all_for_docs = rows
+    if month:
+        all_for_docs = [_clean(x) for x in await _db.tax_obligations.find({"company_id": company_id, "period": month}).to_list(2000)]
+    docs = enrich_documents(docs_raw, all_for_docs)
     return {
         "obligations": rows,
         "documents": docs,
@@ -210,6 +239,7 @@ async def list_tax_obligations(
 
 @router.post("/tax-obligations/{oid}/pay")
 async def pay_tax_obligation(oid: str, req: Dict[str, Any]):
+    """Ödemeyi Masraflar (Vergi / Harç / SGK) üzerinden kasa/bankaya işler."""
     ob = await _db.tax_obligations.find_one({"_id": oid})
     if not ob:
         raise HTTPException(status_code=404, detail="Yükümlülük bulunamadı.")
@@ -220,12 +250,18 @@ async def pay_tax_obligation(oid: str, req: Dict[str, Any]):
     pay_date = req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     partner_id = req.get("partner_id") or None
     account_id = None if partner_id else req.get("account_id")
-    name = await _post_payment(ob, account_id, pay_date, partner_id=partner_id)
+    eid = await _ensure_expense(ob)
+    paid_exp = await expenses.pay_expense(eid, {"account_id": account_id, "partner_id": partner_id, "date": pay_date})
     await _db.tax_obligations.update_one(
         {"_id": oid},
         {"$set": {
-            "payment_status": "paid", "account_id": account_id, "partner_id": partner_id,
-            "account_name": name, "paid_date": pay_date,
+            "payment_status": "paid",
+            "account_id": paid_exp.get("account_id"),
+            "partner_id": paid_exp.get("partner_id"),
+            "account_name": paid_exp.get("account_name"),
+            "paid_date": pay_date,
+            "expense_id": eid,
+            "expense_number": paid_exp.get("expense_number"),
         }},
     )
     return _clean(await _db.tax_obligations.find_one({"_id": oid}))
@@ -236,10 +272,19 @@ async def unpay_tax_obligation(oid: str):
     ob = await _db.tax_obligations.find_one({"_id": oid})
     if not ob or ob.get("payment_status") != "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş yükümlülük bulunamadı.")
-    await _reverse_payment(ob)
+    if ob.get("expense_id"):
+        await expenses.unpay_expense(ob["expense_id"])
+    else:
+        await _reverse_legacy_bank(ob)
     await _db.tax_obligations.update_one(
         {"_id": oid},
-        {"$set": {"payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None}},
+        {"$set": {
+            "payment_status": "unpaid",
+            "account_id": None,
+            "partner_id": None,
+            "account_name": None,
+            "paid_date": None,
+        }},
     )
     return _clean(await _db.tax_obligations.find_one({"_id": oid}))
 
@@ -251,5 +296,22 @@ async def delete_tax_obligation(oid: str):
         raise HTTPException(status_code=404, detail="Yükümlülük bulunamadı.")
     if ob.get("payment_status") == "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş kayıt silinemez. Önce ödemeyi geri alın.")
+    await _delete_linked_expense(ob)
     await _db.tax_obligations.delete_one({"_id": oid})
     return {"ok": True}
+
+
+@router.delete("/tax-documents/{doc_id}")
+async def delete_tax_document(doc_id: str):
+    """Yüklenen bordro/mizan/tahakkuk belgesini ve ödenmemiş satırlarını siler."""
+    doc = await _db.tax_documents.find_one({"_id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Belge bulunamadı.")
+    obs = await _db.tax_obligations.find({"document_id": doc_id}).to_list(500)
+    if any(o.get("payment_status") == "paid" for o in obs):
+        raise HTTPException(status_code=400, detail="Ödenmiş satırı olan belge silinemez. Önce ödemeleri geri alın.")
+    for o in obs:
+        await _delete_linked_expense(o)
+        await _db.tax_obligations.delete_one({"_id": o["_id"]})
+    await _db.tax_documents.delete_one({"_id": doc_id})
+    return {"ok": True, "deleted_obligations": len(obs), "filename": doc.get("filename") or ""}
