@@ -13,6 +13,7 @@ import type { Order, Product } from "../types";
 import { addOrBump, cartTotals, lineFromProduct, type CartLine } from "../utils/cart";
 import { fmtMoney, idOf } from "../utils/money";
 import { orderNumberLabel, statusTr } from "../utils/labels";
+import { orderStatusLabel } from "../utils/orderCargo";
 import {
   canStaffDeleteOrder,
   canStaffEditOrder,
@@ -127,7 +128,7 @@ export function OrderFormScreen() {
   return (
     <Screen onRefresh={load}>
       <H1>{orderNumberLabel(order)}</H1>
-      <Muted>{order.customer_name} · {statusTr(orderStatusOf(order))}</Muted>
+      <Muted>{order.customer_name} · {orderStatusLabel(order, statusTr(orderStatusOf(order)))}</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
       {!editable ? <Muted>Faturalanmış, iptal veya pazaryeri siparişi düzenlenemez.</Muted> : null}

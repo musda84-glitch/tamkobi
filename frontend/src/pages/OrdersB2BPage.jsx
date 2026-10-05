@@ -36,6 +36,7 @@ import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { CreateShipmentModal } from "../components/CreateShipmentModal";
 import { ChangeMarketplaceCargoModal } from "../components/ChangeMarketplaceCargoModal";
 import { channelTr, statusTr, orderStatusBadgeClass, marketplaceStatusTr } from "../utils/labels";
+import { orderStatusLabel, orderStatusSelectOptions } from "../utils/warehouseShip";
 import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel";
 import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components/OrderCreateModals";
 import { AutoShipModal } from "../components/AutoShipModal";
@@ -1333,7 +1334,7 @@ export default function OrdersB2BPage() {
                     <div className="font-mono font-bold text-slate-900 truncate">{ord.held_label || ord.order_number}</div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-1">
                       <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">{channelTr(ord.channel)}</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${orderStatusBadgeClass(ord.order_status)}`}>{statusTr(ord.order_status)}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${orderStatusBadgeClass(ord.order_status)}`}>{orderStatusLabel(ord, statusTr(ord.order_status))}</span>
                     </div>
                     <button type="button" onClick={() => goContact(ord)} className="mt-1 font-semibold text-slate-800 hover:text-indigo-700 truncate text-left block max-w-full">
                       {ord.customer_name || "—"}
@@ -1488,9 +1489,9 @@ export default function OrdersB2BPage() {
                         <span
                           className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded border ${orderStatusBadgeClass(ord.order_status)}`}
                           data-testid={`order-status-chip-${ord.order_number}`}
-                          title={`Durum: ${statusTr(ord.order_status)}`}
+                          title={`Durum: ${orderStatusLabel(ord, statusTr(ord.order_status))}`}
                         >
-                          {statusTr(ord.order_status)}
+                          {orderStatusLabel(ord, statusTr(ord.order_status))}
                         </span>
                       </div>
                     </td>
@@ -1541,12 +1542,12 @@ export default function OrdersB2BPage() {
                     <td className="px-4 py-3">
                       {ord.channel && !["b2b", "manual"].includes(ord.channel) ? (
                         <div data-testid={`order-status-badge-${ord.order_number}`} title="Durum pazaryerinden otomatik güncellenir">
-                          <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`}>{statusTr(ord.order_status)}</span>
+                          <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`}>{orderStatusLabel(ord, statusTr(ord.order_status))}</span>
                           {ord.marketplace_status && <div className="text-[10px] text-slate-400 mt-0.5">{channelTr(ord.channel)}: {marketplaceStatusTr(ord.marketplace_status)}</div>}
                           {ord.channel === "shopphp" && <button onClick={async () => { try { const r = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/push-shopphp`); toast.success(r.data.message); loadData(); } catch (e) { toast.error(e.response?.data?.detail || "Bildirilemedi."); } }} className={`mt-1 text-[10px] font-semibold underline ${ord.shopphp_push?.ok ? "text-emerald-700" : ord.shopphp_push?.ok === false ? "text-rose-600" : "text-indigo-600"}`} title={ord.shopphp_push ? `Son bildirim: ${new Date(ord.shopphp_push.at).toLocaleString("tr-TR")}${ord.shopphp_push.error ? " — " + ord.shopphp_push.error : ""}` : "Onay/kargo/fatura bilgisini ShopPHP mağazasına yaz"} data-testid={`shopphp-push-${ord.order_number}`}>{ord.shopphp_push?.ok ? "Mağazaya bildirildi ✓" : ord.shopphp_push?.ok === false ? "Bildirim hatası — tekrar dene" : "Mağazaya Bildir"}</button>}
                         </div>
                       ) : isB2BCartOrder(ord) ? (
-                        <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`} data-testid={`order-status-badge-${ord.order_number}`}>{statusTr(ord.order_status)}</span>
+                        <span className={`inline-block px-2 py-1 rounded-lg text-[11px] font-semibold border ${orderStatusBadgeClass(ord.order_status)}`} data-testid={`order-status-badge-${ord.order_number}`}>{orderStatusLabel(ord, statusTr(ord.order_status))}</span>
                       ) : (
                       <select
                         value={ord.order_status}
@@ -1554,13 +1555,9 @@ export default function OrdersB2BPage() {
                         className="bg-slate-100 border border-slate-200 rounded p-1 text-[11px] font-semibold"
                         data-testid={`order-status-select-${ord.order_number}`}
                       >
-                        <option value="pending">Beklemede</option>
-                        <option value="approved">Onaylandı</option>
-                        <option value="preparing">Hazırlanıyor</option>
-                        <option value="shipped">Kargolandı</option>
-                        <option value="completed">Teslim edildi</option>
-                        <option value="returned">İade Edildi</option>
-                        <option value="partially_returned">Kısmi İade</option>
+                        {orderStatusSelectOptions(ord).map(([k, l]) => (
+                          <option key={k} value={k}>{l}</option>
+                        ))}
                       </select>)}
                     </td>
                     <td className={`px-3 py-3 text-center overflow-hidden sticky right-0 z-[1] ${selected.includes(orderRowId(ord)) ? "bg-emerald-50" : "bg-white group-hover/row:bg-slate-50"}`} style={{ width: ORDER_ACTIONS_COL }}>

@@ -11,6 +11,7 @@ import { Badge, Card, ErrorBanner, H1, ListRow, Muted, Row, Screen } from "../co
 import { colors } from "../theme";
 import type { Order, Product } from "../types";
 import { channelTr, orderNumberLabel, statusTr, marketplaceStatusTr } from "../utils/labels";
+import { orderStatusLabel } from "../utils/orderCargo";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { canStaffEditOrder, cartFromOrderItems, orderUpdatePayload, removeOrderLine } from "../utils/orderEdit";
 import { orderInvoiceBadgeLabel, orderInvoiceBadgeTone } from "../utils/orderInvoice";
@@ -105,7 +106,7 @@ export function OrderDetailScreen() {
       <OrderActions order={order} size="sm" onMessage={setMessage} onError={setError} onChanged={load} onDeleted={() => router.back()} />
       <Card>
         <Badge label={channelTr(order.channel)} tone="indigo" />
-        <Badge label={statusTr(order.order_status)} tone="amber" />
+        <Badge label={orderStatusLabel(order, statusTr(order.order_status))} tone="amber" />
         {(() => {
           const invTone = orderInvoiceBadgeTone(order);
           const invLabel = orderInvoiceBadgeLabel(order);

@@ -17,6 +17,7 @@ import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { go } from "../nav";
 import { colors } from "../theme";
 import { invoiceTypeTr, orderNumberLabel, riskStatusTr, statusTr, trUpper } from "../utils/labels";
+import { orderStatusLabel } from "../utils/orderCargo";
 import { collectableAccounts, splitPaymentTarget } from "../utils/contactDraft";
 import { paymentTargetGroups } from "../utils/finance";
 import { balanceHint, contactCardVisibleActions, contactDisplayBalance, contactInfoRows, contactSummaryRows, contactTabSelectGroups, contactTypeLabel } from "../utils/contactDisplay";
@@ -1132,7 +1133,7 @@ export function ContactDetailScreen() {
                 testID={`detail-ord-${oid}`}
                 title={orderNumberLabel(o)}
                 leading={<ChannelLogo channel={o.channel} />}
-                subtitle={[statusTr(orderStatusOf(o)), fmtDate(o.order_date || o.created_at)].filter(Boolean).join(" · ")}
+                subtitle={[orderStatusLabel(o, statusTr(orderStatusOf(o))), fmtDate(o.order_date || o.created_at)].filter(Boolean).join(" · ")}
                 right={fmtMoney(o.grand_total || o.total)}
                 onPress={() => go("OrderDetail", { id: idOf(o) })}
               />

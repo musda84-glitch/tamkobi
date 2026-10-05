@@ -37,6 +37,7 @@ import {
 } from "../utils/b2bOrders";
 import { b2bGross, b2bNet, b2bOrderGross } from "../utils/b2bPricing";
 import { statusTr } from "../utils/labels";
+import { orderStatusLabel } from "../utils/orderCargo";
 import { resolveMediaUrl } from "../utils/media";
 import { fmtDate, fmtMoney, idOf, setPriceDecimals } from "../utils/money";
 import { pickLineNote } from "../utils/orderPick";
@@ -892,7 +893,7 @@ export function B2BPortalScreen() {
                 <Card key={oid} testID={`b2b-order-${o.order_number}`}>
                   <Row style={{ justifyContent: "space-between" }}>
                     <Text style={{ fontWeight: "800", color: colors.text }}>{o.order_number}</Text>
-                    <Badge label={statusTr(o.order_status)} tone={o.order_status === "cancelled" ? "red" : o.order_status === "delivered" ? "green" : "amber"} />
+                    <Badge label={orderStatusLabel(o, statusTr(o.order_status))} tone={o.order_status === "cancelled" ? "red" : o.order_status === "delivered" ? "green" : "amber"} />
                   </Row>
                   {extra ? <Badge label={extra} tone="amber" /> : null}
                   <Muted>{fmtDate(o.order_date)}{o.customer_order_number ? ` · Sizin no ${o.customer_order_number}` : ""}</Muted>
@@ -1159,7 +1160,7 @@ export function B2BPortalScreen() {
       <B2BSheet visible={!!preview} title="Sipariş önizleme" subtitle={preview?.order_number} onClose={() => setPreview(null)} testID="b2b-order-preview">
         {preview ? (
           <View>
-            <Muted>{fmtDate(preview.order_date)} · {statusTr(preview.order_status)}</Muted>
+            <Muted>{fmtDate(preview.order_date)} · {orderStatusLabel(preview, statusTr(preview.order_status))}</Muted>
             {preview.customer_order_number ? <Text testID="b2b-preview-customer-order-no" style={{ fontWeight: "700" }}>Sizin no {preview.customer_order_number}</Text> : null}
             {(preview.items || []).map((it, i) => {
               const rec = it as { product_id?: string; product_name?: string; quantity?: number; unit?: string; unit_price?: number; total?: number; total_incl?: number; vat_rate?: number; image_url?: string; sku?: string; barcode?: string; note?: string; line_note?: string; stock_note?: string; notes?: string; tags?: string[]; gtip?: string; origin_country?: string; category?: string };

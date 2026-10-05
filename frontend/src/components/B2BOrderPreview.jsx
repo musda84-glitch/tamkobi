@@ -5,6 +5,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
 import { Barcode } from "./BarcodeLabelPrint";
 import { statusTr } from "../utils/labels";
+import { orderStatusLabel } from "../utils/warehouseShip";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { pickLineNote } from "../utils/pickLineNote";
@@ -61,7 +62,7 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
             </div>
             <div className="text-right text-slate-500">
               <div>{(order.order_date || "").slice(0, 10)}</div>
-              <div className="font-semibold text-slate-700">{statusTr(order.order_status)}</div>
+              <div className="font-semibold text-slate-700">{orderStatusLabel(order, statusTr(order.order_status))}</div>
             </div>
           </div>
           <div className="divide-y border rounded-xl overflow-hidden">

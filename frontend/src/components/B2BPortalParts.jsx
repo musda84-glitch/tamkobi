@@ -7,6 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { statusTr } from "../utils/labels";
+import { orderStatusLabel } from "../utils/warehouseShip";
 import { B2BOrderPreview, PreviewOrderBtn } from "./B2BOrderPreview";
 import { formatOrderItemLabel, cartHeading, cartKalemLabel, cartLinesQtyTotal } from "../utils/b2bCart";
 import { LegalConsent } from "./LegalConsent";
@@ -217,7 +218,7 @@ const OrderStatusBadge = ({ o }) => (
         {o.is_active_cart ? "Aktif sepet" : (o.held_seq ? `Bekleyen sepet #${o.held_seq}` : "Bekleyen sepet")}
       </span>
     ) : (
-      <span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{statusTr(o.order_status)}</span>
+      <span className="bg-slate-100 px-1.5 py-0.5 rounded font-semibold">{orderStatusLabel(o, statusTr(o.order_status))}</span>
     )}
     {o.cancel_request?.status === "pending" && <span className="bg-amber-50 text-amber-800 px-1.5 py-0.5 rounded font-semibold" data-testid={`b2b-cancel-pending-${o.order_number}`}>İptal talebi iletildi</span>}
     {o.cancel_request?.status === "rejected" && <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">İptal talebi reddedildi</span>}

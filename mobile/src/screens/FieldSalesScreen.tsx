@@ -14,6 +14,7 @@ import { addOrBump, cartTotals, findProductByScan, lineFromProduct, parseScanQty
 import { normalizeScanText } from "../utils/b2bCatalog";
 import { B2BAiCartPanel } from "../components/b2b/B2BAiCartPanel";
 import { orderNumberLabel, statusTr } from "../utils/labels";
+import { orderStatusLabel } from "../utils/orderCargo";
 import { fmtMoney, idOf, todayIso } from "../utils/money";
 
 export function FieldSalesScreen() {
@@ -245,7 +246,7 @@ export function FieldSalesScreen() {
       <Card>
         <Text style={{ fontWeight: "800", color: colors.text }}>Bugünkü saha siparişleri</Text>
         {!todayOrders.length ? <Empty icon="clipboard-outline" title="Henüz saha siparişi yok" /> : todayOrders.map((o) => (
-          <ListRow key={idOf(o)} title={orderNumberLabel({ ...o, channel: o.channel || "saha" })} subtitle={`${o.customer_name} · ${statusTr(o.order_status)}`} leading={<ChannelLogo channel={o.channel || "saha"} />} right={fmtMoney(o.grand_total || o.total_amount)} />
+          <ListRow key={idOf(o)} title={orderNumberLabel({ ...o, channel: o.channel || "saha" })} subtitle={`${o.customer_name} · ${orderStatusLabel(o, statusTr(o.order_status))}`} leading={<ChannelLogo channel={o.channel || "saha"} />} right={fmtMoney(o.grand_total || o.total_amount)} />
         ))}
       </Card>
       <BarcodeScannerModal
