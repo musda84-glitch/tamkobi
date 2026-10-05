@@ -13,20 +13,34 @@ export const isIncomingGibInvoice = (inv) => {
   return inv.invoice_type === "purchase" && /gelen|received/i.test(String(inv.gib_status || ""));
 };
 
+/** Giden e-Fatura sekmesi: yalnızca GİB'e gerçekten iletilmiş belgeler. */
 export const isOutgoingGibInvoice = (inv) => {
   if (!inv || inv.invoice_type === "dispatch") return false;
   if (isIncomingGibInvoice(inv)) return false;
-  return ["e_invoice", "e_archive", "e_export"].includes(inv.e_type);
+  const gs = String(inv.gib_status || "")
+    .replace(/^test\s*·\s*/i, "")
+    .trim()
+    .toLowerCase()
+    .replace(/ı/g, "i")
+    .replace(/i̇/g, "i")
+    .replace(/ö/g, "o")
+    .replace(/ü/g, "u")
+    .replace(/ş/g, "s")
+    .replace(/ğ/g, "g")
+    .replace(/ç/g, "c");
+  if (inv.einvoice_state === "error" || /^\s*hata\s*:/i.test(gs)) return false;
+  const code = String(inv.gib_status_code || "").trim();
+  if (["1300", "1220", "1200"].includes(code)) return true;
+  if (inv.einvoice_state === "sent" || inv.einvoice_state === "queued") return true;
+  if (inv.gib_tracking_id || inv.gib_uuid) return true;
+  if (/ziplen|zarflan/.test(gs)) return true;
+  return /gib'?e (ilet|gonder)|n11 faturam|e-ihracat.*ileti/.test(gs);
 };
 
-/** Satış/Alış sekmelerinden GİB giden veya gelen e-belgeleri ayırır. */
+/** Satış/Alış: GİB'e gitmemiş yerel faturalar. Giden/gelen GİB sekmelerine düşenler burada yok. */
 export const isGibSentOrReceivedInvoice = (inv) => {
   if (!inv) return false;
-  if (isIncomingGibInvoice(inv) || isOutgoingGibInvoice(inv)) return true;
-  const gs = String(inv.gib_status || "").replace(/^test\s*·\s*/i, "").trim();
-  if (inv.einvoice_state === "error" || /^\s*hata\s*:/i.test(gs)) return false;
-  if (inv.einvoice_state === "sent" || inv.einvoice_state === "queued") return true;
-  return Boolean(inv.gib_uuid || inv.gib_tracking_id);
+  return isIncomingGibInvoice(inv) || isOutgoingGibInvoice(inv);
 };
 
 export const invoiceTypeFilter = (type) => (inv) => {

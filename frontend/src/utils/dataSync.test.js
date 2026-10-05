@@ -23,7 +23,10 @@ test("invoiceTypeFilter incoming and outgoing_gib", () => {
   expect(invoiceTypeFilter("incoming")({ invoice_type: "purchase", edoc_id: "x" })).toBe(true);
   expect(invoiceTypeFilter("incoming")({ invoice_type: "purchase", e_type: "e_invoice" })).toBe(true);
   expect(invoiceTypeFilter("incoming")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(false);
-  expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(true);
+  expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(false);
+  expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "sales", e_type: "e_invoice", einvoice_state: "sent" })).toBe(true);
+  expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "sales", e_type: "e_archive", gib_uuid: "u1" })).toBe(true);
+  expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "sales", e_type: "e_invoice", gib_status: "İşNet SOAP API ile GİB'e iletildi" })).toBe(true);
   expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "purchase", direction: "incoming", e_type: "e_invoice" })).toBe(false);
   expect(invoiceTypeFilter("outgoing_gib")({ invoice_type: "dispatch", e_type: "e_dispatch" })).toBe(false);
 });
@@ -31,7 +34,8 @@ test("invoiceTypeFilter incoming and outgoing_gib", () => {
 test("sales and purchase tabs hide GIB sent/received invoices", () => {
   expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "paper" })).toBe(true);
   expect(invoiceTypeFilter("sales")({ invoice_type: "sales" })).toBe(true);
-  expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(false);
+  expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "e_invoice" })).toBe(true);
+  expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "e_invoice", status: "draft" })).toBe(true);
   expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "e_archive", einvoice_state: "sent" })).toBe(false);
   expect(invoiceTypeFilter("sales")({ invoice_type: "sales", e_type: "paper", gib_uuid: "u1" })).toBe(false);
   expect(invoiceTypeFilter("purchase")({ invoice_type: "purchase", e_type: "paper" })).toBe(true);
