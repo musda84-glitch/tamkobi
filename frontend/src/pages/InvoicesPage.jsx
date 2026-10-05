@@ -24,6 +24,7 @@ import { SourceBadge } from "../components/SourceBadge";
 import { QuickContactForm } from "../components/QuickContactForm";
 import { INVOICE_ACTIONS_COL } from "../utils/invoiceTableLayout";
 import { invoiceBulkNeedsSelection, bulkApiErrorDetail } from "../utils/invoiceBulkActions";
+import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { FxPicker } from "../components/FxPicker";
 import { TimeInput } from "../components/TimeInput";
 import { fmtDate, fmtMoney, formatTrAmount } from "../utils/money";
@@ -56,15 +57,6 @@ import {
   ChevronDown,
   FileCheck2, CheckCircle, XCircle, Trash2, Pencil, CalendarClock, Truck, RefreshCw, PackagePlus, Loader2 } from "lucide-react";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
-
-const pad2 = (x) => String(x).padStart(2, "0");
-const nowIssueDateTime = () => {
-  const n = new Date();
-  return {
-    issue_date: `${n.getFullYear()}-${pad2(n.getMonth() + 1)}-${pad2(n.getDate())}`,
-    issue_time: `${pad2(n.getHours())}:${pad2(n.getMinutes())}:${pad2(n.getSeconds())}`,
-  };
-};
 
 const typeBadge = (inv) => {
   if (inv.e_type === "expense_slip") return ["Gider Pusulası", "bg-rose-50 text-rose-800"];
@@ -1561,7 +1553,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
             const docs = (payload.documents && payload.documents.length)
               ? payload.documents
               : (eFaturaJob.invoices || (eFaturaJob.invoice ? [eFaturaJob.invoice] : []));
-            const { eType, scenario, alias, withholding, returnRef, exemption } = payload;
+            const { eType, scenario, alias, withholding, returnRef, exemption, stampNow } = payload;
 
             ctx?.setSteps?.([
               { id: "prepare", label: "Hazırlık ve doğrulama" },
@@ -1598,6 +1590,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   } catch { /* gönderim yine denenecek */ }
                 }
                 const patch = {};
+                if (stampNow && docs.length === 1) {
+                  Object.assign(patch, nowIssueDateTime());
+                }
                 if (withholding) {
                   patch.withholding_rate = Number(withholding.withholding_rate || 0);
                   patch.withholding_code = withholding.withholding_code || null;

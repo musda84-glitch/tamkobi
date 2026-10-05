@@ -32,6 +32,7 @@ import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
 import { CargoLabel } from "../components/CargoLabel";
 import { ApproveOrderModal } from "../components/ApproveOrderModal";
 import { ElektronikFaturaOnayModal } from "../components/ElektronikFaturaOnayModal";
+import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { CreateShipmentModal } from "../components/CreateShipmentModal";
 import { ChangeMarketplaceCargoModal } from "../components/ChangeMarketplaceCargoModal";
 import { channelTr, statusTr, orderStatusBadgeClass, marketplaceStatusTr } from "../utils/labels";
@@ -1169,13 +1170,20 @@ export default function OrdersB2BPage() {
             }
             const ord = eFaturaOrder;
             if (!ord) return;
-            const { eType, scenario, alias } = payload || {};
+            const { eType, scenario, alias, stampNow } = payload || {};
             if (alias && ord.contact_id) {
               try {
                 await axios.put(`${API_URL}/contacts/${ord.contact_id}`, {
                   e_invoice_alias: alias,
                   is_e_invoice_user: eType === "e_invoice",
                 });
+              } catch {
+                /* gönderim yine denenecek */
+              }
+            }
+            if (stampNow && ord.invoice_id) {
+              try {
+                await axios.put(`${API_URL}/invoices/${ord.invoice_id}`, nowIssueDateTime());
               } catch {
                 /* gönderim yine denenecek */
               }
