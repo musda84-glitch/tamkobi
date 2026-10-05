@@ -14,7 +14,7 @@ import { QuoteEditModal } from "./QuoteEditModal";
 import { SurveyDetailModal } from "./SurveyDetailModal";
 import { ProjectTrackingModal, TrackingBadge } from "./ProjectTrackingModal";
 import { ContactTermsModal } from "./ContactTermsModal";
-import { InvoiceContextMenu, isIncomingPurchaseInvoice, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel } from "./InvoiceContextMenu";
+import { InvoiceContextMenu, isIncomingPurchaseInvoice, isGibIssued, canDeleteInvoice, canCancelInvoice, canEditInvoice, invoiceETypeLabel, isDispatchDocument } from "./InvoiceContextMenu";
 import { InvoiceCopyButton, useInvoiceCopyFromContext } from "./InvoiceCopyMenu";
 import InvoiceActionPanel from "./InvoiceActionPanel";
 import { ElektronikFaturaOnayModal } from "./ElektronikFaturaOnayModal";
@@ -594,7 +594,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 text-xs">
-          {tab === "invoices" && data.invoices.some((i) => i.status === "draft") && (() => { const drafts = data.invoices.filter((i) => i.status === "draft"); const appr = data.invoices.filter((i) => i.status !== "draft"); return (
+          {tab === "invoices" && data.invoices.some((i) => i.status === "draft") && (() => {
+            const drafts = data.invoices.filter((i) => i.status === "draft" && !isDispatchDocument(i));
+            const appr = data.invoices.filter((i) => i.status !== "draft" && !isDispatchDocument(i));
+            return (
             <div className="mb-3 flex flex-wrap gap-2" data-testid="detail-inv-summary">
               <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5"><span className="text-emerald-700 font-semibold">{appr.length} onaylı fatura</span> · <b>{fmt(appr.reduce((a, i) => a + Number(i.grand_total || 0), 0))}</b> <span className="text-emerald-700/70">(bakiyeye işlendi)</span></div>
               <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5"><span className="text-amber-800 font-semibold">{drafts.length} taslak</span> · <b>{fmt(drafts.reduce((a, i) => a + Number(i.grand_total || 0), 0))}</b> <span className="text-amber-800/70">(bakiyeye işlenmez — onaylandığında işlenir)</span></div>
@@ -604,13 +607,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <SortableHeader {...colState} />
               <tbody className="divide-y divide-slate-100">
                 {data.invoices.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
-                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const cells = {
+                {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const isDisp = isDispatchDocument(inv); const cells = {
                     number: <td key="number" className="py-2 font-mono font-semibold text-slate-900">{canEditInvoice(inv) ? (<button onClick={() => setEditInv({ ...inv })} className="hover:underline text-emerald-700" title="Faturayı düzenle" data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button>) : (<span data-testid={`detail-inv-no-${inv.invoice_number}`}>{inv.invoice_number}</span>)}</td>,
                     date: <td key="date" className="py-2 text-slate-500">{fmtDate(inv.issue_date)}</td>,
                     type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span></td>,
-                    amount: <td key="amount" className={`py-2 text-right font-bold ${inv.status === "draft" ? "text-slate-400" : ""}`}>{fmt(inv.grand_total)}{inv.status === "draft" && <div className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide" data-testid={`detail-inv-draft-${inv.invoice_number}`}>Taslak · bakiye dışı</div>}</td>,
+                    amount: <td key="amount" className={`py-2 text-right font-bold ${inv.status === "draft" || isDisp ? "text-slate-400" : ""}`}>{fmt(inv.grand_total)}{isDisp ? <div className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide" data-testid={`detail-inv-dispatch-nobal-${inv.invoice_number}`}>İrsaliye · bakiye dışı{(inv.invoice_ref_number || inv.converted_invoice_number) ? ` · fatura ${inv.invoice_ref_number || inv.converted_invoice_number}` : ""}</div> : inv.status === "draft" ? <div className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide" data-testid={`detail-inv-draft-${inv.invoice_number}`}>Taslak · bakiye dışı</div> : null}</td>,
                     gib: <td key="gib" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-50 text-emerald-700"}`}>{inv.gib_status || "Taslak"}</span></td>,
-                    payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"}</span></td>,
+                    payment: <td key="payment" className="py-2"><span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${isDisp ? "bg-slate-100 text-slate-600" : inv.payment_status === "paid" ? "bg-emerald-100 text-emerald-800" : inv.payment_status === "partially_paid" ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>{isDisp ? "Bakiye yok" : inv.payment_status === "paid" ? "Ödendi" : inv.payment_status === "partially_paid" ? "Kısmi" : "Cariye işlendi"}</span></td>,
                   }; return (
                   <tr key={inv.id} className={`${invCtx?.inv?.id === inv.id ? "bg-emerald-50/60" : "hover:bg-slate-50"} ${inv.status === "draft" ? "border-l-2 border-amber-400 bg-amber-50/30" : ""}`} data-testid={`detail-inv-${inv.invoice_number}`}>
                     {colState.cols.map((k) => cells[k])}

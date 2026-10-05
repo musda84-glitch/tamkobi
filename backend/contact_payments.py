@@ -72,7 +72,7 @@ def purchase_invoice_leftover_payment(inv: dict, leftover: float) -> Optional[di
     """Hesapsız (cariye işlenen) alış faturası ödemesini sanal satır olarak gösterir."""
     if not isinstance(inv, dict):
         return None
-    if inv.get("invoice_type") == "sales":
+    if inv.get("invoice_type") in ("sales", "dispatch") or inv.get("e_type") == "e_dispatch":
         return None
     if inv.get("status") in ("draft", "cancelled"):
         return None
