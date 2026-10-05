@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
+import { InvoicePrintShareModal } from "../components/InvoicePrintShareModal";
 import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { Printer, Tag, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Factory } from "lucide-react";
@@ -134,10 +135,14 @@ function OrderMoreMenuButton({ ord, contacts, onAction, align = "center", side =
               <DropdownMenuItem
                 onSelect={() => onAction(it.id, ord, { eType: it.eType })}
                 className="gap-2 text-xs font-medium"
+                title={it.title || it.hint || it.label}
                 data-testid={`order-more-${it.testId}${testSuffix}-${ord.order_number}`}
               >
                 <Ico className={`w-4 h-4 shrink-0 ${it.color || "text-slate-500"}`} />
-                <span className="truncate">{it.label}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="truncate block">{it.label}</span>
+                  {it.hint ? <span className="block text-[10px] font-normal text-slate-400 truncate">{it.hint}</span> : null}
+                </span>
               </DropdownMenuItem>
             </div>
           );
@@ -193,6 +198,8 @@ export default function OrdersB2BPage() {
   const [activeTab, setActiveTab] = useState("orders"); // orders | b2b_portal
   const [orders, setOrders] = useState([]);
   const [notifyOrder, setNotifyOrder] = useState(null);
+  const [printShareOrder, setPrintShareOrder] = useState(null);
+  const [printInvoice, setPrintInvoice] = useState(null);
   const [printOrder, setPrintOrder] = useState(null);
   const [labelOrder, setLabelOrder] = useState(null);
   const [dispatchDoc, setDispatchDoc] = useState(null);
@@ -863,31 +870,11 @@ export default function OrdersB2BPage() {
         setShipOrder(ord);
         return;
       case "earsiv_send":
-        if (ord.invoice_id) {
-          try {
-            const r = await printMiniInvoicesFromIntegrator([ord], { apiUrl: API_URL, axiosClient: axios });
-            if (r.ok) toast.success("Entegratör fatura PDF yazdırmaya açıldı.");
-            else if (r.message) toast.message(r.message);
-          } catch {
-            toast.message("Entegratör PDF alınamadı; GİB gönderimi deneniyor.");
-          }
-          try {
-            await axios.post(`${API_URL}/invoices/${ord.invoice_id}/send-to-gib`, {
-              e_type: ord.e_type || orderEBelgeType(ord, contacts),
-            });
-            try {
-              const st = await axios.post(`${API_URL}/e-invoice/${ord.invoice_id}/refresh-status`);
-              const gibNo = st.data?.invoice_number || st.data?.gib_invoice_id;
-              if (gibNo) toast.message(`GİB fatura no: ${gibNo}`);
-            } catch { /* ignore */ }
-            toast.success("GİB gönderimi tetiklendi.");
-            loadData();
-          } catch (err) {
-            toast.message(err.response?.data?.detail || "GİB gönderimi atlandı.");
-          }
-        } else {
+        if (!ord.invoice_id) {
           toast.error("Önce fatura oluşturun.");
+          return;
         }
+        setPrintShareOrder(ord);
         return;
       case "cargo_track_notify":
         if (!ord.cargo_tracking_number) {
@@ -1201,6 +1188,24 @@ export default function OrdersB2BPage() {
         </div></div>
       )}
       {labelOrder && <CargoLabel order={labelOrder} company={activeCompany} onClose={() => setLabelOrder(null)} />}
+      {printShareOrder && (
+        <InvoicePrintShareModal
+          order={printShareOrder}
+          contact={contacts.find((c) => (c.id || c._id) === printShareOrder.contact_id) || {}}
+          companyId={companyId}
+          companyName={activeCompany?.name || activeCompany?.title || ""}
+          onPrint={(doc) => setPrintInvoice(doc)}
+          onClose={() => setPrintShareOrder(null)}
+        />
+      )}
+      {printInvoice && (
+        <PrintDocument
+          docType="invoice"
+          doc={printInvoice}
+          company={activeCompany}
+          onClose={() => setPrintInvoice(null)}
+        />
+      )}
       {printOrder && (
         <PrintDocument
           docType="order"

@@ -20,6 +20,7 @@ import {
   Package,
   Zap,
 } from "lucide-react";
+import { INVOICE_PRINT_SHARE_HINT } from "./invoicePrintShare";
 
 const PANEL_CHANNELS = new Set(["b2b", "manual", "saha", ""]);
 
@@ -132,6 +133,8 @@ const item = (id, label, icon, opts = {}) => ({
   section: opts.section || null,
   color: opts.color || "text-slate-500",
   eType: opts.eType,
+  hint: opts.hint || "",
+  title: opts.title || opts.hint || "",
   hidden: !!opts.hidden,
 });
 
@@ -143,7 +146,11 @@ export function integrationEInvoiceMoreItems() {
     item("mini_8x20", "Mini E-Arşiv Yazdır (8X20cm)", FileText, { color: "text-sky-600" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
-    item("earsiv_send", "E-Arşiv Yazdır & Gönder", Mail, { color: "text-emerald-600" }),
+    item("earsiv_send", "E-Arşiv Yazdır & Gönder", Mail, {
+      color: "text-emerald-600",
+      hint: INVOICE_PRINT_SHARE_HINT,
+      title: INVOICE_PRINT_SHARE_HINT,
+    }),
     item("cargo_track_notify", "Kargo Takip Kodu Bildir", History, { color: "text-sky-500" }),
     item("digital_code_notify", "Dijital Kod Bildir", Download, { color: "text-rose-600" }),
     item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
@@ -180,7 +187,11 @@ export function panelEInvoiceMoreItems(ord) {
     item("mini_8x20", `Mini ${doc} Yazdır (8X20cm)`, FileText, { color: "text-sky-600" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
-    item("earsiv_send", `${doc} Yazdır & Gönder`, Mail, { color: "text-emerald-600" }),
+    item("earsiv_send", `${doc} Yazdır & Gönder`, Mail, {
+      color: "text-emerald-600",
+      hint: INVOICE_PRINT_SHARE_HINT,
+      title: INVOICE_PRINT_SHARE_HINT,
+    }),
     item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
     item("xml", `${doc} XML'i İndir`, Code2, { color: "text-sky-500" }),
     item("efatura_pdf", `${doc} PDF İndir`, Download, { color: "text-indigo-600", testId: "efatura-pdf" }),

@@ -9,6 +9,8 @@ import {
   panelDraftMoreItems,
   panelEInvoiceMoreItems,
   isYmd,
+  INVOICE_PRINT_SHARE_HINT,
+  invoicePrintShareMessage,
 } from "./orderMoreMenu";
 
 describe("orderMoreMenu web variants", () => {
@@ -118,5 +120,15 @@ describe("orderMoreMenu web variants", () => {
       expect(orderMoreMenuItems(ord).items.map((i) => i.id)).toEqual([]);
       expect(mobilePrimaryAction(ord)).toBeNull();
     }
+  });
+
+  it("Yazdır & Gönder is print/email/WhatsApp only", () => {
+    const share = panelEInvoiceMoreItems().find((i) => i.id === "earsiv_send");
+    expect(share?.hint).toBe(INVOICE_PRINT_SHARE_HINT);
+    const msg = invoicePrintShareMessage({ customer_name: "Acme", gib_invoice_id: "U05", e_type: "e_invoice" }, "https://x/pdf");
+    expect(msg).toContain("Acme");
+    expect(msg).toContain("E-Fatura");
+    expect(msg).toContain("https://x/pdf");
+    expect(msg.toLowerCase()).not.toContain("gib gönder");
   });
 });
