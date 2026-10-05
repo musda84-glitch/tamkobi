@@ -12,7 +12,7 @@ import { EmployeeAssignTaskModal } from "./EmployeeAssignTaskModal";
 import { EmployeeYevmiyeModal } from "./EmployeeYevmiyeModal";
 import { EmployeeMovesModal } from "./EmployeeMovesModal";
 import { EmployeePuantajPanel } from "./EmployeePuantajPanel";
-import { empStatusLabel, formatTrDate, performanceTone, remainingTone } from "../utils/employeeCardSummary";
+import { empStatusLabel, formatTrDate, performanceTone, remainingTone, parseAnnualLeaveDays, annualLeaveDaysError, annualLeaveDaysPayload } from "../utils/employeeCardSummary";
 import { employeePayButtonLabel, employeePresenceChip, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, empDataResetConfirm, empDataResetPath } from "../utils/personnelCard";
 import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
@@ -200,6 +200,8 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const [busyReset, setBusyReset] = useState(false);
   const [showArchivedDuties, setShowArchivedDuties] = useState(false);
   const [trashDutiesBusy, setTrashDutiesBusy] = useState(false);
+  const [annualDraft, setAnnualDraft] = useState("");
+  const [annualBusy, setAnnualBusy] = useState(false);
   useEscape(() => {
     if (unifyPay) return;
     if (resetOpen) { setResetOpen(false); setResetOk(false); return; }
@@ -213,11 +215,30 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   const reload = useCallback(() => axios.get(`${API_URL}/personnel/employees/${id}/card`).then((r) => setCard(r.data)).catch(() => toast.error("Personel kartı yüklenemedi.")), [id]);
   useEffect(() => { reload(); axios.get(`${API_URL}/companies/${companyId}/work-schedule`).then((r) => setSchedule(r.data.schedule)).catch(() => {}); }, [reload, companyId]);
   useEffect(() => {
+    const annual = card?.leave_balance?.annual ?? card?.employee?.annual_leave_days;
+    if (annual == null) return;
+    setAnnualDraft(String(annual));
+  }, [card?.leave_balance?.annual, card?.employee?.annual_leave_days]);
+  useEffect(() => {
     if (accountsProp?.length) { setAccounts(accountsProp); return; }
     axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`).then((r) => setAccounts(r.data)).catch(() => {});
   }, [accountsProp, companyId]);
   const e = card?.employee || employee;
   const afterMoney = () => { reload(); onChanged?.(); };
+  const saveAnnualLeave = async () => {
+    const err = annualLeaveDaysError(annualDraft);
+    if (err) { toast.error(err); return; }
+    const days = parseAnnualLeaveDays(annualDraft);
+    setAnnualBusy(true);
+    try {
+      await axios.put(`${API_URL}/personnel/employees/${id}`, annualLeaveDaysPayload(days));
+      toast.success("Yıllık izin hakkı güncellendi.");
+      reload();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İzin hakkı kaydedilemedi.");
+    } finally { setAnnualBusy(false); }
+  };
   const deletePayroll = async (p) => {
     const row = { id: p.id || p._id, kind: "payroll", status: p.status };
     const path = payMoveDeletePath(row);
@@ -501,7 +522,37 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
               </div>
             )}
             {tab === "leaves" && (
-              <div className="space-y-3"><div className="grid grid-cols-2 md:grid-cols-4 gap-2"><Stat label={`Yıllık Hak${card.leave_balance?.year ? ` (${card.leave_balance.year})` : ""}`} value={`${card.leave_balance.annual} gün`} /><Stat label="Kullanılan" value={`${card.leave_balance.used} gün`} /><Stat label="Devir" value={`${card.leave_balance.carry || 0} gün`} testid="emp-leave-carry" /><Stat label="Kalan" value={`${card.leave_balance.remaining} gün`} testid="emp-leave-remaining" /></div>
+              <div className="space-y-3"><div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <form
+                  className="bg-slate-50 rounded-xl p-3 space-y-1.5"
+                  data-testid="emp-leave-annual"
+                  onSubmit={(ev) => { ev.preventDefault(); saveAnnualLeave(); }}
+                >
+                  <div className="text-[10px] uppercase font-semibold text-slate-400">{`Yıllık Hak${card.leave_balance?.year ? ` (${card.leave_balance.year})` : ""}`}</div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min="0"
+                      max="365"
+                      step="1"
+                      value={annualDraft}
+                      onChange={(ev) => setAnnualDraft(ev.target.value)}
+                      className="w-16 bg-white border border-slate-200 rounded-lg px-1.5 py-1 text-sm font-bold text-slate-900"
+                      data-testid="emp-leave-annual-input"
+                    />
+                    <span className="text-sm font-bold text-slate-900">gün</span>
+                    <button
+                      type="submit"
+                      disabled={annualBusy}
+                      className="ml-auto px-2 py-1 rounded-lg text-[10px] font-extrabold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                      data-testid="emp-leave-annual-save"
+                    >
+                      {annualBusy ? "…" : "Kaydet"}
+                    </button>
+                  </div>
+                  <div className="text-[10px] text-slate-500">Bu personelin yıllık izin hakkı</div>
+                </form>
+                <Stat label="Kullanılan" value={`${card.leave_balance.used} gün`} /><Stat label="Devir" value={`${card.leave_balance.carry || 0} gün`} testid="emp-leave-carry" /><Stat label="Kalan" value={`${card.leave_balance.remaining} gün`} testid="emp-leave-remaining" /></div>
                 <table className="w-full" data-testid="emp-leaves-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Tür</th><th className="text-left">Tarih</th><th className="text-right">Gün</th><th className="text-left pl-3">Açıklama</th><th className="text-right">Durum</th></tr></thead>
                   <tbody className="divide-y">{card.leaves.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">İzin kaydı yok.</td></tr>}{card.leaves.map((l) => <tr key={l.id}><td className="py-1.5 font-semibold">{LEAVE[l.type] || l.type}</td><td>{l.start_date} → {l.end_date}</td><td className="text-right">{l.days}</td><td className="pl-3 text-slate-500">{l.reason}</td><td className="text-right"><Badge s={l.status} /></td></tr>)}</tbody></table></div>
             )}

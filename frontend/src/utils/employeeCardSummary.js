@@ -32,3 +32,20 @@ export function remainingTone(amount) {
   if (n > 0) return "emerald";
   return "slate";
 }
+
+export function parseAnnualLeaveDays(raw) {
+  if (raw === "" || raw == null) return null;
+  const n = Math.trunc(Number(String(raw).replace(",", ".")));
+  if (!Number.isFinite(n) || n < 0 || n > 365) return null;
+  return n;
+}
+
+export function annualLeaveDaysError(raw) {
+  if (raw === "" || raw == null) return "İzin gün sayısı gerekli.";
+  if (parseAnnualLeaveDays(raw) == null) return "İzin günü 0–365 arası olmalı.";
+  return null;
+}
+
+export function annualLeaveDaysPayload(days) {
+  return { annual_leave_days: days };
+}
