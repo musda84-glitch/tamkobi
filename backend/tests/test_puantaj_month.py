@@ -6,7 +6,7 @@ from attendance import (
     leave_covers_date,
     leave_year_balance,
 )
-from personnel_wage import calculated_day_wage
+from personnel_wage import calculated_day_wage, pending_yevmiye_adjustment, puantaj_day_wage_fields
 
 
 def test_leave_year_balance_with_carry():
@@ -73,3 +73,27 @@ def test_enrich_puantaj_day_wages_and_ot_pay():
     assert by["2026-09-03"]["overtime_pay"] == round(1 * info["holiday_rate"], 2)
     assert info["wage_total"] == 2000
     assert info["overtime_pay"] == round(200 + by["2026-09-03"]["overtime_pay"], 2)
+
+
+def test_enrich_puantaj_asks_wage_cut_for_late():
+    emp = {"pay_type": "monthly", "salary": 28080}
+    schedule = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4]}
+    records = [
+        {"_id": "att-late", "date": "2026-10-01", "status": "present", "hours": 8, "late_minutes": 10, "early_leave_minutes": 0},
+    ]
+    days = build_employee_month_days("2026-10", records, [], schedule)
+    enrich_puantaj_day_wages(days, records, emp, schedule)
+    by = {d["date"]: d for d in days}
+    row = by["2026-10-01"]
+    assert row["wage_ask"] is True
+    assert row["wage_full"] > row["wage_proposed"]
+    assert row["wage"] == row["wage_proposed"]
+    assert row["early_leave_minutes"] == 0
+    fields = puantaj_day_wage_fields(emp, records[0], schedule)
+    assert fields["wage_ask"] is True
+    pending = pending_yevmiye_adjustment(emp, records[0], schedule, now="2026-10-01T12:00:00")
+    assert pending["status"] == "pending"
+    assert pending["proposed_amount"] == row["wage_proposed"]
+    decided = {**records[0], "yevmiye_adjustment_request": {**pending, "status": "rejected"}}
+    assert puantaj_day_wage_fields(emp, decided, schedule)["wage_ask"] is False
+    assert pending_yevmiye_adjustment(emp, decided, schedule) is None

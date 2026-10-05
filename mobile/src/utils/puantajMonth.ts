@@ -54,6 +54,12 @@ export type PuantajDay = {
   hours?: number;
   overtime_hours?: number;
   late_minutes?: number;
+  early_leave_minutes?: number;
+  wage?: number | null;
+  wage_full?: number | null;
+  wage_proposed?: number | null;
+  wage_adjustment_status?: string | null;
+  wage_ask?: boolean;
   leave_type?: string | null;
   leave_label?: string | null;
   note?: string | null;
@@ -79,6 +85,52 @@ export function buildPuantajCalendarCells(days?: PuantajDay[] | null): Array<Pua
   const lead = list[0].weekday || 0;
   const cells: Array<PuantajDay | null> = Array.from({ length: lead }, () => null);
   return cells.concat(list);
+}
+
+export function puantajWageCanAsk(day?: PuantajDay | null): boolean {
+  if (!day || day.status !== "present") return false;
+  if (!day.attendance_id) return false;
+  const st = String(day.wage_adjustment_status || "").trim().toLowerCase();
+  if (st === "approved" || st === "rejected") return false;
+  if (day.wage_ask) return true;
+  if (st === "pending") return true;
+  const late = Number(day.late_minutes) || 0;
+  const early = Number(day.early_leave_minutes) || 0;
+  if (late > 0 || early > 0) return true;
+  const full = Number(day.wage_full);
+  const wage = Number(day.wage);
+  return Number.isFinite(full) && Number.isFinite(wage) && full > wage + 0.009;
+}
+
+export function puantajWageAskReason(day?: PuantajDay | null): string {
+  const bits: string[] = [];
+  const late = Number(day?.late_minutes) || 0;
+  const early = Number(day?.early_leave_minutes) || 0;
+  if (late > 0) bits.push(`${late} dk geç`);
+  if (early > 0) bits.push(`${early} dk erken`);
+  return bits.join(" · ");
+}
+
+export function puantajWageAskCopy(
+  day?: PuantajDay | null,
+  formatAmount: (n: unknown) => string = (n) => String(n ?? ""),
+): { title: string; body: string; kes: string; kesme: string } {
+  const reason = puantajWageAskReason(day);
+  const full = formatAmount(day?.wage_full ?? day?.wage);
+  const proposed = formatAmount(day?.wage_proposed ?? day?.wage);
+  return {
+    title: "Ücret kesintisi",
+    body: reason
+      ? `${reason}. Tam ${full} ₺ → kesilecek ${proposed} ₺.`
+      : `Tam ${full} ₺ → kesilecek ${proposed} ₺.`,
+    kes: "Ücret kes",
+    kesme: "Ücret kesme",
+  };
+}
+
+export function puantajWageDecisionPath(day?: PuantajDay | null): string {
+  const id = day?.attendance_id;
+  return id ? `/personnel/attendance/${id}/yevmiye-decision` : "";
 }
 
 export function leaveYearArchiveLine(row?: {

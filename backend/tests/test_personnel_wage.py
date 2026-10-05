@@ -10,6 +10,8 @@ from personnel_wage import (
     wage_line,
     yevmiye_adjusted_amount,
     yevmiye_adjustment_needed,
+    pending_yevmiye_adjustment,
+    puantaj_day_wage_fields,
 )
 
 
@@ -66,3 +68,17 @@ def test_payroll_skips_attendance_yevmiye_days():
     assert attendance_yevmiye_covered_days(bonuses) == 2
     assert payroll_days_minus_attendance_yevmiye(18, 2) == 16
     assert payroll_days_minus_attendance_yevmiye(1, 3) == 0
+
+
+def test_pending_yevmiye_adjustment_without_bonus():
+    emp = {"pay_type": "monthly", "salary": 26000}
+    rec = {"late_minutes": 48, "early_leave_minutes": 0}
+    schedule = {"start": "09:00", "end": "18:00", "break_minutes": 60}
+    req = pending_yevmiye_adjustment(emp, rec, schedule, now="t")
+    assert req["status"] == "pending"
+    assert req["full_amount"] == 1000
+    assert req["proposed_amount"] == 900
+    fields = puantaj_day_wage_fields(emp, rec, schedule)
+    assert fields["wage_ask"] is True
+    assert fields["wage"] == 900
+    assert pending_yevmiye_adjustment(emp, {"late_minutes": 0}, schedule) is None

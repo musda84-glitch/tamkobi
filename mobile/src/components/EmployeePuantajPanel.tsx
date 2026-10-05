@@ -6,12 +6,25 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
 import { attendanceCalendarMonth } from "../utils/attendanceSelf";
 import { fmtDmy } from "../utils/calendar";
+import { Ionicons } from "@expo/vector-icons";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { get, post } from "../api/client";
+import { apiErrorMessage, useAuth } from "../auth/AuthContext";
+import { colors } from "../theme";
+import { attendanceCalendarMonth } from "../utils/attendanceSelf";
+import { fmtDmy } from "../utils/calendar";
+import { formatTrAmount } from "../utils/money";
 import {
   buildPuantajCalendarCells,
   leaveYearArchiveLine,
   PUANTAJ_WEEKDAYS,
   puantajStatusTone,
   puantajToneColors,
+  puantajWageAskCopy,
+  puantajWageAskReason,
+  puantajWageCanAsk,
+  puantajWageDecisionPath,
   type PuantajDay,
   type PuantajPayload,
 } from "../utils/puantajMonth";
@@ -43,6 +56,8 @@ export function EmployeePuantajPanel({
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [wageAsk, setWageAsk] = useState<PuantajDay | null>(null);
+  const [wageBusy, setWageBusy] = useState(false);
 
   const load = useCallback(async (m = month) => {
     if (!employeeId) return;
@@ -85,6 +100,28 @@ export function EmployeePuantajPanel({
       setArchiveBusy(false);
     }
   };
+
+  const decideWageCut = async (day: PuantajDay, decision: "approve" | "reject") => {
+    const path = puantajWageDecisionPath(day);
+    if (!path) {
+      setError("Puantaj kaydı bulunamadı.");
+      return;
+    }
+    setWageBusy(true);
+    try {
+      const r = await post<{ message?: string }>(client, path, { decision });
+      setMessage(r?.message || (decision === "approve" ? "Ücret kesildi." : "Ücret kesilmedi."));
+      setError(null);
+      setWageAsk(null);
+      await load(month);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Karar kaydedilemedi."));
+    } finally {
+      setWageBusy(false);
+    }
+  };
+
+  const wageAskCopy = wageAsk ? puantajWageAskCopy(wageAsk, formatTrAmount) : null;
 
   return (
     <View testID="emp-puantaj-panel" style={{ gap: 10 }}>
@@ -199,8 +236,26 @@ export function EmployeePuantajPanel({
                     {d.overtime_hours ? ` · +${d.overtime_hours} sa` : ""}
                   </Text>
                 ) : (
-                  <Muted>{d.leave_label || d.note || (d.late_minutes ? `${d.late_minutes} dk geç` : "—")}</Muted>
+                  <Muted>{d.leave_label || d.note || puantajWageAskReason(d) || "—"}</Muted>
                 )}
+                {d.status === "present" && d.wage != null ? (
+                  puantajWageCanAsk(d) ? (
+                    <Pressable
+                      testID={`emp-puantaj-wage-open-${d.date}`}
+                      onPress={() => setWageAsk(d)}
+                      style={{ alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A" }}
+                    >
+                      <Text testID={`emp-puantaj-wage-${d.date}`} style={{ fontWeight: "800", fontSize: 12, color: "#92400E" }}>
+                        {formatTrAmount(d.wage)} ₺
+                      </Text>
+                    </Pressable>
+                  ) : (
+                    <Text testID={`emp-puantaj-wage-${d.date}`} style={{ fontWeight: "800", fontSize: 12, color: "#065F46" }}>
+                      {formatTrAmount(d.wage)} ₺
+                    </Text>
+                  )
+                ) : null}
+                {d.status === "present" && puantajWageAskReason(d) ? <Muted>{puantajWageAskReason(d)}</Muted> : null}
               </View>
             );
           })}
@@ -270,6 +325,35 @@ export function EmployeePuantajPanel({
           <Muted>Henüz arşivlenmiş yıllık dönem yok.</Muted>
         )}
       </View>
+
+      {wageAsk && wageAskCopy ? (
+        <View
+          testID={`emp-puantaj-wage-ask-${wageAsk.date}`}
+          style={{ padding: 12, borderRadius: 12, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A", gap: 8 }}
+        >
+          <Text style={{ fontWeight: "800", fontSize: 13, color: colors.text }}>{wageAskCopy.title}</Text>
+          <Muted>{wageAskCopy.body} Ücreti kessin mi?</Muted>
+          <Row style={{ gap: 6 }}>
+            <PrimaryButton
+              title={wageAskCopy.kesme}
+              color={colors.primary}
+              compact
+              disabled={wageBusy}
+              testID={`emp-puantaj-wage-kesme-${wageAsk.date}`}
+              onPress={() => { void decideWageCut(wageAsk, "reject"); }}
+            />
+            <PrimaryButton
+              title={wageAskCopy.kes}
+              color={colors.warning}
+              compact
+              disabled={wageBusy}
+              loading={wageBusy}
+              testID={`emp-puantaj-wage-kes-${wageAsk.date}`}
+              onPress={() => { void decideWageCut(wageAsk, "approve"); }}
+            />
+          </Row>
+        </View>
+      ) : null}
     </View>
   );
 }

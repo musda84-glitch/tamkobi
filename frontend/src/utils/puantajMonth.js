@@ -90,6 +90,7 @@ export function buildPuantajDayRows(month, records = [], leaves = [], opts = {})
       hours: Number(rec?.hours) || 0,
       overtime_hours: ot,
       late_minutes: Number(rec?.late_minutes) || 0,
+      early_leave_minutes: Number(rec?.early_leave_minutes) || 0,
       leave_type: lv?.type || (rec?.status === "leave" ? "leave" : null),
       leave_label: lv?.type_label || lv?.reason || null,
       note: rec?.note || lv?.reason || null,
@@ -129,6 +130,49 @@ export function leaveYearBalance({ annual = 14, used = 0, carry = 0 } = {}) {
     carry: c,
     remaining: Math.max(0, a + c - u),
   };
+}
+
+export function puantajWageCanAsk(day) {
+  if (!day || day.status !== "present") return false;
+  if (!day.attendance_id) return false;
+  const st = String(day.wage_adjustment_status || "").trim().toLowerCase();
+  if (st === "approved" || st === "rejected") return false;
+  if (day.wage_ask) return true;
+  if (st === "pending") return true;
+  const late = Number(day.late_minutes) || 0;
+  const early = Number(day.early_leave_minutes) || 0;
+  if (late > 0 || early > 0) return true;
+  const full = Number(day.wage_full);
+  const wage = Number(day.wage);
+  return Number.isFinite(full) && Number.isFinite(wage) && full > wage + 0.009;
+}
+
+export function puantajWageAskReason(day) {
+  const bits = [];
+  const late = Number(day?.late_minutes) || 0;
+  const early = Number(day?.early_leave_minutes) || 0;
+  if (late > 0) bits.push(`${late} dk geç`);
+  if (early > 0) bits.push(`${early} dk erken`);
+  return bits.join(" · ");
+}
+
+export function puantajWageAskCopy(day, formatAmount = (n) => String(n ?? "")) {
+  const reason = puantajWageAskReason(day);
+  const full = formatAmount(day?.wage_full ?? day?.wage);
+  const proposed = formatAmount(day?.wage_proposed ?? day?.wage);
+  return {
+    title: "Ücret kesintisi",
+    body: reason
+      ? `${reason}. Tam ${full} ₺ → kesilecek ${proposed} ₺.`
+      : `Tam ${full} ₺ → kesilecek ${proposed} ₺.`,
+    kes: "Ücret kes",
+    kesme: "Ücret kesme",
+  };
+}
+
+export function puantajWageDecisionPath(day) {
+  const id = day?.attendance_id;
+  return id ? `/personnel/attendance/${id}/yevmiye-decision` : "";
 }
 
 export function leaveYearArchiveLine(row) {
