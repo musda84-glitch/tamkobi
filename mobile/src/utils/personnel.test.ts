@@ -210,21 +210,24 @@ describe("employee draft", () => {
   it("labels requests and sums period bonuses", () => {
     expect(employeeStatusLabel("terminated")).toBe("İşten çıktı");
     expect(employeeStatusLabel("active")).toBe("Aktif");
-    expect(employeePresenceChip({ location_last_inside: true, workplace: { kind: "task" } })).toMatchObject({
-      label: "Dış Görev Yerinde", border: "#A5B4FC",
+    expect(employeePresenceChip({ location_last_inside: true, workplace: { kind: "task" }, now: new Date(2026, 9, 5, 10, 30) })).toMatchObject({
+      label: "Görev Yerinde", border: "#A5B4FC",
     });
-    expect(employeePresenceChip({ location_last_inside: true, workplace: { kind: "company" } })).toMatchObject({
-      label: "İş Yerinde Şuan", border: "#6EE7B7",
-    });
-    expect(employeePresenceChip({ location_last_inside: false })).toMatchObject({
-      label: "Şuan Dışarıda", border: "#FDBA74",
+    expect(employeePresenceChip({ location_last_inside: true, workplace: { kind: "company" }, now: new Date(2026, 9, 5, 10, 30) })).toMatchObject({
+      label: "İş Yerinde", border: "#6EE7B7",
     });
     expect(employeePresenceChip({
       location_last_inside: true,
       today: { check_in: "09:00", check_out: "17:45" },
-    })?.label).toBe("Şuan Dışarıda");
+      now: new Date(2026, 9, 5, 19, 15),
+    })?.label).toBe("Mesai Bitti");
+    expect(employeePresenceChip({
+      location_last_inside: true,
+      today: { check_in: "09:00", scheduled_end: "18:00" },
+      now: new Date(2026, 9, 5, 19, 15),
+    })?.label).toBe("Fazla Mesaide");
     expect(employeePresenceChip({ status: "terminated", location_last_inside: true })).toBeNull();
-    expect(employeePresenceChip({ today: { check_in: "08:30", location_inside_at: "2026-09-25T05:30:00Z" } })?.key).toBe("work");
+    expect(employeePresenceChip({ today: { check_in: "08:30", location_inside_at: "2026-09-25T05:30:00Z" }, now: new Date(2026, 9, 5, 10, 30) })?.key).toBe("work");
     expect(requestKindLabel("early_leave")).toBe("Erken çıkış");
     expect(requestKindLabel("geo_confirm")).toBe("Teyitli giriş");
     expect(pendingRequestDecision({ id: "g1", kind: "geo_confirm" }, true)).toEqual({

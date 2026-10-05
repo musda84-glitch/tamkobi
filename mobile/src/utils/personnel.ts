@@ -581,7 +581,7 @@ export function employeeStatusLabel(status?: string | null): string {
   return "Aktif";
 }
 
-export type EmployeePresenceKind = "duty" | "work" | "out";
+export type EmployeePresenceKind = "duty" | "work" | "done" | "overtime";
 
 export type EmployeePresenceChip = {
   key: EmployeePresenceKind;
@@ -598,17 +598,43 @@ type PresenceToday = {
   location_left_at?: string;
   location_exit_request?: { status?: string } | null;
   geo_check_in?: unknown;
+  scheduled_end?: string;
+  expected_end?: string;
+  assigned_overtime_hours?: number;
+  assigned_overtime_start?: string;
+  assigned_overtime_end?: string;
+  overtime_confirm_request?: { status?: string } | null;
 };
 
-function presenceInside(opts: {
+function hmMinutes(hm?: string | null): number | null {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(hm || "").trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+function clockMinutes(now: Date): number {
+  return now.getHours() * 60 + now.getMinutes();
+}
+
+function inHmWindow(startHm: string | undefined, endHm: string | undefined, now: Date): boolean {
+  const start = hmMinutes(startHm);
+  const end = hmMinutes(endHm);
+  if (start == null || end == null) return false;
+  const nowM = clockMinutes(now);
+  if (end > start) return nowM >= start && nowM < end;
+  return nowM >= start || nowM < end;
+}
+
+function presenceGpsInside(opts: {
   location_last_inside?: boolean | null;
   location_last_ok?: boolean | null;
   location_inside_at?: string | null;
   today?: PresenceToday | null;
 }): boolean | null {
   const today = opts.today;
-  // Resmi çıkış saati (yönetici düzeltmesi dahil) canlı konum bayrağından üstündür.
-  if (today?.check_out) return false;
   if (opts.location_last_inside === true) return true;
   if (opts.location_last_inside === false) return false;
   if (today?.location_exit_request?.status === "pending") return false;
@@ -618,7 +644,46 @@ function presenceInside(opts: {
   return null;
 }
 
-/** Aktif yanındaki anlık yer: dış görev / iş yeri / dışarı. */
+const PRESENCE_CHIP: Record<EmployeePresenceKind, EmployeePresenceChip> = {
+  work: { key: "work", label: "İş Yerinde", color: "#047857", bg: "#D1FAE5", border: "#6EE7B7" },
+  duty: { key: "duty", label: "Görev Yerinde", color: "#3730A3", bg: "#EEF2FF", border: "#A5B4FC" },
+  done: { key: "done", label: "Mesai Bitti", color: "#475569", bg: "#F1F5F9", border: "#CBD5E1" },
+  overtime: { key: "overtime", label: "Fazla Mesaide", color: "#6D28D9", bg: "#EDE9FE", border: "#C4B5FD" },
+};
+
+export function presenceTodayOf(summaryRow?: {
+  today?: PresenceToday | null;
+  schedule?: { start?: string; end?: string } | null;
+} | null): PresenceToday | null {
+  if (!summaryRow) return null;
+  const today = summaryRow.today && typeof summaryRow.today === "object" ? { ...summaryRow.today } : {};
+  if (!today.scheduled_end && summaryRow.schedule?.end) today.scheduled_end = summaryRow.schedule.end;
+  if (!Object.keys(today).length) return null;
+  return today;
+}
+
+function currentlyOnOvertime(opts: {
+  location_last_inside?: boolean | null;
+  location_last_ok?: boolean | null;
+  location_inside_at?: string | null;
+  today?: PresenceToday | null;
+}, now: Date): boolean {
+  const today = opts.today || {};
+  if (hmMinutes(today.check_in) == null) return false;
+  const gps = presenceGpsInside(opts);
+  const checkedOut = hmMinutes(today.check_out) != null;
+  const otWin = inHmWindow(today.assigned_overtime_start, today.assigned_overtime_end, now);
+  const hours = Number(today.assigned_overtime_hours) || 0;
+  const pending = today.overtime_confirm_request?.status === "pending";
+  const schedEnd = hmMinutes(today.scheduled_end || today.expected_end);
+  const pastEnd = schedEnd != null && clockMinutes(now) >= schedEnd;
+  const inOt = otWin || ((hours > 0 || pending) && pastEnd) || (gps === true && pastEnd && !checkedOut);
+  if (!inOt) return false;
+  if (checkedOut && gps !== true) return false;
+  return true;
+}
+
+/** Aktif yanındaki anlık yer: iş yeri / görev / mesai bitti / fazla mesai. */
 export function employeePresenceChip(opts?: {
   status?: string | null;
   workplace?: Workplace | null;
@@ -626,20 +691,21 @@ export function employeePresenceChip(opts?: {
   location_last_ok?: boolean | null;
   location_inside_at?: string | null;
   today?: PresenceToday | null;
+  now?: Date;
 } | null): EmployeePresenceChip | null {
   if (!opts) return null;
   const status = String(opts.status || "active");
   if (status === "terminated" || status === "passive" || status === "inactive") return null;
-  const inside = presenceInside(opts);
-  if (inside === true) {
-    if (opts.workplace?.kind === "task") {
-      return { key: "duty", label: "Dış Görev Yerinde", color: "#3730A3", bg: "#EEF2FF", border: "#A5B4FC" };
-    }
-    return { key: "work", label: "İş Yerinde Şuan", color: "#047857", bg: "#D1FAE5", border: "#6EE7B7" };
-  }
-  if (inside === false) {
-    return { key: "out", label: "Şuan Dışarıda", color: "#C2410C", bg: "#FFEDD5", border: "#FDBA74" };
-  }
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  const today = opts.today || {};
+  const duty = opts.workplace?.kind === "task";
+  const gps = presenceGpsInside(opts);
+  if (currentlyOnOvertime(opts, now)) return PRESENCE_CHIP.overtime;
+  if (hmMinutes(today.check_out) != null) return PRESENCE_CHIP.done;
+  if (gps === true) return duty ? PRESENCE_CHIP.duty : PRESENCE_CHIP.work;
+  if (duty && hmMinutes(today.check_in) != null) return PRESENCE_CHIP.duty;
+  const schedEnd = hmMinutes(today.scheduled_end || today.expected_end);
+  if (gps === false && schedEnd != null && clockMinutes(now) >= schedEnd) return PRESENCE_CHIP.done;
   return null;
 }
 
@@ -1190,6 +1256,8 @@ export type AttendanceToday = {
   assigned_overtime_start?: string;
   assigned_overtime_end?: string;
   expected_end?: string;
+  scheduled_end?: string;
+  scheduled_start?: string;
   location_inside_at?: string;
   location_left_at?: string;
   location_exit_request?: { status?: string } | null;
@@ -1217,6 +1285,7 @@ export type AttendanceSummary = {
   period_wage?: number;
   today?: AttendanceToday | null;
   workplace?: Workplace | null;
+  schedule?: { start?: string; end?: string } | null;
 };
 
 export type AttendanceRecord = {
