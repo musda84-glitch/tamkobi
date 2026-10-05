@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { Eye, Printer, X, Package } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { useEscape } from "../utils/useEscape";
@@ -7,7 +8,7 @@ import { statusTr } from "../utils/labels";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { pickLineNote } from "../utils/pickLineNote";
-import { printQtyTotalLabel } from "../utils/printFormLayout";
+import { b2bPreviewHidePrices, b2bPreviewLineMeta, b2bPreviewPrintLabel, printQtyTotalLabel } from "../utils/printFormLayout";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 
@@ -23,18 +24,30 @@ const lineImage = (it, products) => {
 
 export const B2BOrderPreview = ({ order, products, company, onClose }) => {
   useEscape(onClose);
+  const [hidePrices, setHidePrices] = useState(false);
+  useEffect(() => {
+    const reset = () => setHidePrices(false);
+    window.addEventListener("afterprint", reset);
+    return () => window.removeEventListener("afterprint", reset);
+  }, []);
+  const printPreview = (plain) => {
+    flushSync(() => setHidePrices(!!plain));
+    window.print();
+  };
   if (!order) return null;
   const items = order.items || [];
   const custNo = (order.customer_order_number || "").trim();
   const orderNote = String(order.notes || order.note || "").trim();
   const qtyTotalLabel = printQtyTotalLabel(items);
+  const plain = b2bPreviewHidePrices(hidePrices);
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/70 flex items-start justify-center p-4 overflow-y-auto print:p-0 print:bg-white print:static" {...backdropDismissProps(onClose)}>
-      <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none my-6" onClick={(e) => e.stopPropagation()} data-testid="b2b-order-preview">
+      <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl print:shadow-none print:rounded-none my-6" onClick={(e) => e.stopPropagation()} data-testid="b2b-order-preview" data-hide-prices={plain ? "1" : "0"}>
         <div className="flex items-center justify-between px-5 py-3 border-b no-print print:hidden">
           <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5"><Eye className="w-3.5 h-3.5" /> Sipariş önizleme</span>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => window.print()} className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold" data-testid="b2b-order-preview-print"><Printer className="w-3.5 h-3.5" /> Yazdır</button>
+            <button type="button" onClick={() => printPreview(true)} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 text-slate-800 rounded-lg text-xs font-semibold" data-testid="b2b-order-preview-print-plain"><Printer className="w-3.5 h-3.5" /> {b2bPreviewPrintLabel(true)}</button>
+            <button type="button" onClick={() => printPreview(false)} className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold" data-testid="b2b-order-preview-print"><Printer className="w-3.5 h-3.5" /> {b2bPreviewPrintLabel(false)}</button>
             <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="b2b-order-preview-close"><X className="w-5 h-5" /></button>
           </div>
         </div>
@@ -42,7 +55,7 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
           <div className="flex justify-between items-start gap-4">
             <div>
               {company?.name && <div className="text-sm font-black text-slate-900">{company.name}</div>}
-              <div className="text-[10px] uppercase font-bold text-slate-400 mt-2">Sipariş</div>
+              <div className="text-[10px] uppercase font-bold text-slate-400 mt-2">Sipariş{plain ? " · fiyatsız" : ""}</div>
               <div className="font-mono font-bold text-base text-slate-900" data-testid="b2b-preview-order-number">{order.order_number}</div>
               {custNo ? <div className="mt-1 text-slate-600">Sizin no: <b className="font-mono" data-testid="b2b-preview-customer-order-no">{custNo}</b></div> : null}
             </div>
@@ -64,7 +77,7 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-slate-900 leading-tight">{it.product_name}</div>
-                    <div className="text-slate-500 mt-0.5">{it.quantity} {it.unit || "Adet"}{it.unit_price != null ? ` · ${fmt(it.unit_price)} ₺` : ""}</div>
+                    <div className="text-slate-500 mt-0.5" data-testid={`b2b-preview-line-meta-${i}`}>{b2bPreviewLineMeta(it, plain)}</div>
                     {sku && sku !== code && <div className="text-[10px] text-slate-400 font-mono mt-0.5">SKU {sku}</div>}
                     {stockNote ? (
                       <div className="mt-1 px-2 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900 leading-snug whitespace-pre-wrap" data-testid={`b2b-preview-line-note-${i}`}>
@@ -72,7 +85,7 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
                         {stockNote}
                       </div>
                     ) : null}
-                    <div className="mt-1 font-semibold">{fmt(it.total)} ₺</div>
+                    {plain ? null : <div className="mt-1 font-semibold" data-testid={`b2b-preview-line-total-${i}`}>{fmt(it.total)} ₺</div>}
                   </div>
                   {code ? (
                     <div className="w-[150px] sm:w-[180px] shrink-0" data-testid={`b2b-preview-barcode-${i}`}>
@@ -91,7 +104,7 @@ export const B2BOrderPreview = ({ order, products, company, onClose }) => {
           <div className="flex justify-end">
             <div className="text-right space-y-0.5" data-testid="b2b-preview-totals">
               <div className="text-slate-600 font-semibold" data-testid="b2b-preview-qty-total">{qtyTotalLabel}</div>
-              <div className="font-black text-sm">Toplam {fmt(order.grand_total ?? order.total_amount)} ₺</div>
+              {plain ? null : <div className="font-black text-sm" data-testid="b2b-preview-grand-total">Toplam {fmt(order.grand_total ?? order.total_amount)} ₺</div>}
             </div>
           </div>
         </div>

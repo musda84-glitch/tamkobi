@@ -1,4 +1,4 @@
-import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotal, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "./printFormLayout";
+import { balanceSentence, b2bPreviewHidePrices, b2bPreviewLineMeta, b2bPreviewPrintLabel, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotal, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "./printFormLayout";
 
 test("order and quote use the compact print form", () => {
   expect(isOrderQuotePrint("order")).toBe(true);
@@ -50,4 +50,11 @@ test("balance sentence includes currency suffix", () => {
   expect(balanceSentence(1240)).toBe("Güncel bakiyeniz: 1.240,00 ₺");
   expect(balanceSentence(1240, "USD")).toBe("Güncel bakiyeniz: 1.240,00 USD");
   expect(balanceSentence(null)).toBe("");
+});
+
+test("b2b preview can print without prices", () => {
+  expect(b2bPreviewHidePrices("plain")).toBe(true);
+  expect(b2bPreviewHidePrices(false)).toBe(false);
+  expect(b2bPreviewLineMeta({ quantity: 2, unit: "Adet", unit_price: 10 }, true)).toBe("2 Adet");
+  expect(b2bPreviewPrintLabel(true)).toBe("Fiyatsız yazdır");
 });

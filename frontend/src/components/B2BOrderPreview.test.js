@@ -1,5 +1,5 @@
 import { pickLineNote } from "../utils/pickLineNote";
-import { printQtyTotalLabel } from "../utils/printFormLayout";
+import { b2bPreviewLineMeta, b2bPreviewPrintLabel, printQtyTotalLabel } from "../utils/printFormLayout";
 
 /** Mirrors B2BOrderPreview line note visibility for unit coverage without mounting React. */
 export function previewLineStockNote(it) {
@@ -18,5 +18,14 @@ describe("B2B order preview stock note", () => {
       { quantity: 10, unit: "Adet" },
       { quantity: 5, unit: "Adet" },
     ])).toBe("Toplam Miktar: 15 ad");
+  });
+
+  it("omits unit and line prices for fiyatsız print", () => {
+    const it = { quantity: 4, unit: "Adet", unit_price: 12.5, total: 50 };
+    expect(b2bPreviewLineMeta(it, false)).toContain("12,50");
+    expect(b2bPreviewLineMeta(it, true)).toBe("4 Adet");
+    expect(b2bPreviewLineMeta(it, true)).not.toMatch(/₺/);
+    expect(b2bPreviewPrintLabel(true)).toBe("Fiyatsız yazdır");
+    expect(b2bPreviewPrintLabel(false)).toBe("Yazdır");
   });
 });
