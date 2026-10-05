@@ -13,7 +13,7 @@ import { EmployeeYevmiyeModal } from "./EmployeeYevmiyeModal";
 import { EmployeeMovesModal } from "./EmployeeMovesModal";
 import { EmployeePuantajPanel } from "./EmployeePuantajPanel";
 import { empStatusLabel, formatTrDate, performanceTone, remainingTone } from "../utils/employeeCardSummary";
-import { employeePresenceChip } from "../utils/personnelCard";
+import { employeePresenceChip, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath } from "../utils/personnelCard";
 import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
 import { isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
@@ -198,6 +198,20 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
   }, [accountsProp, companyId]);
   const e = card?.employee || employee;
   const afterMoney = () => { reload(); onChanged?.(); };
+  const deletePayroll = async (p) => {
+    const row = { id: p.id || p._id, kind: "payroll", status: p.status };
+    const path = payMoveDeletePath(row);
+    if (!payMoveCanDelete(row) || !path) return;
+    const ask = payMoveDeleteConfirm(row);
+    if (!window.confirm(`${ask.title}\n${ask.message}`)) return;
+    try {
+      await axios.delete(`${API_URL}${path}`);
+      toast.success("Maaş kaydı silindi.");
+      afterMoney();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Silinemedi.");
+    }
+  };
   const confirmTerminate = async () => {
     if (!termOk) return;
     setBusyTerm(true);
@@ -443,7 +457,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
             {tab === "salary" && (
               <div className="space-y-5" data-testid="emp-pay-moves">
                 <table className="w-full" data-testid="emp-salary-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Dönem</th><th className="text-right">Brüt</th><th className="text-right">Net</th><th className="text-right">Prim</th><th className="text-right">Durum</th></tr></thead>
-                  <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id}><td className="py-1.5 font-semibold">{p.period}{isDailyWage(p) ? <div className="text-[10px] font-medium text-amber-700">{payrollWageLine(p)}</div> : null}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><Badge s={p.status} /></td></tr>)}</tbody></table>
+                  <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id} data-testid={`emp-salary-row-${p.id}`}><td className="py-1.5 font-semibold">{p.period}{isDailyWage(p) ? <div className="text-[10px] font-medium text-amber-700">{payrollWageLine(p)}</div> : null}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><div className="flex items-center justify-end gap-1.5"><Badge s={p.status} />{payMoveCanDelete({ id: p.id, kind: "payroll", status: p.status }) ? <button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-salary-del-${p.id}`} onClick={() => deletePayroll(p)}>sil</button> : null}</div></td></tr>)}</tbody></table>
                 <div>
                   <div className="text-[10px] uppercase font-semibold text-slate-400 mb-1">Avans / prim / masraf</div>
                   <table className="w-full" data-testid="emp-bonus-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Tür</th><th className="text-left">Dönem</th><th className="text-left">Hesap</th><th className="text-right">Tutar</th><th className="text-right">Durum</th></tr></thead>
