@@ -156,7 +156,7 @@ export const WorkScheduleSettings = ({ companyId, onSaved }) => {
 /* Personel: ücretler + kişiye özel mesai (Personel Kartı ve Puantaj'dan ortak kullanılır) */
 export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, onClose }) => {
   const ws = employee.work_schedule || {};
-  const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0, pay_start_date: employee.pay_start_date || "", pay_recurring: employee.pay_recurring !== false });
+  const [pay, setPay] = useState({ payroll_salary: employee.payroll_salary ?? "", salary: employee.salary ?? "", pay_type: isDailyWage(employee) ? "daily" : "monthly", daily_wage: employee.daily_wage ?? "", second_salary: employee.second_salary ?? 0, overtime_method: employee.overtime_method || "", overtime_hourly_rate: employee.overtime_hourly_rate ?? "", meal_allowance: employee.meal_allowance ?? 0, transport_allowance: employee.transport_allowance ?? 0, pay_start_date: employee.pay_start_date || "", pay_recurring: employee.pay_recurring !== false, skip_check_in: !!employee.skip_check_in });
   const [s, setS] = useState({
     start: ws.start || "",
     end: ws.end || "",
@@ -192,6 +192,7 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         transport_allowance: Number(pay.transport_allowance) || 0,
         pay_start_date: pay.pay_start_date || null,
         pay_recurring: pay.pay_recurring !== false,
+        skip_check_in: !!pay.skip_check_in,
         overtime_method: pay.overtime_method || null,
         overtime_hourly_rate: pay.overtime_hourly_rate === "" ? null : Number(pay.overtime_hourly_rate),
         work_schedule: mode === "clear" || !Object.keys(schedule).length ? null : schedule,
@@ -248,9 +249,24 @@ export const EmployeeCompensationForm = ({ employee, companySchedule, onSaved, o
         <ScheduleFields s={s} set={set} allowEmpty />
         <DaySchedule s={s} onChange={setS} fallback={companySchedule} />
       </div>
+      <div className="border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs" data-testid="emp-skip-checkin">
+        <label className="flex items-start gap-2 text-slate-800 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={!!pay.skip_check_in}
+            onChange={(e) => setPay({ ...pay, skip_check_in: e.target.checked })}
+            data-testid="emp-skip-checkin-input"
+          />
+          <span>
+            <span className="font-bold block">Giriş / çıkış sistemine dahil olmasın</span>
+            <span className="text-[10px] text-slate-500 font-normal">İşaretlenirse personel Mesaim giriş-çıkış yapmaz; puantajda normal mesai saatleri otomatik sayılır.</span>
+          </span>
+        </label>
+      </div>
       <div className="border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs text-slate-500" data-testid="emp-location-tracking">
         <div className="font-bold text-slate-800 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-400" /> Konum İzleme</div>
-        <p>Sürekli konum takibi kapalı. Giriş yalnızca iş yeri / görev yeri konumunda yapılır.</p>
+        <p>{pay.skip_check_in ? "Bu personel giriş/çıkış sistemine dahil değil; konumla mesai takibi uygulanmaz." : "Sürekli konum takibi kapalı. Giriş yalnızca iş yeri / görev yeri konumunda yapılır."}</p>
       </div>
       <div className="flex justify-between pt-1"><button type="button" onClick={() => save("clear")} disabled={busy} className="px-3 py-1.5 border rounded-lg text-slate-600" data-testid="emp-ws-clear">Firma saatlerine dön</button><button type="button" onClick={() => save("save")} disabled={busy} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="emp-ws-save">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Kaydet</button></div>
     </div>

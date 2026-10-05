@@ -674,6 +674,7 @@ class Employee(BaseDocument):
     pay_start_date: Optional[str] = None  # Hak ediş tarihi YYYY-MM-DD
     pay_day: int = 1
     pay_recurring: bool = True
+    skip_check_in: bool = False  # True: giriş/çıkış yok; planlanan mesai otomatik sayılır
     sgk_number: Optional[str] = None  # SGK sicil no — doluysa ana maaş yalnız bankadan
     iban: Optional[str] = None  # Personel banka IBAN
     birth_date: Optional[str] = None

@@ -1171,6 +1171,11 @@ def record_has_location_signal(rec: Optional[dict] = None) -> bool:
     )
 
 
+def employee_skips_check_in(employee: Optional[dict] = None) -> bool:
+    """Giriş/çıkış sistemine dahil değil — planlanan mesai saati otomatik sayılır."""
+    return bool(employee and employee.get("skip_check_in"))
+
+
 def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
     s = {**DEFAULT_SCHEDULE, **((company or {}).get("work_schedule") or {})}
     s["days"] = dict(s.get("days") or {})
@@ -1183,6 +1188,7 @@ def merge_schedule(company: dict, employee: Optional[dict] = None) -> dict:
         lt = normalize_location_tracking(employee.get("location_tracking"))
         s["location_tracking"] = lt
         # require_geo şirket / mesai ayarından gelir; konum takibi (sürekli ping) ayrı kapalıdır.
+        s["skip_check_in"] = employee_skips_check_in(employee)
     return s
 
 
@@ -1337,6 +1343,16 @@ def compute_day(rec: dict, schedule: dict, plan: Optional[dict] = None) -> dict:
     out["expected_end"] = expected_end_hm
     leave_m = approved_intraday_gap_minutes(rec)
     out["intraday_leave_minutes"] = leave_m
+    # Giriş/çıkış dışı personel: kayıt yoksa planlanan mesai penceresi sayılır.
+    if (
+        schedule.get("skip_check_in")
+        and not out["is_off_day"]
+        and rec.get("status") not in ("absent", "leave")
+        and not (ci and co)
+    ):
+        ci = ci or win["start"]
+        co = co or win["end"]
+        out["assumed_schedule"] = True
     if ci and not out["is_off_day"]:
         out["late_minutes"] = max(0, _hm(ci) - start_m - int(schedule.get("late_tolerance_minutes") or 0))
         out["early_arrival_minutes"] = max(0, start_m - _hm(ci))
@@ -2094,6 +2110,7 @@ def build_employee_month_days(
     schedule: Optional[dict] = None,
     hire_date=None,
     end_date=None,
+    as_of: Optional[str] = None,
 ) -> list:
     """Ayın her günü için giriş/çıkış/mesai/izin satırları (takvim + tablo)."""
     month = (month or "")[:7]
@@ -2105,6 +2122,8 @@ def build_employee_month_days(
     work_days = set(int(d) for d in ((schedule or {}).get("work_days") if schedule else None) or DEFAULT_SCHEDULE["work_days"])
     hire = _ymd(hire_date)
     term = _ymd(end_date)
+    today_s = _ymd(as_of) or _today(schedule)
+    skip_punch = bool((schedule or {}).get("skip_check_in"))
     out = []
     d = start
     while d <= last:
@@ -2118,6 +2137,14 @@ def build_employee_month_days(
         if term and date > term:
             is_off = True
         status = "empty"
+        check_in = (rec or {}).get("check_in")
+        check_out = (rec or {}).get("check_out")
+        hours = float((rec or {}).get("hours") or 0)
+        late_minutes = int((rec or {}).get("late_minutes") or 0)
+        early_leave_minutes = int((rec or {}).get("early_leave_minutes") or 0)
+        assigned = float((rec or {}).get("assigned_overtime_hours") or 0)
+        computed = float((rec or {}).get("overtime_hours") or 0)
+        note = (rec or {}).get("note") or (lv or {}).get("reason")
         if rec and rec.get("status") == "present":
             status = "present"
         elif rec and rec.get("status") == "absent":
@@ -2126,25 +2153,35 @@ def build_employee_month_days(
             status = "leave"
         elif is_off:
             status = "off"
-        assigned = float((rec or {}).get("assigned_overtime_hours") or 0)
-        computed = float((rec or {}).get("overtime_hours") or 0)
+        elif skip_punch and date <= today_s:
+            # Giriş/çıkış dışı: kayıt yoksa planlanan mesaiyi say
+            assumed = compute_day({"date": date, "status": "present"}, schedule or {})
+            status = "present"
+            check_in = assumed.get("scheduled_start")
+            check_out = assumed.get("scheduled_end")
+            hours = float(assumed.get("hours") or 0)
+            late_minutes = 0
+            early_leave_minutes = 0
+            computed = float(assumed.get("overtime_hours") or 0)
+            note = note or "Planlanan mesai (giriş/çıkış dışı)"
         out.append({
             "date": date,
             "weekday": weekday,
             "weekday_label": DAY_LABELS[weekday],
             "status": status,
             "status_label": STATUS_LABELS.get(status, status),
-            "check_in": (rec or {}).get("check_in"),
-            "check_out": (rec or {}).get("check_out"),
-            "hours": float((rec or {}).get("hours") or 0),
+            "check_in": check_in,
+            "check_out": check_out,
+            "hours": hours,
             "overtime_hours": round(assigned if assigned > 0 else computed, 2),
-            "late_minutes": int((rec or {}).get("late_minutes") or 0),
-            "early_leave_minutes": int((rec or {}).get("early_leave_minutes") or 0),
+            "late_minutes": late_minutes,
+            "early_leave_minutes": early_leave_minutes,
             "leave_type": (lv or {}).get("type") if lv else (rec or {}).get("status") if (rec or {}).get("status") == "leave" else None,
             "leave_label": LEAVE_TYPES.get((lv or {}).get("type"), (lv or {}).get("type")) if lv else None,
-            "note": (rec or {}).get("note") or (lv or {}).get("reason"),
+            "note": note,
             "attendance_id": (rec or {}).get("_id") or (rec or {}).get("id"),
             "is_off_day": is_off,
+            "assumed_schedule": bool(skip_punch and status == "present" and not rec),
         })
         d += timedelta(days=1)
     return out
@@ -4360,6 +4397,8 @@ async def run_missing_checkin_check(company_id: Optional[str] = None, force: boo
         emps = await _db.employees.find({"company_id": company["_id"], "status": "active"}).to_list(300)
         missing = []
         for emp in emps:
+            if employee_skips_check_in(emp):
+                continue
             sch = merge_schedule(company, emp)
             wd = now.weekday()
             plan = await _db.shift_plans.find_one({"employee_id": emp["_id"], "date": today})
@@ -4609,18 +4648,27 @@ async def employee_puantaj(emp_id: str, month: Optional[str] = None):
     wage_info = enrich_puantaj_day_wages(days, rows, emp, schedule)
     bal = leave_year_balance(emp)
     archives = await _db.leave_year_archives.find({"employee_id": emp_id}).sort("year", -1).to_list(20)
+    # Giriş/çıkış dışı personelde özet, sanal planlanan günlerden hesaplanır.
+    summary_rows = rows
+    if employee_skips_check_in(emp):
+        summary_rows = [{
+            "status": d["status"], "hours": d.get("hours") or 0, "normal_hours": d.get("hours") or 0,
+            "overtime_hours": d.get("overtime_hours") or 0, "late_minutes": d.get("late_minutes") or 0,
+            "is_off_day": d.get("is_off_day"), "employee_confirmed": True,
+        } for d in days if d.get("status") in ("present", "absent", "leave")]
     return {
         "employee_id": emp_id,
         "employee_name": emp.get("full_name"),
         "month": month,
         "summary": {
-            **summarize(rows),
+            **summarize(summary_rows),
             "wage_total": wage_info["wage_total"],
             "overtime_pay": wage_info["overtime_pay"],
         },
         "days": days,
         "day_labels": DAY_LABELS,
         "schedule": {"start": schedule.get("start"), "end": schedule.get("end"), "work_days": schedule.get("work_days")},
+        "skip_check_in": employee_skips_check_in(emp),
         "overtime_rates": {
             "weekday_rate": wage_info["weekday_rate"],
             "holiday_rate": wage_info["holiday_rate"],

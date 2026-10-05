@@ -107,6 +107,7 @@ export function hasOpenMesaimSession(today) {
  */
 export function mesaimExclusiveUntilCheckIn(user, today) {
   if (!user?.employee_id) return false;
+  if (user.skip_check_in) return false;
   const role = String(user.role || "");
   if (role === "admin" || role === "manager") return false;
   return !hasOpenMesaimSession(today);
