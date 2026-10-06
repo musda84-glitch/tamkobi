@@ -38,7 +38,7 @@ PROVIDERS = {
         "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
-        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions, POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. Token: resmi SDK POST idprep|id /api/connect/token (client_credentials scope=public, body; Basic yok); Gravitee Identity yedek. RSA: travist/jsencrypt 2048-bit Private Key; Public Key’i portal uygulamaya yükleyin. İmza: JSEncrypt.signSha256(token+?query|json). Bağlantı testi fx/rates; hareket v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
+        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions (Hesap Hareketleriniz V3: beginDate, endDate, itemCount; yanıt accountActivities), POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. Token: resmi SDK POST idprep|id /api/connect/token (client_credentials scope=public, body; Basic yok); Gravitee Identity yedek. RSA: travist/jsencrypt 2048-bit Private Key; Public Key’i portal uygulamaya yükleyin. İmza: JSEncrypt.signSha256(token+?query|json). Bağlantı testi fx/rates; hareket v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -646,6 +646,8 @@ def normalize_kuveyt_connection_secrets(conn: dict) -> dict:
 
 # Postman "1. Account Transaction v3" token body scope
 _KUVEYT_POSTMAN_TX_SCOPE = "public loans accounts transfers cards digital_payments"
+# Resmi V3 query itemCount (Postman örneği 2 — senkron için üst sınır)
+_KUVEYT_TX_ITEM_COUNT = "200"
 
 
 def _kuveyt_scope_candidates(conn: dict) -> List[str]:
@@ -1103,6 +1105,21 @@ def _kuveyt_tx_paths(conn: dict) -> List[str]:
         if p not in paths:
             paths.append(p)
     return paths
+
+
+def _kuveyt_tx_query_variants(since: datetime, end: Optional[datetime] = None) -> List[Dict[str, str]]:
+    """Hesap Hareketleriniz V3 query (hepsi opsiyonel).
+
+    https://developer.kuveytturk.com.tr/documentation/hesap-yonetimi-hesaplarnz/hesap-hareketleriniz-v3
+    Postman: beginDate=yyyy-MM-dd, endDate, itemCount.
+    """
+    end = end or datetime.now(timezone.utc)
+    start_d, end_d = since.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+    return [
+        {},
+        {"beginDate": start_d, "endDate": end_d, "itemCount": _KUVEYT_TX_ITEM_COUNT},
+        {"beginDate": start_d, "endDate": end_d},
+    ]
 
 
 _KUVEYT_FX_CODES = ("USD", "EUR", "GBP", "CHF", "JPY")
@@ -1643,14 +1660,15 @@ def _normalize_date(val: Any) -> str:
 _TX_HINT_KEYS = {
     "amount", "tutar", "transactionamount", "creditamount", "debitamount",
     "alacak", "borc", "borç", "islemtutari", "islemtutar",
-    "transactiondate", "islemtarihi", "bookingdate", "valuedate", "tarih",
+    "transactiondate", "islemtarihi", "bookingdate", "valuedate", "tarih", "date",
     "accountingdate", "dekonttarihi",
     "aciklama", "description", "explanation", "accounttransactionexplanation",
-    "fisno", "referansno", "referencenumber",
+    "fisno", "referansno", "referencenumber", "transactionreference", "businesskey",
 }
 
 _TX_LIST_KEYS = (
-    "transactions", "items", "accountTransactions", "statementLines", "lines",
+    "transactions", "items", "accountTransactions", "accountActivities",
+    "statementLines", "lines",
     "hareketler", "accountStatement", "statement", "results", "content",
     "transactionList", "transactionTable", "accountStatementList",
     "hesapHareketleri", "ekstre", "ekstreHareketleri", "value", "data", "list",
@@ -1780,8 +1798,10 @@ def _normalize_tx_rows(raw: Any) -> List[Dict[str, Any]]:
         txs.append({
             "external_id": str(
                 _ci_get(
-                    r, "transactionId", "id", "referenceNo", "bookingId",
+                    r, "transactionId", "id", "transactionReference", "businessKey",
+                    "referenceNo", "bookingId",
                     "fisNo", "dekontNo", "referansNo", "refNo", "referenceNumber",
+                    "seqNum",
                 )
                 or hashlib.sha256(str(r).encode()).hexdigest()[:16]
             ),
@@ -1800,7 +1820,7 @@ def _normalize_tx_rows(raw: Any) -> List[Dict[str, Any]]:
                     "karsiHesapAdi", "gonderenAdi", "aliciAdi",
                 ) or ""
             ),
-            "currency": _ci_get(r, "currency", "currencyCode", "paraBirimi") or "TRY",
+            "currency": _ci_get(r, "currency", "currencyCode", "fxCode", "paraBirimi") or "TRY",
             "is_simulated": False,
         })
     return txs
@@ -2657,11 +2677,12 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
 async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
     """GET /v3/accounts/{ekNo}/transactions + RSA Signature (abonelikteki tek hareket ucu).
 
-    Portal/Postman + resmi SDK:
+    Portal/Postman + resmi Hesap Hareketleriniz V3:
       POST idprep|id /api/connect/token (client_credentials, scope=public)
       GET  gateway|/prep /v3/accounts/{suffix}/transactions
            Authorization: Bearer …  Signature: RSA-SHA256(token[+?query])
-           Opsiyonel query: beginDate, endDate
+           Opsiyonel query: beginDate, endDate, itemCount
+           Yanıt: value.accountActivities (date, amount, description, transactionReference, fxCode, balance)
     v4/v1 ve hesap listesi bu uygulamada abone değildir.
     """
     pem = _kuveyt_private_key_pem(conn)
@@ -2684,7 +2705,6 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     bases = _kuveyt_gateway_urls(conn)
     account = (conn.get("bank_account_number") or "").strip().replace(" ", "")
     end = datetime.now(timezone.utc)
-    start_d, end_d = since.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
     balance: Optional[float] = None
     best_err = ""
     saw_auth = False
@@ -2692,10 +2712,7 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     saw_ok_empty = False
     detail = ""
 
-    ranges = [
-        {},
-        {"beginDate": start_d, "endDate": end_d},
-    ]
+    ranges = _kuveyt_tx_query_variants(since, end)
 
     async with httpx.AsyncClient(timeout=45) as client:
         client.cookies.clear()
