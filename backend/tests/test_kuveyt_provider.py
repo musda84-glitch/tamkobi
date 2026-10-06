@@ -45,11 +45,11 @@ def test_kuveyt_provider_identity_and_api_hosts():
 
 def test_kuveyt_token_urls_sandbox_and_live():
     sand = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "sandbox"})
-    assert sand[0] == "https://prep-identity.kuveytturk.com.tr/connect/token"
-    assert sand[1] == "https://idprep.kuveytturk.com.tr/api/connect/token"
+    assert sand[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
+    assert sand[1] == "https://prep-identity.kuveytturk.com.tr/connect/token"
     live = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "live"})
-    assert live[0] == "https://identity.kuveytturk.com.tr/connect/token"
-    assert live[1] == "https://id.kuveytturk.com.tr/api/connect/token"
+    assert live[0] == "https://id.kuveytturk.com.tr/api/connect/token"
+    assert live[1] == "https://identity.kuveytturk.com.tr/connect/token"
     custom = bp._kuveyt_token_urls({
         "provider": "kuveytturk", "mode": "live",
         "token_url": "https://identity.kuveytturk.com.tr/connect/token",
@@ -133,8 +133,10 @@ def test_frontend_wires_travist_jsencrypt():
     util = (root / "frontend/src/utils/jsencryptKuveyt.js").read_text(encoding="utf-8")
     pkg = (root / "frontend/package.json").read_text(encoding="utf-8")
     assert "github.com/travist/jsencrypt" in panel
-    assert "generateJsencryptPrivateKeyPem" in panel
+    assert "generateJsencryptKeyPair" in panel
     assert "conn-jsencrypt-generate-btn" in panel
+    assert "API Market" in panel
+    assert "getPublicKey" in util
     assert "default_key_size: 2048" in util
     assert "getPrivateKey" in util
     assert "github:travist/jsencrypt" in pkg
@@ -390,9 +392,9 @@ def test_kuveyt_scope_candidates_prefer_public():
     assert "payments cards" in bp._kuveyt_scope_candidates({"scope": "payments cards"})
 
 
-def test_kuveyt_tx_scope_candidates_prefer_postman_v3():
-    assert bp._kuveyt_tx_scope_candidates({})[0] == bp._KUVEYT_POSTMAN_TX_SCOPE
-    assert "public" in bp._kuveyt_tx_scope_candidates({})
+def test_kuveyt_tx_scope_candidates_prefer_public():
+    assert bp._kuveyt_tx_scope_candidates({})[0] == "public"
+    assert bp._KUVEYT_POSTMAN_TX_SCOPE in bp._kuveyt_tx_scope_candidates({})
     assert bp._KUVEYT_POSTMAN_TX_SCOPE == "public loans accounts transfers cards digital_payments"
 
 
@@ -414,8 +416,8 @@ def test_kuveyt_token_auth_attempts_body_then_basic():
 def test_kuveyt_token_urls_oidc_connect_token():
     live = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "live"})
     assert live == [
-        "https://identity.kuveytturk.com.tr/connect/token",
         "https://id.kuveytturk.com.tr/api/connect/token",
+        "https://identity.kuveytturk.com.tr/connect/token",
     ]
     fixed = bp._kuveyt_token_urls({
         "provider": "kuveytturk", "mode": "live",
@@ -434,8 +436,36 @@ def test_kuveyt_gateway_urls_include_iuysal_prep_host():
     assert live[1] == "https://api.kuveytturk.com.tr"
 
 
-def test_kuveyt_token_falls_back_to_sdk_identity():
-    """Gravitee invalid_client → iuysal idprep /api/connect/token."""
+def test_kuveyt_token_uses_official_sdk_identity_first():
+    """iuysal / Android SDK: idprep /api/connect/token önce."""
+    conn = {"provider": "kuveytturk", "mode": "sandbox", "client_id": "cid", "client_secret": "sec"}
+    good = MagicMock()
+    good.status_code = 200
+    good.content = b'{"access_token":"sdk-tok"}'
+    good.json.return_value = {"access_token": "sdk-tok"}
+    good.headers = {"content-type": "application/json"}
+    good.text = ""
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=good)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._kuveyt_access_token(conn)
+
+    token = asyncio.run(_run())
+    assert token == "sdk-tok"
+    urls = [c.args[0] for c in mock_client.post.await_args_list]
+    assert urls[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
+    assert mock_client.post.call_count == 1
+    assert "Authorization" not in mock_client.post.await_args.kwargs["headers"]
+    assert conn["_kuveyt_token_url"] == urls[0]
+
+
+def test_kuveyt_token_falls_back_to_gravitee_identity():
+    """SDK invalid_client → Gravitee prep-identity /connect/token."""
     conn = {"provider": "kuveytturk", "mode": "sandbox", "client_id": "cid", "client_secret": "sec"}
     bad = MagicMock()
     bad.status_code = 401
@@ -445,8 +475,8 @@ def test_kuveyt_token_falls_back_to_sdk_identity():
     bad.json.return_value = {"error": "invalid_client"}
     good = MagicMock()
     good.status_code = 200
-    good.content = b'{"access_token":"sdk-tok"}'
-    good.json.return_value = {"access_token": "sdk-tok"}
+    good.content = b'{"access_token":"grav-tok"}'
+    good.json.return_value = {"access_token": "grav-tok"}
     good.headers = {"content-type": "application/json"}
     good.text = ""
 
@@ -460,11 +490,10 @@ def test_kuveyt_token_falls_back_to_sdk_identity():
             return await bp._kuveyt_access_token(conn)
 
     token = asyncio.run(_run())
-    assert token == "sdk-tok"
+    assert token == "grav-tok"
     urls = [c.args[0] for c in mock_client.post.await_args_list]
-    assert urls[0] == "https://prep-identity.kuveytturk.com.tr/connect/token"
-    assert urls[1] == "https://idprep.kuveytturk.com.tr/api/connect/token"
-    assert "Authorization" not in mock_client.post.await_args_list[1].kwargs["headers"]
+    assert urls[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
+    assert urls[1] == "https://prep-identity.kuveytturk.com.tr/connect/token"
 
 
 def test_kuveyt_token_posts_client_credentials_to_identity():
@@ -486,7 +515,7 @@ def test_kuveyt_token_posts_client_credentials_to_identity():
     token = asyncio.run(_run())
     assert token == "kt-token"
     args, kwargs = mock_client.post.await_args
-    assert args[0] == "https://prep-identity.kuveytturk.com.tr/connect/token"
+    assert args[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
     assert kwargs["data"]["grant_type"] == "client_credentials"
     assert kwargs["data"]["client_id"] == "cid"
     assert kwargs["data"]["client_secret"] == "sec"
@@ -512,7 +541,6 @@ def test_kuveyt_token_detects_live_sandbox_mismatch():
     good.text = ""
 
     mock_client = AsyncMock()
-    # 1) live Gravitee body fails  2) live SDK body fails  3) sandbox Gravitee succeeds (teşhis)
     mock_client.post = AsyncMock(side_effect=[bad, bad, good])
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -531,8 +559,8 @@ def test_kuveyt_token_detects_live_sandbox_mismatch():
         assert "Sandbox" in msg or "prep-identity" in msg or "idprep" in msg
         assert "Mod=live" in msg
         urls = [c.args[0] for c in mock_client.post.await_args_list]
-        assert urls[0] == "https://identity.kuveytturk.com.tr/connect/token"
-        assert "https://id.kuveytturk.com.tr/api/connect/token" in urls
+        assert urls[0] == "https://id.kuveytturk.com.tr/api/connect/token"
+        assert "https://identity.kuveytturk.com.tr/connect/token" in urls
         assert any("prep-identity" in u or "idprep" in u for u in urls)
         assert all("Authorization" not in c.kwargs["headers"] for c in mock_client.post.await_args_list)
 
@@ -627,7 +655,7 @@ def test_kuveyt_token_invalid_client_message_hints_api_key():
         msg = str(e)
         assert "invalid_client" in msg
         assert "Api Anahtarı" in msg or "Client Secret" in msg
-        assert "identity.kuveytturk.com.tr" in msg
+        assert "id.kuveytturk.com.tr" in msg or "identity.kuveytturk.com.tr" in msg
         assert "/connect/token" in msg
 
 
@@ -661,6 +689,7 @@ def test_kuveyt_probe_signs_fx_rates_get():
     assert out["ok"] is True
     assert out["simulated"] is False
     assert "client_credentials" in out["message"]
+    assert "idprep.kuveytturk.com.tr" in (out.get("identity_host") or out["message"])
     get_args, get_kwargs = mock_client.get.await_args
     assert get_args[0] == "https://prep-gateway.kuveytturk.com.tr/v1/fx/rates"
     assert get_kwargs["headers"]["Authorization"] == "Bearer tokAAA"
@@ -724,9 +753,9 @@ def test_fetch_kuveyt_signed_transactions():
     assert out["transactions"][0]["external_id"] == "KT1"
     assert out["transactions"][0]["amount"] == 150.25
     assert out["balance"] == 8800.5
-    # Token: Postman v3 scope önce
+    # Token: resmi SDK CC scope=public önce
     post_kwargs = mock_client.post.await_args.kwargs
-    assert post_kwargs["data"].get("scope") == bp._KUVEYT_POSTMAN_TX_SCOPE
+    assert post_kwargs["data"].get("scope") == "public"
     get_calls = mock_client.get.await_args_list
     tx_url = get_calls[0].args[0]
     assert tx_url == "https://gateway.kuveytturk.com.tr/v3/accounts/6/transactions"
@@ -758,7 +787,7 @@ def test_fetch_kuveyt_accepts_empty_200_transactions():
     mock_client = AsyncMock()
     mock_client.cookies = MagicMock()
     mock_client.post = AsyncMock(return_value=token_resp)
-    mock_client.get = AsyncMock(side_effect=[empty_tx])
+    mock_client.get = AsyncMock(return_value=empty_tx)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -924,3 +953,94 @@ def test_fetch_kuveyt_requires_suffix_path():
             assert False, "expected RuntimeError"
         except RuntimeError as e:
             assert "ek no" in str(e).lower() or "/v3/accounts" in str(e)
+
+
+def test_kuveyt_probe_success_false_is_not_ok():
+    pem = _rsa_pem()
+    conn = {
+        "provider": "kuveytturk", "mode": "sandbox",
+        "client_id": "cid", "client_secret": "sec", "private_key": pem,
+    }
+    token_resp = MagicMock()
+    token_resp.status_code = 200
+    token_resp.content = b'{"access_token":"tok"}'
+    token_resp.json.return_value = {"access_token": "tok"}
+    fx_resp = MagicMock()
+    fx_resp.status_code = 200
+    fx_resp.text = '{"success":false,"message":"product not subscribed"}'
+    fx_resp.json.return_value = {"success": False, "message": "product not subscribed"}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=token_resp)
+    mock_client.get = AsyncMock(return_value=fx_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.test_connection(conn)
+
+    out = asyncio.run(_run())
+    assert out["ok"] is False
+    assert "product not subscribed" in out["message"]
+
+
+def test_fetch_kuveyt_dated_query_after_empty_no_query():
+    """Resmi SDK: no-query boşsa beginDate/endDate dener."""
+    pem = _rsa_pem()
+    conn = {
+        "provider": "kuveytturk", "mode": "live",
+        "client_id": "cid", "client_secret": "sec", "private_key": pem,
+        "bank_account_number": "6",
+    }
+    token_resp = MagicMock()
+    token_resp.status_code = 200
+    token_resp.content = b'{"access_token":"tok"}'
+    token_resp.json.return_value = {"access_token": "tok"}
+    empty = MagicMock()
+    empty.status_code = 200
+    empty.text = '{"transactions":[]}'
+    empty.json.return_value = {"transactions": []}
+    filled = MagicMock()
+    filled.status_code = 200
+    filled.text = '{"transactions":[{"transactionId":"D1","amount":9,"direction":"credit","description":"Gelen","transactionDate":"2026-09-10"}]}'
+    filled.json.return_value = {
+        "transactions": [
+            {"transactionId": "D1", "amount": 9, "direction": "credit",
+             "description": "Gelen", "transactionDate": "2026-09-10"},
+        ],
+    }
+
+    mock_client = AsyncMock()
+    mock_client.cookies = MagicMock()
+    mock_client.post = AsyncMock(return_value=token_resp)
+    mock_client.get = AsyncMock(side_effect=[empty, filled])
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._fetch_kuveyt_transactions(conn, datetime(2026, 9, 1, tzinfo=timezone.utc))
+
+    out = asyncio.run(_run())
+    assert out["transactions"][0]["external_id"] == "D1"
+    urls = [c.args[0] for c in mock_client.get.await_args_list]
+    assert "beginDate=" not in urls[0]
+    assert "beginDate=" in urls[1]
+
+
+def test_apply_linked_account_number_kuveyt_uses_ek_no():
+    acc = {"iban": "TR330006200000000000000006", "account_number": "9698082300006"}
+    out = bp.apply_linked_account_number({"provider": "kuveytturk"}, acc)
+    assert out["bank_account_number"]
+    keep = bp.apply_linked_account_number(
+        {"provider": "kuveytturk", "bank_account_number": "6"},
+        acc,
+    )
+    assert keep["bank_account_number"] == "6"
+    dash = bp.apply_linked_account_number(
+        {"provider": "kuveytturk", "bank_account_number": "-"},
+        {"account_number": "2"},
+    )
+    assert dash["bank_account_number"] == "2"
+
