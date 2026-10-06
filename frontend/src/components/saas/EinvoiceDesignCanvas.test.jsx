@@ -50,6 +50,7 @@ test("renders preview blocks and can hide then restore from palette", async () =
   expect(host.querySelector('[data-testid="einvoice-design-block-order_no"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-supplier"]')?.textContent).toContain("Örnek Yazılım A.Ş.");
   expect(host.querySelector('[data-testid="einvoice-design-block-header"]')?.textContent).not.toContain("Örnek Yazılım A.Ş.");
+  expect(host.querySelector('[data-testid="einvoice-design-palette-header-supplier_name"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-logo"]')?.textContent).toContain("Logo");
   expect(host.querySelector('[data-testid="einvoice-design-logo-size-72"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-customer"]')?.textContent).toContain("Alıcı Ticaret Ltd. Şti.");
@@ -283,4 +284,21 @@ test("logo size buttons update preview height", async () => {
   });
   expect(last.logoSize).toBe(120);
   expect(host.querySelector('[data-testid="einvoice-design-logo"] img')?.style.height).toBe("120px");
+});
+
+test("header can show supplier name under the logo", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-header-value-supplier_name"]')).toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-header-supplier_name"]').click();
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-header-value-supplier_name"]')?.textContent).toBe("Örnek Yazılım A.Ş.");
+  expect(host.querySelector('[data-testid="einvoice-design-block-header"]')?.textContent).toContain("Örnek Yazılım A.Ş.");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-header-supplier_address"]').click();
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-header-value-supplier_address"]')?.textContent).toContain("Kadıköy");
 });

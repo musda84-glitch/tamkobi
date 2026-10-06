@@ -7,6 +7,7 @@ import {
   FONT_OPTIONS,
   LINE_COL_LABELS,
   META_FIELD_LABELS,
+  HEADER_FIELD_LABELS,
   metaGridColsClass,
   GIB_SEAL_JPEG_DATA_URL,
   SAMPLE_INVOICE,
@@ -20,9 +21,11 @@ import {
   TOTAL_ROW_SAMPLE_KEY,
   hiddenLineCols,
   hiddenMetaFields,
+  hiddenHeaderFields,
   hiddenTotalRows,
   isLineCol,
   isMetaField,
+  isHeaderField,
   isTotalRow,
   moveBlock,
   moveVisible,
@@ -32,6 +35,7 @@ import {
   setBlockSpan,
   visibleLineCols,
   visibleMetaFields,
+  visibleHeaderFields,
   visibleTotalRows,
 } from "../../utils/einvoiceDesignLayout";
 import { inputCls } from "./saasUi";
@@ -112,11 +116,18 @@ const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDro
   />
 );
 
-const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, onQrSize, onLogoSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
+const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
   const title = layout.kind === "e_archive" ? "e-Arşiv Fatura" : "e-Fatura";
   if (id === "header") {
     const logoSize = Number(layout.logoSize) || 72;
+    const headerFields = visibleHeaderFields(layout);
+    const headerValue = (fid) => {
+      if (fid === "supplier_name") return s.supplier.name;
+      if (fid === "supplier_address") return s.supplier.address;
+      if (fid === "supplier_vkn") return `VKN/TCKN: ${s.supplier.vkn}`;
+      return "";
+    };
     return (
       <div className="pb-2 space-y-1.5" data-testid="einvoice-design-logo" style={{ borderBottom: `3px solid ${layout.accent}` }}>
         {layout.logo ? (
@@ -124,6 +135,16 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, onQ
         ) : (
           <div className="text-[10px] text-slate-400 border border-dashed rounded-md px-2 py-3 inline-block">Logo</div>
         )}
+        {headerFields.map((f) => (
+          <div
+            key={f.id}
+            className={f.id === "supplier_name" ? "text-base font-bold leading-tight" : "text-[10px] leading-snug"}
+            style={f.id === "supplier_name" ? { color: layout.primary } : { color: layout.text }}
+            data-testid={`einvoice-design-header-value-${f.id}`}
+          >
+            {headerValue(f.id)}
+          </div>
+        ))}
         <div className="flex items-center flex-wrap gap-1" data-testid="einvoice-design-logo-sizes">
           <span className="text-[9px] font-bold text-slate-500">Boyut</span>
           {LOGO_SIZE_OPTIONS.map((opt) => (
@@ -139,6 +160,19 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, onQ
             </button>
           ))}
         </div>
+        <FieldChipsBar
+          vis={headerFields}
+          hid={hiddenHeaderFields(layout)}
+          labels={HEADER_FIELD_LABELS}
+          testPrefix="header"
+          list={layout.headerFields}
+          onPatch={onPatchHeader}
+          drag={drag}
+          onDragStart={onDragStart}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          onDragEnd={onDragEnd}
+        />
       </div>
     );
   }
@@ -328,6 +362,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
   const hidden = L.blocks.filter((b) => b.hidden);
   const hiddenCols = hiddenLineCols(L);
   const hiddenMeta = hiddenMetaFields(L);
+  const hiddenHeader = hiddenHeaderFields(L);
   const hiddenTotals = hiddenTotalRows(L);
 
   useEffect(() => {
@@ -341,6 +376,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
   const patchBlocks = (blocks) => patch({ blocks });
   const patchCols = (lineCols) => patch({ lineCols });
   const patchMeta = (metaFields) => patch({ metaFields });
+  const patchHeader = (headerFields) => patch({ headerFields });
   const patchTotals = (totalRows) => patch({ totalRows });
 
   const onDragStart = (id) => (e) => {
@@ -373,6 +409,13 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
       patchMeta(fields);
       return;
     }
+    if (isHeaderField(from)) {
+      let fields = L.headerFields;
+      if (asVisible || isHeaderField(targetId) || targetId === "header") fields = setBlockHidden(fields, from, false);
+      if (isHeaderField(targetId)) fields = moveBlock(fields, from, targetId);
+      patchHeader(fields);
+      return;
+    }
     if (isTotalRow(from)) {
       let rows = L.totalRows;
       if (asVisible || isTotalRow(targetId) || targetId === "totals") rows = setBlockHidden(rows, from, false);
@@ -380,7 +423,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
       patchTotals(rows);
       return;
     }
-    if (isLineCol(targetId) || isMetaField(targetId) || isTotalRow(targetId)) return;
+    if (isLineCol(targetId) || isMetaField(targetId) || isHeaderField(targetId) || isTotalRow(targetId)) return;
     let blocks = L.blocks;
     if (asVisible) blocks = setBlockHidden(blocks, from, false);
     patchBlocks(moveBlock(blocks, from, targetId));
@@ -400,6 +443,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
     if (!from) return;
     if (isLineCol(from)) patchCols(setBlockHidden(L.lineCols, from, true));
     else if (isMetaField(from)) patchMeta(setBlockHidden(L.metaFields, from, true));
+    else if (isHeaderField(from)) patchHeader(setBlockHidden(L.headerFields, from, true));
     else if (isTotalRow(from)) patchTotals(setBlockHidden(L.totalRows, from, true));
     else patchBlocks(setBlockHidden(L.blocks, from, true));
   };
@@ -489,6 +533,24 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
               <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
               <span className="flex-1 font-semibold text-slate-700">{LINE_COL_LABELS[c.id]}</span>
               <button type="button" onClick={() => patchCols(setBlockHidden(L.lineCols, c.id, false))} className="text-[10px] font-bold text-emerald-700 px-1.5 py-0.5 border border-emerald-200 rounded" data-testid={`einvoice-design-show-col-${c.id}`}>
+                <Plus className="w-3 h-3 inline" /> Ekle
+              </button>
+            </div>
+          ))}
+          <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500 px-1 pt-2">Logo alanları</div>
+          {hiddenHeader.length === 0 ? <p className="text-[11px] text-slate-400 px-1">Logo altındaki satıcı alanları açık.</p> : null}
+          {hiddenHeader.map((c) => (
+            <div
+              key={c.id}
+              draggable
+              onDragStart={onDragStart(c.id)}
+              onDragEnd={clearDrag}
+              className={`flex items-center gap-1 bg-white border rounded-lg px-2 py-1.5 cursor-grab active:cursor-grabbing ${dragId === c.id ? "opacity-40" : ""}`}
+              data-testid={`einvoice-design-palette-header-${c.id}`}
+            >
+              <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+              <span className="flex-1 font-semibold text-slate-700">{HEADER_FIELD_LABELS[c.id]}</span>
+              <button type="button" onClick={() => patchHeader(setBlockHidden(L.headerFields, c.id, false))} className="text-[10px] font-bold text-emerald-700 px-1.5 py-0.5 border border-emerald-200 rounded" data-testid={`einvoice-design-show-header-${c.id}`}>
                 <Plus className="w-3 h-3 inline" /> Ekle
               </button>
             </div>
@@ -592,6 +654,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                   layout={L}
                   onPatchCols={patchCols}
                   onPatchMeta={patchMeta}
+                  onPatchHeader={patchHeader}
                   onPatchTotals={patchTotals}
                   onQrSize={(size) => patch({ qrSize: size })}
                   onLogoSize={(size) => patch({ logoSize: size })}

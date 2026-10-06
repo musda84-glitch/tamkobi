@@ -34,6 +34,8 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.metaFields.find((f) => f.id === "invoice_date").hidden).toBe(true);
   expect(L.metaFields.find((f) => f.id === "issue_time").hidden).toBe(true);
   expect(L.metaFields.find((f) => f.id === "order_no").hidden).toBe(true);
+  expect(L.headerFields.find((f) => f.id === "supplier_name").hidden).toBe(true);
+  expect(L.headerFields.find((f) => f.id === "supplier_address").hidden).toBe(true);
   expect(L.totalRows.find((r) => r.id === "kdv").hidden).toBe(false);
   expect(L.totalRows.find((r) => r.id === "allowance").hidden).toBe(false);
   expect(L.totalRows.find((r) => r.id === "matrah").hidden).toBe(false);
@@ -323,6 +325,25 @@ test("layoutToXslt uses selected logo height", () => {
   }));
   expect(xslt).toContain("height:120px");
   expect(xslt).not.toContain("height:72px");
+});
+
+test("layoutToXslt header can include supplier name from UBL", () => {
+  const xslt = layoutToXslt(normalizeLayout({
+    logo: "data:image/png;base64,aaa",
+    headerFields: [{ id: "supplier_name" }],
+    blocks: [
+      { id: "header" },
+      { id: "supplier", hidden: true },
+      { id: "customer", hidden: true },
+      { id: "meta", hidden: true },
+      { id: "lines", hidden: true },
+      { id: "totals", hidden: true },
+      { id: "notes", hidden: true },
+      { id: "iban", hidden: true },
+    ],
+  }));
+  expect(xslt).toContain("inv-brand-name");
+  expect(xslt).toContain("AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name");
 });
 
 test("xmlEscape encodes markup", () => {
