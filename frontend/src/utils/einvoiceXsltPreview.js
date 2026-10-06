@@ -21,14 +21,20 @@ export const SAMPLE_UBL_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <n1:Invoice xmlns:n1="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
   xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
   xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cbc:CustomizationID>TR1.2</cbc:CustomizationID>
   <cbc:ProfileID>TICARIFATURA</cbc:ProfileID>
   <cbc:ID>ABC2026000000001</cbc:ID>
   <cbc:UUID>550e8400-e29b-41d4-a716-446655440000</cbc:UUID>
   <cbc:IssueDate>2026-10-06</cbc:IssueDate>
   <cbc:IssueTime>14:32:05</cbc:IssueTime>
+  <cbc:DueDate>2026-10-06</cbc:DueDate>
   <cbc:InvoiceTypeCode>SATIS</cbc:InvoiceTypeCode>
   <cbc:Note>İşbu belge elektronik olarak düzenlenmiştir.</cbc:Note>
   <cac:OrderReference><cbc:ID>SIP-2026-0142</cbc:ID></cac:OrderReference>
+  <cac:DespatchDocumentReference>
+    <cbc:ID>SF-414808</cbc:ID>
+    <cbc:IssueDate>2026-10-06</cbc:IssueDate>
+  </cac:DespatchDocumentReference>
   <cac:AccountingSupplierParty><cac:Party>
     <cac:PartyIdentification><cbc:ID schemeID="VKN">1234567890</cbc:ID></cac:PartyIdentification>
     <cac:PartyName><cbc:Name>Örnek Yazılım A.Ş.</cbc:Name></cac:PartyName>

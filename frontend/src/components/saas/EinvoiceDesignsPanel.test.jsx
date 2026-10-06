@@ -53,7 +53,7 @@ test("lists designs, opens editor and has download", async () => {
   });
   await act(async () => { await Promise.resolve(); });
   expect(host.querySelector('[data-testid="einvoice-design-canvas"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.textContent).toContain("e-Fatura");
+  expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.textContent).toContain("Fatura No");
   expect(host.querySelector('[data-testid="einvoice-design-xslt"]')).toBeNull();
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-tab-xslt"]').click();

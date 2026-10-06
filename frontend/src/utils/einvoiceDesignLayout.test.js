@@ -32,9 +32,14 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.lineCols.find((c) => c.id === "sku").hidden).toBe(true);
   expect(L.lineCols.find((c) => c.id === "name").hidden).toBe(false);
   expect(L.metaFields.find((f) => f.id === "number").hidden).toBe(false);
-  expect(L.metaFields.find((f) => f.id === "date").hidden).toBe(false);
-  expect(L.metaFields.find((f) => f.id === "invoice_date").hidden).toBe(true);
-  expect(L.metaFields.find((f) => f.id === "issue_time").hidden).toBe(true);
+  expect(L.metaFields.find((f) => f.id === "invoice_date").hidden).toBe(false);
+  expect(L.metaFields.find((f) => f.id === "issue_time").hidden).toBe(false);
+  expect(L.metaFields.find((f) => f.id === "customization").hidden).toBe(false);
+  expect(L.metaFields.find((f) => f.id === "invoice_type").hidden).toBe(false);
+  expect(L.metaFields.find((f) => f.id === "despatch_no").hidden).toBe(false);
+  expect(L.metaFields.find((f) => f.id === "due_date").hidden).toBe(false);
+  expect(L.metaFields.find((f) => f.id === "date").hidden).toBe(true);
+  expect(L.metaFields.find((f) => f.id === "ettn").hidden).toBe(true);
   expect(L.metaFields.find((f) => f.id === "order_no").hidden).toBe(true);
   expect(L.headerFields.find((f) => f.id === "supplier_name").hidden).toBe(true);
   expect(L.headerFields.find((f) => f.id === "supplier_address").hidden).toBe(true);
@@ -141,10 +146,13 @@ test("layoutToXslt writes stylesheet, colors and skips hidden blocks", () => {
   expect(xslt).toContain("cac:InvoiceLine");
   expect(xslt).toContain("#112233");
   expect(xslt).toContain("#445566");
-  expect(xslt).toContain("e-Arşiv Fatura");
   expect(xslt).not.toContain("Demo A.Ş.");
   expect(xslt).toContain("Mal / Hizmet");
-  expect(xslt).toContain("Belge numarası");
+  expect(xslt).toContain("Fatura No");
+  expect(xslt).toContain("Özelleştirme No");
+  expect(xslt).toContain("Fatura Tipi");
+  expect(xslt).not.toContain("class=\"inv-badge\"");
+  expect(xslt).not.toContain("class=\"inv-no\"");
   expect(xslt).not.toContain("IBAN / ödeme");
   expect(xslt).not.toContain(">Notlar<");
   expect(xslt).not.toContain("GİB karekod");
@@ -193,11 +201,16 @@ test("layoutToXslt packs half-width blocks and emits invoice/order numbers in me
       { id: "iban", hidden: true },
     ],
     metaFields: [
+      { id: "customization" },
+      { id: "profile" },
+      { id: "invoice_type" },
       { id: "number" },
       { id: "invoice_date" },
       { id: "date" },
       { id: "issue_time" },
-      { id: "profile" },
+      { id: "despatch_no" },
+      { id: "despatch_date" },
+      { id: "due_date" },
       { id: "ettn" },
       { id: "order_no" },
     ],
@@ -206,15 +219,26 @@ test("layoutToXslt packs half-width blocks and emits invoice/order numbers in me
   expect(xslt).toContain('width="50%"');
   expect(xslt).toContain("SATICI");
   expect(xslt).toContain("ALICI");
-  expect(xslt).toContain("Belge numarası");
-  expect(xslt).toContain("Fatura tarihi");
-  expect(xslt).toContain("Düzenleme tarihi");
-  expect(xslt).toContain("Düzenleme zamanı");
+  expect(xslt).toContain("Fatura No:");
+  expect(xslt).toContain("Fatura Tarihi:");
+  expect(xslt).toContain("Düzenleme tarihi:");
+  expect(xslt).toContain("Fatura Saati:");
+  expect(xslt).toContain("Özelleştirme No:");
+  expect(xslt).toContain("Fatura Tipi:");
+  expect(xslt).toContain("İrsaliye No:");
+  expect(xslt).toContain("İrsaliye Tarihi:");
+  expect(xslt).toContain("Son Ödeme Tarihi:");
   expect(xslt).toContain("/n1:Invoice/cbc:ID");
   expect(xslt).toContain("/n1:Invoice/cbc:IssueTime");
-  expect(xslt).toContain("Sipariş numarası");
+  expect(xslt).toContain("/n1:Invoice/cbc:CustomizationID");
+  expect(xslt).toContain("/n1:Invoice/cbc:InvoiceTypeCode");
+  expect(xslt).toContain("DespatchDocumentReference/cbc:ID");
+  expect(xslt).toContain("Sipariş No:");
   expect(xslt).toContain("cac:OrderReference/cbc:ID");
   expect(xslt).toContain("class=\"inv-row\"");
+  expect(xslt).toContain("class=\"inv-meta-k\"");
+  expect(xslt).toContain("font-weight:inherit");
+  expect(xslt).not.toMatch(/class="inv-k">Fatura No/);
 });
 
 test("layoutToXslt includes optional totals rows", () => {
@@ -293,26 +317,32 @@ test("layoutToXslt header is logo only without company title", () => {
   expect(xslt).not.toContain("AccountingSupplierParty");
 });
 
-test("metaGridColsClass stacks at 1/3 and splits at 1/2", () => {
+test("metaGridColsClass always stacks like GIB paper", () => {
   expect(metaGridColsClass(4, 4)).toBe("grid-cols-1");
   expect(metaGridColsClass(4, 6)).toBe("grid-cols-1");
-  expect(metaGridColsClass(6, 4)).toBe("grid-cols-2");
-  expect(metaGridColsClass(12, 4)).toBe("grid-cols-4");
-  expect(metaGridColsClass(12, 3)).toBe("grid-cols-3");
+  expect(metaGridColsClass(6, 4)).toBe("grid-cols-1");
+  expect(metaGridColsClass(12, 4)).toBe("grid-cols-1");
+  expect(metaGridColsClass(12, 3)).toBe("grid-cols-1");
 });
 
-test("layoutToXslt stacks meta fields when block is 1/3", () => {
+test("layoutToXslt writes GIB-style inline meta rows at any width", () => {
   const stacked = layoutToXslt(normalizeLayout({
     blocks: [{ id: "meta", span: 4 }],
     metaFields: [{ id: "number" }, { id: "date" }, { id: "profile" }, { id: "ettn" }],
   }));
-  expect(stacked).toContain('class="inv-meta inv-meta-stack"');
-  expect(stacked).toContain(".inv-meta-stack td");
-  expect(stacked).toMatch(/<tr>\s*<td>[\s\S]*Belge numarası[\s\S]*<\/tr>\s*<tr>[\s\S]*Düzenleme tarihi/);
+  expect(stacked).toContain('class="inv-meta"');
+  expect(stacked).toContain("class=\"inv-meta-k\"");
+  expect(stacked).toMatch(/<tr>\s*<td class="inv-meta-k">Fatura No:[\s\S]*<\/tr>\s*<tr>[\s\S]*Düzenleme tarihi:/);
+  expect(stacked).not.toContain("class=\"inv-no\"");
+  expect(stacked).not.toMatch(/inv-meta-k \{[^}]*text-transform/);
 
   const full = layoutToXslt(defaultLayout("e_invoice"));
   expect(full).toContain('class="inv-meta"');
-  expect(full).not.toContain('class="inv-meta inv-meta-stack"');
+  expect(full).toContain("Özelleştirme No:");
+  expect(full).toContain("Fatura Tipi:");
+  expect(full).toContain("İrsaliye No:");
+  expect(full).toContain("Son Ödeme Tarihi:");
+  expect(full).toContain("' - '");
 });
 
 test("layoutToXslt uses selected logo height", () => {
@@ -371,13 +401,14 @@ test("layoutToXslt emits empty spacer block when added", () => {
   expect(xslt).toContain("width=\"33%\"");
 });
 
-test("layoutToXslt uses paper font size and dotted invoice dates", () => {
+test("layoutToXslt uses paper font size and spaced invoice dates", () => {
   const xslt = layoutToXslt(normalizeLayout({
     fontSize: 9,
     blocks: [{ id: "meta" }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
   }));
   expect(xslt).toContain("font-size:9px");
   expect(xslt).toContain("substring(/n1:Invoice/cbc:IssueDate,9,2)");
+  expect(xslt).toContain("' - '");
 });
 
 test("xmlEscape encodes markup", () => {
