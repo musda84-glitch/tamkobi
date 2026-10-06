@@ -1,4 +1,4 @@
-"""Döviz kurları: TCMB günlük bülten + şirket bazlı manuel kur.
+"""Döviz kurları: Kuveyt Türk GET /v1/fx/rates (bağlantı varsa) + TCMB günlük bülten + manuel kur.
 
 Kur 1 birim döviz = X TRY (JPY gibi Unit=100 olanlarda birim başına bölünür).
 Belgeler (fatura, masraf, dış ticaret) `currency` + `fx_rate` + `local_total` (TRY) tutar.
@@ -139,7 +139,7 @@ async def _upsert_rates(company_id: str, iso: str, rates: Dict[str, dict], sourc
             "bulletin_url": bulletin_url,
             "updated_at": _now(),
         }
-        if existing and existing.get("source") == "manual" and source == "tcmb":
+        if existing and existing.get("source") == "manual" and source in ("tcmb", "kuveyt"):
             saved.append(_clean(dict(existing)))
             continue
         if existing:
@@ -153,22 +153,41 @@ async def _upsert_rates(company_id: str, iso: str, rates: Dict[str, dict], sourc
     return saved
 
 
+async def fetch_kuveyt_for_company(company_id: str) -> Tuple[str, Dict[str, dict], str]:
+    """Şirketin canlı Kuveyt bağlantısından GET /v1/fx/rates."""
+    from bank_providers import fetch_kuveyt_fx_rates, find_company_kuveyt_connection
+
+    conn = await find_company_kuveyt_connection(_db, company_id)
+    if not conn:
+        raise RuntimeError("Kuveyt Türk banka bağlantısı yok.")
+    iso, rates, url = await fetch_kuveyt_fx_rates(conn)
+    if not rates:
+        raise RuntimeError("Kuveyt Türk kur yanıtında USD/EUR satırı yok.")
+    return iso, rates, url
+
+
 async def ensure_rates(company_id: str, on_date: Optional[str] = None, fetch: bool = True) -> dict:
     iso = on_date or date.today().isoformat()
     rows = [_clean(x) for x in await _db.fx_rates.find({"company_id": company_id, "date": iso}).to_list(50)]
     fetched = False
     source = rows[0]["source"] if rows else None
+    want_today = iso == date.today().isoformat()
     if fetch and not rows:
-        try:
-            iso2, rates, url = await fetch_tcmb(iso)
-            rows = await _upsert_rates(company_id, iso2, rates, "tcmb", url)
-            iso, fetched, source = iso2, True, "tcmb"
-        except HTTPException:
-            # Header chip and settings must still load; user can type a rate or retry TCMB.
-            pass
-        iso2, rates, url = await fetch_tcmb(iso)
-        rows = await _upsert_rates(company_id, iso2, rates, "tcmb", url)
-        iso, fetched, source = iso2, True, "tcmb"
+        if want_today:
+            try:
+                iso2, rates, url = await fetch_kuveyt_for_company(company_id)
+                rows = await _upsert_rates(company_id, iso2, rates, "kuveyt", url)
+                iso, fetched, source = iso2, True, "kuveyt"
+            except Exception:
+                pass
+        if not fetched:
+            try:
+                iso2, rates, url = await fetch_tcmb(iso)
+                rows = await _upsert_rates(company_id, iso2, rates, "tcmb", url)
+                iso, fetched, source = iso2, True, "tcmb"
+            except HTTPException:
+                # Header chip and settings must still load; user can type a rate or retry.
+                pass
     return {
         "date": iso,
         "source": source,
@@ -288,9 +307,32 @@ async def quote_rate(request: Request, currency: str, date: Optional[str] = None
 @router.post("/fx/fetch")
 async def fetch_rates(req: Dict[str, Any], request: Request):
     company_id = await _tenant_id(request)
-    iso, rates, url = await fetch_tcmb(req.get("date"))
+    on = req.get("date")
+    today = date.today().isoformat()
+    if not on or on == today:
+        try:
+            iso, rates, url = await fetch_kuveyt_for_company(company_id)
+            rows = await _upsert_rates(company_id, iso, rates, "kuveyt", url)
+            return {
+                "date": iso,
+                "source": "kuveyt",
+                "bulletin_url": url,
+                "count": len(rows),
+                "rates": {r["currency"]: r for r in rows},
+                "message": f"Kuveyt Türk kurları alındı ({len(rows)} kur). Manuel girilmiş kurlar korundu.",
+            }
+        except Exception:
+            pass
+    iso, rates, url = await fetch_tcmb(on)
     rows = await _upsert_rates(company_id, iso, rates, "tcmb", url)
-    return {"date": iso, "source": "tcmb", "bulletin_url": url, "count": len(rows), "rates": {r["currency"]: r for r in rows}, "message": f"TCMB {iso} bülteni alındı ({len(rows)} kur). Manuel girilmiş kurlar korundu."}
+    return {
+        "date": iso,
+        "source": "tcmb",
+        "bulletin_url": url,
+        "count": len(rows),
+        "rates": {r["currency"]: r for r in rows},
+        "message": f"TCMB {iso} bülteni alındı ({len(rows)} kur). Manuel girilmiş kurlar korundu.",
+    }
 
 
 @router.put("/fx/rates")
