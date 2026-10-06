@@ -7,6 +7,7 @@ import { fmtDate, fmtBytes, StatusBadge, PlanChip, Toggle, inputCls, groupByCate
 import { descendantIds, sortCompanyTree } from "../../utils/companyTree";
 import { backdropDismissProps } from "../../utils/modalBackdrop";
 import { AddonToggles } from "./AddonsPanel";
+import IsnetIntegrationPanel from "../IsnetIntegrationPanel";
 
 const cred = { withCredentials: true };
 
@@ -214,7 +215,7 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5"><FileCheck2 className="w-4 h-4 text-slate-400" /> E-Fatura entegratörü</h3>
-                <p className="text-[10px] text-slate-500 mt-0.5">Entegratör yalnızca burada seçilir. Firma paneli bu sağlayıcının kullanıcı adı ve şifresini girer.</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">Entegratör yalnızca burada seçilir. İşNet SOAP için ortam, IP ve e-İrsaliye varsayılanları da burada; firma paneli VKN, GİB etiketi ve portal kullanıcı/şifresini girer.</p>
               </div>
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${(d.einvoice?.status === "configured") ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`} data-testid="drawer-einvoice-status">{d.einvoice?.status === "configured" ? "Bağlı" : eiProvider ? "Atandı · bağlantı bekliyor" : "Seçilmedi"}</span>
             </div>
@@ -237,6 +238,11 @@ export const CompanyLicenseDrawer = ({ companyId, plans, catalog, companies = []
                 } catch (e) { toast.error(e.response?.data?.detail || "Atanamadı."); } finally { setBusy(""); }
               }} disabled={busy === "ei"} className="px-4 py-2 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-60" data-testid="drawer-einvoice-save">{busy === "ei" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Entegratörü kaydet</button>
             </div>
+            {eiProvider === "isnet" ? (
+              <div className="pt-1" data-testid="drawer-isnet-soap">
+                <IsnetIntegrationPanel companyId={companyId} variant="system" />
+              </div>
+            ) : null}
           </section>
 
           <section className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">

@@ -276,6 +276,7 @@ def test_isnet_payload_fields_documented_in_server_source():
     # Kullanıcı ayarlarında SOAP/portal test ipuçları gösterilmez
     assert "einvoiceservicetest.isnet.net.tr" not in text
     assert "efaturadestek@nettefatura.com.tr" not in text
+    assert "identity_in_req" in text
 
 
 def test_company_tax_code_and_soap_serialize():

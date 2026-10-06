@@ -1016,7 +1016,9 @@ async def isnet_save_settings(req: Dict[str, Any]):
         )
     fields = _isnet_payload(req, existing)
     tax = fields.get("company_tax_id") or ""
-    if len(tax) not in (10, 11) or not fields["alias"]:
+    # Firma paneli VKN/alias gönderir; Sistem SOAP kaydı mevcut kimliği korur.
+    identity_in_req = any(k in req for k in ("company_tax_id", "vkn", "alias", "gib_alias"))
+    if identity_in_req and (len(tax) not in (10, 11) or not fields["alias"]):
         raise HTTPException(
             status_code=400,
             detail="Şirket VKN/TCKN ve GİB alias zorunludur (SOAP IP–VKN; kullanıcı/şifre gerekmez).",
