@@ -40,6 +40,8 @@ export type Employee = {
   location_last_at?: string | null;
   location_last_inside?: boolean | null;
   location_inside_at?: string | null;
+  user_id?: string | null;
+  has_user?: boolean;
 };
 
 export type LocMode = {

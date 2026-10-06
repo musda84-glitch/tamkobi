@@ -8,7 +8,7 @@ import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { openAssignedDuties } from "../utils/assignedDuty";
-import { shopFloorCardActions, shopFloorCardBorder, shopFloorPausePhaseLabel, workOrderFinishPlan } from "../utils/shopFloorActions";
+import { shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, workOrderFinishPlan } from "../utils/shopFloorActions";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
@@ -69,7 +69,7 @@ export default function ShopFloorPage() {
         axios.get(`${API_URL}/companies/${companyId}/work-parks`).catch(() => ({ data: { parks: [] } })),
         axios.get(`${API_URL}/personnel/me`, { withCredentials: true }).catch(() => ({ data: { tasks: [] } })),
       ]);
-      setWos(w.data || []); setEmployees(e.data || []);
+      setWos(w.data || []); setEmployees(shopFloorOperators(e.data || []));
       setStations(stationNamesFromParks(parks.data?.parks, Array.isArray(s.data) ? s.data : []));
       setDuties(Array.isArray(me.data?.tasks) ? me.data.tasks : []);
     } catch { /* keep last */ }

@@ -32,6 +32,11 @@ class TestShopfloorOperatorPin:
         ahmet = next(e for e in r.json() if e.get("full_name") == "Ahmet Yılmaz")
         assert "shopfloor_pin_hash" not in ahmet
         assert ahmet.get("has_shopfloor_pin") is True
+        for e in r.json():
+            assert "has_user" in e
+            assert e["has_user"] is True or e["has_user"] is False
+        # Demo seed: PIN var, create-user yok
+        assert ahmet.get("has_user") is False
 
     def test_wrong_pin_rejected(self):
         s = _admin()

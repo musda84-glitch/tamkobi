@@ -1,4 +1,5 @@
 import {
+  employeeHasSystemUser,
   employeeLabel,
   finishOverPlan,
   finishQtyError,
@@ -11,6 +12,7 @@ import {
   readyCount,
   runningCount,
   shopFloorCardBorder,
+  shopFloorOperators,
   shopFloorStationSections,
   todayDoneCount,
   woCardKey,
@@ -115,8 +117,24 @@ describe("employees", () => {
   it("prepends the signed-in card when /personnel is closed", () => {
     const self = { id: "emp_me", full_name: "Ben" };
     expect(mergeSelfEmployee([], self).map((e) => e.id)).toEqual(["emp_me"]);
+    expect(mergeSelfEmployee([], self)[0].has_user).toBe(true);
     expect(mergeSelfEmployee([{ id: "emp_me", full_name: "Ben" }, { id: "x" }], self)).toHaveLength(2);
     expect(mergeSelfEmployee(null, null)).toEqual([]);
+  });
+
+  it("hides personnel without a system user from the operator picker", () => {
+    expect(employeeHasSystemUser({ id: "a", has_user: false, full_name: "Soner Akkaya" })).toBe(false);
+    expect(employeeHasSystemUser({ id: "b", has_user: true })).toBe(true);
+    expect(employeeHasSystemUser({ id: "c", user_id: "usr_1" })).toBe(true);
+    const ops = shopFloorOperators(mergeSelfEmployee(
+      [
+        { id: "a", full_name: "Soner Akkaya", has_user: false },
+        { id: "b", full_name: "Gökhan Yılmaz" },
+        { id: "c", full_name: "Muhammed ASLAN", has_user: true },
+      ],
+      { id: "me", full_name: "Ben" },
+    ));
+    expect(ops.map((e) => e.full_name)).toEqual(["Ben", "Muhammed ASLAN"]);
   });
 });
 
