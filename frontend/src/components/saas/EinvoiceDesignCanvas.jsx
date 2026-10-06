@@ -192,6 +192,14 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
   if (id === "customer") {
     return <PartyCard title="Alıcı" p={s.customer} kCls={layout.muted} vCls={layout.primary} />;
   }
+  if (id === "ettn") {
+    return (
+      <div data-testid="einvoice-design-ettn" style={{ color: layout.text }}>
+        <div className="font-normal">ETTN</div>
+        <div className="break-all leading-tight" style={{ fontSize: "1.5em", color: layout.primary }}>{s.ettn}</div>
+      </div>
+    );
+  }
   if (id === "meta") {
     const fields = visibleMetaFields(layout);
     const valueOf = (fid) => {
@@ -199,7 +207,6 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
       if (fid === "invoice_date" || fid === "date") return s.date;
       if (fid === "issue_time") return s.issueTime;
       if (fid === "profile") return s.profile;
-      if (fid === "ettn") return s.ettn;
       if (fid === "order_no") return s.orderNo;
       if (fid === "customization") return s.customization;
       if (fid === "invoice_type") return s.invoiceType;
@@ -219,7 +226,7 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
             {fields.map((f) => (
               <tr key={f.id} data-testid={`einvoice-design-meta-row-${f.id}`}>
                 <td className="align-top whitespace-nowrap pr-2 py-px font-normal">{META_FIELD_LABELS[f.id]}:</td>
-                <td className={`align-top py-px font-normal ${f.id === "ettn" ? "break-all" : ""}`}>{valueOf(f.id)}</td>
+                <td className="align-top py-px font-normal">{valueOf(f.id)}</td>
               </tr>
             ))}
           </tbody>

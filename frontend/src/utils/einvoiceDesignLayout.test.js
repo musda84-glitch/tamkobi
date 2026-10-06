@@ -42,7 +42,9 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.metaFields.find((f) => f.id === "despatch_no").hidden).toBe(false);
   expect(L.metaFields.find((f) => f.id === "due_date").hidden).toBe(false);
   expect(L.metaFields.find((f) => f.id === "date").hidden).toBe(true);
-  expect(L.metaFields.find((f) => f.id === "ettn").hidden).toBe(true);
+  expect(L.metaFields.find((f) => f.id === "ettn")).toBeUndefined();
+  expect(L.blocks.find((b) => b.id === "ettn").hidden).toBe(true);
+  expect(L.blocks.find((b) => b.id === "ettn").span).toBe(12);
   expect(L.metaFields.find((f) => f.id === "order_no").hidden).toBe(true);
   expect(L.headerFields.find((f) => f.id === "supplier_name").hidden).toBe(true);
   expect(L.headerFields.find((f) => f.id === "supplier_address").hidden).toBe(true);
@@ -214,7 +216,6 @@ test("layoutToXslt packs half-width blocks and emits invoice/order numbers in me
       { id: "despatch_no" },
       { id: "despatch_date" },
       { id: "due_date" },
-      { id: "ettn" },
       { id: "order_no" },
     ],
   });
@@ -298,6 +299,33 @@ test("legacy gib_seal maps to the matching e-Fatura or e-Arşiv seal", () => {
   expect(archive.blocks.find((b) => b.id === "gib_seal_invoice").hidden).toBe(true);
 });
 
+test("legacy visible meta ETTN becomes its own block", () => {
+  const L = normalizeLayout({
+    metaFields: [{ id: "number" }, { id: "ettn", hidden: false }],
+  });
+  expect(L.metaFields.find((f) => f.id === "ettn")).toBeUndefined();
+  expect(L.blocks.find((b) => b.id === "ettn").hidden).toBe(false);
+  const kept = normalizeLayout({
+    blocks: [{ id: "ettn", hidden: true }],
+    metaFields: [{ id: "ettn", hidden: false }],
+  });
+  expect(kept.blocks.find((b) => b.id === "ettn").hidden).toBe(true);
+});
+
+test("layoutToXslt writes ETTN as its own block", () => {
+  const hidden = layoutToXslt(defaultLayout("e_invoice"));
+  expect(hidden).not.toContain("inv-ettn-v");
+  const shown = layoutToXslt(normalizeLayout({
+    blocks: [{ id: "ettn" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
+  }));
+  expect(shown).toContain("class=\"inv-ettn\"");
+  expect(shown).toContain("inv-ettn-v");
+  expect(shown).toContain("ETTN");
+  expect(shown).toContain("/n1:Invoice/cbc:UUID");
+  expect(shown).toContain("width=\"100%\"");
+  expect(shown).toMatch(/inv-ettn-v \{[^}]*font-size:18px/);
+});
+
 test("layoutToXslt embeds both GIB seals independently", () => {
   const invoice = layoutToXslt(normalizeLayout({
     kind: "e_invoice",
@@ -364,7 +392,7 @@ test("metaGridColsClass always stacks like GIB paper", () => {
 test("layoutToXslt writes GIB-style inline meta rows at any width", () => {
   const stacked = layoutToXslt(normalizeLayout({
     blocks: [{ id: "meta", span: 4 }],
-    metaFields: [{ id: "number" }, { id: "date" }, { id: "profile" }, { id: "ettn" }],
+    metaFields: [{ id: "number" }, { id: "date" }, { id: "profile" }],
   }));
   expect(stacked).toContain('class="inv-meta"');
   expect(stacked).toContain("class=\"inv-meta-k\"");
