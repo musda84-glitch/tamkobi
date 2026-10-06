@@ -8,7 +8,7 @@ import { BankMatchRow } from "./BankMatchRow";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { formatTrAmount } from "../utils/money";
 import { matchActorName, matchActorTitle } from "../utils/bankMatchLabel";
-import { generateJsencryptPrivateKeyPem } from "../utils/jsencryptKuveyt";
+import { generateJsencryptKeyPair } from "../utils/jsencryptKuveyt";
 
 const LINKABLE_ACCOUNT_TYPES = new Set(["bank", "pos", "okc_pos"]);
 const PROVIDER_BANK_HINTS = {
@@ -190,15 +190,17 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [matched, setMatched] = useState([]);
   const [showMatched, setShowMatched] = useState(false);
   const [genKeyBusy, setGenKeyBusy] = useState(false);
+  const [ktPublicPem, setKtPublicPem] = useState("");
 
   const fillJsencryptKey = async (target) => {
     if (genKeyBusy) return;
     setGenKeyBusy(true);
     try {
-      const pem = await generateJsencryptPrivateKeyPem();
-      if (target === "add") setForm((f) => ({ ...f, private_key: pem }));
-      else setEditForm((f) => ({ ...f, private_key: pem }));
-      toast.success("JSEncrypt 2048-bit Private Key üretildi. Public Key’i bu alana yapıştırmayın.");
+      const { privateKey, publicKey } = await generateJsencryptKeyPair();
+      if (target === "add") setForm((f) => ({ ...f, private_key: privateKey }));
+      else setEditForm((f) => ({ ...f, private_key: privateKey }));
+      setKtPublicPem(publicKey || "");
+      toast.success("Private Key forma yazıldı. Public Key’i Kuveyt API Market uygulamasına yükleyin.");
     } catch (err) {
       toast.error(err?.message || "JSEncrypt anahtar üretilemedi");
     } finally {
@@ -554,8 +556,15 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                           </button>
                           <p className="text-[10px] text-slate-500">
                             Kuveyt imzası <a href="https://github.com/travist/jsencrypt" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">travist/jsencrypt</a> <code className="font-mono">signSha256</code> ile üretilir.
-                            Demo: <a href="https://travistidwell.com/jsencrypt/demo/" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">Private Key</a> kutusunu yapıştırın (2048-bit; Public Key değil).
+                            Üretilen <b>Public Key</b>’i API Market uygulamasına yükleyin (Private Key burada kalır).
                           </p>
+                          {ktPublicPem && (
+                            <div className="mt-1 space-y-1" data-testid="conn-jsencrypt-public-box">
+                              <label className="block font-semibold text-slate-700">Portal Public Key (kopyalayıp API Market’e yapıştırın)</label>
+                              <textarea className={`${inputCls} font-mono min-h-[72px]`} readOnly value={ktPublicPem} data-testid="conn-jsencrypt-public-pem" />
+                              <button type="button" className="px-2 py-1 rounded-md border text-[10px] font-semibold" onClick={() => { navigator.clipboard?.writeText(ktPublicPem); toast.success("Public Key kopyalandı."); }} data-testid="conn-jsencrypt-copy-public-btn">Public Key kopyala</button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </>
@@ -596,8 +605,8 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <code className="font-mono">GET /v3/accounts/&#123;ekNo&#125;/transactions</code> (hareket),{" "}
                 <code className="font-mono">POST /v1/vpos/getMerchantOrderDetail</code> (sipariş sorgu).{" "}
                 <code className="font-mono">non3DPayment</code> kart çeker — TamKobi otomatik çağırmaz.
-                Token: <b>client_credentials</b>. İmza: <b>travist/jsencrypt</b> <code className="font-mono">JSEncrypt.signSha256</code>.
-                RSA: demo 2048-bit <b>Private Key</b> (Public Key değil). v4/v1 ve banka listesi abone değil.
+                Token: resmi SDK <code className="font-mono">idprep</code>/<code className="font-mono">id</code> <code className="font-mono">/api/connect/token</code> (<b>client_credentials</b> scope=public). İmza: <b>travist/jsencrypt</b> <code className="font-mono">JSEncrypt.signSha256</code>.
+                RSA: 2048-bit <b>Private Key</b> TamKobi’de; eşleşen <b>Public Key</b> API Market uygulamasına yüklenir. v4/v1 ve banka listesi abone değil.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">
@@ -640,8 +649,15 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                           </button>
                           <p className="text-[10px] text-slate-500">
                             İmza <code className="font-mono">JSEncrypt.signSha256</code> (<a href="https://github.com/travist/jsencrypt" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">github.com/travist/jsencrypt</a>).
-                            Public Key / pubout yapıştırmayın.
+                            Public Key’i bu alana yapıştırmayın — API Market uygulamasına yükleyin.
                           </p>
+                          {ktPublicPem && (
+                            <div className="mt-1 space-y-1" data-testid="edit-jsencrypt-public-box">
+                              <label className="block font-semibold text-slate-700">Portal Public Key</label>
+                              <textarea className={`${inputCls} font-mono min-h-[72px]`} readOnly value={ktPublicPem} data-testid="edit-jsencrypt-public-pem" />
+                              <button type="button" className="px-2 py-1 rounded-md border text-[10px] font-semibold" onClick={() => { navigator.clipboard?.writeText(ktPublicPem); toast.success("Public Key kopyalandı."); }} data-testid="edit-jsencrypt-copy-public-btn">Public Key kopyala</button>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div><label className="block font-semibold mb-1">Access Token <span className="text-slate-400 font-normal">(müşteri yetkili — hareket için)</span></label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" placeholder="Authorization Code ile alınan access_token — boşsa değişmez" /></div>

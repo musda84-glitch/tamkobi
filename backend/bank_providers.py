@@ -24,8 +24,8 @@ import httpx
 PROVIDERS = {
     "kuveytturk": {
         "name": "Kuveyt Türk API Market",
-        # Gravitee 2026: prep-identity|identity /connect/token + prep-gateway|gateway.
-        # iuysal/kuveytturk SDK: idprep|id /api/connect/token + apitest.../prep | api.kuveytturk.com.tr
+        # Resmi SDK (iuysal + Android): idprep|id /api/connect/token + apitest.../prep | api.kuveytturk.com.tr
+        # Gravitee API Market yedek: prep-identity|identity /connect/token + prep-gateway|gateway.
         "sandbox_url": "https://prep-gateway.kuveytturk.com.tr",
         "live_url": "https://gateway.kuveytturk.com.tr",
         "identity_sandbox_url": "https://prep-identity.kuveytturk.com.tr",
@@ -38,7 +38,7 @@ PROVIDERS = {
         "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
-        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions, POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. RSA: travist/jsencrypt demo 2048-bit Private Key (BEGIN RSA PRIVATE KEY; Public Key değil). İmza: github.com/travist/jsencrypt JSEncrypt.signSha256(token+query|json). Token: client_credentials scope=public — Gravitee Identity, olmazsa iuysal SDK. Bağlantı testi fx/rates; hareket yalnızca v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
+        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions, POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. Token: resmi SDK POST idprep|id /api/connect/token (client_credentials scope=public, body; Basic yok); Gravitee Identity yedek. RSA: travist/jsencrypt 2048-bit Private Key; Public Key’i portal uygulamaya yükleyin. İmza: JSEncrypt.signSha256(token+?query|json). Bağlantı testi fx/rates; hareket v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -269,13 +269,13 @@ def _kuveyt_normalize_token_url(url: str) -> str:
 
 
 def _kuveyt_token_urls(conn: dict) -> List[str]:
-    """Gravitee Identity önce; iuysal SDK (idprep|id /api/connect/token) yedek."""
+    """Resmi SDK Identity önce (idprep|id /api/connect/token); Gravitee yedek."""
     urls: List[str] = []
     custom = (conn.get("token_url") or "").strip()
     if custom:
         urls.append(_kuveyt_normalize_token_url(custom))
-    urls.append(_kuveyt_identity_host(conn).rstrip("/") + _kuveyt_token_path())
     urls.append(_kuveyt_sdk_identity_host(conn).rstrip("/") + _kuveyt_sdk_token_path())
+    urls.append(_kuveyt_identity_host(conn).rstrip("/") + _kuveyt_token_path())
     seen = set()
     out = []
     for u in urls:
@@ -673,13 +673,13 @@ def _kuveyt_scope_candidates(conn: dict) -> List[str]:
 
 
 def _kuveyt_tx_scope_candidates(conn: dict) -> List[str]:
-    """Postman Account Transaction v3: token body scope listesi önce."""
+    """Resmi SDK CC: scope=public önce; Postman v3 uzun liste yedek."""
     out: List[str] = []
     custom = (conn.get("scope") or "").strip()
     for s in (
-        _KUVEYT_POSTMAN_TX_SCOPE,
-        custom,
         "public",
+        custom,
+        _KUVEYT_POSTMAN_TX_SCOPE,
         "accounts",
         "accounts public",
         "",
@@ -816,7 +816,7 @@ async def _kuveyt_post_token(
 
 
 async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -> str:
-    """Token: Gravitee /connect/token, sonra iuysal SDK idprep|id /api/connect/token.
+    """Token: resmi SDK idprep|id /api/connect/token, sonra Gravitee /connect/token.
 
     invalid_client bir host’ta diğer Identity ailesini durdurmaz (farklı OAuth sunucuları).
     404/HTML’de bir sonraki host denenir.
@@ -842,6 +842,7 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
             for scope in scope_list:
                 token, err, code = await _kuveyt_post_token(client, url, client_id, client_secret, scope)
                 if token:
+                    conn["_kuveyt_token_url"] = url
                     return token
                 if err:
                     last_err = err
@@ -913,9 +914,9 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
         "Kuveyt Türk token alınamadı (Identity Server client_credentials)."
         f"{hint}"
         f"Mod={mode}; {fp}. "
-        "Token: POST Gravitee …/connect/token veya iuysal SDK …/api/connect/token "
+        "Token: POST resmi SDK …/api/connect/token (idprep|id) veya Gravitee …/connect/token "
         "(body: grant_type, client_id, client_secret, scope=public). "
-        f"(sandbox: prep-identity + idprep.kuveytturk.com.tr / canlı: identity + id.kuveytturk.com.tr). ({detail[:220]})"
+        f"(sandbox: idprep.kuveytturk.com.tr + prep-identity / canlı: id.kuveytturk.com.tr + identity). ({detail[:220]})"
     )
 
 
@@ -979,11 +980,15 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
     token = await _kuveyt_access_token(conn)
     pem = _kuveyt_private_key_pem(conn)
     mode = _kuveyt_normalize_mode(conn)
+    identity_used = conn.get("_kuveyt_token_url") or (
+        _kuveyt_sdk_identity_host(conn) + _kuveyt_sdk_token_path()
+    )
     extra = " RSA-SHA256 imza anahtarı yok — fx/rates ve hareket için PKCS8 PEM gerekli."
-    identity_used = _kuveyt_identity_host(conn)
+    probe_ok = True
     if pem:
         headers = _kuveyt_headers(token, conn)
         last_probe = ""
+        probe_ok = False
         async with httpx.AsyncClient(timeout=20) as client:
             for base in _kuveyt_gateway_urls(conn):
                 url = f"{base}/v1/fx/rates"
@@ -999,17 +1004,31 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
                             f"{detail[:160]}"
                         )
                 if resp.status_code == 404:
+                    extra = f" ({last_probe})"
                     continue
-                extra = " GET /v1/fx/rates + RSA-SHA256 Signature doğrulandı." if resp.status_code < 400 else f" ({last_probe})"
+                if resp.status_code >= 400:
+                    extra = f" ({last_probe})"
+                    continue
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = None
+                biz = _kuveyt_business_error(data) if data else ""
+                if biz:
+                    extra = f" GET /v1/fx/rates reddedildi: {biz}"
+                    continue
+                extra = " GET /v1/fx/rates + RSA-SHA256 Signature doğrulandı."
+                probe_ok = True
                 break
+    sdk_host = _kuveyt_sdk_identity_host(conn)
     return {
-        "ok": True,
+        "ok": probe_ok,
         "simulated": False,
         "mode": mode,
         "identity_host": identity_used,
         "message": (
             f"Kuveyt Türk Identity Server client_credentials doğrulandı "
-            f"(mod={mode}, Gravitee {identity_used} / SDK {_kuveyt_sdk_identity_host(conn)}).{extra}"
+            f"(mod={mode}, token={identity_used}, SDK {sdk_host}).{extra}"
         ),
     }
 
@@ -2105,6 +2124,21 @@ def _enpara_is_missing_account_error(text: str) -> bool:
 def apply_linked_account_number(conn: dict, acc: Optional[dict] = None) -> dict:
     """Bağlantıda kullanılabilir IBAN/hesap yoksa bağlı TamKobi hesabından kopyala."""
     out = dict(conn or {})
+    provider = (out.get("provider") or "").strip().lower()
+    if provider == "kuveytturk":
+        if _kuveyt_account_suffix_candidates(out):
+            return out
+        if not acc:
+            return out
+        for key in ("iban", "account_number"):
+            linked = (acc.get(key) or "").strip().replace(" ", "")
+            if not linked or linked == "-":
+                continue
+            trial = {**out, "bank_account_number": linked}
+            if _kuveyt_account_suffix_candidates(trial):
+                out["bank_account_number"] = linked
+                return out
+        return out
     if _enpara_has_statement_account(_enpara_account_ref(out)):
         return out
     if not acc:
@@ -2623,9 +2657,9 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
 async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
     """GET /v3/accounts/{ekNo}/transactions + RSA Signature (abonelikteki tek hareket ucu).
 
-    Portal/Postman:
-      POST {prep-}identity/connect/token (client_credentials)
-      GET  {prep-}gateway/v3/accounts/{suffix}/transactions
+    Portal/Postman + resmi SDK:
+      POST idprep|id /api/connect/token (client_credentials, scope=public)
+      GET  gateway|/prep /v3/accounts/{suffix}/transactions
            Authorization: Bearer …  Signature: RSA-SHA256(token[+?query])
            Opsiyonel query: beginDate, endDate
     v4/v1 ve hesap listesi bu uygulamada abone değildir.
@@ -2700,12 +2734,19 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
                         data = resp.json()
                     except Exception:
                         continue
+                    biz = _kuveyt_business_error(data)
+                    if biz:
+                        best_err = f"{detail} {biz}"
+                        continue
                     bal = _extract_balance(data, prefer_iban=account)
                     if bal is not None:
                         balance = bal
                     rows = _normalize_tx_rows(data)
+                    if rows:
+                        return {"transactions": rows, "balance": balance, "access_token": None}
                     saw_ok_empty = True
-                    return {"transactions": rows or [], "balance": balance, "access_token": None}
+                    if not params:
+                        continue
                 if gw_auth:
                     break
             if gw_auth:
