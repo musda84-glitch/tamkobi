@@ -58,6 +58,28 @@ test("renders preview blocks and can hide then restore from palette", async () =
   expect(host.querySelector('[data-testid="einvoice-design-block-iban"]')).not.toBeNull();
 });
 
+test("shows uploaded XSLT in the preview iframe", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <EinvoiceDesignCanvas
+        layout={defaultLayout("e_invoice")}
+        kind="e_invoice"
+        xsltHtml={"<html><body><div>Acme XSLT kağıdı</div></body></html>"}
+        preferXsltPreview
+        onChange={(n) => { last = n; }}
+      />
+    );
+  });
+  const frame = host.querySelector('[data-testid="einvoice-design-preview"]');
+  expect(frame?.tagName).toBe("IFRAME");
+  expect(frame?.getAttribute("srcdoc") || frame?.srcdoc).toContain("Acme XSLT kağıdı");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-paper-layout"]').click();
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-block-lines"]')).not.toBeNull();
+});
+
 test("move down swaps header with next visible block", async () => {
   const root = createRoot(host);
   await act(async () => {

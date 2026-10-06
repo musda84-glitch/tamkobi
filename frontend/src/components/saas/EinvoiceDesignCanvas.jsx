@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { EyeOff, GripVertical, ImagePlus, Plus, ArrowDown, ArrowUp } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { compressImageFile } from "../../utils/compressImage";
@@ -202,17 +202,25 @@ const PreviewBlock = ({ id, layout, onPatchCols, drag, onDragStart, onDragOver, 
   return null;
 };
 
-export const EinvoiceDesignCanvas = ({ layout, onChange, kind }) => {
+export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", preferXsltPreview = false }) => {
   const L = normalizeLayout(layout, kind);
   const logoRef = useRef(null);
   const [dragId, setDragId] = useState("");
   const [overId, setOverId] = useState("");
   const [overPalette, setOverPalette] = useState(false);
+  const [paperMode, setPaperMode] = useState(preferXsltPreview && xsltHtml ? "xslt" : "layout");
   const visible = L.blocks.filter((b) => !b.hidden);
   const hidden = L.blocks.filter((b) => b.hidden);
   const hiddenCols = hiddenLineCols(L);
 
-  const patch = (partial) => onChange(normalizeLayout({ ...L, ...partial }, kind));
+  useEffect(() => {
+    setPaperMode(preferXsltPreview && xsltHtml ? "xslt" : "layout");
+  }, [preferXsltPreview, xsltHtml]);
+
+  const patch = (partial) => {
+    setPaperMode("layout");
+    onChange(normalizeLayout({ ...L, ...partial }, kind));
+  };
   const patchBlocks = (blocks) => patch({ blocks });
   const patchCols = (lineCols) => patch({ lineCols });
 
@@ -307,7 +315,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind }) => {
         {L.logo ? (
           <button type="button" onClick={() => patch({ logo: "" })} className="px-2.5 py-1.5 border rounded-lg font-semibold text-slate-500" data-testid="einvoice-design-logo-clear">Logoyu kaldır</button>
         ) : null}
-        <span className="text-[10px] text-slate-500">Önizleme örnek veriyle. Bölüm ve kalem alanlarını paletten ekleyin veya sürükleyin.</span>
+        <span className="text-[10px] text-slate-500">Önizleme örnek veriyle. Yüklenen XSLT burada görünür; düzenlemek için Düzenleyici’ye geçin.</span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
@@ -357,7 +365,24 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind }) => {
         </div>
 
         <div className="lg:col-span-9">
-          <div className="text-[10px] text-slate-500 mb-1 font-semibold">Önizleme (örnek veri)</div>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+            <div className="text-[10px] text-slate-500 font-semibold">Önizleme (örnek veri)</div>
+            {xsltHtml ? (
+              <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5" data-testid="einvoice-design-paper-tabs">
+                <button type="button" onClick={() => setPaperMode("layout")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "layout" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-layout">Düzenleyici</button>
+                <button type="button" onClick={() => setPaperMode("xslt")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "xslt" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-xslt">Yüklenen XSLT</button>
+              </div>
+            ) : null}
+          </div>
+          {paperMode === "xslt" && xsltHtml ? (
+            <iframe
+              title="Yüklenen XSLT önizleme"
+              srcDoc={xsltHtml}
+              sandbox="allow-same-origin"
+              className="w-full min-h-[22rem] h-[36rem] rounded-xl border shadow-sm bg-white"
+              data-testid="einvoice-design-preview"
+            />
+          ) : (
           <div
             className="rounded-xl border shadow-sm p-4 space-y-2 min-h-[22rem]"
             style={{ background: L.paper, color: L.text, fontFamily: `"${L.font}", Tahoma, sans-serif` }}
@@ -396,6 +421,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind }) => {
               </div>
             ))}
           </div>
+          )}
         </div>
       </div>
     </div>

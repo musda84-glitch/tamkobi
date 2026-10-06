@@ -6,6 +6,7 @@ import { API_URL } from "../../context/AuthContext";
 import { inputCls } from "./saasUi";
 import { EinvoiceDesignCanvas } from "./EinvoiceDesignCanvas";
 import { defaultLayout, layoutToXslt, normalizeLayout } from "../../utils/einvoiceDesignLayout";
+import { buildXsltPreview, layoutFromXslt } from "../../utils/einvoiceXsltPreview";
 
 const cred = { withCredentials: true };
 
@@ -21,11 +22,14 @@ const downloadBlob = (blob, filename) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 };
 
-const fromApi = (data, kind) => ({
-  name: data?.name || "",
-  xslt: data?.xslt || "",
-  layout: normalizeLayout(data?.layout, data?.kind || kind),
-});
+const fromApi = (data, kind) => {
+  const xslt = data?.xslt || "";
+  const kind0 = data?.kind || kind;
+  const layout = data?.layout && typeof data.layout === "object"
+    ? normalizeLayout(data.layout, kind0)
+    : layoutFromXslt(xslt, kind0);
+  return { name: data?.name || "", xslt, layout };
+};
 
 export const EinvoiceDesignsPanel = () => {
   const [d, setD] = useState(null);
@@ -49,6 +53,7 @@ export const EinvoiceDesignsPanel = () => {
 
   const items = useMemo(() => (d?.items || []).filter((i) => i.kind === kind), [d, kind]);
   const openRow = items.find((i) => i.id === openId);
+  const xsltPreview = useMemo(() => buildXsltPreview(form.xslt, kind), [form.xslt, kind]);
 
   const openDesign = async (id) => {
     setBusy(`open-${id}`);
@@ -158,9 +163,9 @@ export const EinvoiceDesignsPanel = () => {
       await load();
       setOpenId(r.data.id);
       setForm(fromApi(r.data, kind));
-      setTab("xslt");
+      setTab("visual");
       setSource("xslt");
-      toast.success("XSLT yüklendi.");
+      toast.success("XSLT yüklendi — önizleme şablondan güncellendi.");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Yüklenemedi.");
     } finally {
@@ -264,6 +269,8 @@ export const EinvoiceDesignsPanel = () => {
                 <EinvoiceDesignCanvas
                   layout={form.layout}
                   kind={kind}
+                  xsltHtml={xsltPreview.html}
+                  preferXsltPreview={source === "xslt" && !!xsltPreview.html}
                   onChange={(layout) => { setForm((f) => ({ ...f, layout })); setSource("visual"); }}
                 />
               ) : (
