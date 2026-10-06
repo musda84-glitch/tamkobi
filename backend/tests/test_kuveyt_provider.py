@@ -38,6 +38,8 @@ def test_kuveyt_provider_identity_and_api_hosts():
     assert "RSA-SHA256" in meta["hint"] or "signSha256" in meta["hint"] or "JSEncrypt" in meta["hint"]
     assert "/v1/fx/rates" in meta["hint"]
     assert "/v3/accounts/{ekNo}/transactions" in meta["hint"]
+    assert "itemCount" in meta["hint"]
+    assert "accountActivities" in meta["hint"]
     assert "getMerchantOrderDetail" in meta["hint"]
     assert "non3DPayment" in meta["hint"]
     assert "/v1/data/banks" not in meta["hint"]
@@ -244,6 +246,53 @@ def test_kuveyt_postman_account_transaction_v3_fixture():
     assert "Signature" in headers
     qkeys = {q["key"] for q in tx["url"].get("query") or []}
     assert {"beginDate", "endDate", "itemCount"} <= qkeys
+
+
+def test_kuveyt_tx_query_variants_match_docs_v3():
+    since = datetime(2025, 8, 1, tzinfo=timezone.utc)
+    end = datetime(2025, 8, 19, tzinfo=timezone.utc)
+    variants = bp._kuveyt_tx_query_variants(since, end)
+    assert variants[0] == {}
+    assert variants[1] == {
+        "beginDate": "2025-08-01",
+        "endDate": "2025-08-19",
+        "itemCount": bp._KUVEYT_TX_ITEM_COUNT,
+    }
+    assert variants[2] == {"beginDate": "2025-08-01", "endDate": "2025-08-19"}
+    assert bp._KUVEYT_TX_ITEM_COUNT != "2"
+
+
+def test_normalize_kuveyt_account_transactions_v3_envelope():
+    """Resmi V3 zarf: value.accountActivities + transactionReference / fxCode / balance."""
+    payload = {
+        "success": True,
+        "value": {
+            "executionReferenceId": "ex1",
+            "accountActivities": [
+                {
+                    "suffix": 6,
+                    "date": "2025-08-01",
+                    "description": "Gelen EFT",
+                    "amount": 150.25,
+                    "balance": 8800.5,
+                    "transactionReference": "KT-REF-1",
+                    "businessKey": "BK1",
+                    "seqNum": 12,
+                    "fxCode": "TRY",
+                    "iban": "TR330006200000000000000006",
+                }
+            ],
+        },
+    }
+    rows = bp._normalize_tx_rows(payload)
+    assert len(rows) == 1
+    assert rows[0]["external_id"] == "KT-REF-1"
+    assert rows[0]["amount"] == 150.25
+    assert rows[0]["description"] == "Gelen EFT"
+    assert rows[0]["date"] == "2025-08-01"
+    assert rows[0]["currency"] == "TRY"
+    assert bp._extract_balance(payload) == 8800.5
+    assert bp._has_explicit_empty_tx_list({"success": True, "value": {"accountActivities": []}}) is True
 
 
 def test_has_credentials_kuveyt_client_pair():
@@ -766,6 +815,59 @@ def test_fetch_kuveyt_signed_transactions():
     assert get_calls[0].kwargs["headers"]["Authorization"] == "Bearer tokBBB"
 
 
+def test_fetch_kuveyt_parses_official_v3_account_activities():
+    """Doküman zarfı: GET 200 + value.accountActivities."""
+    pem = _rsa_pem()
+    conn = {
+        "provider": "kuveytturk", "mode": "live",
+        "client_id": "cid", "client_secret": "sec", "private_key": pem,
+        "bank_account_number": "6",
+    }
+    token_resp = MagicMock()
+    token_resp.status_code = 200
+    token_resp.content = b'{"access_token":"tokV3"}'
+    token_resp.json.return_value = {"access_token": "tokV3"}
+    payload = {
+        "success": True,
+        "value": {
+            "executionReferenceId": "ex1",
+            "accountActivities": [
+                {
+                    "suffix": 6,
+                    "date": "2025-08-01",
+                    "description": "Havale",
+                    "amount": -40.0,
+                    "balance": 1200.0,
+                    "transactionReference": "V3-1",
+                    "fxCode": "TRY",
+                }
+            ],
+        },
+    }
+    tx_resp = MagicMock()
+    tx_resp.status_code = 200
+    tx_resp.text = '{"success":true}'
+    tx_resp.json.return_value = payload
+
+    mock_client = AsyncMock()
+    mock_client.cookies = MagicMock()
+    mock_client.post = AsyncMock(return_value=token_resp)
+    mock_client.get = AsyncMock(return_value=tx_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._fetch_kuveyt_transactions(conn, datetime(2025, 8, 1, tzinfo=timezone.utc))
+
+    out = asyncio.run(_run())
+    assert out["transactions"][0]["external_id"] == "V3-1"
+    assert out["transactions"][0]["amount"] == 40.0
+    assert out["transactions"][0]["direction"] == "debit"
+    assert out["balance"] == 1200.0
+    assert "/v1/vpos/non3DPayment" not in "".join(c.args[0] for c in mock_client.post.await_args_list)
+
+
 def test_fetch_kuveyt_accepts_empty_200_transactions():
     """Tarih aralığında hareket yoksa 200+[] başarıdır; accounttransactions 404’e düşülmez."""
     pem = _rsa_pem()
@@ -1027,6 +1129,7 @@ def test_fetch_kuveyt_dated_query_after_empty_no_query():
     urls = [c.args[0] for c in mock_client.get.await_args_list]
     assert "beginDate=" not in urls[0]
     assert "beginDate=" in urls[1]
+    assert "itemCount=" in urls[1]
 
 
 def test_apply_linked_account_number_kuveyt_uses_ek_no():
