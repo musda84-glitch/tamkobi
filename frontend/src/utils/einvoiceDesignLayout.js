@@ -174,6 +174,21 @@ export const FONT_OPTIONS = [
   { id: "Times New Roman", label: "Times New Roman" },
 ];
 
+export const FONT_SIZE_OPTIONS = [
+  { size: 8, label: "8" },
+  { size: 9, label: "9" },
+  { size: 10, label: "10" },
+  { size: 11, label: "11" },
+  { size: 12, label: "12" },
+  { size: 13, label: "13" },
+  { size: 14, label: "14" },
+];
+
+export function asFontSize(value, fallback = 12) {
+  const n = Number(value);
+  return FONT_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
+}
+
 const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const MAX_LOGO = 420_000;
 
@@ -261,6 +276,7 @@ export function defaultLayout(kind = "e_invoice") {
     version: 1,
     kind: kind === "e_archive" ? "e_archive" : "e_invoice",
     font: "Tahoma",
+    fontSize: 12,
     paper: "#ffffff",
     primary: "#0f172a",
     accent: "#059669",
@@ -298,6 +314,7 @@ export function normalizeLayout(raw, kind) {
     ? raw.kind
     : (kind === "e_archive" ? "e_archive" : "e_invoice");
   if (typeof raw.font === "string" && raw.font.trim()) out.font = raw.font.trim().slice(0, 80);
+  out.fontSize = asFontSize(raw.fontSize, base.fontSize);
   out.paper = asColor(raw.paper, base.paper);
   out.primary = asColor(raw.primary, base.primary);
   out.accent = asColor(raw.accent, base.accent);
@@ -428,6 +445,14 @@ export function xmlEscape(value) {
     .replace(/"/g, "&quot;");
 }
 
+function xsltMoney(path) {
+  return `<xsl:if test="${path}!=''"><xsl:value-of select="format-number(number(${path}), '#.##0,00', 'tr')"/></xsl:if>`;
+}
+
+function xsltYmdDot(path) {
+  return `<xsl:value-of select="concat(substring(${path},9,2),'.',substring(${path},6,2),'.',substring(${path},1,4))"/>`;
+}
+
 function kindTitle(kind) {
   return kind === "e_archive" ? "e-Arşiv Fatura" : "e-Fatura";
 }
@@ -442,14 +467,14 @@ const LINE_COL_XSLT = {
   },
   qty: { align: "right", td: `<td align="right"><xsl:value-of select="cbc:InvoicedQuantity"/></td>` },
   unit: { align: "left", td: `<td><xsl:value-of select="cbc:InvoicedQuantity/@unitCode"/></td>` },
-  net_price: { align: "right", td: `<td align="right"><xsl:value-of select="cbc:LineExtensionAmount"/></td>` },
-  price: { align: "right", td: `<td align="right"><xsl:value-of select="cac:Price/cbc:PriceAmount"/></td>` },
+  net_price: { align: "right", td: `<td align="right">${xsltMoney("cbc:LineExtensionAmount")}</td>` },
+  price: { align: "right", td: `<td align="right">${xsltMoney("cac:Price/cbc:PriceAmount")}</td>` },
   discount: {
     align: "right",
     td: `<td align="right"><xsl:choose><xsl:when test="cac:AllowanceCharge/cbc:MultiplierFactorNumeric">%<xsl:value-of select="cac:AllowanceCharge/cbc:MultiplierFactorNumeric * 100"/></xsl:when><xsl:otherwise><xsl:value-of select="cac:AllowanceCharge[cbc:ChargeIndicator='false']/cbc:Amount"/></xsl:otherwise></xsl:choose></td>`,
   },
   vat: { align: "right", td: `<td align="right">%<xsl:value-of select="cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory/cbc:Percent"/></td>` },
-  total: { align: "right", td: `<td align="right"><xsl:value-of select="cbc:LineExtensionAmount"/></td>` },
+  total: { align: "right", td: `<td align="right">${xsltMoney("cbc:LineExtensionAmount")}</td>` },
 };
 
 function xsltLineTable(L) {
@@ -474,8 +499,8 @@ function xsltMetaTable(L) {
   if (!fields.length) return "";
   const map = {
     number: `<td><div class="inv-badge">${xmlEscape(title)}</div><span class="inv-k">${xmlEscape(META_FIELD_LABELS.number)}</span><div class="inv-no"><xsl:value-of select="/n1:Invoice/cbc:ID"/></div></td>`,
-    invoice_date: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.invoice_date)}</span><div><xsl:value-of select="/n1:Invoice/cbc:IssueDate"/></div></td>`,
-    date: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.date)}</span><div><xsl:value-of select="/n1:Invoice/cbc:IssueDate"/></div></td>`,
+    invoice_date: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.invoice_date)}</span><div>${xsltYmdDot("/n1:Invoice/cbc:IssueDate")}</div></td>`,
+    date: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.date)}</span><div>${xsltYmdDot("/n1:Invoice/cbc:IssueDate")}</div></td>`,
     issue_time: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.issue_time)}</span><div><xsl:value-of select="/n1:Invoice/cbc:IssueTime"/></div></td>`,
     profile: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.profile)}</span><div><xsl:value-of select="/n1:Invoice/cbc:ProfileID"/></div></td>`,
     ettn: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.ettn)}</span><div class="inv-ettn"><xsl:value-of select="/n1:Invoice/cbc:UUID"/></div></td>`,
@@ -495,14 +520,14 @@ function xsltTotalsTable(L) {
   const rows = visibleTotalRows(L);
   if (!rows.length) return "";
   const map = {
-    subtotal: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.subtotal)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:LineExtensionAmount"/></td></tr>`,
-    allowance: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.allowance)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:AllowanceTotalAmount"/></td></tr>`,
-    matrah: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.matrah)}</td><td align="right"><xsl:choose><xsl:when test="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:TaxTypeCode='0015']/cbc:TaxableAmount"><xsl:value-of select="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:TaxTypeCode='0015']/cbc:TaxableAmount"/></xsl:when><xsl:otherwise><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount"/></xsl:otherwise></xsl:choose></td></tr>`,
-    exemption: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.exemption)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cbc:TaxExemptionReason or cac:TaxCategory/cbc:TaxExemptionReasonCode]/cbc:TaxableAmount"/></td></tr>`,
-    kdv: `<xsl:for-each select="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal"><tr><td class="inv-k">Hesaplanan (%<xsl:value-of select="cbc:Percent"/>)</td><td align="right"><xsl:value-of select="cbc:TaxAmount"/></td></tr></xsl:for-each>`,
-    tevkifat: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.tevkifat)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:WithholdingTaxTotal/cbc:TaxAmount"/></td></tr>`,
-    inclusive: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.inclusive)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount"/></td></tr>`,
-    grand: `<tr class="inv-grand"><td>${xmlEscape(TOTAL_ROW_LABELS.grand)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount"/></td></tr>`,
+    subtotal: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.subtotal)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:LegalMonetaryTotal/cbc:LineExtensionAmount")}</td></tr>`,
+    allowance: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.allowance)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:LegalMonetaryTotal/cbc:AllowanceTotalAmount")}</td></tr>`,
+    matrah: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.matrah)}</td><td align="right"><xsl:choose><xsl:when test="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:TaxTypeCode='0015']/cbc:TaxableAmount">${xsltMoney("/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:TaxTypeCode='0015']/cbc:TaxableAmount")}</xsl:when><xsl:otherwise>${xsltMoney("/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount")}</xsl:otherwise></xsl:choose></td></tr>`,
+    exemption: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.exemption)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cbc:TaxExemptionReason or cac:TaxCategory/cbc:TaxExemptionReasonCode]/cbc:TaxableAmount")}</td></tr>`,
+    kdv: `<xsl:for-each select="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal"><tr><td class="inv-tot">Hesaplanan (%<xsl:value-of select="cbc:Percent"/>)</td><td align="right">${xsltMoney("cbc:TaxAmount")}</td></tr></xsl:for-each>`,
+    tevkifat: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.tevkifat)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:WithholdingTaxTotal/cbc:TaxAmount")}</td></tr>`,
+    inclusive: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.inclusive)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount")}</td></tr>`,
+    grand: `<tr class="inv-grand"><td>${xmlEscape(TOTAL_ROW_LABELS.grand)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount")}</td></tr>`,
   };
   return `
       <table class="inv-totals" cellpadding="4" cellspacing="0" align="right">
@@ -630,6 +655,9 @@ export function layoutToXslt(layout, kind) {
   const L = normalizeLayout(layout, kind);
   const body = xsltPackedBody(L);
   const font = xmlEscape(L.font);
+  const fs = asFontSize(L.fontSize);
+  const k = Math.max(7, fs - 2);
+  const no = fs + 3;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
   xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
@@ -637,33 +665,35 @@ export function layoutToXslt(layout, kind) {
   xmlns:n1="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
   exclude-result-prefixes="cac cbc n1">
   <xsl:output method="html" indent="yes" encoding="UTF-8"/>
+  <xsl:decimal-format name="tr" decimal-separator="," grouping-separator="."/>
   <xsl:template match="/">
     <html>
       <head>
         <meta charset="UTF-8"/>
         <title><xsl:value-of select="/n1:Invoice/cbc:ID"/></title>
         <style type="text/css">
-          body { background:${L.paper}; color:${L.text}; font-family:"${font}", Tahoma, sans-serif; font-size:12px; margin:0; padding:16px; }
-          h1 { font-size:18px; color:${L.primary}; margin:8px 0 0; }
+          body { background:${L.paper}; color:${L.text}; font-family:"${font}", Tahoma, sans-serif; font-size:${fs}px; margin:0; padding:16px; }
+          h1 { font-size:${no}px; color:${L.primary}; margin:8px 0 0; }
           .inv-wrap { max-width:900px; margin:0 auto; }
           .inv-row { margin:0 0 8px; }
           .inv-cell { padding:2px 4px; }
           .inv-header { border-bottom:3px solid ${L.accent}; padding-bottom:10px; }
-          .inv-brand-name { font-size:16px; margin:6px 0 2px; color:${L.primary}; }
-          .inv-brand-addr, .inv-brand-vkn { font-size:11px; }
-          .inv-badge { display:inline-block; background:${L.accent}; color:#fff; font-weight:700; padding:4px 10px; border-radius:4px; letter-spacing:.04em; }
-          .inv-no { font-size:16px; font-weight:700; color:${L.primary}; margin-top:4px; }
-          .inv-k { font-size:10px; font-weight:700; color:${L.muted}; text-transform:uppercase; letter-spacing:.04em; }
+          .inv-brand-name { font-size:${no}px; margin:6px 0 2px; color:${L.primary}; }
+          .inv-brand-addr, .inv-brand-vkn { font-size:${k}px; }
+          .inv-badge { display:inline-block; background:${L.accent}; color:#fff; font-weight:700; padding:4px 10px; border-radius:4px; letter-spacing:.04em; font-size:${k}px; }
+          .inv-no { font-size:${no}px; font-weight:700; color:${L.primary}; margin-top:4px; }
+          .inv-k { font-size:${k}px; font-weight:700; color:${L.muted}; text-transform:uppercase; letter-spacing:.04em; }
+          .inv-tot { color:${L.muted}; }
           .inv-v { font-weight:700; color:${L.primary}; margin:2px 0 4px; }
           .inv-box { border:1px solid ${L.accent}33; background:${L.paper}; }
           .inv-meta td { border-bottom:1px solid ${L.muted}33; }
           .inv-meta-stack td { width:100%; display:block; }
-          .inv-ettn { font-size:10px; word-break:break-all; }
+          .inv-ettn { font-size:${k}px; word-break:break-all; }
           .inv-lines { border-collapse:collapse; }
-          .inv-lines th { background:${L.primary}; color:#fff; font-size:10px; }
+          .inv-lines th { background:${L.primary}; color:#fff; font-size:${k}px; }
           .inv-lines td { border-bottom:1px solid ${L.muted}22; }
           .inv-totals { min-width:260px; margin-top:8px; }
-          .inv-grand td { font-weight:700; color:${L.primary}; font-size:14px; border-top:2px solid ${L.accent}; }
+          .inv-grand td { font-weight:700; color:${L.primary}; font-size:${fs + 1}px; border-top:2px solid ${L.accent}; }
           .inv-notes, .inv-iban { border-top:1px dashed ${L.muted}55; padding-top:8px; color:${L.muted}; }
           .inv-balance { border:1px solid ${L.accent}; padding:8px 10px; }
           .inv-qr { text-align:right; }
