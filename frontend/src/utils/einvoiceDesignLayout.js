@@ -122,6 +122,20 @@ export const META_FIELD_LABELS = {
 
 const META_FIELD_HIDDEN_BY_DEFAULT = { invoice_date: true, issue_time: true, order_no: true };
 
+export const HEADER_FIELD_IDS = ["supplier_name", "supplier_address", "supplier_vkn"];
+
+export const HEADER_FIELD_LABELS = {
+  supplier_name: "Satıcı unvanı",
+  supplier_address: "Adres",
+  supplier_vkn: "VKN / TCKN",
+};
+
+const HEADER_FIELD_HIDDEN_BY_DEFAULT = {
+  supplier_name: true,
+  supplier_address: true,
+  supplier_vkn: true,
+};
+
 export const TOTAL_ROW_IDS = [
   "subtotal", "allowance", "matrah", "kdv", "tevkifat", "inclusive", "grand", "exemption",
 ];
@@ -257,6 +271,7 @@ export function defaultLayout(kind = "e_invoice") {
     blocks: defaultBlocks(),
     lineCols: idList(LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT),
     metaFields: idList(META_FIELD_IDS, META_FIELD_HIDDEN_BY_DEFAULT),
+    headerFields: idList(HEADER_FIELD_IDS, HEADER_FIELD_HIDDEN_BY_DEFAULT),
     totalRows: idList(TOTAL_ROW_IDS, TOTAL_ROW_HIDDEN_BY_DEFAULT),
   };
 }
@@ -293,6 +308,7 @@ export function normalizeLayout(raw, kind) {
   out.blocks = normalizeBlocks(raw.blocks);
   out.lineCols = normalizeIdList(raw.lineCols, LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT);
   out.metaFields = deriveMetaFields(raw);
+  out.headerFields = normalizeIdList(raw.headerFields, HEADER_FIELD_IDS, HEADER_FIELD_HIDDEN_BY_DEFAULT);
   out.totalRows = normalizeIdList(raw.totalRows, TOTAL_ROW_IDS, TOTAL_ROW_HIDDEN_BY_DEFAULT);
   out.version = 1;
   return out;
@@ -351,11 +367,14 @@ export function moveVisible(blocks, id, dir) {
 
 export const isLineCol = (id) => LINE_COL_IDS.includes(id);
 export const isMetaField = (id) => META_FIELD_IDS.includes(id);
+export const isHeaderField = (id) => HEADER_FIELD_IDS.includes(id);
 export const isTotalRow = (id) => TOTAL_ROW_IDS.includes(id);
 export const visibleLineCols = (layout) => (layout?.lineCols || []).filter((c) => !c.hidden);
 export const hiddenLineCols = (layout) => (layout?.lineCols || []).filter((c) => c.hidden);
 export const visibleMetaFields = (layout) => (layout?.metaFields || []).filter((c) => !c.hidden);
 export const hiddenMetaFields = (layout) => (layout?.metaFields || []).filter((c) => c.hidden);
+export const visibleHeaderFields = (layout) => (layout?.headerFields || []).filter((c) => !c.hidden);
+export const hiddenHeaderFields = (layout) => (layout?.headerFields || []).filter((c) => c.hidden);
 export const visibleTotalRows = (layout) => (layout?.totalRows || []).filter((c) => !c.hidden);
 export const hiddenTotalRows = (layout) => (layout?.totalRows || []).filter((c) => c.hidden);
 
@@ -513,6 +532,19 @@ function xsltBlocks(L) {
   const logo = L.logo
     ? `<img src="${xmlEscape(L.logo)}" alt="logo" style="height:${logoH}px;width:auto;max-width:100%;object-fit:contain;"/>`
     : "";
+  const headerVis = visibleHeaderFields(L);
+  const headerBits = headerVis.map((f) => {
+    if (f.id === "supplier_name") {
+      return `<h1 class="inv-brand-name"><xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name"/></h1>`;
+    }
+    if (f.id === "supplier_address") {
+      return `<div class="inv-brand-addr"><xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PostalAddress/cbc:StreetName"/><xsl:text> </xsl:text><xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PostalAddress/cbc:BuildingNumber"/><xsl:text> </xsl:text><xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PostalAddress/cbc:CityName"/></div>`;
+    }
+    if (f.id === "supplier_vkn") {
+      return `<div class="inv-brand-vkn">VKN/TCKN: <xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyIdentification/cbc:ID"/></div>`;
+    }
+    return "";
+  }).join("");
   const supplier = xsltPartyBox("supplier");
   const customer = xsltPartyBox("customer");
 
@@ -520,7 +552,7 @@ function xsltBlocks(L) {
     header: `
       <table class="inv-header" width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td class="inv-brand" valign="top">${logo}</td>
+          <td class="inv-brand" valign="top">${logo}${headerBits}</td>
         </tr>
       </table>`,
     gib_seal: `
@@ -614,6 +646,8 @@ export function layoutToXslt(layout, kind) {
           .inv-row { margin:0 0 8px; }
           .inv-cell { padding:2px 4px; }
           .inv-header { border-bottom:3px solid ${L.accent}; padding-bottom:10px; }
+          .inv-brand-name { font-size:16px; margin:6px 0 2px; color:${L.primary}; }
+          .inv-brand-addr, .inv-brand-vkn { font-size:11px; }
           .inv-badge { display:inline-block; background:${L.accent}; color:#fff; font-weight:700; padding:4px 10px; border-radius:4px; letter-spacing:.04em; }
           .inv-no { font-size:16px; font-weight:700; color:${L.primary}; margin-top:4px; }
           .inv-k { font-size:10px; font-weight:700; color:${L.muted}; text-transform:uppercase; letter-spacing:.04em; }
