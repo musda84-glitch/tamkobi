@@ -35,7 +35,7 @@ PROVIDERS = {
         "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
-        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions, POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. Müşteri Id/Secret + Api Anahtarı + RSA-SHA256 PEM. Token: client_credentials scope=public — Gravitee Identity, olmazsa iuysal SDK. Bağlantı testi fx/rates; hareket yalnızca v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
+        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions, POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. Müşteri Id/Secret + Api Anahtarı + RSA PEM (PKCS8 veya JSEncrypt/openssl PKCS1). İmza: JSEncrypt.signSha256(token+query|json) = SHA256withRSA. Token: client_credentials scope=public — Gravitee Identity, olmazsa iuysal SDK. Bağlantı testi fx/rates; hareket yalnızca v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -503,7 +503,12 @@ def _kuveyt_query_string(params: Optional[Dict[str, Any]]) -> str:
 
 
 def _kuveyt_sign(access_token: str, pem: str, *, query_string: str = "", json_body: str = "") -> str:
-    """SHA256withRSA over UTF-8 payload, Base64. GET: token.trim()+query; POST: token+jsonBody."""
+    """Portal JSEncrypt.signSha256 / Java SHA256withRSA, Base64 Signature başlığı.
+
+    travist/jsencrypt: ``signSha256(data)`` ≡ PKCS1-v1.5 + SHA-256 (DigestInfo).
+    GET: accessToken.trim() + queryString (?k=v&…, URL-encode yok).
+    POST: accessToken + jsonBody (trim yok).
+    """
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
 

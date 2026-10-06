@@ -31,7 +31,8 @@ def test_kuveyt_provider_identity_and_api_hosts():
     assert meta["legacy_token_path"] == "/api/connect/token"
     assert meta["legacy_sandbox_url"] == "https://apitest.kuveytturk.com.tr/prep"
     assert "private_key" in meta["fields"]
-    assert "RSA-SHA256" in meta["hint"] or "Signature" in meta["hint"]
+    assert "JSEncrypt" in meta["hint"]
+    assert "RSA-SHA256" in meta["hint"] or "signSha256" in meta["hint"] or "JSEncrypt" in meta["hint"]
     assert "/v1/fx/rates" in meta["hint"]
     assert "/v3/accounts/{ekNo}/transactions" in meta["hint"]
     assert "getMerchantOrderDetail" in meta["hint"]
@@ -76,6 +77,47 @@ def test_kuveyt_sign_get_matches_sha256withrsa():
     key = serialization.load_pem_private_key(pem.encode(), password=None)
     pub = key.public_key()
     pub.verify(
+        __import__("base64").b64decode(sig),
+        (token + qs).encode("utf-8"),
+        padding.PKCS1v15(),
+        hashes.SHA256(),
+    )
+
+
+def test_kuveyt_sign_matches_jsencrypt_signSha256_fixture():
+    """travist/jsencrypt JSEncrypt.signSha256 golden vector (PKCS1 PEM)."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "fixtures/kuveyt/jsencrypt_signSha256.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    pem = data["private_key_pkcs1"]
+    assert "BEGIN RSA PRIVATE KEY" in pem
+    get = data["get"]
+    assert bp._kuveyt_sign(get["token"], pem, query_string=get["query_string"]) == get["signature"]
+    post = data["post"]
+    assert bp._kuveyt_sign(post["token"], pem, json_body=post["json_body"]) == post["signature"]
+    key = serialization.load_pem_private_key(pem.encode(), password=None)
+    key.public_key().verify(
+        __import__("base64").b64decode(get["signature"]),
+        get["payload"].encode("utf-8"),
+        padding.PKCS1v15(),
+        hashes.SHA256(),
+    )
+
+
+def test_kuveyt_sign_pkcs1_jsencrypt_key_format():
+    """openssl genrsa / JSEncrypt.getPrivateKey() PKCS1 PEM imzalanır."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    assert "BEGIN RSA PRIVATE KEY" in pem
+    token, qs = "tok", "?beginDate=2026-10-06"
+    sig = bp._kuveyt_sign(token, pem, query_string=qs)
+    key.public_key().verify(
         __import__("base64").b64decode(sig),
         (token + qs).encode("utf-8"),
         padding.PKCS1v15(),

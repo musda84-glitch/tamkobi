@@ -1,0 +1,16 @@
+{
+  "source": "travist/jsencrypt JSEncrypt.signSha256 — byte-identical to SHA256withRSA",
+  "private_key_pkcs1": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEApqXtTUiX7q/uEDfmztU49vTcwcYCtS9zm8+S6KC0jZ3ha34X\nhz2OpKo/FAAAr9Glh2TFmMlkmre/RZ8jVmvhAec2gOW/LATK16+G6v7S1qLl/h6x\ncinM66LTX1ZhoObiTmJcHiLfIdypDH5I9cd3JTdA7+DjhVooMxXTlQxU3je5398K\n/X54ZkweLJfeSAs5eXrQRv0CYRp5MMUst11G9xh9F7PPXYBNbYsaHRWIqf7aktcm\nVgAPGkkg7h18gVbG9kCXkkrwr61nxyoJiKpQsUCXYzQF8k2SibH3vWbmqqXShVfb\nl9fFt562WmPCdnA6JeMxmaZeZoEHUHYCRY50awIDAQABAoIBAAb2t6p04x+iEgE/\n5MQ13F7tfCAYy/PFG0A8KOs4DY0LBBvZNaOwHdRugAF88opmT1Pcd4/Bf3oiClS4\nqEhfOUeg4TUuF8WZU0SdQ1A+L8Wwu72mJX7oyKhift5LN/v6SfCoL/Z00vz32vr4\nd/uiE/qyvi+7JqbKGq3v0CfSHEwtpKdTpxcZ6ycV3Gda3YfNde/AlkBQ2r3o8lh8\n9zlgntSXHelSmtEgXTFMx37ggQV8A9kwikAKuA66FSjsJNiJ58tHag2j+W/zPG7F\nI3LwHwlT52Uqigl+n0Iw3Gj+B7wXOtz7PMTfvZx5dtlsmnFeRJkIWgaAIrvnKI8n\n6x3F1GkCgYEA3dsy73zFQjeLun0fChd+btX6874pyxQ2Sa4bCsD5Lhri4Hwmc+/I\nGcy2WASCmMkEvevrcTZ3XaD5arRx1KQJ1zJkhtA8nbvMQefuyk/5H8YgQBV3zkPM\nXHg+ak5isUxRaMftgHyQArASgNc+QY9DwO6vJKi94FkvCDOOBOpwAl0CgYEAwEuc\ny0ixEvDeFqhhPuErPkBmmm+FGZ1skL5P5ZSqHJkr78MoUAfZOc9/hmU577Yt3iuu\nC6E6kso7XODM3LpmdmTnSglXCwABkV8hnQd85tKoxUin+ENCwNhTK+Su7PLjkfjS\nKLFNjK4ByxaTY/b627uEdIwyus80YHNd0mJ9dWcCgYEAoTM7YF4Vala31WpCmm+V\ns20RafeboG5wP7sc9QRgSgrJHPm4avcoOu7O80dbqS4unt0D9v/vXX2wnMK+Dxad\n+9omxvoZgTbKZHzkueXAC0FHf6jZo2sJ24qXN2D7Pv5IDM1wGbLoZLuQxkMffj1d\nqpsDcayWQqQqk1f6ckHx3xUCgYAXKYRrYAgkNesqY4HDJzAkQXGabJBls3aeQK4z\nAyMyaqjGKoWyjh92PS4pLAw8eX8w4aYHNJZvk/huiY1jkPhCjojlfBaF9qw5rHHK\nDlrXGszFZqkE2GU0AVqTUOpZFDChJo155VFn/pWstr1uLxOsX/vmZfS+V7MBYyQL\n8V0XRQKBgFcdqEjHsLT/sZJ/RbiuIIAmcXrdx9r8y3Nfa0Y7ku20jRBwL8qWFOlY\n2yC5zxrHK8Q/PHJtZqRMrTm7sPKlo7EItf/+C17UgjFZ2zgcqVbFNl5JOPQCuSKV\nXIcStUWNASekbb8aWbsuN8ezz7ButEzyKapOCxcuK/w0Kv5HQ+Ge\n-----END RSA PRIVATE KEY-----\n",
+  "get": {
+    "payload": "tokAAA?beginDate=2026-09-01&endDate=2026-09-18",
+    "token": "tokAAA",
+    "query_string": "?beginDate=2026-09-01&endDate=2026-09-18",
+    "signature": "C4TeVx/Q32PpfsDZznQ82F4Aw7XAItvx6xKlSPjb+j67KQsOGFMpU+K8O7egR83Hu8PMVyLCgz3a8iGXN9ZGry6zPFdD9XDMD/jjem2zaw+1ZMrnmPBfs2uDqTlUhtLRr5IClZWF40R95SEz96tZmWQI6da3hIMerONLVOmZhXUOyzYTn9Z4kV6nT+lYLbZ6EnSApb3Yv+YNbdlcQHWnkgEhZG9uZS2hJQHv5DOlnW4HPe2350bXNKPEUw0RuamNoneIWy9k4FjYXB3C7PpqSplWbvsjJo7xILwJIdos0hSshJKwRDMyIGUxN8t+SIoEfJ9nVaE7cfSY7kGqeNLJJg=="
+  },
+  "post": {
+    "payload": "tokAAA{\"merchantId\":123}",
+    "token": "tokAAA",
+    "json_body": "{\"merchantId\":123}",
+    "signature": "b6WX8/5e4ztXeAR5Hm/twPC7mSvUJvZtC72LDfQ+NgWqV1wLOVz7n2Cgl/Sh+OLN885Wu7Hp8Nfja75dEzEMnGx3n4H11q2O4M1pW3lf/5CJnQqO6vaKXKdGjqsedfPHjRKMdNnmrn1xvrhlBtJuAlVltMyCtS3Wam2nCEaLSdHVRuskRwsEGw2rssO56xZItgscEnt43AY4dBgmRPvqVaAuD1gisoyZnAbQ0/uxkJjAgK4Ue4ShWM1R11EhnIJMACufDlUmzkBH2TpbZX8tv/xEAaGncCnPxEKoxsObrSsUV8U/2NrwYUaf+pT1au0JJWPSXOMVHfLylEN9PNkgag=="
+  }
+}
