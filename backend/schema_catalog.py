@@ -149,6 +149,12 @@ COLLECTIONS = {
         "keys": ("_id", "server_id", "email", "display_name", "allowed_user_ids", "purposes"),
         "refs": ("platform_mail_servers._id",),
     },
+    "einvoice_designs": {
+        "scope": SCOPE_PLATFORM,
+        "description": "GİB e-Fatura / e-Arşiv XSLT görsel tasarımları (Sistem paneli).",
+        "keys": ("_id", "name", "kind", "xslt", "is_builtin", "is_selected"),
+        "refs": (),
+    },
     "gib_wallets": {
         "scope": SCOPE_PLATFORM,
         "description": "GİB e-belge kontör bakiyesi.",

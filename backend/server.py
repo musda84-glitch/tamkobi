@@ -127,6 +127,7 @@ import gib_credits
 import order_pick
 import platform_mail
 import platform_sms
+import einvoice_designs
 import applog
 import mail_tracking
 import stock_moves
@@ -17289,6 +17290,7 @@ import storage_manager
 storage_manager.init(db, get_current_user, saas.require_super_admin)
 platform_mail.init(db)
 platform_sms.init(db)
+einvoice_designs.init(db)
 addons.init(db)
 support_tickets.init(db, get_current_user)
 staff_messages.init(db, get_current_user)
@@ -17450,6 +17452,7 @@ app.include_router(trade.router)
 app.include_router(order_pick.router)
 app.include_router(platform_mail.router)
 app.include_router(platform_sms.router)
+app.include_router(einvoice_designs.router)
 app.include_router(demo.router)
 app.include_router(data_export.router)
 app.include_router(legal_docs.router)
