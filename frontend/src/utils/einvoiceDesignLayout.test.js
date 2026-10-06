@@ -314,12 +314,13 @@ test("legacy visible meta ETTN becomes its own block", () => {
 
 test("layoutToXslt writes ETTN as its own block", () => {
   const hidden = layoutToXslt(defaultLayout("e_invoice"));
-  expect(hidden).not.toContain("inv-ettn-v");
+  expect(hidden).not.toContain('class="inv-ettn"');
+  expect(hidden).not.toContain('<div class="inv-ettn-v">');
   const shown = layoutToXslt(normalizeLayout({
     blocks: [{ id: "ettn" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
   }));
   expect(shown).toContain("class=\"inv-ettn\"");
-  expect(shown).toContain("inv-ettn-v");
+  expect(shown).toContain('<div class="inv-ettn-v">');
   expect(shown).toContain("ETTN");
   expect(shown).toContain("/n1:Invoice/cbc:UUID");
   expect(shown).toContain("width=\"100%\"");
