@@ -38,6 +38,12 @@ def test_parse_tcmb_xml():
     assert rates["USD"]["buying"] == 34.1
     assert rates["EUR"]["selling"] == 37.25
     assert abs(rates["JPY"]["rate"] - 0.23) < 1e-9
+    from bank_providers import parse_kuveyt_fx_payload
+    kt = parse_kuveyt_fx_payload({
+        "success": True,
+        "value": [{"fxCode": "USD", "buyRate": 34.1, "sellRate": 34.2, "name": "ABD DOLARI"}],
+    })
+    assert kt["USD"]["rate"] == 34.2
 
 
 def test_try_amount_uses_local_total():

@@ -32,6 +32,11 @@ def test_kuveyt_provider_identity_and_api_hosts():
     assert meta["legacy_sandbox_url"] == "https://apitest.kuveytturk.com.tr/prep"
     assert "private_key" in meta["fields"]
     assert "RSA-SHA256" in meta["hint"] or "Signature" in meta["hint"]
+    assert "/v1/fx/rates" in meta["hint"]
+    assert "/v3/accounts/{ekNo}/transactions" in meta["hint"]
+    assert "getMerchantOrderDetail" in meta["hint"]
+    assert "non3DPayment" in meta["hint"]
+    assert "/v1/data/banks" not in meta["hint"]
 
 
 def test_kuveyt_token_urls_sandbox_and_live():
@@ -115,7 +120,7 @@ def test_kuveyt_account_suffix_from_iban():
 
 
 def test_kuveyt_tx_paths_prefer_ek_no_not_customer():
-    """9698082300002 → ek 2 önce; müşteri no path’e girmez. Portal V3 path önce."""
+    """9698082300002 → ek 2 önce; müşteri no path’e girmez. Yalnız V3 suffix path."""
     cands = bp._kuveyt_account_suffix_candidates({
         "bank_account_number": "9698082300002",
         "customer_number": "96980823",
@@ -124,14 +129,11 @@ def test_kuveyt_tx_paths_prefer_ek_no_not_customer():
     assert "96980823" not in cands
     paths = bp._kuveyt_tx_paths({"bank_account_number": "9698082300002"})
     assert paths[0] == "/v3/accounts/2/transactions"
-    assert "/v4/accounts/2/transactions" in paths
-    assert "/v1/accounts/2/transactions" in paths
-    assert "/v3/accounts/transactions" in paths
+    assert all("/v4/" not in p and "/v1/" not in p for p in paths)
+    assert all(p.endswith("/transactions") and "/v3/accounts/" in p for p in paths)
+    assert "/v3/accounts/transactions" not in paths
     assert all("accounttransactions" not in p for p in paths)
     assert all("/96980823/" not in p for p in paths)
-    lists = bp._kuveyt_account_list_paths({"bank_account_number": "5"})
-    assert lists[0] == "/v3/accounts"
-    assert "/v3/accounts/5" in lists
 
 
 def test_kuveyt_scope_includes_postman_tx_v4():
@@ -522,7 +524,7 @@ def test_kuveyt_token_invalid_client_message_hints_api_key():
         assert "/connect/token" in msg
 
 
-def test_kuveyt_probe_signs_banks_get():
+def test_kuveyt_probe_signs_fx_rates_get():
     pem = _rsa_pem()
     conn = {
         "provider": "kuveytturk", "mode": "sandbox",
@@ -533,14 +535,14 @@ def test_kuveyt_probe_signs_banks_get():
     token_resp.content = b'{"access_token":"tokAAA"}'
     token_resp.json.return_value = {"access_token": "tokAAA"}
 
-    banks_resp = MagicMock()
-    banks_resp.status_code = 200
-    banks_resp.text = "[]"
-    banks_resp.json.return_value = []
+    fx_resp = MagicMock()
+    fx_resp.status_code = 200
+    fx_resp.text = '{"success":true,"value":[]}'
+    fx_resp.json.return_value = {"success": True, "value": []}
 
     mock_client = AsyncMock()
     mock_client.post = AsyncMock(return_value=token_resp)
-    mock_client.get = AsyncMock(return_value=banks_resp)
+    mock_client.get = AsyncMock(return_value=fx_resp)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -553,9 +555,12 @@ def test_kuveyt_probe_signs_banks_get():
     assert out["simulated"] is False
     assert "client_credentials" in out["message"]
     get_args, get_kwargs = mock_client.get.await_args
-    assert get_args[0] == "https://prep-gateway.kuveytturk.com.tr/v1/data/banks"
+    assert get_args[0] == "https://prep-gateway.kuveytturk.com.tr/v1/fx/rates"
     assert get_kwargs["headers"]["Authorization"] == "Bearer tokAAA"
     assert get_kwargs["headers"]["Signature"]
+    assert mock_client.post.call_count >= 1
+    posted = [c.args[0] for c in mock_client.post.await_args_list]
+    assert all("/v1/vpos/non3DPayment" not in u for u in posted)
 
 
 def test_fetch_kuveyt_requires_private_key():
@@ -617,6 +622,8 @@ def test_fetch_kuveyt_signed_transactions():
     tx_url = get_calls[0].args[0]
     assert tx_url == "https://gateway.kuveytturk.com.tr/v3/accounts/6/transactions"
     assert "beginDate=" not in tx_url
+    assert all("/v4/" not in c.args[0] for c in get_calls)
+    assert all("/v1/accounts" not in c.args[0] for c in get_calls)
     assert get_calls[0].kwargs["headers"]["Signature"]
     assert get_calls[0].kwargs["headers"]["Authorization"] == "Bearer tokBBB"
 
@@ -655,3 +662,152 @@ def test_fetch_kuveyt_accepts_empty_200_transactions():
     urls = [c.args[0] for c in mock_client.get.await_args_list]
     assert all("accounttransactions" not in u for u in urls)
     assert any("/v3/accounts/" in u and "/transactions" in u for u in urls)
+    assert all("/v4/" not in u and "/v1/data/banks" not in u for u in urls)
+    assert all("/v1/accounts/" not in u for u in urls)
+    posted = [c.args[0] for c in mock_client.post.await_args_list]
+    assert all("/v1/vpos/non3DPayment" not in u for u in posted)
+
+
+def test_parse_kuveyt_fx_payload_codes_and_jpy_unit():
+    data = {
+        "success": True,
+        "value": [
+            {"name": "ABD DOLARI", "fxCode": "USD", "buyRate": 41.1, "sellRate": 41.4},
+            {"name": "EURO", "fxCode": "EUR/TRY", "buyRate": 48.0, "sellRate": 48.5},
+            {"name": "JAPON YENI", "fxCode": "JPY", "buyRate": 22.0, "sellRate": 23.0},
+            {"name": "ALTIN", "fxCode": "XAU", "buyRate": 4300, "sellRate": 4320},
+        ],
+    }
+    rates = bp.parse_kuveyt_fx_payload(data)
+    assert set(rates) == {"USD", "EUR", "JPY"}
+    assert rates["USD"]["rate"] == 41.4
+    assert rates["USD"]["buying"] == 41.1
+    assert abs(rates["JPY"]["rate"] - 0.23) < 1e-9
+    assert rates["JPY"]["unit"] == 100.0
+
+
+def test_parse_kuveyt_fx_payload_success_false():
+    try:
+        bp.parse_kuveyt_fx_payload({"success": False, "message": "product not subscribed"})
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "product not subscribed" in str(e)
+
+
+def test_kuveyt_non3d_payment_requires_confirm_charge():
+    pem = _rsa_pem()
+    conn = {
+        "provider": "kuveytturk", "mode": "live",
+        "client_id": "cid", "client_secret": "sec", "private_key": pem,
+    }
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.kuveyt_non3d_payment(conn, {"merchantId": 1, "amount": "100"})
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "confirm_charge" in str(e)
+        assert "non3DPayment" in str(e)
+    mock_client.post.assert_not_called()
+
+
+def test_kuveyt_merchant_order_detail_posts_once():
+    pem = _rsa_pem()
+    conn = {
+        "provider": "kuveytturk", "mode": "sandbox",
+        "client_id": "cid", "client_secret": "sec", "private_key": pem,
+    }
+    token_resp = MagicMock()
+    token_resp.status_code = 200
+    token_resp.content = b'{"access_token":"tokORD"}'
+    token_resp.json.return_value = {"access_token": "tokORD"}
+
+    order_resp = MagicMock()
+    order_resp.status_code = 200
+    order_resp.text = '{"success":true,"value":{"OrderId":"9"}}'
+    order_resp.json.return_value = {"success": True, "value": {"OrderId": "9"}}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=[token_resp, order_resp])
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.kuveyt_get_merchant_order_detail(conn, {
+                "merchantId": 123, "customerId": 1, "userName": "api",
+                "hashData": "abc", "startDate": "01.10.2026", "endDate": "06.10.2026",
+            })
+
+    out = asyncio.run(_run())
+    assert out["value"]["OrderId"] == "9"
+    vpos_posts = [c for c in mock_client.post.await_args_list if "/v1/vpos/getMerchantOrderDetail" in (c.args[0] if c.args else "")]
+    assert len(vpos_posts) == 1
+    assert vpos_posts[0].args[0].endswith("/v1/vpos/getMerchantOrderDetail")
+    assert vpos_posts[0].kwargs["headers"]["Signature"]
+    assert vpos_posts[0].kwargs["headers"]["Content-Type"] == "application/json"
+    body = vpos_posts[0].kwargs["content"].decode("utf-8")
+    assert '"merchantId":123' in body
+    assert "non3DPayment" not in body
+
+
+def test_fetch_kuveyt_fx_rates_signed_get():
+    pem = _rsa_pem()
+    conn = {
+        "provider": "kuveytturk", "mode": "live",
+        "client_id": "cid", "client_secret": "sec", "private_key": pem,
+    }
+    token_resp = MagicMock()
+    token_resp.status_code = 200
+    token_resp.content = b'{"access_token":"tokFX"}'
+    token_resp.json.return_value = {"access_token": "tokFX"}
+
+    fx_resp = MagicMock()
+    fx_resp.status_code = 200
+    fx_resp.text = '{"success":true}'
+    fx_resp.json.return_value = {
+        "success": True,
+        "value": [{"name": "USD", "fxCode": "USD", "buyRate": 40.0, "sellRate": 40.5}],
+    }
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=token_resp)
+    mock_client.get = AsyncMock(return_value=fx_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_kuveyt_fx_rates(conn)
+
+    iso, rates, url = asyncio.run(_run())
+    assert rates["USD"]["rate"] == 40.5
+    assert url.endswith("/v1/fx/rates")
+    assert mock_client.get.await_args.args[0] == "https://gateway.kuveytturk.com.tr/v1/fx/rates"
+    assert mock_client.get.await_args.kwargs["headers"]["Signature"]
+    posted = [c.args[0] for c in mock_client.post.await_args_list]
+    assert all("/v1/vpos/non3DPayment" not in u for u in posted)
+
+
+def test_fetch_kuveyt_requires_suffix_path():
+    pem = _rsa_pem()
+    conn = {
+        "provider": "kuveytturk", "mode": "live",
+        "client_id": "cid", "client_secret": "sec", "private_key": pem,
+    }
+
+    async def _run():
+        return await bp._fetch_kuveyt_transactions(conn, datetime.now(timezone.utc) - timedelta(days=1))
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "ek no" in str(e).lower() or "/v3/accounts" in str(e)

@@ -19,7 +19,9 @@ const sourceLabel = (pack) => {
   if (!rows.length) return { text: "Kur yok", kind: "empty" };
   const sources = new Set(rows.map((r) => r.source).filter(Boolean));
   if (sources.size === 1 && sources.has("tcmb")) return { text: "TCMB", kind: "auto" };
+  if (sources.size === 1 && sources.has("kuveyt")) return { text: "Kuveyt", kind: "auto" };
   if (sources.has("manual")) return { text: "Ayarlı", kind: "manual" };
+  if (sources.has("kuveyt")) return { text: "Kuveyt", kind: "auto" };
   return { text: "TCMB", kind: "auto" };
 };
 
@@ -79,11 +81,11 @@ export const HeaderFxRates = ({ companyId }) => {
     setBusy("fetch");
     try {
       const r = await axios.post(`${API_URL}/fx/fetch`, { date: view.date }, { ...cred, params: { company_id: companyId } });
-      setPack({ ...view, date: r.data.date, source: "tcmb", rates: r.data.rates || view.rates });
+      setPack({ ...view, date: r.data.date, source: r.data.source || "tcmb", rates: r.data.rates || view.rates });
       setDraft({});
-      toast.success(r.data.message || "TCMB kurları alındı.");
+      toast.success(r.data.message || "Kurlar alındı.");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "TCMB alınamadı. Manuel kur girebilirsiniz.");
+      toast.error(e.response?.data?.detail || "Kurlar alınamadı. Manuel kur girebilirsiniz.");
     } finally { setBusy(""); }
   };
   const saveRow = async (code) => {
@@ -130,7 +132,7 @@ export const HeaderFxRates = ({ companyId }) => {
             <div>
               <div className="font-bold text-slate-900">Döviz kurları</div>
               <div className="text-[10px] text-slate-400 mt-0.5">
-                {src.kind === "manual" ? "Ayarlı (manuel) kur" : src.kind === "empty" ? "Kur henüz yok — TCMB çekin veya yazın" : "Otomatik TCMB kuru"} · {view.date || "bugün"}
+                {src.kind === "manual" ? "Ayarlı (manuel) kur" : src.kind === "empty" ? "Kur henüz yok — çekin veya yazın" : src.text === "Kuveyt" ? "Kuveyt Türk kuru" : "Otomatik TCMB kuru"} · {view.date || "bugün"}
               </div>
             </div>
             {canEdit && (
@@ -141,7 +143,7 @@ export const HeaderFxRates = ({ companyId }) => {
                 className="px-2 py-1 bg-slate-900 text-white rounded-lg font-semibold inline-flex items-center gap-1 disabled:opacity-60"
                 data-testid="header-fx-fetch"
               >
-                <RefreshCw className={`w-3 h-3 ${busy === "fetch" ? "animate-spin" : ""}`} /> TCMB
+                <RefreshCw className={`w-3 h-3 ${busy === "fetch" ? "animate-spin" : ""}`} /> Çek
               </button>
             )}
           </div>
@@ -162,7 +164,7 @@ export const HeaderFxRates = ({ companyId }) => {
                     className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 font-mono text-right disabled:opacity-60"
                     data-testid={`header-fx-input-${code}`}
                   />
-                  <span className="w-14 text-[10px] text-slate-400">{row.source === "manual" ? "Ayarlı" : row.source === "tcmb" ? "TCMB" : "—"}</span>
+                  <span className="w-14 text-[10px] text-slate-400">{row.source === "manual" ? "Ayarlı" : row.source === "tcmb" ? "TCMB" : row.source === "kuveyt" ? "Kuveyt" : "—"}</span>
                   {canEdit && (
                     <button
                       type="button"

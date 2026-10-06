@@ -35,7 +35,7 @@ PROVIDERS = {
         "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
-        "hint": "API Market: Müşteri Id/Secret + Api Anahtarı + RSA-SHA256 PEM. Token: client_credentials scope=public — önce Gravitee Identity (prep-identity|identity /connect/token), olmazsa iuysal SDK (idprep|id /api/connect/token). Hareket: GET /v3/accounts/{ekNo}/transactions + Signature. Liste: GET /v1/accounts/{suffix?} (authorization code + accounts). Sandbox gateway: prep-gateway, yedek apitest.kuveytturk.com.tr/prep.",
+        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions, POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. Müşteri Id/Secret + Api Anahtarı + RSA-SHA256 PEM. Token: client_credentials scope=public — Gravitee Identity, olmazsa iuysal SDK. Bağlantı testi fx/rates; hareket yalnızca v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -908,18 +908,23 @@ async def _kuveyt_account_bearer(conn: dict) -> tuple:
 
 
 async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
+    """Bağlantı testi: token + GET /v1/fx/rates (abonelikteki public CC uç).
+
+    /v1/data/banks bu uygulamada abone değildir.
+    """
     token = await _kuveyt_access_token(conn)
     pem = _kuveyt_private_key_pem(conn)
     mode = _kuveyt_normalize_mode(conn)
-    extra = " RSA-SHA256 imza anahtarı yok — hesap hareketi için PKCS8 PEM gerekli."
+    extra = " RSA-SHA256 imza anahtarı yok — fx/rates ve hareket için PKCS8 PEM gerekli."
     identity_used = _kuveyt_identity_host(conn)
     if pem:
         headers = _kuveyt_headers(token, conn)
         last_probe = ""
         async with httpx.AsyncClient(timeout=20) as client:
             for base in _kuveyt_gateway_urls(conn):
-                resp = await client.get(f"{base}/v1/data/banks", headers=headers)
-                last_probe = f"{base}/v1/data/banks HTTP {resp.status_code}"
+                url = f"{base}/v1/fx/rates"
+                resp = await client.get(url, headers=headers)
+                last_probe = f"{url} HTTP {resp.status_code}"
                 if resp.status_code in (401, 403):
                     detail = _api_error_detail(resp)
                     blob = f"{detail} {getattr(resp, 'text', '') or ''}".lower()
@@ -931,7 +936,7 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
                         )
                 if resp.status_code == 404:
                     continue
-                extra = " RSA-SHA256 Signature doğrulandı." if resp.status_code < 400 else f" ({last_probe})"
+                extra = " GET /v1/fx/rates + RSA-SHA256 Signature doğrulandı." if resp.status_code < 400 else f" ({last_probe})"
                 break
     return {
         "ok": True,
@@ -946,7 +951,7 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
 
 
 def _kuveyt_account_suffix(conn: dict) -> str:
-    """Primary account ek no for path /v3|/v4|/v1/accounts/{suffix}/transactions."""
+    """Primary account ek no for path /v3/accounts/{suffix}/transactions."""
     cands = _kuveyt_account_suffix_candidates(conn)
     return cands[0] if cands else ""
 
@@ -1005,40 +1010,207 @@ def _kuveyt_account_suffix_candidates(conn: dict) -> List[str]:
 
 
 def _kuveyt_tx_paths(conn: dict) -> List[str]:
-    """Portal Accounts API: GET /v3/accounts/{suffix}/transactions (Own - Account Transactions V3).
+    """Yalnız abone uç: GET /v3/accounts/{suffix}/transactions.
 
-    Also try Account List V3 with suffix: GET /v3/accounts/{suffix} is separate (balance).
-    Fallbacks: Postman v4, then v1. Prefer suffix paths first.
+    v4/v1 ve suffiksiz path’ler bu uygulamada abone değildir.
     """
     paths: List[str] = []
     for suf in _kuveyt_account_suffix_candidates(conn)[:8]:
-        for ver in ("v3", "v4", "v1"):
-            p = f"/{ver}/accounts/{suf}/transactions"
-            if p not in paths:
-                paths.append(p)
-    for p in (
-        "/v3/accounts/transactions",
-        "/v4/accounts/transactions",
-        "/v1/accounts/transactions",
-    ):
+        p = f"/v3/accounts/{suf}/transactions"
         if p not in paths:
             paths.append(p)
     return paths
 
 
-def _kuveyt_account_list_paths(conn: dict) -> List[str]:
-    """Portal: GET /v3/accounts and GET /v3/accounts/{suffix} (Account List V3)."""
-    paths: List[str] = []
-    for ver in ("v3", "v4", "v1"):
-        p = f"/{ver}/accounts"
-        if p not in paths:
-            paths.append(p)
-    for suf in _kuveyt_account_suffix_candidates(conn)[:4]:
-        for ver in ("v3", "v4", "v1"):
-            p = f"/{ver}/accounts/{suf}"
-            if p not in paths:
-                paths.append(p)
-    return paths
+_KUVEYT_FX_CODES = ("USD", "EUR", "GBP", "CHF", "JPY")
+_KUVEYT_VPOS_ORDER_PATH = "/v1/vpos/getMerchantOrderDetail"
+_KUVEYT_VPOS_NON3D_PATH = "/v1/vpos/non3DPayment"
+
+
+def _kuveyt_business_error(data: Any) -> str:
+    """HTTP 200 + success:false is a Kuveyt business error, not transport OK."""
+    if not isinstance(data, dict):
+        return ""
+    success = data.get("success")
+    if success is False or str(success).lower() == "false":
+        msg = (
+            data.get("message")
+            or data.get("errorMessage")
+            or data.get("error")
+            or data.get("results")
+            or "success=false"
+        )
+        return str(msg)[:300]
+    return ""
+
+
+def _kuveyt_payload_rows(data: Any) -> List[Any]:
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+    for key in ("value", "values", "data", "result", "results", "fxRates", "items"):
+        v = data.get(key)
+        if isinstance(v, list):
+            return v
+        if isinstance(v, dict):
+            nested = _kuveyt_payload_rows(v)
+            if nested:
+                return nested
+    return []
+
+
+def _kuveyt_num(v: Any) -> Optional[float]:
+    if v is None or v == "":
+        return None
+    try:
+        return float(str(v).replace(",", ".").replace(" ", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_kuveyt_fx_payload(data: Any) -> Dict[str, dict]:
+    """GET /v1/fx/rates → TamKobi kur satırları (name, fxCode, buyRate, sellRate)."""
+    err = _kuveyt_business_error(data)
+    if err:
+        raise ValueError(f"Kuveyt FX: {err}")
+    rates: Dict[str, dict] = {}
+    for row in _kuveyt_payload_rows(data):
+        if not isinstance(row, dict):
+            continue
+        code = str(
+            row.get("fxCode") or row.get("FxCode") or row.get("currency") or ""
+        ).strip().upper()
+        if "/" in code:
+            code = code.split("/")[0].strip()
+        if code not in _KUVEYT_FX_CODES:
+            continue
+        buy = _kuveyt_num(row.get("buyRate") if row.get("buyRate") is not None else row.get("BuyRate"))
+        sell = _kuveyt_num(row.get("sellRate") if row.get("sellRate") is not None else row.get("SellRate"))
+        if buy is None and sell is None:
+            continue
+        unit = 1.0
+        per_raw = sell if sell is not None else buy or 0
+        if code == "JPY" and per_raw > 1:
+            unit = 100.0
+        per = (sell if sell is not None else buy or 0) / unit
+        rates[code] = {
+            "currency": code,
+            "unit": unit,
+            "buying": round((buy or 0) / unit, 6) if buy is not None else None,
+            "selling": round((sell or 0) / unit, 6) if sell is not None else None,
+            "rate": round(per, 6),
+            "name": str(row.get("name") or row.get("Name") or code).strip(),
+        }
+    return rates
+
+
+def _kuveyt_compact_json(obj: Any) -> str:
+    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+
+
+async def fetch_kuveyt_fx_rates(conn: dict) -> tuple:
+    """GET /v1/fx/rates (Hazine, public CC). Returns (iso_date, rates, url)."""
+    from datetime import date as date_cls
+
+    token = await _kuveyt_access_token(conn)
+    pem = _kuveyt_private_key_pem(conn)
+    if not pem:
+        raise RuntimeError("Kuveyt Türk kurları için RSA private key (PKCS8 PEM) gerekli.")
+    last = ""
+    async with httpx.AsyncClient(timeout=20) as client:
+        for base in _kuveyt_gateway_urls(conn):
+            url = f"{base}/v1/fx/rates"
+            headers = _kuveyt_headers(token, conn)
+            resp = await client.get(url, headers=headers)
+            last = f"GET {url} HTTP {resp.status_code}: {_api_error_detail(resp)}"
+            if resp.status_code == 404:
+                continue
+            if resp.status_code in (401, 403):
+                raise RuntimeError(f"Kuveyt Türk kur API yetki hatası. {last[:220]}")
+            if resp.status_code >= 400:
+                continue
+            try:
+                data = resp.json()
+            except Exception:
+                continue
+            try:
+                rates = parse_kuveyt_fx_payload(data)
+            except ValueError as e:
+                last = str(e)
+                continue
+            if rates:
+                return date_cls.today().isoformat(), rates, url
+            last = f"GET {url} HTTP {resp.status_code}: kur satırı yok"
+    raise RuntimeError(f"Kuveyt Türk kurları alınamadı. {last[:360]}")
+
+
+async def find_company_kuveyt_connection(db, company_id: str) -> Optional[dict]:
+    if db is None or not company_id:
+        return None
+    try:
+        conns = await db.bank_connections.find(
+            {"company_id": company_id, "provider": "kuveytturk"}
+        ).to_list(50)
+    except Exception:
+        return None
+    for c in conns or []:
+        if not _is_simulated(c) and has_credentials(c) and _kuveyt_private_key_pem(c):
+            return c
+    return None
+
+
+async def _kuveyt_post_signed(conn: dict, path: str, body: dict, *, token: Optional[str] = None) -> Any:
+    """Tek POST + RSA imza. Aynı URL tekrar denenmez (non3D kart çekimi güvenli)."""
+    tok = token or await _kuveyt_access_token(conn)
+    pem = _kuveyt_private_key_pem(conn)
+    if not pem:
+        raise RuntimeError("Kuveyt Türk VPOS için RSA private key (PKCS8 PEM) gerekli.")
+    raw = _kuveyt_compact_json(body)
+    last = ""
+    async with httpx.AsyncClient(timeout=30) as client:
+        for base in _kuveyt_gateway_urls(conn):
+            url = f"{base}{path}"
+            headers = _kuveyt_headers(tok, conn, json_body=raw)
+            resp = await client.post(url, content=raw.encode("utf-8"), headers=headers)
+            last = f"POST {url} HTTP {resp.status_code}: {_api_error_detail(resp)}"
+            if resp.status_code == 404:
+                continue
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Kuveyt Türk {path} hatası. {last[:360]}")
+            try:
+                data = resp.json()
+            except Exception:
+                raise RuntimeError(f"Kuveyt Türk {path} JSON değil. {last[:360]}")
+            err = _kuveyt_business_error(data)
+            if err:
+                raise RuntimeError(f"Kuveyt Türk {path}: {err}")
+            return data
+    raise RuntimeError(f"Kuveyt Türk {path} alınamadı. {last[:360]}")
+
+
+def _kuveyt_vpos_request_body(fields: dict) -> dict:
+    inner = {k: v for k, v in (fields or {}).items() if v not in (None, "")}
+    return {"request": inner}
+
+
+async def kuveyt_get_merchant_order_detail(conn: dict, request_fields: dict) -> Any:
+    """POST /v1/vpos/getMerchantOrderDetail — sipariş sorgu, kart çekmez."""
+    return await _kuveyt_post_signed(conn, _KUVEYT_VPOS_ORDER_PATH, _kuveyt_vpos_request_body(request_fields))
+
+
+async def kuveyt_non3d_payment(conn: dict, request_fields: dict, *, confirm_charge: bool = False) -> Any:
+    """POST /v1/vpos/non3DPayment kart çeker.
+
+    TamKobi probe/senkron/kur çekme bu fonksiyonu çağırmaz.
+    confirm_charge=True yalnızca açık bir ödeme akışında kullanılmalıdır.
+    """
+    if not confirm_charge:
+        raise RuntimeError(
+            "POST /v1/vpos/non3DPayment kart çeker. TamKobi bu uç noktayı otomatik çağırmaz; "
+            "confirm_charge=True yalnızca açık ödeme akışında kullanılır."
+        )
+    return await _kuveyt_post_signed(conn, _KUVEYT_VPOS_NON3D_PATH, _kuveyt_vpos_request_body(request_fields))
 
 
 def _enpara_dead_route(resp) -> bool:
@@ -2328,14 +2500,14 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
 
 
 async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, Any]:
-    """Postman Account Transaction v3: GET /v3/accounts/{ekNo}/transactions + RSA Signature.
+    """GET /v3/accounts/{ekNo}/transactions + RSA Signature (abonelikteki tek hareket ucu).
 
     Portal/Postman:
-      POST {prep-}identity/connect/token (client_credentials, Postman scope)
+      POST {prep-}identity/connect/token (client_credentials)
       GET  {prep-}gateway/v3/accounts/{suffix}/transactions
            Authorization: Bearer …  Signature: RSA-SHA256(token[+?query])
-           Opsiyonel query: beginDate, endDate, itemCount
-    Fallback: Account List V3 (yalnızca bakiye), ardından v4/v1 path’ler.
+           Opsiyonel query: beginDate, endDate
+    v4/v1 ve hesap listesi bu uygulamada abone değildir.
     """
     pem = _kuveyt_private_key_pem(conn)
     if not pem:
@@ -2355,16 +2527,20 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     saw_ok_empty = False
     detail = ""
 
-    # Postman v3: no-query first; then beginDate/endDate (itemCount opsiyonel, örnekte kapalı)
     ranges = [
         {},
         {"beginDate": start_d, "endDate": end_d},
     ]
     ek_list = _kuveyt_account_suffix_candidates(conn)
     paths = _kuveyt_tx_paths(conn)
+    if not paths:
+        raise RuntimeError(
+            "Kuveyt Türk hesap hareketi için ek no gerekli. "
+            "Düzenle → Hesap No/IBAN alanına ek no (örn. 6) veya IBAN girin. "
+            "Uç: GET /v3/accounts/{ekNo}/transactions."
+        )
 
     async with httpx.AsyncClient(timeout=45) as client:
-        # Postman disableCookies: Identity cookie’si Gateway’e taşınmasın
         client.cookies.clear()
 
         async def _get(gw: str, path: str, params: Optional[Dict[str, str]] = None):
@@ -2411,29 +2587,6 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
                     break
             if gw_auth:
                 break
-
-            if not gw_auth:
-                for acc_path in _kuveyt_account_list_paths(conn)[:4]:
-                    resp = await _get(gw, acc_path)
-                    detail = f"GET {gw}{acc_path} HTTP {resp.status_code}: {_api_error_detail(resp)}"
-                    if resp.status_code in (401, 403):
-                        saw_auth = True
-                        best_err = detail
-                        break
-                    if resp.status_code == 404:
-                        saw_404 = True
-                        continue
-                    if resp.status_code >= 400:
-                        best_err = best_err or detail
-                        continue
-                    try:
-                        data = resp.json()
-                    except Exception:
-                        continue
-                    bal = _extract_balance(data, prefer_iban=account)
-                    if bal is not None:
-                        balance = bal
-                        break
             if saw_ok_empty or balance is not None:
                 break
             if saw_auth:
@@ -2443,19 +2596,19 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
         return {"transactions": [], "balance": balance, "access_token": None}
 
     hint = " Client ID/Secret, PKCS8 PEM ve hesap ek no/IBAN’ı kontrol edin."
-    if saw_auth or (saw_404 and token_kind == "cc"):
+    if saw_auth:
         hint = (
-            " Hesap İşlem API’si müşteri yetkili token ister (Authorization Code + scope=accounts). "
-            "Bağlantı testi yalnızca client_credentials ile geçer; hareket için portalden müşteri "
-            "girişi sonrası Access Token (ve Refresh Token) alınarak Düzenle → Access Token alanına "
-            "yapıştırılmalı. Uygulamaya Accounts (V3) ürününün tanımlı olduğundan emin olun."
+            " GET /v3/accounts/{ekNo}/transactions yetki hatası. token scope=accounts "
+            "(client_credentials çoğu abonelikte yeter; gerekirse Access Token yapıştırın) "
+            "ve RSA Signature’ı kontrol edin."
         )
         if token_kind == "cc":
-            hint += " (Şu an client_credentials token kullanıldı — Postman Account Transaction v3 scope.)"
+            hint += " (Şu an client_credentials token kullanıldı.)"
     elif saw_404:
         hint = (
-            " Gateway 404: GET /v3/accounts/{ekNo}/transactions (Account Transaction v3) deneyin; "
-            "Hesap No’ya ek no (örn. 6) veya IBAN yazın — müşteri numarasını path’e koymayın."
+            " Gateway 404: yalnızca GET /v3/accounts/{ekNo}/transactions abonedir; "
+            "Hesap No’ya ek no (örn. 6) veya IBAN yazın — müşteri numarasını path’e koymayın. "
+            "v4/v1 ve hesap listesi bu uygulamada yok."
         )
     elif not account and not ek_list:
         hint = " Düzenle → Hesap No/IBAN alanına Kuveyt ek no veya IBAN girin."
