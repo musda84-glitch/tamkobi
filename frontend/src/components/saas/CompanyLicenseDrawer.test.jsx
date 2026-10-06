@@ -165,4 +165,5 @@ test("system company drawer hosts İşNet SOAP panel when provider is isnet", as
   expect(host.querySelector('[data-testid="isnet-mode-live"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="isnet-despatch-section"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="isnet-company-tax-id"]')).toBeNull();
+  expect(host.querySelector('[data-testid="isnet-quick-links"]')).toBeNull();
 });

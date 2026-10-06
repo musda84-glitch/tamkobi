@@ -6,12 +6,6 @@ import IsnetIntegrationPanel from "./IsnetIntegrationPanel";
 
 jest.mock("axios");
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
-jest.mock("react-router-dom", () => {
-  const React = require("react");
-  return {
-    Link: ({ to, children, ...rest }) => React.createElement("a", { href: typeof to === "string" ? to : "/", ...rest }, children),
-  };
-}, { virtual: true });
 
 const SETTINGS = {
   username: "apiuser",
@@ -90,6 +84,11 @@ test("system variant shows SOAP, vendor and despatch; omits company identity fie
   expect(host.querySelector('[data-testid="isnet-company-tax-id"]')).toBeNull();
   expect(host.querySelector('[data-testid="isnet-gib-alias"]')).toBeNull();
   expect(host.querySelector('[data-testid="isnet-username"]')).toBeNull();
+  expect(host.querySelector('[data-testid="isnet-quick-links"]')).toBeNull();
+  expect(host.querySelector('[data-testid="isnet-edoc-inbox-link"]')).toBeNull();
+  expect(host.querySelector('[data-testid="isnet-invoices-link"]')).toBeNull();
+  expect(host.textContent).not.toContain("Gelen e-Fatura");
+  expect(host.textContent).not.toContain("Giden e-İrsaliye");
   await act(async () => {
     host.querySelector('[data-testid="isnet-save-btn"]').click();
   });
