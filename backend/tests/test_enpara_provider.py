@@ -39,6 +39,7 @@ def test_providers_split_enpara_and_qnb():
     assert "/ticket" in hint
     assert "/list" in hint
     assert "METHOD NOT ALLOWED" in hint or "405" in hint
+    assert "364737" in hint or "zorunlu" in hint
 
 
 def _is_oauth_url(url) -> bool:
@@ -90,7 +91,7 @@ def test_normalize_tr_fields_and_dates():
 
 
 def test_enpara_probe_ok_with_access_token():
-    conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid"}
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid", "bank_account_number": "TR330011100000000000000001"}
 
     mock_resp = MagicMock()
     mock_resp.status_code = 200
@@ -115,6 +116,7 @@ def test_enpara_probe_ok_with_access_token():
     body = _json_body(kwargs)
     assert "startDateTime" in body
     assert "endDateTime" in body
+    assert body.get("iban") == "TR330011100000000000000001"
     assert "accountInfo" not in body
     assert kwargs["headers"]["Authorization"] == "Bearer tok123"
     assert kwargs["headers"]["Content-Type"] == "application/json"
@@ -122,7 +124,7 @@ def test_enpara_probe_ok_with_access_token():
 
 
 def test_enpara_probe_invalid_token():
-    conn = {"provider": "enpara", "mode": "live", "access_token": "bad"}
+    conn = {"provider": "enpara", "mode": "live", "access_token": "bad", "bank_account_number": "TR330011100000000000000001"}
 
     mock_resp = MagicMock()
     mock_resp.status_code = 401
@@ -292,6 +294,8 @@ def test_payload_variants_match_gravitee_schema():
     assert "accountInfo" not in first
     assert not any(isinstance(v, dict) for v in first.values())
     assert all("startDateTime" in p and "endDateTime" in p for p in variants)
+    assert all(p.get("iban") or p.get("accountNo") for p in variants)
+    assert not any(set(p) <= {"startDateTime", "endDateTime"} for p in variants)
 
 
 def test_iban_parts():
@@ -539,6 +543,7 @@ def test_enpara_probe_unexpired_jwt_access_denied_skips_refresh():
     conn = {
         "provider": "enpara", "mode": "live", "access_token": token,
         "client_id": "cid", "client_secret": "sec", "api_key": "gk-9",
+        "bank_account_number": "TR330011100000000000000001",
     }
     denied = MagicMock()
     denied.status_code = 401
@@ -714,7 +719,7 @@ def test_has_credentials_ignores_masked_placeholders():
 
 
 def test_enpara_probe_response_has_no_token_preview():
-    conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid"}
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid", "bank_account_number": "TR330011100000000000000001"}
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.text = "[]"
@@ -749,6 +754,7 @@ def test_frontend_bank_panel_does_not_call_enpara():
     assert "POST /v1/account-statement" in text
     assert "startDateTime" in text
     assert "GET /v1/account-statement" not in text
+    assert "364737" in text
 
 
 def test_server_mask_connection_hides_enpara_secrets():
@@ -866,7 +872,7 @@ def test_enpara_statement_200_empty_ok_when_list_405():
 
 
 def test_enpara_probe_statement_405_still_ok():
-    conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid"}
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok123", "client_id": "cid", "bank_account_number": "TR330011100000000000000001"}
     mock_resp = MagicMock()
     mock_resp.status_code = 405
     mock_resp.text = '{"errorMessage":"METHOD NOT ALLOWED"}'
@@ -1577,4 +1583,203 @@ def test_enpara_explicit_completed_empty_transactions_still_ok():
     assert bp._has_explicit_empty_tx_list({"status": "completed", "transactions": []}) is True
     assert bp._has_explicit_empty_tx_list({}) is False
     assert bp._has_explicit_empty_tx_list({"status": "SUCCESS", "ticketNo": "T9"}) is False
+
+
+def test_enpara_payload_variants_empty_without_account():
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    assert bp._enpara_payload_variants(start, end, "", "") == []
+    assert bp._enpara_payload_variants(start, end, "-", "") == []
+    assert bp._enpara_payload_variants(start, end, "TR00", "") == []
+    assert bp._enpara_payload_variants(start, end, "TR3300111", "") == []
+
+
+def test_apply_linked_account_number_copies_iban():
+    acc = {"iban": "TR33 0011 1000 0000 0000 0000 01"}
+    out = bp.apply_linked_account_number({"provider": "enpara"}, acc)
+    assert out["bank_account_number"] == "TR330011100000000000000001"
+    keep = bp.apply_linked_account_number(
+        {"provider": "enpara", "bank_account_number": "TR330011100000000000000001"},
+        {"iban": "TR990011100000000000000099"},
+    )
+    assert keep["bank_account_number"] == "TR330011100000000000000001"
+    dash = bp.apply_linked_account_number(
+        {"provider": "enpara", "bank_account_number": "-"},
+        acc,
+    )
+    assert dash["bank_account_number"] == "TR330011100000000000000001"
+    short = bp.apply_linked_account_number(
+        {"provider": "enpara", "bank_account_number": "TR00"},
+        acc,
+    )
+    assert short["bank_account_number"] == "TR330011100000000000000001"
+    skipped = bp.apply_linked_account_number(
+        {"provider": "enpara", "bank_account_number": "-"},
+        {"iban": "TR00"},
+    )
+    assert skipped.get("bank_account_number") == "-"
+
+
+def test_enpara_fetch_requires_iban_before_http():
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock()
+    mock_client.get = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, datetime.now(timezone.utc) - timedelta(days=1))
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "364737" in msg or "IBAN" in msg
+        assert "26" in msg
+    mock_client.post.assert_not_called()
+    mock_client.get.assert_not_called()
+
+
+def test_enpara_fetch_never_posts_dates_only():
+    """resultCode 364737: tarihler-only gövde gönderilmez."""
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    bodies = []
+
+    async def _post(url, **kwargs):
+        body = _json_body(kwargs)
+        if str(url).endswith("/account-statement") and "/ticket" not in str(url) and "/list" not in str(url):
+            bodies.append(body)
+            payload = {
+                "status": "completed",
+                "transactions": [
+                    {"transactionId": "Z1", "amount": 5, "direction": "credit", "description": "Gelen", "transactionDate": "2026-10-01"},
+                ],
+            }
+            r = MagicMock()
+            r.status_code = 200
+            r.text = json.dumps(payload)
+            r.headers = {"content-type": "application/json"}
+            r.json = MagicMock(return_value=payload)
+            return r
+        r = MagicMock()
+        r.status_code = 404
+        r.text = "{}"
+        r.json = MagicMock(return_value={})
+        return r
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.get = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    out = asyncio.run(_run())
+    assert out["transactions"]
+    assert bodies
+    for body in bodies:
+        assert body.get("iban") or body.get("accountNo")
+        assert set(body) - {"startDateTime", "endDateTime"}
+
+
+def test_enpara_probe_without_iban_fails_closed():
+    conn = {"provider": "enpara", "mode": "live", "access_token": "tok123"}
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.test_connection(conn)
+
+    out = asyncio.run(_run())
+    assert out["ok"] is False
+    assert "364737" in out["message"] or "IBAN" in out["message"]
+    mock_client.post.assert_not_called()
+
+
+def test_enpara_364737_reports_iban_in_keys():
+    """Bankanın 364737 cevabı tarihler-only varyantından gelmez; keys iban içerir."""
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    body = {
+        "resultCode": "364737",
+        "resultDescription": "Hesap numarası yada IBAN bilgisinden en az biri gönderilmelidir.",
+    }
+    bad = MagicMock()
+    bad.status_code = 200
+    bad.text = json.dumps(body)
+    bad.headers = {"content-type": "application/json"}
+    bad.json = MagicMock(return_value=body)
+    posted = []
+
+    async def _post(url, **kwargs):
+        posted.append(_json_body(kwargs))
+        return bad
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.get = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.fetch_transactions(conn, since)
+
+    try:
+        asyncio.run(_run())
+        assert False, "expected 364737"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "364737" in msg
+        assert "iban" in msg.lower()
+    assert posted
+    assert posted[0].get("iban") == "TR330011100000000000000001"
+    assert "startDateTime" in posted[0] and "endDateTime" in posted[0]
+    assert set(posted[0]) != {"startDateTime", "endDateTime"}
+
+
+def test_enpara_probe_364737_is_not_ok():
+    conn = {
+        "provider": "enpara", "mode": "live", "access_token": "tok123",
+        "bank_account_number": "TR330011100000000000000001",
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = '{"resultCode":"364737","resultDescription":"Hesap numarası yada IBAN bilgisinden en az biri gönderilmelidir."}'
+    mock_resp.json = MagicMock(return_value={
+        "resultCode": "364737",
+        "resultDescription": "Hesap numarası yada IBAN bilgisinden en az biri gönderilmelidir.",
+    })
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.get = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.test_connection(conn)
+
+    out = asyncio.run(_run())
+    assert out["ok"] is False
+    assert "364737" in out["message"]
+    body = _json_body(mock_client.post.await_args.kwargs)
+    assert body.get("iban") == "TR330011100000000000000001"
 

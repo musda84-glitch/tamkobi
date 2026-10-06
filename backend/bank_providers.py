@@ -47,7 +47,7 @@ PROVIDERS = {
         "token_path": "/securedomain/oauth/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
         "fields": ["access_token", "refresh_token", "client_id", "client_secret", "customer_number"],
-        "hint": "Hesap Hareketleri: POST /v1/account-statement JSON (startDateTime, endDateTime yyyy-MM-ddTHH:mm:ss+HH:mm; iban/accountNo opsiyonel). status=SUCCESS çoğu zaman ticket üretir — hareket GET/POST /ticket ile alınır; SUCCESS boş ekstre değildir. /list kayıtlı hesap bakiyesi. Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır. IBAN 26 hane. Production IP 85.95.240.136. HTTP 405 METHOD NOT ALLOWED IP engeli değildir.",
+        "hint": "Hesap Hareketleri: POST /v1/account-statement JSON (startDateTime, endDateTime yyyy-MM-ddTHH:mm:ss+HH:mm; iban 26 hane zorunlu — resultCode 364737). status=SUCCESS çoğu zaman ticket üretir — hareket GET/POST /ticket ile alınır; SUCCESS boş ekstre değildir. /list kayıtlı hesap bakiyesi. Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır. Production IP 85.95.240.136. HTTP 405 METHOD NOT ALLOWED IP engeli değildir.",
     },
     "qnb": {
         "name": "QNB Open Banking",
@@ -1491,10 +1491,9 @@ async def _enpara_probe(conn: dict) -> Dict[str, Any]:
     customer = (conn.get("customer_number") or "").strip()
     w_start, w_end = _enpara_day_windows(end, end)[-1]
     payloads = _enpara_payload_variants(w_start, w_end, account, customer)
-    body = payloads[0] if payloads else {
-        "startDateTime": f"{w_start:%Y-%m-%dT00:00:00}{_tr_offset(w_start)}",
-        "endDateTime": f"{w_end:%Y-%m-%dT23:59:59}{_tr_offset(w_end)}",
-    }
+    if not payloads:
+        raise RuntimeError(_ENPARA_MISSING_ACCOUNT)
+    body = payloads[0]
     del since
     async with httpx.AsyncClient(timeout=20) as client:
         resp = await client.post(f"{base}/v1/account-statement", headers=headers, json=body)
@@ -1519,6 +1518,12 @@ async def _enpara_probe(conn: dict) -> Dict[str, Any]:
                 probe_data = None
             res_err = _enpara_result_error(probe_data)
             if res_err:
+                if "364737" in res_err or _enpara_is_missing_account_error(res_err):
+                    raise RuntimeError(
+                        "Enpara IBAN veya hesap no istiyor (resultCode 364737). "
+                        "Düzenle → 26 haneli IBAN girin. "
+                        f"{res_err[:220]}"
+                    )
                 extra = f" Servis uyarısı: {res_err[:200]}"
     if token:
         conn["access_token"] = token
@@ -2065,7 +2070,51 @@ def _enpara_account_no(account: str) -> str:
     if iban:
         parts = _iban_parts(iban)
         return parts.get("accountNumber") or ""
+    if _is_iban(raw) or raw.startswith("TR"):
+        return ""
     return raw
+
+
+_ENPARA_MISSING_ACCOUNT = (
+    "Enpara hesap hareketi için IBAN veya hesap no zorunlu (resultCode 364737). "
+    "Düzenle → Hesap No/IBAN alanına 26 haneli Enpara IBAN’ını girin "
+    "(veya bağlı TamKobi hesabının IBAN’ını doldurun). "
+    "Yalnızca tarih gönderilmez."
+)
+
+
+def _enpara_has_statement_account(account: str) -> bool:
+    """Enpara 364737: iban (26) veya hesap no; yarım TR IBAN yetmez."""
+    if _enpara_iban_26(account):
+        return True
+    raw = (account or "").strip().replace(" ", "").upper()
+    if not raw or raw == "-" or raw.startswith("TR"):
+        return False
+    return bool(_enpara_account_no(raw))
+
+
+def _enpara_is_missing_account_error(text: str) -> bool:
+    blob = (text or "").lower()
+    return (
+        "364737" in blob
+        or "hesap numarası yada iban" in blob
+        or "iban bilgisinden en az biri" in blob
+    )
+
+
+def apply_linked_account_number(conn: dict, acc: Optional[dict] = None) -> dict:
+    """Bağlantıda kullanılabilir IBAN/hesap yoksa bağlı TamKobi hesabından kopyala."""
+    out = dict(conn or {})
+    if _enpara_has_statement_account(_enpara_account_ref(out)):
+        return out
+    if not acc:
+        return out
+    for key in ("iban", "account_number"):
+        linked = (acc.get(key) or "").strip().replace(" ", "").upper()
+        if _enpara_has_statement_account(linked):
+            out["bank_account_number"] = linked
+            return out
+    return out
 
 
 def _string_params(payload: Dict[str, Any]) -> Dict[str, str]:
@@ -2121,11 +2170,13 @@ def _enpara_day_windows(start: datetime, end: datetime, *, max_days: int = 31) -
 def _enpara_payload_variants(start: datetime, end: datetime, account: str, customer: str) -> List[Dict[str, Any]]:
     """QNB/Enpara Gravitee Account Statement + Account Transactions şeması.
 
-    Zorunlu: startDateTime, endDateTime (yyyy-MM-ddTHH:mm:ss+HH:mm).
-    Opsiyonel: iban (tam 26), accountNo (string).
+    Zorunlu: startDateTime, endDateTime (yyyy-MM-ddTHH:mm:ss+HH:mm)
+    ve iban (tam 26) veya accountNo. resultCode 364737: tarihler-only reddedilir.
     Nested object (accountInfo) JSON Schema'da yok — 400-1 'object' üretir.
     """
     del customer  # şemada yok; imza uyumu
+    if not _enpara_has_statement_account(account):
+        return []
     iban = _enpara_iban_26(account)
     acct_no = _enpara_account_no(account)
     try:
@@ -2158,9 +2209,8 @@ def _enpara_payload_variants(start: datetime, end: datetime, account: str, custo
             add({**base, "iban": iban, "accountNo": acct_no})
         if iban:
             add({**base, "iban": iban})
-        if acct_no:
+        if acct_no and not iban:
             add({**base, "accountNo": acct_no})
-        add(dict(base))
 
     seen = set()
     uniq = []
@@ -2235,7 +2285,7 @@ def _enpara_raise_auth(resp):
 async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]:
     """Enpara Hesap Hareketleri — production POST JSON; katalog GET iddiası yalnızca 405 yedek.
 
-    POST https://api.enpara.com/v1/account-statement  JSON {startDateTime, endDateTime, iban?, accountNo?}
+    POST https://api.enpara.com/v1/account-statement  JSON {startDateTime, endDateTime, iban|accountNo}
     GET  https://api.enpara.com/v1/account-statement/ticket?ticketNo=  (405 ise POST {ticketNo})
     POST https://api.enpara.com/v1/account-statement/list  JSON {} veya iban/tarih
     Abone olunmayan /v1/account-transactions/* çağrılmaz.
@@ -2243,11 +2293,13 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
     import asyncio
 
     stored_token = _plain_secret(conn, "access_token")
+    account = _enpara_account_ref(conn)
+    if not _enpara_has_statement_account(account):
+        raise RuntimeError(_ENPARA_MISSING_ACCOUNT)
     token = await _enpara_access_token(conn)
     base = _base_url(conn) or "https://api.enpara.com"
     post_headers = _enpara_headers(token, conn, for_get=False)
     get_headers = _enpara_headers(token, conn, for_get=True)
-    account = _enpara_account_ref(conn)
     customer = (conn.get("customer_number") or "").strip()
     end = datetime.now(timezone.utc)
     if (end - since).days > 30:
@@ -2355,6 +2407,11 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
                 last_detail = result_error
                 if result_error not in result_errors:
                     result_errors.append(result_error)
+                if _enpara_is_missing_account_error(res_err):
+                    raise RuntimeError(
+                        "Enpara hesap hareketi alınamadı. Servis isteği reddetti: "
+                        f"{result_error[:600]}"
+                    )
                 return None
             strict_tid = _ticket_id_from(data) or _ticket_from_headers(resp)
             candidates = _ticket_candidates(data)
