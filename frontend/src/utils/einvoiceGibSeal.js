@@ -9,3 +9,7 @@ export function gibSealCaption(kind) {
 export function gibSealAlt(kind) {
   return kind === "e_archive" ? "E-Arşiv Logo" : "E-Fatura Logo";
 }
+
+export function gibSealKindForBlock(id) {
+  return id === "gib_seal_archive" ? "e_archive" : "e_invoice";
+}

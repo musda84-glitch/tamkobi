@@ -1,4 +1,4 @@
-import { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption } from "./einvoiceGibSeal";
+import { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption, gibSealKindForBlock } from "./einvoiceGibSeal";
 
 test("official GIB seal is a JPEG data URL", () => {
   expect(GIB_SEAL_JPEG_DATA_URL.startsWith("data:image/jpeg;base64,/9j/")).toBe(true);
@@ -10,4 +10,6 @@ test("seal caption and alt follow document kind", () => {
   expect(gibSealCaption("e_archive")).toBe("e-Arşiv Fatura");
   expect(gibSealAlt("e_invoice")).toBe("E-Fatura Logo");
   expect(gibSealAlt("e_archive")).toBe("E-Arşiv Logo");
+  expect(gibSealKindForBlock("gib_seal_invoice")).toBe("e_invoice");
+  expect(gibSealKindForBlock("gib_seal_archive")).toBe("e_archive");
 });

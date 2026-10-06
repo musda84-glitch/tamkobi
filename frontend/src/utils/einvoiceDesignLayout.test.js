@@ -21,8 +21,11 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.blocks.find((b) => b.id === "customer").span).toBe(6);
   expect(L.blocks.find((b) => b.id === "invoice_no")).toBeUndefined();
   expect(L.blocks.find((b) => b.id === "order_no")).toBeUndefined();
-  expect(L.blocks.find((b) => b.id === "gib_seal").hidden).toBe(true);
-  expect(L.blocks.find((b) => b.id === "gib_seal").span).toBe(4);
+  expect(L.blocks.find((b) => b.id === "gib_seal")).toBeUndefined();
+  expect(L.blocks.find((b) => b.id === "gib_seal_invoice").hidden).toBe(true);
+  expect(L.blocks.find((b) => b.id === "gib_seal_invoice").span).toBe(4);
+  expect(L.blocks.find((b) => b.id === "gib_seal_archive").hidden).toBe(true);
+  expect(L.blocks.find((b) => b.id === "gib_seal_archive").span).toBe(4);
   expect(L.blocks.find((b) => b.id === "qr").hidden).toBe(true);
   expect(L.qrSize).toBe(96);
   expect(L.logoSize).toBe(72);
@@ -275,10 +278,27 @@ test("layoutToXslt includes optional totals rows", () => {
   expect(xslt).not.toMatch(/class="inv-k">Mal Hizmet Toplam Tutarı/);
 });
 
-test("layoutToXslt embeds GIB seal with kind caption when added", () => {
+test("legacy gib_seal maps to the matching e-Fatura or e-Arşiv seal", () => {
+  const invoice = normalizeLayout({
+    kind: "e_invoice",
+    blocks: [{ id: "gib_seal", hidden: false, span: 4 }],
+  });
+  expect(invoice.blocks.find((b) => b.id === "gib_seal")).toBeUndefined();
+  expect(invoice.blocks.find((b) => b.id === "gib_seal_invoice")).toEqual({ id: "gib_seal_invoice", hidden: false, span: 4 });
+  expect(invoice.blocks.find((b) => b.id === "gib_seal_archive").hidden).toBe(true);
+
+  const archive = normalizeLayout({
+    kind: "e_archive",
+    blocks: [{ id: "gib_seal", hidden: false, span: 6 }],
+  });
+  expect(archive.blocks.find((b) => b.id === "gib_seal_archive")).toEqual({ id: "gib_seal_archive", hidden: false, span: 6 });
+  expect(archive.blocks.find((b) => b.id === "gib_seal_invoice").hidden).toBe(true);
+});
+
+test("layoutToXslt embeds both GIB seals independently", () => {
   const invoice = layoutToXslt(normalizeLayout({
     kind: "e_invoice",
-    blocks: [{ id: "gib_seal" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
+    blocks: [{ id: "gib_seal_invoice" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
   }));
   expect(invoice).toContain("inv-gib-seal");
   expect(invoice).toContain("E-Fatura Logo");
@@ -288,11 +308,24 @@ test("layoutToXslt embeds GIB seal with kind caption when added", () => {
 
   const archive = layoutToXslt(normalizeLayout({
     kind: "e_archive",
-    blocks: [{ id: "gib_seal" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
+    blocks: [{ id: "gib_seal_archive" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
   }));
   expect(archive).toContain("E-Arşiv Logo");
   expect(archive).toContain("e-Arşiv Fatura");
   expect(archive).not.toContain("e-FATURA");
+
+  const both = layoutToXslt(normalizeLayout({
+    blocks: [
+      { id: "gib_seal_invoice", span: 4 },
+      { id: "gib_seal_archive", span: 4 },
+      { id: "header", hidden: true },
+      { id: "meta", hidden: true },
+      { id: "lines", hidden: true },
+      { id: "totals", hidden: true },
+    ],
+  }));
+  expect(both).toContain("e-FATURA");
+  expect(both).toContain("e-Arşiv Fatura");
 });
 
 test("layoutToXslt header is logo only without company title", () => {

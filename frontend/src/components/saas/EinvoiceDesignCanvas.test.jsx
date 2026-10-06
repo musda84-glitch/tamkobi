@@ -177,7 +177,8 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   expect(host.querySelector('[data-testid="einvoice-design-col-sku"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-col-show-sku"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-qr"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="einvoice-design-palette-gib_seal"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-gib_seal_invoice"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-gib_seal_archive"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-spacer"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-balance"]')).not.toBeNull();
 
@@ -223,13 +224,20 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   expect(host.querySelector('[data-testid="einvoice-design-block-balance"]')?.textContent).toContain("18.450,00 TL Borç");
 
   await act(async () => {
-    host.querySelector('[data-testid="einvoice-design-show-gib_seal"]').click();
+    host.querySelector('[data-testid="einvoice-design-show-gib_seal_invoice"]').click();
   });
-  const seal = host.querySelector('[data-testid="einvoice-design-gib-seal"]');
+  const seal = host.querySelector('[data-testid="einvoice-design-gib-seal-invoice"]');
   expect(seal).not.toBeNull();
   expect(seal?.textContent).toContain("e-FATURA");
   expect(seal?.querySelector("img")?.getAttribute("alt")).toBe("E-Fatura Logo");
   expect(seal?.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/jpeg;base64,/);
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-gib_seal_archive"]').click();
+  });
+  const archiveSeal = host.querySelector('[data-testid="einvoice-design-gib-seal-archive"]');
+  expect(archiveSeal).not.toBeNull();
+  expect(archiveSeal?.textContent).toContain("e-Arşiv Fatura");
+  expect(archiveSeal?.querySelector("img")?.getAttribute("alt")).toBe("E-Arşiv Logo");
 
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-show-spacer"]').click();
@@ -243,18 +251,18 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   expect(host.querySelector('[data-testid="einvoice-design-block-spacer"]').className).toContain("col-span-12");
 });
 
-test("GIB seal caption follows e-Arşiv kind", async () => {
+test("GIB e-Arşiv seal can be added next to e-Fatura seal", async () => {
   const root = createRoot(host);
   await act(async () => {
     root.render(
       <EinvoiceDesignCanvas
-        layout={normalizeLayout({ kind: "e_archive", blocks: [{ id: "gib_seal" }] }, "e_archive")}
+        layout={normalizeLayout({ kind: "e_archive", blocks: [{ id: "gib_seal_archive" }] }, "e_archive")}
         kind="e_archive"
         onChange={(n) => { last = n; }}
       />
     );
   });
-  const seal = host.querySelector('[data-testid="einvoice-design-gib-seal"]');
+  const seal = host.querySelector('[data-testid="einvoice-design-gib-seal-archive"]');
   expect(seal?.textContent).toContain("e-Arşiv Fatura");
   expect(seal?.querySelector("img")?.getAttribute("alt")).toBe("E-Arşiv Logo");
 });
