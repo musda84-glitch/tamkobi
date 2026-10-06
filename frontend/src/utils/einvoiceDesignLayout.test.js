@@ -26,6 +26,8 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.blocks.find((b) => b.id === "qr").hidden).toBe(true);
   expect(L.qrSize).toBe(96);
   expect(L.logoSize).toBe(72);
+  expect(L.blocks.find((b) => b.id === "spacer").hidden).toBe(true);
+  expect(L.blocks.find((b) => b.id === "spacer").span).toBe(4);
   expect(L.blocks.find((b) => b.id === "balance").hidden).toBe(true);
   expect(L.lineCols.find((c) => c.id === "sku").hidden).toBe(true);
   expect(L.lineCols.find((c) => c.id === "name").hidden).toBe(false);
@@ -141,7 +143,7 @@ test("layoutToXslt writes stylesheet, colors and skips hidden blocks", () => {
   expect(xslt).toContain("e-Arşiv Fatura");
   expect(xslt).not.toContain("Demo A.Ş.");
   expect(xslt).toContain("Mal / Hizmet");
-  expect(xslt).toContain("Fatura numarası");
+  expect(xslt).toContain("Belge numarası");
   expect(xslt).not.toContain("IBAN / ödeme");
   expect(xslt).not.toContain(">Notlar<");
   expect(xslt).not.toContain("GİB karekod");
@@ -203,7 +205,7 @@ test("layoutToXslt packs half-width blocks and emits invoice/order numbers in me
   expect(xslt).toContain('width="50%"');
   expect(xslt).toContain("SATICI");
   expect(xslt).toContain("ALICI");
-  expect(xslt).toContain("Fatura numarası");
+  expect(xslt).toContain("Belge numarası");
   expect(xslt).toContain("Fatura tarihi");
   expect(xslt).toContain("Düzenleme tarihi");
   expect(xslt).toContain("Düzenleme zamanı");
@@ -301,7 +303,7 @@ test("layoutToXslt stacks meta fields when block is 1/3", () => {
   }));
   expect(stacked).toContain('class="inv-meta inv-meta-stack"');
   expect(stacked).toContain(".inv-meta-stack td");
-  expect(stacked).toMatch(/<tr>\s*<td>[\s\S]*Fatura numarası[\s\S]*<\/tr>\s*<tr>[\s\S]*Düzenleme tarihi/);
+  expect(stacked).toMatch(/<tr>\s*<td>[\s\S]*Belge numarası[\s\S]*<\/tr>\s*<tr>[\s\S]*Düzenleme tarihi/);
 
   const full = layoutToXslt(defaultLayout("e_invoice"));
   expect(full).toContain('class="inv-meta"');
@@ -344,6 +346,24 @@ test("layoutToXslt header can include supplier name from UBL", () => {
   }));
   expect(xslt).toContain("inv-brand-name");
   expect(xslt).toContain("AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name");
+});
+
+test("layoutToXslt emits empty spacer block when added", () => {
+  const xslt = layoutToXslt(normalizeLayout({
+    blocks: [
+      { id: "spacer", span: 4 },
+      { id: "header", hidden: true },
+      { id: "supplier", hidden: true },
+      { id: "customer", hidden: true },
+      { id: "meta", hidden: true },
+      { id: "lines", hidden: true },
+      { id: "totals", hidden: true },
+      { id: "notes", hidden: true },
+      { id: "iban", hidden: true },
+    ],
+  }));
+  expect(xslt).toContain('class="inv-spacer"');
+  expect(xslt).toContain("width=\"33%\"");
 });
 
 test("xmlEscape encodes markup", () => {
