@@ -21,16 +21,21 @@ import httpx
 PROVIDERS = {
     "kuveytturk": {
         "name": "Kuveyt Türk API Market",
-        # 2026 OIDC discovery: prep-identity / identity (eski idprep/id zaman aşımı).
-        # Token path: /connect/token (eski /api/connect/token yeni host’ta 404).
+        # Gravitee 2026: prep-identity|identity /connect/token + prep-gateway|gateway.
+        # iuysal/kuveytturk SDK: idprep|id /api/connect/token + apitest.../prep | api.kuveytturk.com.tr
         "sandbox_url": "https://prep-gateway.kuveytturk.com.tr",
         "live_url": "https://gateway.kuveytturk.com.tr",
         "identity_sandbox_url": "https://prep-identity.kuveytturk.com.tr",
         "identity_live_url": "https://identity.kuveytturk.com.tr",
         "token_path": "/connect/token",
+        "legacy_sandbox_url": "https://apitest.kuveytturk.com.tr/prep",
+        "legacy_live_url": "https://api.kuveytturk.com.tr",
+        "legacy_identity_sandbox_url": "https://idprep.kuveytturk.com.tr",
+        "legacy_identity_live_url": "https://id.kuveytturk.com.tr",
+        "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
-        "hint": "API Market: Müşteri Id/Secret + Api Anahtarı + RSA-SHA256 PEM. Bağlantı testi client_credentials (scope=public). Hesap hareketi (Postman Account Transaction v3): GET /v3/accounts/{ekNo}/transactions (+ RSA Signature; token scope=public loans accounts transfers cards digital_payments). Liste: GET /v3/accounts. Müşteri yetkili Access Token (Authorization Code + accounts) önerilir. Sandbox: prep-gateway / prep-identity; Canlı: gateway / identity.",
+        "hint": "API Market: Müşteri Id/Secret + Api Anahtarı + RSA-SHA256 PEM. Token: client_credentials scope=public — önce Gravitee Identity (prep-identity|identity /connect/token), olmazsa iuysal SDK (idprep|id /api/connect/token). Hareket: GET /v3/accounts/{ekNo}/transactions + Signature. Liste: GET /v1/accounts/{suffix?} (authorization code + accounts). Sandbox gateway: prep-gateway, yedek apitest.kuveytturk.com.tr/prep.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -203,47 +208,102 @@ def _kuveyt_normalize_mode(conn: dict) -> str:
     return "sandbox"
 
 
+_KUVEYT_GRAVITEE_ID_HOSTS = ("prep-identity.kuveytturk.com.tr", "identity.kuveytturk.com.tr")
+_KUVEYT_SDK_ID_HOSTS = ("idprep.kuveytturk.com.tr", "id.kuveytturk.com.tr")
+
+
 def _kuveyt_identity_host(conn: dict) -> str:
     meta = PROVIDERS["kuveytturk"]
     live = _kuveyt_normalize_mode(conn) == "live"
     return (meta["identity_live_url"] if live else meta["identity_sandbox_url"]).rstrip("/")
 
 
-def _kuveyt_alt_identity_host(conn: dict) -> str:
-    """Seçili ortamın tersi — invalid_client’ta ortam/kimlik uyumsuzluğunu teşhis için."""
+def _kuveyt_sdk_identity_host(conn: dict) -> str:
+    """iuysal/kuveytturk + Android SDK Identity (idprep / id)."""
     meta = PROVIDERS["kuveytturk"]
     live = _kuveyt_normalize_mode(conn) == "live"
-    return (meta["identity_sandbox_url"] if live else meta["identity_live_url"]).rstrip("/")
+    return (meta["legacy_identity_live_url"] if live else meta["legacy_identity_sandbox_url"]).rstrip("/")
 
 
 def _kuveyt_token_path() -> str:
     return PROVIDERS["kuveytturk"].get("token_path") or "/connect/token"
 
 
+def _kuveyt_sdk_token_path() -> str:
+    return PROVIDERS["kuveytturk"].get("legacy_token_path") or "/api/connect/token"
+
+
+def _kuveyt_host_from_url(url: str) -> str:
+    u = (url or "").strip().lower()
+    if "://" in u:
+        u = u.split("://", 1)[1]
+    return u.split("/", 1)[0]
+
+
 def _kuveyt_normalize_token_url(url: str) -> str:
-    """Yeni Identity /connect/token; eski /api/connect/token → /connect/token."""
+    """Host’a göre path: Gravitee /connect/token; iuysal SDK /api/connect/token."""
     u = (url or "").strip().rstrip("/")
     if not u:
         return ""
-    if u.endswith("/api/connect/token"):
-        return u[: -len("/api/connect/token")] + "/connect/token"
-    if u.endswith("/connect/token"):
+    host = _kuveyt_host_from_url(u)
+    if host in _KUVEYT_SDK_ID_HOSTS:
+        base = u
+        for suf in ("/api/connect/token", "/connect/token"):
+            if base.endswith(suf):
+                base = base[: -len(suf)]
+                break
+        return base.rstrip("/") + _kuveyt_sdk_token_path()
+    if host in _KUVEYT_GRAVITEE_ID_HOSTS:
+        base = u
+        for suf in ("/api/connect/token", "/connect/token"):
+            if base.endswith(suf):
+                base = base[: -len(suf)]
+                break
+        return base.rstrip("/") + _kuveyt_token_path()
+    if u.endswith("/api/connect/token") or u.endswith("/connect/token"):
         return u
     return u + _kuveyt_token_path()
 
 
 def _kuveyt_token_urls(conn: dict) -> List[str]:
-    """OIDC discovery (2026): POST {prep-identity|identity}/connect/token."""
+    """Gravitee Identity önce; iuysal SDK (idprep|id /api/connect/token) yedek."""
     urls: List[str] = []
     custom = (conn.get("token_url") or "").strip()
     if custom:
         urls.append(_kuveyt_normalize_token_url(custom))
-    host = _kuveyt_identity_host(conn)
-    urls.append(host.rstrip("/") + _kuveyt_token_path())
+    urls.append(_kuveyt_identity_host(conn).rstrip("/") + _kuveyt_token_path())
+    urls.append(_kuveyt_sdk_identity_host(conn).rstrip("/") + _kuveyt_sdk_token_path())
     seen = set()
     out = []
     for u in urls:
         if u in seen:
+            continue
+        seen.add(u)
+        out.append(u)
+    return out
+
+
+def _kuveyt_alt_token_urls(conn: dict) -> List[str]:
+    """Karşı ortam (Canlı↔Sandbox) hem Gravitee hem SDK Identity."""
+    flipped = dict(conn)
+    flipped["mode"] = "sandbox" if _kuveyt_normalize_mode(conn) == "live" else "live"
+    flipped.pop("token_url", None)
+    return _kuveyt_token_urls(flipped)
+
+
+def _kuveyt_gateway_urls(conn: dict) -> List[str]:
+    """Gravitee gateway önce; iuysal SDK apitest.../prep (veya api.kuveytturk.com.tr) yedek."""
+    urls: List[str] = []
+    if conn.get("base_url"):
+        urls.append(str(conn.get("base_url")).rstrip("/"))
+    meta = PROVIDERS["kuveytturk"]
+    live = _kuveyt_normalize_mode(conn) == "live"
+    urls.append((meta["live_url"] if live else meta["sandbox_url"]).rstrip("/"))
+    urls.append((meta["legacy_live_url"] if live else meta["legacy_sandbox_url"]).rstrip("/"))
+    seen = set()
+    out = []
+    for u in urls:
+        if not u or u in seen:
             continue
         seen.add(u)
         out.append(u)
@@ -568,12 +628,14 @@ def _kuveyt_tx_scope_candidates(conn: dict) -> List[str]:
     return out
 
 
-def _kuveyt_token_auth_attempts(client_id: str, client_secret: str, scope: str) -> List[Dict[str, Any]]:
-    """OIDC: client_secret_post önce; discovery ayrıca client_secret_basic destekliyor."""
+def _kuveyt_token_auth_attempts(
+    client_id: str, client_secret: str, scope: str, url: str = ""
+) -> List[Dict[str, Any]]:
+    """OIDC: client_secret_post önce. Gravitee client_secret_basic dener; iuysal SDK yalnızca body."""
     form_base: Dict[str, str] = {"grant_type": "client_credentials"}
     if scope:
         form_base["scope"] = scope
-    return [
+    attempts: List[Dict[str, Any]] = [
         {
             "data": {**form_base, "client_id": client_id, "client_secret": client_secret},
             "headers": {
@@ -582,16 +644,21 @@ def _kuveyt_token_auth_attempts(client_id: str, client_secret: str, scope: str) 
             },
             "label": "body",
         },
-        {
-            "data": {**form_base},
-            "headers": {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-                "Authorization": _basic_auth_header(client_id, client_secret),
-            },
-            "label": "basic",
-        },
     ]
+    host = _kuveyt_host_from_url(url)
+    if host not in _KUVEYT_SDK_ID_HOSTS:
+        attempts.append(
+            {
+                "data": {**form_base},
+                "headers": {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                    "Authorization": _basic_auth_header(client_id, client_secret),
+                },
+                "label": "basic",
+            }
+        )
+    return attempts
 
 
 _KUVEYT_UUID_RE = re.compile(
@@ -650,7 +717,7 @@ async def _kuveyt_post_token(
     scope: str,
 ) -> tuple[Optional[str], Optional[str], int]:
     """Returns (access_token | None, error_text | None, status_code)."""
-    attempts = _kuveyt_token_auth_attempts(client_id, client_secret, scope)
+    attempts = _kuveyt_token_auth_attempts(client_id, client_secret, scope, url)
     last_err = None
     last_code = 0
     for attempt in attempts:
@@ -685,12 +752,10 @@ async def _kuveyt_post_token(
 
 
 async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -> str:
-    """Kuveyt Identity (2026 OIDC): POST {prep-identity|identity}/connect/token.
+    """Token: Gravitee /connect/token, sonra iuysal SDK idprep|id /api/connect/token.
 
-    - Discovery: /connect/token (eski /api/connect/token yeni host’ta 404).
-    - Auth: client_secret_post önce, sonra client_secret_basic.
-    - invalid_client → yanlış secret veya Canlı/Sandbox kimlik karışması.
-    - scopes: verilirse (hareket için Postman v3 listesi) o sırayla dene; yoksa public önce.
+    invalid_client bir host’ta diğer Identity ailesini durdurmaz (farklı OAuth sunucuları).
+    404/HTML’de bir sonraki host denenir.
     """
     client_id = _kuveyt_normalize_secret(_plain_secret(conn, "client_id"))
     client_secret = _kuveyt_normalize_secret(_plain_secret(conn, "client_secret"))
@@ -705,51 +770,52 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
     last_err = "Token uç noktası yanıt vermedi."
     primary_err = ""
     saw_invalid_client = False
+    tried_urls: List[str] = []
     scope_list = list(scopes) if scopes is not None else _kuveyt_scope_candidates(conn)
     async with httpx.AsyncClient(timeout=25) as client:
         for url in _kuveyt_token_urls(conn):
-            stop_scopes = False
+            tried_urls.append(url)
             for scope in scope_list:
-                if stop_scopes:
-                    break
                 token, err, code = await _kuveyt_post_token(client, url, client_id, client_secret, scope)
                 if token:
                     return token
                 if err:
                     last_err = err
                     blob = err.lower()
-                    if "invalid_client" in blob:
-                        saw_invalid_client = True
-                        primary_err = err
-                        stop_scopes = True
-                        break
                     if not primary_err:
                         primary_err = err
+                    if "invalid_client" in blob:
+                        saw_invalid_client = True
+                        break
                     if code == 404 or "html" in blob:
                         break
-            if saw_invalid_client:
-                break
 
-        # Ortam uyumsuzluğu teşhisi: aynı kimlik diğer Identity host’ta çalışıyor mu?
         alt_hint = ""
         if saw_invalid_client:
-            alt_host = _kuveyt_alt_identity_host(conn)
-            alt_url = alt_host.rstrip("/") + _kuveyt_token_path()
-            alt_token, alt_err, _ = await _kuveyt_post_token(
-                client, alt_url, client_id, client_secret, "public"
-            )
-            if alt_token:
-                other = "Sandbox (prep-identity)" if mode == "live" else "Canlı (identity)"
-                current = "Canlı" if mode == "live" else "Sandbox"
-                alt_hint = (
-                    f" Teşhis: aynı Müşteri Id/Secret {other} Identity’de token aldı, "
-                    f"ama bağlantı modu={current}. Portalden {current} uygulama kimliklerini "
-                    f"kopyalayın veya bağlantı modunu {other.split()[0]} yapın. "
+            alt_ok = False
+            alt_also_invalid = False
+            for alt_url in _kuveyt_alt_token_urls(conn):
+                if alt_url in tried_urls:
+                    continue
+                alt_token, alt_err, _ = await _kuveyt_post_token(
+                    client, alt_url, client_id, client_secret, "public"
                 )
-            elif alt_err and "invalid_client" in alt_err.lower():
+                if alt_token:
+                    alt_ok = True
+                    other = "Sandbox" if mode == "live" else "Canlı"
+                    current = "Canlı" if mode == "live" else "Sandbox"
+                    alt_hint = (
+                        f" Teşhis: aynı Müşteri Id/Secret {other} Identity’de token aldı "
+                        f"({alt_url}), ama bağlantı modu={current}. Portalden {current} "
+                        f"uygulama kimliklerini kopyalayın veya bağlantı modunu {other} yapın. "
+                    )
+                    break
+                if alt_err and "invalid_client" in alt_err.lower():
+                    alt_also_invalid = True
+            if not alt_ok and alt_also_invalid:
                 alt_hint = (
-                    " Teşhis: hem Canlı (identity) hem Sandbox (prep-identity) invalid_client "
-                    "döndü — Müşteri Id / Client Secret portaldeki değerlerle eşleşmiyor. "
+                    " Teşhis: hem Canlı hem Sandbox Identity (Gravitee ve idprep/id) "
+                    "invalid_client döndü — Müşteri Id / Client Secret portaldeki değerlerle eşleşmiyor. "
                 )
 
     detail = primary_err or last_err
@@ -783,8 +849,9 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
         "Kuveyt Türk token alınamadı (Identity Server client_credentials)."
         f"{hint}"
         f"Mod={mode}; {fp}. "
-        "Resmi uç: POST …/connect/token (body: grant_type, client_id, client_secret, scope=public). "
-        f"(sandbox: prep-identity.kuveytturk.com.tr / canlı: identity.kuveytturk.com.tr). ({detail[:220]})"
+        "Token: POST Gravitee …/connect/token veya iuysal SDK …/api/connect/token "
+        "(body: grant_type, client_id, client_secret, scope=public). "
+        f"(sandbox: prep-identity + idprep.kuveytturk.com.tr / canlı: identity + id.kuveytturk.com.tr). ({detail[:220]})"
     )
 
 
@@ -845,29 +912,35 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
     pem = _kuveyt_private_key_pem(conn)
     mode = _kuveyt_normalize_mode(conn)
     extra = " RSA-SHA256 imza anahtarı yok — hesap hareketi için PKCS8 PEM gerekli."
+    identity_used = _kuveyt_identity_host(conn)
     if pem:
-        base = _base_url(conn)
         headers = _kuveyt_headers(token, conn)
+        last_probe = ""
         async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(f"{base}/v1/data/banks", headers=headers)
-            if resp.status_code in (401, 403):
-                detail = _api_error_detail(resp)
-                blob = f"{detail} {getattr(resp, 'text', '') or ''}".lower()
-                if "sign" in blob or "imza" in blob or resp.status_code == 401:
-                    raise RuntimeError(
-                        f"Kuveyt Türk imza/yetki hatası (HTTP {resp.status_code}). "
-                        "PKCS8 PEM private key ve Signature başlığını kontrol edin. "
-                        f"{detail[:160]}"
-                    )
-            extra = " RSA-SHA256 Signature doğrulandı." if resp.status_code < 400 else ""
+            for base in _kuveyt_gateway_urls(conn):
+                resp = await client.get(f"{base}/v1/data/banks", headers=headers)
+                last_probe = f"{base}/v1/data/banks HTTP {resp.status_code}"
+                if resp.status_code in (401, 403):
+                    detail = _api_error_detail(resp)
+                    blob = f"{detail} {getattr(resp, 'text', '') or ''}".lower()
+                    if "sign" in blob or "imza" in blob or resp.status_code == 401:
+                        raise RuntimeError(
+                            f"Kuveyt Türk imza/yetki hatası (HTTP {resp.status_code}). "
+                            "PKCS8 PEM private key ve Signature başlığını kontrol edin. "
+                            f"{detail[:160]}"
+                        )
+                if resp.status_code == 404:
+                    continue
+                extra = " RSA-SHA256 Signature doğrulandı." if resp.status_code < 400 else f" ({last_probe})"
+                break
     return {
         "ok": True,
         "simulated": False,
         "mode": mode,
-        "identity_host": _kuveyt_identity_host(conn),
+        "identity_host": identity_used,
         "message": (
             f"Kuveyt Türk Identity Server client_credentials doğrulandı "
-            f"(mod={mode}, {_kuveyt_identity_host(conn)}).{extra}"
+            f"(mod={mode}, Gravitee {identity_used} / SDK {_kuveyt_sdk_identity_host(conn)}).{extra}"
         ),
     }
 
@@ -2271,7 +2344,7 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
             "Developer portalındaki imza anahtarını Düzenle ekranına yapıştırın."
         )
     token, token_kind = await _kuveyt_account_bearer(conn)
-    base = _base_url(conn)
+    bases = _kuveyt_gateway_urls(conn)
     account = (conn.get("bank_account_number") or "").strip().replace(" ", "")
     end = datetime.now(timezone.utc)
     start_d, end_d = since.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
@@ -2294,70 +2367,77 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
         # Postman disableCookies: Identity cookie’si Gateway’e taşınmasın
         client.cookies.clear()
 
-        async def _get(path: str, params: Optional[Dict[str, str]] = None):
+        async def _get(gw: str, path: str, params: Optional[Dict[str, str]] = None):
             client.cookies.clear()
             qs_params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
             headers = _kuveyt_headers(token, conn, params=qs_params or None)
-            url = f"{base}{path}" + _kuveyt_query_string(qs_params)
+            url = f"{gw}{path}" + _kuveyt_query_string(qs_params)
             return await client.get(url, headers=headers)
 
-        # Postman v3 önce: GET /v3/accounts/{ekNo}/transactions
-        for path in paths:
-            for params in ranges:
-                resp = await _get(path, params)
-                qs_label = ",".join(f"{k}={v}" for k, v in params.items()) or "no-query"
-                detail = (
-                    f"GET {path} HTTP {resp.status_code} "
-                    f"({qs_label}): {_api_error_detail(resp)}"
-                )
-                if resp.status_code in (401, 403):
-                    saw_auth = True
-                    best_err = detail
-                    break
-                if resp.status_code == 404:
-                    saw_404 = True
-                    if not best_err or "404" in best_err:
+        for gw in bases:
+            gw_auth = False
+            for path in paths:
+                for params in ranges:
+                    resp = await _get(gw, path, params)
+                    qs_label = ",".join(f"{k}={v}" for k, v in params.items()) or "no-query"
+                    detail = (
+                        f"GET {gw}{path} HTTP {resp.status_code} "
+                        f"({qs_label}): {_api_error_detail(resp)}"
+                    )
+                    if resp.status_code in (401, 403):
+                        saw_auth = True
+                        gw_auth = True
                         best_err = detail
-                    continue
-                if resp.status_code >= 400:
-                    best_err = detail
-                    continue
-                try:
-                    data = resp.json()
-                except Exception:
-                    continue
-                bal = _extract_balance(data, prefer_iban=account)
-                if bal is not None:
-                    balance = bal
-                rows = _normalize_tx_rows(data)
-                saw_ok_empty = True
-                return {"transactions": rows or [], "balance": balance, "access_token": None}
-            if saw_auth:
+                        break
+                    if resp.status_code == 404:
+                        saw_404 = True
+                        if not best_err or "404" in best_err:
+                            best_err = detail
+                        continue
+                    if resp.status_code >= 400:
+                        best_err = detail
+                        continue
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        continue
+                    bal = _extract_balance(data, prefer_iban=account)
+                    if bal is not None:
+                        balance = bal
+                    rows = _normalize_tx_rows(data)
+                    saw_ok_empty = True
+                    return {"transactions": rows or [], "balance": balance, "access_token": None}
+                if gw_auth:
+                    break
+            if gw_auth:
                 break
 
-        # Bakiye için Account List V3 (hareket uydurma / erken return yok)
-        if not saw_auth:
-            for acc_path in _kuveyt_account_list_paths(conn)[:4]:
-                resp = await _get(acc_path)
-                detail = f"GET {acc_path} HTTP {resp.status_code}: {_api_error_detail(resp)}"
-                if resp.status_code in (401, 403):
-                    saw_auth = True
-                    best_err = detail
-                    break
-                if resp.status_code == 404:
-                    saw_404 = True
-                    continue
-                if resp.status_code >= 400:
-                    best_err = best_err or detail
-                    continue
-                try:
-                    data = resp.json()
-                except Exception:
-                    continue
-                bal = _extract_balance(data, prefer_iban=account)
-                if bal is not None:
-                    balance = bal
-                    break
+            if not gw_auth:
+                for acc_path in _kuveyt_account_list_paths(conn)[:4]:
+                    resp = await _get(gw, acc_path)
+                    detail = f"GET {gw}{acc_path} HTTP {resp.status_code}: {_api_error_detail(resp)}"
+                    if resp.status_code in (401, 403):
+                        saw_auth = True
+                        best_err = detail
+                        break
+                    if resp.status_code == 404:
+                        saw_404 = True
+                        continue
+                    if resp.status_code >= 400:
+                        best_err = best_err or detail
+                        continue
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        continue
+                    bal = _extract_balance(data, prefer_iban=account)
+                    if bal is not None:
+                        balance = bal
+                        break
+            if saw_ok_empty or balance is not None:
+                break
+            if saw_auth:
+                break
 
     if saw_ok_empty or balance is not None:
         return {"transactions": [], "balance": balance, "access_token": None}
