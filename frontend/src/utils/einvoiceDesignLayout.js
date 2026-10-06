@@ -83,26 +83,32 @@ export const META_FIELD_LABELS = {
 
 const META_FIELD_HIDDEN_BY_DEFAULT = { order_no: true };
 
-export const TOTAL_ROW_IDS = ["subtotal", "allowance", "exemption", "kdv", "tevkifat", "grand"];
+export const TOTAL_ROW_IDS = [
+  "subtotal", "allowance", "matrah", "kdv", "tevkifat", "inclusive", "grand", "exemption",
+];
 
 export const TOTAL_ROW_LABELS = {
-  subtotal: "Mal hizmet toplam",
-  allowance: "İskonto",
+  subtotal: "Mal Hizmet Toplam Tutarı",
+  allowance: "Toplam İskonto",
+  matrah: "KDV Matrahı",
+  kdv: "Hesaplanan (%20)",
+  tevkifat: "Hesaplanan KDV Tevkifat",
+  inclusive: "Vergiler Dahil Toplam Tutar",
+  grand: "Ödenecek Tutar",
   exemption: "İstisna",
-  kdv: "KDV",
-  tevkifat: "Tevkifat",
-  grand: "Ödenecek tutar",
 };
 
-const TOTAL_ROW_HIDDEN_BY_DEFAULT = { allowance: true, exemption: true, tevkifat: true };
+const TOTAL_ROW_HIDDEN_BY_DEFAULT = { tevkifat: true, exemption: true };
 
 export const TOTAL_ROW_SAMPLE_KEY = {
   subtotal: "subtotal",
   allowance: "discount",
-  exemption: "exemption",
+  matrah: "matrah",
   kdv: "vat",
   tevkifat: "withholding",
+  inclusive: "inclusive",
   grand: "grand",
+  exemption: "exemption",
 };
 
 export const FONT_OPTIONS = [
@@ -334,9 +340,11 @@ export const SAMPLE_INVOICE = {
   ],
   subtotal: "13.000,00",
   discount: "300,00",
+  matrah: "13.000,00",
   exemption: "0,00",
   vat: "2.600,00",
   withholding: "1.300,00",
+  inclusive: "15.600,00",
   grand: "15.600,00",
   balance: "18.450,00 TL Borç",
   notes: ["İşbu belge elektronik olarak düzenlenmiştir."],
@@ -419,9 +427,11 @@ function xsltTotalsTable(L) {
   const map = {
     subtotal: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.subtotal)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:LineExtensionAmount"/></td></tr>`,
     allowance: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.allowance)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:AllowanceTotalAmount"/></td></tr>`,
+    matrah: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.matrah)}</td><td align="right"><xsl:choose><xsl:when test="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:TaxTypeCode='0015']/cbc:TaxableAmount"><xsl:value-of select="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:TaxTypeCode='0015']/cbc:TaxableAmount"/></xsl:when><xsl:otherwise><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount"/></xsl:otherwise></xsl:choose></td></tr>`,
     exemption: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.exemption)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cbc:TaxExemptionReason or cac:TaxCategory/cbc:TaxExemptionReasonCode]/cbc:TaxableAmount"/></td></tr>`,
-    kdv: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.kdv)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:TaxTotal/cbc:TaxAmount"/></td></tr>`,
+    kdv: `<xsl:for-each select="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal"><tr><td class="inv-k">Hesaplanan (%<xsl:value-of select="cbc:Percent"/>)</td><td align="right"><xsl:value-of select="cbc:TaxAmount"/></td></tr></xsl:for-each>`,
     tevkifat: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.tevkifat)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:WithholdingTaxTotal/cbc:TaxAmount"/></td></tr>`,
+    inclusive: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.inclusive)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount"/></td></tr>`,
     grand: `<tr class="inv-grand"><td>${xmlEscape(TOTAL_ROW_LABELS.grand)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount"/></td></tr>`,
   };
   return `

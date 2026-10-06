@@ -52,7 +52,13 @@ test("renders preview blocks and can hide then restore from palette", async () =
   expect(host.querySelector('[data-testid="einvoice-design-block-lines"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-iban"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-meta-order_no"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="einvoice-design-palette-total-allowance"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-total-exemption"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("Mal Hizmet Toplam Tutarı");
+  expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("Toplam İskonto");
+  expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("KDV Matrahı");
+  expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("Hesaplanan (%20)");
+  expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("Vergiler Dahil Toplam Tutar");
+  expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("Ödenecek Tutar");
 
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-hide-iban"]').click();
@@ -122,20 +128,21 @@ test("span buttons, order number and extra totals", async () => {
   expect(meta).toContain("Fatura numarası");
   expect(meta).toContain("Tarih");
   await act(async () => {
-    host.querySelector('[data-testid="einvoice-design-show-total-allowance"]').click();
-  });
-  await act(async () => {
     host.querySelector('[data-testid="einvoice-design-show-total-exemption"]').click();
   });
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-show-total-tevkifat"]').click();
   });
   const totals = host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent || "";
-  expect(totals).toContain("İskonto");
+  expect(totals).toContain("Toplam İskonto");
+  expect(totals).toContain("KDV Matrahı");
+  expect(totals).toContain("Hesaplanan (%20)");
+  expect(totals).toContain("Vergiler Dahil Toplam Tutar");
   expect(totals).toContain("İstisna");
-  expect(totals).toContain("Tevkifat");
-  expect(totals).toContain("KDV");
+  expect(totals).toContain("Hesaplanan KDV Tevkifat");
+  expect(totals).toContain("Ödenecek Tutar");
   expect(totals).toContain("300,00");
+  expect(totals).toContain("15.600,00");
 });
 
 test("adds stock, vat and GIB QR fields from palette", async () => {

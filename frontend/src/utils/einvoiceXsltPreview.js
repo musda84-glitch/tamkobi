@@ -42,11 +42,18 @@ export const SAMPLE_UBL_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </cac:Party></cac:AccountingCustomerParty>
   <cac:PaymentMeans><cac:PayeeFinancialAccount><cbc:ID>TR12 ACCT-000009 0000 01</cbc:ID><cbc:Name>Örnek Banka</cbc:Name></cac:PayeeFinancialAccount></cac:PaymentMeans>
   <cac:TaxTotal><cbc:TaxAmount currencyID="TRY">2600.00</cbc:TaxAmount>
-    <cac:TaxSubtotal><cbc:Percent>20</cbc:Percent><cac:TaxCategory><cbc:Percent>20</cbc:Percent><cac:TaxScheme><cbc:TaxTypeCode>0015</cbc:TaxTypeCode></cac:TaxScheme></cac:TaxCategory></cac:TaxSubtotal>
+    <cac:TaxSubtotal>
+      <cbc:TaxableAmount currencyID="TRY">13000.00</cbc:TaxableAmount>
+      <cbc:TaxAmount currencyID="TRY">2600.00</cbc:TaxAmount>
+      <cbc:Percent>20</cbc:Percent>
+      <cac:TaxCategory><cbc:Percent>20</cbc:Percent><cac:TaxScheme><cbc:Name>KDV</cbc:Name><cbc:TaxTypeCode>0015</cbc:TaxTypeCode></cac:TaxScheme></cac:TaxCategory>
+    </cac:TaxSubtotal>
   </cac:TaxTotal>
   <cac:LegalMonetaryTotal>
+    <cbc:LineExtensionAmount currencyID="TRY">13000.00</cbc:LineExtensionAmount>
     <cbc:TaxExclusiveAmount currencyID="TRY">13000.00</cbc:TaxExclusiveAmount>
     <cbc:TaxInclusiveAmount currencyID="TRY">15600.00</cbc:TaxInclusiveAmount>
+    <cbc:AllowanceTotalAmount currencyID="TRY">300.00</cbc:AllowanceTotalAmount>
     <cbc:PayableAmount currencyID="TRY">15600.00</cbc:PayableAmount>
   </cac:LegalMonetaryTotal>
   <cac:InvoiceLine>
@@ -184,9 +191,12 @@ export function xsltFallbackPreviewHtml(xslt, kind) {
       ${s.lines.map((ln) => `<tr><td>${ln.no}</td><td>${xmlEscape(ln.name)}</td><td>${xmlEscape(ln.qty)}</td><td>${xmlEscape(ln.price)}</td><td>${xmlEscape(ln.total)}</td></tr>`).join("")}
     </table>
     <table align="right" cellpadding="4">
-      <tr><td>Mal hizmet toplam</td><td>${xmlEscape(s.subtotal)}</td></tr>
-      <tr><td>KDV</td><td>${xmlEscape(s.vat)}</td></tr>
-      <tr><td><b>Ödenecek tutar</b></td><td><b>${xmlEscape(s.grand)}</b></td></tr>
+      <tr><td>Mal Hizmet Toplam Tutarı</td><td>${xmlEscape(s.subtotal)}</td></tr>
+      <tr><td>Toplam İskonto</td><td>${xmlEscape(s.discount)}</td></tr>
+      <tr><td>KDV Matrahı</td><td>${xmlEscape(s.matrah)}</td></tr>
+      <tr><td>Hesaplanan (%20)</td><td>${xmlEscape(s.vat)}</td></tr>
+      <tr><td>Vergiler Dahil Toplam Tutar</td><td>${xmlEscape(s.inclusive)}</td></tr>
+      <tr><td><b>Ödenecek Tutar</b></td><td><b>${xmlEscape(s.grand)}</b></td></tr>
     </table>
   </div></body></html>`;
 }

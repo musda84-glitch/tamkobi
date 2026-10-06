@@ -66,4 +66,10 @@ test("xsltFallbackPreviewHtml uses extracted style", () => {
   expect(html).toContain("e-Arşiv Fatura");
   expect(html).toContain("lineTable");
   expect(html).toContain("Yazılım lisans bedeli");
+  expect(html).toContain("Mal Hizmet Toplam Tutarı");
+  expect(html).toContain("Toplam İskonto");
+  expect(html).toContain("KDV Matrahı");
+  expect(html).toContain("Hesaplanan (%20)");
+  expect(html).toContain("Vergiler Dahil Toplam Tutar");
+  expect(html).toContain("Ödenecek Tutar");
 });
