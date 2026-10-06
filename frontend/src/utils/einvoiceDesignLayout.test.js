@@ -29,7 +29,10 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.metaFields.find((f) => f.id === "number").hidden).toBe(false);
   expect(L.metaFields.find((f) => f.id === "order_no").hidden).toBe(true);
   expect(L.totalRows.find((r) => r.id === "kdv").hidden).toBe(false);
-  expect(L.totalRows.find((r) => r.id === "allowance").hidden).toBe(true);
+  expect(L.totalRows.find((r) => r.id === "allowance").hidden).toBe(false);
+  expect(L.totalRows.find((r) => r.id === "matrah").hidden).toBe(false);
+  expect(L.totalRows.find((r) => r.id === "inclusive").hidden).toBe(false);
+  expect(L.totalRows.find((r) => r.id === "exemption").hidden).toBe(true);
   expect(L.kind).toBe("e_invoice");
 });
 
@@ -201,19 +204,26 @@ test("layoutToXslt includes optional totals rows", () => {
     totalRows: [
       { id: "subtotal" },
       { id: "allowance" },
-      { id: "exemption" },
+      { id: "matrah" },
       { id: "kdv" },
       { id: "tevkifat" },
+      { id: "inclusive" },
       { id: "grand" },
+      { id: "exemption" },
     ],
   });
   const xslt = layoutToXslt(layout);
-  expect(xslt).toContain("Mal hizmet toplam");
-  expect(xslt).toContain("İskonto");
+  expect(xslt).toContain("Mal Hizmet Toplam Tutarı");
+  expect(xslt).toContain("Toplam İskonto");
+  expect(xslt).toContain("KDV Matrahı");
+  expect(xslt).toContain("Hesaplanan");
   expect(xslt).toContain("İstisna");
-  expect(xslt).toContain("KDV");
-  expect(xslt).toContain("Tevkifat");
+  expect(xslt).toContain("Hesaplanan KDV Tevkifat");
+  expect(xslt).toContain("Vergiler Dahil Toplam Tutar");
+  expect(xslt).toContain("Ödenecek Tutar");
   expect(xslt).toContain("AllowanceTotalAmount");
+  expect(xslt).toContain("TaxExclusiveAmount");
+  expect(xslt).toContain("TaxInclusiveAmount");
   expect(xslt).toContain("WithholdingTaxTotal");
   expect(xslt).toContain("TaxExemptionReason");
 });
