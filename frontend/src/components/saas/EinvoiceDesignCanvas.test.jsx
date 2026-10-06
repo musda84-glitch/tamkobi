@@ -5,6 +5,7 @@ import { EinvoiceDesignCanvas } from "./EinvoiceDesignCanvas";
 import { defaultLayout } from "../../utils/einvoiceDesignLayout";
 
 jest.mock("../../utils/compressImage", () => ({ compressImageFile: async (f) => f }));
+jest.mock("qrcode.react", () => ({ QRCodeSVG: () => <svg data-testid="einvoice-design-qr-svg" /> }));
 
 let host;
 let last;
@@ -67,4 +68,48 @@ test("move down swaps header with next visible block", async () => {
   });
   expect(last.blocks[0].id).toBe("parties");
   expect(last.blocks[1].id).toBe("header");
+});
+
+test("adds stock, vat and GIB QR fields from palette", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-col-sku"]')).toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-col-show-sku"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-qr"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-balance"]')).not.toBeNull();
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-col-show-sku"]').click();
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-col-show-vat"]').click();
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-col-show-barcode"]').click();
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-col-show-discount"]').click();
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-col-show-net_price"]').click();
+  });
+  const lines = host.querySelector('[data-testid="einvoice-design-block-lines"]')?.textContent || "";
+  expect(lines).toContain("Stok kodu");
+  expect(lines).toContain("YZL-001");
+  expect(lines).toContain("Barkod");
+  expect(lines).toContain("İskonto");
+  expect(lines).toContain("KDV");
+  expect(lines).toContain("KDV'siz fiyat");
+  expect(last.lineCols.find((c) => c.id === "sku").hidden).toBe(false);
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-qr"]').click();
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-balance"]').click();
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-qr"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-balance"]')?.textContent).toContain("18.450,00 TL Borç");
 });
