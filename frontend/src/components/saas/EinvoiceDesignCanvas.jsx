@@ -18,6 +18,7 @@ import {
   TOTAL_ROW_LABELS,
   gibSealAlt,
   gibSealCaption,
+  gibSealKindForBlock,
   TOTAL_ROW_SAMPLE_KEY,
   hiddenLineCols,
   hiddenMetaFields,
@@ -175,11 +176,13 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
       </div>
     );
   }
-  if (id === "gib_seal") {
+  if (id === "gib_seal_invoice" || id === "gib_seal_archive") {
+    const sealKind = gibSealKindForBlock(id);
+    const testId = sealKind === "e_archive" ? "einvoice-design-gib-seal-archive" : "einvoice-design-gib-seal-invoice";
     return (
-      <div className="flex flex-col items-center justify-center py-1 text-center" data-testid="einvoice-design-gib-seal">
-        <img src={GIB_SEAL_JPEG_DATA_URL} alt={gibSealAlt(layout.kind)} style={{ width: 91 }} />
-        <div className="text-base font-bold mt-1" style={{ color: layout.primary }}>{gibSealCaption(layout.kind)}</div>
+      <div className="flex flex-col items-center justify-center py-1 text-center" data-testid={testId}>
+        <img src={GIB_SEAL_JPEG_DATA_URL} alt={gibSealAlt(sealKind)} style={{ width: 91 }} />
+        <div className="text-base font-bold mt-1" style={{ color: layout.primary }}>{gibSealCaption(sealKind)}</div>
       </div>
     );
   }

@@ -1,17 +1,18 @@
 /** e-Fatura / e-Arşiv görsel tasarım düzeni → canlı önizleme + XSLT. */
 
-import { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption } from "./einvoiceGibSeal";
+import { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption, gibSealKindForBlock } from "./einvoiceGibSeal";
 
-export { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption };
+export { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption, gibSealKindForBlock };
 
 export const BLOCK_IDS = [
   "header", "supplier", "customer", "meta", "lines", "totals",
-  "notes", "iban", "balance", "qr", "gib_seal", "spacer",
+  "notes", "iban", "balance", "qr", "gib_seal_invoice", "gib_seal_archive", "spacer",
 ];
 
 export const BLOCK_LABELS = {
   header: "Logo",
-  gib_seal: "GİB mührü",
+  gib_seal_invoice: "GİB e-Fatura",
+  gib_seal_archive: "GİB e-Arşiv",
   supplier: "Satıcı",
   customer: "Alıcı",
   meta: "Fatura bilgileri",
@@ -32,9 +33,12 @@ export const SPAN_OPTIONS = [
 
 export const SPAN_CLASS = { 12: "col-span-12", 6: "col-span-6", 4: "col-span-4" };
 
-const BLOCK_HIDDEN_BY_DEFAULT = { gib_seal: true, balance: true, qr: true, spacer: true };
+const BLOCK_HIDDEN_BY_DEFAULT = {
+  gib_seal_invoice: true, gib_seal_archive: true, balance: true, qr: true, spacer: true,
+};
 const BLOCK_SPAN_BY_DEFAULT = {
-  gib_seal: 4,
+  gib_seal_invoice: 4,
+  gib_seal_archive: 4,
   spacer: 4,
   supplier: 6,
   customer: 6,
@@ -211,7 +215,7 @@ function normalizeIdList(raw, ids, hiddenByDefault) {
   return out;
 }
 
-function expandLegacyBlocks(raw) {
+function expandLegacyBlocks(raw, kind) {
   const out = [];
   for (const b of Array.isArray(raw) ? raw : []) {
     if (b?.id === "parties") {
@@ -219,6 +223,10 @@ function expandLegacyBlocks(raw) {
       out.push({ id: "customer", hidden: !!b.hidden, span: 6 });
     } else if (b?.id === "invoice_no" || b?.id === "order_no") {
       continue;
+    } else if (b?.id === "gib_seal") {
+      const archive = kind === "e_archive";
+      out.push({ id: "gib_seal_invoice", hidden: archive ? true : !!b.hidden, span: b.span ?? 4 });
+      out.push({ id: "gib_seal_archive", hidden: archive ? !!b.hidden : true, span: b.span ?? 4 });
     } else {
       out.push(b);
     }
@@ -239,10 +247,10 @@ function deriveMetaFields(raw) {
   });
 }
 
-function normalizeBlocks(raw) {
+function normalizeBlocks(raw, kind) {
   const seen = new Set();
   const out = [];
-  for (const b of expandLegacyBlocks(raw)) {
+  for (const b of expandLegacyBlocks(raw, kind)) {
     const id = String(b?.id || "");
     if (!BLOCK_IDS.includes(id) || seen.has(id)) continue;
     seen.add(id);
@@ -324,7 +332,7 @@ export function normalizeLayout(raw, kind) {
   out.logoSize = asLogoSize(raw.logoSize, base.logoSize);
   out.qrSize = asQrSize(raw.qrSize, base.qrSize);
   if (typeof raw.companyTitle === "string") out.companyTitle = raw.companyTitle.slice(0, 120);
-  out.blocks = normalizeBlocks(raw.blocks);
+  out.blocks = normalizeBlocks(raw.blocks, out.kind);
   out.lineCols = normalizeIdList(raw.lineCols, LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT);
   out.metaFields = deriveMetaFields(raw);
   out.headerFields = normalizeIdList(raw.headerFields, HEADER_FIELD_IDS, HEADER_FIELD_HIDDEN_BY_DEFAULT);
@@ -560,6 +568,14 @@ function xsltPartyBox(role) {
       </div>`;
 }
 
+function xsltGibSeal(kind) {
+  return `
+      <div class="inv-gib-seal" align="center">
+        <img style="width:91px;" align="middle" alt="${xmlEscape(gibSealAlt(kind))}" src="${GIB_SEAL_JPEG_DATA_URL}"/>
+        <h1 align="center"><span style="font-weight:bold;">${xmlEscape(gibSealCaption(kind))}</span></h1>
+      </div>`;
+}
+
 function xsltBlocks(L) {
   const logoH = asLogoSize(L.logoSize);
   const logo = L.logo
@@ -588,11 +604,8 @@ function xsltBlocks(L) {
           <td class="inv-brand" valign="top">${logo}${headerBits}</td>
         </tr>
       </table>`,
-    gib_seal: `
-      <div class="inv-gib-seal" align="center">
-        <img style="width:91px;" align="middle" alt="${xmlEscape(gibSealAlt(L.kind))}" src="${GIB_SEAL_JPEG_DATA_URL}"/>
-        <h1 align="center"><span style="font-weight:bold;">${xmlEscape(gibSealCaption(L.kind))}</span></h1>
-      </div>`,
+    gib_seal_invoice: xsltGibSeal("e_invoice"),
+    gib_seal_archive: xsltGibSeal("e_archive"),
     supplier,
     customer,
     parties: `
