@@ -1,6 +1,7 @@
 """Platform e-Fatura / e-Arşiv XSLT tasarımları (Sistem paneli)."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
@@ -19,6 +20,7 @@ COLLECTION = "einvoice_designs"
 KINDS = ("e_invoice", "e_archive")
 KIND_LABELS = {"e_invoice": "e-Fatura", "e_archive": "e-Arşiv"}
 MAX_XSLT_BYTES = 2 * 1024 * 1024
+MAX_LAYOUT_BYTES = 500 * 1024
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "einvoice_xslt")
 BUILTIN = (
     {
@@ -71,6 +73,17 @@ def validate_xslt(text: str) -> str:
     return raw
 
 
+def validate_layout(value: Any) -> Optional[dict]:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="Görsel düzen bir nesne olmalı.")
+    raw = json.dumps(value, ensure_ascii=False)
+    if len(raw.encode("utf-8")) > MAX_LAYOUT_BYTES:
+        raise HTTPException(status_code=400, detail="Tasarım düzeni çok büyük (logoyu küçültün).")
+    return value
+
+
 def _slug_filename(name: str, kind: str) -> str:
     base = re.sub(r"[^a-zA-Z0-9._-]+", "_", (name or KIND_LABELS.get(kind, kind)).strip())[:60].strip("._") or kind
     if not base.lower().endswith(".xslt"):
@@ -87,12 +100,14 @@ def _public(doc: dict, *, include_xslt: bool = False) -> dict:
         "kind_label": KIND_LABELS.get(doc.get("kind") or "", doc.get("kind") or ""),
         "is_builtin": bool(doc.get("is_builtin")),
         "is_selected": bool(doc.get("is_selected")),
+        "has_layout": isinstance(doc.get("layout"), dict),
         "xslt_bytes": len(str(xslt).encode("utf-8")),
         "created_at": doc.get("created_at"),
         "updated_at": doc.get("updated_at"),
     }
     if include_xslt:
         out["xslt"] = xslt
+        out["layout"] = doc.get("layout") if isinstance(doc.get("layout"), dict) else None
     return out
 
 
@@ -179,11 +194,18 @@ async def create_design(req: Dict[str, Any], _: dict = Depends(saas.require_supe
             name = f"{src.get('name') or KIND_LABELS[kind]} kopya"
     builtin_file = next((s["file"] for s in BUILTIN if s["kind"] == kind), BUILTIN[0]["file"])
     xslt = validate_xslt(xslt if xslt is not None else _read_builtin_xslt(builtin_file))
+    if "layout" in req:
+        layout = req.get("layout")
+    elif src:
+        layout = src.get("layout")
+    else:
+        layout = None
     doc = {
         "_id": f"einvoice_xslt_{uuid.uuid4().hex[:10]}",
         "name": name[:120],
         "kind": kind,
         "xslt": xslt,
+        "layout": validate_layout(layout) if layout is not None else None,
         "is_builtin": False,
         "is_selected": False,
         "created_at": _now(),
@@ -207,6 +229,8 @@ async def update_design(design_id: str, req: Dict[str, Any], _: dict = Depends(s
         patch["xslt"] = validate_xslt(req.get("xslt"))
     if "kind" in req:
         patch["kind"] = _kind(req.get("kind"))
+    if "layout" in req:
+        patch["layout"] = validate_layout(req.get("layout"))
     await _db[COLLECTION].update_one({"_id": design_id}, {"$set": patch})
     return _public(await _get(design_id), include_xslt=True)
 

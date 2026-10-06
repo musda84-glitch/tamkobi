@@ -107,3 +107,21 @@ def test_copy_select_and_block_delete_selected():
     xslt = _run(ed.selected_xslt("e_invoice"))
     assert created["xslt"][:40] in (xslt or "")
     assert col.rows[created["id"]]["is_selected"] is True
+
+
+def test_layout_copy_and_update():
+    col = _boot()
+    _run(ed.ensure_defaults())
+    created = _run(ed.create_design({
+        "copy_from_id": "einvoice_xslt_default_e_invoice",
+        "name": "Görsel",
+        "layout": {"version": 1, "primary": "#112233", "blocks": [{"id": "header", "hidden": False}]},
+    }, {}))
+    assert created["layout"]["primary"] == "#112233"
+    assert created["has_layout"] is True
+    updated = _run(ed.update_design(created["id"], {"layout": {"accent": "#abcdef"}}, {}))
+    assert updated["layout"]["accent"] == "#abcdef"
+    copied = _run(ed.create_design({"copy_from_id": created["id"]}, {}))
+    assert copied["layout"]["accent"] == "#abcdef"
+    with pytest.raises(HTTPException):
+        _run(ed.update_design(created["id"], {"layout": ["nope"]}, {}))

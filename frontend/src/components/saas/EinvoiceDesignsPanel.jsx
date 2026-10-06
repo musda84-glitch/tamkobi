@@ -4,8 +4,12 @@ import { toast } from "sonner";
 import { FileCode2, Download, Loader2, Plus, Save, Trash2, Upload } from "lucide-react";
 import { API_URL } from "../../context/AuthContext";
 import { inputCls } from "./saasUi";
+import { EinvoiceDesignCanvas } from "./EinvoiceDesignCanvas";
+import { defaultLayout, layoutToXslt, normalizeLayout } from "../../utils/einvoiceDesignLayout";
 
 const cred = { withCredentials: true };
+
+const emptyForm = (kind = "e_invoice") => ({ name: "", xslt: "", layout: defaultLayout(kind) });
 
 const downloadBlob = (blob, filename) => {
   const a = document.createElement("a");
@@ -17,11 +21,19 @@ const downloadBlob = (blob, filename) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 };
 
+const fromApi = (data, kind) => ({
+  name: data?.name || "",
+  xslt: data?.xslt || "",
+  layout: normalizeLayout(data?.layout, data?.kind || kind),
+});
+
 export const EinvoiceDesignsPanel = () => {
   const [d, setD] = useState(null);
   const [kind, setKind] = useState("e_invoice");
   const [openId, setOpenId] = useState("");
-  const [form, setForm] = useState({ name: "", xslt: "" });
+  const [form, setForm] = useState(() => emptyForm());
+  const [tab, setTab] = useState("visual");
+  const [source, setSource] = useState("visual");
   const [busy, setBusy] = useState("");
   const fileRef = useRef(null);
 
@@ -36,13 +48,16 @@ export const EinvoiceDesignsPanel = () => {
   }, [load]);
 
   const items = useMemo(() => (d?.items || []).filter((i) => i.kind === kind), [d, kind]);
+  const openRow = items.find((i) => i.id === openId);
 
   const openDesign = async (id) => {
     setBusy(`open-${id}`);
     try {
       const r = await axios.get(`${API_URL}/system/einvoice-designs/${id}`, cred);
       setOpenId(id);
-      setForm({ name: r.data.name || "", xslt: r.data.xslt || "" });
+      setForm(fromApi(r.data, kind));
+      setTab("visual");
+      setSource(r.data?.layout ? "visual" : "xslt");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Tasarım açılamadı.");
     } finally {
@@ -54,8 +69,10 @@ export const EinvoiceDesignsPanel = () => {
     if (!openId) return;
     setBusy("save");
     try {
-      const r = await axios.put(`${API_URL}/system/einvoice-designs/${openId}`, { name: form.name, xslt: form.xslt }, cred);
-      setForm({ name: r.data.name || "", xslt: r.data.xslt || "" });
+      const layout = normalizeLayout(form.layout, kind);
+      const xslt = source === "xslt" ? form.xslt : layoutToXslt(layout, kind);
+      const r = await axios.put(`${API_URL}/system/einvoice-designs/${openId}`, { name: form.name, xslt, layout }, cred);
+      setForm(fromApi(r.data, kind));
       await load();
       toast.success("Tasarım kaydedildi.");
     } catch (e) {
@@ -84,8 +101,10 @@ export const EinvoiceDesignsPanel = () => {
       const r = await axios.post(`${API_URL}/system/einvoice-designs`, { copy_from_id: id }, cred);
       await load();
       setOpenId(r.data.id);
-      setForm({ name: r.data.name || "", xslt: r.data.xslt || "" });
-      toast.success("Tasarım kopyalandı — düzenleyip kaydedin.");
+      setForm(fromApi(r.data, kind));
+      setTab("visual");
+      setSource(r.data?.layout ? "visual" : "xslt");
+      toast.success("Tasarım kopyalandı — görsel düzenleyip kaydedin.");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Kopyalanamadı.");
     } finally {
@@ -101,7 +120,7 @@ export const EinvoiceDesignsPanel = () => {
       setD((prev) => ({ ...prev, items: r.data.items }));
       if (openId === id) {
         setOpenId("");
-        setForm({ name: "", xslt: "" });
+        setForm(emptyForm(kind));
       }
       toast.success("Tasarım silindi.");
     } catch (e) {
@@ -138,7 +157,9 @@ export const EinvoiceDesignsPanel = () => {
       }, cred);
       await load();
       setOpenId(r.data.id);
-      setForm({ name: r.data.name || "", xslt: r.data.xslt || "" });
+      setForm(fromApi(r.data, kind));
+      setTab("xslt");
+      setSource("xslt");
       toast.success("XSLT yüklendi.");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Yüklenemedi.");
@@ -157,8 +178,9 @@ export const EinvoiceDesignsPanel = () => {
             <FileCode2 className="w-4 h-4 text-slate-400" /> e-Fatura / e-Arşiv tasarımları
           </h2>
           <p className="text-[11px] text-slate-500 mt-0.5 max-w-2xl">
-            GİB görsel XSLT şablonları. Birden fazla tasarım tutun, birini seçin, indirin veya kopyalayıp düzenleyin.
-            Varsayılan e-Fatura ve e-Arşiv şablonları yüklüdür.
+            Fatura görünümünü sürükle-bırak ile düzenleyin: logo, renk, yazı tipi ve bölüm sırası.
+            Kaydedince XSLT üretilir. Ham XSLT sekmesi gelişmiş kullanım içindir.
+            Varsayılan GİB şablonları yüklüdür — görsel kaydetmek onları bu düzene çevirir; orijinali korumak için kopyalayın.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -177,7 +199,7 @@ export const EinvoiceDesignsPanel = () => {
           <button
             key={k.id}
             type="button"
-            onClick={() => { setKind(k.id); setOpenId(""); setForm({ name: "", xslt: "" }); }}
+            onClick={() => { setKind(k.id); setOpenId(""); setForm(emptyForm(k.id)); setTab("visual"); }}
             className={`px-3 py-1.5 rounded-lg font-semibold ${kind === k.id ? "bg-white shadow-sm text-slate-900" : "text-slate-500"}`}
             data-testid={`einvoice-design-kind-${k.id}`}
           >
@@ -186,14 +208,14 @@ export const EinvoiceDesignsPanel = () => {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-        <ul className="lg:col-span-2 space-y-2" data-testid="einvoice-design-list">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        <ul className="xl:col-span-3 space-y-2" data-testid="einvoice-design-list">
           {items.map((row) => (
             <li key={row.id} className={`rounded-xl border p-3 space-y-2 ${openId === row.id ? "border-emerald-300 bg-emerald-50/40" : "border-slate-200 bg-white"}`} data-testid={`einvoice-design-row-${row.id}`}>
               <div className="flex items-start justify-between gap-2">
                 <button type="button" onClick={() => openDesign(row.id)} className="text-left min-w-0">
                   <div className="font-bold text-slate-900 truncate">{row.name}</div>
-                  <div className="text-[10px] text-slate-500">{Math.round((row.xslt_bytes || 0) / 1024)} KB{row.is_builtin ? " · varsayılan" : ""}</div>
+                  <div className="text-[10px] text-slate-500">{Math.round((row.xslt_bytes || 0) / 1024)} KB{row.is_builtin ? " · varsayılan" : ""}{row.has_layout ? " · görsel" : ""}</div>
                 </button>
                 {row.is_selected ? (
                   <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5" data-testid={`einvoice-design-selected-${row.id}`}>Seçili</span>
@@ -217,25 +239,44 @@ export const EinvoiceDesignsPanel = () => {
           ))}
         </ul>
 
-        <div className="lg:col-span-3 bg-white border border-slate-200 rounded-2xl p-4 space-y-3 min-h-[24rem]" data-testid="einvoice-design-editor">
+        <div className="xl:col-span-9 bg-white border border-slate-200 rounded-2xl p-4 space-y-3 min-h-[24rem]" data-testid="einvoice-design-editor">
           {!openId ? (
-            <p className="text-slate-500">Soldan bir tasarım seçin veya kopyalayın. XSLT’yi buradan düzenleyebilirsiniz.</p>
+            <p className="text-slate-500">Soldan bir tasarım seçin veya kopyalayın. Bölümleri sürükleyerek fatura görünümünü düzenleyin.</p>
           ) : (
             <>
-              <div>
-                <label className="block font-semibold mb-1">Tasarım adı</label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} data-testid="einvoice-design-name" />
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex-1 min-w-[12rem]">
+                  <label className="block font-semibold mb-1">Tasarım adı</label>
+                  <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={inputCls} data-testid="einvoice-design-name" />
+                </div>
+                <div className="flex gap-1 bg-slate-100 rounded-xl p-1" data-testid="einvoice-design-editor-tabs">
+                  <button type="button" onClick={() => setTab("visual")} className={`px-3 py-1.5 rounded-lg font-semibold ${tab === "visual" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-tab-visual">Görsel</button>
+                  <button type="button" onClick={() => setTab("xslt")} className={`px-3 py-1.5 rounded-lg font-semibold ${tab === "xslt" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-tab-xslt">XSLT</button>
+                </div>
               </div>
-              <div>
-                <label className="block font-semibold mb-1">XSLT</label>
-                <textarea
-                  value={form.xslt}
-                  onChange={(e) => setForm({ ...form, xslt: e.target.value })}
-                  spellCheck={false}
-                  className={`${inputCls} font-mono text-[11px] min-h-[22rem] leading-snug`}
-                  data-testid="einvoice-design-xslt"
+              {openRow?.is_builtin && tab === "visual" ? (
+                <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5" data-testid="einvoice-design-builtin-hint">
+                  Varsayılan GİB şablonu. Görsel kaydetmek XSLT’yi bu düzene çevirir. Orijinali saklamak için önce kopyalayın.
+                </p>
+              ) : null}
+              {tab === "visual" ? (
+                <EinvoiceDesignCanvas
+                  layout={form.layout}
+                  kind={kind}
+                  onChange={(layout) => { setForm((f) => ({ ...f, layout })); setSource("visual"); }}
                 />
-              </div>
+              ) : (
+                <div>
+                  <label className="block font-semibold mb-1">XSLT</label>
+                  <textarea
+                    value={form.xslt}
+                    onChange={(e) => { setForm({ ...form, xslt: e.target.value }); setSource("xslt"); }}
+                    spellCheck={false}
+                    className={`${inputCls} font-mono text-[11px] min-h-[22rem] leading-snug`}
+                    data-testid="einvoice-design-xslt"
+                  />
+                </div>
+              )}
               <div className="flex justify-end gap-2">
                 <button type="button" onClick={() => download({ id: openId, name: form.name, kind })} disabled={!!busy} className="px-3 py-1.5 border rounded-xl font-semibold inline-flex items-center gap-1.5" data-testid="einvoice-design-editor-download">
                   <Download className="w-3.5 h-3.5" /> İndir

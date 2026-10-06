@@ -26,7 +26,7 @@ beforeEach(() => {
     const u = String(url);
     if (u.endsWith("/system/einvoice-designs")) return Promise.resolve({ data: LIST });
     if (u.includes("/download")) return Promise.resolve({ data: new Blob(["<xsl:stylesheet/>"]) });
-    if (u.includes("/einvoice-designs/")) return Promise.resolve({ data: { ...LIST.items[0], xslt: "<xsl:stylesheet/>" } });
+    if (u.includes("/einvoice-designs/")) return Promise.resolve({ data: { ...LIST.items[0], xslt: "<xsl:stylesheet/>", layout: null } });
     return Promise.resolve({ data: LIST });
   });
   axios.post.mockResolvedValue({ data: { id: "einvoice_xslt_copy", name: "Varsayılan e-Fatura kopya", kind: "e_invoice", xslt: "<xsl:stylesheet/>", items: LIST.items } });
@@ -52,6 +52,12 @@ test("lists designs, opens editor and has download", async () => {
     host.querySelector('[data-testid="einvoice-design-edit-einvoice_xslt_default_e_invoice"]').click();
   });
   await act(async () => { await Promise.resolve(); });
+  expect(host.querySelector('[data-testid="einvoice-design-canvas"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.textContent).toContain("e-Fatura");
+  expect(host.querySelector('[data-testid="einvoice-design-xslt"]')).toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-tab-xslt"]').click();
+  });
   expect(host.querySelector('[data-testid="einvoice-design-xslt"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-save"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-editor-download"]')).not.toBeNull();
