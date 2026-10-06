@@ -299,7 +299,7 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
                     style={grand ? { borderTop: `2px solid ${layout.accent}`, color: layout.primary } : undefined}
                   >
                     <td className={grand ? "pr-6 py-1" : "pr-6 py-0.5"} style={grand ? undefined : { color: layout.muted }}>{TOTAL_ROW_LABELS[r.id]}</td>
-                    <td className="text-right">{s[TOTAL_ROW_SAMPLE_KEY[r.id] || r.id]}{grand ? " TL" : ""}</td>
+                    <td className="text-right whitespace-nowrap">{s[TOTAL_ROW_SAMPLE_KEY[r.id] || r.id]} {s.currency || "TL"}</td>
                   </tr>
                 );
               })}

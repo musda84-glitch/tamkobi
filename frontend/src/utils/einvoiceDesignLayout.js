@@ -409,6 +409,7 @@ export const SAMPLE_INVOICE = {
   despatchNo: "SF-414808",
   despatchDate: "06 - 10 - 2026",
   dueDate: "06 - 10 - 2026",
+  currency: "TL",
   supplier: {
     name: "Örnek Yazılım A.Ş.",
     vkn: "1234567890",
@@ -450,8 +451,16 @@ export function xmlEscape(value) {
     .replace(/"/g, "&quot;");
 }
 
+function xsltCurrencySuffix(path) {
+  return `<xsl:choose><xsl:when test="${path}/@currencyID='TRY' or ${path}/@currencyID='TRL'"><xsl:text> TL</xsl:text></xsl:when><xsl:when test="${path}/@currencyID!=''"><xsl:text> </xsl:text><xsl:value-of select="${path}/@currencyID"/></xsl:when><xsl:when test="/n1:Invoice/cbc:DocumentCurrencyCode='TRY' or /n1:Invoice/cbc:DocumentCurrencyCode='TRL'"><xsl:text> TL</xsl:text></xsl:when><xsl:when test="/n1:Invoice/cbc:DocumentCurrencyCode!=''"><xsl:text> </xsl:text><xsl:value-of select="/n1:Invoice/cbc:DocumentCurrencyCode"/></xsl:when></xsl:choose>`;
+}
+
 function xsltMoney(path) {
   return `<xsl:if test="${path}!=''"><xsl:value-of select="format-number(number(${path}), '#.##0,00', 'tr')"/></xsl:if>`;
+}
+
+function xsltMoneyWithCurrency(path) {
+  return `<xsl:if test="${path}!=''"><xsl:value-of select="format-number(number(${path}), '#.##0,00', 'tr')"/>${xsltCurrencySuffix(path)}</xsl:if>`;
 }
 
 function xsltYmdDash(path) {
@@ -526,14 +535,14 @@ function xsltTotalsTable(L) {
   const rows = visibleTotalRows(L);
   if (!rows.length) return "";
   const map = {
-    subtotal: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.subtotal)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:LegalMonetaryTotal/cbc:LineExtensionAmount")}</td></tr>`,
-    allowance: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.allowance)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:LegalMonetaryTotal/cbc:AllowanceTotalAmount")}</td></tr>`,
-    matrah: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.matrah)}</td><td align="right"><xsl:choose><xsl:when test="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:TaxTypeCode='0015']/cbc:TaxableAmount">${xsltMoney("/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:TaxTypeCode='0015']/cbc:TaxableAmount")}</xsl:when><xsl:otherwise>${xsltMoney("/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount")}</xsl:otherwise></xsl:choose></td></tr>`,
-    exemption: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.exemption)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cbc:TaxExemptionReason or cac:TaxCategory/cbc:TaxExemptionReasonCode]/cbc:TaxableAmount")}</td></tr>`,
-    kdv: `<xsl:for-each select="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal"><tr><td class="inv-tot">Hesaplanan (%<xsl:value-of select="cbc:Percent"/>)</td><td align="right">${xsltMoney("cbc:TaxAmount")}</td></tr></xsl:for-each>`,
-    tevkifat: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.tevkifat)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:WithholdingTaxTotal/cbc:TaxAmount")}</td></tr>`,
-    inclusive: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.inclusive)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount")}</td></tr>`,
-    grand: `<tr class="inv-grand"><td>${xmlEscape(TOTAL_ROW_LABELS.grand)}</td><td align="right">${xsltMoney("/n1:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount")}</td></tr>`,
+    subtotal: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.subtotal)}</td><td align="right">${xsltMoneyWithCurrency("/n1:Invoice/cac:LegalMonetaryTotal/cbc:LineExtensionAmount")}</td></tr>`,
+    allowance: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.allowance)}</td><td align="right">${xsltMoneyWithCurrency("/n1:Invoice/cac:LegalMonetaryTotal/cbc:AllowanceTotalAmount")}</td></tr>`,
+    matrah: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.matrah)}</td><td align="right"><xsl:choose><xsl:when test="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:TaxTypeCode='0015']/cbc:TaxableAmount">${xsltMoneyWithCurrency("/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:TaxTypeCode='0015']/cbc:TaxableAmount")}</xsl:when><xsl:otherwise>${xsltMoneyWithCurrency("/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount")}</xsl:otherwise></xsl:choose></td></tr>`,
+    exemption: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.exemption)}</td><td align="right">${xsltMoneyWithCurrency("/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cbc:TaxExemptionReason or cac:TaxCategory/cbc:TaxExemptionReasonCode]/cbc:TaxableAmount")}</td></tr>`,
+    kdv: `<xsl:for-each select="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal"><tr><td class="inv-tot">Hesaplanan (%<xsl:value-of select="cbc:Percent"/>)</td><td align="right">${xsltMoneyWithCurrency("cbc:TaxAmount")}</td></tr></xsl:for-each>`,
+    tevkifat: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.tevkifat)}</td><td align="right">${xsltMoneyWithCurrency("/n1:Invoice/cac:WithholdingTaxTotal/cbc:TaxAmount")}</td></tr>`,
+    inclusive: `<tr><td class="inv-tot">${xmlEscape(TOTAL_ROW_LABELS.inclusive)}</td><td align="right">${xsltMoneyWithCurrency("/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount")}</td></tr>`,
+    grand: `<tr class="inv-grand"><td>${xmlEscape(TOTAL_ROW_LABELS.grand)}</td><td align="right">${xsltMoneyWithCurrency("/n1:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount")}</td></tr>`,
   };
   return `
       <table class="inv-totals" cellpadding="4" cellspacing="0" align="right">
