@@ -32,7 +32,8 @@ def test_kuveyt_provider_identity_and_api_hosts():
     assert meta["legacy_sandbox_url"] == "https://apitest.kuveytturk.com.tr/prep"
     assert "private_key" in meta["fields"]
     assert "JSEncrypt" in meta["hint"]
-    assert "openssl genrsa" in meta["hint"]
+    assert "travist/jsencrypt" in meta["hint"]
+    assert "signSha256" in meta["hint"]
     assert "2048" in meta["hint"]
     assert "RSA-SHA256" in meta["hint"] or "signSha256" in meta["hint"] or "JSEncrypt" in meta["hint"]
     assert "/v1/fx/rates" in meta["hint"]
@@ -106,6 +107,37 @@ def test_kuveyt_sign_matches_jsencrypt_signSha256_fixture():
         padding.PKCS1v15(),
         hashes.SHA256(),
     )
+
+
+def test_jsencrypt_bridge_signSha256_is_the_signature():
+    """Kuveyt Signature node travist/jsencrypt JSEncrypt.signSha256 ile üretilir."""
+    import json
+    from pathlib import Path
+    from unittest.mock import patch
+
+    path = Path(__file__).resolve().parents[1] / "fixtures/kuveyt/jsencrypt_signSha256.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    pem = data["private_key_pkcs1"]
+    get = data["get"]
+    direct = bp._jsencrypt_sign_sha256(pem, get["payload"])
+    assert direct == get["signature"]
+    with patch.object(bp, "_kuveyt_sign_python", side_effect=AssertionError("python yedek kullanılmamalı")):
+        assert bp._kuveyt_sign(get["token"], pem, query_string=get["query_string"]) == get["signature"]
+
+
+def test_frontend_wires_travist_jsencrypt():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    panel = (root / "frontend/src/components/BankConnectionsPanel.jsx").read_text(encoding="utf-8")
+    util = (root / "frontend/src/utils/jsencryptKuveyt.js").read_text(encoding="utf-8")
+    pkg = (root / "frontend/package.json").read_text(encoding="utf-8")
+    assert "github.com/travist/jsencrypt" in panel
+    assert "generateJsencryptPrivateKeyPem" in panel
+    assert "conn-jsencrypt-generate-btn" in panel
+    assert "default_key_size: 2048" in util
+    assert "getPrivateKey" in util
+    assert "github:travist/jsencrypt" in pkg
 
 
 def test_kuveyt_sign_pkcs1_jsencrypt_key_format():

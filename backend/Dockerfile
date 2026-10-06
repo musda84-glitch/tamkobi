@@ -29,7 +29,11 @@ ENV APP_GIT_SHA=$GIT_SHA \
     APP_GIT_BRANCH=$GIT_BRANCH \
     APP_GIT_MESSAGE="$GIT_MESSAGE" \
     APP_BUILD_TIME=$BUILD_TIME
-RUN chmod +x /app/scripts/rotate-logs.sh /app/scripts/perf-monitor.sh /app/scripts/apply-mysql-tuning.sh /app/scripts/map_schema.py
+RUN chmod +x /app/scripts/rotate-logs.sh /app/scripts/perf-monitor.sh /app/scripts/apply-mysql-tuning.sh /app/scripts/map_schema.py \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && cd /app/jsencrypt_bridge && npm install --omit=dev --no-audit --no-fund
 
 EXPOSE 8000
 
