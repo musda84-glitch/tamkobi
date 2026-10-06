@@ -87,3 +87,16 @@ export function shopFloorCardBorder(status) {
   if (s === "ready") return "border-blue-200";
   return "border-slate-200";
 }
+
+/** Sistem kullanıcısı (create-user) açılmış personel — atölye operatör listesi. */
+export function employeeHasSystemUser(emp) {
+  if (!emp) return false;
+  if (emp.has_user === true) return true;
+  if (emp.has_user === false) return false;
+  const uid = String(emp.user_id || "").trim();
+  return uid.length > 0 && uid !== "-";
+}
+
+export function shopFloorOperators(employees) {
+  return (employees || []).filter(employeeHasSystemUser);
+}

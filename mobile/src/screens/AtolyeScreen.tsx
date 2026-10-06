@@ -24,6 +24,7 @@ import {
   roundNeededQty,
   runningCount,
   shopFloorCardBorder,
+  shopFloorOperators,
   shopFloorPausePhaseLabel,
   shopFloorStationSections,
   todayDoneCount,
@@ -262,7 +263,7 @@ export function AtolyeScreen() {
         get<{ group_same_station?: boolean }>(client, "/production/work-orders/shopfloor-settings", { company_id: companyId }).catch(() => null),
       ]);
       setWos(Array.isArray(w) ? w : []);
-      setEmployees(mergeSelfEmployee(Array.isArray(e) ? e : [], me?.employee));
+      setEmployees(shopFloorOperators(mergeSelfEmployee(Array.isArray(e) ? e : [], me?.employee)));
       setStations(stationNamesFromParks(parks?.parks, Array.isArray(s) ? s : []));
       setDuties(Array.isArray(me?.tasks) ? me.tasks : []);
       if (settings && typeof settings.group_same_station === "boolean") setGroupSameStation(settings.group_same_station);

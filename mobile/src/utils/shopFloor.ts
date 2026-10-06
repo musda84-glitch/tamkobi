@@ -207,14 +207,30 @@ export function employeeLabel(e: Employee): string {
   return e.position ? `${name} — ${e.position}` : name;
 }
 
+/** Sistem kullanıcısı (create-user) açılmış personel — atölye operatör listesi. */
+export function employeeHasSystemUser(emp?: Employee | null): boolean {
+  if (!emp) return false;
+  if (emp.has_user === true) return true;
+  if (emp.has_user === false) return false;
+  const uid = String(emp.user_id || "").trim();
+  return uid.length > 0 && uid !== "-";
+}
+
+export function shopFloorOperators(employees: Employee[] | null | undefined): Employee[] {
+  return (employees || []).filter(employeeHasSystemUser);
+}
+
 /** Üretim rolü /personnel listesini göremez; oturumdaki kartı operatör listesine ekle. */
 export function mergeSelfEmployee(list: Employee[] | null | undefined, self?: Employee | null): Employee[] {
   const rows = list || [];
   if (!self) return rows;
   const sid = idOf(self);
   if (!sid) return rows;
-  if (rows.some((e) => idOf(e) === sid)) return rows;
-  return [self, ...rows];
+  const stamped = { ...self, has_user: true };
+  if (rows.some((e) => idOf(e) === sid)) {
+    return rows.map((e) => (idOf(e) === sid ? { ...e, has_user: true } : e));
+  }
+  return [stamped, ...rows];
 }
 
 export function woCardKey(w: WorkOrder): string {

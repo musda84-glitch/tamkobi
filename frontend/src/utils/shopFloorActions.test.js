@@ -1,4 +1,4 @@
-import { shopFloorCardActions, shopFloorCardBorder, shopFloorPausePhaseLabel, workOrderFinishPlan } from "./shopFloorActions";
+import { employeeHasSystemUser, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, workOrderFinishPlan } from "./shopFloorActions";
 
 describe("workOrderFinishPlan", () => {
   test("uses material needed for material-linked step", () => {
@@ -99,5 +99,21 @@ describe("shopFloorCardActions", () => {
     expect(shopFloorCardBorder("in_progress")).toMatch(/amber/);
     expect(shopFloorCardBorder("paused")).toMatch(/orange/);
     expect(shopFloorCardBorder("ready")).toMatch(/blue/);
+  });
+});
+
+describe("shopFloorOperators", () => {
+  test("hides personnel without a system user", () => {
+    expect(employeeHasSystemUser({ id: "a", has_user: false, full_name: "Soner Akkaya" })).toBe(false);
+    expect(employeeHasSystemUser({ id: "b", has_user: true, full_name: "Muhammed ASLAN" })).toBe(true);
+    expect(employeeHasSystemUser({ id: "c", user_id: "usr_1" })).toBe(true);
+    expect(employeeHasSystemUser({ id: "d", user_id: "" })).toBe(false);
+    expect(employeeHasSystemUser({ id: "e", user_id: "-" })).toBe(false);
+    expect(shopFloorOperators([
+      { id: "a", full_name: "Soner Akkaya", has_user: false },
+      { id: "b", full_name: "Gökhan Yılmaz" },
+      { id: "c", full_name: "Muhammed ASLAN", has_user: true },
+      { id: "d", full_name: "Yaşar Yıldırım", user_id: "usr_1" },
+    ]).map((e) => e.full_name)).toEqual(["Muhammed ASLAN", "Yaşar Yıldırım"]);
   });
 });

@@ -15316,6 +15316,7 @@ async def personnel_role_options(company_id: Optional[str] = "comp_nexus_main_01
 
 @api_router.get("/personnel/employees")
 async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
+    import shopfloor_operators as sfo
     employees = await db.employees.find({"company_id": company_id}).to_list(100)
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     ids = [e["_id"] for e in employees]
@@ -15334,6 +15335,12 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
     company = await db.companies.find_one({"_id": company_id}) or {}
     today_s = attendance._today(attendance.merge_schedule(company))
     workplaces = await attendance.workplaces_by_employee(company_id, ids, today_s, company.get("location"))
+    user_ids = [e.get("user_id") for e in employees if e.get("user_id") and e.get("user_id") != "-"]
+    user_q = [{"employee_id": {"$in": ids}}]
+    if user_ids:
+        user_q.append({"_id": {"$in": user_ids}})
+    linked_users = await db.users.find({"$or": user_q}, {"_id": 1, "employee_id": 1, "is_active": 1}).to_list(2000)
+    linked_emp_ids, linked_usr_ids = sfo.linked_system_user_keys(linked_users)
     out = []
     for e in employees:
         eid = e["_id"]
@@ -15347,6 +15354,7 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
             expenses=emap.get(eid) or [],
         )
         doc = clean_doc(e)
+        doc["has_user"] = sfo.employee_has_system_user(e, linked_emp_ids, linked_usr_ids)
         doc["balance"] = bal
         doc["workplace"] = workplaces.get(eid)
         yev_days, yev_amt = 0, 0.0
