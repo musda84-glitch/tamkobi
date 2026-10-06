@@ -6,6 +6,12 @@ import { CompanyLicenseDrawer } from "./CompanyLicenseDrawer";
 
 jest.mock("axios");
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
+jest.mock("react-router-dom", () => {
+  const React = require("react");
+  return {
+    Link: ({ to, children, ...rest }) => React.createElement("a", { href: typeof to === "string" ? to : "/", ...rest }, children),
+  };
+}, { virtual: true });
 
 const companyPayload = {
   id: "comp_matek",
@@ -130,4 +136,33 @@ test("shows admin email, membership and sends password reset", async () => {
   const call = axios.post.mock.calls.find((c) => String(c[0]).includes("send-password-reset"));
   expect(call).toBeTruthy();
   expect(call[1]).toMatchObject({ email: "admin@matek.test", user_id: "usr_1" });
+});
+
+test("system company drawer hosts İşNet SOAP panel when provider is isnet", async () => {
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/einvoice/providers")) return Promise.resolve({ data: [{ code: "isnet", name: "İşNet SOAP" }] });
+    if (u.includes("/einvoice/settings")) return Promise.resolve({ data: { provider: "isnet", status: "configured", mode: "live", alias: "urn:mail:pk@x.com", company_tax_id: "6131659091" } });
+    if (u.includes("/integrations/isnet/egress")) return Promise.resolve({ data: { egress_ips: ["1.1.1.1"], production_ips: ["1.1.1.1"], same_as_production: true } });
+    return Promise.resolve({ data: { ...companyPayload, einvoice: { provider: "isnet", status: "configured" } } });
+  });
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <CompanyLicenseDrawer
+        companyId="comp_matek"
+        plans={[{ id: "plan_enterprise", name: "Kurumsal", modules: [], user_limit: 0, company_limit: 0 }]}
+        catalog={[]}
+        companies={[]}
+        onClose={() => {}}
+        onChanged={() => {}}
+      />
+    );
+  });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(host.querySelector('[data-testid="drawer-isnet-soap"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="isnet-integration-panel"]')?.getAttribute("data-variant")).toBe("system");
+  expect(host.querySelector('[data-testid="isnet-mode-live"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="isnet-despatch-section"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="isnet-company-tax-id"]')).toBeNull();
 });

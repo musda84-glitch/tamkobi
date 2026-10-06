@@ -104,10 +104,10 @@ const EInvoiceSettings = ({ companyId }) => {
           <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Atanan entegratör</div>
           <div className="text-sm font-bold text-slate-900 mt-0.5">{s.provider_name || "İşNet Net-e Fatura — SOAP API"}</div>
           <p className="text-[10px] text-slate-500 mt-1" data-testid="einvoice-isnet-scope">
-            e-Fatura · e-Arşiv · e-İrsaliye — tek SOAP (IP–VKN) bağlantısı; ikinci kayıt gerekmez.
+            e-Fatura · e-Arşiv · e-İrsaliye. VKN, GİB etiketi ve portal girişi burada; SOAP ortamı / IP / e-İrsaliye varsayılanları Sistem → Şirket ayarlarından.
           </p>
         </div>
-        <IsnetIntegrationPanel companyId={companyId} />
+        <IsnetIntegrationPanel companyId={companyId} variant="company" />
       </div>
     );
   }
