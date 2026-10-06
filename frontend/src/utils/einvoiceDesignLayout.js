@@ -5,7 +5,7 @@ import { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption, gibSealKindForBlock
 export { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption, gibSealKindForBlock };
 
 export const BLOCK_IDS = [
-  "header", "supplier", "customer", "meta", "lines", "totals",
+  "header", "supplier", "customer", "meta", "ettn", "lines", "totals",
   "notes", "iban", "balance", "qr", "gib_seal_invoice", "gib_seal_archive", "spacer",
 ];
 
@@ -16,6 +16,7 @@ export const BLOCK_LABELS = {
   supplier: "Satıcı",
   customer: "Alıcı",
   meta: "Fatura bilgileri",
+  ettn: "ETTN",
   lines: "Kalemler",
   totals: "Toplamlar",
   notes: "Notlar",
@@ -34,9 +35,10 @@ export const SPAN_OPTIONS = [
 export const SPAN_CLASS = { 12: "col-span-12", 6: "col-span-6", 4: "col-span-4" };
 
 const BLOCK_HIDDEN_BY_DEFAULT = {
-  gib_seal_invoice: true, gib_seal_archive: true, balance: true, qr: true, spacer: true,
+  ettn: true, gib_seal_invoice: true, gib_seal_archive: true, balance: true, qr: true, spacer: true,
 };
 const BLOCK_SPAN_BY_DEFAULT = {
+  ettn: 12,
   gib_seal_invoice: 4,
   gib_seal_archive: 4,
   spacer: 4,
@@ -108,7 +110,7 @@ const LINE_COL_HIDDEN_BY_DEFAULT = {
 
 export const META_FIELD_IDS = [
   "customization", "profile", "invoice_type", "number", "invoice_date", "date",
-  "issue_time", "despatch_no", "despatch_date", "due_date", "ettn", "order_no",
+  "issue_time", "despatch_no", "despatch_date", "due_date", "order_no",
 ];
 
 export const META_FIELD_LABELS = {
@@ -122,11 +124,10 @@ export const META_FIELD_LABELS = {
   despatch_no: "İrsaliye No",
   despatch_date: "İrsaliye Tarihi",
   due_date: "Son Ödeme Tarihi",
-  ettn: "ETTN",
   order_no: "Sipariş No",
 };
 
-const META_FIELD_HIDDEN_BY_DEFAULT = { date: true, ettn: true, order_no: true };
+const META_FIELD_HIDDEN_BY_DEFAULT = { date: true, order_no: true };
 
 export const HEADER_FIELD_IDS = ["supplier_name", "supplier_address", "supplier_vkn"];
 
@@ -333,6 +334,13 @@ export function normalizeLayout(raw, kind) {
   out.qrSize = asQrSize(raw.qrSize, base.qrSize);
   if (typeof raw.companyTitle === "string") out.companyTitle = raw.companyTitle.slice(0, 120);
   out.blocks = normalizeBlocks(raw.blocks, out.kind);
+  const hasEttnBlock = Array.isArray(raw?.blocks) && raw.blocks.some((b) => b?.id === "ettn");
+  if (!hasEttnBlock) {
+    const ettnMeta = (Array.isArray(raw?.metaFields) ? raw.metaFields : []).find((f) => f?.id === "ettn");
+    if (ettnMeta && !ettnMeta.hidden) {
+      out.blocks = setBlockHidden(out.blocks, "ettn", false);
+    }
+  }
   out.lineCols = normalizeIdList(raw.lineCols, LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT);
   out.metaFields = deriveMetaFields(raw);
   out.headerFields = normalizeIdList(raw.headerFields, HEADER_FIELD_IDS, HEADER_FIELD_HIDDEN_BY_DEFAULT);
@@ -530,7 +538,6 @@ function xsltMetaTable(L) {
     despatch_no: xsltMetaRow(META_FIELD_LABELS.despatch_no, `<xsl:value-of select="/n1:Invoice/cac:DespatchDocumentReference/cbc:ID"/>`),
     despatch_date: xsltMetaRow(META_FIELD_LABELS.despatch_date, xsltYmdDash("/n1:Invoice/cac:DespatchDocumentReference/cbc:IssueDate")),
     due_date: xsltMetaRow(META_FIELD_LABELS.due_date, dueInner),
-    ettn: xsltMetaRow(META_FIELD_LABELS.ettn, `<xsl:value-of select="/n1:Invoice/cbc:UUID"/>`),
     order_no: xsltMetaRow(META_FIELD_LABELS.order_no, `<xsl:value-of select="/n1:Invoice/cac:OrderReference/cbc:ID"/>`),
   };
   return `
@@ -625,6 +632,11 @@ function xsltBlocks(L) {
         </tr>
       </table>`,
     meta: xsltMetaTable(L),
+    ettn: `
+      <div class="inv-ettn">
+        <div>ETTN</div>
+        <div class="inv-ettn-v"><xsl:value-of select="/n1:Invoice/cbc:UUID"/></div>
+      </div>`,
     lines: xsltLineTable(L),
     totals: xsltTotalsTable(L),
     notes: `
@@ -716,6 +728,8 @@ export function layoutToXslt(layout, kind) {
           .inv-meta td { font-weight:inherit; font-size:${fs}px; color:${L.text}; padding:1px 8px 1px 0; vertical-align:top; }
           .inv-meta-k { white-space:nowrap; }
           .inv-meta-v { word-break:break-word; }
+          .inv-ettn { word-break:break-all; }
+          .inv-ettn-v { font-size:${fs + 6}px; color:${L.primary}; margin-top:2px; }
           .inv-lines { border-collapse:collapse; }
           .inv-lines th { background:${L.primary}; color:#fff; font-size:${k}px; }
           .inv-lines td { border-bottom:1px solid ${L.muted}22; }

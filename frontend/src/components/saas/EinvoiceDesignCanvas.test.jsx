@@ -51,7 +51,9 @@ test("renders preview blocks and can hide then restore from palette", async () =
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).toContain("TR1.2");
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).toContain("SF-414808");
   expect(host.querySelector('[data-testid="einvoice-design-palette-meta-date"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="einvoice-design-palette-meta-ettn"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-ettn"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-ettn"]')).toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).not.toContain("550e8400");
   expect(host.querySelector('[data-testid="einvoice-design-block-invoice_no"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-order_no"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-supplier"]')?.textContent).toContain("Örnek Yazılım A.Ş.");
@@ -138,9 +140,6 @@ test("span buttons, order number and extra totals", async () => {
   });
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-show-meta-date"]').click();
-  });
-  await act(async () => {
-    host.querySelector('[data-testid="einvoice-design-show-meta-ettn"]').click();
   });
   const meta = host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent || "";
   expect(meta).toContain("SIP-2026-0142");
@@ -253,6 +252,26 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   });
   expect(last.blocks.find((b) => b.id === "spacer").span).toBe(12);
   expect(host.querySelector('[data-testid="einvoice-design-block-spacer"]').className).toContain("col-span-12");
+});
+
+test("ETTN is a separate palette block, not a fatura bilgileri field", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-palette-ettn"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).not.toContain("ETTN");
+  expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).not.toContain("550e8400");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-ettn"]').click();
+  });
+  const box = host.querySelector('[data-testid="einvoice-design-ettn"]');
+  expect(box).not.toBeNull();
+  expect(box?.textContent).toContain("ETTN");
+  expect(box?.textContent).toContain("550e8400-e29b-41d4-a716-446655440000");
+  expect(box?.querySelector(".break-all")?.style.fontSize).toBe("1.5em");
+  expect(host.querySelector('[data-testid="einvoice-design-block-ettn"]').className).toContain("col-span-12");
+  expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).not.toContain("550e8400");
 });
 
 test("GIB e-Arşiv seal can be added next to e-Fatura seal", async () => {
