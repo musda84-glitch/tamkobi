@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { Inbox, Loader2, Plug, Save, Truck, Send, FileCheck2, Download } from "lucide-react";
+import { Loader2, Plug, Save, Truck, Download } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2";
@@ -210,8 +209,6 @@ export default function IsnetIntegrationPanel({ companyId, variant = "company" }
     return <div className="text-xs text-slate-400 p-4" data-testid="isnet-loading">Yükleniyor…</div>;
   }
 
-  const linkBtn =
-    "px-3 py-1.5 rounded-lg font-semibold border inline-flex items-center gap-1.5 transition";
   const soap = testMode ? ISNET_SOAP.test : ISNET_SOAP.live;
 
   return (
@@ -346,25 +343,6 @@ export default function IsnetIntegrationPanel({ companyId, variant = "company" }
                 </p>
               </div>
             )}
-          </div>
-
-          <div className="flex flex-wrap gap-2" data-testid="isnet-quick-links">
-            <Link to="/edoc-inbox" className={`${linkBtn} border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100`} data-testid="isnet-edoc-inbox-link">
-              <Inbox className="w-3.5 h-3.5" />
-              Gelen e-Fatura
-            </Link>
-            <Link to="/edoc-inbox?kind=dispatch" className={`${linkBtn} border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800 hover:bg-fuchsia-100`} data-testid="isnet-incoming-despatch-link">
-              <Truck className="w-3.5 h-3.5" />
-              Gelen e-İrsaliye
-            </Link>
-            <Link to="/dispatches" className={`${linkBtn} border-fuchsia-200 bg-white text-fuchsia-800 hover:bg-fuchsia-50`} data-testid="isnet-outgoing-despatch-link">
-              <Send className="w-3.5 h-3.5" />
-              Giden e-İrsaliye
-            </Link>
-            <Link to="/invoices" className={`${linkBtn} border-slate-200 bg-white text-slate-700 hover:bg-slate-50`} data-testid="isnet-invoices-link">
-              <FileCheck2 className="w-3.5 h-3.5" />
-              Faturalar
-            </Link>
           </div>
         </>
       ) : null}
