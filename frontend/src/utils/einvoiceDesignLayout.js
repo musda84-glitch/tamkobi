@@ -6,7 +6,7 @@ export { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption };
 
 export const BLOCK_IDS = [
   "header", "supplier", "customer", "meta", "lines", "totals",
-  "notes", "iban", "balance", "qr", "gib_seal",
+  "notes", "iban", "balance", "qr", "gib_seal", "spacer",
 ];
 
 export const BLOCK_LABELS = {
@@ -21,6 +21,7 @@ export const BLOCK_LABELS = {
   iban: "IBAN / ödeme",
   balance: "Güncel bakiye",
   qr: "GİB karekod",
+  spacer: "Boş alan",
 };
 
 export const SPAN_OPTIONS = [
@@ -31,9 +32,10 @@ export const SPAN_OPTIONS = [
 
 export const SPAN_CLASS = { 12: "col-span-12", 6: "col-span-6", 4: "col-span-4" };
 
-const BLOCK_HIDDEN_BY_DEFAULT = { gib_seal: true, balance: true, qr: true };
+const BLOCK_HIDDEN_BY_DEFAULT = { gib_seal: true, balance: true, qr: true, spacer: true };
 const BLOCK_SPAN_BY_DEFAULT = {
   gib_seal: 4,
+  spacer: 4,
   supplier: 6,
   customer: 6,
   iban: 6,
@@ -111,7 +113,7 @@ const LINE_COL_HIDDEN_BY_DEFAULT = {
 export const META_FIELD_IDS = ["number", "invoice_date", "date", "issue_time", "profile", "ettn", "order_no"];
 
 export const META_FIELD_LABELS = {
-  number: "Fatura numarası",
+  number: "Belge numarası",
   invoice_date: "Fatura tarihi",
   date: "Düzenleme tarihi",
   issue_time: "Düzenleme zamanı",
@@ -609,6 +611,7 @@ function xsltBlocks(L) {
           </xsl:if>
         </xsl:for-each>
       </div>`,
+    spacer: `<div class="inv-spacer">&nbsp;</div>`,
   };
 }
 
@@ -664,6 +667,7 @@ export function layoutToXslt(layout, kind) {
           .inv-notes, .inv-iban { border-top:1px dashed ${L.muted}55; padding-top:8px; color:${L.muted}; }
           .inv-balance { border:1px solid ${L.accent}; padding:8px 10px; }
           .inv-qr { text-align:right; }
+          .inv-spacer { min-height:28px; }
           .inv-gib-seal { text-align:center; }
           .inv-gib-seal h1 { font-size:18px; margin:4px 0 0; color:${L.primary}; }
         </style>

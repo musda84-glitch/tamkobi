@@ -348,6 +348,17 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
       </div>
     );
   }
+  if (id === "spacer") {
+    return (
+      <div
+        className="min-h-[3.5rem] rounded-md border border-dashed flex items-center justify-center text-[9px] font-bold uppercase tracking-wide"
+        style={{ borderColor: `${layout.muted}55`, color: layout.muted }}
+        data-testid="einvoice-design-spacer"
+      >
+        Boş alan
+      </div>
+    );
+  }
   return null;
 };
 

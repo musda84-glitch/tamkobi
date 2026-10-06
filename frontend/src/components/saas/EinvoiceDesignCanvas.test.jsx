@@ -42,7 +42,7 @@ test("renders preview blocks and can hide then restore from palette", async () =
   });
   expect(host.querySelector('[data-testid="einvoice-design-canvas"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.textContent).toContain("ABC2026000000001");
-  expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).toContain("Fatura numarası");
+  expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).toContain("Belge numarası");
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).toContain("Düzenleme tarihi");
   expect(host.querySelector('[data-testid="einvoice-design-palette-meta-invoice_date"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-meta-issue_time"]')).not.toBeNull();
@@ -137,7 +137,7 @@ test("span buttons, order number and extra totals", async () => {
   const meta = host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent || "";
   expect(meta).toContain("SIP-2026-0142");
   expect(meta).toContain("Sipariş numarası");
-  expect(meta).toContain("Fatura numarası");
+  expect(meta).toContain("Belge numarası");
   expect(meta).toContain("Fatura tarihi");
   expect(meta).toContain("Düzenleme tarihi");
   expect(meta).toContain("Düzenleme zamanı");
@@ -169,6 +169,7 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   expect(host.querySelector('[data-testid="einvoice-design-col-show-sku"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-qr"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-gib_seal"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-spacer"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-balance"]')).not.toBeNull();
 
   await act(async () => {
@@ -220,6 +221,17 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   expect(seal?.textContent).toContain("e-FATURA");
   expect(seal?.querySelector("img")?.getAttribute("alt")).toBe("E-Fatura Logo");
   expect(seal?.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/jpeg;base64,/);
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-spacer"]').click();
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-spacer"]')?.textContent).toContain("Boş alan");
+  expect(host.querySelector('[data-testid="einvoice-design-block-spacer"]').className).toContain("col-span-4");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-span-spacer-12"]').click();
+  });
+  expect(last.blocks.find((b) => b.id === "spacer").span).toBe(12);
+  expect(host.querySelector('[data-testid="einvoice-design-block-spacer"]').className).toContain("col-span-12");
 });
 
 test("GIB seal caption follows e-Arşiv kind", async () => {
