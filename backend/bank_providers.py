@@ -2515,6 +2515,14 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
             "Kuveyt Türk hesap hareketi için RSA private key (PKCS8 PEM) gerekli. "
             "Developer portalındaki imza anahtarını Düzenle ekranına yapıştırın."
         )
+    ek_list = _kuveyt_account_suffix_candidates(conn)
+    paths = _kuveyt_tx_paths(conn)
+    if not paths:
+        raise RuntimeError(
+            "Kuveyt Türk hesap hareketi için ek no gerekli. "
+            "Düzenle → Hesap No/IBAN alanına ek no (örn. 6) veya IBAN girin. "
+            "Uç: GET /v3/accounts/{ekNo}/transactions."
+        )
     token, token_kind = await _kuveyt_account_bearer(conn)
     bases = _kuveyt_gateway_urls(conn)
     account = (conn.get("bank_account_number") or "").strip().replace(" ", "")
@@ -2531,14 +2539,6 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
         {},
         {"beginDate": start_d, "endDate": end_d},
     ]
-    ek_list = _kuveyt_account_suffix_candidates(conn)
-    paths = _kuveyt_tx_paths(conn)
-    if not paths:
-        raise RuntimeError(
-            "Kuveyt Türk hesap hareketi için ek no gerekli. "
-            "Düzenle → Hesap No/IBAN alanına ek no (örn. 6) veya IBAN girin. "
-            "Uç: GET /v3/accounts/{ekNo}/transactions."
-        )
 
     async with httpx.AsyncClient(timeout=45) as client:
         client.cookies.clear()
