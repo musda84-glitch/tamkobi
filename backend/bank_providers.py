@@ -35,7 +35,7 @@ PROVIDERS = {
         "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
-        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions, POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. Müşteri Id/Secret + Api Anahtarı + RSA PEM (PKCS8 veya JSEncrypt/openssl PKCS1). İmza: JSEncrypt.signSha256(token+query|json) = SHA256withRSA. Token: client_credentials scope=public — Gravitee Identity, olmazsa iuysal SDK. Bağlantı testi fx/rates; hareket yalnızca v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
+        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions, POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. RSA: openssl genrsa -out private.pem 2048 (BEGIN/END dahil; public.pem değil; min 2048-bit). İmza: JSEncrypt.signSha256(token+query|json) = SHA256withRSA. Token: client_credentials scope=public — Gravitee Identity, olmazsa iuysal SDK. Bağlantı testi fx/rates; hareket yalnızca v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -429,6 +429,17 @@ def _kuveyt_private_key_pem(conn: dict) -> str:
     return _kuveyt_clean_pem_paste(raw) if raw else ""
 
 
+def _kuveyt_require_rsa_size(key):
+    """JSEncrypt getting-started: production min 2048-bit (openssl genrsa 2048). Default JS keygen is 1024."""
+    bits = int(getattr(key, "key_size", 0) or 0)
+    if bits and bits < 2048:
+        raise RuntimeError(
+            f"Kuveyt Türk RSA anahtarı {bits}-bit. JSEncrypt getting-started üretim için en az 2048-bit ister "
+            "(openssl genrsa -out private.pem 2048). JSEncrypt varsayılan 1024-bit demo anahtarını kullanmayın."
+        )
+    return key
+
+
 def _kuveyt_load_private_key(pem: str):
     from cryptography.hazmat.primitives.serialization import (
         load_pem_private_key,
@@ -441,8 +452,8 @@ def _kuveyt_load_private_key(pem: str):
     if kind == "public":
         raise RuntimeError(
             "Kuveyt Türk RSA alanı genel anahtar (PUBLIC KEY) içeriyor. "
-            "Portal’dan özel anahtar (PRIVATE KEY / PKCS8) yapıştırın — "
-            "-----BEGIN PRIVATE KEY----- ile başlamalı."
+            "JSEncrypt/OpenSSL getting-started: openssl rsa -pubout ile üretilen public.pem imza için kullanılmaz. "
+            "private.pem yapıştırın — -----BEGIN RSA PRIVATE KEY----- veya -----BEGIN PRIVATE KEY-----."
         )
     if kind == "cert":
         raise RuntimeError(
@@ -461,8 +472,10 @@ def _kuveyt_load_private_key(pem: str):
         ck = _kuveyt_pem_kind(cand)
         try:
             if ck == "openssh":
-                return load_ssh_private_key(cand.encode("utf-8"), password=None)
-            return load_pem_private_key(cand.encode("utf-8"), password=None)
+                return _kuveyt_require_rsa_size(load_ssh_private_key(cand.encode("utf-8"), password=None))
+            return _kuveyt_require_rsa_size(load_pem_private_key(cand.encode("utf-8"), password=None))
+        except RuntimeError:
+            raise
         except Exception as e:
             errors.append(_err_text(e))
         try:
@@ -470,19 +483,22 @@ def _kuveyt_load_private_key(pem: str):
             if body:
                 der = base64.b64decode(body, validate=False)
                 if der:
-                    return load_der_private_key(der, password=None)
+                    return _kuveyt_require_rsa_size(load_der_private_key(der, password=None))
+        except RuntimeError:
+            raise
         except Exception as e:
             errors.append(f"DER:{_err_text(e)}")
 
     hint = errors[-1] if errors else "boş veya geçersiz"
-    if any("no BEGIN/END delimiters for a private key" in e for e in errors):
+    if kind == "bare" or any("no BEGIN/END delimiters for a private key" in e for e in errors):
         hint = (
-            "Yapıştırılan metinde PRIVATE KEY başlığı yok "
-            "(genel anahtar, sertifika veya bozuk yapıştırma olabilir)."
+            "PEM başlık/altlık yok (JSEncrypt Invalid key). "
+            "openssl genrsa -out private.pem 2048 çıktısının tamamını yapıştırın: "
+            "-----BEGIN RSA PRIVATE KEY----- … -----END RSA PRIVATE KEY-----."
         )
     raise RuntimeError(
         "Kuveyt Türk RSA özel anahtarı okunamadı. PKCS8 PEM "
-        "(-----BEGIN PRIVATE KEY-----) veya PKCS1 "
+        "(-----BEGIN PRIVATE KEY-----) veya OpenSSL/JSEncrypt PKCS1 "
         "(-----BEGIN RSA PRIVATE KEY-----) beklenir. "
         f"{hint}"
     ) from None
@@ -2517,8 +2533,18 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     pem = _kuveyt_private_key_pem(conn)
     if not pem:
         raise RuntimeError(
-            "Kuveyt Türk hesap hareketi için RSA private key (PKCS8 PEM) gerekli. "
-            "Developer portalındaki imza anahtarını Düzenle ekranına yapıştırın."
+            "Kuveyt Türk hesap hareketi için RSA private key gerekli. "
+            "openssl genrsa -out private.pem 2048 çıktısını (BEGIN/END dahil) Düzenle ekranına yapıştırın. "
+            "public.pem / pubout değil."
+        )
+    # Ek no yoksa Identity’ye çıkma — test ve geçersiz kayıt canlı token almasın.
+    ek_list = _kuveyt_account_suffix_candidates(conn)
+    paths = _kuveyt_tx_paths(conn)
+    if not paths:
+        raise RuntimeError(
+            "Kuveyt Türk hesap hareketi için ek no gerekli. "
+            "Düzenle → Hesap No/IBAN alanına ek no (örn. 6) veya IBAN girin. "
+            "Uç: GET /v3/accounts/{ekNo}/transactions."
         )
     token, token_kind = await _kuveyt_account_bearer(conn)
     bases = _kuveyt_gateway_urls(conn)
@@ -2536,14 +2562,6 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
         {},
         {"beginDate": start_d, "endDate": end_d},
     ]
-    ek_list = _kuveyt_account_suffix_candidates(conn)
-    paths = _kuveyt_tx_paths(conn)
-    if not paths:
-        raise RuntimeError(
-            "Kuveyt Türk hesap hareketi için ek no gerekli. "
-            "Düzenle → Hesap No/IBAN alanına ek no (örn. 6) veya IBAN girin. "
-            "Uç: GET /v3/accounts/{ekNo}/transactions."
-        )
 
     async with httpx.AsyncClient(timeout=45) as client:
         client.cookies.clear()
@@ -2600,7 +2618,7 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     if saw_ok_empty or balance is not None:
         return {"transactions": [], "balance": balance, "access_token": None}
 
-    hint = " Client ID/Secret, PKCS8 PEM ve hesap ek no/IBAN’ı kontrol edin."
+    hint = " Client ID/Secret, openssl genrsa private.pem (min 2048-bit) ve hesap ek no/IBAN’ı kontrol edin."
     if saw_auth:
         hint = (
             " GET /v3/accounts/{ekNo}/transactions yetki hatası. token scope=accounts "

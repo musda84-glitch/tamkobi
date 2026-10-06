@@ -32,6 +32,8 @@ def test_kuveyt_provider_identity_and_api_hosts():
     assert meta["legacy_sandbox_url"] == "https://apitest.kuveytturk.com.tr/prep"
     assert "private_key" in meta["fields"]
     assert "JSEncrypt" in meta["hint"]
+    assert "openssl genrsa" in meta["hint"]
+    assert "2048" in meta["hint"]
     assert "RSA-SHA256" in meta["hint"] or "signSha256" in meta["hint"] or "JSEncrypt" in meta["hint"]
     assert "/v1/fx/rates" in meta["hint"]
     assert "/v3/accounts/{ekNo}/transactions" in meta["hint"]
@@ -276,6 +278,37 @@ def test_kuveyt_load_private_key_rejects_public_key():
         assert False, "expected RuntimeError"
     except RuntimeError as e:
         assert "PUBLIC KEY" in str(e) or "genel anahtar" in str(e)
+        assert "public.pem" in str(e) or "pubout" in str(e)
+
+
+def test_kuveyt_rejects_jsencrypt_default_1024_bit_key():
+    """getting-started: JSEncrypt default 1024-bit is demo-only; production min 2048."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    try:
+        bp._kuveyt_load_private_key(pem)
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "1024" in msg
+        assert "2048" in msg
+        assert "openssl genrsa" in msg
+
+
+def test_kuveyt_load_private_key_missing_pem_fences_hint():
+    """JSEncrypt Invalid key = missing BEGIN/END; paste openssl genrsa private.pem fences."""
+    try:
+        bp._kuveyt_load_private_key("not-a-key")
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "JSEncrypt Invalid key" in msg
+        assert "openssl genrsa" in msg
+        assert "BEGIN RSA PRIVATE KEY" in msg
 
 
 def test_kuveyt_load_private_key_markdown_fence():
@@ -615,7 +648,9 @@ def test_fetch_kuveyt_requires_private_key():
         asyncio.run(_run())
         assert False, "expected RuntimeError"
     except RuntimeError as e:
-        assert "PKCS8" in str(e) or "private key" in str(e).lower() or "PEM" in str(e)
+        msg = str(e)
+        assert "PKCS8" in msg or "private key" in msg.lower() or "PEM" in msg
+        assert "openssl genrsa" in msg
 
 
 def test_fetch_kuveyt_signed_transactions():
@@ -848,8 +883,12 @@ def test_fetch_kuveyt_requires_suffix_path():
     async def _run():
         return await bp._fetch_kuveyt_transactions(conn, datetime.now(timezone.utc) - timedelta(days=1))
 
-    try:
-        asyncio.run(_run())
-        assert False, "expected RuntimeError"
-    except RuntimeError as e:
-        assert "ek no" in str(e).lower() or "/v3/accounts" in str(e)
+    async def _no_token(_conn):
+        raise AssertionError("token must not run without ek no")
+
+    with patch.object(bp, "_kuveyt_account_bearer", side_effect=_no_token):
+        try:
+            asyncio.run(_run())
+            assert False, "expected RuntimeError"
+        except RuntimeError as e:
+            assert "ek no" in str(e).lower() or "/v3/accounts" in str(e)
