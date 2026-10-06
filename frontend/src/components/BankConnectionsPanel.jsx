@@ -65,7 +65,7 @@ function ConnErrorBox({ connection, onEdit }) {
   if (!err) return null;
   const isKuveyt = connection?.provider === "kuveytturk";
   const invalidClient = /invalid_client/i.test(err);
-  const rsaBad = /RSA özel anahtar|PRIVATE KEY|PKCS8|PKCS1|PUBLIC KEY|CERTIFICATE|imza anahtar/i.test(err);
+  const rsaBad = /RSA özel anahtar|RSA anahtarı|PRIVATE KEY|PKCS8|PKCS1|PUBLIC KEY|CERTIFICATE|imza anahtar|2048-bit|JSEncrypt Invalid key|openssl genrsa/i.test(err);
   if (!isKuveyt || (!invalidClient && !rsaBad)) {
     return <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2" data-testid="conn-last-error">{err}</div>;
   }
@@ -77,15 +77,16 @@ function ConnErrorBox({ connection, onEdit }) {
         <div className="font-bold flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5 shrink-0" /> RSA imza anahtarı okunamadı</div>
         <p className="text-rose-700 leading-snug">
           {isPublic
-            ? "Yapıştırılan metin genel anahtar (PUBLIC KEY). İmza için özel anahtar gerekir."
+            ? "Yapıştırılan metin public.pem (PUBLIC KEY). openssl rsa -pubout çıktısı imza için kullanılmaz — private.pem gerekir."
             : isCert
               ? "Yapıştırılan metin sertifika. İmza için PRIVATE KEY PEM gerekir."
-              : "RSA Private Key alanı boş, bozuk veya yanlış formatta."}
+              : "RSA Private Key alanı boş, bozuk veya 2048-bit değil. JSEncrypt Invalid key = BEGIN/END satırları eksik."}
         </p>
         <ol className="list-decimal list-inside text-rose-700 space-y-0.5 pl-0.5">
-          <li>API Market → uygulamanız → <b>özel anahtar</b> (private key) dosyasını açın.</li>
-          <li>İlk satır <b>-----BEGIN PRIVATE KEY-----</b> (PKCS8) veya <b>-----BEGIN RSA PRIVATE KEY-----</b> (JSEncrypt / openssl) olmalı.</li>
-          <li><b>PUBLIC KEY</b> / sertifika / Api Anahtarı UUID’sini bu alana yapıştırmayın.</li>
+          <li>OpenSSL (önerilen): <code className="font-mono">openssl genrsa -out private.pem 2048</code> — dosyanın tamamını yapıştırın.</li>
+          <li>İlk satır <b>-----BEGIN RSA PRIVATE KEY-----</b> (JSEncrypt/openssl) veya <b>-----BEGIN PRIVATE KEY-----</b> (PKCS8) olmalı; BEGIN/END satırlarını silmeyin.</li>
+          <li><b>public.pem</b> / PUBLIC KEY / sertifika / Api Anahtarı UUID’sini bu alana yapıştırmayın.</li>
+          <li>JSEncrypt varsayılan 1024-bit demo anahtarı olmaz — en az 2048-bit.</li>
           <li>Düzenle → RSA alanını temizleyip yeniden yapıştırın → Kaydet &amp; Test Et.</li>
         </ol>
         {onEdit && (
@@ -497,11 +498,19 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <div key={f}>
                   <label className="block font-semibold mb-1">{FIELD_LABELS[f] || f}{" "}
                     <span className="text-slate-400 font-normal">
-                      {f === "access_token" ? "(hareket için müşteri token)" : f === "refresh_token" ? "(token yenileme)" : f === "private_key" ? "(JSEncrypt / PKCS8 özel anahtar — PUBLIC KEY değil)" : f === "api_key" ? "(X-Gravitee — token değil)" : "(opsiyonel — boşsa simüle)"}
+                      {f === "access_token" ? "(hareket için müşteri token)" : f === "refresh_token" ? "(token yenileme)" : f === "private_key" ? "(openssl genrsa / PKCS8 — public.pem değil)" : f === "api_key" ? "(X-Gravitee — token değil)" : "(opsiyonel — boşsa simüle)"}
                     </span>
                   </label>
                   {f === "private_key" ? (
-                    <textarea className={`${inputCls} font-mono min-h-[88px]`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} autoComplete="off" placeholder={"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"} spellCheck={false} />
+                    <>
+                      <textarea className={`${inputCls} font-mono min-h-[88px]`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} autoComplete="off" placeholder={"-----BEGIN RSA PRIVATE KEY-----\n(openssl genrsa -out private.pem 2048)\n-----END RSA PRIVATE KEY-----"} spellCheck={false} />
+                      {form.provider === "kuveytturk" && (
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          JSEncrypt getting-started: <code className="font-mono">openssl genrsa -out private.pem 2048</code> — BEGIN/END satırlarıyla yapıştırın.
+                          <code className="font-mono">openssl rsa -pubout</code> public.pem değil. JSEncrypt 1024-bit demo olmaz (min 2048).
+                        </p>
+                      )}
+                    </>
                   ) : (
                     <input type={SECRET_FIELDS.includes(f) ? "password" : "text"} className={`${inputCls} font-mono`} value={form[f] || ""} onChange={(e) => setForm({ ...form, [f]: e.target.value })} data-testid={`conn-field-${f}`} autoComplete="new-password" />
                   )}
@@ -540,7 +549,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <code className="font-mono">POST /v1/vpos/getMerchantOrderDetail</code> (sipariş sorgu).{" "}
                 <code className="font-mono">non3DPayment</code> kart çeker — TamKobi otomatik çağırmaz.
                 Token: <b>client_credentials</b>. İmza: portal <b>JSEncrypt.signSha256</b>(token+query|json) = SHA256withRSA.
-                RSA: PKCS8 veya JSEncrypt/openssl <code className="font-mono">BEGIN RSA PRIVATE KEY</code>. v4/v1 ve banka listesi abone değil.
+                RSA: <code className="font-mono">openssl genrsa -out private.pem 2048</code> (BEGIN/END; public.pem değil; min 2048-bit). v4/v1 ve banka listesi abone değil.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">
@@ -576,8 +585,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                       <div><label className="block font-semibold mb-1">Api Anahtarı <span className="text-slate-400 font-normal">(X-Gravitee-Api-Key — boş bırakırsanız değişmez)</span></label><input type="password" className={`${inputCls} font-mono`} value={editForm.api_key} onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })} data-testid="edit-conn-api-key" autoComplete="new-password" placeholder="Portal Api Anahtarı UUID" /></div>
                       <div>
                         <label className="block font-semibold mb-1">RSA Private Key (PKCS8 / JSEncrypt PKCS1) <span className="text-slate-400 font-normal">(boş bırakırsanız değişmez)</span></label>
-                        <textarea className={`${inputCls} font-mono min-h-[88px]`} value={editForm.private_key} onChange={(e) => setEditForm({ ...editForm, private_key: e.target.value })} data-testid="edit-conn-private-key" autoComplete="off" placeholder={"-----BEGIN PRIVATE KEY-----\n(özel anahtar — PUBLIC KEY değil)\n-----END PRIVATE KEY-----"} spellCheck={false} />
-                        <p className="text-[10px] text-slate-500 mt-1">İlk satır BEGIN PRIVATE KEY (PKCS8) veya BEGIN RSA PRIVATE KEY (JSEncrypt / openssl genrsa). Genel anahtar / Api Anahtarı UUID buraya gelmez. İmza, portal JSEncrypt.signSha256 ile aynıdır.</p>
+                        <textarea className={`${inputCls} font-mono min-h-[88px]`} value={editForm.private_key} onChange={(e) => setEditForm({ ...editForm, private_key: e.target.value })} data-testid="edit-conn-private-key" autoComplete="off" placeholder={"-----BEGIN RSA PRIVATE KEY-----\n(openssl genrsa -out private.pem 2048 — PUBLIC KEY değil)\n-----END RSA PRIVATE KEY-----"} spellCheck={false} />
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          JSEncrypt getting-started: <code className="font-mono">openssl genrsa -out private.pem 2048</code> çıktısını (BEGIN/END dahil) yapıştırın.
+                          <code className="font-mono">openssl rsa -pubout</code> ile üretilen public.pem değil. En az 2048-bit. İmza, JSEncrypt.signSha256 ile aynıdır.
+                        </p>
                       </div>
                       <div><label className="block font-semibold mb-1">Access Token <span className="text-slate-400 font-normal">(müşteri yetkili — hareket için)</span></label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" placeholder="Authorization Code ile alınan access_token — boşsa değişmez" /></div>
                       <div><label className="block font-semibold mb-1">Refresh Token <span className="text-slate-400 font-normal">(opsiyonel)</span></label><textarea className={`${inputCls} font-mono min-h-[56px]`} value={editForm.refresh_token} onChange={(e) => setEditForm({ ...editForm, refresh_token: e.target.value })} data-testid="edit-conn-refresh-token" autoComplete="off" placeholder="Token yenilemek için — boşsa değişmez" /></div>
