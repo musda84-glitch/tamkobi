@@ -9,7 +9,6 @@ import {
   LINE_COL_LABELS,
   META_FIELD_LABELS,
   HEADER_FIELD_LABELS,
-  metaGridColsClass,
   GIB_SEAL_JPEG_DATA_URL,
   SAMPLE_INVOICE,
   SPAN_CLASS,
@@ -119,7 +118,6 @@ const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDro
 
 const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, onFontSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
-  const title = layout.kind === "e_archive" ? "e-Arşiv Fatura" : "e-Fatura";
   if (id === "header") {
     const logoSize = Number(layout.logoSize) || 72;
     const headerFields = visibleHeaderFields(layout);
@@ -193,7 +191,6 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
   }
   if (id === "meta") {
     const fields = visibleMetaFields(layout);
-    const cols = metaGridColsClass((layout.blocks || []).find((b) => b.id === "meta")?.span, fields.length);
     const valueOf = (fid) => {
       if (fid === "number") return s.number;
       if (fid === "invoice_date" || fid === "date") return s.date;
@@ -201,19 +198,29 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
       if (fid === "profile") return s.profile;
       if (fid === "ettn") return s.ettn;
       if (fid === "order_no") return s.orderNo;
+      if (fid === "customization") return s.customization;
+      if (fid === "invoice_type") return s.invoiceType;
+      if (fid === "despatch_no") return s.despatchNo;
+      if (fid === "despatch_date") return s.despatchDate;
+      if (fid === "due_date") return s.dueDate;
       return "";
     };
     return (
       <div>
-        <div className={`grid gap-2 ${cols}`} style={{ borderBottom: `1px solid ${layout.muted}33`, fontSize: "1em" }} data-testid="einvoice-design-meta-grid">
-          {fields.map((f) => (
-            <div key={f.id} className="min-w-0">
-              {f.id === "number" ? <span className="inline-block text-[0.85em] font-bold text-white px-2 py-0.5 rounded mb-0.5" style={{ background: layout.accent }}>{title}</span> : null}
-              <div className="text-[0.78em] font-bold uppercase" style={{ color: layout.muted }}>{META_FIELD_LABELS[f.id]}</div>
-              <div className={f.id === "ettn" ? "break-all text-[0.82em]" : f.id === "number" ? "font-bold" : ""} style={f.id === "number" ? { color: layout.primary } : undefined}>{valueOf(f.id)}</div>
-            </div>
-          ))}
-        </div>
+        <table
+          className="w-full border-collapse"
+          style={{ fontSize: "1em", fontWeight: 400, color: layout.text, borderBottom: `1px solid ${layout.muted}33` }}
+          data-testid="einvoice-design-meta-grid"
+        >
+          <tbody>
+            {fields.map((f) => (
+              <tr key={f.id} data-testid={`einvoice-design-meta-row-${f.id}`}>
+                <td className="align-top whitespace-nowrap pr-2 py-px font-normal">{META_FIELD_LABELS[f.id]}:</td>
+                <td className={`align-top py-px font-normal ${f.id === "ettn" ? "break-all" : ""}`}>{valueOf(f.id)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
         <div className="flex items-center flex-wrap gap-1 mt-1.5" data-testid="einvoice-design-font-sizes">
           <span className="text-[9px] font-bold text-slate-500">Punto</span>
           {FONT_SIZE_OPTIONS.map((opt) => (

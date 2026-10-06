@@ -72,17 +72,9 @@ export function asSpan(value, fallback = 12) {
   return n === 4 || n === 6 || n === 12 ? n : fallback;
 }
 
-/** Fatura bilgileri: 1/3 dikey, 1/2 iki sütun, Tam alan sayısına göre. */
-export function metaGridColsClass(span, fieldCount) {
-  const metaSpan = asSpan(span, 12);
-  const n = Math.min(Math.max(Number(fieldCount) || 1, 1), 6);
-  if (metaSpan === 4) return "grid-cols-1";
-  if (metaSpan === 6) return "grid-cols-2";
-  if (n >= 6) return "grid-cols-6";
-  if (n >= 5) return "grid-cols-5";
-  if (n === 4) return "grid-cols-4";
-  if (n === 2) return "grid-cols-2";
-  return "grid-cols-3";
+/** Fatura bilgileri GİB kağıdı gibi her genişlikte dikey Liste: Etiket: Değer. */
+export function metaGridColsClass(_span, _fieldCount) {
+  return "grid-cols-1";
 }
 
 export const LINE_COL_IDS = ["no", "sku", "name", "barcode", "qty", "unit", "net_price", "price", "discount", "vat", "total"];
@@ -110,19 +102,27 @@ const LINE_COL_HIDDEN_BY_DEFAULT = {
   vat: true,
 };
 
-export const META_FIELD_IDS = ["number", "invoice_date", "date", "issue_time", "profile", "ettn", "order_no"];
+export const META_FIELD_IDS = [
+  "customization", "profile", "invoice_type", "number", "invoice_date", "date",
+  "issue_time", "despatch_no", "despatch_date", "due_date", "ettn", "order_no",
+];
 
 export const META_FIELD_LABELS = {
-  number: "Belge numarası",
-  invoice_date: "Fatura tarihi",
-  date: "Düzenleme tarihi",
-  issue_time: "Düzenleme zamanı",
+  customization: "Özelleştirme No",
   profile: "Senaryo",
+  invoice_type: "Fatura Tipi",
+  number: "Fatura No",
+  invoice_date: "Fatura Tarihi",
+  date: "Düzenleme tarihi",
+  issue_time: "Fatura Saati",
+  despatch_no: "İrsaliye No",
+  despatch_date: "İrsaliye Tarihi",
+  due_date: "Son Ödeme Tarihi",
   ettn: "ETTN",
-  order_no: "Sipariş numarası",
+  order_no: "Sipariş No",
 };
 
-const META_FIELD_HIDDEN_BY_DEFAULT = { invoice_date: true, issue_time: true, order_no: true };
+const META_FIELD_HIDDEN_BY_DEFAULT = { date: true, ettn: true, order_no: true };
 
 export const HEADER_FIELD_IDS = ["supplier_name", "supplier_address", "supplier_vkn"];
 
@@ -400,10 +400,15 @@ export const hiddenTotalRows = (layout) => (layout?.totalRows || []).filter((c) 
 export const SAMPLE_INVOICE = {
   number: "ABC2026000000001",
   orderNo: "SIP-2026-0142",
-  date: "06.10.2026",
+  date: "06 - 10 - 2026",
   issueTime: "14:32:05",
   ettn: "550e8400-e29b-41d4-a716-446655440000",
   profile: "TICARIFATURA",
+  customization: "TR1.2",
+  invoiceType: "SATIS",
+  despatchNo: "SF-414808",
+  despatchDate: "06 - 10 - 2026",
+  dueDate: "06 - 10 - 2026",
   supplier: {
     name: "Örnek Yazılım A.Ş.",
     vkn: "1234567890",
@@ -449,12 +454,8 @@ function xsltMoney(path) {
   return `<xsl:if test="${path}!=''"><xsl:value-of select="format-number(number(${path}), '#.##0,00', 'tr')"/></xsl:if>`;
 }
 
-function xsltYmdDot(path) {
-  return `<xsl:value-of select="concat(substring(${path},9,2),'.',substring(${path},6,2),'.',substring(${path},1,4))"/>`;
-}
-
-function kindTitle(kind) {
-  return kind === "e_archive" ? "e-Arşiv Fatura" : "e-Fatura";
+function xsltYmdDash(path) {
+  return `<xsl:value-of select="concat(substring(${path},9,2),' - ',substring(${path},6,2),' - ',substring(${path},1,4))"/>`;
 }
 
 const LINE_COL_XSLT = {
@@ -493,26 +494,31 @@ function xsltLineTable(L) {
       </table>`;
 }
 
+function xsltMetaRow(label, inner) {
+  return `<tr><td class="inv-meta-k">${xmlEscape(label)}:</td><td class="inv-meta-v">${inner}</td></tr>`;
+}
+
 function xsltMetaTable(L) {
-  const title = kindTitle(L.kind);
   const fields = visibleMetaFields(L);
   if (!fields.length) return "";
+  const dueInner = `<xsl:choose><xsl:when test="/n1:Invoice/cbc:DueDate">${xsltYmdDash("/n1:Invoice/cbc:DueDate")}</xsl:when><xsl:otherwise>${xsltYmdDash("/n1:Invoice/cac:PaymentMeans/cbc:PaymentDueDate")}</xsl:otherwise></xsl:choose>`;
   const map = {
-    number: `<td><div class="inv-badge">${xmlEscape(title)}</div><span class="inv-k">${xmlEscape(META_FIELD_LABELS.number)}</span><div class="inv-no"><xsl:value-of select="/n1:Invoice/cbc:ID"/></div></td>`,
-    invoice_date: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.invoice_date)}</span><div>${xsltYmdDot("/n1:Invoice/cbc:IssueDate")}</div></td>`,
-    date: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.date)}</span><div>${xsltYmdDot("/n1:Invoice/cbc:IssueDate")}</div></td>`,
-    issue_time: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.issue_time)}</span><div><xsl:value-of select="/n1:Invoice/cbc:IssueTime"/></div></td>`,
-    profile: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.profile)}</span><div><xsl:value-of select="/n1:Invoice/cbc:ProfileID"/></div></td>`,
-    ettn: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.ettn)}</span><div class="inv-ettn"><xsl:value-of select="/n1:Invoice/cbc:UUID"/></div></td>`,
-    order_no: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.order_no)}</span><div class="inv-v"><xsl:value-of select="/n1:Invoice/cac:OrderReference/cbc:ID"/></div></td>`,
+    customization: xsltMetaRow(META_FIELD_LABELS.customization, `<xsl:value-of select="/n1:Invoice/cbc:CustomizationID"/>`),
+    profile: xsltMetaRow(META_FIELD_LABELS.profile, `<xsl:value-of select="/n1:Invoice/cbc:ProfileID"/>`),
+    invoice_type: xsltMetaRow(META_FIELD_LABELS.invoice_type, `<xsl:value-of select="/n1:Invoice/cbc:InvoiceTypeCode"/>`),
+    number: xsltMetaRow(META_FIELD_LABELS.number, `<xsl:value-of select="/n1:Invoice/cbc:ID"/>`),
+    invoice_date: xsltMetaRow(META_FIELD_LABELS.invoice_date, xsltYmdDash("/n1:Invoice/cbc:IssueDate")),
+    date: xsltMetaRow(META_FIELD_LABELS.date, xsltYmdDash("/n1:Invoice/cbc:IssueDate")),
+    issue_time: xsltMetaRow(META_FIELD_LABELS.issue_time, `<xsl:value-of select="/n1:Invoice/cbc:IssueTime"/>`),
+    despatch_no: xsltMetaRow(META_FIELD_LABELS.despatch_no, `<xsl:value-of select="/n1:Invoice/cac:DespatchDocumentReference/cbc:ID"/>`),
+    despatch_date: xsltMetaRow(META_FIELD_LABELS.despatch_date, xsltYmdDash("/n1:Invoice/cac:DespatchDocumentReference/cbc:IssueDate")),
+    due_date: xsltMetaRow(META_FIELD_LABELS.due_date, dueInner),
+    ettn: xsltMetaRow(META_FIELD_LABELS.ettn, `<xsl:value-of select="/n1:Invoice/cbc:UUID"/>`),
+    order_no: xsltMetaRow(META_FIELD_LABELS.order_no, `<xsl:value-of select="/n1:Invoice/cac:OrderReference/cbc:ID"/>`),
   };
-  const stacked = asSpan((L.blocks || []).find((b) => b.id === "meta")?.span, 12) === 4;
-  const body = stacked
-    ? fields.map((f) => `<tr>${map[f.id] || ""}</tr>`).join("")
-    : `<tr>${fields.map((f) => map[f.id] || "").join("")}</tr>`;
   return `
-      <table class="inv-meta${stacked ? " inv-meta-stack" : ""}" width="100%" cellpadding="6" cellspacing="0">
-        ${body}
+      <table class="inv-meta" width="100%" cellpadding="0" cellspacing="0">
+        ${fields.map((f) => map[f.id] || "").join("")}
       </table>`;
 }
 
@@ -680,15 +686,14 @@ export function layoutToXslt(layout, kind) {
           .inv-header { border-bottom:3px solid ${L.accent}; padding-bottom:10px; }
           .inv-brand-name { font-size:${no}px; margin:6px 0 2px; color:${L.primary}; }
           .inv-brand-addr, .inv-brand-vkn { font-size:${k}px; }
-          .inv-badge { display:inline-block; background:${L.accent}; color:#fff; font-weight:700; padding:4px 10px; border-radius:4px; letter-spacing:.04em; font-size:${k}px; }
-          .inv-no { font-size:${no}px; font-weight:700; color:${L.primary}; margin-top:4px; }
           .inv-k { font-size:${k}px; font-weight:700; color:${L.muted}; text-transform:uppercase; letter-spacing:.04em; }
           .inv-tot { color:${L.muted}; }
           .inv-v { font-weight:700; color:${L.primary}; margin:2px 0 4px; }
           .inv-box { border:1px solid ${L.accent}33; background:${L.paper}; }
-          .inv-meta td { border-bottom:1px solid ${L.muted}33; }
-          .inv-meta-stack td { width:100%; display:block; }
-          .inv-ettn { font-size:${k}px; word-break:break-all; }
+          .inv-meta { border-collapse:collapse; }
+          .inv-meta td { font-weight:inherit; font-size:${fs}px; color:${L.text}; padding:1px 8px 1px 0; vertical-align:top; }
+          .inv-meta-k { white-space:nowrap; }
+          .inv-meta-v { word-break:break-word; }
           .inv-lines { border-collapse:collapse; }
           .inv-lines th { background:${L.primary}; color:#fff; font-size:${k}px; }
           .inv-lines td { border-bottom:1px solid ${L.muted}22; }
