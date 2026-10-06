@@ -275,6 +275,9 @@ test("layoutToXslt includes optional totals rows", () => {
   expect(xslt).toContain('class="inv-tot"');
   expect(xslt).toContain("format-number");
   expect(xslt).toContain('decimal-format name="tr"');
+  expect(xslt).toContain("<xsl:text> TL</xsl:text>");
+  expect(xslt).toContain("DocumentCurrencyCode");
+  expect(xslt).toContain("@currencyID");
   expect(xslt).not.toMatch(/class="inv-k">Mal Hizmet Toplam Tutarı/);
 });
 

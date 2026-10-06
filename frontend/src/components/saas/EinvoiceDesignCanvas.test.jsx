@@ -71,6 +71,8 @@ test("renders preview blocks and can hide then restore from palette", async () =
   expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("Hesaplanan (%20)");
   expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("Vergiler Dahil Toplam Tutar");
   expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("Ödenecek Tutar");
+  expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("13.000,00 TL");
+  expect(host.querySelector('[data-testid="einvoice-design-block-totals"]')?.textContent).toContain("15.600,00 TL");
 
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-hide-iban"]').click();
@@ -165,8 +167,10 @@ test("span buttons, order number and extra totals", async () => {
   expect(totals).toContain("İstisna");
   expect(totals).toContain("Hesaplanan KDV Tevkifat");
   expect(totals).toContain("Ödenecek Tutar");
-  expect(totals).toContain("300,00");
-  expect(totals).toContain("15.600,00");
+  expect(totals).toContain("300,00 TL");
+  expect(totals).toContain("15.600,00 TL");
+  expect(totals).toContain("2.600,00 TL");
+  expect(totals).toContain("13.000,00 TL");
 });
 
 test("adds stock, vat and GIB QR fields from palette", async () => {
