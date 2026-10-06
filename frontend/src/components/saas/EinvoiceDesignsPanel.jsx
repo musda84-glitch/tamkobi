@@ -184,7 +184,7 @@ export const EinvoiceDesignsPanel = () => {
           </h2>
           <p className="text-[11px] text-slate-500 mt-0.5 max-w-2xl">
             Fatura görünümünü sürükle-bırak ile düzenleyin: logo, renk, yazı tipi, bölüm sırası,
-            kalem alanları (stok kodu, barkod, iskonto, KDV, KDV’siz fiyat), güncel bakiye ve GİB karekod.
+            kalem alanları (stok kodu, barkod, iskonto, KDV, KDV’siz fiyat), güncel bakiye, GİB mührü ve GİB karekod.
             Kaydedince XSLT üretilir. Ham XSLT sekmesi gelişmiş kullanım içindir.
             Varsayılan GİB şablonları yüklüdür — görsel kaydetmek onları bu düzene çevirir; orijinali korumak için kopyalayın.
           </p>

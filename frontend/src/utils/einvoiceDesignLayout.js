@@ -1,12 +1,17 @@
 /** e-Fatura / e-Arşiv görsel tasarım düzeni → canlı önizleme + XSLT. */
 
+import { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption } from "./einvoiceGibSeal";
+
+export { GIB_SEAL_JPEG_DATA_URL, gibSealAlt, gibSealCaption };
+
 export const BLOCK_IDS = [
   "header", "supplier", "customer", "meta", "lines", "totals",
-  "notes", "iban", "balance", "qr",
+  "notes", "iban", "balance", "qr", "gib_seal",
 ];
 
 export const BLOCK_LABELS = {
   header: "Üst bilgi / logo",
+  gib_seal: "GİB mührü",
   supplier: "Satıcı",
   customer: "Alıcı",
   meta: "Fatura bilgileri",
@@ -26,8 +31,9 @@ export const SPAN_OPTIONS = [
 
 export const SPAN_CLASS = { 12: "col-span-12", 6: "col-span-6", 4: "col-span-4" };
 
-const BLOCK_HIDDEN_BY_DEFAULT = { balance: true, qr: true };
+const BLOCK_HIDDEN_BY_DEFAULT = { gib_seal: true, balance: true, qr: true };
 const BLOCK_SPAN_BY_DEFAULT = {
+  gib_seal: 4,
   supplier: 6,
   customer: 6,
   iban: 6,
@@ -460,6 +466,11 @@ function xsltBlocks(L) {
           <td class="inv-brand" valign="top">${logo}<h1>${company}</h1></td>
         </tr>
       </table>`,
+    gib_seal: `
+      <div class="inv-gib-seal" align="center">
+        <img style="width:91px;" align="middle" alt="${xmlEscape(gibSealAlt(L.kind))}" src="${GIB_SEAL_JPEG_DATA_URL}"/>
+        <h1 align="center"><span style="font-weight:bold;">${xmlEscape(gibSealCaption(L.kind))}</span></h1>
+      </div>`,
     supplier,
     customer,
     parties: `
@@ -561,6 +572,8 @@ export function layoutToXslt(layout, kind) {
           .inv-notes, .inv-iban { border-top:1px dashed ${L.muted}55; padding-top:8px; color:${L.muted}; }
           .inv-balance { border:1px solid ${L.accent}; padding:8px 10px; }
           .inv-qr { text-align:right; }
+          .inv-gib-seal { text-align:center; }
+          .inv-gib-seal h1 { font-size:18px; margin:4px 0 0; color:${L.primary}; }
         </style>
       </head>
       <body>

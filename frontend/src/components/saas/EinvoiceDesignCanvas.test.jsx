@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { act } from "react";
 import { EinvoiceDesignCanvas } from "./EinvoiceDesignCanvas";
-import { defaultLayout } from "../../utils/einvoiceDesignLayout";
+import { defaultLayout, normalizeLayout } from "../../utils/einvoiceDesignLayout";
 
 jest.mock("../../utils/compressImage", () => ({ compressImageFile: async (f) => f }));
 jest.mock("qrcode.react", () => ({ QRCodeSVG: () => <svg data-testid="einvoice-design-qr-svg" /> }));
@@ -146,6 +146,7 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   expect(host.querySelector('[data-testid="einvoice-design-col-sku"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-col-show-sku"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-qr"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-gib_seal"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-balance"]')).not.toBeNull();
 
   await act(async () => {
@@ -182,4 +183,29 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   expect(host.querySelector('[data-testid="einvoice-design-qr"]')?.parentElement?.textContent).not.toContain("550e8400");
   expect(host.querySelector('[data-testid="einvoice-design-qr"]')?.parentElement?.textContent).not.toMatch(/GİB KAREKOD/i);
   expect(host.querySelector('[data-testid="einvoice-design-block-balance"]')?.textContent).toContain("18.450,00 TL Borç");
+
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-gib_seal"]').click();
+  });
+  const seal = host.querySelector('[data-testid="einvoice-design-gib-seal"]');
+  expect(seal).not.toBeNull();
+  expect(seal?.textContent).toContain("e-FATURA");
+  expect(seal?.querySelector("img")?.getAttribute("alt")).toBe("E-Fatura Logo");
+  expect(seal?.querySelector("img")?.getAttribute("src")).toMatch(/^data:image\/jpeg;base64,/);
+});
+
+test("GIB seal caption follows e-Arşiv kind", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <EinvoiceDesignCanvas
+        layout={normalizeLayout({ kind: "e_archive", blocks: [{ id: "gib_seal" }] }, "e_archive")}
+        kind="e_archive"
+        onChange={(n) => { last = n; }}
+      />
+    );
+  });
+  const seal = host.querySelector('[data-testid="einvoice-design-gib-seal"]');
+  expect(seal?.textContent).toContain("e-Arşiv Fatura");
+  expect(seal?.querySelector("img")?.getAttribute("alt")).toBe("E-Arşiv Logo");
 });
