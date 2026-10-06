@@ -23,6 +23,7 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.blocks.find((b) => b.id === "gib_seal").hidden).toBe(true);
   expect(L.blocks.find((b) => b.id === "gib_seal").span).toBe(4);
   expect(L.blocks.find((b) => b.id === "qr").hidden).toBe(true);
+  expect(L.qrSize).toBe(96);
   expect(L.blocks.find((b) => b.id === "balance").hidden).toBe(true);
   expect(L.lineCols.find((c) => c.id === "sku").hidden).toBe(true);
   expect(L.lineCols.find((c) => c.id === "name").hidden).toBe(false);
@@ -131,7 +132,7 @@ test("layoutToXslt writes stylesheet, colors and skips hidden blocks", () => {
   expect(xslt).toContain("#112233");
   expect(xslt).toContain("#445566");
   expect(xslt).toContain("e-Arşiv Fatura");
-  expect(xslt).toContain("Demo A.Ş.");
+  expect(xslt).not.toContain("Demo A.Ş.");
   expect(xslt).toContain("Mal / Hizmet");
   expect(xslt).toContain("Fatura numarası");
   expect(xslt).not.toContain("IBAN / ödeme");
@@ -145,6 +146,7 @@ test("layoutToXslt writes stylesheet, colors and skips hidden blocks", () => {
 
 test("layoutToXslt includes added line columns and extra blocks", () => {
   const layout = normalizeLayout({
+    qrSize: 160,
     blocks: [{ id: "lines" }, { id: "balance" }, { id: "qr" }],
     lineCols: [
       { id: "sku" },
@@ -164,6 +166,7 @@ test("layoutToXslt includes added line columns and extra blocks", () => {
   expect(xslt).toContain("KDV'siz fiyat");
   expect(xslt).toContain("Güncel bakiye");
   expect(xslt).toContain("DocumentType='QR'");
+  expect(xslt).toContain("width:160px;height:160px");
   expect(xslt).not.toMatch(/inv-k">GİB karekod/);
 });
 
@@ -246,6 +249,27 @@ test("layoutToXslt embeds GIB seal with kind caption when added", () => {
   expect(archive).toContain("E-Arşiv Logo");
   expect(archive).toContain("e-Arşiv Fatura");
   expect(archive).not.toContain("e-FATURA");
+});
+
+test("layoutToXslt header is logo only without company title", () => {
+  const xslt = layoutToXslt(normalizeLayout({
+    logo: "data:image/png;base64,aaa",
+    companyTitle: "Gizleme A.Ş.",
+    blocks: [
+      { id: "header" },
+      { id: "supplier", hidden: true },
+      { id: "customer", hidden: true },
+      { id: "meta", hidden: true },
+      { id: "lines", hidden: true },
+      { id: "totals", hidden: true },
+      { id: "notes", hidden: true },
+      { id: "iban", hidden: true },
+    ],
+  }));
+  expect(xslt).toContain('alt="logo"');
+  expect(xslt).toContain("data:image/png;base64,aaa");
+  expect(xslt).not.toContain("Gizleme A.Ş.");
+  expect(xslt).not.toContain("AccountingSupplierParty");
 });
 
 test("xmlEscape encodes markup", () => {

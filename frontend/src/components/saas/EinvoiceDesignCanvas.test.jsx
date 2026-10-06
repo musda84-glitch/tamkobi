@@ -47,6 +47,8 @@ test("renders preview blocks and can hide then restore from palette", async () =
   expect(host.querySelector('[data-testid="einvoice-design-block-invoice_no"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-order_no"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-supplier"]')?.textContent).toContain("Örnek Yazılım A.Ş.");
+  expect(host.querySelector('[data-testid="einvoice-design-block-header"]')?.textContent).not.toContain("Örnek Yazılım A.Ş.");
+  expect(host.querySelector('[data-testid="einvoice-design-logo"]')?.textContent).toContain("Logo");
   expect(host.querySelector('[data-testid="einvoice-design-block-customer"]')?.textContent).toContain("Alıcı Ticaret Ltd. Şti.");
   expect(host.querySelector('[data-testid="einvoice-design-block-parties"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-lines"]')).not.toBeNull();
@@ -187,6 +189,11 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
     host.querySelector('[data-testid="einvoice-design-show-balance"]').click();
   });
   expect(host.querySelector('[data-testid="einvoice-design-qr"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-qr-size-96"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-qr-size-160"]').click();
+  });
+  expect(last.qrSize).toBe(160);
   expect(host.querySelector('[data-testid="einvoice-design-qr"]')?.parentElement?.textContent).not.toContain("550e8400");
   expect(host.querySelector('[data-testid="einvoice-design-qr"]')?.parentElement?.textContent).not.toMatch(/GİB KAREKOD/i);
   expect(host.querySelector('[data-testid="einvoice-design-block-balance"]')?.textContent).toContain("18.450,00 TL Borç");
