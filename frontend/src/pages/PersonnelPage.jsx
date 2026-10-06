@@ -651,18 +651,17 @@ export default function PersonnelPage() {
             return (
           <div
             key={empKey}
-            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_280px]"}`}
+            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_160px]"}`}
             data-testid={`employee-card-${emp.tc_kimlik}`}
             data-expanded={cardOpen ? "1" : "0"}
           >
           <div className="px-4 pt-3 pb-2 flex flex-col gap-2">
             <div className="flex flex-wrap items-start gap-3 justify-between">
-              <div className="flex flex-col gap-1.5 min-w-0 flex-1">
-              <div className="flex items-start gap-2.5 min-w-0">
+              <div className="flex items-start gap-2.5 min-w-0 sm:max-w-[280px] sm:shrink-0">
                 <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 text-[11px] font-black text-slate-500" data-testid={`employee-photo-${emp.tc_kimlik || empKey}`}>
                   {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="w-full h-full object-cover" /> : (emp.full_name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
                 </div>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <h3 className="font-bold text-slate-900 text-sm">{emp.full_name}</h3>
                     {isDailyWage(emp) ? <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`employee-yevmiye-badge-${empKey}`}>Yevmiye</span> : null}
@@ -702,15 +701,15 @@ export default function PersonnelPage() {
                       <span className="text-amber-800 font-extrabold"> · Avans {fmtCardMoney(emp.balance.advances)}</span>
                     ) : null}
                   </div>
+                  {emp.workplace?.kind === "task" ? (
+                    <div className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1 mt-0.5" data-testid={`employee-workplace-${empKey}`}>
+                      Görev · {workplaceShort(emp.workplace)}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
-            {emp.workplace?.kind === "task" ? (
-              <div className="w-full text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1" data-testid={`employee-workplace-${empKey}`}>
-                Görev · {workplaceShort(emp.workplace)}
-              </div>
-            ) : null}
-
+              <div className="flex flex-col gap-1.5 min-w-0 flex-1" data-testid={`employee-card-mid-${empKey}`}>
             <EmployeeRequestChips
               items={empReqs}
               compact
