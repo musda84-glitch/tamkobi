@@ -119,9 +119,13 @@ test("identity column stacks requests, actions and remaining receivable", async 
   expect(card.textContent).toContain("Soner Akkaya");
   expect(card.textContent).toContain("Kalan izin");
   expect(host.querySelector('[data-testid="employee-receivable-14479874352"]')?.textContent).toMatch(/Kalan alacak/);
-  expect(host.querySelector('[data-testid="employee-card-requests-14479874352"]')?.textContent).toContain("Talepler");
-  expect(host.querySelector('[data-testid="employee-card-actions-emp_1"]')?.textContent).toMatch(/Hareketler/);
-  expect(host.querySelector('[data-testid="employee-card-actions-emp_1"]')?.textContent).toMatch(/Personel Kartı/);
+  const mid = host.querySelector('[data-testid="employee-card-mid-emp_1"]');
+  expect(mid).not.toBeNull();
+  expect(mid.className).toMatch(/flex-1/);
+  expect(mid.querySelector('[data-testid="employee-card-requests-14479874352"]')?.textContent).toContain("Talepler");
+  expect(mid.querySelector('[data-testid="employee-card-actions-emp_1"]')?.textContent).toMatch(/Hareketler/);
+  expect(mid.querySelector('[data-testid="employee-card-actions-emp_1"]')?.textContent).toMatch(/Personel Kartı/);
+  expect(mid.contains(host.querySelector('[data-testid="employee-receivable-14479874352"]'))).toBe(false);
   expect(host.querySelector('[data-testid="employee-cards-grid"]')?.className).toContain("grid-cols-1");
   expect(host.querySelector('[data-testid="employee-cards-grid"]')?.className).not.toMatch(/xl:grid-cols-2/);
   expect(host.querySelector('[data-testid="employee-card-details-14479874352"]')).toBeNull();
