@@ -273,18 +273,19 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, onQ
   if (id === "qr") {
     const qrSize = Number(layout.qrSize) || 96;
     return (
-      <div className="flex flex-col items-end gap-1 pt-1">
+      <div className="flex flex-col items-end gap-1.5 pt-1">
         <div className="bg-white p-1 border rounded" data-testid="einvoice-design-qr">
           <QRCodeSVG value={sampleQrPayload(s)} size={qrSize} level="M" />
         </div>
-        <div className="flex gap-0.5" data-testid="einvoice-design-qr-sizes">
+        <div className="flex items-center flex-wrap justify-end gap-1" data-testid="einvoice-design-qr-sizes">
+          <span className="text-[9px] font-bold text-slate-500">Boyut</span>
           {QR_SIZE_OPTIONS.map((opt) => (
             <button
               key={opt.size}
               type="button"
-              title={`${opt.size}px`}
-              onClick={() => onQrSize?.(opt.size)}
-              className={`text-[8px] font-bold px-1 py-0.5 rounded ${qrSize === opt.size ? "bg-slate-800 text-white" : "text-slate-400 hover:bg-slate-100"}`}
+              title={`${opt.size} px`}
+              onClick={(e) => { e.stopPropagation(); onQrSize?.(opt.size); }}
+              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${qrSize === opt.size ? "bg-slate-800 text-white border-slate-800" : "text-slate-600 border-slate-200 hover:bg-slate-100"}`}
               data-testid={`einvoice-design-qr-size-${opt.size}`}
             >
               {opt.label}

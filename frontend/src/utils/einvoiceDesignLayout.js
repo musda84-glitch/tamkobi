@@ -42,10 +42,10 @@ const BLOCK_SPAN_BY_DEFAULT = {
 };
 
 export const QR_SIZE_OPTIONS = [
-  { size: 64, label: "S" },
-  { size: 96, label: "M" },
-  { size: 128, label: "L" },
-  { size: 160, label: "XL" },
+  { size: 64, label: "64" },
+  { size: 96, label: "96" },
+  { size: 128, label: "128" },
+  { size: 160, label: "160" },
 ];
 
 export function asQrSize(value, fallback = 96) {

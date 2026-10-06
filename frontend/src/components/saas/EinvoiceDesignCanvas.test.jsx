@@ -190,6 +190,7 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   });
   expect(host.querySelector('[data-testid="einvoice-design-qr"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-qr-size-96"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-qr"]')?.textContent).toContain("Boyut");
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-qr-size-160"]').click();
   });
