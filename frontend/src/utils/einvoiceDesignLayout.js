@@ -1,14 +1,12 @@
 /** e-Fatura / e-Arşiv görsel tasarım düzeni → canlı önizleme + XSLT. */
 
 export const BLOCK_IDS = [
-  "header", "invoice_no", "supplier", "customer", "meta", "lines", "totals",
-  "notes", "iban", "order_no", "balance", "qr",
+  "header", "supplier", "customer", "meta", "lines", "totals",
+  "notes", "iban", "balance", "qr",
 ];
 
 export const BLOCK_LABELS = {
   header: "Üst bilgi / logo",
-  invoice_no: "Fatura numarası",
-  order_no: "Sipariş numarası",
   supplier: "Satıcı",
   customer: "Alıcı",
   meta: "Fatura bilgileri",
@@ -28,11 +26,8 @@ export const SPAN_OPTIONS = [
 
 export const SPAN_CLASS = { 12: "col-span-12", 6: "col-span-6", 4: "col-span-4" };
 
-const BLOCK_HIDDEN_BY_DEFAULT = { order_no: true, balance: true, qr: true };
+const BLOCK_HIDDEN_BY_DEFAULT = { balance: true, qr: true };
 const BLOCK_SPAN_BY_DEFAULT = {
-  header: 6,
-  invoice_no: 6,
-  order_no: 6,
   supplier: 6,
   customer: 6,
   iban: 6,
@@ -68,6 +63,40 @@ const LINE_COL_HIDDEN_BY_DEFAULT = {
   net_price: true,
   discount: true,
   vat: true,
+};
+
+export const META_FIELD_IDS = ["number", "date", "profile", "ettn", "order_no"];
+
+export const META_FIELD_LABELS = {
+  number: "Fatura numarası",
+  date: "Tarih",
+  profile: "Senaryo",
+  ettn: "ETTN",
+  order_no: "Sipariş numarası",
+};
+
+const META_FIELD_HIDDEN_BY_DEFAULT = { order_no: true };
+
+export const TOTAL_ROW_IDS = ["subtotal", "allowance", "exemption", "kdv", "tevkifat", "grand"];
+
+export const TOTAL_ROW_LABELS = {
+  subtotal: "Mal hizmet toplam",
+  allowance: "İskonto",
+  exemption: "İstisna",
+  kdv: "KDV",
+  tevkifat: "Tevkifat",
+  grand: "Ödenecek tutar",
+};
+
+const TOTAL_ROW_HIDDEN_BY_DEFAULT = { allowance: true, exemption: true, tevkifat: true };
+
+export const TOTAL_ROW_SAMPLE_KEY = {
+  subtotal: "subtotal",
+  allowance: "discount",
+  exemption: "exemption",
+  kdv: "vat",
+  tevkifat: "withholding",
+  grand: "grand",
 };
 
 export const FONT_OPTIONS = [
@@ -106,11 +135,26 @@ function expandLegacyBlocks(raw) {
     if (b?.id === "parties") {
       out.push({ id: "supplier", hidden: !!b.hidden, span: 6 });
       out.push({ id: "customer", hidden: !!b.hidden, span: 6 });
+    } else if (b?.id === "invoice_no" || b?.id === "order_no") {
+      continue;
     } else {
       out.push(b);
     }
   }
   return out;
+}
+
+function deriveMetaFields(raw) {
+  const listed = normalizeIdList(raw?.metaFields, META_FIELD_IDS, META_FIELD_HIDDEN_BY_DEFAULT);
+  if (Array.isArray(raw?.metaFields) && raw.metaFields.length) return listed;
+  const blocks = Array.isArray(raw?.blocks) ? raw.blocks : [];
+  const orderBlk = blocks.find((b) => b?.id === "order_no");
+  const invBlk = blocks.find((b) => b?.id === "invoice_no");
+  return listed.map((f) => {
+    if (f.id === "order_no" && orderBlk) return { ...f, hidden: !!orderBlk.hidden };
+    if (f.id === "number" && invBlk) return { ...f, hidden: !!invBlk.hidden };
+    return f;
+  });
 }
 
 function normalizeBlocks(raw) {
@@ -159,6 +203,8 @@ export function defaultLayout(kind = "e_invoice") {
     companyTitle: "",
     blocks: defaultBlocks(),
     lineCols: idList(LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT),
+    metaFields: idList(META_FIELD_IDS, META_FIELD_HIDDEN_BY_DEFAULT),
+    totalRows: idList(TOTAL_ROW_IDS, TOTAL_ROW_HIDDEN_BY_DEFAULT),
   };
 }
 
@@ -191,6 +237,8 @@ export function normalizeLayout(raw, kind) {
   if (typeof raw.companyTitle === "string") out.companyTitle = raw.companyTitle.slice(0, 120);
   out.blocks = normalizeBlocks(raw.blocks);
   out.lineCols = normalizeIdList(raw.lineCols, LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT);
+  out.metaFields = deriveMetaFields(raw);
+  out.totalRows = normalizeIdList(raw.totalRows, TOTAL_ROW_IDS, TOTAL_ROW_HIDDEN_BY_DEFAULT);
   out.version = 1;
   return out;
 }
@@ -247,8 +295,14 @@ export function moveVisible(blocks, id, dir) {
 }
 
 export const isLineCol = (id) => LINE_COL_IDS.includes(id);
+export const isMetaField = (id) => META_FIELD_IDS.includes(id);
+export const isTotalRow = (id) => TOTAL_ROW_IDS.includes(id);
 export const visibleLineCols = (layout) => (layout?.lineCols || []).filter((c) => !c.hidden);
 export const hiddenLineCols = (layout) => (layout?.lineCols || []).filter((c) => c.hidden);
+export const visibleMetaFields = (layout) => (layout?.metaFields || []).filter((c) => !c.hidden);
+export const hiddenMetaFields = (layout) => (layout?.metaFields || []).filter((c) => c.hidden);
+export const visibleTotalRows = (layout) => (layout?.totalRows || []).filter((c) => !c.hidden);
+export const hiddenTotalRows = (layout) => (layout?.totalRows || []).filter((c) => c.hidden);
 
 export const SAMPLE_INVOICE = {
   number: "ABC2026000000001",
@@ -273,7 +327,10 @@ export const SAMPLE_INVOICE = {
     { no: 2, sku: "KUR-110", barcode: "8680000000002", name: "Kurulum ve eğitim", qty: "2", unit: "C62", net_price: "3.000,00", price: "1.500,00", discount: "%10", vat: "%20", total: "3.240,00" },
   ],
   subtotal: "13.000,00",
+  discount: "300,00",
+  exemption: "0,00",
   vat: "2.600,00",
+  withholding: "1.300,00",
   grand: "15.600,00",
   balance: "18.450,00 TL Borç",
   notes: ["İşbu belge elektronik olarak düzenlenmiştir."],
@@ -332,6 +389,40 @@ function xsltLineTable(L) {
       </table>`;
 }
 
+function xsltMetaTable(L) {
+  const title = kindTitle(L.kind);
+  const fields = visibleMetaFields(L);
+  if (!fields.length) return "";
+  const map = {
+    number: `<td><div class="inv-badge">${xmlEscape(title)}</div><span class="inv-k">${xmlEscape(META_FIELD_LABELS.number)}</span><div class="inv-no"><xsl:value-of select="/n1:Invoice/cbc:ID"/></div></td>`,
+    date: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.date)}</span><div><xsl:value-of select="/n1:Invoice/cbc:IssueDate"/></div></td>`,
+    profile: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.profile)}</span><div><xsl:value-of select="/n1:Invoice/cbc:ProfileID"/></div></td>`,
+    ettn: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.ettn)}</span><div class="inv-ettn"><xsl:value-of select="/n1:Invoice/cbc:UUID"/></div></td>`,
+    order_no: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.order_no)}</span><div class="inv-v"><xsl:value-of select="/n1:Invoice/cac:OrderReference/cbc:ID"/></div></td>`,
+  };
+  const cells = fields.map((f) => map[f.id] || "").join("");
+  return `
+      <table class="inv-meta" width="100%" cellpadding="6" cellspacing="0">
+        <tr>${cells}</tr>
+      </table>`;
+}
+
+function xsltTotalsTable(L) {
+  const rows = visibleTotalRows(L);
+  if (!rows.length) return "";
+  const map = {
+    subtotal: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.subtotal)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:LineExtensionAmount"/></td></tr>`,
+    allowance: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.allowance)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:AllowanceTotalAmount"/></td></tr>`,
+    exemption: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.exemption)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cbc:TaxExemptionReason or cac:TaxCategory/cbc:TaxExemptionReasonCode]/cbc:TaxableAmount"/></td></tr>`,
+    kdv: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.kdv)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:TaxTotal/cbc:TaxAmount"/></td></tr>`,
+    tevkifat: `<tr><td class="inv-k">${xmlEscape(TOTAL_ROW_LABELS.tevkifat)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:WithholdingTaxTotal/cbc:TaxAmount"/></td></tr>`,
+    grand: `<tr class="inv-grand"><td>${xmlEscape(TOTAL_ROW_LABELS.grand)}</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount"/></td></tr>`,
+  };
+  return `
+      <table class="inv-totals" cellpadding="4" cellspacing="0" align="right">
+        ${rows.map((r) => map[r.id] || "").join("")}
+      </table>`;
+}
 function xsltPartyBox(role) {
   const path = role === "customer"
     ? "/n1:Invoice/cac:AccountingCustomerParty/cac:Party"
@@ -353,7 +444,6 @@ function xsltPartyBox(role) {
 }
 
 function xsltBlocks(L) {
-  const title = kindTitle(L.kind);
   const logo = L.logo
     ? `<img src="${xmlEscape(L.logo)}" alt="logo" style="max-height:72px;max-width:220px;object-fit:contain;"/>`
     : "";
@@ -370,17 +460,6 @@ function xsltBlocks(L) {
           <td class="inv-brand" valign="top">${logo}<h1>${company}</h1></td>
         </tr>
       </table>`,
-    invoice_no: `
-      <div class="inv-doctype" style="text-align:right;">
-        <div class="inv-badge">${xmlEscape(title)}</div>
-        <div class="inv-k" style="margin-top:6px;">Fatura numarası</div>
-        <div class="inv-no"><xsl:value-of select="/n1:Invoice/cbc:ID"/></div>
-      </div>`,
-    order_no: `
-      <div class="inv-box" style="padding:8px;">
-        <div class="inv-k">Sipariş numarası</div>
-        <div class="inv-v"><xsl:value-of select="/n1:Invoice/cac:OrderReference/cbc:ID"/></div>
-      </div>`,
     supplier,
     customer,
     parties: `
@@ -390,21 +469,9 @@ function xsltBlocks(L) {
           <td width="50%" valign="top">${customer}</td>
         </tr>
       </table>`,
-    meta: `
-      <table class="inv-meta" width="100%" cellpadding="6" cellspacing="0">
-        <tr>
-          <td><span class="inv-k">Tarih</span><div><xsl:value-of select="/n1:Invoice/cbc:IssueDate"/></div></td>
-          <td><span class="inv-k">Senaryo</span><div><xsl:value-of select="/n1:Invoice/cbc:ProfileID"/></div></td>
-          <td><span class="inv-k">ETTN</span><div class="inv-ettn"><xsl:value-of select="/n1:Invoice/cbc:UUID"/></div></td>
-        </tr>
-      </table>`,
+    meta: xsltMetaTable(L),
     lines: xsltLineTable(L),
-    totals: `
-      <table class="inv-totals" cellpadding="4" cellspacing="0" align="right">
-        <tr><td class="inv-k">Mal hizmet toplam</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount"/></td></tr>
-        <tr><td class="inv-k">KDV</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:TaxTotal/cbc:TaxAmount"/></td></tr>
-        <tr class="inv-grand"><td>Ödenecek tutar</td><td align="right"><xsl:value-of select="/n1:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount"/></td></tr>
-      </table>`,
+    totals: xsltTotalsTable(L),
     notes: `
       <div class="inv-notes">
         <div class="inv-k">Notlar</div>
@@ -429,22 +496,18 @@ function xsltBlocks(L) {
       </div>`,
     qr: `
       <div class="inv-qr">
-        <div>
-          <div class="inv-k">GİB karekod</div>
-          <xsl:for-each select="/n1:Invoice/cac:AdditionalDocumentReference[cbc:DocumentType='QR' or cbc:DocumentTypeCode='QR' or cbc:DocumentType='KAREKOD']">
-            <xsl:if test="cac:Attachment/cbc:EmbeddedDocumentBinaryObject">
-              <img alt="GİB karekod" style="width:96px;height:96px">
-                <xsl:attribute name="src">
-                  <xsl:text>data:</xsl:text>
-                  <xsl:value-of select="cac:Attachment/cbc:EmbeddedDocumentBinaryObject/@mimeCode"/>
-                  <xsl:text>;base64,</xsl:text>
-                  <xsl:value-of select="cac:Attachment/cbc:EmbeddedDocumentBinaryObject"/>
-                </xsl:attribute>
-              </img>
-            </xsl:if>
-          </xsl:for-each>
-          <div class="inv-ettn"><xsl:value-of select="/n1:Invoice/cbc:UUID"/></div>
-        </div>
+        <xsl:for-each select="/n1:Invoice/cac:AdditionalDocumentReference[cbc:DocumentType='QR' or cbc:DocumentTypeCode='QR' or cbc:DocumentType='KAREKOD']">
+          <xsl:if test="cac:Attachment/cbc:EmbeddedDocumentBinaryObject">
+            <img alt="QR" style="width:96px;height:96px">
+              <xsl:attribute name="src">
+                <xsl:text>data:</xsl:text>
+                <xsl:value-of select="cac:Attachment/cbc:EmbeddedDocumentBinaryObject/@mimeCode"/>
+                <xsl:text>;base64,</xsl:text>
+                <xsl:value-of select="cac:Attachment/cbc:EmbeddedDocumentBinaryObject"/>
+              </xsl:attribute>
+            </img>
+          </xsl:if>
+        </xsl:for-each>
       </div>`,
   };
 }
