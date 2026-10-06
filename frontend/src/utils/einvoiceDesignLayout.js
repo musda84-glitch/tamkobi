@@ -10,7 +10,7 @@ export const BLOCK_IDS = [
 ];
 
 export const BLOCK_LABELS = {
-  header: "Üst bilgi / logo",
+  header: "Logo",
   gib_seal: "GİB mührü",
   supplier: "Satıcı",
   customer: "Alıcı",
@@ -40,6 +40,18 @@ const BLOCK_SPAN_BY_DEFAULT = {
   balance: 6,
   qr: 6,
 };
+
+export const QR_SIZE_OPTIONS = [
+  { size: 64, label: "S" },
+  { size: 96, label: "M" },
+  { size: 128, label: "L" },
+  { size: 160, label: "XL" },
+];
+
+export function asQrSize(value, fallback = 96) {
+  const n = Number(value);
+  return QR_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
+}
 
 export function asSpan(value, fallback = 12) {
   const n = Number(value);
@@ -213,6 +225,7 @@ export function defaultLayout(kind = "e_invoice") {
     muted: "#64748b",
     logo: "",
     companyTitle: "",
+    qrSize: 96,
     blocks: defaultBlocks(),
     lineCols: idList(LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT),
     metaFields: idList(META_FIELD_IDS, META_FIELD_HIDDEN_BY_DEFAULT),
@@ -246,6 +259,7 @@ export function normalizeLayout(raw, kind) {
   out.text = asColor(raw.text, base.text);
   out.muted = asColor(raw.muted, base.muted);
   out.logo = asLogo(raw.logo);
+  out.qrSize = asQrSize(raw.qrSize, base.qrSize);
   if (typeof raw.companyTitle === "string") out.companyTitle = raw.companyTitle.slice(0, 120);
   out.blocks = normalizeBlocks(raw.blocks);
   out.lineCols = normalizeIdList(raw.lineCols, LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT);
@@ -463,9 +477,6 @@ function xsltBlocks(L) {
   const logo = L.logo
     ? `<img src="${xmlEscape(L.logo)}" alt="logo" style="max-height:72px;max-width:220px;object-fit:contain;"/>`
     : "";
-  const company = L.companyTitle
-    ? xmlEscape(L.companyTitle)
-    : `<xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name"/>`;
   const supplier = xsltPartyBox("supplier");
   const customer = xsltPartyBox("customer");
 
@@ -473,7 +484,7 @@ function xsltBlocks(L) {
     header: `
       <table class="inv-header" width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td class="inv-brand" valign="top">${logo}<h1>${company}</h1></td>
+          <td class="inv-brand" valign="top">${logo}</td>
         </tr>
       </table>`,
     gib_seal: `
@@ -519,7 +530,7 @@ function xsltBlocks(L) {
       <div class="inv-qr">
         <xsl:for-each select="/n1:Invoice/cac:AdditionalDocumentReference[cbc:DocumentType='QR' or cbc:DocumentTypeCode='QR' or cbc:DocumentType='KAREKOD']">
           <xsl:if test="cac:Attachment/cbc:EmbeddedDocumentBinaryObject">
-            <img alt="QR" style="width:96px;height:96px">
+            <img alt="QR" style="width:${asQrSize(L.qrSize)}px;height:${asQrSize(L.qrSize)}px">
               <xsl:attribute name="src">
                 <xsl:text>data:</xsl:text>
                 <xsl:value-of select="cac:Attachment/cbc:EmbeddedDocumentBinaryObject/@mimeCode"/>

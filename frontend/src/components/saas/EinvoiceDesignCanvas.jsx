@@ -11,6 +11,7 @@ import {
   SAMPLE_INVOICE,
   SPAN_CLASS,
   SPAN_OPTIONS,
+  QR_SIZE_OPTIONS,
   TOTAL_ROW_LABELS,
   gibSealAlt,
   gibSealCaption,
@@ -109,14 +110,17 @@ const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDro
   />
 );
 
-const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
+const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, onQrSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
   const title = layout.kind === "e_archive" ? "e-Arşiv Fatura" : "e-Fatura";
   if (id === "header") {
     return (
-      <div className="pb-2" style={{ borderBottom: `3px solid ${layout.accent}` }}>
-        {layout.logo ? <img src={layout.logo} alt="logo" className="max-h-[56px] max-w-[180px] object-contain mb-1" /> : null}
-        <div className="text-base font-bold" style={{ color: layout.primary }}>{layout.companyTitle || s.supplier.name}</div>
+      <div className="pb-2" data-testid="einvoice-design-logo" style={{ borderBottom: `3px solid ${layout.accent}` }}>
+        {layout.logo ? (
+          <img src={layout.logo} alt="logo" className="max-h-[56px] max-w-[180px] object-contain" />
+        ) : (
+          <div className="text-[10px] text-slate-400 border border-dashed rounded-md px-2 py-3 inline-block">Logo</div>
+        )}
       </div>
     );
   }
@@ -267,10 +271,25 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, dra
     );
   }
   if (id === "qr") {
+    const qrSize = Number(layout.qrSize) || 96;
     return (
-      <div className="flex justify-end pt-1">
+      <div className="flex flex-col items-end gap-1 pt-1">
         <div className="bg-white p-1 border rounded" data-testid="einvoice-design-qr">
-          <QRCodeSVG value={sampleQrPayload(s)} size={72} level="M" />
+          <QRCodeSVG value={sampleQrPayload(s)} size={qrSize} level="M" />
+        </div>
+        <div className="flex gap-0.5" data-testid="einvoice-design-qr-sizes">
+          {QR_SIZE_OPTIONS.map((opt) => (
+            <button
+              key={opt.size}
+              type="button"
+              title={`${opt.size}px`}
+              onClick={() => onQrSize?.(opt.size)}
+              className={`text-[8px] font-bold px-1 py-0.5 rounded ${qrSize === opt.size ? "bg-slate-800 text-white" : "text-slate-400 hover:bg-slate-100"}`}
+              data-testid={`einvoice-design-qr-size-${opt.size}`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
       </div>
     );
@@ -380,11 +399,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
 
   return (
     <div className="space-y-3" data-testid="einvoice-design-canvas">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <label className="block">
-          <span className="block font-semibold mb-1">Firma adı</span>
-          <input value={L.companyTitle} onChange={(e) => patch({ companyTitle: e.target.value })} className={inputCls} placeholder="Boşsa satıcı unvanı" data-testid="einvoice-design-company" />
-        </label>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         <label className="block">
           <span className="block font-semibold mb-1">Yazı tipi</span>
           <select value={L.font} onChange={(e) => patch({ font: e.target.value })} className={inputCls} data-testid="einvoice-design-font">
@@ -558,6 +573,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                   onPatchCols={patchCols}
                   onPatchMeta={patchMeta}
                   onPatchTotals={patchTotals}
+                  onQrSize={(size) => patch({ qrSize: size })}
                   drag={dragId}
                   onDragStart={onDragStart}
                   onDragOver={onDragOverItem}
