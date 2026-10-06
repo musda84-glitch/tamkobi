@@ -8651,6 +8651,7 @@ async def create_bank_connection(conn: BankConnection):
     conn.provider_name = bank_providers.PROVIDERS[conn.provider]["name"]
     conn.linked_account_name = _linked_account_label(acc)
     doc = bank_providers.normalize_kuveyt_connection_secrets(conn.to_mongo())
+    doc = bank_providers.apply_linked_account_number(doc, acc)
     test = await bank_providers.test_connection(doc)
     doc["status"] = "simulated" if test.get("simulated") else ("connected" if test["ok"] else "error")
     doc["last_error"] = None if test["ok"] else test["message"]
@@ -8726,6 +8727,14 @@ async def test_bank_connection(conn_id: str):
     patch = {}
     if meta and doc.get("provider_name") != meta["name"]:
         patch["provider_name"] = meta["name"]
+    original_ref = (doc.get("bank_account_number") or "").strip()
+    acc = None
+    if doc.get("linked_account_id"):
+        acc = await db.bank_accounts.find_one({"_id": doc["linked_account_id"]})
+    doc = bank_providers.apply_linked_account_number(doc, acc)
+    filled = (doc.get("bank_account_number") or "").strip()
+    if filled and filled != original_ref:
+        patch["bank_account_number"] = filled
     test = await bank_providers.test_connection(doc)
     status_val = "simulated" if test.get("simulated") else ("connected" if test["ok"] else "error")
     patch.update({"status": status_val, "last_error": None if test["ok"] else test["message"]})
@@ -8760,14 +8769,11 @@ async def sync_bank_connection(conn_id: str, request: Request, days: int = 7):
     acc = await db.bank_accounts.find_one({"_id": doc.get("linked_account_id")})
     if not acc:
         raise HTTPException(status_code=404, detail="Bağlı banka hesabı bulunamadı.")
-    # Enpara/QNB için bağlı hesabın IBAN'ını kullan (bağlantıda boşsa)
-    filled_iban = ""
-    if not (doc.get("bank_account_number") or "").strip():
-        filled_iban = (acc.get("iban") or acc.get("account_number") or "").strip().replace(" ", "")
-        if filled_iban and filled_iban != "-":
-            doc = {**doc, "bank_account_number": filled_iban}
-        else:
-            filled_iban = ""
+    original_ref = (doc.get("bank_account_number") or "").strip()
+    doc = bank_providers.apply_linked_account_number(doc, acc)
+    filled_iban = (doc.get("bank_account_number") or "").strip()
+    if filled_iban == original_ref:
+        filled_iban = ""
     since = datetime.now(timezone.utc) - timedelta(days=max(1, min(days, 90)))
     try:
         result = await bank_providers.fetch_transactions(doc, since)

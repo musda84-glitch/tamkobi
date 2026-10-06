@@ -65,8 +65,34 @@ function ConnErrorBox({ connection, onEdit }) {
   const err = connection?.last_error || "";
   if (!err) return null;
   const isKuveyt = connection?.provider === "kuveytturk";
+  const isEnpara = connection?.provider === "enpara";
   const invalidClient = /invalid_client/i.test(err);
   const rsaBad = /RSA özel anahtar|RSA anahtarı|PRIVATE KEY|PKCS8|PKCS1|PUBLIC KEY|CERTIFICATE|imza anahtar|2048-bit|JSEncrypt Invalid key|openssl genrsa/i.test(err);
+  const enparaIban = isEnpara && /364737|IBAN veya hesap no|Hesap numarası yada IBAN|26 haneli Enpara IBAN/i.test(err);
+  if (enparaIban) {
+    return (
+      <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg p-2.5 space-y-1.5" data-testid="conn-last-error-enpara-iban">
+        <div className="font-bold flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5 shrink-0" /> Enpara IBAN gerekli</div>
+        <p className="text-rose-700 leading-snug">
+          Enpara artık yalnızca tarih ile ekstre vermiyor. POST /v1/account-statement gövdesinde 26 haneli IBAN (veya hesap no) zorunlu.
+        </p>
+        <ol className="list-decimal list-inside text-rose-700 space-y-0.5 pl-0.5">
+          <li>Hesaplar’da bağlı Enpara hesabının IBAN’ını 26 karakter, boşluksuz yazın.</li>
+          <li>Düzenle → Hesap No/IBAN alanına aynı IBAN’ı yapıştırın (TR…).</li>
+          <li>Kaydet &amp; Test Et, sonra Senkron.</li>
+        </ol>
+        {onEdit && (
+          <button type="button" onClick={onEdit} className="mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-rose-600 text-white font-semibold hover:bg-rose-700" data-testid="conn-error-edit-iban-btn">
+            <Pencil className="w-3 h-3" /> Düzenle &amp; IBAN gir
+          </button>
+        )}
+        <details className="text-[10px] text-rose-500">
+          <summary className="cursor-pointer select-none">Teknik ayrıntı</summary>
+          <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-rose-600/90">{err}</pre>
+        </details>
+      </div>
+    );
+  }
   if (!isKuveyt || (!invalidClient && !rsaBad)) {
     return <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2" data-testid="conn-last-error">{err}</div>;
   }
@@ -541,7 +567,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               {form.provider === "kuveytturk" && (
                 <div><label className="block font-semibold mb-1">Scope <span className="text-slate-400 font-normal">(opsiyonel — örn. accounts public)</span></label><input className={`${inputCls} font-mono`} value={form.scope || ""} onChange={(e) => setForm({ ...form, scope: e.target.value })} data-testid="conn-field-scope" autoComplete="off" placeholder="accounts public" /></div>
               )}
-              <div><label className="block font-semibold mb-1">Banka Hesap No / IBAN <span className="text-slate-400 font-normal">{form.provider === "kuveytturk" ? "(Kuveyt: ek no veya IBAN)" : "(opsiyonel)"}</span></label><input className={`${inputCls} font-mono`} value={form.bank_account_number} onChange={(e) => setForm({ ...form, bank_account_number: e.target.value })} data-testid="conn-field-bank-account" placeholder={form.provider === "kuveytturk" ? "Örn. 1 veya TR… IBAN" : ""} /></div>
+              <div><label className="block font-semibold mb-1">Banka Hesap No / IBAN <span className="text-slate-400 font-normal">{form.provider === "kuveytturk" ? "(Kuveyt: ek no veya IBAN)" : form.provider === "enpara" ? "(Enpara: 26 haneli IBAN — zorunlu)" : "(opsiyonel)"}</span></label><input className={`${inputCls} font-mono`} value={form.bank_account_number} onChange={(e) => setForm({ ...form, bank_account_number: e.target.value })} data-testid="conn-field-bank-account" placeholder={form.provider === "kuveytturk" ? "Örn. 1 veya TR… IBAN" : form.provider === "enpara" ? "TR… 26 karakter, boşluksuz" : ""} /></div>
               <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={form.auto_sync} onChange={(e) => setForm({ ...form, auto_sync: e.target.checked })} data-testid="conn-auto-sync" /><span className="font-semibold">Arka planda otomatik senkron (2 dk)</span></label>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setShowAdd(false)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="save-bank-connection-btn">Bağla & Test Et</button></div>
             </form>
@@ -561,7 +587,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
                 Portal uçları: <code className="font-mono">POST /v1/account-statement</code> JSON gövde <code className="font-mono">startDateTime</code>/<code className="font-mono">endDateTime</code>, <code className="font-mono">/ticket</code>, <code className="font-mono">/list</code>.
                 Yapıştırın: <b>Access Token</b>, <b>Refresh Token</b>, <b>Client ID</b> (sunucuda saklanır, listede görünmez). Client Secret opsiyonel.
-                401 access_denied genelde IP listesi — production çıkış 85.95.240.136 portala ekli olmalı (405 METHOD NOT ALLOWED IP değildir). IBAN 26 karakter.
+                401 access_denied genelde IP listesi — production çıkış 85.95.240.136 portala ekli olmalı (405 METHOD NOT ALLOWED IP değildir). IBAN 26 karakter zorunlu (resultCode 364737).
               </p>
             )}
             {editForm.provider === "kuveytturk" && (
@@ -633,7 +659,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <div><label className="block font-semibold mb-1">Müşteri No</label><input className={`${inputCls} font-mono`} value={editForm.customer_number} onChange={(e) => setEditForm({ ...editForm, customer_number: e.target.value })} data-testid="edit-conn-customer" /></div>
               <div><label className="block font-semibold mb-1">Hesap No / IBAN {editForm.provider === "enpara" ? <span className="text-rose-600">(Enpara hareket için gerekli)</span> : editForm.provider === "kuveytturk" ? <span className="text-slate-500 font-normal">(ek no veya IBAN)</span> : <span className="text-slate-400 font-normal">(opsiyonel)</span>}</label>
                 <input className={`${inputCls} font-mono`} value={editForm.bank_account_number} onChange={(e) => setEditForm({ ...editForm, bank_account_number: e.target.value })} data-testid="edit-conn-iban" placeholder={editForm.provider === "kuveytturk" ? "Örn. 1 veya TR… IBAN" : "TR… veya hesap no"} autoComplete="off" />
-                <p className="text-[10px] text-slate-500 mt-1">{editForm.provider === "kuveytturk" ? "Hareket yalnızca GET /v3/accounts/{ekNo}/transactions (v4/v1 yok). Bağlantı testi GET /v1/fx/rates. Boşsa bağlı hesabın IBAN’ı kullanılır." : "Boşsa bağlı TamKobi hesabının IBAN’ı kullanılır. Enpara şeması IBAN’ı tam 26 karakter (boşluksuz) ister."}</p>
+                <p className="text-[10px] text-slate-500 mt-1">{editForm.provider === "kuveytturk" ? "Hareket yalnızca GET /v3/accounts/{ekNo}/transactions (v4/v1 yok). Bağlantı testi GET /v1/fx/rates. Boşsa bağlı hesabın IBAN’ı kullanılır." : editForm.provider === "enpara" ? "Enpara resultCode 364737: IBAN veya hesap no zorunlu. 26 karakter, boşluksuz. Boşsa bağlı TamKobi hesabının IBAN’ı kopyalanır." : "Boşsa bağlı TamKobi hesabının IBAN’ı kullanılır."}</p>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setEditForm({ ...editForm, mode: "sandbox" })} className={`p-2 rounded-lg border font-semibold ${editForm.mode === "sandbox" ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`} data-testid="edit-conn-mode-sandbox">Sandbox</button>
