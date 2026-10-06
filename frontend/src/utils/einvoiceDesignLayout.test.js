@@ -5,7 +5,9 @@ import {
   moveBlock,
   moveVisible,
   normalizeLayout,
+  packBlockRows,
   setBlockHidden,
+  setBlockSpan,
   xmlEscape,
 } from "./einvoiceDesignLayout";
 
@@ -13,6 +15,11 @@ test("default layout shows core blocks and hides extra fields", () => {
   const L = defaultLayout("e_invoice");
   expect(L.blocks.map((b) => b.id)).toEqual(BLOCK_IDS);
   expect(L.blocks.find((b) => b.id === "header").hidden).toBe(false);
+  expect(L.blocks.find((b) => b.id === "header").span).toBe(6);
+  expect(L.blocks.find((b) => b.id === "invoice_no").hidden).toBe(false);
+  expect(L.blocks.find((b) => b.id === "supplier").span).toBe(6);
+  expect(L.blocks.find((b) => b.id === "customer").span).toBe(6);
+  expect(L.blocks.find((b) => b.id === "order_no").hidden).toBe(true);
   expect(L.blocks.find((b) => b.id === "qr").hidden).toBe(true);
   expect(L.blocks.find((b) => b.id === "balance").hidden).toBe(true);
   expect(L.lineCols.find((c) => c.id === "sku").hidden).toBe(true);
@@ -30,8 +37,8 @@ test("normalizeLayout fills missing blocks and sanitizes colors", () => {
   expect(L.kind).toBe("e_archive");
   expect(L.primary).toBe("#0f172a");
   expect(L.accent).toBe("#abc");
-  expect(L.blocks[0]).toEqual({ id: "totals", hidden: true });
-  expect(L.blocks[1]).toEqual({ id: "header", hidden: false });
+  expect(L.blocks[0]).toEqual({ id: "totals", hidden: true, span: 12 });
+  expect(L.blocks[1]).toEqual({ id: "header", hidden: false, span: 6 });
   expect(L.blocks.map((b) => b.id).sort()).toEqual([...BLOCK_IDS].sort());
   expect(L.blocks.find((b) => b.id === "qr").hidden).toBe(true);
   expect(L.lineCols.find((c) => c.id === "barcode").hidden).toBe(true);
@@ -39,14 +46,40 @@ test("normalizeLayout fills missing blocks and sanitizes colors", () => {
 
 test("moveBlock reorders and moveVisible steps among shown items", () => {
   const blocks = BLOCK_IDS.map((id) => ({ id, hidden: id === "notes" }));
-  const down = moveBlock(blocks, "header", "parties");
-  expect(down[0].id).toBe("parties");
+  const down = moveBlock(blocks, "header", "invoice_no");
+  expect(down[0].id).toBe("invoice_no");
   expect(down[1].id).toBe("header");
   const visDown = moveVisible(blocks, "header", 1);
-  expect(visDown[0].id).toBe("parties");
+  expect(visDown[0].id).toBe("invoice_no");
   expect(visDown[1].id).toBe("header");
   const visUp = moveVisible(visDown, "header", -1);
   expect(visUp[0].id).toBe("header");
+});
+
+test("legacy parties expands to supplier and customer at half width", () => {
+  const L = normalizeLayout({
+    blocks: [{ id: "header" }, { id: "parties" }],
+  });
+  expect(L.blocks.find((b) => b.id === "parties")).toBeUndefined();
+  expect(L.blocks.find((b) => b.id === "supplier")).toEqual({ id: "supplier", hidden: false, span: 6 });
+  expect(L.blocks.find((b) => b.id === "customer")).toEqual({ id: "customer", hidden: false, span: 6 });
+});
+
+test("setBlockSpan and packBlockRows place half-width blocks side by side", () => {
+  const spanned = setBlockSpan(defaultLayout().blocks, "header", 12);
+  expect(spanned.find((b) => b.id === "header").span).toBe(12);
+  const rows = packBlockRows([
+    { id: "header", span: 6 },
+    { id: "invoice_no", span: 6 },
+    { id: "supplier", span: 6 },
+    { id: "customer", span: 6 },
+    { id: "meta", span: 12 },
+  ]);
+  expect(rows.map((r) => r.map((b) => b.id))).toEqual([
+    ["header", "invoice_no"],
+    ["supplier", "customer"],
+    ["meta"],
+  ]);
 });
 
 test("setBlockHidden toggles a block", () => {
@@ -105,6 +138,32 @@ test("layoutToXslt includes added line columns and extra blocks", () => {
   expect(xslt).toContain("Güncel bakiye");
   expect(xslt).toContain("GİB karekod");
   expect(xslt).toContain("DocumentType='QR'");
+});
+
+test("layoutToXslt packs half-width blocks and emits invoice/order numbers", () => {
+  const layout = normalizeLayout({
+    blocks: [
+      { id: "header", span: 6 },
+      { id: "invoice_no", span: 6 },
+      { id: "supplier", span: 6 },
+      { id: "customer", span: 6 },
+      { id: "order_no", span: 6 },
+      { id: "lines", hidden: true },
+      { id: "meta", hidden: true },
+      { id: "totals", hidden: true },
+      { id: "notes", hidden: true },
+      { id: "iban", hidden: true },
+    ],
+  });
+  const xslt = layoutToXslt(layout);
+  expect(xslt).toContain('width="50%"');
+  expect(xslt).toContain("SATICI");
+  expect(xslt).toContain("ALICI");
+  expect(xslt).toContain("Fatura numarası");
+  expect(xslt).toContain("/n1:Invoice/cbc:ID");
+  expect(xslt).toContain("Sipariş numarası");
+  expect(xslt).toContain("cac:OrderReference/cbc:ID");
+  expect(xslt).toContain("class=\"inv-row\"");
 });
 
 test("xmlEscape encodes markup", () => {

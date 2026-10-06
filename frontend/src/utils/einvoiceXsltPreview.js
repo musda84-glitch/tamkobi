@@ -27,6 +27,7 @@ export const SAMPLE_UBL_XML = `<?xml version="1.0" encoding="UTF-8"?>
   <cbc:IssueDate>2026-10-06</cbc:IssueDate>
   <cbc:InvoiceTypeCode>SATIS</cbc:InvoiceTypeCode>
   <cbc:Note>İşbu belge elektronik olarak düzenlenmiştir.</cbc:Note>
+  <cac:OrderReference><cbc:ID>SIP-2026-0142</cbc:ID></cac:OrderReference>
   <cac:AccountingSupplierParty><cac:Party>
     <cac:PartyIdentification><cbc:ID schemeID="VKN">1234567890</cbc:ID></cac:PartyIdentification>
     <cac:PartyName><cbc:Name>Örnek Yazılım A.Ş.</cbc:Name></cac:PartyName>

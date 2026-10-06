@@ -1,10 +1,16 @@
 /** e-Fatura / e-Arşiv görsel tasarım düzeni → canlı önizleme + XSLT. */
 
-export const BLOCK_IDS = ["header", "parties", "meta", "lines", "totals", "notes", "iban", "balance", "qr"];
+export const BLOCK_IDS = [
+  "header", "invoice_no", "supplier", "customer", "meta", "lines", "totals",
+  "notes", "iban", "order_no", "balance", "qr",
+];
 
 export const BLOCK_LABELS = {
   header: "Üst bilgi / logo",
-  parties: "Satıcı ve alıcı",
+  invoice_no: "Fatura numarası",
+  order_no: "Sipariş numarası",
+  supplier: "Satıcı",
+  customer: "Alıcı",
   meta: "Fatura bilgileri",
   lines: "Kalemler",
   totals: "Toplamlar",
@@ -14,7 +20,30 @@ export const BLOCK_LABELS = {
   qr: "GİB karekod",
 };
 
-const BLOCK_HIDDEN_BY_DEFAULT = { balance: true, qr: true };
+export const SPAN_OPTIONS = [
+  { span: 12, label: "Tam" },
+  { span: 6, label: "1/2" },
+  { span: 4, label: "1/3" },
+];
+
+export const SPAN_CLASS = { 12: "col-span-12", 6: "col-span-6", 4: "col-span-4" };
+
+const BLOCK_HIDDEN_BY_DEFAULT = { order_no: true, balance: true, qr: true };
+const BLOCK_SPAN_BY_DEFAULT = {
+  header: 6,
+  invoice_no: 6,
+  order_no: 6,
+  supplier: 6,
+  customer: 6,
+  iban: 6,
+  balance: 6,
+  qr: 6,
+};
+
+export function asSpan(value, fallback = 12) {
+  const n = Number(value);
+  return n === 4 || n === 6 || n === 12 ? n : fallback;
+}
 
 export const LINE_COL_IDS = ["no", "sku", "name", "barcode", "qty", "unit", "net_price", "price", "discount", "vat", "total"];
 
@@ -71,6 +100,51 @@ function normalizeIdList(raw, ids, hiddenByDefault) {
   return out;
 }
 
+function expandLegacyBlocks(raw) {
+  const out = [];
+  for (const b of Array.isArray(raw) ? raw : []) {
+    if (b?.id === "parties") {
+      out.push({ id: "supplier", hidden: !!b.hidden, span: 6 });
+      out.push({ id: "customer", hidden: !!b.hidden, span: 6 });
+    } else {
+      out.push(b);
+    }
+  }
+  return out;
+}
+
+function normalizeBlocks(raw) {
+  const seen = new Set();
+  const out = [];
+  for (const b of expandLegacyBlocks(raw)) {
+    const id = String(b?.id || "");
+    if (!BLOCK_IDS.includes(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      hidden: !!b.hidden,
+      span: asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[id] || 12),
+    });
+  }
+  for (const id of BLOCK_IDS) {
+    if (seen.has(id)) continue;
+    out.push({
+      id,
+      hidden: !!BLOCK_HIDDEN_BY_DEFAULT[id],
+      span: BLOCK_SPAN_BY_DEFAULT[id] || 12,
+    });
+  }
+  return out;
+}
+
+function defaultBlocks() {
+  return BLOCK_IDS.map((id) => ({
+    id,
+    hidden: !!BLOCK_HIDDEN_BY_DEFAULT[id],
+    span: BLOCK_SPAN_BY_DEFAULT[id] || 12,
+  }));
+}
+
 export function defaultLayout(kind = "e_invoice") {
   return {
     version: 1,
@@ -83,7 +157,7 @@ export function defaultLayout(kind = "e_invoice") {
     muted: "#64748b",
     logo: "",
     companyTitle: "",
-    blocks: idList(BLOCK_IDS, BLOCK_HIDDEN_BY_DEFAULT),
+    blocks: defaultBlocks(),
     lineCols: idList(LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT),
   };
 }
@@ -115,7 +189,7 @@ export function normalizeLayout(raw, kind) {
   out.muted = asColor(raw.muted, base.muted);
   out.logo = asLogo(raw.logo);
   if (typeof raw.companyTitle === "string") out.companyTitle = raw.companyTitle.slice(0, 120);
-  out.blocks = normalizeIdList(raw.blocks, BLOCK_IDS, BLOCK_HIDDEN_BY_DEFAULT);
+  out.blocks = normalizeBlocks(raw.blocks);
   out.lineCols = normalizeIdList(raw.lineCols, LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT);
   out.version = 1;
   return out;
@@ -135,6 +209,35 @@ export function setBlockHidden(blocks, id, hidden) {
   return (blocks || []).map((b) => (b.id === id ? { ...b, hidden: !!hidden } : { ...b }));
 }
 
+export function setBlockSpan(blocks, id, span) {
+  const s = asSpan(span, 12);
+  return (blocks || []).map((b) => (b.id === id ? { ...b, span: s } : { ...b }));
+}
+
+export function packBlockRows(blocks) {
+  const vis = (blocks || []).filter((b) => !b.hidden);
+  const rows = [];
+  let row = [];
+  let used = 0;
+  for (const b of vis) {
+    const span = asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[b.id] || 12);
+    if (row.length && used + span > 12) {
+      rows.push(row);
+      row = [];
+      used = 0;
+    }
+    row.push({ ...b, span });
+    used += span;
+    if (used >= 12) {
+      rows.push(row);
+      row = [];
+      used = 0;
+    }
+  }
+  if (row.length) rows.push(row);
+  return rows;
+}
+
 export function moveVisible(blocks, id, dir) {
   const vis = (blocks || []).filter((b) => !b.hidden).map((b) => b.id);
   const i = vis.indexOf(id);
@@ -149,6 +252,7 @@ export const hiddenLineCols = (layout) => (layout?.lineCols || []).filter((c) =>
 
 export const SAMPLE_INVOICE = {
   number: "ABC2026000000001",
+  orderNo: "SIP-2026-0142",
   date: "06.10.2026",
   ettn: "550e8400-e29b-41d4-a716-446655440000",
   profile: "TICARIFATURA",
@@ -228,6 +332,26 @@ function xsltLineTable(L) {
       </table>`;
 }
 
+function xsltPartyBox(role) {
+  const path = role === "customer"
+    ? "/n1:Invoice/cac:AccountingCustomerParty/cac:Party"
+    : "/n1:Invoice/cac:AccountingSupplierParty/cac:Party";
+  const label = role === "customer" ? "ALICI" : "SATICI";
+  return `
+      <div class="inv-box" style="padding:8px;">
+        <div class="inv-k">${label}</div>
+        <div class="inv-v"><xsl:value-of select="${path}/cac:PartyName/cbc:Name"/></div>
+        <div><xsl:value-of select="${path}/cac:PostalAddress/cbc:StreetName"/>
+          <xsl:text> </xsl:text>
+          <xsl:value-of select="${path}/cac:PostalAddress/cbc:BuildingNumber"/>
+          <xsl:text> </xsl:text>
+          <xsl:value-of select="${path}/cac:PostalAddress/cbc:CityName"/>
+        </div>
+        <div>VKN/TCKN: <xsl:value-of select="${path}/cac:PartyIdentification/cbc:ID"/></div>
+        <div>VD: <xsl:value-of select="${path}/cac:PartyTaxScheme/cac:TaxScheme/cbc:Name"/></div>
+      </div>`;
+}
+
 function xsltBlocks(L) {
   const title = kindTitle(L.kind);
   const logo = L.logo
@@ -236,45 +360,34 @@ function xsltBlocks(L) {
   const company = L.companyTitle
     ? xmlEscape(L.companyTitle)
     : `<xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name"/>`;
+  const supplier = xsltPartyBox("supplier");
+  const customer = xsltPartyBox("customer");
 
   return {
     header: `
       <table class="inv-header" width="100%" cellpadding="0" cellspacing="0">
         <tr>
           <td class="inv-brand" valign="top">${logo}<h1>${company}</h1></td>
-          <td class="inv-doctype" valign="top" align="right">
-            <div class="inv-badge">${xmlEscape(title)}</div>
-            <div class="inv-no"><xsl:value-of select="/n1:Invoice/cbc:ID"/></div>
-          </td>
         </tr>
       </table>`,
+    invoice_no: `
+      <div class="inv-doctype" style="text-align:right;">
+        <div class="inv-badge">${xmlEscape(title)}</div>
+        <div class="inv-k" style="margin-top:6px;">Fatura numarası</div>
+        <div class="inv-no"><xsl:value-of select="/n1:Invoice/cbc:ID"/></div>
+      </div>`,
+    order_no: `
+      <div class="inv-box" style="padding:8px;">
+        <div class="inv-k">Sipariş numarası</div>
+        <div class="inv-v"><xsl:value-of select="/n1:Invoice/cac:OrderReference/cbc:ID"/></div>
+      </div>`,
+    supplier,
+    customer,
     parties: `
       <table class="inv-parties" width="100%" cellpadding="8" cellspacing="0">
         <tr>
-          <td width="50%" valign="top" class="inv-box">
-            <div class="inv-k">SATICI</div>
-            <div class="inv-v"><xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name"/></div>
-            <div><xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PostalAddress/cbc:StreetName"/>
-              <xsl:text> </xsl:text>
-              <xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PostalAddress/cbc:BuildingNumber"/>
-              <xsl:text> </xsl:text>
-              <xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PostalAddress/cbc:CityName"/>
-            </div>
-            <div>VKN/TCKN: <xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyIdentification/cbc:ID"/></div>
-            <div>VD: <xsl:value-of select="/n1:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyTaxScheme/cac:TaxScheme/cbc:Name"/></div>
-          </td>
-          <td width="50%" valign="top" class="inv-box">
-            <div class="inv-k">ALICI</div>
-            <div class="inv-v"><xsl:value-of select="/n1:Invoice/cac:AccountingCustomerParty/cac:Party/cac:PartyName/cbc:Name"/></div>
-            <div><xsl:value-of select="/n1:Invoice/cac:AccountingCustomerParty/cac:Party/cac:PostalAddress/cbc:StreetName"/>
-              <xsl:text> </xsl:text>
-              <xsl:value-of select="/n1:Invoice/cac:AccountingCustomerParty/cac:Party/cac:PostalAddress/cbc:BuildingNumber"/>
-              <xsl:text> </xsl:text>
-              <xsl:value-of select="/n1:Invoice/cac:AccountingCustomerParty/cac:Party/cac:PostalAddress/cbc:CityName"/>
-            </div>
-            <div>VKN/TCKN: <xsl:value-of select="/n1:Invoice/cac:AccountingCustomerParty/cac:Party/cac:PartyIdentification/cbc:ID"/></div>
-            <div>VD: <xsl:value-of select="/n1:Invoice/cac:AccountingCustomerParty/cac:Party/cac:PartyTaxScheme/cac:TaxScheme/cbc:Name"/></div>
-          </td>
+          <td width="50%" valign="top">${supplier}</td>
+          <td width="50%" valign="top">${customer}</td>
         </tr>
       </table>`,
     meta: `
@@ -336,10 +449,20 @@ function xsltBlocks(L) {
   };
 }
 
+function xsltPackedBody(L) {
+  const map = xsltBlocks(L);
+  return packBlockRows(L.blocks).map((row) => {
+    const cells = row.map((b) => {
+      const pct = Math.round((asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[b.id] || 12) / 12) * 100);
+      return `<td width="${pct}%" valign="top" class="inv-cell">${map[b.id] || ""}</td>`;
+    }).join("");
+    return `<table class="inv-row" width="100%" cellpadding="4" cellspacing="0"><tr>${cells}</tr></table>`;
+  }).join("\n");
+}
+
 export function layoutToXslt(layout, kind) {
   const L = normalizeLayout(layout, kind);
-  const map = xsltBlocks(L);
-  const body = L.blocks.filter((b) => !b.hidden).map((b) => map[b.id] || "").join("\n");
+  const body = xsltPackedBody(L);
   const font = xmlEscape(L.font);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
@@ -357,10 +480,11 @@ export function layoutToXslt(layout, kind) {
           body { background:${L.paper}; color:${L.text}; font-family:"${font}", Tahoma, sans-serif; font-size:12px; margin:0; padding:16px; }
           h1 { font-size:18px; color:${L.primary}; margin:8px 0 0; }
           .inv-wrap { max-width:900px; margin:0 auto; }
-          .inv-block { margin:0 0 14px; }
+          .inv-row { margin:0 0 8px; }
+          .inv-cell { padding:2px 4px; }
           .inv-header { border-bottom:3px solid ${L.accent}; padding-bottom:10px; }
           .inv-badge { display:inline-block; background:${L.accent}; color:#fff; font-weight:700; padding:4px 10px; border-radius:4px; letter-spacing:.04em; }
-          .inv-no { font-size:16px; font-weight:700; color:${L.primary}; margin-top:8px; }
+          .inv-no { font-size:16px; font-weight:700; color:${L.primary}; margin-top:4px; }
           .inv-k { font-size:10px; font-weight:700; color:${L.muted}; text-transform:uppercase; letter-spacing:.04em; }
           .inv-v { font-weight:700; color:${L.primary}; margin:2px 0 4px; }
           .inv-box { border:1px solid ${L.accent}33; background:${L.paper}; }
