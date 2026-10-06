@@ -7,11 +7,13 @@ import {
   FONT_OPTIONS,
   LINE_COL_LABELS,
   META_FIELD_LABELS,
+  metaGridColsClass,
   GIB_SEAL_JPEG_DATA_URL,
   SAMPLE_INVOICE,
   SPAN_CLASS,
   SPAN_OPTIONS,
   QR_SIZE_OPTIONS,
+  LOGO_SIZE_OPTIONS,
   TOTAL_ROW_LABELS,
   gibSealAlt,
   gibSealCaption,
@@ -110,17 +112,33 @@ const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDro
   />
 );
 
-const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, onQrSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
+const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, onQrSize, onLogoSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
   const title = layout.kind === "e_archive" ? "e-Arşiv Fatura" : "e-Fatura";
   if (id === "header") {
+    const logoSize = Number(layout.logoSize) || 72;
     return (
-      <div className="pb-2" data-testid="einvoice-design-logo" style={{ borderBottom: `3px solid ${layout.accent}` }}>
+      <div className="pb-2 space-y-1.5" data-testid="einvoice-design-logo" style={{ borderBottom: `3px solid ${layout.accent}` }}>
         {layout.logo ? (
-          <img src={layout.logo} alt="logo" className="max-h-[56px] max-w-[180px] object-contain" />
+          <img src={layout.logo} alt="logo" className="object-contain" style={{ height: logoSize, width: "auto", maxWidth: "100%" }} />
         ) : (
           <div className="text-[10px] text-slate-400 border border-dashed rounded-md px-2 py-3 inline-block">Logo</div>
         )}
+        <div className="flex items-center flex-wrap gap-1" data-testid="einvoice-design-logo-sizes">
+          <span className="text-[9px] font-bold text-slate-500">Boyut</span>
+          {LOGO_SIZE_OPTIONS.map((opt) => (
+            <button
+              key={opt.size}
+              type="button"
+              title={`${opt.size} px`}
+              onClick={(e) => { e.stopPropagation(); onLogoSize?.(opt.size); }}
+              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${logoSize === opt.size ? "bg-slate-800 text-white border-slate-800" : "text-slate-600 border-slate-200 hover:bg-slate-100"}`}
+              data-testid={`einvoice-design-logo-size-${opt.size}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </div>
     );
   }
@@ -140,10 +158,11 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, onQ
   }
   if (id === "meta") {
     const fields = visibleMetaFields(layout);
-    const n = Math.min(Math.max(fields.length, 1), 5);
+    const cols = metaGridColsClass((layout.blocks || []).find((b) => b.id === "meta")?.span, fields.length);
     const valueOf = (fid) => {
       if (fid === "number") return s.number;
-      if (fid === "date") return s.date;
+      if (fid === "invoice_date" || fid === "date") return s.date;
+      if (fid === "issue_time") return s.issueTime;
       if (fid === "profile") return s.profile;
       if (fid === "ettn") return s.ettn;
       if (fid === "order_no") return s.orderNo;
@@ -151,7 +170,7 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, onQ
     };
     return (
       <div>
-        <div className={`grid gap-2 text-[11px] ${n >= 5 ? "grid-cols-5" : n === 4 ? "grid-cols-4" : n === 2 ? "grid-cols-2" : "grid-cols-3"}`} style={{ borderBottom: `1px solid ${layout.muted}33` }}>
+        <div className={`grid gap-2 text-[11px] ${cols}`} style={{ borderBottom: `1px solid ${layout.muted}33` }} data-testid="einvoice-design-meta-grid">
           {fields.map((f) => (
             <div key={f.id} className="min-w-0">
               {f.id === "number" ? <span className="inline-block text-[10px] font-bold text-white px-2 py-0.5 rounded mb-0.5" style={{ background: layout.accent }}>{title}</span> : null}
@@ -575,6 +594,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                   onPatchMeta={patchMeta}
                   onPatchTotals={patchTotals}
                   onQrSize={(size) => patch({ qrSize: size })}
+                  onLogoSize={(size) => patch({ logoSize: size })}
                   drag={dragId}
                   onDragStart={onDragStart}
                   onDragOver={onDragOverItem}

@@ -53,9 +53,34 @@ export function asQrSize(value, fallback = 96) {
   return QR_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
 }
 
+export const LOGO_SIZE_OPTIONS = [
+  { size: 48, label: "48" },
+  { size: 72, label: "72" },
+  { size: 96, label: "96" },
+  { size: 120, label: "120" },
+];
+
+export function asLogoSize(value, fallback = 72) {
+  const n = Number(value);
+  return LOGO_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
+}
+
 export function asSpan(value, fallback = 12) {
   const n = Number(value);
   return n === 4 || n === 6 || n === 12 ? n : fallback;
+}
+
+/** Fatura bilgileri: 1/3 dikey, 1/2 iki sütun, Tam alan sayısına göre. */
+export function metaGridColsClass(span, fieldCount) {
+  const metaSpan = asSpan(span, 12);
+  const n = Math.min(Math.max(Number(fieldCount) || 1, 1), 6);
+  if (metaSpan === 4) return "grid-cols-1";
+  if (metaSpan === 6) return "grid-cols-2";
+  if (n >= 6) return "grid-cols-6";
+  if (n >= 5) return "grid-cols-5";
+  if (n === 4) return "grid-cols-4";
+  if (n === 2) return "grid-cols-2";
+  return "grid-cols-3";
 }
 
 export const LINE_COL_IDS = ["no", "sku", "name", "barcode", "qty", "unit", "net_price", "price", "discount", "vat", "total"];
@@ -83,17 +108,19 @@ const LINE_COL_HIDDEN_BY_DEFAULT = {
   vat: true,
 };
 
-export const META_FIELD_IDS = ["number", "date", "profile", "ettn", "order_no"];
+export const META_FIELD_IDS = ["number", "invoice_date", "date", "issue_time", "profile", "ettn", "order_no"];
 
 export const META_FIELD_LABELS = {
   number: "Fatura numarası",
-  date: "Tarih",
+  invoice_date: "Fatura tarihi",
+  date: "Düzenleme tarihi",
+  issue_time: "Düzenleme zamanı",
   profile: "Senaryo",
   ettn: "ETTN",
   order_no: "Sipariş numarası",
 };
 
-const META_FIELD_HIDDEN_BY_DEFAULT = { order_no: true };
+const META_FIELD_HIDDEN_BY_DEFAULT = { invoice_date: true, issue_time: true, order_no: true };
 
 export const TOTAL_ROW_IDS = [
   "subtotal", "allowance", "matrah", "kdv", "tevkifat", "inclusive", "grand", "exemption",
@@ -225,6 +252,7 @@ export function defaultLayout(kind = "e_invoice") {
     muted: "#64748b",
     logo: "",
     companyTitle: "",
+    logoSize: 72,
     qrSize: 96,
     blocks: defaultBlocks(),
     lineCols: idList(LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT),
@@ -259,6 +287,7 @@ export function normalizeLayout(raw, kind) {
   out.text = asColor(raw.text, base.text);
   out.muted = asColor(raw.muted, base.muted);
   out.logo = asLogo(raw.logo);
+  out.logoSize = asLogoSize(raw.logoSize, base.logoSize);
   out.qrSize = asQrSize(raw.qrSize, base.qrSize);
   if (typeof raw.companyTitle === "string") out.companyTitle = raw.companyTitle.slice(0, 120);
   out.blocks = normalizeBlocks(raw.blocks);
@@ -334,6 +363,7 @@ export const SAMPLE_INVOICE = {
   number: "ABC2026000000001",
   orderNo: "SIP-2026-0142",
   date: "06.10.2026",
+  issueTime: "14:32:05",
   ettn: "550e8400-e29b-41d4-a716-446655440000",
   profile: "TICARIFATURA",
   supplier: {
@@ -423,15 +453,20 @@ function xsltMetaTable(L) {
   if (!fields.length) return "";
   const map = {
     number: `<td><div class="inv-badge">${xmlEscape(title)}</div><span class="inv-k">${xmlEscape(META_FIELD_LABELS.number)}</span><div class="inv-no"><xsl:value-of select="/n1:Invoice/cbc:ID"/></div></td>`,
+    invoice_date: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.invoice_date)}</span><div><xsl:value-of select="/n1:Invoice/cbc:IssueDate"/></div></td>`,
     date: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.date)}</span><div><xsl:value-of select="/n1:Invoice/cbc:IssueDate"/></div></td>`,
+    issue_time: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.issue_time)}</span><div><xsl:value-of select="/n1:Invoice/cbc:IssueTime"/></div></td>`,
     profile: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.profile)}</span><div><xsl:value-of select="/n1:Invoice/cbc:ProfileID"/></div></td>`,
     ettn: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.ettn)}</span><div class="inv-ettn"><xsl:value-of select="/n1:Invoice/cbc:UUID"/></div></td>`,
     order_no: `<td><span class="inv-k">${xmlEscape(META_FIELD_LABELS.order_no)}</span><div class="inv-v"><xsl:value-of select="/n1:Invoice/cac:OrderReference/cbc:ID"/></div></td>`,
   };
-  const cells = fields.map((f) => map[f.id] || "").join("");
+  const stacked = asSpan((L.blocks || []).find((b) => b.id === "meta")?.span, 12) === 4;
+  const body = stacked
+    ? fields.map((f) => `<tr>${map[f.id] || ""}</tr>`).join("")
+    : `<tr>${fields.map((f) => map[f.id] || "").join("")}</tr>`;
   return `
-      <table class="inv-meta" width="100%" cellpadding="6" cellspacing="0">
-        <tr>${cells}</tr>
+      <table class="inv-meta${stacked ? " inv-meta-stack" : ""}" width="100%" cellpadding="6" cellspacing="0">
+        ${body}
       </table>`;
 }
 
@@ -474,8 +509,9 @@ function xsltPartyBox(role) {
 }
 
 function xsltBlocks(L) {
+  const logoH = asLogoSize(L.logoSize);
   const logo = L.logo
-    ? `<img src="${xmlEscape(L.logo)}" alt="logo" style="max-height:72px;max-width:220px;object-fit:contain;"/>`
+    ? `<img src="${xmlEscape(L.logo)}" alt="logo" style="height:${logoH}px;width:auto;max-width:100%;object-fit:contain;"/>`
     : "";
   const supplier = xsltPartyBox("supplier");
   const customer = xsltPartyBox("customer");
@@ -584,6 +620,7 @@ export function layoutToXslt(layout, kind) {
           .inv-v { font-weight:700; color:${L.primary}; margin:2px 0 4px; }
           .inv-box { border:1px solid ${L.accent}33; background:${L.paper}; }
           .inv-meta td { border-bottom:1px solid ${L.muted}33; }
+          .inv-meta-stack td { width:100%; display:block; }
           .inv-ettn { font-size:10px; word-break:break-all; }
           .inv-lines { border-collapse:collapse; }
           .inv-lines th { background:${L.primary}; color:#fff; font-size:10px; }

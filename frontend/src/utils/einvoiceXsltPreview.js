@@ -25,6 +25,7 @@ export const SAMPLE_UBL_XML = `<?xml version="1.0" encoding="UTF-8"?>
   <cbc:ID>ABC2026000000001</cbc:ID>
   <cbc:UUID>550e8400-e29b-41d4-a716-446655440000</cbc:UUID>
   <cbc:IssueDate>2026-10-06</cbc:IssueDate>
+  <cbc:IssueTime>14:32:05</cbc:IssueTime>
   <cbc:InvoiceTypeCode>SATIS</cbc:InvoiceTypeCode>
   <cbc:Note>İşbu belge elektronik olarak düzenlenmiştir.</cbc:Note>
   <cac:OrderReference><cbc:ID>SIP-2026-0142</cbc:ID></cac:OrderReference>

@@ -43,12 +43,15 @@ test("renders preview blocks and can hide then restore from palette", async () =
   expect(host.querySelector('[data-testid="einvoice-design-canvas"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.textContent).toContain("ABC2026000000001");
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).toContain("Fatura numarası");
-  expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).toContain("Tarih");
+  expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).toContain("Düzenleme tarihi");
+  expect(host.querySelector('[data-testid="einvoice-design-palette-meta-invoice_date"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-meta-issue_time"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-invoice_no"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-order_no"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-supplier"]')?.textContent).toContain("Örnek Yazılım A.Ş.");
   expect(host.querySelector('[data-testid="einvoice-design-block-header"]')?.textContent).not.toContain("Örnek Yazılım A.Ş.");
   expect(host.querySelector('[data-testid="einvoice-design-logo"]')?.textContent).toContain("Logo");
+  expect(host.querySelector('[data-testid="einvoice-design-logo-size-72"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-customer"]')?.textContent).toContain("Alıcı Ticaret Ltd. Şti.");
   expect(host.querySelector('[data-testid="einvoice-design-block-parties"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-lines"]')).not.toBeNull();
@@ -124,11 +127,20 @@ test("span buttons, order number and extra totals", async () => {
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-show-meta-order_no"]').click();
   });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-meta-invoice_date"]').click();
+  });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-meta-issue_time"]').click();
+  });
   const meta = host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent || "";
   expect(meta).toContain("SIP-2026-0142");
   expect(meta).toContain("Sipariş numarası");
   expect(meta).toContain("Fatura numarası");
-  expect(meta).toContain("Tarih");
+  expect(meta).toContain("Fatura tarihi");
+  expect(meta).toContain("Düzenleme tarihi");
+  expect(meta).toContain("Düzenleme zamanı");
+  expect(meta).toContain("14:32:05");
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-show-total-exemption"]').click();
   });
@@ -223,4 +235,52 @@ test("GIB seal caption follows e-Arşiv kind", async () => {
   const seal = host.querySelector('[data-testid="einvoice-design-gib-seal"]');
   expect(seal?.textContent).toContain("e-Arşiv Fatura");
   expect(seal?.querySelector("img")?.getAttribute("alt")).toBe("E-Arşiv Logo");
+});
+
+test("meta fields stack vertically at 1/3 width", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  const full = host.querySelector('[data-testid="einvoice-design-meta-grid"]');
+  expect(full?.className).toContain("grid-cols-4");
+  expect(full?.className).not.toContain("grid-cols-1");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-span-meta-4"]').click();
+  });
+  expect(last.blocks.find((b) => b.id === "meta").span).toBe(4);
+  expect(host.querySelector('[data-testid="einvoice-design-block-meta"]').className).toContain("col-span-4");
+  const stacked = host.querySelector('[data-testid="einvoice-design-meta-grid"]');
+  expect(stacked?.className).toContain("grid-cols-1");
+  expect(stacked?.textContent).toContain("Düzenleme tarihi");
+});
+
+test("logo size buttons update preview height", async () => {
+  const LogoHarness = () => {
+    const [layout, setLayout] = useState(() => normalizeLayout({ logo: "data:image/png;base64,aaa" }, "e_invoice"));
+    last = layout;
+    return (
+      <EinvoiceDesignCanvas
+        layout={layout}
+        kind="e_invoice"
+        onChange={(n) => {
+          last = n;
+          setLayout(n);
+        }}
+      />
+    );
+  };
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<LogoHarness />);
+  });
+  const img = host.querySelector('[data-testid="einvoice-design-logo"] img');
+  expect(img?.getAttribute("alt")).toBe("logo");
+  expect(img?.style.height).toBe("72px");
+  expect(host.querySelector('[data-testid="einvoice-design-logo-size-120"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-logo-size-120"]').click();
+  });
+  expect(last.logoSize).toBe(120);
+  expect(host.querySelector('[data-testid="einvoice-design-logo"] img')?.style.height).toBe("120px");
 });
