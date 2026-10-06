@@ -7,10 +7,13 @@ import {
   FONT_OPTIONS,
   LINE_COL_LABELS,
   META_FIELD_LABELS,
+  GIB_SEAL_JPEG_DATA_URL,
   SAMPLE_INVOICE,
   SPAN_CLASS,
   SPAN_OPTIONS,
   TOTAL_ROW_LABELS,
+  gibSealAlt,
+  gibSealCaption,
   TOTAL_ROW_SAMPLE_KEY,
   hiddenLineCols,
   hiddenMetaFields,
@@ -114,6 +117,14 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, dra
       <div className="pb-2" style={{ borderBottom: `3px solid ${layout.accent}` }}>
         {layout.logo ? <img src={layout.logo} alt="logo" className="max-h-[56px] max-w-[180px] object-contain mb-1" /> : null}
         <div className="text-base font-bold" style={{ color: layout.primary }}>{layout.companyTitle || s.supplier.name}</div>
+      </div>
+    );
+  }
+  if (id === "gib_seal") {
+    return (
+      <div className="flex flex-col items-center justify-center py-1 text-center" data-testid="einvoice-design-gib-seal">
+        <img src={GIB_SEAL_JPEG_DATA_URL} alt={gibSealAlt(layout.kind)} style={{ width: 91 }} />
+        <div className="text-base font-bold mt-1" style={{ color: layout.primary }}>{gibSealCaption(layout.kind)}</div>
       </div>
     );
   }

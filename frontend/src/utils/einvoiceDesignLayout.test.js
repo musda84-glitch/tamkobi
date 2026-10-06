@@ -20,6 +20,8 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.blocks.find((b) => b.id === "customer").span).toBe(6);
   expect(L.blocks.find((b) => b.id === "invoice_no")).toBeUndefined();
   expect(L.blocks.find((b) => b.id === "order_no")).toBeUndefined();
+  expect(L.blocks.find((b) => b.id === "gib_seal").hidden).toBe(true);
+  expect(L.blocks.find((b) => b.id === "gib_seal").span).toBe(4);
   expect(L.blocks.find((b) => b.id === "qr").hidden).toBe(true);
   expect(L.blocks.find((b) => b.id === "balance").hidden).toBe(true);
   expect(L.lineCols.find((c) => c.id === "sku").hidden).toBe(true);
@@ -133,6 +135,9 @@ test("layoutToXslt writes stylesheet, colors and skips hidden blocks", () => {
   expect(xslt).not.toContain(">Notlar<");
   expect(xslt).not.toContain("GİB karekod");
   expect(xslt).not.toContain("Stok kodu");
+  expect(xslt).not.toContain('class="inv-gib-seal"');
+  expect(xslt).not.toContain("E-Fatura Logo");
+  expect(xslt).not.toContain("E-Arşiv Logo");
 });
 
 test("layoutToXslt includes added line columns and extra blocks", () => {
@@ -211,6 +216,26 @@ test("layoutToXslt includes optional totals rows", () => {
   expect(xslt).toContain("AllowanceTotalAmount");
   expect(xslt).toContain("WithholdingTaxTotal");
   expect(xslt).toContain("TaxExemptionReason");
+});
+
+test("layoutToXslt embeds GIB seal with kind caption when added", () => {
+  const invoice = layoutToXslt(normalizeLayout({
+    kind: "e_invoice",
+    blocks: [{ id: "gib_seal" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
+  }));
+  expect(invoice).toContain("inv-gib-seal");
+  expect(invoice).toContain("E-Fatura Logo");
+  expect(invoice).toContain("e-FATURA");
+  expect(invoice).toContain("data:image/jpeg;base64,");
+  expect(invoice).not.toContain("e-Arşiv Fatura");
+
+  const archive = layoutToXslt(normalizeLayout({
+    kind: "e_archive",
+    blocks: [{ id: "gib_seal" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
+  }));
+  expect(archive).toContain("E-Arşiv Logo");
+  expect(archive).toContain("e-Arşiv Fatura");
+  expect(archive).not.toContain("e-FATURA");
 });
 
 test("xmlEscape encodes markup", () => {
