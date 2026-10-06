@@ -6,11 +6,18 @@ import {
   BLOCK_LABELS,
   FONT_OPTIONS,
   LINE_COL_LABELS,
+  META_FIELD_LABELS,
   SAMPLE_INVOICE,
   SPAN_CLASS,
   SPAN_OPTIONS,
+  TOTAL_ROW_LABELS,
+  TOTAL_ROW_SAMPLE_KEY,
   hiddenLineCols,
+  hiddenMetaFields,
+  hiddenTotalRows,
   isLineCol,
+  isMetaField,
+  isTotalRow,
   moveBlock,
   moveVisible,
   normalizeLayout,
@@ -18,6 +25,8 @@ import {
   setBlockHidden,
   setBlockSpan,
   visibleLineCols,
+  visibleMetaFields,
+  visibleTotalRows,
 } from "../../utils/einvoiceDesignLayout";
 import { inputCls } from "./saasUi";
 
@@ -43,49 +52,61 @@ const lineCell = (ln, colId) => {
   return ln[colId] ?? "";
 };
 
-const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
-  const vis = visibleLineCols(layout);
-  const hid = hiddenLineCols(layout);
-  return (
-    <div className="mt-2 space-y-1.5" data-testid="einvoice-design-line-cols">
-      <div className="flex flex-wrap gap-1">
-        {vis.map((c) => (
-          <span
+const FieldChipsBar = ({ vis, hid, labels, testPrefix, list, onPatch, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => (
+  <div className="mt-2 space-y-1.5" data-testid={`einvoice-design-${testPrefix}s`}>
+    <div className="flex flex-wrap gap-1">
+      {vis.map((c) => (
+        <span
+          key={c.id}
+          draggable
+          onDragStart={onDragStart(c.id)}
+          onDragOver={onDragOver(c.id)}
+          onDrop={onDrop(c.id)}
+          onDragEnd={onDragEnd}
+          className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-white cursor-grab ${drag === c.id ? "opacity-40" : ""} ${drag && drag !== c.id ? "border-emerald-300" : "border-slate-200"}`}
+          data-testid={`einvoice-design-${testPrefix}-${c.id}`}
+        >
+          <GripVertical className="w-2.5 h-2.5 text-slate-300" />
+          {labels[c.id]}
+          <button type="button" className="text-rose-500 pl-0.5" title="Kaldır" data-testid={`einvoice-design-${testPrefix}-hide-${c.id}`} onClick={(e) => { e.stopPropagation(); onPatch(setBlockHidden(list, c.id, true)); }}>×</button>
+        </span>
+      ))}
+    </div>
+    {hid.length ? (
+      <div className="flex flex-wrap gap-1" data-testid={`einvoice-design-${testPrefix}-adders`}>
+        {hid.map((c) => (
+          <button
             key={c.id}
-            draggable
-            onDragStart={onDragStart(c.id)}
-            onDragOver={onDragOver(c.id)}
-            onDrop={onDrop(c.id)}
-            onDragEnd={onDragEnd}
-            className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-white cursor-grab ${drag === c.id ? "opacity-40" : ""} ${drag && drag !== c.id ? "border-emerald-300" : "border-slate-200"}`}
-            data-testid={`einvoice-design-col-${c.id}`}
+            type="button"
+            onClick={() => onPatch(setBlockHidden(list, c.id, false))}
+            className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-dashed border-emerald-300 text-emerald-800 bg-emerald-50/70"
+            data-testid={`einvoice-design-${testPrefix}-show-${c.id}`}
           >
-            <GripVertical className="w-2.5 h-2.5 text-slate-300" />
-            {LINE_COL_LABELS[c.id]}
-            <button type="button" className="text-rose-500 pl-0.5" title="Kaldır" data-testid={`einvoice-design-col-hide-${c.id}`} onClick={(e) => { e.stopPropagation(); onPatchCols(setBlockHidden(layout.lineCols, c.id, true)); }}>×</button>
-          </span>
+            + {labels[c.id]}
+          </button>
         ))}
       </div>
-      {hid.length ? (
-        <div className="flex flex-wrap gap-1" data-testid="einvoice-design-col-adders">
-          {hid.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => onPatchCols(setBlockHidden(layout.lineCols, c.id, false))}
-              className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-dashed border-emerald-300 text-emerald-800 bg-emerald-50/70"
-              data-testid={`einvoice-design-col-show-${c.id}`}
-            >
-              + {LINE_COL_LABELS[c.id]}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-};
+    ) : null}
+  </div>
+);
 
-const PreviewBlock = ({ id, layout, onPatchCols, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
+const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => (
+  <FieldChipsBar
+    vis={visibleLineCols(layout)}
+    hid={hiddenLineCols(layout)}
+    labels={LINE_COL_LABELS}
+    testPrefix="col"
+    list={layout.lineCols}
+    onPatch={onPatchCols}
+    drag={drag}
+    onDragStart={onDragStart}
+    onDragOver={onDragOver}
+    onDrop={onDrop}
+    onDragEnd={onDragEnd}
+  />
+);
+
+const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchTotals, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
   const title = layout.kind === "e_archive" ? "e-Arşiv Fatura" : "e-Fatura";
   if (id === "header") {
@@ -96,23 +117,6 @@ const PreviewBlock = ({ id, layout, onPatchCols, drag, onDragStart, onDragOver, 
       </div>
     );
   }
-  if (id === "invoice_no") {
-    return (
-      <div className="text-right">
-        <span className="inline-block text-[10px] font-bold text-white px-2 py-0.5 rounded" style={{ background: layout.accent }}>{title}</span>
-        <div className="text-[9px] font-bold uppercase mt-1" style={{ color: layout.muted }}>Fatura numarası</div>
-        <div className="text-sm font-bold" style={{ color: layout.primary }}>{s.number}</div>
-      </div>
-    );
-  }
-  if (id === "order_no") {
-    return (
-      <div className="rounded-lg border p-2.5" style={{ borderColor: `${layout.accent}33` }}>
-        <div className="text-[9px] font-bold uppercase" style={{ color: layout.muted }}>Sipariş numarası</div>
-        <div className="text-sm font-bold mt-0.5" style={{ color: layout.primary }}>{s.orderNo}</div>
-      </div>
-    );
-  }
   if (id === "supplier") {
     return <PartyCard title="Satıcı" p={s.supplier} kCls={layout.muted} vCls={layout.primary} />;
   }
@@ -120,11 +124,40 @@ const PreviewBlock = ({ id, layout, onPatchCols, drag, onDragStart, onDragOver, 
     return <PartyCard title="Alıcı" p={s.customer} kCls={layout.muted} vCls={layout.primary} />;
   }
   if (id === "meta") {
+    const fields = visibleMetaFields(layout);
+    const n = Math.min(Math.max(fields.length, 1), 5);
+    const valueOf = (fid) => {
+      if (fid === "number") return s.number;
+      if (fid === "date") return s.date;
+      if (fid === "profile") return s.profile;
+      if (fid === "ettn") return s.ettn;
+      if (fid === "order_no") return s.orderNo;
+      return "";
+    };
     return (
-      <div className="grid grid-cols-3 gap-2 text-[11px]" style={{ borderBottom: `1px solid ${layout.muted}33` }}>
-        <div><div className="text-[9px] font-bold uppercase" style={{ color: layout.muted }}>Tarih</div>{s.date}</div>
-        <div><div className="text-[9px] font-bold uppercase" style={{ color: layout.muted }}>Senaryo</div>{s.profile}</div>
-        <div className="min-w-0"><div className="text-[9px] font-bold uppercase" style={{ color: layout.muted }}>ETTN</div><span className="break-all text-[9px]">{s.ettn}</span></div>
+      <div>
+        <div className={`grid gap-2 text-[11px] ${n >= 5 ? "grid-cols-5" : n === 4 ? "grid-cols-4" : n === 2 ? "grid-cols-2" : "grid-cols-3"}`} style={{ borderBottom: `1px solid ${layout.muted}33` }}>
+          {fields.map((f) => (
+            <div key={f.id} className="min-w-0">
+              {f.id === "number" ? <span className="inline-block text-[10px] font-bold text-white px-2 py-0.5 rounded mb-0.5" style={{ background: layout.accent }}>{title}</span> : null}
+              <div className="text-[9px] font-bold uppercase" style={{ color: layout.muted }}>{META_FIELD_LABELS[f.id]}</div>
+              <div className={f.id === "ettn" ? "break-all text-[9px]" : f.id === "number" ? "font-bold" : ""} style={f.id === "number" ? { color: layout.primary } : undefined}>{valueOf(f.id)}</div>
+            </div>
+          ))}
+        </div>
+        <FieldChipsBar
+          vis={fields}
+          hid={hiddenMetaFields(layout)}
+          labels={META_FIELD_LABELS}
+          testPrefix="meta"
+          list={layout.metaFields}
+          onPatch={onPatchMeta}
+          drag={drag}
+          onDragStart={onDragStart}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          onDragEnd={onDragEnd}
+        />
       </div>
     );
   }
@@ -160,17 +193,41 @@ const PreviewBlock = ({ id, layout, onPatchCols, drag, onDragStart, onDragOver, 
     );
   }
   if (id === "totals") {
+    const rows = visibleTotalRows(layout);
     return (
-      <div className="flex justify-end">
-        <table className="text-[11px] min-w-[14rem]">
-          <tbody>
-            <tr><td className="pr-6 py-0.5" style={{ color: layout.muted }}>Mal hizmet toplam</td><td className="text-right">{s.subtotal}</td></tr>
-            <tr><td className="pr-6 py-0.5" style={{ color: layout.muted }}>KDV</td><td className="text-right">{s.vat}</td></tr>
-            <tr style={{ borderTop: `2px solid ${layout.accent}`, color: layout.primary }} className="font-bold text-sm">
-              <td className="pr-6 py-1">Ödenecek tutar</td><td className="text-right">{s.grand} TL</td>
-            </tr>
-          </tbody>
-        </table>
+      <div>
+        <div className="flex justify-end">
+          <table className="text-[11px] min-w-[14rem]">
+            <tbody>
+              {rows.map((r) => {
+                const grand = r.id === "grand";
+                return (
+                  <tr
+                    key={r.id}
+                    className={grand ? "font-bold text-sm" : ""}
+                    style={grand ? { borderTop: `2px solid ${layout.accent}`, color: layout.primary } : undefined}
+                  >
+                    <td className={grand ? "pr-6 py-1" : "pr-6 py-0.5"} style={grand ? undefined : { color: layout.muted }}>{TOTAL_ROW_LABELS[r.id]}</td>
+                    <td className="text-right">{s[TOTAL_ROW_SAMPLE_KEY[r.id] || r.id]}{grand ? " TL" : ""}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <FieldChipsBar
+          vis={rows}
+          hid={hiddenTotalRows(layout)}
+          labels={TOTAL_ROW_LABELS}
+          testPrefix="total"
+          list={layout.totalRows}
+          onPatch={onPatchTotals}
+          drag={drag}
+          onDragStart={onDragStart}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          onDragEnd={onDragEnd}
+        />
       </div>
     );
   }
@@ -200,11 +257,7 @@ const PreviewBlock = ({ id, layout, onPatchCols, drag, onDragStart, onDragOver, 
   }
   if (id === "qr") {
     return (
-      <div className="flex items-end justify-end gap-2 pt-1">
-        <div className="text-right text-[9px]" style={{ color: layout.muted }}>
-          <div className="font-bold uppercase mb-1">GİB karekod</div>
-          <div className="break-all max-w-[9rem]">{s.ettn}</div>
-        </div>
+      <div className="flex justify-end pt-1">
         <div className="bg-white p-1 border rounded" data-testid="einvoice-design-qr">
           <QRCodeSVG value={sampleQrPayload(s)} size={72} level="M" />
         </div>
@@ -224,6 +277,8 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
   const visible = L.blocks.filter((b) => !b.hidden);
   const hidden = L.blocks.filter((b) => b.hidden);
   const hiddenCols = hiddenLineCols(L);
+  const hiddenMeta = hiddenMetaFields(L);
+  const hiddenTotals = hiddenTotalRows(L);
 
   useEffect(() => {
     setPaperMode(preferXsltPreview && xsltHtml ? "xslt" : "layout");
@@ -235,6 +290,8 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
   };
   const patchBlocks = (blocks) => patch({ blocks });
   const patchCols = (lineCols) => patch({ lineCols });
+  const patchMeta = (metaFields) => patch({ metaFields });
+  const patchTotals = (totalRows) => patch({ totalRows });
 
   const onDragStart = (id) => (e) => {
     e.stopPropagation();
@@ -259,7 +316,21 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
       patchCols(cols);
       return;
     }
-    if (isLineCol(targetId)) return;
+    if (isMetaField(from)) {
+      let fields = L.metaFields;
+      if (asVisible || isMetaField(targetId) || targetId === "meta") fields = setBlockHidden(fields, from, false);
+      if (isMetaField(targetId)) fields = moveBlock(fields, from, targetId);
+      patchMeta(fields);
+      return;
+    }
+    if (isTotalRow(from)) {
+      let rows = L.totalRows;
+      if (asVisible || isTotalRow(targetId) || targetId === "totals") rows = setBlockHidden(rows, from, false);
+      if (isTotalRow(targetId)) rows = moveBlock(rows, from, targetId);
+      patchTotals(rows);
+      return;
+    }
+    if (isLineCol(targetId) || isMetaField(targetId) || isTotalRow(targetId)) return;
     let blocks = L.blocks;
     if (asVisible) blocks = setBlockHidden(blocks, from, false);
     patchBlocks(moveBlock(blocks, from, targetId));
@@ -278,6 +349,8 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
     clearDrag();
     if (!from) return;
     if (isLineCol(from)) patchCols(setBlockHidden(L.lineCols, from, true));
+    else if (isMetaField(from)) patchMeta(setBlockHidden(L.metaFields, from, true));
+    else if (isTotalRow(from)) patchTotals(setBlockHidden(L.totalRows, from, true));
     else patchBlocks(setBlockHidden(L.blocks, from, true));
   };
 
@@ -374,6 +447,42 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
               </button>
             </div>
           ))}
+          <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500 px-1 pt-2">Fatura alanları</div>
+          {hiddenMeta.length === 0 ? <p className="text-[11px] text-slate-400 px-1">Tüm fatura bilgileri bölümde.</p> : null}
+          {hiddenMeta.map((c) => (
+            <div
+              key={c.id}
+              draggable
+              onDragStart={onDragStart(c.id)}
+              onDragEnd={clearDrag}
+              className={`flex items-center gap-1 bg-white border rounded-lg px-2 py-1.5 cursor-grab active:cursor-grabbing ${dragId === c.id ? "opacity-40" : ""}`}
+              data-testid={`einvoice-design-palette-meta-${c.id}`}
+            >
+              <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+              <span className="flex-1 font-semibold text-slate-700">{META_FIELD_LABELS[c.id]}</span>
+              <button type="button" onClick={() => patchMeta(setBlockHidden(L.metaFields, c.id, false))} className="text-[10px] font-bold text-emerald-700 px-1.5 py-0.5 border border-emerald-200 rounded" data-testid={`einvoice-design-show-meta-${c.id}`}>
+                <Plus className="w-3 h-3 inline" /> Ekle
+              </button>
+            </div>
+          ))}
+          <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500 px-1 pt-2">Toplam alanları</div>
+          {hiddenTotals.length === 0 ? <p className="text-[11px] text-slate-400 px-1">Tüm toplam satırları tabloda.</p> : null}
+          {hiddenTotals.map((c) => (
+            <div
+              key={c.id}
+              draggable
+              onDragStart={onDragStart(c.id)}
+              onDragEnd={clearDrag}
+              className={`flex items-center gap-1 bg-white border rounded-lg px-2 py-1.5 cursor-grab active:cursor-grabbing ${dragId === c.id ? "opacity-40" : ""}`}
+              data-testid={`einvoice-design-palette-total-${c.id}`}
+            >
+              <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+              <span className="flex-1 font-semibold text-slate-700">{TOTAL_ROW_LABELS[c.id]}</span>
+              <button type="button" onClick={() => patchTotals(setBlockHidden(L.totalRows, c.id, false))} className="text-[10px] font-bold text-emerald-700 px-1.5 py-0.5 border border-emerald-200 rounded" data-testid={`einvoice-design-show-total-${c.id}`}>
+                <Plus className="w-3 h-3 inline" /> Ekle
+              </button>
+            </div>
+          ))}
         </div>
 
         <div className="lg:col-span-9">
@@ -436,6 +545,8 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                   id={b.id}
                   layout={L}
                   onPatchCols={patchCols}
+                  onPatchMeta={patchMeta}
+                  onPatchTotals={patchTotals}
                   drag={dragId}
                   onDragStart={onDragStart}
                   onDragOver={onDragOverItem}
