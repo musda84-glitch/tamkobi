@@ -23,6 +23,12 @@ test("hiçbir gruba yazılmamış bölüm kaybolmaz, sonda Diğer'de görünür"
   expect(last.items.map((s) => s.path)).toEqual(["/sistem/yeni"]);
 });
 
+test("e-fatura tasarım entegrasyon klasöründe", () => {
+  const groups = groupSystemSections(sections(...SYSTEM_NAV_GROUPS.flatMap((g) => g.paths)));
+  const entegrasyon = groups.find((g) => g.id === "entegrasyon");
+  expect(entegrasyon.items.map((s) => s.path)).toContain("/sistem/e-fatura-tasarim");
+});
+
 test("bölüm listesi boşken menü de boştur", () => {
   expect(groupSystemSections([])).toEqual([]);
   expect(groupSystemSections(undefined)).toEqual([]);
