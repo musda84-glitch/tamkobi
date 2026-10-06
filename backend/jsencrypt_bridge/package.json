@@ -1,0 +1,9 @@
+{
+  "name": "tamkobi-jsencrypt-bridge",
+  "private": true,
+  "description": "Kuveyt API Market Signature = travist/jsencrypt JSEncrypt.signSha256",
+  "license": "MIT",
+  "dependencies": {
+    "jsencrypt": "github:travist/jsencrypt"
+  }
+}

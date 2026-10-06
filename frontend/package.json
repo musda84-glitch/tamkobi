@@ -44,6 +44,7 @@
     "html5-qrcode": "^2.3.8",
     "input-otp": "1.4.2",
     "jsbarcode": "^3.12.3",
+    "jsencrypt": "github:travist/jsencrypt",
     "leaflet": "^1.9.4",
     "lodash": "4.18.1",
     "lucide-react": "0.516.0",

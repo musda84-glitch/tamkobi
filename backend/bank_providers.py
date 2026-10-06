@@ -11,7 +11,10 @@ import json
 import logging
 import random
 import re
+import shutil
+import subprocess
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -35,7 +38,7 @@ PROVIDERS = {
         "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
-        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions, POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. RSA: openssl genrsa -out private.pem 2048 (BEGIN/END dahil; public.pem değil; min 2048-bit). İmza: JSEncrypt.signSha256(token+query|json) = SHA256withRSA. Token: client_credentials scope=public — Gravitee Identity, olmazsa iuysal SDK. Bağlantı testi fx/rates; hareket yalnızca v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
+        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions, POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. RSA: travist/jsencrypt demo 2048-bit Private Key (BEGIN RSA PRIVATE KEY; Public Key değil). İmza: github.com/travist/jsencrypt JSEncrypt.signSha256(token+query|json). Token: client_credentials scope=public — Gravitee Identity, olmazsa iuysal SDK. Bağlantı testi fx/rates; hareket yalnızca v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -518,23 +521,63 @@ def _kuveyt_query_string(params: Optional[Dict[str, Any]]) -> str:
     return "?" + "&".join(parts)
 
 
-def _kuveyt_sign(access_token: str, pem: str, *, query_string: str = "", json_body: str = "") -> str:
-    """Portal JSEncrypt.signSha256 / Java SHA256withRSA, Base64 Signature başlığı.
+_JSENCRYPT_BRIDGE_DIR = Path(__file__).resolve().parent / "jsencrypt_bridge"
+_JSENCRYPT_SIGN_JS = _JSENCRYPT_BRIDGE_DIR / "sign.js"
 
-    travist/jsencrypt: ``signSha256(data)`` ≡ PKCS1-v1.5 + SHA-256 (DigestInfo).
-    GET: accessToken.trim() + queryString (?k=v&…, URL-encode yok).
-    POST: accessToken + jsonBody (trim yok).
-    """
+
+def _kuveyt_sign_payload(access_token: str, *, query_string: str = "", json_body: str = "") -> str:
+    """GET: accessToken.trim()+queryString; POST: accessToken+jsonBody (portal JSEncrypt)."""
+    if json_body:
+        return (access_token or "") + json_body
+    return (access_token or "").strip() + (query_string or "")
+
+
+def _jsencrypt_sign_sha256(pem: str, data: str) -> str:
+    """travist/jsencrypt JSEncrypt.signSha256 — github.com/travist/jsencrypt."""
+    node = shutil.which("node")
+    if not node:
+        raise RuntimeError("JSEncrypt için node bulunamadı")
+    if not _JSENCRYPT_SIGN_JS.is_file():
+        raise RuntimeError("JSEncrypt köprüsü (sign.js) yok")
+    proc = subprocess.run(
+        [node, str(_JSENCRYPT_SIGN_JS)],
+        input=json.dumps({"privateKey": pem, "data": data}, ensure_ascii=False),
+        capture_output=True,
+        text=True,
+        timeout=20,
+        cwd=str(_JSENCRYPT_BRIDGE_DIR),
+        check=False,
+    )
+    sig = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not sig:
+        err = (proc.stderr or proc.stdout or "imza alınamadı").strip()[:240]
+        raise RuntimeError(f"JSEncrypt.signSha256 başarısız: {err}")
+    return sig
+
+
+def _kuveyt_sign_python(pem: str, data: str) -> str:
+    """JSEncrypt.signSha256 ile aynı: PKCS1-v1.5 + SHA-256 (node yoksa yedek)."""
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
 
-    if json_body:
-        payload = (access_token or "") + json_body
-    else:
-        payload = (access_token or "").strip() + (query_string or "")
     key = _kuveyt_load_private_key(pem)
-    sig = key.sign(payload.encode("utf-8"), padding.PKCS1v15(), hashes.SHA256())
+    sig = key.sign(data.encode("utf-8"), padding.PKCS1v15(), hashes.SHA256())
     return base64.b64encode(sig).decode("ascii")
+
+
+def _kuveyt_sign(access_token: str, pem: str, *, query_string: str = "", json_body: str = "") -> str:
+    """Kuveyt Signature = travist/jsencrypt JSEncrypt.signSha256.
+
+    GET: accessToken.trim() + queryString (?k=v&…, URL-encode yok).
+    POST: accessToken + jsonBody (trim yok).
+    """
+    payload = _kuveyt_sign_payload(access_token, query_string=query_string, json_body=json_body)
+    _kuveyt_load_private_key(pem)
+    try:
+        return _jsencrypt_sign_sha256(pem, payload)
+    except Exception as e:
+        logger.warning("JSEncrypt node imza yok, PKCS1 SHA256 yedek: %s", _err_text(e)[:160])
+        return _kuveyt_sign_python(pem, payload)
 
 
 def _kuveyt_headers(

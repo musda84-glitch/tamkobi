@@ -61,6 +61,13 @@ BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 APP_VERSION="${APP_VERSION:-2.0.0}"
 echo "Dağıtılan sürüm: $APP_VERSION ($GIT_SHA_SHORT · $GIT_BRANCH) — $GIT_MESSAGE"
 
+echo "--- JSEncrypt (Kuveyt Signature, github.com/travist/jsencrypt)"
+if command -v npm >/dev/null 2>&1; then
+  (cd "$ROOT/backend/jsencrypt_bridge" && npm install --omit=dev --no-audit --no-fund)
+else
+  echo "Uyarı: npm yok; Kuveyt imzası PKCS1 SHA256 yedeğine düşer."
+fi
+
 echo "--- Backend bağımlılıkları"
 if [ ! -x "$ROOT/backend/venv/bin/python3" ]; then
   echo "HATA: $ROOT/backend/venv yok. venv oluşturup requirements.txt kurun." >&2
