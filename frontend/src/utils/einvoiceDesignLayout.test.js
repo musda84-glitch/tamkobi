@@ -9,10 +9,14 @@ import {
   xmlEscape,
 } from "./einvoiceDesignLayout";
 
-test("default layout has all blocks visible", () => {
+test("default layout shows core blocks and hides extra fields", () => {
   const L = defaultLayout("e_invoice");
   expect(L.blocks.map((b) => b.id)).toEqual(BLOCK_IDS);
-  expect(L.blocks.every((b) => !b.hidden)).toBe(true);
+  expect(L.blocks.find((b) => b.id === "header").hidden).toBe(false);
+  expect(L.blocks.find((b) => b.id === "qr").hidden).toBe(true);
+  expect(L.blocks.find((b) => b.id === "balance").hidden).toBe(true);
+  expect(L.lineCols.find((c) => c.id === "sku").hidden).toBe(true);
+  expect(L.lineCols.find((c) => c.id === "name").hidden).toBe(false);
   expect(L.kind).toBe("e_invoice");
 });
 
@@ -29,6 +33,8 @@ test("normalizeLayout fills missing blocks and sanitizes colors", () => {
   expect(L.blocks[0]).toEqual({ id: "totals", hidden: true });
   expect(L.blocks[1]).toEqual({ id: "header", hidden: false });
   expect(L.blocks.map((b) => b.id).sort()).toEqual([...BLOCK_IDS].sort());
+  expect(L.blocks.find((b) => b.id === "qr").hidden).toBe(true);
+  expect(L.lineCols.find((c) => c.id === "barcode").hidden).toBe(true);
 });
 
 test("moveBlock reorders and moveVisible steps among shown items", () => {
@@ -73,6 +79,32 @@ test("layoutToXslt writes stylesheet, colors and skips hidden blocks", () => {
   expect(xslt).toContain("Mal / Hizmet");
   expect(xslt).not.toContain("IBAN / ödeme");
   expect(xslt).not.toContain(">Notlar<");
+  expect(xslt).not.toContain("GİB karekod");
+  expect(xslt).not.toContain("Stok kodu");
+});
+
+test("layoutToXslt includes added line columns and extra blocks", () => {
+  const layout = normalizeLayout({
+    blocks: [{ id: "lines" }, { id: "balance" }, { id: "qr" }],
+    lineCols: [
+      { id: "sku" },
+      { id: "barcode" },
+      { id: "name" },
+      { id: "discount" },
+      { id: "vat" },
+      { id: "net_price" },
+    ],
+  });
+  const xslt = layoutToXslt(layout);
+  expect(xslt).toContain("Stok kodu");
+  expect(xslt).toContain("SellersItemIdentification");
+  expect(xslt).toContain("Barkod");
+  expect(xslt).toContain("İskonto");
+  expect(xslt).toContain("KDV");
+  expect(xslt).toContain("KDV'siz fiyat");
+  expect(xslt).toContain("Güncel bakiye");
+  expect(xslt).toContain("GİB karekod");
+  expect(xslt).toContain("DocumentType='QR'");
 });
 
 test("xmlEscape encodes markup", () => {

@@ -1,14 +1,20 @@
 import React, { useRef, useState } from "react";
 import { EyeOff, GripVertical, ImagePlus, Plus, ArrowDown, ArrowUp } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { compressImageFile } from "../../utils/compressImage";
 import {
   BLOCK_LABELS,
   FONT_OPTIONS,
+  LINE_COL_LABELS,
   SAMPLE_INVOICE,
+  hiddenLineCols,
+  isLineCol,
   moveBlock,
   moveVisible,
   normalizeLayout,
+  sampleQrPayload,
   setBlockHidden,
+  visibleLineCols,
 } from "../../utils/einvoiceDesignLayout";
 import { inputCls } from "./saasUi";
 
@@ -29,7 +35,54 @@ const PartyCard = ({ title, p, kCls, vCls }) => (
   </div>
 );
 
-const PreviewBlock = ({ id, layout }) => {
+const lineCell = (ln, colId) => {
+  if (colId === "qty" && !ln._showUnit) return `${ln.qty}${ln.unit ? ` ${ln.unit}` : ""}`;
+  return ln[colId] ?? "";
+};
+
+const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
+  const vis = visibleLineCols(layout);
+  const hid = hiddenLineCols(layout);
+  return (
+    <div className="mt-2 space-y-1.5" data-testid="einvoice-design-line-cols">
+      <div className="flex flex-wrap gap-1">
+        {vis.map((c) => (
+          <span
+            key={c.id}
+            draggable
+            onDragStart={onDragStart(c.id)}
+            onDragOver={onDragOver(c.id)}
+            onDrop={onDrop(c.id)}
+            onDragEnd={onDragEnd}
+            className={`inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-white cursor-grab ${drag === c.id ? "opacity-40" : ""} ${drag && drag !== c.id ? "border-emerald-300" : "border-slate-200"}`}
+            data-testid={`einvoice-design-col-${c.id}`}
+          >
+            <GripVertical className="w-2.5 h-2.5 text-slate-300" />
+            {LINE_COL_LABELS[c.id]}
+            <button type="button" className="text-rose-500 pl-0.5" title="Kaldır" data-testid={`einvoice-design-col-hide-${c.id}`} onClick={(e) => { e.stopPropagation(); onPatchCols(setBlockHidden(layout.lineCols, c.id, true)); }}>×</button>
+          </span>
+        ))}
+      </div>
+      {hid.length ? (
+        <div className="flex flex-wrap gap-1" data-testid="einvoice-design-col-adders">
+          {hid.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => onPatchCols(setBlockHidden(layout.lineCols, c.id, false))}
+              className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-dashed border-emerald-300 text-emerald-800 bg-emerald-50/70"
+              data-testid={`einvoice-design-col-show-${c.id}`}
+            >
+              + {LINE_COL_LABELS[c.id]}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const PreviewBlock = ({ id, layout, onPatchCols, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
   const title = layout.kind === "e_archive" ? "e-Arşiv Fatura" : "e-Fatura";
   if (id === "header") {
@@ -64,29 +117,34 @@ const PreviewBlock = ({ id, layout }) => {
     );
   }
   if (id === "lines") {
+    const cols = visibleLineCols(layout);
+    const unitOn = cols.some((c) => c.id === "unit");
     return (
-      <table className="w-full text-[10px]">
-        <thead>
-          <tr style={{ background: layout.primary, color: "#fff" }}>
-            <th className="text-left p-1.5 font-semibold">Sıra</th>
-            <th className="text-left p-1.5 font-semibold">Mal / Hizmet</th>
-            <th className="text-right p-1.5 font-semibold">Miktar</th>
-            <th className="text-right p-1.5 font-semibold">Birim fiyat</th>
-            <th className="text-right p-1.5 font-semibold">Tutar</th>
-          </tr>
-        </thead>
-        <tbody>
-          {s.lines.map((ln) => (
-            <tr key={ln.no} style={{ borderBottom: `1px solid ${layout.muted}22` }}>
-              <td className="p-1.5">{ln.no}</td>
-              <td className="p-1.5">{ln.name}</td>
-              <td className="p-1.5 text-right">{ln.qty} {ln.unit}</td>
-              <td className="p-1.5 text-right">{ln.price}</td>
-              <td className="p-1.5 text-right">{ln.total}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[10px]">
+            <thead>
+              <tr style={{ background: layout.primary, color: "#fff" }}>
+                {cols.map((c) => (
+                  <th key={c.id} className={`p-1.5 font-semibold whitespace-nowrap ${c.id === "name" || c.id === "sku" ? "text-left" : "text-right"}`}>{LINE_COL_LABELS[c.id]}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {s.lines.map((ln) => (
+                <tr key={ln.no} style={{ borderBottom: `1px solid ${layout.muted}22` }}>
+                  {cols.map((c) => (
+                    <td key={c.id} className={`p-1.5 whitespace-nowrap ${c.id === "name" || c.id === "sku" ? "text-left" : "text-right"}`}>
+                      {lineCell({ ...ln, _showUnit: unitOn }, c.id)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <LineColsBar layout={layout} onPatchCols={onPatchCols} drag={drag} onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop} onDragEnd={onDragEnd} />
+      </div>
     );
   }
   if (id === "totals") {
@@ -120,6 +178,27 @@ const PreviewBlock = ({ id, layout }) => {
       </div>
     );
   }
+  if (id === "balance") {
+    return (
+      <div className="flex items-center justify-between rounded-lg px-2.5 py-2 text-[11px]" style={{ border: `1px solid ${layout.accent}` }}>
+        <span className="font-bold uppercase text-[9px]" style={{ color: layout.muted }}>Güncel bakiye</span>
+        <span className="font-bold" style={{ color: layout.primary }}>{s.balance}</span>
+      </div>
+    );
+  }
+  if (id === "qr") {
+    return (
+      <div className="flex items-end justify-end gap-2 pt-1">
+        <div className="text-right text-[9px]" style={{ color: layout.muted }}>
+          <div className="font-bold uppercase mb-1">GİB karekod</div>
+          <div className="break-all max-w-[9rem]">{s.ettn}</div>
+        </div>
+        <div className="bg-white p-1 border rounded" data-testid="einvoice-design-qr">
+          <QRCodeSVG value={sampleQrPayload(s)} size={72} level="M" />
+        </div>
+      </div>
+    );
+  }
   return null;
 };
 
@@ -131,11 +210,14 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind }) => {
   const [overPalette, setOverPalette] = useState(false);
   const visible = L.blocks.filter((b) => !b.hidden);
   const hidden = L.blocks.filter((b) => b.hidden);
+  const hiddenCols = hiddenLineCols(L);
 
   const patch = (partial) => onChange(normalizeLayout({ ...L, ...partial }, kind));
   const patchBlocks = (blocks) => patch({ blocks });
+  const patchCols = (lineCols) => patch({ lineCols });
 
   const onDragStart = (id) => (e) => {
+    e.stopPropagation();
     setDragId(id);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", id);
@@ -146,25 +228,37 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind }) => {
     e.dataTransfer.dropEffect = "move";
     setOverId(id);
   };
-  const onDropItem = (id, asVisible) => (e) => {
-    e.preventDefault();
-    const from = dragId || e.dataTransfer.getData("text/plain");
-    setDragId("");
-    setOverId("");
-    setOverPalette(false);
-    if (!from || from === id) return;
+  const clearDrag = () => { setDragId(""); setOverId(""); setOverPalette(false); };
+
+  const applyDrop = (from, targetId, asVisible) => {
+    if (!from || from === targetId) return;
+    if (isLineCol(from)) {
+      let cols = L.lineCols;
+      if (asVisible || isLineCol(targetId) || targetId === "lines") cols = setBlockHidden(cols, from, false);
+      if (isLineCol(targetId)) cols = moveBlock(cols, from, targetId);
+      patchCols(cols);
+      return;
+    }
+    if (isLineCol(targetId)) return;
     let blocks = L.blocks;
     if (asVisible) blocks = setBlockHidden(blocks, from, false);
-    patchBlocks(moveBlock(blocks, from, id));
+    patchBlocks(moveBlock(blocks, from, targetId));
+  };
+
+  const onDropItem = (id, asVisible) => (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const from = dragId || e.dataTransfer.getData("text/plain");
+    clearDrag();
+    applyDrop(from, id, asVisible);
   };
   const dropOnPalette = (e) => {
     e.preventDefault();
     const from = dragId || e.dataTransfer.getData("text/plain");
-    setDragId("");
-    setOverId("");
-    setOverPalette(false);
+    clearDrag();
     if (!from) return;
-    patchBlocks(setBlockHidden(L.blocks, from, true));
+    if (isLineCol(from)) patchCols(setBlockHidden(L.lineCols, from, true));
+    else patchBlocks(setBlockHidden(L.blocks, from, true));
   };
 
   const onLogo = async (e) => {
@@ -213,7 +307,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind }) => {
         {L.logo ? (
           <button type="button" onClick={() => patch({ logo: "" })} className="px-2.5 py-1.5 border rounded-lg font-semibold text-slate-500" data-testid="einvoice-design-logo-clear">Logoyu kaldır</button>
         ) : null}
-        <span className="text-[10px] text-slate-500">Önizleme örnek veriyle. Bölümleri sürükleyin, gizleyin veya paletten ekleyin.</span>
+        <span className="text-[10px] text-slate-500">Önizleme örnek veriyle. Bölüm ve kalem alanlarını paletten ekleyin veya sürükleyin.</span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
@@ -225,19 +319,37 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind }) => {
           onDrop={dropOnPalette}
         >
           <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500 px-1">Gizli bölümler</div>
-          {hidden.length === 0 ? <p className="text-[11px] text-slate-400 px-1">Hepsi faturada. Gizlemek için faturadan buraya sürükleyin.</p> : null}
+          {hidden.length === 0 ? <p className="text-[11px] text-slate-400 px-1">Bölümlerin hepsi faturada.</p> : null}
           {hidden.map((b) => (
             <div
               key={b.id}
               draggable
               onDragStart={onDragStart(b.id)}
-              onDragEnd={() => { setDragId(""); setOverId(""); setOverPalette(false); }}
+              onDragEnd={clearDrag}
               className={`flex items-center gap-1 bg-white border rounded-lg px-2 py-1.5 cursor-grab active:cursor-grabbing ${dragId === b.id ? "opacity-40" : ""}`}
               data-testid={`einvoice-design-palette-${b.id}`}
             >
               <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
               <span className="flex-1 font-semibold text-slate-700">{BLOCK_LABELS[b.id]}</span>
               <button type="button" onClick={() => patchBlocks(setBlockHidden(L.blocks, b.id, false))} className="text-[10px] font-bold text-emerald-700 px-1.5 py-0.5 border border-emerald-200 rounded" data-testid={`einvoice-design-show-${b.id}`}>
+                <Plus className="w-3 h-3 inline" /> Ekle
+              </button>
+            </div>
+          ))}
+          <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500 px-1 pt-2">Kalem alanları</div>
+          {hiddenCols.length === 0 ? <p className="text-[11px] text-slate-400 px-1">Tüm kalem sütunları tabloda.</p> : null}
+          {hiddenCols.map((c) => (
+            <div
+              key={c.id}
+              draggable
+              onDragStart={onDragStart(c.id)}
+              onDragEnd={clearDrag}
+              className={`flex items-center gap-1 bg-white border rounded-lg px-2 py-1.5 cursor-grab active:cursor-grabbing ${dragId === c.id ? "opacity-40" : ""}`}
+              data-testid={`einvoice-design-palette-col-${c.id}`}
+            >
+              <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+              <span className="flex-1 font-semibold text-slate-700">{LINE_COL_LABELS[c.id]}</span>
+              <button type="button" onClick={() => patchCols(setBlockHidden(L.lineCols, c.id, false))} className="text-[10px] font-bold text-emerald-700 px-1.5 py-0.5 border border-emerald-200 rounded" data-testid={`einvoice-design-show-col-${c.id}`}>
                 <Plus className="w-3 h-3 inline" /> Ekle
               </button>
             </div>
@@ -259,7 +371,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind }) => {
                 onDragStart={onDragStart(b.id)}
                 onDragOver={onDragOverItem(b.id)}
                 onDrop={onDropItem(b.id, true)}
-                onDragEnd={() => { setDragId(""); setOverId(""); setOverPalette(false); }}
+                onDragEnd={clearDrag}
                 className={`relative rounded-lg p-1.5 pt-6 -mx-1 ${dragId === b.id ? "opacity-40" : ""} ${overId === b.id && dragId !== b.id ? "ring-2 ring-emerald-400" : "ring-1 ring-slate-200/80 hover:ring-slate-300"}`}
                 data-testid={`einvoice-design-block-${b.id}`}
               >
@@ -271,7 +383,16 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind }) => {
                   <button type="button" onClick={() => patchBlocks(moveVisible(L.blocks, b.id, 1))} className="p-0.5" title="Aşağı" data-testid={`einvoice-design-down-${b.id}`}><ArrowDown className="w-3 h-3" /></button>
                   <button type="button" onClick={() => patchBlocks(setBlockHidden(L.blocks, b.id, true))} className="p-0.5 text-rose-600" title="Gizle" data-testid={`einvoice-design-hide-${b.id}`}><EyeOff className="w-3 h-3" /></button>
                 </div>
-                <PreviewBlock id={b.id} layout={L} />
+                <PreviewBlock
+                  id={b.id}
+                  layout={L}
+                  onPatchCols={patchCols}
+                  drag={dragId}
+                  onDragStart={onDragStart}
+                  onDragOver={onDragOverItem}
+                  onDrop={onDropItem}
+                  onDragEnd={clearDrag}
+                />
               </div>
             ))}
           </div>
