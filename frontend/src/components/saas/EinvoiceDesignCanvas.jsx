@@ -7,6 +7,8 @@ import {
   FONT_OPTIONS,
   LINE_COL_LABELS,
   SAMPLE_INVOICE,
+  SPAN_CLASS,
+  SPAN_OPTIONS,
   hiddenLineCols,
   isLineCol,
   moveBlock,
@@ -14,6 +16,7 @@ import {
   normalizeLayout,
   sampleQrPayload,
   setBlockHidden,
+  setBlockSpan,
   visibleLineCols,
 } from "../../utils/einvoiceDesignLayout";
 import { inputCls } from "./saasUi";
@@ -87,25 +90,34 @@ const PreviewBlock = ({ id, layout, onPatchCols, drag, onDragStart, onDragOver, 
   const title = layout.kind === "e_archive" ? "e-Arşiv Fatura" : "e-Fatura";
   if (id === "header") {
     return (
-      <div className="flex items-start justify-between gap-3 pb-2" style={{ borderBottom: `3px solid ${layout.accent}` }}>
-        <div className="min-w-0">
-          {layout.logo ? <img src={layout.logo} alt="logo" className="max-h-[56px] max-w-[180px] object-contain mb-1" /> : null}
-          <div className="text-base font-bold" style={{ color: layout.primary }}>{layout.companyTitle || s.supplier.name}</div>
-        </div>
-        <div className="text-right shrink-0">
-          <span className="inline-block text-[10px] font-bold text-white px-2 py-0.5 rounded" style={{ background: layout.accent }}>{title}</span>
-          <div className="text-sm font-bold mt-1" style={{ color: layout.primary }}>{s.number}</div>
-        </div>
+      <div className="pb-2" style={{ borderBottom: `3px solid ${layout.accent}` }}>
+        {layout.logo ? <img src={layout.logo} alt="logo" className="max-h-[56px] max-w-[180px] object-contain mb-1" /> : null}
+        <div className="text-base font-bold" style={{ color: layout.primary }}>{layout.companyTitle || s.supplier.name}</div>
       </div>
     );
   }
-  if (id === "parties") {
+  if (id === "invoice_no") {
     return (
-      <div className="grid grid-cols-2 gap-2">
-        <PartyCard title="Satıcı" p={s.supplier} kCls={layout.muted} vCls={layout.primary} />
-        <PartyCard title="Alıcı" p={s.customer} kCls={layout.muted} vCls={layout.primary} />
+      <div className="text-right">
+        <span className="inline-block text-[10px] font-bold text-white px-2 py-0.5 rounded" style={{ background: layout.accent }}>{title}</span>
+        <div className="text-[9px] font-bold uppercase mt-1" style={{ color: layout.muted }}>Fatura numarası</div>
+        <div className="text-sm font-bold" style={{ color: layout.primary }}>{s.number}</div>
       </div>
     );
+  }
+  if (id === "order_no") {
+    return (
+      <div className="rounded-lg border p-2.5" style={{ borderColor: `${layout.accent}33` }}>
+        <div className="text-[9px] font-bold uppercase" style={{ color: layout.muted }}>Sipariş numarası</div>
+        <div className="text-sm font-bold mt-0.5" style={{ color: layout.primary }}>{s.orderNo}</div>
+      </div>
+    );
+  }
+  if (id === "supplier") {
+    return <PartyCard title="Satıcı" p={s.supplier} kCls={layout.muted} vCls={layout.primary} />;
+  }
+  if (id === "customer") {
+    return <PartyCard title="Alıcı" p={s.customer} kCls={layout.muted} vCls={layout.primary} />;
   }
   if (id === "meta") {
     return (
@@ -366,7 +378,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
 
         <div className="lg:col-span-9">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-            <div className="text-[10px] text-slate-500 font-semibold">Önizleme (örnek veri)</div>
+            <div className="text-[10px] text-slate-500 font-semibold">Önizleme (örnek veri) — en: Tam / 1/2 / 1/3, yan yana için ardışık 1/2</div>
             {xsltHtml ? (
               <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5" data-testid="einvoice-design-paper-tabs">
                 <button type="button" onClick={() => setPaperMode("layout")} className={`px-2 py-1 rounded-md font-semibold ${paperMode === "layout" ? "bg-white shadow-sm" : "text-slate-500"}`} data-testid="einvoice-design-paper-layout">Düzenleyici</button>
@@ -384,11 +396,11 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
             />
           ) : (
           <div
-            className="rounded-xl border shadow-sm p-4 space-y-2 min-h-[22rem]"
+            className="rounded-xl border shadow-sm p-4 min-h-[22rem] grid grid-cols-12 gap-2"
             style={{ background: L.paper, color: L.text, fontFamily: `"${L.font}", Tahoma, sans-serif` }}
             data-testid="einvoice-design-preview"
           >
-            {visible.length === 0 ? <p className="text-slate-400 text-center py-10">Paletten bölüm ekleyin.</p> : null}
+            {visible.length === 0 ? <p className="col-span-12 text-slate-400 text-center py-10">Paletten bölüm ekleyin.</p> : null}
             {visible.map((b) => (
               <div
                 key={b.id}
@@ -397,13 +409,25 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                 onDragOver={onDragOverItem(b.id)}
                 onDrop={onDropItem(b.id, true)}
                 onDragEnd={clearDrag}
-                className={`relative rounded-lg p-1.5 pt-6 -mx-1 ${dragId === b.id ? "opacity-40" : ""} ${overId === b.id && dragId !== b.id ? "ring-2 ring-emerald-400" : "ring-1 ring-slate-200/80 hover:ring-slate-300"}`}
+                className={`relative rounded-lg p-1.5 pt-6 ${SPAN_CLASS[b.span] || "col-span-12"} ${dragId === b.id ? "opacity-40" : ""} ${overId === b.id && dragId !== b.id ? "ring-2 ring-emerald-400" : "ring-1 ring-slate-200/80 hover:ring-slate-300"}`}
                 data-testid={`einvoice-design-block-${b.id}`}
               >
-                <div className="absolute top-0.5 left-1 right-1 z-10 flex items-center gap-0.5">
+                <div className="absolute top-0.5 left-1 right-1 z-10 flex items-center gap-0.5 min-w-0">
                   <GripVertical className="w-3.5 h-3.5 text-slate-300 cursor-grab shrink-0" />
                   <span className="text-[9px] font-bold text-slate-400 px-1 cursor-grab truncate">{BLOCK_LABELS[b.id]}</span>
                   <span className="flex-1" />
+                  {SPAN_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.span}
+                      type="button"
+                      title={opt.label}
+                      onClick={() => patchBlocks(setBlockSpan(L.blocks, b.id, opt.span))}
+                      className={`text-[8px] font-bold px-1 py-0.5 rounded ${Number(b.span) === opt.span ? "bg-slate-800 text-white" : "text-slate-400 hover:bg-slate-100"}`}
+                      data-testid={`einvoice-design-span-${b.id}-${opt.span}`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
                   <button type="button" onClick={() => patchBlocks(moveVisible(L.blocks, b.id, -1))} className="p-0.5" title="Yukarı" data-testid={`einvoice-design-up-${b.id}`}><ArrowUp className="w-3 h-3" /></button>
                   <button type="button" onClick={() => patchBlocks(moveVisible(L.blocks, b.id, 1))} className="p-0.5" title="Aşağı" data-testid={`einvoice-design-down-${b.id}`}><ArrowDown className="w-3 h-3" /></button>
                   <button type="button" onClick={() => patchBlocks(setBlockHidden(L.blocks, b.id, true))} className="p-0.5 text-rose-600" title="Gizle" data-testid={`einvoice-design-hide-${b.id}`}><EyeOff className="w-3 h-3" /></button>

@@ -42,8 +42,13 @@ test("renders preview blocks and can hide then restore from palette", async () =
   });
   expect(host.querySelector('[data-testid="einvoice-design-canvas"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.textContent).toContain("ABC2026000000001");
+  expect(host.querySelector('[data-testid="einvoice-design-block-invoice_no"]')?.textContent).toContain("Fatura numarası");
+  expect(host.querySelector('[data-testid="einvoice-design-block-supplier"]')?.textContent).toContain("Örnek Yazılım A.Ş.");
+  expect(host.querySelector('[data-testid="einvoice-design-block-customer"]')?.textContent).toContain("Alıcı Ticaret Ltd. Şti.");
+  expect(host.querySelector('[data-testid="einvoice-design-block-parties"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-lines"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-iban"]')).toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-palette-order_no"]')).not.toBeNull();
 
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-hide-iban"]').click();
@@ -88,8 +93,27 @@ test("move down swaps header with next visible block", async () => {
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-down-header"]').click();
   });
-  expect(last.blocks[0].id).toBe("parties");
+  expect(last.blocks[0].id).toBe("invoice_no");
   expect(last.blocks[1].id).toBe("header");
+});
+
+test("span buttons and order number palette", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  expect(last.blocks.find((b) => b.id === "header").span).toBe(6);
+  expect(host.querySelector('[data-testid="einvoice-design-block-header"]').className).toContain("col-span-6");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-span-header-12"]').click();
+  });
+  expect(last.blocks.find((b) => b.id === "header").span).toBe(12);
+  expect(host.querySelector('[data-testid="einvoice-design-block-header"]').className).toContain("col-span-12");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-show-order_no"]').click();
+  });
+  expect(host.querySelector('[data-testid="einvoice-design-block-order_no"]')?.textContent).toContain("SIP-2026-0142");
+  expect(host.querySelector('[data-testid="einvoice-design-block-order_no"]')?.textContent).toContain("Sipariş numarası");
 });
 
 test("adds stock, vat and GIB QR fields from palette", async () => {
