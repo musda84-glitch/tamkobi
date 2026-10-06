@@ -44,6 +44,7 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.totalRows.find((r) => r.id === "inclusive").hidden).toBe(false);
   expect(L.totalRows.find((r) => r.id === "exemption").hidden).toBe(true);
   expect(L.kind).toBe("e_invoice");
+  expect(L.fontSize).toBe(12);
 });
 
 test("normalizeLayout fills missing blocks and sanitizes colors", () => {
@@ -244,6 +245,10 @@ test("layoutToXslt includes optional totals rows", () => {
   expect(xslt).toContain("TaxInclusiveAmount");
   expect(xslt).toContain("WithholdingTaxTotal");
   expect(xslt).toContain("TaxExemptionReason");
+  expect(xslt).toContain('class="inv-tot"');
+  expect(xslt).toContain("format-number");
+  expect(xslt).toContain('decimal-format name="tr"');
+  expect(xslt).not.toMatch(/class="inv-k">Mal Hizmet Toplam Tutarı/);
 });
 
 test("layoutToXslt embeds GIB seal with kind caption when added", () => {
@@ -364,6 +369,15 @@ test("layoutToXslt emits empty spacer block when added", () => {
   }));
   expect(xslt).toContain('class="inv-spacer"');
   expect(xslt).toContain("width=\"33%\"");
+});
+
+test("layoutToXslt uses paper font size and dotted invoice dates", () => {
+  const xslt = layoutToXslt(normalizeLayout({
+    fontSize: 9,
+    blocks: [{ id: "meta" }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
+  }));
+  expect(xslt).toContain("font-size:9px");
+  expect(xslt).toContain("substring(/n1:Invoice/cbc:IssueDate,9,2)");
 });
 
 test("xmlEscape encodes markup", () => {

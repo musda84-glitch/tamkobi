@@ -5,6 +5,7 @@ import { compressImageFile } from "../../utils/compressImage";
 import {
   BLOCK_LABELS,
   FONT_OPTIONS,
+  FONT_SIZE_OPTIONS,
   LINE_COL_LABELS,
   META_FIELD_LABELS,
   HEADER_FIELD_LABELS,
@@ -116,7 +117,7 @@ const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDro
   />
 );
 
-const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
+const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, onFontSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
   const title = layout.kind === "e_archive" ? "e-Arşiv Fatura" : "e-Fatura";
   if (id === "header") {
@@ -204,13 +205,28 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
     };
     return (
       <div>
-        <div className={`grid gap-2 text-[11px] ${cols}`} style={{ borderBottom: `1px solid ${layout.muted}33` }} data-testid="einvoice-design-meta-grid">
+        <div className={`grid gap-2 ${cols}`} style={{ borderBottom: `1px solid ${layout.muted}33`, fontSize: "1em" }} data-testid="einvoice-design-meta-grid">
           {fields.map((f) => (
             <div key={f.id} className="min-w-0">
-              {f.id === "number" ? <span className="inline-block text-[10px] font-bold text-white px-2 py-0.5 rounded mb-0.5" style={{ background: layout.accent }}>{title}</span> : null}
-              <div className="text-[9px] font-bold uppercase" style={{ color: layout.muted }}>{META_FIELD_LABELS[f.id]}</div>
-              <div className={f.id === "ettn" ? "break-all text-[9px]" : f.id === "number" ? "font-bold" : ""} style={f.id === "number" ? { color: layout.primary } : undefined}>{valueOf(f.id)}</div>
+              {f.id === "number" ? <span className="inline-block text-[0.85em] font-bold text-white px-2 py-0.5 rounded mb-0.5" style={{ background: layout.accent }}>{title}</span> : null}
+              <div className="text-[0.78em] font-bold uppercase" style={{ color: layout.muted }}>{META_FIELD_LABELS[f.id]}</div>
+              <div className={f.id === "ettn" ? "break-all text-[0.82em]" : f.id === "number" ? "font-bold" : ""} style={f.id === "number" ? { color: layout.primary } : undefined}>{valueOf(f.id)}</div>
             </div>
+          ))}
+        </div>
+        <div className="flex items-center flex-wrap gap-1 mt-1.5" data-testid="einvoice-design-font-sizes">
+          <span className="text-[9px] font-bold text-slate-500">Punto</span>
+          {FONT_SIZE_OPTIONS.map((opt) => (
+            <button
+              key={opt.size}
+              type="button"
+              title={`${opt.size} px`}
+              onClick={(e) => { e.stopPropagation(); onFontSize?.(opt.size); }}
+              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${Number(layout.fontSize) === opt.size ? "bg-slate-800 text-white border-slate-800" : "text-slate-600 border-slate-200 hover:bg-slate-100"}`}
+              data-testid={`einvoice-design-font-size-${opt.size}`}
+            >
+              {opt.label}
+            </button>
           ))}
         </div>
         <FieldChipsBar
@@ -235,7 +251,7 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
     return (
       <div>
         <div className="overflow-x-auto">
-          <table className="w-full text-[10px]">
+          <table className="w-full text-[0.9em]">
             <thead>
               <tr style={{ background: layout.primary, color: "#fff" }}>
                 {cols.map((c) => (
@@ -265,7 +281,7 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
     return (
       <div>
         <div className="flex justify-end">
-          <table className="text-[11px] min-w-[14rem]">
+          <table className="min-w-[14rem]" style={{ fontSize: "1em" }}>
             <tbody>
               {rows.map((r) => {
                 const grand = r.id === "grand";
@@ -474,11 +490,17 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
 
   return (
     <div className="space-y-3" data-testid="einvoice-design-canvas">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <label className="block">
           <span className="block font-semibold mb-1">Yazı tipi</span>
           <select value={L.font} onChange={(e) => patch({ font: e.target.value })} className={inputCls} data-testid="einvoice-design-font">
             {FONT_OPTIONS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="block font-semibold mb-1">Punto</span>
+          <select value={L.fontSize} onChange={(e) => patch({ fontSize: Number(e.target.value) })} className={inputCls} data-testid="einvoice-design-font-size">
+            {FONT_SIZE_OPTIONS.map((f) => <option key={f.size} value={f.size}>{f.label} px</option>)}
           </select>
         </label>
         {[
@@ -625,7 +647,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
           ) : (
           <div
             className="rounded-xl border shadow-sm p-4 min-h-[22rem] grid grid-cols-12 gap-2"
-            style={{ background: L.paper, color: L.text, fontFamily: `"${L.font}", Tahoma, sans-serif` }}
+            style={{ background: L.paper, color: L.text, fontFamily: `"${L.font}", Tahoma, sans-serif`, fontSize: `${L.fontSize}px` }}
             data-testid="einvoice-design-preview"
           >
             {visible.length === 0 ? <p className="col-span-12 text-slate-400 text-center py-10">Paletten bölüm ekleyin.</p> : null}
@@ -669,6 +691,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                   onPatchTotals={patchTotals}
                   onQrSize={(size) => patch({ qrSize: size })}
                   onLogoSize={(size) => patch({ logoSize: size })}
+                  onFontSize={(size) => patch({ fontSize: size })}
                   drag={dragId}
                   onDragStart={onDragStart}
                   onDragOver={onDragOverItem}

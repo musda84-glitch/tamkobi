@@ -314,3 +314,19 @@ test("header can show supplier name under the logo", async () => {
   });
   expect(host.querySelector('[data-testid="einvoice-design-header-value-supplier_address"]')?.textContent).toContain("Kadıköy");
 });
+
+test("font size control shrinks preview and is stored on layout", async () => {
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Harness />);
+  });
+  expect(last.fontSize).toBe(12);
+  expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.style.fontSize).toBe("12px");
+  expect(host.querySelector('[data-testid="einvoice-design-font-size-8"]')).not.toBeNull();
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-font-size-8"]').click();
+  });
+  expect(last.fontSize).toBe(8);
+  expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.style.fontSize).toBe("8px");
+  expect(host.querySelector('[data-testid="einvoice-design-font-size"]')?.value).toBe("8");
+});
