@@ -463,12 +463,39 @@ def _stable_uuid(inv: Dict[str, Any]) -> str:
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tamkobi-invoice:{raw}"))
 
 
+def attach_xslt_stylesheet(root, xslt: str, issue_date: str, filename: str = "efatura.xslt") -> None:
+    """GİB: AdditionalDocumentReference / DocumentType=XSLT (gzip+Base64)."""
+    text = str(xslt or "").strip()
+    if "<xsl:stylesheet" not in text and "<xsl:transform" not in text:
+        return
+    try:
+        import einvoice_designs
+        payload = einvoice_designs.gzip_xslt_b64(text)
+    except Exception:
+        return
+    adr = _cac(root, "AdditionalDocumentReference")
+    _cbc(adr, "ID", str(uuid.uuid4()))
+    _cbc(adr, "IssueDate", issue_date)
+    _cbc(adr, "DocumentType", "XSLT")
+    att = _cac(adr, "Attachment")
+    _cbc(
+        att,
+        "EmbeddedDocumentBinaryObject",
+        payload,
+        mimeCode="application/xml",
+        encodingCode="Base64",
+        characterSetCode="UTF-8",
+        filename=filename,
+    )
+
+
 def build_invoice_ubl(
     inv: Dict[str, Any],
     seller: Dict[str, Any],
     buyer: Dict[str, Any],
     *,
     send_ready: bool = False,
+    xslt: Optional[str] = None,
 ) -> bytes:
     """UBL-TR Invoice XML. parse_ubl ile okunabilir.
 
@@ -587,6 +614,14 @@ def build_invoice_ubl(
         _cbc(adr, "IssueDate", _date(inv.get("dispatch_date") or inv.get("issue_date")))
         _cbc(adr, "DocumentTypeCode", "IRSALIYE")
         _cbc(adr, "DocumentType", "İrsaliye")
+
+    if xslt:
+        attach_xslt_stylesheet(
+            root,
+            xslt,
+            issue_date,
+            filename="earsiv.xslt" if (e_type == "e_archive" or profile == "EARSIVFATURA") else "efatura.xslt",
+        )
 
     seller_party = {
         "name": seller.get("name"),

@@ -1787,6 +1787,7 @@ def build_ubl(
     company: dict,
     contact: Optional[dict],
     ettn: Optional[str] = None,
+    xslt: Optional[str] = None,
 ) -> tuple:
     """İşNet Send*Xml UBL — ubl_export (IADE / TEVKIFAT / WithholdingTaxTotal).
 
@@ -1809,7 +1810,7 @@ def build_ubl(
         "email": (company or {}).get("email"),
     }
     buyer = ubl_export._buyer_from(inv, contact)
-    xml_bytes = ubl_export.build_invoice_ubl(inv, seller, buyer, send_ready=True)
+    xml_bytes = ubl_export.build_invoice_ubl(inv, seller, buyer, send_ready=True, xslt=xslt)
     root = ET.fromstring(xml_bytes)
     cbc = "{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}"
     inv_id = ""
@@ -2095,8 +2096,15 @@ async def send_document(
 
     company_for_ubl = {**(company or {})}
     company_for_ubl["tax_number"] = seller_vkn
+    xslt = None
     try:
-        xml, _local_ettn, inv_id = build_ubl(inv_for_ubl, company_for_ubl, contact)
+        import einvoice_designs as _ed
+
+        xslt = await _ed.selected_xslt_for_e_type(e_type)
+    except Exception:
+        logger.exception("isnet selected xslt load failed")
+    try:
+        xml, _local_ettn, inv_id = build_ubl(inv_for_ubl, company_for_ubl, contact, xslt=xslt)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

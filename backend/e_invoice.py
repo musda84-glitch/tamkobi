@@ -436,7 +436,13 @@ async def build_and_store_xml(invoice: dict, company: dict, contact: Optional[di
         "phone": company.get("phone"),
     }
     buyer = ubl_export._buyer_from(inv, contact)
-    xml = ubl_export.build_invoice_ubl(inv, seller, buyer)
+    xslt = None
+    try:
+        import einvoice_designs as _ed
+        xslt = await _ed.selected_xslt_for_e_type(inv.get("e_type") or "e_invoice")
+    except Exception:
+        logger.exception("e-invoice selected xslt load failed")
+    xml = ubl_export.build_invoice_ubl(inv, seller, buyer, xslt=xslt)
     await store_outgoing_xml(str(inv.get("_id") or inv.get("id")), inv["company_id"], xml, {"scenario": scenario, "source": "ubl_export"})
     return xml
 

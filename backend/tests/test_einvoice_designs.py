@@ -1,11 +1,17 @@
 """Platform e-Fatura / e-Arşiv XSLT tasarım birim testleri."""
 import asyncio
+import base64
+import gzip
+import io
+import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
+from PIL import Image
 
 import einvoice_designs as ed
+import ubl_export
 
 
 class _MemCol:
@@ -125,3 +131,57 @@ def test_layout_copy_and_update():
     assert copied["layout"]["accent"] == "#abcdef"
     with pytest.raises(HTTPException):
         _run(ed.update_design(created["id"], {"layout": ["nope"]}, {}))
+
+
+def _tiny_png_b64():
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (20, 80, 180)).save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def test_gzip_xslt_roundtrip():
+    xslt = '<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"/>'
+    blob = ed.gzip_xslt_b64(xslt)
+    assert gzip.decompress(base64.b64decode(blob)).decode("utf-8") == xslt
+
+
+def test_prepare_xslt_converts_png_data_uri_to_jpeg():
+    b64 = _tiny_png_b64()
+    xslt = f'<img src="data:image/png;base64,{b64}"/>'
+    out = ed.prepare_xslt_for_gib(xslt)
+    assert "data:image/jpeg;base64," in out
+    assert "data:image/png" not in out
+
+
+def test_build_invoice_ubl_embeds_gzip_xslt():
+    inv = {
+        "_id": "inv_xslt",
+        "invoice_number": "ABC2026000000001",
+        "invoice_type": "sales",
+        "e_type": "e_invoice",
+        "issue_date": "2026-10-07",
+        "items": [{"name": "Kalem", "quantity": 1, "unit_price": 10, "vat_rate": 20, "total": 10}],
+        "subtotal": 10,
+        "vat_total": 2,
+        "grand_total": 12,
+    }
+    seller = {"name": "Satıcı", "tax_number": "1234567801", "city": "İstanbul", "address": "Cad 1"}
+    buyer = {"name": "Alıcı", "tax_number_or_id": "6320984412", "city": "Ankara"}
+    xslt = '<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:template match="/"/></xsl:stylesheet>'
+    xml = ubl_export.build_invoice_ubl(inv, seller, buyer, send_ready=True, xslt=xslt)
+    text = xml.decode("utf-8")
+    assert "<cbc:DocumentType>XSLT</cbc:DocumentType>" in text
+    assert 'filename="efatura.xslt"' in text
+    ns = {
+        "cac": "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+        "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+        "n1": "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2",
+    }
+    root = ET.fromstring(xml)
+    payload = None
+    for adr in root.findall("cac:AdditionalDocumentReference", ns):
+        if (adr.findtext("cbc:DocumentType", default="", namespaces=ns) or "") == "XSLT":
+            payload = adr.findtext("cac:Attachment/cbc:EmbeddedDocumentBinaryObject", default="", namespaces=ns)
+    assert payload
+    decoded = gzip.decompress(base64.b64decode(payload)).decode("utf-8")
+    assert "<xsl:stylesheet" in decoded

@@ -816,7 +816,7 @@ def test_send_document_ubl_seller_uses_isnet_company_tax_id():
     contact = {"name": "Alıcı", "tax_number_or_id": "11111111111"}
     built = {}
 
-    def _capture_ubl(inv, co, ct, ettn=None):
+    def _capture_ubl(inv, co, ct, ettn=None, xslt=None):
         built["seller"] = co.get("tax_number")
         return ("<Invoice/>", "u", "TKB2026000000001")
 
