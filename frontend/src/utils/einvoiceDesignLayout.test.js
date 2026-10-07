@@ -1,6 +1,7 @@
 import {
   BLOCK_IDS,
   defaultLayout,
+  filledMetaFields,
   gibSafeLogoSrc,
   layoutToXslt,
   metaGridColsClass,
@@ -8,6 +9,7 @@ import {
   moveVisible,
   normalizeLayout,
   packBlockRows,
+  sampleMetaValue,
   setBlockHidden,
   setBlockSpan,
   xmlEscape,
@@ -423,6 +425,26 @@ test("layoutToXslt writes GIB-style inline meta rows at any width", () => {
     metaFields: [{ id: "order_no", hidden: false }, { id: "number" }],
   }));
   expect(withOrder).toContain('xsl:if test="/n1:Invoice/cac:OrderReference/cbc:ID[normalize-space(.)!=\'\']"');
+});
+
+test("filledMetaFields drops empty values and keeps chip order", () => {
+  const L = normalizeLayout({
+    metaFields: [
+      { id: "number" },
+      { id: "order_no", hidden: false },
+      { id: "profile" },
+      { id: "despatch_no", hidden: false },
+    ],
+  });
+  const sample = {
+    number: "ABC1",
+    orderNo: "",
+    profile: "TICARIFATURA",
+    despatchNo: "   ",
+  };
+  const filled = filledMetaFields(L, sample);
+  expect(filled.map((f) => f.id)).toEqual(["number", "profile"]);
+  expect(sampleMetaValue("order_no", sample)).toBe("");
 });
 
 test("gibSafeLogoSrc keeps data URIs and drops http", () => {

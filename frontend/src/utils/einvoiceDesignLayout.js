@@ -481,6 +481,27 @@ export const SAMPLE_INVOICE = {
   iban: "TR12 ACCT-000009 0000 01",
 };
 
+/** Önizleme / örnek: meta alanının gösterilecek değeri. */
+export function sampleMetaValue(fid, sample = SAMPLE_INVOICE) {
+  const s = sample || SAMPLE_INVOICE;
+  if (fid === "number") return s.number;
+  if (fid === "invoice_date" || fid === "date") return s.date;
+  if (fid === "issue_time") return s.issueTime;
+  if (fid === "profile") return s.profile;
+  if (fid === "order_no") return s.orderNo;
+  if (fid === "customization") return s.customization;
+  if (fid === "invoice_type") return s.invoiceType;
+  if (fid === "despatch_no") return s.despatchNo;
+  if (fid === "despatch_date") return s.despatchDate;
+  if (fid === "due_date") return s.dueDate;
+  return "";
+}
+
+/** Değeri dolu meta satırları — boşlar düşer, chip sırası korunur (kayarak yeniden dizilir). */
+export function filledMetaFields(layout, sample = SAMPLE_INVOICE) {
+  return visibleMetaFields(layout).filter((f) => String(sampleMetaValue(f.id, sample) || "").trim());
+}
+
 export function sampleQrPayload(sample = SAMPLE_INVOICE) {
   return `ETTN:${sample.ettn};VKN:${sample.supplier.vkn};NO:${sample.number};TARIH:${sample.date};TUTAR:${sample.grand}`;
 }
