@@ -30,6 +30,7 @@ test("default layout shows core blocks and hides extra fields", () => {
   expect(L.blocks.find((b) => b.id === "qr").hidden).toBe(true);
   expect(L.qrSize).toBe(96);
   expect(L.logoSize).toBe(72);
+  expect(L.ettnFontSize).toBe(18);
   expect(L.blocks.find((b) => b.id === "spacer").hidden).toBe(true);
   expect(L.blocks.find((b) => b.id === "spacer").span).toBe(4);
   expect(L.blocks.find((b) => b.id === "balance").hidden).toBe(true);
@@ -326,6 +327,11 @@ test("layoutToXslt writes ETTN as its own block", () => {
   expect(shown).toContain("/n1:Invoice/cbc:UUID");
   expect(shown).toContain("width=\"100%\"");
   expect(shown).toMatch(/inv-ettn-v \{[^}]*font-size:18px/);
+  const sized = layoutToXslt(normalizeLayout({
+    ettnFontSize: 12,
+    blocks: [{ id: "ettn" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
+  }));
+  expect(sized).toMatch(/inv-ettn-v \{[^}]*font-size:12px/);
 });
 
 test("layoutToXslt embeds both GIB seals independently", () => {
@@ -398,7 +404,8 @@ test("layoutToXslt writes GIB-style inline meta rows at any width", () => {
   }));
   expect(stacked).toContain('class="inv-meta"');
   expect(stacked).toContain("class=\"inv-meta-k\"");
-  expect(stacked).toMatch(/<tr>\s*<td class="inv-meta-k">Fatura No:[\s\S]*<\/tr>\s*<tr>[\s\S]*Düzenleme tarihi:/);
+  expect(stacked).toMatch(/inv-meta-k">Fatura No:[\s\S]*<\/tr>[\s\S]*Düzenleme tarihi:/);
+  expect(stacked).toContain('xsl:if test="/n1:Invoice/cbc:ID[normalize-space(.)!=\'\']"');
   expect(stacked).not.toContain("class=\"inv-no\"");
   expect(stacked).not.toMatch(/inv-meta-k \{[^}]*text-transform/);
 
@@ -409,6 +416,13 @@ test("layoutToXslt writes GIB-style inline meta rows at any width", () => {
   expect(full).toContain("İrsaliye No:");
   expect(full).toContain("Son Ödeme Tarihi:");
   expect(full).toContain("' - '");
+  expect(full).toContain('xsl:if test="/n1:Invoice/cac:DespatchDocumentReference/cbc:ID[normalize-space(.)!=\'\']"');
+  expect(full).toContain('xsl:if test="/n1:Invoice/cbc:IssueTime[normalize-space(.)!=\'\']"');
+  expect(full).toContain("normalize-space(.)!=''");
+  const withOrder = layoutToXslt(normalizeLayout({
+    metaFields: [{ id: "order_no", hidden: false }, { id: "number" }],
+  }));
+  expect(withOrder).toContain('xsl:if test="/n1:Invoice/cac:OrderReference/cbc:ID[normalize-space(.)!=\'\']"');
 });
 
 test("gibSafeLogoSrc keeps data URIs and drops http", () => {
