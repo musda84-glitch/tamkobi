@@ -33,6 +33,9 @@ def bank_tx_balance_delta(tx: dict) -> float:
     """Kasa/banka / çek portföy / borç fişi satırının cari etkisi.
 
     Masraf (source=expense) oluştururken cariye yazılmaz; burada da yok sayılır.
+    virman_card_mirror: havuz görünüm satırı — asıl cari etkisi virman/partner tarafında.
+    Eski cari↔cari müşteri kartı eşleniği (kaynak outflow + hedef mirror inflow) işaretleri
+    düzeltilmiş gibi sayılır; yeni satırlar source=virman + doğru type kullanır.
     """
     if not isinstance(tx, dict) or not tx.get("contact_id"):
         return 0.0
@@ -41,6 +44,14 @@ def bank_tx_balance_delta(tx: dict) -> float:
     if tx.get("source") == "expense":
         return 0.0
     amt = _num(tx.get("amount"))
+    # Legacy cari↔cari + müşteri kartı (yanlış type yazılmış havuz çifti).
+    if tx.get("via_customer_card") and tx.get("customer_card_pool_ledger"):
+        if tx.get("source") == "virman" and tx.get("target_contact_id") and tx.get("type") == "outflow":
+            return -amt  # kaynak cari −
+        if tx.get("source") == "virman_card_mirror" and tx.get("type") == "inflow":
+            return amt  # hedef cari +
+    if tx.get("source") == "virman_card_mirror":
+        return 0.0
     return -amt if tx.get("type") == "inflow" else amt
 
 
