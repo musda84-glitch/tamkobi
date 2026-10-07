@@ -51,7 +51,7 @@ const FIELD_LABELS = {
   access_token: "Access Token",
   refresh_token: "Refresh Token",
   api_key: "Api Anahtarı (X-Gravitee-Api-Key)",
-  private_key: "RSA Private Key (JSEncrypt PKCS1)",
+  private_key: "RSA Private Key (PKCS1 / JSEncrypt)",
   customer_number: "Müşteri Numarası",
   base_url: "API Base URL",
   token_url: "Token URL",
@@ -252,6 +252,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const fillJsencryptKey = async (target) => {
     if (genKeyBusy) return;
     setGenKeyBusy(true);
+    toast.info("2048-bit RSA üretiliyor… (Web Crypto; genelde 1–3 sn)");
     try {
       const { privateKey, publicKey, certificatePem } = await generateJsencryptKeyPair();
       if (target === "add") setForm((f) => ({ ...f, private_key: privateKey }));
@@ -260,7 +261,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       setKtCrtPem(certificatePem || "");
       toast.success("Private Key forma yazıldı. .crt indirip API Market’e yükleyin (Private Key burada kalır).");
     } catch (err) {
-      toast.error(err?.message || "JSEncrypt anahtar üretilemedi");
+      toast.error(err?.message || "RSA anahtar üretilemedi");
     } finally {
       setGenKeyBusy(false);
     }
@@ -618,10 +619,10 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                       {form.provider === "kuveytturk" && (
                         <div className="mt-1 space-y-1">
                           <button type="button" onClick={() => fillJsencryptKey("add")} disabled={genKeyBusy} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-800 text-white font-semibold hover:bg-slate-700 disabled:opacity-50" data-testid="conn-jsencrypt-generate-btn">
-                            {genKeyBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} JSEncrypt 2048-bit anahtar üret
+                            {genKeyBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} {genKeyBusy ? "Üretiliyor…" : "2048-bit RSA anahtar üret"}
                           </button>
                           <p className="text-[10px] text-slate-500">
-                            Kuveyt imzası <a href="https://github.com/travist/jsencrypt" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">travist/jsencrypt</a> <code className="font-mono">signSha256</code>.
+                            PKCS1 Private Key (JSEncrypt <code className="font-mono">signSha256</code> uyumlu). Üretim Web Crypto ile yapılır — eski JSEncrypt.getKey tarayıcıyı kilitleyebilirdi.
                             Private Key burada; eşleşen <b>.crt</b> API Market’e yüklenir.
                           </p>
                           {ktPublicPem && (
@@ -727,10 +728,10 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                         <textarea className={`${inputCls} font-mono min-h-[88px]`} value={editForm.private_key} onChange={(e) => setEditForm({ ...editForm, private_key: e.target.value })} data-testid="edit-conn-private-key" autoComplete="off" placeholder={"-----BEGIN RSA PRIVATE KEY-----\n(JSEncrypt getPrivateKey — PUBLIC KEY değil)\n-----END RSA PRIVATE KEY-----"} spellCheck={false} />
                         <div className="mt-1 space-y-1">
                           <button type="button" onClick={() => fillJsencryptKey("edit")} disabled={genKeyBusy} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-800 text-white font-semibold hover:bg-slate-700 disabled:opacity-50" data-testid="edit-jsencrypt-generate-btn">
-                            {genKeyBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} JSEncrypt 2048-bit anahtar üret
+                            {genKeyBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} {genKeyBusy ? "Üretiliyor…" : "2048-bit RSA anahtar üret"}
                           </button>
                           <p className="text-[10px] text-slate-500">
-                            İmza <code className="font-mono">JSEncrypt.signSha256</code>. Private Key bu alanda kalır; <b>.crt indir</b> → API Market’e yükleyin (Public Key’i buraya yapıştırmayın).
+                            İmza <code className="font-mono">JSEncrypt.signSha256</code>. Anahtar Web Crypto ile üretilir (takılma yok). Private Key bu alanda kalır; <b>.crt indir</b> → API Market’e yükleyin.
                           </p>
                           {ktPublicPem && (
                             <div className="mt-1 space-y-1" data-testid="edit-jsencrypt-public-box">
