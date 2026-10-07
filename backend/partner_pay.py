@@ -19,6 +19,15 @@ TX_LABELS = {
     "debit": "Ortak Borç Fişi",
     "salary": "Ortak Aylık Maaş",
 }
+
+
+def tx_display_label(tx: Optional[Dict[str, Any]]) -> str:
+    """Masraf ödemesi withdrawal olsa da 'Para Çekişi' değil 'Masraf Ödemesi' gösterilir."""
+    if not tx:
+        return "İşlem"
+    if tx.get("expense_id") or tx.get("source") == "expense":
+        return "Ortak Masraf Ödemesi"
+    return TX_LABELS.get(tx.get("type"), tx.get("type") or "İşlem")
 CASH_TYPES = ("capital_in", "withdrawal")
 LEDGER_TYPES = ("credit", "debit", "salary")
 MUTABLE_TYPES = CASH_TYPES + LEDGER_TYPES

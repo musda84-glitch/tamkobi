@@ -6,15 +6,15 @@ import { toast } from "sonner";
 import { ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2, X, Check } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
-import { isPartnerLedgerType, PARTNER_TX_LABEL, partnerTxIncreasesBalance, partnerTxSign } from "../utils/partnerTx";
+import { isPartnerExpenseTx, isPartnerLedgerType, partnerTxLabel, partnerTxIncreasesBalance, partnerTxSign } from "../utils/partnerTx";
 
-const TX_LABEL = PARTNER_TX_LABEL;
 const fmt = (n) => formatTrAmount((n || 0));
 const COLS = [["date", "Tarih"], ["partner_name", "Ortak"], ["type", "İşlem"], ["account_name", "Hesap / Açıklama"], ["amount", "Tutar", "text-right"]];
 const inputCls = "bg-white border border-slate-200 rounded-md p-1 text-xs";
-const typeBadge = (type) => {
-  if (type === "capital_in" || type === "credit" || type === "salary") return "bg-emerald-50 text-emerald-700";
-  if (type === "withdrawal" || type === "debit") return "bg-rose-50 text-rose-700";
+const typeBadge = (t) => {
+  if (isPartnerExpenseTx(t)) return "bg-amber-50 text-amber-800";
+  if (t.type === "capital_in" || t.type === "credit" || t.type === "salary") return "bg-emerald-50 text-emerald-700";
+  if (t.type === "withdrawal" || t.type === "debit") return "bg-rose-50 text-rose-700";
   return "bg-indigo-50 text-indigo-700";
 };
 
@@ -24,8 +24,8 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
   const [busy, setBusy] = useState(false);
   const toggle = (key) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "amount" || key === "date" ? "desc" : "asc" }));
   const rows = useMemo(() => [...txs].sort((a, b) => {
-    const x = sort.key === "amount" ? Number(a.amount) : sort.key === "type" ? TX_LABEL[a.type] : (a[sort.key] || "");
-    const y = sort.key === "amount" ? Number(b.amount) : sort.key === "type" ? TX_LABEL[b.type] : (b[sort.key] || "");
+    const x = sort.key === "amount" ? Number(a.amount) : sort.key === "type" ? partnerTxLabel(a) : (a[sort.key] || "");
+    const y = sort.key === "amount" ? Number(b.amount) : sort.key === "type" ? partnerTxLabel(b) : (b[sort.key] || "");
     const r = typeof x === "number" ? x - y : String(x).localeCompare(String(y), "tr") || (a.created_at || "").localeCompare(b.created_at || "");
     return sort.dir === "asc" ? r : -r;
   }), [txs, sort]);
@@ -35,7 +35,12 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
     catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); } finally { setBusy(false); }
   };
   const del = async (t) => {
-    if (!window.confirm(`${TX_LABEL[t.type] || t.type} (${fmt(t.amount)} ₺) silinsin mi? Ortak${isPartnerLedgerType(t.type) ? "" : " ve hesap"} bakiyeleri geri alınır.`)) return;
+    const linked = isPartnerExpenseTx(t);
+    const base = `${partnerTxLabel(t)} (${fmt(t.amount)} ₺) silinsin mi?`;
+    const bal = linked
+      ? " Bağlı masraf da silinir; ortak bakiyesi geri alınır."
+      : ` Ortak${isPartnerLedgerType(t.type) ? "" : " ve hesap"} bakiyeleri geri alınır.`;
+    if (!window.confirm(base + bal)) return;
     try { const r = await axios.delete(`${API_URL}/banking/partners/transactions/${t.id}`); toast.success(r.data.message); onChanged?.(); }
     catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
@@ -55,7 +60,7 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
           <tr key={t.id} className="bg-indigo-50/40" data-testid={`partner-tx-edit-row-${t.id}`}>
             <td className="px-4 py-2"><input type="date" value={edit.date} onChange={(e) => setEdit({ ...edit, date: e.target.value })} className={inputCls} data-testid="partner-tx-edit-date" /></td>
             <td className="px-4 py-2 font-semibold text-slate-900">{t.partner_name}</td>
-            <td className="px-4 py-2"><span className="px-2 py-0.5 rounded-md font-semibold bg-slate-100">{TX_LABEL[t.type]}</span></td>
+            <td className="px-4 py-2"><span className="px-2 py-0.5 rounded-md font-semibold bg-slate-100">{partnerTxLabel(t)}</span></td>
             <td className="px-4 py-2 flex gap-1">
               {!isPartnerLedgerType(t.type) && <PaymentTargetSelect companyId={companyId} accounts={accounts} value={edit.account_id || ""} onChange={(v) => setEdit({ ...edit, account_id: v })} testId="partner-tx-edit-account" includePartners={false} className={inputCls} />}
               <input value={edit.description || ""} onChange={(e) => setEdit({ ...edit, description: e.target.value })} className={`${inputCls} flex-1`} placeholder="Açıklama" data-testid="partner-tx-edit-desc" />
@@ -67,12 +72,12 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
           <tr key={t.id} className="hover:bg-slate-50/70 group" data-testid={`partner-tx-row-${t.id}`}>
             <td className="px-4 py-2 font-mono text-slate-500">{t.date}</td>
             <td className="px-4 py-2 font-semibold text-slate-900">{t.partner_name}</td>
-            <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md font-semibold ${typeBadge(t.type)}`}>{TX_LABEL[t.type] || t.type}{t.type === "profit_share" && !t.is_paid ? " (Tahakkuk)" : ""}</span></td>
+            <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md font-semibold ${typeBadge(t)}`}>{partnerTxLabel(t)}{t.type === "profit_share" && !t.is_paid ? " (Tahakkuk)" : ""}</span></td>
             <td className="px-4 py-2 text-slate-600">{t.account_name ? <span className="font-semibold text-slate-700">{t.account_name} • </span> : ""}{t.description}</td>
             <td className={`px-4 py-2 text-right font-bold ${partnerTxIncreasesBalance(t.type) ? "text-emerald-600" : "text-rose-600"}`}>{partnerTxSign(t.type)}{fmt(t.amount)} ₺</td>
             <td className="px-4 py-2 text-right whitespace-nowrap">
-              {t.type !== "profit_share" && <button onClick={() => setEdit({ id: t.id, date: t.date, amount: t.amount, description: t.description, account_id: t.account_id })} className="p-1.5 rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50" title="Düzenle" data-testid={`partner-tx-edit-${t.id}`}><Pencil className="w-3.5 h-3.5" /></button>}
-              <button onClick={() => del(t)} className="p-1.5 rounded-md text-slate-500 hover:text-rose-600 hover:bg-rose-50" title="Sil (bakiyeler geri alınır)" data-testid={`partner-tx-del-${t.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+              {t.type !== "profit_share" && !isPartnerExpenseTx(t) && <button onClick={() => setEdit({ id: t.id, date: t.date, amount: t.amount, description: t.description, account_id: t.account_id })} className="p-1.5 rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50" title="Düzenle" data-testid={`partner-tx-edit-${t.id}`}><Pencil className="w-3.5 h-3.5" /></button>}
+              <button onClick={() => del(t)} className="p-1.5 rounded-md text-slate-500 hover:text-rose-600 hover:bg-rose-50" title={isPartnerExpenseTx(t) ? "Sil (bağlı masraf da silinir)" : "Sil (bakiyeler geri alınır)"} data-testid={`partner-tx-del-${t.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
             </td>
           </tr>
         ))}

@@ -1,9 +1,18 @@
-import { isPartnerCashType, isPartnerLedgerType, partnerBalanceMeta, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxIncreasesBalance, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
+import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxIncreasesBalance, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
 
 describe("partnerTx", () => {
   it("labels debit and credit slips", () => {
     expect(PARTNER_TX_LABEL.debit).toMatch(/borç/i);
     expect(PARTNER_TX_LABEL.credit).toMatch(/alacak/i);
+  });
+
+  it("labels partner-paid expense as Masraf Ödemesi not Para Çekişi / Sermaye", () => {
+    expect(partnerTxLabel({ type: "withdrawal", expense_id: "e1" })).toBe("Masraf Ödemesi");
+    expect(partnerTxLabel({ type: "withdrawal", source: "expense" })).toBe("Masraf Ödemesi");
+    expect(partnerTxLabel({ type: "withdrawal" })).toBe("Para Çekişi");
+    expect(partnerTxLabel({ type: "capital_in" })).toBe("Sermaye Girişi");
+    expect(isPartnerExpenseTx({ expense_id: "e1" })).toBe(true);
+    expect(isPartnerExpenseTx({ type: "withdrawal" })).toBe(false);
   });
 
   it("explains partner balance sign for company vs partner", () => {

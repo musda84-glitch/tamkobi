@@ -47,6 +47,13 @@ export const PARTNER_TX_TR: Record<string, string> = {
   salary: "Aylık Maaş",
 };
 
+/** Ortak kasasından masraf ödemesi — bakiye withdrawal, etiket Masraf Ödemesi. */
+export function partnerTxLabel(tx?: { type?: string; expense_id?: string; source?: string } | null): string {
+  if (!tx) return "";
+  if (tx.expense_id || tx.source === "expense") return "Masraf Ödemesi";
+  return PARTNER_TX_TR[tx.type || ""] || tx.type || "";
+}
+
 export type BankAccount = {
   id?: string;
   _id?: string;
@@ -141,6 +148,8 @@ export type PartnerTx = {
   description?: string;
   date?: string;
   is_paid?: boolean;
+  expense_id?: string;
+  source?: string;
 };
 
 export type AccountDraft = {
@@ -779,10 +788,11 @@ export function bankMovementNotice(tx: BankTx, accounts: { id?: string; _id?: st
 
 export function partnerMovementNotice(tx: PartnerTx): GroupMovementNotice {
   const amt = Number(tx.amount || 0);
+  const label = partnerTxLabel(tx);
   return {
     id: idOf(tx),
-    title: String(tx.description || partnerTxTr(tx.type)),
-    detail: [partnerTxTr(tx.type), tx.partner_name, tx.account_name].filter(Boolean).join(" · "),
+    title: String(tx.description || label),
+    detail: [label, tx.partner_name, tx.account_name].filter(Boolean).join(" · "),
     signed: tx.type === "withdrawal" ? -amt : amt,
   };
 }

@@ -9,6 +9,17 @@ export const PARTNER_TX_LABEL = {
   salary: "Aylık Maaş",
 };
 
+/** Ortak kasasından masraf ödemesi withdrawal kaydıdır; etiket Para Çekişi değil Masraf Ödemesi. */
+export function partnerTxLabel(tx) {
+  if (!tx) return "";
+  if (tx.expense_id || tx.source === "expense") return "Masraf Ödemesi";
+  return PARTNER_TX_LABEL[tx.type] || tx.type || "";
+}
+
+export function isPartnerExpenseTx(tx) {
+  return Boolean(tx?.expense_id || tx?.source === "expense");
+}
+
 /**
  * Ortak bakiyesi (şirket defteri):
  *   artı → şirket ortağa borçlu (ortak alacaklı / kasa borçlu)
