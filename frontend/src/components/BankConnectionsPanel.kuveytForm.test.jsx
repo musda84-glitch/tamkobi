@@ -1,0 +1,103 @@
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { act } from "react";
+import axios from "axios";
+import { BankConnectionsPanel } from "./BankConnectionsPanel";
+
+jest.mock("axios", () => {
+  const impl = {
+    get: jest.fn(() => Promise.resolve({ data: [] })),
+    post: jest.fn(() => Promise.resolve({ data: {} })),
+    put: jest.fn(() => Promise.resolve({ data: {} })),
+    delete: jest.fn(() => Promise.resolve({ data: {} })),
+  };
+  return { __esModule: true, default: impl, ...impl };
+});
+jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }));
+jest.mock("../context/AuthContext", () => ({ API_URL: "/api" }));
+jest.mock("../utils/jsencryptKuveyt", () => ({
+  generateJsencryptKeyPair: jest.fn(async () => ({ privateKey: "PRIV", publicKey: "PUB" })),
+}));
+
+const PROVIDERS = [{
+  code: "kuveytturk",
+  name: "Kuveyt Türk API Market",
+  fields: ["client_id", "client_secret", "api_key", "private_key"],
+  live_url: "https://prep-gateway.kuveytturk.com.tr",
+  hint: "Canlı: prep-identity + prep-gateway",
+}];
+const CONN = {
+  id: "c1",
+  provider: "kuveytturk",
+  provider_name: "Kuveyt Türk API Market",
+  linked_account_id: "a1",
+  linked_account_name: "Kuveyt Türk — Vadesiz TL",
+  mode: "live",
+  bank_account_number: "6",
+};
+const ACCOUNTS = [{ id: "a1", bank_name: "Kuveyt Türk", account_name: "Vadesiz TL", type: "bank" }];
+
+let host;
+let quiet;
+let root;
+
+beforeEach(() => {
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  quiet = jest.spyOn(console, "error").mockImplementation(() => {});
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/banking/providers")) return Promise.resolve({ data: PROVIDERS });
+    if (u.includes("/banking/connections")) return Promise.resolve({ data: [CONN] });
+    if (u.includes("/banking/transactions/unmatched")) return Promise.resolve({ data: [] });
+    if (u.includes("/banking/match-rules")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+});
+
+afterEach(() => {
+  if (root) {
+    act(() => { root.unmount(); });
+    root = null;
+  }
+  quiet.mockRestore();
+  host.remove();
+});
+
+async function renderPanel() {
+  root = createRoot(host);
+  await act(async () => {
+    root.render(<BankConnectionsPanel companyId="c1" accounts={ACCOUNTS} contacts={[]} />);
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+test("Kuveyt edit modal keeps only needed fields and shows prep hosts", async () => {
+  await renderPanel();
+  const editBtn = host.querySelector('[data-testid="edit-bank-connection-btn"]')
+    || [...host.querySelectorAll("button")].find((b) => /Düzenle/i.test(b.textContent || ""));
+  expect(editBtn).toBeTruthy();
+  await act(async () => { editBtn.click(); });
+  await act(async () => { await Promise.resolve(); });
+
+  const modal = host.querySelector('[data-testid="edit-bank-connection-modal"]');
+  expect(modal).not.toBeNull();
+  const hint = host.querySelector('[data-testid="kuveyt-edit-hint"]');
+  expect(hint).not.toBeNull();
+  expect(hint.textContent).toContain("prep-identity.kuveytturk.com.tr");
+  expect(hint.textContent).toContain("prep-gateway.kuveytturk.com.tr");
+
+  expect(host.querySelector('[data-testid="edit-conn-client-id"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="edit-conn-client-secret"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="edit-conn-api-key"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="edit-conn-private-key"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="edit-conn-iban"]')).not.toBeNull();
+
+  expect(host.querySelector('[data-testid="edit-conn-access-token"]')).toBeNull();
+  expect(host.querySelector('[data-testid="edit-conn-refresh-token"]')).toBeNull();
+  expect(host.querySelector('[data-testid="edit-conn-scope"]')).toBeNull();
+  expect(host.querySelector('[data-testid="edit-conn-customer"]')).toBeNull();
+});

@@ -179,9 +179,9 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [unmatched, setUnmatched] = useState([]);
   const [busy, setBusy] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ provider: "kuveytturk", linked_account_id: "", mode: "sandbox", client_id: "", client_secret: "", access_token: "", refresh_token: "", api_key: "", private_key: "", customer_number: "", bank_account_number: "", base_url: "", scope: "", auto_sync: true });
+  const [form, setForm] = useState({ provider: "kuveytturk", linked_account_id: "", mode: "live", client_id: "", client_secret: "", access_token: "", refresh_token: "", api_key: "", private_key: "", customer_number: "", bank_account_number: "", base_url: "", auto_sync: true });
   const [editConn, setEditConn] = useState(null);
-  const [editForm, setEditForm] = useState({ provider: "enpara", linked_account_id: "", client_id: "", client_secret: "", access_token: "", refresh_token: "", api_key: "", private_key: "", customer_number: "", bank_account_number: "", mode: "live", scope: "" });
+  const [editForm, setEditForm] = useState({ provider: "enpara", linked_account_id: "", client_id: "", client_secret: "", access_token: "", refresh_token: "", api_key: "", private_key: "", customer_number: "", bank_account_number: "", mode: "live" });
   const [rules, setRules] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [showRules, setShowRules] = useState(false);
@@ -279,7 +279,6 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
       customer_number: c.customer_number || "",
       bank_account_number: c.bank_account_number || "",
       mode: c.mode || "live",
-      scope: c.scope || "",
     });
   };
 
@@ -539,11 +538,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <button type="button" onClick={() => setForm({ ...form, mode: "sandbox" })} className={`p-2 rounded-lg border font-semibold ${form.mode === "sandbox" ? "bg-amber-500 text-white border-amber-500" : "bg-white"}`} data-testid="conn-mode-sandbox">Sandbox / Test</button>
                 <button type="button" onClick={() => setForm({ ...form, mode: "live" })} className={`p-2 rounded-lg border font-semibold ${form.mode === "live" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`} data-testid="conn-mode-live">Canlı</button>
               </div>
-              {(provider?.fields || []).map((f) => (
+              {(provider?.fields || []).filter((f) => form.provider !== "kuveytturk" || !["access_token", "refresh_token", "customer_number", "scope"].includes(f)).map((f) => (
                 <div key={f}>
                   <label className="block font-semibold mb-1">{FIELD_LABELS[f] || f}{" "}
                     <span className="text-slate-400 font-normal">
-                      {f === "access_token" ? "(hareket için müşteri token)" : f === "refresh_token" ? "(token yenileme)" : f === "private_key" ? "(JSEncrypt Private Key — Public Key değil)" : f === "api_key" ? "(X-Gravitee — token değil)" : "(opsiyonel — boşsa simüle)"}
+                      {f === "access_token" ? "(hareket için müşteri token)" : f === "refresh_token" ? "(token yenileme)" : f === "private_key" ? "(JSEncrypt Private Key — Public Key değil)" : f === "api_key" ? "(X-Gravitee — token değil)" : form.provider === "kuveytturk" ? "" : "(opsiyonel — boşsa simüle)"}
                     </span>
                   </label>
                   {f === "private_key" ? (
@@ -573,9 +572,6 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                   )}
                 </div>
               ))}
-              {form.provider === "kuveytturk" && (
-                <div><label className="block font-semibold mb-1">Scope <span className="text-slate-400 font-normal">(opsiyonel — örn. accounts public)</span></label><input className={`${inputCls} font-mono`} value={form.scope || ""} onChange={(e) => setForm({ ...form, scope: e.target.value })} data-testid="conn-field-scope" autoComplete="off" placeholder="accounts public" /></div>
-              )}
               <div><label className="block font-semibold mb-1">Banka Hesap No / IBAN <span className="text-slate-400 font-normal">{form.provider === "kuveytturk" ? "(Kuveyt: ek no veya IBAN)" : form.provider === "enpara" ? "(Enpara: 26 haneli IBAN — zorunlu)" : "(opsiyonel)"}</span></label><input className={`${inputCls} font-mono`} value={form.bank_account_number} onChange={(e) => setForm({ ...form, bank_account_number: e.target.value })} data-testid="conn-field-bank-account" placeholder={form.provider === "kuveytturk" ? "Örn. 1 veya TR… IBAN" : form.provider === "enpara" ? "TR… 26 karakter, boşluksuz" : ""} /></div>
               <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={form.auto_sync} onChange={(e) => setForm({ ...form, auto_sync: e.target.checked })} data-testid="conn-auto-sync" /><span className="font-semibold">Arka planda otomatik senkron (2 dk)</span></label>
               <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setShowAdd(false)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold" data-testid="save-bank-connection-btn">Bağla & Test Et</button></div>
@@ -601,12 +597,15 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             )}
             {editForm.provider === "kuveytturk" && (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="kuveyt-edit-hint">
-                Abonelik: <code className="font-mono">GET /v1/fx/rates</code> (bağlantı testi / kur),{" "}
-                <code className="font-mono">GET /v3/accounts/&#123;ekNo&#125;/transactions</code> (Hesap Hareketleriniz V3: <code className="font-mono">beginDate</code>/<code className="font-mono">endDate</code>/<code className="font-mono">itemCount</code>),{" "}
-                <code className="font-mono">POST /v1/vpos/getMerchantOrderDetail</code> (sipariş sorgu).{" "}
-                <code className="font-mono">non3DPayment</code> kart çeker — TamKobi otomatik çağırmaz.
-                Token: resmi SDK <code className="font-mono">idprep</code>/<code className="font-mono">id</code> <code className="font-mono">/api/connect/token</code> (<b>client_credentials</b> scope=public). İmza: <b>travist/jsencrypt</b> <code className="font-mono">JSEncrypt.signSha256</code>.
-                RSA: 2048-bit <b>Private Key</b> TamKobi’de; eşleşen <b>Public Key</b> API Market uygulamasına yüklenir. v4/v1 ve banka listesi abone değil.
+                Canlı:{" "}
+                <a href="https://prep-identity.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-identity.kuveytturk.com.tr</a>
+                {" "}(token) ·{" "}
+                <a href="https://prep-gateway.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-gateway.kuveytturk.com.tr</a>
+                {" "}(API). Abonelik: <code className="font-mono">GET /v1/fx/rates</code>,{" "}
+                <code className="font-mono">GET /v3/accounts/&#123;ekNo&#125;/transactions</code>,{" "}
+                <code className="font-mono">POST /v1/vpos/getMerchantOrderDetail</code>.
+                Token: <code className="font-mono">POST /connect/token</code> (<b>client_credentials</b> scope=public). İmza: <code className="font-mono">JSEncrypt.signSha256</code>.
+                RSA Private Key burada; Public Key API Market’te.
               </p>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">
@@ -660,9 +659,6 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                           )}
                         </div>
                       </div>
-                      <div><label className="block font-semibold mb-1">Access Token <span className="text-slate-400 font-normal">(müşteri yetkili — hareket için)</span></label><textarea className={`${inputCls} font-mono min-h-[72px]`} value={editForm.access_token} onChange={(e) => setEditForm({ ...editForm, access_token: e.target.value })} data-testid="edit-conn-access-token" autoComplete="off" placeholder="Authorization Code ile alınan access_token — boşsa değişmez" /></div>
-                      <div><label className="block font-semibold mb-1">Refresh Token <span className="text-slate-400 font-normal">(opsiyonel)</span></label><textarea className={`${inputCls} font-mono min-h-[56px]`} value={editForm.refresh_token} onChange={(e) => setEditForm({ ...editForm, refresh_token: e.target.value })} data-testid="edit-conn-refresh-token" autoComplete="off" placeholder="Token yenilemek için — boşsa değişmez" /></div>
-                      <div><label className="block font-semibold mb-1">Scope <span className="text-slate-400 font-normal">(opsiyonel — örn. accounts public)</span></label><input className={`${inputCls} font-mono`} value={editForm.scope || ""} onChange={(e) => setEditForm({ ...editForm, scope: e.target.value })} data-testid="edit-conn-scope" autoComplete="off" placeholder="accounts public" /></div>
                     </>
                   ) : (
                     <>
@@ -672,7 +668,9 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                   )}
                 </>
               )}
-              <div><label className="block font-semibold mb-1">Müşteri No</label><input className={`${inputCls} font-mono`} value={editForm.customer_number} onChange={(e) => setEditForm({ ...editForm, customer_number: e.target.value })} data-testid="edit-conn-customer" /></div>
+              {editForm.provider !== "kuveytturk" && (
+                <div><label className="block font-semibold mb-1">Müşteri No</label><input className={`${inputCls} font-mono`} value={editForm.customer_number} onChange={(e) => setEditForm({ ...editForm, customer_number: e.target.value })} data-testid="edit-conn-customer" /></div>
+              )}
               <div><label className="block font-semibold mb-1">Hesap No / IBAN {editForm.provider === "enpara" ? <span className="text-rose-600">(Enpara hareket için gerekli)</span> : editForm.provider === "kuveytturk" ? <span className="text-slate-500 font-normal">(ek no veya IBAN)</span> : <span className="text-slate-400 font-normal">(opsiyonel)</span>}</label>
                 <input className={`${inputCls} font-mono`} value={editForm.bank_account_number} onChange={(e) => setEditForm({ ...editForm, bank_account_number: e.target.value })} data-testid="edit-conn-iban" placeholder={editForm.provider === "kuveytturk" ? "Örn. 1 veya TR… IBAN" : "TR… veya hesap no"} autoComplete="off" />
                 <p className="text-[10px] text-slate-500 mt-1">{editForm.provider === "kuveytturk" ? "Hareket: GET /v3/accounts/{ekNo}/transactions (beginDate, endDate, itemCount; yanıt accountActivities). v4/v1 yok. Bağlantı testi GET /v1/fx/rates. Boşsa bağlı hesabın IBAN’ı / ek no kullanılır." : editForm.provider === "enpara" ? "Enpara resultCode 364737: IBAN veya hesap no zorunlu. 26 karakter, boşluksuz. Boşsa bağlı TamKobi hesabının IBAN’ı kopyalanır." : "Boşsa bağlı TamKobi hesabının IBAN’ı kullanılır."}</p>
