@@ -37,6 +37,8 @@ import {
   setBlockSpan,
   visibleLineCols,
   visibleMetaFields,
+  filledMetaFields,
+  sampleMetaValue,
   visibleHeaderFields,
   visibleTotalRows,
 } from "../../utils/einvoiceDesignLayout";
@@ -219,21 +221,7 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
   }
   if (id === "meta") {
     const fields = visibleMetaFields(layout);
-    const valueOf = (fid) => {
-      if (fid === "number") return s.number;
-      if (fid === "invoice_date" || fid === "date") return s.date;
-      if (fid === "issue_time") return s.issueTime;
-      if (fid === "profile") return s.profile;
-      if (fid === "order_no") return s.orderNo;
-      if (fid === "customization") return s.customization;
-      if (fid === "invoice_type") return s.invoiceType;
-      if (fid === "despatch_no") return s.despatchNo;
-      if (fid === "despatch_date") return s.despatchDate;
-      if (fid === "due_date") return s.dueDate;
-      return "";
-    };
-    // Verisi olmayan satırlar önizlemede gizlenir; chip sırası korunur, boşlar kayar.
-    const filled = fields.filter((f) => String(valueOf(f.id) || "").trim());
+    const filled = filledMetaFields(layout, s);
     return (
       <div>
         <table
@@ -245,11 +233,14 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
             {filled.map((f) => (
               <tr key={f.id} data-testid={`einvoice-design-meta-row-${f.id}`}>
                 <td className="align-top whitespace-nowrap pr-2 py-px font-normal">{META_FIELD_LABELS[f.id]}:</td>
-                <td className="align-top py-px font-normal">{valueOf(f.id)}</td>
+                <td className="align-top py-px font-normal">{sampleMetaValue(f.id, s)}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        <p className="text-[9px] text-slate-500 mt-1" data-testid="einvoice-design-meta-empty-hint">
+          Gerçek faturada boş alanlar gizlenir; kalan satırlar sırayı koruyarak yukarı kayar.
+        </p>
         <div className="flex items-center flex-wrap gap-1 mt-1.5" data-testid="einvoice-design-font-sizes">
           <span className="text-[9px] font-bold text-slate-500">Punto</span>
           {FONT_SIZE_OPTIONS.map((opt) => (
