@@ -7,18 +7,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from partner_pay import TX_LABELS, tx_display_label  # noqa: E402
 
 
-def test_expense_linked_withdrawal_label_is_masraf_not_sermaye():
+def test_expense_linked_credit_label_is_masraf_not_cekis():
     plain = {"type": "withdrawal", "amount": 4000}
     assert tx_display_label(plain) == TX_LABELS["withdrawal"]
     assert "Para Çekişi" in tx_display_label(plain)
 
-    linked = {"type": "withdrawal", "amount": 4000, "expense_id": "exp-1", "source": "expense"}
+    # Ortak şirket masrafını öder → credit (alacak); etiket Masraf Ödemesi
+    linked = {"type": "credit", "amount": 4000, "expense_id": "exp-1", "source": "expense"}
     label = tx_display_label(linked)
     assert "Masraf" in label
     assert "Para Çekişi" not in label
     assert "Sermaye" not in label
 
-    by_source = {"type": "withdrawal", "source": "expense"}
+    by_source = {"type": "credit", "source": "expense"}
     assert "Masraf" in tx_display_label(by_source)
 
 

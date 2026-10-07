@@ -6,13 +6,14 @@ describe("partnerTx", () => {
     expect(PARTNER_TX_LABEL.credit).toMatch(/alacak/i);
   });
 
-  it("labels partner-paid expense as Masraf Ödemesi not Para Çekişi / Sermaye", () => {
-    expect(partnerTxLabel({ type: "withdrawal", expense_id: "e1" })).toBe("Masraf Ödemesi");
-    expect(partnerTxLabel({ type: "withdrawal", source: "expense" })).toBe("Masraf Ödemesi");
+  it("labels partner-paid company expense as Masraf Ödemesi (credit / alacak)", () => {
+    expect(partnerTxLabel({ type: "credit", expense_id: "e1" })).toBe("Masraf Ödemesi");
+    expect(partnerTxLabel({ type: "credit", source: "expense" })).toBe("Masraf Ödemesi");
+    expect(partnerTxIncreasesBalance("credit")).toBe(true);
     expect(partnerTxLabel({ type: "withdrawal" })).toBe("Para Çekişi");
     expect(partnerTxLabel({ type: "capital_in" })).toBe("Sermaye Girişi");
     expect(isPartnerExpenseTx({ expense_id: "e1" })).toBe(true);
-    expect(isPartnerExpenseTx({ type: "withdrawal" })).toBe(false);
+    expect(isPartnerExpenseTx({ type: "credit" })).toBe(false);
   });
 
   it("explains partner balance sign for company vs partner", () => {
