@@ -32,7 +32,13 @@ export function employeePayButtonLabel(emp) {
 }
 
 export function remainingLeaveDays(emp) {
-  return (Number(emp?.annual_leave_days) || 14) - (Number(emp?.used_leave_days) || 0);
+  const annual = Number(emp?.annual_leave_days) || 14;
+  const used = Number(emp?.used_leave_days) || 0;
+  const carry = Number(emp?.leave_carry_days) || 0;
+  if (emp?.leave_balance && emp.leave_balance.remaining != null) {
+    return Number(emp.leave_balance.remaining) || 0;
+  }
+  return Math.max(0, annual + carry - used);
 }
 
 export function employeeCompRows(emp, balance, opts = {}) {

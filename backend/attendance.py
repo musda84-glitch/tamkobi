@@ -2103,6 +2103,74 @@ def leave_year_balance(emp: Optional[dict] = None) -> dict:
     }
 
 
+def _leave_days_num(leave: Optional[dict] = None) -> float:
+    try:
+        return max(0.0, float((leave or {}).get("days") or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def leave_in_year(leave: Optional[dict], year: int) -> bool:
+    """İzin, başlangıç yılı leave_year dönemine aitse sayılır."""
+    start = str((leave or {}).get("start_date") or "")[:10]
+    if len(start) >= 4 and start[:4].isdigit():
+        return int(start[:4]) == int(year)
+    return True
+
+
+def is_annual_leave(leave: Optional[dict] = None) -> bool:
+    """Eski kayıtlarda type boş gelebilir — yıllık say."""
+    t = str((leave or {}).get("type") or "annual").strip().lower()
+    return t in ("annual", "yillik", "yıllık", "")
+
+
+def approved_annual_used(leaves: Optional[list] = None, year: Optional[int] = None) -> float:
+    """Onaylı yıllık izin günleri (opsiyonel yıl filtresi)."""
+    total = 0.0
+    for lv in leaves or []:
+        if not lv or lv.get("status") != "approved" or not is_annual_leave(lv):
+            continue
+        if year is not None and not leave_in_year(lv, year):
+            continue
+        total += _leave_days_num(lv)
+    return total
+
+
+def pending_annual_days(leaves: Optional[list] = None, year: Optional[int] = None) -> float:
+    total = 0.0
+    for lv in leaves or []:
+        if not lv or lv.get("status") != "pending" or not is_annual_leave(lv):
+            continue
+        if year is not None and not leave_in_year(lv, year):
+            continue
+        total += _leave_days_num(lv)
+    return total
+
+
+def compute_leave_balance(emp: Optional[dict] = None, leaves: Optional[list] = None) -> dict:
+    """Kart / self-servis için kanonik bakiye: yıllık + devir − kullanılan (yıl filtresi).
+
+    leaves verilirse used leave_requests'ten yeniden hesaplanır (denormalize drift yok).
+    pending_days kalan haktan düşülmez; ayrı alan olarak döner (talep kontrolü için).
+    """
+    emp = emp or {}
+    bal = leave_year_balance(emp)
+    year = int(bal["year"])
+    if leaves is not None:
+        used = approved_annual_used(leaves, year)
+        bal = {
+            **bal,
+            "used": used,
+            "remaining": max(0.0, float(bal["annual"]) + float(bal["carry"]) - used),
+        }
+    pending_days = pending_annual_days(leaves, year) if leaves is not None else 0.0
+    pending_count = sum(1 for lv in (leaves or []) if lv and lv.get("status") == "pending")
+    bal["pending_days"] = pending_days
+    bal["pending"] = pending_count
+    bal["available"] = max(0.0, float(bal["remaining"]) - pending_days)
+    return bal
+
+
 def build_employee_month_days(
     month: str,
     records: list,
@@ -4646,7 +4714,10 @@ async def employee_puantaj(emp_id: str, month: Optional[str] = None):
     }).to_list(200)
     days = build_employee_month_days(month, rows, leaves, schedule, emp.get("start_date"), emp.get("end_date"))
     wage_info = enrich_puantaj_day_wages(days, rows, emp, schedule)
-    bal = leave_year_balance(emp)
+    all_leaves = await _db.leave_requests.find({"employee_id": emp_id}).to_list(500)
+    bal = compute_leave_balance(emp, all_leaves)
+    if abs(float(emp.get("used_leave_days") or 0) - float(bal["used"])) > 0.001:
+        await _db.employees.update_one({"_id": emp_id}, {"$set": {"used_leave_days": bal["used"]}})
     archives = await _db.leave_year_archives.find({"employee_id": emp_id}).sort("year", -1).to_list(20)
     # Giriş/çıkış dışı personelde özet, sanal planlanan günlerden hesaplanır.
     summary_rows = rows
@@ -4683,8 +4754,9 @@ async def list_leave_years(emp_id: str):
     emp = await _db.employees.find_one({"_id": emp_id})
     if not emp:
         raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    leaves = await _db.leave_requests.find({"employee_id": emp_id}).to_list(500)
     archives = await _db.leave_year_archives.find({"employee_id": emp_id}).sort("year", -1).to_list(50)
-    return {"current": leave_year_balance(emp), "archives": [_clean(a) for a in archives]}
+    return {"current": compute_leave_balance(emp, leaves), "archives": [_clean(a) for a in archives]}
 
 
 @router.post("/personnel/employees/{emp_id}/leave-years/rollover")
@@ -4694,7 +4766,8 @@ async def rollover_leave_year(emp_id: str, req: Dict[str, Any] = None):
     emp = await _db.employees.find_one({"_id": emp_id})
     if not emp:
         raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
-    bal = leave_year_balance(emp)
+    leaves = await _db.leave_requests.find({"employee_id": emp_id}).to_list(500)
+    bal = compute_leave_balance(emp, leaves)
     year = int(req.get("year") or bal["year"])
     if await _db.leave_year_archives.find_one({"employee_id": emp_id, "year": year}):
         raise HTTPException(status_code=400, detail=f"{year} yılı zaten arşivlenmiş.")
@@ -4733,7 +4806,7 @@ async def rollover_leave_year(emp_id: str, req: Dict[str, Any] = None):
         "message": f"{year} izin yılı arşivlendi; {new_year} dönemi açıldı"
         + (f" ({carry_days:g} gün devredildi)." if carry_days else "."),
         "archive": _clean(archive),
-        "current": leave_year_balance(emp2),
+        "current": compute_leave_balance(emp2, leaves),
     }
 
 
@@ -4747,10 +4820,9 @@ async def my_leaves(request: Request):
     if not emp:
         return {"employee": None, "leaves": [], "balance": None}
     leaves = await _db.leave_requests.find({"employee_id": emp["_id"]}).sort("created_at", -1).to_list(100)
-    bal = leave_year_balance(emp)
-    pending_days = sum(l.get("days", 0) for l in leaves if l.get("status") == "pending" and l.get("type") == "annual")
+    bal = compute_leave_balance(emp, leaves)
     return {"employee": {"id": emp["_id"], "full_name": emp["full_name"]}, "leaves": [_clean(l) for l in leaves], "types": LEAVE_TYPES,
-            "balance": {**bal, "pending_days": pending_days}}
+            "balance": bal}
 
 
 def parse_advance_self(req: Dict[str, Any]) -> Dict[str, Any]:
@@ -4857,10 +4929,14 @@ async def create_my_leave(req: Dict[str, Any], request: Request):
     if overlap:
         raise HTTPException(status_code=400, detail=f"Bu tarihlerle çakışan bir izin talebiniz var ({overlap['start_date']} → {overlap['end_date']}).")
     if leave_type == "annual":
-        pending_days = sum(l.get("days", 0) for l in await _db.leave_requests.find({"employee_id": emp["_id"], "status": "pending", "type": "annual"}).to_list(200))
-        remaining = emp.get("annual_leave_days", 14) - emp.get("used_leave_days", 0) - pending_days
-        if days > remaining:
-            raise HTTPException(status_code=400, detail=f"Yetersiz yıllık izin bakiyesi. Kullanılabilir: {remaining:g} gün (bekleyen talepler düşülmüştür).")
+        existing = await _db.leave_requests.find({"employee_id": emp["_id"]}).to_list(500)
+        bal = compute_leave_balance(emp, existing)
+        if days > bal["available"] + 1e-9:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Yetersiz yıllık izin bakiyesi. Kullanılabilir: {bal['available']:g} gün"
+                + (" (bekleyen talepler düşülmüştür)." if bal["pending_days"] else "."),
+            )
     doc = {"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": leave_type,
            "start_date": req["start_date"], "end_date": req["end_date"], "days": days, "reason": (req.get("reason") or "")[:300], "status": "pending", "source": "self",
            "decided_at": None, "created_at": _now()}

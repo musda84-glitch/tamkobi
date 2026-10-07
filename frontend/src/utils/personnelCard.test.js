@@ -43,6 +43,8 @@ describe("personnelCard", () => {
     expect(employeeCompRowCaption(rows.find((r) => r.key === "salary"), true)).toBe("Yevmiye / gün");
     expect(employeeCompRowCaption(rows.find((r) => r.key === "bonus"), true)).toBe("Yevmiye günü · 16 gün");
     expect(remainingLeaveDays({ annual_leave_days: 14, used_leave_days: 3 })).toBe(11);
+    expect(remainingLeaveDays({ annual_leave_days: 14, used_leave_days: 3, leave_carry_days: 2 })).toBe(13);
+    expect(remainingLeaveDays({ leave_balance: { remaining: 9 } })).toBe(9);
   });
 
   test("shows live presence next to Aktif: iş yeri, görev, mesai bitti, fazla mesai", () => {
