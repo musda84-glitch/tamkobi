@@ -113,6 +113,7 @@ export default function PersonnelPage() {
     salary: 35000,
     pay_type: "monthly",
     daily_wage: "",
+    annual_leave_days: 14,
     start_date: new Date().toISOString().split("T")[0],
     photo_url: "",
     sgk_number: "",
@@ -149,6 +150,7 @@ export default function PersonnelPage() {
       salary: emp.salary ?? 0,
       pay_type: emp.pay_type === "daily" ? "daily" : "monthly",
       daily_wage: emp.daily_wage ?? "",
+      annual_leave_days: emp.annual_leave_days ?? emp.leave_balance?.annual ?? 14,
       start_date: emp.start_date || new Date().toISOString().split("T")[0],
       photo_url: emp.photo_url || "",
       sgk_number: emp.sgk_number || "",
@@ -299,11 +301,17 @@ export default function PersonnelPage() {
     const daily = Number(newEmployee.daily_wage || 0);
     const monthly = Number(newEmployee.salary || 0);
     const isDaily = newEmployee.pay_type === "daily";
+    const annualLeave = Math.trunc(Number(newEmployee.annual_leave_days));
+    if (!Number.isFinite(annualLeave) || annualLeave < 0 || annualLeave > 365) {
+      toast.error("Yıllık izin günü 0–365 arası olmalı.");
+      return;
+    }
     const body = {
       ...newEmployee,
       pay_type: isDaily ? "daily" : "monthly",
       daily_wage: isDaily ? daily : 0,
       salary: isDaily ? Math.round(daily * 26 * 100) / 100 : monthly,
+      annual_leave_days: annualLeave,
       sgk_number: sgk || null,
       iban: iban || null,
       meal_allowance: Number(newEmployee.meal_allowance || 0) || 0,
@@ -1239,6 +1247,20 @@ export default function PersonnelPage() {
                     data-testid="employee-email-input"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Yıllık izin hakkı (gün)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="365"
+                  step="1"
+                  value={newEmployee.annual_leave_days}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, annual_leave_days: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-900"
+                  data-testid="employee-annual-leave-input"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Personel kartı → İzinler sekmesinden de değiştirilebilir.</p>
               </div>
 
               <button

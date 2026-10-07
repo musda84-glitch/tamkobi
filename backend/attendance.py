@@ -2090,7 +2090,11 @@ def leave_covers_date(leaves: list, date: str) -> Optional[dict]:
 
 def leave_year_balance(emp: Optional[dict] = None) -> dict:
     emp = emp or {}
-    annual = max(0, int(emp.get("annual_leave_days") or 14))
+    raw_annual = emp.get("annual_leave_days")
+    try:
+        annual = max(0, int(14 if raw_annual is None or raw_annual == "" else raw_annual))
+    except (TypeError, ValueError):
+        annual = 14
     used = max(0, float(emp.get("used_leave_days") or 0))
     carry = max(0, float(emp.get("leave_carry_days") or 0))
     year = int(emp.get("leave_year") or local_now().year)

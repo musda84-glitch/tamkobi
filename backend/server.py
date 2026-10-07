@@ -23,6 +23,7 @@ from client_ip import request_ip
 import partner_pay
 import employee_pay
 import employee_data_reset
+from employee_sgk import norm_iban as _norm_iban, sgk_iban_update_error
 import b2b_production
 from order_edit import order_edit_block_reason
 from order_dedupe import (
@@ -16131,10 +16132,6 @@ def _sgk_set(emp: Optional[dict]) -> bool:
     return bool(str((emp or {}).get("sgk_number") or "").strip())
 
 
-def _norm_iban(v: Optional[str]) -> str:
-    return "".join(ch for ch in str(v or "").upper() if ch.isalnum())
-
-
 async def _assert_salary_bank_only(emp: dict, account_id: Optional[str], partner_id: Optional[str]):
     """SGK sicili olan personelin ana maaşı yalnız banka hesabından ödenir (kasa/ortak/kart yok)."""
     if not _sgk_set(emp):
@@ -16353,10 +16350,9 @@ async def update_employee(emp_id: str, data: Dict[str, Any]):
                 upd["pay_day"] = int(str(upd["pay_start_date"])[8:10])
             except (TypeError, ValueError):
                 pass
-        final_sgk = upd["sgk_number"] if "sgk_number" in upd else existing.get("sgk_number")
-        final_iban = upd["iban"] if "iban" in upd else existing.get("iban")
-        if str(final_sgk or "").strip() and not _norm_iban(final_iban):
-            raise HTTPException(status_code=400, detail="SGK sicil numarası girildiğinde personel IBAN zorunludur (maaş yalnız bankadan ödenir).")
+        sgk_err = sgk_iban_update_error(existing, upd)
+        if sgk_err:
+            raise HTTPException(status_code=400, detail=sgk_err)
         upd["updated_at"] = datetime.now(timezone.utc).isoformat()
         await db.employees.update_one({"_id": emp_id}, {"$set": upd})
         merged = {**(existing or {}), **upd}

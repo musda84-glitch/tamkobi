@@ -135,6 +135,33 @@ test("sistem sekmesinde onaylı personel veri sıfırlama gönderir", async () =
 
 test("izinler sekmesinde yıllık hak günü kaydeder", async () => {
   axios.put.mockResolvedValue({ data: { annual_leave_days: 20 } });
+  let cardCalls = 0;
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/card")) {
+      cardCalls += 1;
+      const annual = cardCalls === 1 ? 14 : 20;
+      return Promise.resolve({
+        data: {
+          employee: { id: "emp_1", full_name: "Ali", status: "active", position: "Satış", department: "Satış", annual_leave_days: annual },
+          payrolls: [],
+          bonuses: [],
+          leaves: [],
+          documents: [],
+          attendance: { days_present: 0, total_hours: 0, overtime_hours: 0 },
+          leave_balance: { remaining: annual, annual, used: 0, carry: 0, year: 2026 },
+          totals: { bonus_total: 0, paid_salary: 0 },
+          balance: { remaining: 0, overtime_due: 0, month: "2026-10" },
+          overtime: {},
+          performance: {},
+          tasks: [],
+        },
+      });
+    }
+    if (u.includes("work-schedule")) return Promise.resolve({ data: { schedule: {} } });
+    if (u.includes("banking/accounts")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: {} });
+  });
   render(<EmployeeCardModal employee={{ id: "emp_1", full_name: "Ali" }} companyId="c1" onClose={() => {}} />);
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
   act(() => host.querySelector('[data-testid="emp-tab-leaves"]').click());
@@ -154,4 +181,5 @@ test("izinler sekmesinde yıllık hak günü kaydeder", async () => {
     await new Promise((r) => setTimeout(r, 20));
   });
   expect(axios.put).toHaveBeenCalledWith("/api/personnel/employees/emp_1", { annual_leave_days: 20 });
+  expect(host.querySelector('[data-testid="emp-leave-remaining"]')?.textContent).toMatch(/20/);
 });
