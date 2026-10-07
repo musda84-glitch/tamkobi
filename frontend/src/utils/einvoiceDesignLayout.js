@@ -61,6 +61,22 @@ export function asQrSize(value, fallback = 96) {
   return QR_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
 }
 
+/** ETTN UUID punto seçenekleri (varsayılan 18 ≈ eski fs+6). */
+export const ETTN_FONT_SIZE_OPTIONS = [
+  { size: 10, label: "10" },
+  { size: 12, label: "12" },
+  { size: 14, label: "14" },
+  { size: 16, label: "16" },
+  { size: 18, label: "18" },
+  { size: 20, label: "20" },
+  { size: 24, label: "24" },
+];
+
+export function asEttnFontSize(value, fallback = 18) {
+  const n = Number(value);
+  return ETTN_FONT_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
+}
+
 export const LOGO_SIZE_OPTIONS = [
   { size: 48, label: "48" },
   { size: 72, label: "72" },
@@ -295,6 +311,7 @@ export function defaultLayout(kind = "e_invoice") {
     companyTitle: "",
     logoSize: 72,
     qrSize: 96,
+    ettnFontSize: 18,
     blocks: defaultBlocks(),
     lineCols: idList(LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT),
     metaFields: idList(META_FIELD_IDS, META_FIELD_HIDDEN_BY_DEFAULT),
@@ -340,6 +357,7 @@ export function normalizeLayout(raw, kind) {
   out.logo = asLogo(raw.logo);
   out.logoSize = asLogoSize(raw.logoSize, base.logoSize);
   out.qrSize = asQrSize(raw.qrSize, base.qrSize);
+  out.ettnFontSize = asEttnFontSize(raw.ettnFontSize, base.ettnFontSize);
   if (typeof raw.companyTitle === "string") out.companyTitle = raw.companyTitle.slice(0, 120);
   out.blocks = normalizeBlocks(raw.blocks, out.kind);
   const hasEttnBlock = Array.isArray(raw?.blocks) && raw.blocks.some((b) => b?.id === "ettn");
@@ -527,26 +545,30 @@ function xsltLineTable(L) {
       </table>`;
 }
 
-function xsltMetaRow(label, inner) {
-  return `<tr><td class="inv-meta-k">${xmlEscape(label)}:</td><td class="inv-meta-v">${inner}</td></tr>`;
+function xsltMetaRow(label, inner, testExpr) {
+  const row = `<tr><td class="inv-meta-k">${xmlEscape(label)}:</td><td class="inv-meta-v">${inner}</td></tr>`;
+  if (!testExpr) return row;
+  return `<xsl:if test="${testExpr}">${row}</xsl:if>`;
 }
 
+/** Fatura bilgisi satırı: veri yoksa satır basılmaz; kalanlar sırayı koruyarak kayar. */
 function xsltMetaTable(L) {
   const fields = visibleMetaFields(L);
   if (!fields.length) return "";
-  const dueInner = `<xsl:choose><xsl:when test="/n1:Invoice/cbc:DueDate">${xsltYmdDash("/n1:Invoice/cbc:DueDate")}</xsl:when><xsl:otherwise>${xsltYmdDash("/n1:Invoice/cac:PaymentMeans/cbc:PaymentDueDate")}</xsl:otherwise></xsl:choose>`;
+  const dueTest = "(/n1:Invoice/cbc:DueDate[normalize-space(.)!=''] or /n1:Invoice/cac:PaymentMeans/cbc:PaymentDueDate[normalize-space(.)!=''])";
+  const dueInner = `<xsl:choose><xsl:when test="/n1:Invoice/cbc:DueDate[normalize-space(.)!='']">${xsltYmdDash("/n1:Invoice/cbc:DueDate")}</xsl:when><xsl:otherwise>${xsltYmdDash("/n1:Invoice/cac:PaymentMeans/cbc:PaymentDueDate")}</xsl:otherwise></xsl:choose>`;
   const map = {
-    customization: xsltMetaRow(META_FIELD_LABELS.customization, `<xsl:value-of select="/n1:Invoice/cbc:CustomizationID"/>`),
-    profile: xsltMetaRow(META_FIELD_LABELS.profile, `<xsl:value-of select="/n1:Invoice/cbc:ProfileID"/>`),
-    invoice_type: xsltMetaRow(META_FIELD_LABELS.invoice_type, `<xsl:value-of select="/n1:Invoice/cbc:InvoiceTypeCode"/>`),
-    number: xsltMetaRow(META_FIELD_LABELS.number, `<xsl:value-of select="/n1:Invoice/cbc:ID"/>`),
-    invoice_date: xsltMetaRow(META_FIELD_LABELS.invoice_date, xsltYmdDash("/n1:Invoice/cbc:IssueDate")),
-    date: xsltMetaRow(META_FIELD_LABELS.date, xsltYmdDash("/n1:Invoice/cbc:IssueDate")),
-    issue_time: xsltMetaRow(META_FIELD_LABELS.issue_time, `<xsl:value-of select="/n1:Invoice/cbc:IssueTime"/>`),
-    despatch_no: xsltMetaRow(META_FIELD_LABELS.despatch_no, `<xsl:value-of select="/n1:Invoice/cac:DespatchDocumentReference/cbc:ID"/>`),
-    despatch_date: xsltMetaRow(META_FIELD_LABELS.despatch_date, xsltYmdDash("/n1:Invoice/cac:DespatchDocumentReference/cbc:IssueDate")),
-    due_date: xsltMetaRow(META_FIELD_LABELS.due_date, dueInner),
-    order_no: xsltMetaRow(META_FIELD_LABELS.order_no, `<xsl:value-of select="/n1:Invoice/cac:OrderReference/cbc:ID"/>`),
+    customization: xsltMetaRow(META_FIELD_LABELS.customization, `<xsl:value-of select="/n1:Invoice/cbc:CustomizationID"/>`, "/n1:Invoice/cbc:CustomizationID[normalize-space(.)!='']"),
+    profile: xsltMetaRow(META_FIELD_LABELS.profile, `<xsl:value-of select="/n1:Invoice/cbc:ProfileID"/>`, "/n1:Invoice/cbc:ProfileID[normalize-space(.)!='']"),
+    invoice_type: xsltMetaRow(META_FIELD_LABELS.invoice_type, `<xsl:value-of select="/n1:Invoice/cbc:InvoiceTypeCode"/>`, "/n1:Invoice/cbc:InvoiceTypeCode[normalize-space(.)!='']"),
+    number: xsltMetaRow(META_FIELD_LABELS.number, `<xsl:value-of select="/n1:Invoice/cbc:ID"/>`, "/n1:Invoice/cbc:ID[normalize-space(.)!='']"),
+    invoice_date: xsltMetaRow(META_FIELD_LABELS.invoice_date, xsltYmdDash("/n1:Invoice/cbc:IssueDate"), "/n1:Invoice/cbc:IssueDate[normalize-space(.)!='']"),
+    date: xsltMetaRow(META_FIELD_LABELS.date, xsltYmdDash("/n1:Invoice/cbc:IssueDate"), "/n1:Invoice/cbc:IssueDate[normalize-space(.)!='']"),
+    issue_time: xsltMetaRow(META_FIELD_LABELS.issue_time, `<xsl:value-of select="/n1:Invoice/cbc:IssueTime"/>`, "/n1:Invoice/cbc:IssueTime[normalize-space(.)!='']"),
+    despatch_no: xsltMetaRow(META_FIELD_LABELS.despatch_no, `<xsl:value-of select="/n1:Invoice/cac:DespatchDocumentReference/cbc:ID"/>`, "/n1:Invoice/cac:DespatchDocumentReference/cbc:ID[normalize-space(.)!='']"),
+    despatch_date: xsltMetaRow(META_FIELD_LABELS.despatch_date, xsltYmdDash("/n1:Invoice/cac:DespatchDocumentReference/cbc:IssueDate"), "/n1:Invoice/cac:DespatchDocumentReference/cbc:IssueDate[normalize-space(.)!='']"),
+    due_date: xsltMetaRow(META_FIELD_LABELS.due_date, dueInner, dueTest),
+    order_no: xsltMetaRow(META_FIELD_LABELS.order_no, `<xsl:value-of select="/n1:Invoice/cac:OrderReference/cbc:ID"/>`, "/n1:Invoice/cac:OrderReference/cbc:ID[normalize-space(.)!='']"),
   };
   return `
       <table class="inv-meta" width="100%" cellpadding="0" cellspacing="0">
@@ -740,7 +762,7 @@ export function layoutToXslt(layout, kind) {
           .inv-meta-k { white-space:nowrap; }
           .inv-meta-v { word-break:break-word; }
           .inv-ettn { word-break:break-all; }
-          .inv-ettn-v { font-size:${fs + 6}px; color:${L.primary}; margin-top:2px; }
+          .inv-ettn-v { font-size:${asEttnFontSize(L.ettnFontSize)}px; color:${L.primary}; margin-top:2px; }
           .inv-lines { border-collapse:collapse; }
           .inv-lines th { background:${L.primary}; color:#fff; font-size:${k}px; }
           .inv-lines td { border-bottom:1px solid ${L.muted}22; font-size:${fs}px; }

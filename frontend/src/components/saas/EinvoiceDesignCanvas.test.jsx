@@ -269,9 +269,15 @@ test("ETTN is a separate palette block, not a fatura bilgileri field", async () 
   expect(box).not.toBeNull();
   expect(box?.textContent).toContain("ETTN");
   expect(box?.textContent).toContain("550e8400-e29b-41d4-a716-446655440000");
-  expect(box?.querySelector(".break-all")?.style.fontSize).toBe("1.5em");
+  expect(box?.querySelector(".break-all")?.style.fontSize).toBe("18px");
+  expect(host.querySelector('[data-testid="einvoice-design-ettn-font-sizes"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-ettn"]').className).toContain("col-span-12");
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).not.toContain("550e8400");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-ettn-font-size-12"]').click();
+  });
+  expect(last.ettnFontSize).toBe(12);
+  expect(host.querySelector('[data-testid="einvoice-design-ettn"] .break-all')?.style.fontSize).toBe("12px");
 });
 
 test("GIB e-Arşiv seal can be added next to e-Fatura seal", async () => {

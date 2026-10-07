@@ -6,6 +6,7 @@ import {
   BLOCK_LABELS,
   FONT_OPTIONS,
   FONT_SIZE_OPTIONS,
+  ETTN_FONT_SIZE_OPTIONS,
   LINE_COL_LABELS,
   META_FIELD_LABELS,
   HEADER_FIELD_LABELS,
@@ -117,7 +118,7 @@ const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDro
   />
 );
 
-const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, onFontSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
+const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, onFontSize, onEttnFontSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
   if (id === "header") {
     const logoSize = Number(layout.logoSize) || 72;
@@ -193,10 +194,26 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
     return <PartyCard title="Alıcı" p={s.customer} kCls={layout.muted} vCls={layout.primary} />;
   }
   if (id === "ettn") {
+    const ettnFs = Number(layout.ettnFontSize) || 18;
     return (
       <div data-testid="einvoice-design-ettn" style={{ color: layout.text }}>
         <div className="font-normal">ETTN</div>
-        <div className="break-all leading-tight" style={{ fontSize: "1.5em", color: layout.primary }}>{s.ettn}</div>
+        <div className="break-all leading-tight" style={{ fontSize: `${ettnFs}px`, color: layout.primary }}>{s.ettn}</div>
+        <div className="flex items-center flex-wrap gap-1 mt-1.5" data-testid="einvoice-design-ettn-font-sizes">
+          <span className="text-[9px] font-bold text-slate-500">Punto</span>
+          {ETTN_FONT_SIZE_OPTIONS.map((opt) => (
+            <button
+              key={opt.size}
+              type="button"
+              title={`${opt.size} px`}
+              onClick={(e) => { e.stopPropagation(); onEttnFontSize?.(opt.size); }}
+              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${ettnFs === opt.size ? "bg-slate-800 text-white border-slate-800" : "text-slate-600 border-slate-200 hover:bg-slate-100"}`}
+              data-testid={`einvoice-design-ettn-font-size-${opt.size}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </div>
     );
   }
@@ -215,6 +232,8 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
       if (fid === "due_date") return s.dueDate;
       return "";
     };
+    // Verisi olmayan satırlar önizlemede gizlenir; chip sırası korunur, boşlar kayar.
+    const filled = fields.filter((f) => String(valueOf(f.id) || "").trim());
     return (
       <div>
         <table
@@ -223,7 +242,7 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
           data-testid="einvoice-design-meta-grid"
         >
           <tbody>
-            {fields.map((f) => (
+            {filled.map((f) => (
               <tr key={f.id} data-testid={`einvoice-design-meta-row-${f.id}`}>
                 <td className="align-top whitespace-nowrap pr-2 py-px font-normal">{META_FIELD_LABELS[f.id]}:</td>
                 <td className="align-top py-px font-normal">{valueOf(f.id)}</td>
@@ -709,6 +728,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                   onQrSize={(size) => patch({ qrSize: size })}
                   onLogoSize={(size) => patch({ logoSize: size })}
                   onFontSize={(size) => patch({ fontSize: size })}
+                  onEttnFontSize={(size) => patch({ ettnFontSize: size })}
                   drag={dragId}
                   onDragStart={onDragStart}
                   onDragOver={onDragOverItem}
