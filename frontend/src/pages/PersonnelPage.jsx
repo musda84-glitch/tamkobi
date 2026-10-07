@@ -18,7 +18,7 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
 import { assignedOvertimeCellCaption, cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint, locationControllerLabel, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
-import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, employeePresenceChip, fmtCardMoney, presenceTodayOf, remainingDue, remainingLeaveDays } from "../utils/personnelCard";
+import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, employeePresenceChip, fmtCardMoney, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, presenceTodayOf, remainingDue, remainingLeaveDays } from "../utils/personnelCard";
 import { punchLabelClass } from "../utils/punchLabels";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
@@ -357,6 +357,21 @@ export default function PersonnelPage() {
       loadPersonnelData();
     } catch (err) {
       toast.error("Bordro hesaplanamadı.");
+    }
+  };
+
+  const handleDeletePayroll = async (p) => {
+    const row = { id: p.id || p._id, kind: "payroll", status: p.status };
+    const path = payMoveDeletePath(row);
+    if (!payMoveCanDelete(row) || !path) return;
+    const ask = payMoveDeleteConfirm(row);
+    if (!window.confirm(`${ask.title}\n${ask.message}`)) return;
+    try {
+      await axios.delete(`${API_URL}${path}`);
+      toast.success("Maaş kaydı çöp kutusuna taşındı.");
+      loadPersonnelData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Maaş kaydı silinemedi.");
     }
   };
 
@@ -1005,14 +1020,25 @@ export default function PersonnelPage() {
                     {p.status !== 'paid' ? (
                       <button
                         onClick={() => openSalaryPayModal(p)}
-                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm"
+                        className="px-3 py-1 mr-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm"
                         data-testid={`pay-salary-btn-${p.employee_name}`}
                       >
                         Maaşı Öde
                       </button>
                     ) : (
-                      <span className="text-emerald-700 font-semibold text-[11px]">Tamamlandı</span>
+                      <span className="text-emerald-700 font-semibold text-[11px] mr-1">Tamamlandı</span>
                     )}
+                    {payMoveCanDelete({ id: p.id || p._id, kind: "payroll", status: p.status }) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePayroll(p)}
+                        className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold"
+                        title="Maaş kaydını sil (çöp kutusu)"
+                        data-testid={`payroll-delete-btn-${p.id || p._id}`}
+                      >
+                        Sil
+                      </button>
+                    ) : null}
                   </td>
                 </tr>
               ))}
