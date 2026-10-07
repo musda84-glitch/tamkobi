@@ -669,10 +669,13 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-1.5" data-testid="kuveyt-edit-hint">
                 <p>
                   Canlı:{" "}
-                  <a href="https://prep-identity.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-identity.kuveytturk.com.tr</a>
+                  <a href="https://identity.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">identity.kuveytturk.com.tr</a>
                   {" "}(token) ·{" "}
-                  <a href="https://prep-gateway.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-gateway.kuveytturk.com.tr</a>
-                  {" "}(API).
+                  <a href="https://gateway.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">gateway.kuveytturk.com.tr</a>
+                  {" "}(API). Prep/test:{" "}
+                  <a href="https://prep-identity.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-identity</a>
+                  {" · "}
+                  <a href="https://prep-gateway.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-gateway</a>.
                 </p>
                 <p>
                   Abonelik: <code className="font-mono">GET /v1/fx/rates</code> (bağlantı testi),{" "}
@@ -683,6 +686,8 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <ol className="list-decimal list-inside space-y-0.5 text-amber-900" data-testid="kuveyt-live-checklist">
                   <li><b>İmza:</b> Private Key (.pem) burada; eşleşen <b>.crt</b> API Market’te olmalı — aksi halde Signature Invalid.</li>
                   <li><b>IP:</b> Canlı onay formundaki sunucu IP’sinden test edin; diğer IP’ler gateway tarafından engellenir.</li>
+                  <li><b>Scope:</b> Hesap hareketi token’ı <code className="font-mono">grant_type=client_credentials&amp;scope=accounts</code> (client_credentials; kullanıcı girişi gerekmez). Invalid Scope = Accounts aboneliği yok veya Test/Prep host’a canlı kimlik gönderilmiş.</li>
+                  <li><b>Hesap ek no:</b> Path <code className="font-mono">/v3/accounts/&#123;suffix&#125;/transactions</code> — müşteri numarası değil, hesap ek no (suffix).</li>
                 </ol>
               </div>
             )}

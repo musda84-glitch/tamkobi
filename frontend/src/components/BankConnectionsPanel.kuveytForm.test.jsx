@@ -113,7 +113,7 @@ test("Kuveyt ReadTimeout shows host checklist instead of bare error", async () =
   expect(host.querySelector('[data-testid="conn-last-error"]')).toBeNull();
 });
 
-test("Kuveyt edit modal keeps only needed fields and shows prep hosts", async () => {
+test("Kuveyt edit modal keeps only needed fields and shows live hosts", async () => {
   await renderPanel();
   await openEditModal();
 
@@ -121,8 +121,15 @@ test("Kuveyt edit modal keeps only needed fields and shows prep hosts", async ()
   expect(modal).not.toBeNull();
   const hint = host.querySelector('[data-testid="kuveyt-edit-hint"]');
   expect(hint).not.toBeNull();
-  expect(hint.textContent).toContain("prep-identity.kuveytturk.com.tr");
-  expect(hint.textContent).toContain("prep-gateway.kuveytturk.com.tr");
+  expect(hint.textContent).toContain("identity.kuveytturk.com.tr");
+  expect(hint.textContent).toContain("gateway.kuveytturk.com.tr");
+  expect(hint.textContent).toContain("prep-identity");
+  expect(hint.textContent).toContain("prep-gateway");
+  const hrefs = [...hint.querySelectorAll("a")].map((a) => a.getAttribute("href") || "");
+  expect(hrefs).toContain("https://identity.kuveytturk.com.tr");
+  expect(hrefs).toContain("https://gateway.kuveytturk.com.tr");
+  expect(hrefs).toContain("https://prep-identity.kuveytturk.com.tr");
+  expect(hrefs).toContain("https://prep-gateway.kuveytturk.com.tr");
 
   expect(host.querySelector('[data-testid="edit-conn-client-id"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="edit-conn-client-secret"]')).not.toBeNull();
@@ -140,6 +147,8 @@ test("Kuveyt edit modal keeps only needed fields and shows prep hosts", async ()
   expect(checklist.textContent).toMatch(/İmza/i);
   expect(checklist.textContent).toMatch(/\.crt/i);
   expect(checklist.textContent).toMatch(/IP/i);
+  expect(checklist.textContent).toMatch(/scope=accounts/i);
+  expect(checklist.textContent).toMatch(/suffix/i);
 });
 
 test("Kuveyt Signature Invalid shows crt checklist", async () => {
