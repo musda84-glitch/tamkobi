@@ -215,7 +215,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
       return;
     }
-    if (p.source === "bank_sync") {
+    if (isLockedTx(p)) {
       toast.error(lockedTxTitle(p));
       return;
     }
@@ -535,7 +535,19 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const paid = Number(s.total_paid) || 0;
   const open = Number(s.open_amount) || 0;
   const summaryDiverge = Math.abs(Math.abs(bal) - Math.abs(open)) > 0.5;
+  const openingBal = Number(s.opening_balance ?? c.opening_balance) || 0;
   const chequeBal = openChequeBalance(data.cheques);
+  const clearOpeningBalance = async () => {
+    if (!window.confirm("Açılış / aktarım bakiyesi sıfırlansın mı? Fatura ve kasa hareketleri kalır; yalnızca devir tutarı silinir.")) return;
+    try {
+      const r = await axios.post(`${API_URL}/contacts/${c.id}/clear-opening-balance`);
+      toast.success(r.data.message || "Açılış bakiyesi sıfırlandı.");
+      await notifyDataChanged({ companyId: c.company_id, scopes: ["contacts", "cash"] });
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Sıfırlanamadı.");
+    }
+  };
   const summaryCards = [
     { key: "balance", label: "Cari hesap", hint: bal > 0 ? "Müşteri size borçlu" : bal < 0 ? "Siz bu cariye borçlusunuz" : "Hesap denk — borç yok", badge: bal > 0 ? "Alacak" : bal < 0 ? "Borç" : "Kapalı", value: bal, cls: bal > 0 ? "text-emerald-700" : bal < 0 ? "text-rose-700" : "text-slate-800", title: "Satış, alış ve kasa/banka hareketlerinin net bakiyesi. Artı = alacak, eksi = borç." },
     { key: "invoiced", label: "Satış faturaları", hint: "Onaylı satışların toplamı", badge: null, value: invoiced, cls: "text-slate-900", title: "Taslaklar hariç kesilmiş satış faturalarının tutarı." },
@@ -594,6 +606,17 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           {summaryDiverge && (
             <p className="text-[11px] text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-1.5" data-testid="contact-summary-note">
               <b>Cari hesap</b> alış faturası ve kasa hareketlerini de içerir; <b>kalan alacak</b> yalnızca satış faturaları − tahsilattır. Bu yüzden iki tutar aynı olmayabilir.
+            </p>
+          )}
+          {Math.abs(openingBal) > 0.5 && (
+            <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 flex flex-wrap items-center gap-2" data-testid="contact-opening-balance-note">
+              <span className="flex-1 min-w-[200px]">
+                <b>Açılış / aktarım bakiyesi:</b> {fmt(openingBal)} ₺
+                {c.opening_balance_source === "bizimhesap" ? " (BizimHesap)" : ""}. Ödeme silmek bunu düşürmez.
+              </span>
+              <button type="button" onClick={clearOpeningBalance} className="shrink-0 px-2 py-1 rounded-md border border-amber-300 bg-white text-[10px] font-bold text-amber-900 hover:bg-amber-100" data-testid="clear-opening-balance-btn">
+                Açılışı sıfırla
+              </button>
             </p>
           )}
         </div>
