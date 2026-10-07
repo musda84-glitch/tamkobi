@@ -612,7 +612,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
   };
   const pickRetailContact = async () => {
     if (formData.invoice_type === "purchase") {
-      toast.error("Perakende (carisiz) yalnızca satış faturalarında kullanılır.");
+      toast.error("Perakende (carisiz) alış faturasında kullanılamaz.");
       return;
     }
     try {
@@ -1821,19 +1821,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 <div>
                   <label className="flex items-center justify-between font-semibold text-slate-700 mb-1 gap-2 flex-wrap">
                     <span>Cari Seçin</span>
-                    <span className="flex items-center gap-2">
-                      {formData.invoice_type === "sales" && (
-                        <button
-                          type="button"
-                          onClick={pickRetailContact}
-                          className="inline-flex items-center gap-1 text-rose-700 hover:underline font-semibold"
-                          data-testid="inv-retail-contact-btn"
-                        >
-                          <Store className="w-3.5 h-3.5" /> Perakende (carisiz)
-                        </button>
-                      )}
-                      <button type="button" onClick={() => setQuickContact((v) => !v)} className="text-emerald-700 hover:underline font-semibold" data-testid="inv-new-contact-btn">+ Yeni cari ekle</button>
-                    </span>
+                    <button type="button" onClick={() => setQuickContact((v) => !v)} className="text-emerald-700 hover:underline font-semibold" data-testid="inv-new-contact-btn">+ Yeni cari ekle</button>
                   </label>
                   <SearchSelect
                     value={formData.contact_id}
@@ -1844,7 +1832,24 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     getSub={(c) => `${c.type === 'customer' ? 'Müşteri' : c.type === 'supplier' ? 'Tedarikçi' : 'Müşteri & Tedarikçi'} • VKN ${c.tax_number_or_id}`}
                     onChange={(id, c) => setFormData({ ...formData, contact_id: id, contact_name: c?.name || "", e_type: c && formData.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(formData.e_type) ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : formData.e_type })}
                     testId="inv-contact-select"
+                    leadingAction={formData.invoice_type !== "purchase" ? {
+                      label: "Perakende (carisiz)",
+                      sub: "Cari seçmeden peşin satış — e-arşiv",
+                      testId: "inv-retail-contact-option",
+                      icon: <Store className="w-4 h-4 shrink-0 text-rose-700" />,
+                      onSelect: pickRetailContact,
+                    } : null}
                   />
+                  {formData.invoice_type !== "purchase" && (
+                    <button
+                      type="button"
+                      onClick={pickRetailContact}
+                      className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-800 hover:bg-rose-100"
+                      data-testid="inv-retail-contact-btn"
+                    >
+                      <Store className="w-3.5 h-3.5" /> Perakende (carisiz) satış
+                    </button>
+                  )}
                 </div>
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Proje (opsiyonel)</label>
