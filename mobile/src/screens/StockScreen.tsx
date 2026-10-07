@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { View } from "react-native";
-import { get } from "../api/client";
+import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { ActionTiles } from "../components/ActionTiles";
 import { B2BSheet } from "../components/b2b/B2BSheet";
@@ -11,7 +11,12 @@ import { LazyBarcodeScanner } from "../components/LazyBarcodeScanner";
 import { ProductThumb } from "../components/ProductThumb";
 import { go } from "../nav";
 import { colors } from "../theme";
-import type { Product } from "../types";
+import type { Contact, Product } from "../types";
+import {
+  barcodeSalePayload,
+  findRetailContact,
+  retailContactCreatePayload,
+} from "../utils/barcodeSale";
 import { productTypeTr } from "../utils/labels";
 import { cacheIsFresh, peekCachedRows, readCachedRows, writeCachedRows } from "../utils/listCache";
 import { listRowText } from "../utils/listRow";
@@ -24,6 +29,7 @@ import { moveChange, parseStockMoves, type StockMove } from "../utils/stockMoves
 export function StockScreen() {
   const { client, companyId, can } = useAuth();
   const canEdit = can("/stock", "edit");
+  const canInvoice = can("/invoices", "edit");
   const params = useLocalSearchParams<{ scan?: string | string[] }>();
   const [rows, setRows] = useState<Product[]>([]);
   const [cats, setCats] = useState<ProductCategory[]>([]);
@@ -31,6 +37,9 @@ export function StockScreen() {
   const [cat, setCat] = useState("all");
   const [scan, setScan] = useState(false);
   const [hit, setHit] = useState<Product | null>(null);
+  const [saleQty, setSaleQty] = useState("1");
+  const [saleBusy, setSaleBusy] = useState(false);
+  const [saleMsg, setSaleMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [movesFor, setMovesFor] = useState<Product | null>(null);
@@ -90,13 +99,60 @@ export function StockScreen() {
   const lookup = async (code: string) => {
     try {
       const local = rows.find((p) => p.barcode === code || p.sku === code);
-      if (local) { setHit(local); setQ(code); return; }
+      if (local) {
+        setHit(local);
+        setSaleQty("1");
+        setSaleMsg(null);
+        setQ(code);
+        return;
+      }
       const p = await get<Product>(client, `/products/barcode/${encodeURIComponent(code)}`, { company_id: companyId });
       setHit(p);
+      setSaleQty("1");
+      setSaleMsg(null);
       setQ(code);
     } catch (err) {
       setHit(null);
       setError(apiErrorMessage(err, "Barkod ile ürün bulunamadı."));
+    }
+  };
+
+  const ensureRetailContact = async (): Promise<Contact> => {
+    const contacts = await get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }).catch(() => []);
+    const existing = findRetailContact(contacts || []);
+    if (existing) return existing as Contact;
+    return post<Contact>(client, "/contacts", retailContactCreatePayload(companyId));
+  };
+
+  const sellRetail = async (p: Product) => {
+    if (!canInvoice) {
+      setError("Fatura kesme yetkiniz yok.");
+      return;
+    }
+    const qty = Math.max(Number(String(saleQty).replace(",", ".")) || 0, 0);
+    if (!(qty > 0)) {
+      setError("Satış adedi girin.");
+      return;
+    }
+    setSaleBusy(true);
+    setSaleMsg(null);
+    setError(null);
+    try {
+      const contact = await ensureRetailContact();
+      const payload = barcodeSalePayload({
+        companyId,
+        contact,
+        product: p,
+        quantity: qty,
+        mode: "retail",
+      });
+      const inv = await post<{ invoice_number?: string; id?: string; _id?: string }>(client, "/invoices", payload);
+      setSaleMsg(`Perakende satış: ${inv.invoice_number || "fatura"} · ${fmtMoney(payload.paid_amount)}`);
+      await load(true);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Perakende satış kaydedilemedi."));
+    } finally {
+      setSaleBusy(false);
     }
   };
 
@@ -177,6 +233,25 @@ export function StockScreen() {
       )}
     >
         <ErrorBanner message={error} />
+        {saleMsg ? <Muted testID="stock-retail-msg">{saleMsg}</Muted> : null}
+        {hit && canInvoice ? (
+          <View style={{ gap: 8, marginBottom: 8 }} testID="stock-retail-sale">
+            <Field
+              label="Perakende adet"
+              testID="stock-retail-qty"
+              value={saleQty}
+              onChangeText={setSaleQty}
+              keyboardType="decimal-pad"
+            />
+            <PrimaryButton
+              title={saleBusy ? "Satılıyor…" : "Perakende satış yap"}
+              testID="stock-retail-sell"
+              color={colors.primary}
+              loading={saleBusy}
+              onPress={() => sellRetail(hit)}
+            />
+          </View>
+        ) : null}
         {!filtered.length ? (
           <Empty icon="cube-outline" title="Ürün yok" hint={canEdit ? "Kategori veya aramayı değiştirin, ya da yeni stok kartı ekleyin." : "Kategori veya aramayı değiştirin, ya da barkod okutun."} />
         ) : filtered.map((p) => {

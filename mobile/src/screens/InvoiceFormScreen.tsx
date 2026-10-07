@@ -44,6 +44,11 @@ import {
   type InvoiceDraft,
 } from "../utils/invoiceDraft";
 import { paymentTargetGroups, splitPaymentTarget, type BankAccount, type Partner } from "../utils/finance";
+import {
+  findRetailContact,
+  invoiceFormPatchForRetail,
+  retailContactCreatePayload,
+} from "../utils/barcodeSale";
 import { contactTypeTr } from "../utils/labels";
 import { lineDraftKey, lineNumberCommit, lineNumberOnFocus, lineNumberShown } from "../utils/lineNumberDraft";
 import { fmtMoney, idOf, sanitizeMoneyInput } from "../utils/money";
@@ -266,6 +271,30 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
       due_date: due,
     }));
     setCustQ("");
+  };
+
+  const pickRetailContact = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      let retail = findRetailContact(contacts);
+      if (!retail) {
+        retail = await post<Contact>(client, "/contacts", retailContactCreatePayload(companyId));
+        setContacts((prev) => [retail as Contact, ...prev]);
+      }
+      const patch = invoiceFormPatchForRetail(retail, draft);
+      setDraft((d) => ({
+        ...d,
+        contact_id: patch.contact_id,
+        contact_name: patch.contact_name,
+        e_type: (patch.e_type as typeof d.e_type) || d.e_type,
+      }));
+      setCustQ("");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Perakende cari seçilemedi."));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const addProduct = (p: Product) => {
@@ -536,9 +565,18 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
           />
         ) : (
           <>
+            {draft.invoice_type === "sales" ? (
+              <PrimaryButton
+                title="Perakende müşteri"
+                testID="inv-retail-contact-btn"
+                color={colors.primary}
+                loading={busy}
+                onPress={pickRetailContact}
+              />
+            ) : null}
             <Field label="Cari ara" testID="inv-contact-search" value={custQ} onChangeText={setCustQ} placeholder="Ad / VKN / telefon" />
             {custHits.map((c) => (
-              <ListRow key={idOf(c)} title={c.name} subtitle={`${contactTypeTr(c.type)} · VKN ${c.tax_number_or_id || "—"}`} onPress={() => pickContact(c)} />
+              <ListRow key={idOf(c)} title={c.name} subtitle={`${contactTypeTr(c.type)} · VKN ${c.tax_number_or_id || "—"}`} onPress={() => pickContact(c)} testID={/perakende/i.test(c.name || "") ? "inv-retail-contact-option" : undefined} />
             ))}
             <Muted>+ Yeni cari ekle</Muted>
             <Field label="Cari adı" testID="inv-quick-name" value={quickName} onChangeText={setQuickName} />
