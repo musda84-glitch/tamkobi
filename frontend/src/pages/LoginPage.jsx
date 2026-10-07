@@ -5,8 +5,24 @@ import { LogIn, KeyRound, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { BuildStamp } from "../components/BuildStamp";
+import TamKobiMark from "../components/TamKobiMark";
 import { LOGIN } from "../constants/testIds/auth";
 import { REMEMBER_ERP_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
+
+function LoginBrand({ subtitle }) {
+  return (
+    <div className="flex items-center gap-3">
+      <TamKobiMark className="w-10 h-10 shrink-0 rounded-xl" />
+      <div>
+        <div className="text-2xl tracking-tight text-slate-900" data-testid="login-brand">
+          <span className="font-black">Tam</span>
+          <span className="font-medium text-slate-500">Kobi</span>
+        </div>
+        {subtitle ? <div className="text-[10px] uppercase tracking-[0.18em] text-slate-400 font-semibold">{subtitle}</div> : null}
+      </div>
+    </div>
+  );
+}
 
 export default function LoginPage() {
   const { login } = useAuth();

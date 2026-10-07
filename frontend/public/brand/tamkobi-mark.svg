@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="TamKobi">
+  <rect width="32" height="32" rx="8" fill="#0b0b14"/>
+  <defs><clipPath id="c"><circle cx="16" cy="16" r="10.8"/></clipPath></defs>
+  <g clip-path="url(#c)">
+    <rect x="5.2" y="5.2" width="9.225" height="9.225" fill="#2d7bff"/>
+    <rect x="16.575" y="5.2" width="9.225" height="9.225" fill="#7b3ff2"/>
+    <rect x="5.2" y="16.575" width="9.225" height="9.225" fill="#4f2fd0"/>
+    <rect x="16.575" y="16.575" width="9.225" height="9.225" fill="#c6f432"/>
+  </g>
+</svg>
