@@ -75,6 +75,31 @@ async function renderPanel() {
   });
 }
 
+test("Kuveyt ReadTimeout shows host checklist instead of bare error", async () => {
+  const timedOut = {
+    ...CONN,
+    mode: "sandbox",
+    last_error:
+      "Bağlantı kurulamadı: Kuveyt Türk gateway zaman aşımı (ReadTimeout). " +
+      "Denenen uçlar: https://prep-gateway.kuveytturk.com.tr/v1/fx/rates. " +
+      "üretim çıkış IP’si banka whitelist’te değilse yanıt gelmez.",
+  };
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/banking/providers")) return Promise.resolve({ data: PROVIDERS });
+    if (u.includes("/banking/connections")) return Promise.resolve({ data: [timedOut] });
+    if (u.includes("/banking/transactions/unmatched")) return Promise.resolve({ data: [] });
+    if (u.includes("/banking/match-rules")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+  await renderPanel();
+  const box = host.querySelector('[data-testid="conn-last-error-kuveyt-timeout"]');
+  expect(box).not.toBeNull();
+  expect(box.textContent).toMatch(/zaman aşımı/i);
+  expect(box.textContent).toContain("prep-gateway.kuveytturk.com.tr");
+  expect(host.querySelector('[data-testid="conn-last-error"]')).toBeNull();
+});
+
 test("Kuveyt edit modal keeps only needed fields and shows prep hosts", async () => {
   await renderPanel();
   const editBtn = host.querySelector('[data-testid="edit-bank-connection-btn"]')

@@ -68,6 +68,7 @@ function ConnErrorBox({ connection, onEdit }) {
   const isEnpara = connection?.provider === "enpara";
   const invalidClient = /invalid_client/i.test(err);
   const rsaBad = /RSA özel anahtar|RSA anahtarı|PRIVATE KEY|PKCS8|PKCS1|PUBLIC KEY|CERTIFICATE|imza anahtar|2048-bit|JSEncrypt Invalid key|openssl genrsa/i.test(err);
+  const kuveytTimeout = isKuveyt && /ReadTimeout|ConnectTimeout|zaman aşımı|süresi aşıldı|gateway zaman aşımı|Identity zaman aşımı/i.test(err);
   const enparaIban = isEnpara && /364737|IBAN veya hesap no|Hesap numarası yada IBAN|26 haneli Enpara IBAN/i.test(err);
   if (enparaIban) {
     return (
@@ -93,8 +94,37 @@ function ConnErrorBox({ connection, onEdit }) {
       </div>
     );
   }
-  if (!isKuveyt || (!invalidClient && !rsaBad)) {
+  if (!isKuveyt || (!invalidClient && !rsaBad && !kuveytTimeout)) {
     return <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2" data-testid="conn-last-error">{err}</div>;
+  }
+  if (kuveytTimeout && !invalidClient && !rsaBad) {
+    const hostMatch = err.match(/https?:\/\/[^\s,)]+/gi) || [];
+    const hosts = [...new Set(hostMatch)].slice(0, 3);
+    return (
+      <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg p-2.5 space-y-1.5" data-testid="conn-last-error-kuveyt-timeout">
+        <div className="font-bold flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5 shrink-0" /> Banka yanıt vermedi (zaman aşımı)</div>
+        <p className="text-rose-700 leading-snug">
+          Identity veya Gateway isteği zamanında yanıt vermedi. Sandbox/Canlı prep-identity ve prep-gateway host’larına sunucu çıkış IP’sinden erişim gerekir.
+        </p>
+        {hosts.length > 0 && (
+          <p className="text-rose-600 font-mono text-[10px] break-all">Denenen: {hosts.join(" · ")}</p>
+        )}
+        <ol className="list-decimal list-inside text-rose-700 space-y-0.5 pl-0.5">
+          <li>Üretim çıkış IP’sinin Kuveyt API Market whitelist’te olduğunu doğrulayın.</li>
+          <li>Mod (Sandbox/Canlı) portal uygulamasıyla aynı olsun.</li>
+          <li>Birkaç dakika sonra Kaydet &amp; Test Et’i tekrar deneyin.</li>
+        </ol>
+        {onEdit && (
+          <button type="button" onClick={onEdit} className="mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-rose-600 text-white font-semibold hover:bg-rose-700" data-testid="conn-error-edit-timeout-btn">
+            <Pencil className="w-3 h-3" /> Düzenle &amp; yeniden dene
+          </button>
+        )}
+        <details className="text-[10px] text-rose-500">
+          <summary className="cursor-pointer select-none">Teknik ayrıntı</summary>
+          <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-rose-600/90">{err}</pre>
+        </details>
+      </div>
+    );
   }
   if (rsaBad && !invalidClient) {
     const isPublic = /PUBLIC KEY|genel anahtar/i.test(err);
