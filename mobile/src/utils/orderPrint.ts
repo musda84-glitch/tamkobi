@@ -72,6 +72,8 @@ export type OrderFormOptions = {
   docType?: PrintDocType;
   contactBalance?: number | null;
   paymentPlan?: PrintPaymentRow[] | null;
+  /** Native print: skip remote logo/product images (Android WebView print hangs on network imgs). */
+  omitRemoteImages?: boolean;
 };
 
 const DOC_TITLES: Record<PrintDocType, string> = {
@@ -248,7 +250,9 @@ function quoteExtras(order: Order): { validUntil?: string; dueDate?: string; sub
 
 export function orderFormHtml(order: Order, company?: PrintCompany | null, options?: OrderFormOptions): string {
   const tpl = mergePrintTemplate(options?.template);
-  const lines = itemsOf(order, options?.products || {}, options?.mediaBase);
+  const omitRemote = !!options?.omitRemoteImages;
+  const mediaBase = omitRemote ? undefined : options?.mediaBase;
+  const lines = itemsOf(order, omitRemote ? {} : (options?.products || {}), mediaBase);
   const rawItems = (order.items || []) as Record<string, unknown>[];
   const layout = tpl.layout || "classic";
   const color = layout === "minimal" ? "#0f172a" : tpl.primary_color || "#059669";
@@ -273,14 +277,14 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const total = order.grand_total ?? order.total_amount ?? 0;
   const custNo = customerOrderNo(order);
   const orderNotes = [order.customer_note, order.order_note, order.customer_notes].filter(Boolean);
-  const showImages = tpl.show_images !== false;
+  const showImages = !omitRemote && tpl.show_images !== false;
   const showBarcode = tpl.show_barcode !== false;
   const vatLines = printVatLines(doc, rawItems);
   const netAmount = printNetAmount(doc, rawItems);
   const balanceText = !hideAll ? balanceSentence(options?.contactBalance) : "";
   const shipAddr = order.shipping_address || String(doc.address || "");
-  const logo = tpl.show_logo && company?.logo_url
-    ? `<img src="${esc(printThumbUrl(company.logo_url, options?.mediaBase))}" alt="logo" style="height:56px;object-fit:contain;${isModern ? "background:#fff;border-radius:8px;padding:4px;" : ""}"/>`
+  const logo = !omitRemote && tpl.show_logo && company?.logo_url
+    ? `<img src="${esc(printThumbUrl(company.logo_url, mediaBase))}" alt="logo" style="height:56px;object-fit:contain;${isModern ? "background:#fff;border-radius:8px;padding:4px;" : ""}"/>`
     : "";
   const tax = tpl.show_tax_info && (company?.tax_office || company?.tax_number)
     ? `<div style="opacity:${isModern ? "0.8" : "1"};color:${isModern ? "#fff" : "#64748b"}">VD: ${esc(company?.tax_office || "")} • VKN: ${esc(company?.tax_number || "")}</div>`
@@ -450,8 +454,8 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
   const notesBox = tpl.show_order_notes !== false && orderNotes.length
     ? `<div style="margin-top:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px;color:#334155;white-space:pre-wrap"><b>Sipariş Notu:</b> ${esc(orderNotes.join(" • "))}</div>`
     : "";
-  const qtyTotalBox = tpl.show_qty_total && items.length
-    ? `<div data-print-qty-total style="margin-top:8px;text-align:right;font-size:14px;font-weight:800;color:#1e293b">${esc(printQtyTotalLabel(items))}</div>`
+  const qtyTotalBox = tpl.show_qty_total && lines.length
+    ? `<div data-print-qty-total style="margin-top:8px;text-align:right;font-size:14px;font-weight:800;color:#1e293b">${esc(printQtyTotalLabel(lines))}</div>`
     : "";
   const extraNotes = (order.notes || extras.terms)
     ? `<div style="margin-top:24px;color:#475569;white-space:pre-wrap">${order.notes ? esc(order.notes) : ""}${extras.terms ? `<div style="margin-top:8px"><b>Şartlar:</b> ${esc(extras.terms)}</div>` : ""}</div>`
@@ -465,9 +469,9 @@ export function orderFormHtml(order: Order, company?: PrintCompany | null, optio
         <table style="width:100%;border-collapse:collapse">${options!.paymentPlan!.map((r) => `<tr style="border-bottom:1px solid #f1f5f9"><td style="padding:4px 0;font-weight:600">${esc(r.label || "")}</td><td style="padding:4px 0;color:#64748b;font-family:ui-monospace,monospace">${esc(fmtDate(r.due_date))}</td><td style="padding:4px 0;text-align:right;font-weight:600">${esc(money(r.amount, "TRY"))}</td><td style="padding:4px 0;text-align:right;width:80px">${r.status === "paid" ? `<span style="color:#047857;font-weight:700">Ödendi</span>` : r.status ? `<span style="color:#94a3b8">Bekliyor</span>` : ""}</td></tr>`).join("")}</table>
       </div>`
     : "";
-  const docImages = Array.isArray(doc.images) ? (doc.images as unknown[]).slice(0, 8) : [];
+  const docImages = omitRemote || !showImages ? [] : (Array.isArray(doc.images) ? (doc.images as unknown[]).slice(0, 8) : []);
   const gallery = docImages.length
-    ? `<div style="margin-top:24px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">${docImages.map((img) => `<img src="${esc(printThumbUrl(String(img), options?.mediaBase))}" alt="" style="width:100%;height:96px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0"/>`).join("")}</div>`
+    ? `<div style="margin-top:24px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">${docImages.map((img) => `<img src="${esc(printThumbUrl(String(img), mediaBase))}" alt="" style="width:100%;height:96px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0"/>`).join("")}</div>`
     : "";
   const footer = `<div style="margin-top:40px;display:flex;justify-content:space-between;align-items:flex-end">
     <div style="color:#94a3b8;font-style:italic">${esc(tpl.footer_note || "")}</div>

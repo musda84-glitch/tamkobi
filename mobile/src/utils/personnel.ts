@@ -1,5 +1,5 @@
 import { splitPaymentTarget } from "./finance";
-import { fmtDate, idOf } from "./money";
+import { fmtDate, fmtMoney, idOf } from "./money";
 import { hoursFromTimeRange } from "./overtimeRange";
 import { workplaceDays, workplaceHint, type Workplace } from "./workplace";
 
@@ -2053,6 +2053,18 @@ export function remainingDue(balance?: EmployeeBalance | null, unpaidFallback = 
     return Number(balance.remaining) || 0;
   }
   return unpaidFallback;
+}
+
+/** Liste / kart Öde butonu: kalan alacak + fazla mesai. */
+export function employeePayButtonDue(emp?: { balance?: EmployeeBalance | null } | null, balance?: EmployeeBalance | null): number {
+  const bal = balance || emp?.balance || null;
+  return remainingDue(bal) + overtimeDue(bal);
+}
+
+export function employeePayButtonLabel(emp?: { balance?: EmployeeBalance | null } | null, balance?: EmployeeBalance | null): string {
+  const due = employeePayButtonDue(emp, balance);
+  if (!due) return "Öde";
+  return `Öde · ${fmtMoney(due)}`;
 }
 
 export function validateAdvance(amount: string): string | null {

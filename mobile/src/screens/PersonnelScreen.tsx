@@ -58,6 +58,7 @@ import {
   employeeCompRows,
   employeeCompGroups,
   employeeCompRowCaption,
+  employeePayButtonLabel,
   unpaidPayrollTotal,
   employeePayMoves,
   EMPLOYEE_CARD_PAY_ACTIONS,
@@ -107,6 +108,7 @@ import {
   presenceTodayOf,
   openEmployeeTasks,
   remainingLeaveDays,
+  employeePayButtonDue,
   workplaceDetailsSummary,
   workplaceDetailsToggleLabel,
   employeeCardChrome,
@@ -382,6 +384,7 @@ export function PersonnelScreen() {
   const [photoEmp, setPhotoEmp] = useState<Employee | null>(null);
   const [bonuses, setBonuses] = useState<EmployeeBonus[]>([]);
   const [bonusForm, setBonusForm] = useState({ employee_id: "", type: "bonus", amount: "", period: new Date().toISOString().slice(0, 7), note: "" });
+  const [settleEmp, setSettleEmp] = useState<Employee | null>(null);
   const [expenseEmp, setExpenseEmp] = useState<Employee | null>(null);
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseNote, setExpenseNote] = useState("");
@@ -416,35 +419,41 @@ export function PersonnelScreen() {
       setProjects(Array.isArray(projs) ? projs : []);
       setPendingReqs(Array.isArray(reqs?.items) ? reqs.items : []);
       setBonuses(Array.isArray(bonusRows) ? bonusRows : []);
-      const pairs = await Promise.all((emps || []).slice(0, 40).map(async (e) => {
-        const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(e)}/card`).catch(() => null);
-        return [idOf(e), enrichEmployeeBalance(card, month), card?.employee?.photo_url, card?.workplace, yevmiyeAccrual({ bonuses: card?.bonuses, payrolls: card?.payrolls, employeeId: idOf(e) }), card] as const;
-      }));
-      setBalances(Object.fromEntries(pairs.filter((row) => !!row[1]).map(([id, bal]) => [id, bal as EmployeeBalance] as const)));
-      setCards(Object.fromEntries(pairs.map(([id, , , , , card]) => [id, card || {}])));
-      const photos = Object.fromEntries(pairs.flatMap(([id, , url]) => (url ? [[id, url] as const] : [])));
-      const cardWp = Object.fromEntries(pairs.flatMap(([id, , , wp]) => (wp ? [[id, wp] as const] : [])));
-      const yevFromCard = Object.fromEntries(pairs.map(([id, , , , yev]) => [id, yev] as const));
-      const cardsById = Object.fromEntries(pairs.map(([id, , , , , card]) => [id, card || {}]));
+      // Avoid N× /card on list focus (was freezing Personel). Cards load on demand (Hareketler / Öde).
+      setCards({});
+      const balMap: Record<string, EmployeeBalance> = {};
+      for (const e of emps || []) {
+        const eid = idOf(e);
+        const empPays = (pays || []).filter((p) => p.employee_id === eid);
+        const empBonuses = (bonusRows || []).filter((b) => String(b.employee_id || "") === eid);
+        const unpaid = empPays.filter((p) => p.status !== "paid").reduce((s, p) => s + (Number(p.final_payable ?? p.net_salary) || 0), 0);
+        const advances = empBonuses.filter((b) => b.type === "advance" && b.status !== "paid").reduce((s, b) => s + (Number(b.amount) || 0), 0);
+        const bonusPending = empBonuses.filter((b) => (b.type === "bonus" || !b.type) && b.status !== "paid").reduce((s, b) => s + (Number(b.amount) || 0), 0);
+        const otDue = empBonuses.filter((b) => b.type === "overtime" && b.status !== "paid").reduce((s, b) => s + (Number(b.amount) || 0), 0);
+        balMap[eid] = {
+          remaining: Math.max(0, unpaid + bonusPending + otDue - advances),
+          advances,
+          bonus_pending: bonusPending,
+          overtime_due: otDue,
+          meal_allowance: Number(e.meal_allowance) || 0,
+          transport_allowance: Number(e.transport_allowance) || 0,
+        };
+      }
+      setBalances(balMap);
       setEmployees((emps || []).map((e) => {
         const eid = idOf(e);
         const attWp = (att?.summary || []).find((s) => s.employee_id === eid)?.workplace;
-        const wp = pickEmployeeWorkplace(e.workplace, cardWp[eid], attWp, fieldWorkplaceFromProjects(projs || [], eid));
-        const cardYev = yevFromCard[eid] || { days: 0, amount: 0 };
+        const wp = pickEmployeeWorkplace(e.workplace, undefined, attWp, fieldWorkplaceFromProjects(projs || [], eid));
         const fromPays = yevmiyeAccrual({
           payrolls: (pays || []).filter((p) => p.employee_id === eid),
+          bonuses: (bonusRows || []).filter((b) => String(b.employee_id || "") === eid),
           employeeId: eid,
         });
-        const cardEmp = cardsById[eid]?.employee;
         return {
           ...e,
-          ...cardEmp,
-          photo_url: e.photo_url || photos[eid] || cardEmp?.photo_url,
           workplace: wp,
-          annual_leave_days: cardEmp?.annual_leave_days ?? e.annual_leave_days,
-          used_leave_days: cardEmp?.used_leave_days ?? e.used_leave_days,
-          yevmiye_days: Math.max(cardYev.days || 0, Number(e.yevmiye_days) || 0, fromPays.days),
-          yevmiye_due: Math.max(cardYev.amount || 0, Number(e.yevmiye_due) || 0, fromPays.amount),
+          yevmiye_days: Math.max(Number(e.yevmiye_days) || 0, fromPays.days),
+          yevmiye_due: Math.max(Number(e.yevmiye_due) || 0, fromPays.amount),
         };
       }));
       const firstPartner = (pars || []).find((p) => p.is_active !== false);
@@ -1091,6 +1100,9 @@ export function PersonnelScreen() {
     try {
       const card = await get<EmployeeCard>(client, `/personnel/employees/${idOf(emp)}/card`);
       applyMovesCard(card);
+      setCards((cur) => ({ ...cur, [idOf(emp)]: card || {} }));
+      const bal = enrichEmployeeBalance(card, month);
+      if (bal) setBalances((cur) => ({ ...cur, [idOf(emp)]: bal }));
       setTaskMoves(sortTaskMoves(card?.tasks || []));
       setError(null);
       void loadLocMoves(emp, "30d", ym);
@@ -1502,7 +1514,7 @@ export function PersonnelScreen() {
                   <EmployeeAvatar
                     name={emp.full_name}
                     photoUrl={emp.photo_url}
-                    size={56}
+                    size={40}
                     testID={`emp-card-photo-${eid}`}
                     onLongPress={canEdit ? () => setPhotoEmp(emp) : undefined}
                   />
@@ -1547,7 +1559,7 @@ export function PersonnelScreen() {
                     <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
                     <Muted testID={`emp-leave-${eid}`}>
                       Kalan izin: {cards[eid]?.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {cards[eid]?.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
-                      {cards[eid]?.performance?.overall != null ? ` · performans %${cards[eid]?.performance?.overall}` : ""}
+                      {cards[eid]?.performance?.overall != null ? ` · performans %${cards[eid].performance.overall}` : ""}
                     </Muted>
                   </View>
                 </View>
@@ -1799,9 +1811,16 @@ export function PersonnelScreen() {
                     testID={`emp-card-moves-btn-${eid}`}
                     onPress={() => openMoves(emp)}
                   />
-                  {canEdit ? EMPLOYEE_CARD_PAY_ACTIONS.map((action) => (
-                    <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
-                  )) : null}
+                  {canEdit ? (
+                    <PayChip
+                      title={employeePayButtonLabel({ balance: bal }, bal)}
+                      icon={employeeCardActionIcon("salary")}
+                      color={colors.primaryHover}
+                      bg={colors.emerald50}
+                      testID={`employee-pay-btn-${emp.tc_kimlik || eid}`}
+                      onPress={() => setSettleEmp(emp)}
+                    />
+                  ) : null}
                   {canEdit ? (
                     <>
                       {EMPLOYEE_CARD_WORK_ACTIONS.map((action) => (
@@ -2562,6 +2581,57 @@ export function PersonnelScreen() {
           loading={busy}
           onPress={saveMovesTask}
         />
+      </B2BSheet>
+
+      <B2BSheet
+        visible={!!settleEmp}
+        title={settleEmp ? employeePayButtonLabel({ balance: balances[idOf(settleEmp)] }, balances[idOf(settleEmp)]) : "Öde"}
+        subtitle={settleEmp ? `${settleEmp.full_name} · maaş, mesai, prim, yemek, yol, avans` : undefined}
+        onClose={() => setSettleEmp(null)}
+        testID="employee-settle-sheet"
+      >
+        {settleEmp ? (
+          <View style={{ gap: 8 }}>
+            <Muted>
+              Kalan alacak {fmtMoney(remainingDue(balances[idOf(settleEmp)]))}
+              {employeePayButtonDue({ balance: balances[idOf(settleEmp)] }, balances[idOf(settleEmp)])
+                ? ` · ödenecek ${fmtMoney(employeePayButtonDue({ balance: balances[idOf(settleEmp)] }, balances[idOf(settleEmp)]))}`
+                : ""}
+            </Muted>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+              {EMPLOYEE_CARD_PAY_ACTIONS.map((action) => (
+                <PayChip
+                  key={action.key}
+                  title={employeeCardActionTitle(action, settleEmp)}
+                  icon={employeeCardActionIcon(action.key)}
+                  color={EMP_ACTION_TONE[action.key]?.color || colors.primaryHover}
+                  bg={EMP_ACTION_TONE[action.key]?.bg || colors.emerald50}
+                  testID={`settle-${action.key}-${idOf(settleEmp)}`}
+                  onPress={() => {
+                    const emp = settleEmp;
+                    setSettleEmp(null);
+                    const fn = empActionHandlers[action.key as keyof typeof empActionHandlers];
+                    fn?.(emp);
+                  }}
+                />
+              ))}
+              <PayChip
+                title="Masraf"
+                icon={employeeCardActionIcon("expense")}
+                color="#9A3412"
+                bg="#FFF7ED"
+                testID={`settle-expense-${idOf(settleEmp)}`}
+                onPress={() => {
+                  const emp = settleEmp;
+                  setSettleEmp(null);
+                  setExpenseEmp(emp);
+                  setExpenseAmount("");
+                  setExpenseNote("");
+                }}
+              />
+            </View>
+          </View>
+        ) : null}
       </B2BSheet>
 
       <B2BSheet
