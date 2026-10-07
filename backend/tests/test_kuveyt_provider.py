@@ -1150,3 +1150,91 @@ def test_apply_linked_account_number_kuveyt_uses_ek_no():
     )
     assert dash["bank_account_number"] == "2"
 
+
+def test_err_text_read_timeout_includes_url():
+    req = httpx.Request("GET", "https://prep-gateway.kuveytturk.com.tr/v1/fx/rates")
+    exc = httpx.ReadTimeout("timed out", request=req)
+    text = bp._err_text(exc)
+    assert "ReadTimeout" in text
+    assert "prep-gateway.kuveytturk.com.tr" in text
+    assert "/v1/fx/rates" in text
+    bare = httpx.ReadTimeout("timed out")
+    assert "ReadTimeout" in bp._err_text(bare)
+    assert bp._err_text(bare) != ""  # never empty class-only surprise for UI
+
+
+def test_kuveyt_timeouts_are_generous():
+    assert float(bp._KUVEYT_TOKEN_TIMEOUT.read) >= 40
+    assert float(bp._KUVEYT_GATEWAY_TIMEOUT.read) >= 35
+    assert float(bp._KUVEYT_TOKEN_TIMEOUT.connect) >= 10
+
+
+def test_kuveyt_probe_fx_read_timeout_names_host():
+    """GET /v1/fx/rates ReadTimeout must not surface as bare 'Bağlantı kurulamadı: ReadTimeout'."""
+    pem = _rsa_pem()
+    conn = {
+        "provider": "kuveytturk", "mode": "sandbox",
+        "client_id": "cid", "client_secret": "sec", "private_key": pem,
+    }
+    token_resp = MagicMock()
+    token_resp.status_code = 200
+    token_resp.content = b'{"access_token":"tokTO"}'
+    token_resp.json.return_value = {"access_token": "tokTO"}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=token_resp)
+
+    async def _get(url, **kwargs):
+        req = httpx.Request("GET", url)
+        raise httpx.ReadTimeout("timed out", request=req)
+
+    mock_client.get = AsyncMock(side_effect=_get)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.test_connection(conn)
+
+    out = asyncio.run(_run())
+    assert out["ok"] is False
+    msg = out["message"]
+    assert "ReadTimeout" in msg or "zaman aşımı" in msg.lower() or "süresi aşıldı" in msg
+    assert "prep-gateway.kuveytturk.com.tr" in msg
+    assert "/v1/fx/rates" in msg
+    # bare class-name-only message is the bug we fix
+    assert msg.strip() != "Bağlantı kurulamadı: ReadTimeout"
+    assert "whitelist" in msg.lower() or "Denenen" in msg
+
+
+def test_kuveyt_token_timeout_retries_once():
+    conn = {
+        "provider": "kuveytturk", "mode": "sandbox",
+        "client_id": "cid", "client_secret": "sec",
+    }
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.content = b'{"access_token":"after-retry"}'
+    ok.json.return_value = {"access_token": "after-retry"}
+
+    calls = {"n": 0}
+
+    async def _post(url, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ReadTimeout("timed out", request=httpx.Request("POST", url))
+        return ok
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(side_effect=_post)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp._kuveyt_access_token(conn)
+
+    tok = asyncio.run(_run())
+    assert tok == "after-retry"
+    assert calls["n"] >= 2
+
