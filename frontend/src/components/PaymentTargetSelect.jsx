@@ -4,20 +4,28 @@ import { API_URL } from "../context/AuthContext";
 import { useDataRefresh } from "../utils/dataRefresh";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR");
-const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", okc_pos: "ÖKC POS", credit_card: "Kredi Kartı" };
+const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", okc_pos: "ÖKC POS", credit_card: "Kredi Kartı", customer_credit_card: "Müşteri Kredi Kartı" };
 /** Tahsilatta kredi kartı yok (backend reddeder); ödemede kart + ortaklar açık. */
 const COLLECT_TYPES = ["cash_box", "bank", "pos", "okc_pos"];
-const SPEND_TYPES = ["cash_box", "bank", "pos", "okc_pos", "credit_card"];
+const SPEND_TYPES = ["cash_box", "bank", "pos", "okc_pos", "credit_card", "customer_credit_card"];
 /** Eski kayıtlarda cash / kasa gibi alias'lar da kasa grubuna düşsün. */
 const TYPE_ALIAS = { cash: "cash_box", kasa: "cash_box", cashbox: "cash_box", nakit: "cash_box", cash_box: "cash_box" };
 const normalizeType = (t) => TYPE_ALIAS[String(t || "").toLowerCase()] || t;
+const spendGroupKey = (a) => (
+  normalizeType(a?.type) === "credit_card" && String(a?.card_owner || "company") === "customer"
+    ? "customer_credit_card"
+    : normalizeType(a?.type)
+);
 
 const bal = (a) => Number(a?.current_balance ?? a?.balance ?? 0);
 const accId = (a) => a?.id || a?._id || "";
 const accLabel = (a) => {
   const name = a.account_name || a.name || "Hesap";
   const bank = a.bank_name && a.bank_name !== name ? a.bank_name : "";
-  return `${bank ? `${bank} — ` : ""}${name} (${fmt(bal(a))} ₺)`;
+  const owner = a.linked_contact_name && String(a.card_owner || "") === "customer"
+    ? ` · ${a.linked_contact_name}`
+    : "";
+  return `${bank ? `${bank} — ` : ""}${name}${owner} (${fmt(bal(a))} ₺)`;
 };
 
 /** Company credit cards are spend-only; tahsilat goes to kasa / bank / POS. */
@@ -72,7 +80,9 @@ export const PaymentTargetSelect = ({
   useDataRefresh(refreshLive, { companyId, scopes: ["cash"] });
 
   const typeOrder = typeFilter
-    ? typeFilter
+    ? (typeFilter.includes("credit_card") && !typeFilter.includes("customer_credit_card")
+      ? [...typeFilter, "customer_credit_card"]
+      : typeFilter)
     : (collectableOnly
       ? COLLECT_TYPES
       : (includeCreditCards ? SPEND_TYPES : COLLECT_TYPES));
@@ -81,8 +91,8 @@ export const PaymentTargetSelect = ({
     : (includeCreditCards ? (liveAccounts || []) : collectableAccounts(liveAccounts));
   if (typeFilter) pool = pool.filter((a) => typeFilter.includes(normalizeType(a.type)));
   if (excludeIntegrated) pool = pool.filter((a) => !a.is_integrated);
-  const groups = typeOrder.map((t) => [t, pool.filter((a) => normalizeType(a.type) === t)]).filter(([, l]) => l.length);
-  const orphan = typeFilter ? [] : pool.filter((a) => !SPEND_TYPES.includes(normalizeType(a.type)));
+  const groups = typeOrder.map((t) => [t, pool.filter((a) => spendGroupKey(a) === t)]).filter(([, l]) => l.length);
+  const orphan = typeFilter ? [] : pool.filter((a) => !SPEND_TYPES.includes(spendGroupKey(a)));
 
   return (
     <select value={value || ""} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={`w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-medium ${className}`} data-testid={testId}>

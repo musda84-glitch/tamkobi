@@ -1,4 +1,6 @@
 """Entegre (API bağlı) banka hesaplarına manuel işlem engeli + kredi kartı tahsilat yasağı."""
+from typing import Any, Dict, Optional, Tuple
+
 from fastapi import HTTPException
 
 NO_COLLECT_MSG = "Kredi kartı tahsilat için kullanılamaz. Tahsilatı kasa, banka veya POS hesabına alın."
@@ -25,3 +27,48 @@ async def assert_collection_allowed(db, account_id):
     if acc and acc.get("type") == "credit_card":
         raise HTTPException(status_code=400, detail=NO_COLLECT_MSG)
     return acc
+
+
+def customer_card_owner_delta(
+    account: Optional[Dict[str, Any]],
+    tx_type: str,
+    amount: float,
+    payee_contact_id: Optional[str] = None,
+) -> Optional[Tuple[str, float]]:
+    """Müşteri kartından çıkışta cari sahibi bakiyesi: −tutar (alacak azalır / borç artar).
+
+    Returns (owner_contact_id, balance_delta) or None.
+    """
+    if not account or account.get("type") != "credit_card":
+        return None
+    if str(account.get("card_owner") or "company") != "customer":
+        return None
+    owner_id = account.get("linked_contact_id")
+    if not owner_id:
+        return None
+    if str(tx_type or "") != "outflow":
+        return None
+    if payee_contact_id and str(payee_contact_id) == str(owner_id):
+        return None
+    return str(owner_id), -float(amount or 0)
+
+
+async def apply_customer_card_owner_effect(
+    db,
+    account: Optional[Dict[str, Any]],
+    tx_type: str,
+    amount: float,
+    payee_contact_id: Optional[str] = None,
+    *,
+    sign: int = 1,
+) -> Optional[Dict[str, str]]:
+    """sign=+1 uygular, sign=-1 geri alır. owner_contact_id / name döner."""
+    hit = customer_card_owner_delta(account, tx_type, amount, payee_contact_id)
+    if not hit:
+        return None
+    owner_id, delta = hit
+    await db.contacts.update_one({"_id": owner_id}, {"$inc": {"balance": float(delta) * sign}})
+    return {
+        "owner_contact_id": owner_id,
+        "owner_contact_name": (account or {}).get("linked_contact_name") or "",
+    }
