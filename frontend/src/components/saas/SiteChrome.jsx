@@ -1,9 +1,9 @@
-
 import React from "react";
 import { Link } from "react-router-dom";
 import TamKobiMark from "../TamKobiMark";
+import { siteBrand } from "../../utils/siteBrand";
 
-export const siteBrand = (name) => (name || "TamKobi").trim() || "TamKobi";
+export { siteBrand };
 
 export const BrandMark = ({ name, testId = "site-brand" }) => {
   const brand = siteBrand(name);
@@ -21,7 +21,7 @@ export const BrandMark = ({ name, testId = "site-brand" }) => {
             <span className="block text-[9px] uppercase tracking-[0.18em] text-slate-400 font-semibold">KOBİ&apos;LER İÇİN TAM ERP</span>
           </>
         ) : (
-          <span className="font-bold text-lg tracking-tight">{brand}<span className="text-[#c6f432]">.com</span></span>
+          <span className="font-bold text-lg tracking-tight">{brand}</span>
         )}
       </span>
     </Link>

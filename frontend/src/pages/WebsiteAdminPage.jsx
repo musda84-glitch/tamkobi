@@ -42,7 +42,7 @@ export default function WebsiteAdminPage() {
           <div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-amber-400 font-semibold">Platform</div>
             <h1 className="text-2xl font-bold text-white" data-testid="system-section-title">Web Sitesi</h1>
-            <p className="text-xs text-slate-400 mt-1">tamkobi.com vitrini, paket yayını ve marka ayarları</p>
+            <p className="text-xs text-slate-400 mt-1">TamKobi vitrini, paket yayını ve marka ayarları</p>
           </div>
           {overview && (
             <div className="flex gap-2 text-xs">
