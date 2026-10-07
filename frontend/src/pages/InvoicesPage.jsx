@@ -34,6 +34,7 @@ import { WITHHOLDING_OPTIONS } from "../utils/invoiceWithholding";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { InvoiceGibBar } from "../components/InvoiceGibBar";
 import { isEinvoiceConfigured, supportsEDispatch } from "../utils/einvoiceIntegrator";
+import { findRetailContact, invoiceFormPatchForRetail, retailContactCreatePayload } from "../utils/barcodeSale";
 
 import {
   FileText,
@@ -47,6 +48,7 @@ import {
   X,
   CreditCard,
   Building2,
+  Store,
   Sparkles,
   QrCode,
   MoreVertical,
@@ -608,10 +610,30 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       toast.error(err.response?.data?.detail || "Gider pusulası kesilemedi.");
     }
   };
+  const pickRetailContact = async () => {
+    if (formData.invoice_type === "purchase") {
+      toast.error("Perakende (carisiz) yalnızca satış faturalarında kullanılır.");
+      return;
+    }
+    try {
+      let contact = findRetailContact(contacts);
+      if (!contact) {
+        const company_id = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+        const r = await axios.post(`${API_URL}/contacts`, retailContactCreatePayload(company_id));
+        contact = r.data;
+        setContacts((prev) => [contact, ...prev]);
+      }
+      setFormData((fd) => ({ ...fd, ...invoiceFormPatchForRetail(contact, fd) }));
+      toast.success("Perakende (carisiz) seçildi.");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Perakende cari oluşturulamadı.");
+    }
+  };
+
   const handleCreateInvoice = async (e) => {
     e.preventDefault();
     if (!formData.contact_id) {
-      toast.error("Lütfen bir cari seçiniz.");
+      toast.error("Lütfen bir cari seçiniz veya Perakende (carisiz) kullanın.");
       return;
     }
     try {
@@ -1797,7 +1819,22 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   </div>
                 </div>
                 <div>
-                  <label className="flex items-center justify-between font-semibold text-slate-700 mb-1">Cari Seçin <button type="button" onClick={() => setQuickContact((v) => !v)} className="text-emerald-700 hover:underline font-semibold" data-testid="inv-new-contact-btn">+ Yeni cari ekle</button></label>
+                  <label className="flex items-center justify-between font-semibold text-slate-700 mb-1 gap-2 flex-wrap">
+                    <span>Cari Seçin</span>
+                    <span className="flex items-center gap-2">
+                      {formData.invoice_type === "sales" && (
+                        <button
+                          type="button"
+                          onClick={pickRetailContact}
+                          className="inline-flex items-center gap-1 text-rose-700 hover:underline font-semibold"
+                          data-testid="inv-retail-contact-btn"
+                        >
+                          <Store className="w-3.5 h-3.5" /> Perakende (carisiz)
+                        </button>
+                      )}
+                      <button type="button" onClick={() => setQuickContact((v) => !v)} className="text-emerald-700 hover:underline font-semibold" data-testid="inv-new-contact-btn">+ Yeni cari ekle</button>
+                    </span>
+                  </label>
                   <SearchSelect
                     value={formData.contact_id}
                     valueLabel={formData.contact_name || ""}

@@ -1,4 +1,4 @@
-import { barcodeSaleLine, barcodeSalePayload, findRetailContact, pickCashAccount, RETAIL_CONTACT_NAME } from "./barcodeSale";
+import { barcodeSaleLine, barcodeSalePayload, findRetailContact, invoiceFormPatchForRetail, pickCashAccount, RETAIL_CONTACT_NAME, RETAIL_CONTACT_TAX, retailContactCreatePayload } from "./barcodeSale";
 
 test("barcodeSaleLine uses sale price and quantity", () => {
   const line = barcodeSaleLine({ id: "p1", name: "Kalem", sale_price: 100, vat_rate: 20, unit: "Adet" }, 2);
@@ -26,4 +26,14 @@ test("barcodeSalePayload perakende is paid sales invoice", () => {
 test("findRetailContact and pickCashAccount helpers", () => {
   expect(findRetailContact([{ id: "1", name: "Perakende Müşteri", tax_number_or_id: "11111111111" }])?.id).toBe("1");
   expect(pickCashAccount([{ id: "b", type: "bank" }, { id: "k", type: "cash_box", account_name: "Ana Kasa" }])?.id).toBe("k");
+});
+
+test("invoiceFormPatchForRetail sets e-archive for sales", () => {
+  const patch = invoiceFormPatchForRetail(
+    { id: "r1", name: RETAIL_CONTACT_NAME, tax_number_or_id: RETAIL_CONTACT_TAX },
+    { invoice_type: "sales", e_type: "e_invoice" },
+  );
+  expect(patch.contact_id).toBe("r1");
+  expect(patch.e_type).toBe("e_archive");
+  expect(retailContactCreatePayload("c1").tax_number_or_id).toBe(RETAIL_CONTACT_TAX);
 });
