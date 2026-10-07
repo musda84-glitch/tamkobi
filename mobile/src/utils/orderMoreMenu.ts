@@ -14,6 +14,7 @@ export type OrderMoreItem = {
   eType?: "e_invoice" | "e_archive";
   hint?: string;
   title?: string;
+  hidden?: boolean;
 };
 
 export type OrderMoreOrder = {
@@ -157,7 +158,7 @@ export function defaultMoreItems(
   ord?: OrderMoreOrder | null,
   opts: { eBelgeItems?: Array<{ eType: "e_invoice" | "e_archive"; label: string; testIdSuffix: string }> } = {},
 ): OrderMoreItem[] {
-  const rows = (ord?.is_invoiced ? (opts.eBelgeItems || []) : []).map((eb) => {
+  const rows: OrderMoreItem[] = (ord?.is_invoiced ? (opts.eBelgeItems || []) : []).map((eb) =>
     item(`ebelge_${eb.eType}`, eb.label, "receipt", {
       testId: `e-belge-${eb.testIdSuffix}`,
       section: "E-Belge (GİB)",
