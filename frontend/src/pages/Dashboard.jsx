@@ -7,6 +7,7 @@ import { OverviewPanel } from "../components/OverviewPanel";
 import { DemoContentCard } from "../components/DemoContentCard";
 import { PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { EdocPendingInbox } from "../components/EdocPendingInbox";
+import { MarketplaceQuestionsInbox } from "../components/MarketplaceQuestionsInbox";
 import { OpsAlertsPanel } from "../components/OpsAlertsPanel";
 import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
 import { useDashboardLayout } from "../hooks/useDashboardLayout";
@@ -151,6 +152,7 @@ export default function Dashboard() {
         <div className="space-y-4" data-testid="dashboard-alerts-left">
           <PersonnelRequestsInbox companyId={companyId} compact />
           <EdocPendingInbox companyId={companyId} />
+          <MarketplaceQuestionsInbox companyId={companyId} />
         </div>
         <OpsAlertsPanel companyId={companyId} />
       </div>

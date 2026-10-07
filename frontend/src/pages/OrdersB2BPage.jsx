@@ -194,8 +194,21 @@ export default function OrdersB2BPage() {
   const showMoreActions = feature("order_more_actions");
   const showPrices = feature("view_prices");
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const goContact = (ord) => navigate(ord.contact_id ? `/contacts?contact_id=${ord.contact_id}` : `/contacts?search=${encodeURIComponent(ord.customer_name || "")}`);
-  const [activeTab, setActiveTab] = useState("orders"); // orders | b2b_portal
+  const ORDER_TABS = useMemo(() => new Set(["orders", "b2b_portal", "claims", "cancelled", "questions", "mp_products", "pricing", "profit"]), []);
+  const tabFromUrl = searchParams.get("tab");
+  const [activeTab, setActiveTabState] = useState(() => (ORDER_TABS.has(tabFromUrl) ? tabFromUrl : "orders"));
+  useEffect(() => {
+    if (ORDER_TABS.has(tabFromUrl) && tabFromUrl !== activeTab) setActiveTabState(tabFromUrl);
+  }, [tabFromUrl, ORDER_TABS]); // eslint-disable-line react-hooks/exhaustive-deps -- sync URL → tab only
+  const setActiveTab = useCallback((tab) => {
+    setActiveTabState(tab);
+    const next = new URLSearchParams(searchParams);
+    if (tab && tab !== "orders") next.set("tab", tab);
+    else next.delete("tab");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   const [orders, setOrders] = useState([]);
   const [notifyOrder, setNotifyOrder] = useState(null);
   const [printShareOrder, setPrintShareOrder] = useState(null);
@@ -544,7 +557,6 @@ export default function OrdersB2BPage() {
     }
   };
   const [editTpl, setEditTpl] = useState(false);
-  const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => { if (searchParams.get("new") === "1") setNewOrder(true); }, [searchParams]);
   const closeNewOrder = useCallback(() => {
     setNewOrder(false);
