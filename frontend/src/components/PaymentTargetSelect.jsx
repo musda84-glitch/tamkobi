@@ -112,6 +112,8 @@ export const PaymentTargetSelect = ({
   let pool = collectableOnly
     ? collectableAccounts(liveAccounts)
     : (includeCreditCards ? (liveAccounts || []) : collectableAccounts(liveAccounts));
+  // Havuz kasası virman/ödeme kaynağı değil — cari virmanda «müşteri kartı ile» kullanılır.
+  pool = pool.filter((a) => !a.is_customer_card_pool);
   if (typeFilter) pool = pool.filter((a) => typeFilter.includes(normalizeType(a.type)));
   if (excludeIntegrated) pool = pool.filter((a) => !a.is_integrated);
   const groups = typeOrder.map((t) => [t, pool.filter((a) => spendGroupKey(a) === t)]).filter(([, l]) => l.length);

@@ -142,7 +142,8 @@ export default function BankingPage() {
     source_account_id: "",
     target_account_id: "",
     amount: "",
-    description: "Hesaplar arası transfer (Virman)"
+    description: "Hesaplar arası transfer (Virman)",
+    via_customer_card: false,
   });
 
   const loadBankingData = useCallback(async ({ silent = false } = {}) => {
@@ -200,26 +201,32 @@ export default function BankingPage() {
       const company_id = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       const isCard = newAccount.type === "credit_card";
       const isCustomerCard = isCard && newAccount.card_owner === "customer";
-      if (isCustomerCard && !newAccount.linked_contact_id) {
-        toast.error("Müşteri kredi kartı için cari seçin.");
-        return;
-      }
       const last4 = String(newAccount.card_last4 || "").replace(/\D/g, "").slice(-4);
-      const payload = {
-        type: newAccount.type,
-        bank_name: newAccount.bank_name,
-        account_name: newAccount.account_name,
-        currency: newAccount.currency || "TRY",
-        current_balance: isCard ? -Math.abs(Number(newAccount.current_balance || 0)) : Number(newAccount.current_balance || 0),
-      };
-      if (isCard) {
+      const payload = isCustomerCard
+        ? {
+            type: "credit_card",
+            card_owner: "customer",
+            is_customer_card_pool: true,
+            bank_name: "Müşteri Kartları",
+            account_name: "Müşteri Kredi Kartları",
+            currency: "TRY",
+            current_balance: 0,
+          }
+        : {
+            type: newAccount.type,
+            bank_name: newAccount.bank_name,
+            account_name: newAccount.account_name,
+            currency: newAccount.currency || "TRY",
+            current_balance: isCard ? -Math.abs(Number(newAccount.current_balance || 0)) : Number(newAccount.current_balance || 0),
+          };
+      if (isCard && !isCustomerCard) {
         payload.card_holder = (newAccount.card_holder || "").trim() || null;
         payload.card_last4 = last4 || null;
         payload.card_expiry = (newAccount.card_expiry || "").trim() || null;
         payload.card_limit = newAccount.card_limit === "" || newAccount.card_limit == null ? null : Number(newAccount.card_limit);
-        payload.card_owner = isCustomerCard ? "customer" : "company";
-        payload.linked_contact_id = isCustomerCard ? newAccount.linked_contact_id : null;
-      } else {
+        payload.card_owner = "company";
+        payload.linked_contact_id = null;
+      } else if (!isCard) {
         payload.iban = newAccount.iban;
         payload.account_number = newAccount.account_number;
         if (newAccount.type === "pos" || newAccount.type === "okc_pos") {
@@ -245,7 +252,7 @@ export default function BankingPage() {
         const created = (await axios.post(`${API_URL}/banking/accounts`, { company_id, ...payload })).data;
         toast.success(
           isCustomerCard
-            ? "Müşteri kredi kartı kaydedildi. Tedarikçi ödemelerinde seçebilirsiniz."
+            ? "Müşteri Kredi Kartları kasası hazır. Cari virmanda «müşteri kredi kartı ile» seçin."
             : isCard
               ? "Kart hesabı kaydedildi. Ekstreyi AI ile yükleyebilirsiniz."
               : "Banka/Kasa hesabı başarıyla eklendi.",
@@ -254,7 +261,7 @@ export default function BankingPage() {
         setEditingAccount(null);
         setNewAccount(emptyAccountForm);
         await bumpCashData();
-        if (isCard) setStmtAccount({ ...created, id: created.id || created._id });
+        if (isCard && !isCustomerCard) setStmtAccount({ ...created, id: created.id || created._id });
       }
     } catch (err) {
       toast.error(err.response?.data?.detail || "Hesap kaydedilemedi.");
@@ -322,11 +329,12 @@ export default function BankingPage() {
         source_account_id: virmanForm.source_account_id,
         target_account_id: virmanForm.target_account_id,
         amount: Number(virmanForm.amount),
-        description: virmanForm.description
+        description: virmanForm.description,
+        via_customer_card: Boolean(virmanForm.via_customer_card),
       });
       toast.success(res.data.message);
       setShowVirmanModal(false);
-      setVirmanForm({ ...virmanForm, amount: "" });
+      setVirmanForm({ ...virmanForm, amount: "", via_customer_card: false });
       await bumpCashData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Virman işlemi gerçekleştirilemedi.");
@@ -495,7 +503,7 @@ export default function BankingPage() {
                 )}
                 {g.type === "customer_credit_card" && (
                   <div className="text-[10px] font-bold text-rose-800 bg-rose-50 border border-rose-200 rounded-md px-2 py-0.5 w-fit">
-                    Müşteri kartı · cari bakiyesi · virman / tedarikçi ödemesi
+                    Cari virman · müşteri kredi kartı ile işaretlenen hareketler
                   </div>
                 )}
                 <div>
@@ -576,7 +584,9 @@ export default function BankingPage() {
                     {isCard && (
                       <div className={`text-[10px] font-bold rounded-md px-2 py-0.5 w-fit border ${isCustomerCard ? "text-rose-800 bg-rose-50 border-rose-200" : "text-fuchsia-800 bg-fuchsia-50 border-fuchsia-200"}`} data-testid={`card-no-collect-${accId}`}>
                         {isCustomerCard
-                          ? `Müşteri kartı · ${acc.linked_contact_name || "cari"} · virman / tedarikçi ödemesi`
+                          ? (acc.is_customer_card_pool
+                            ? "Cari virman · müşteri kredi kartı ile işaretlenen hareketler"
+                            : `Müşteri kartı · ${acc.linked_contact_name || "cari"}`)
                           : "Şirket kartı · tahsilat kapalı · masraf / ekstre"}
                       </div>
                     )}
@@ -732,7 +742,7 @@ export default function BankingPage() {
                 accounts={accounts}
                 contacts={contacts}
                 value={virmanForm.source_account_id}
-                onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v })}
+                onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v, via_customer_card: String(v || "").startsWith("contact:") || String(virmanForm.target_account_id || "").startsWith("contact:") ? virmanForm.via_customer_card : false })}
                 testId="virman-source"
                 label="Kaynak (Çıkış)"
                 includePartners
@@ -743,12 +753,27 @@ export default function BankingPage() {
                 accounts={accounts}
                 contacts={contacts}
                 value={virmanForm.target_account_id}
-                onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v })}
+                onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v, via_customer_card: String(virmanForm.source_account_id || "").startsWith("contact:") || String(v || "").startsWith("contact:") ? virmanForm.via_customer_card : false })}
                 testId="virman-target"
                 label="Hedef (Giriş)"
                 includePartners
                 excludeIntegrated
               />
+              {(String(virmanForm.source_account_id || "").startsWith("contact:") || String(virmanForm.target_account_id || "").startsWith("contact:")) && (
+                <label className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50/50 p-3 cursor-pointer" data-testid="virman-via-customer-card">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={Boolean(virmanForm.via_customer_card)}
+                    onChange={(e) => setVirmanForm({ ...virmanForm, via_customer_card: e.target.checked })}
+                    data-testid="virman-via-customer-card-input"
+                  />
+                  <span>
+                    <span className="font-semibold text-rose-900">Müşteri kredi kartı ile virman yapıldı</span>
+                    <span className="block text-[11px] text-rose-800/90 mt-0.5">Hareket Müşteri Kredi Kartları kasasında listelenir.</span>
+                  </span>
+                </label>
+              )}
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Transfer Tutarı (₺)</label>
@@ -839,23 +864,15 @@ export default function BankingPage() {
                   <option value="customer_credit_card">Müşteri Kredi Kartı</option>
                 </select>
               </div>
-              {newAccount.type === "credit_card" && newAccount.card_owner === "customer" && (
-                <div data-testid="customer-card-contact-field">
-                  <label className="block font-semibold text-slate-700 mb-1">Kart Sahibi Müşteri (Cari)</label>
-                  <SearchSelect
-                    value={newAccount.linked_contact_id}
-                    onChange={(id) => setNewAccount({ ...newAccount, linked_contact_id: id || "" })}
-                    options={contacts}
-                    getLabel={(c) => c.name}
-                    getSub={(c) => c.tax_number_or_id}
-                    placeholder="Müşteri ara…"
-                    testId="customer-card-contact-select"
-                  />
-                  <p className="mt-1 text-[11px] text-fuchsia-800">
-                    Bu kartla tedarikçiye ödeme yapınca tutar hem tedarikçi borcuna hem müşteri cari bakiyesine işlenir.
+              {newAccount.type === "credit_card" && newAccount.card_owner === "customer" ? (
+                <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-3 space-y-1" data-testid="customer-card-pool-hint">
+                  <p className="text-[11px] font-semibold text-rose-900">Müşteri Kredi Kartları kasası</p>
+                  <p className="text-[11px] text-rose-800/90">
+                    Kart / cari bilgisi girilmez. Cari virmanda «Müşteri kredi kartı ile virman yapıldı» işaretlenince hareketler bu kasada görünür.
                   </p>
                 </div>
-              )}
+              ) : (
+              <>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">{newAccount.type === "okc_pos" ? "Marka / Kurum" : "Banka / Kurum Adı"}</label>
                 <input
@@ -1060,6 +1077,8 @@ export default function BankingPage() {
                 />
                 {editingAccount && <p className="text-[10px] text-slate-400 mt-1">Bakiye hareketlerle değişir; düzeltmede değiştirilmez.</p>}
               </div>
+              </>
+              )}
               <div className="flex justify-end gap-2 pt-2 border-t">
                 <button
                   type="button"
@@ -1073,7 +1092,11 @@ export default function BankingPage() {
                   className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold"
                   data-testid="save-account-btn"
                 >
-                  {editingAccount ? "Değişiklikleri Kaydet" : "Hesabı Kaydet"}
+                  {editingAccount
+                    ? "Değişiklikleri Kaydet"
+                    : (newAccount.type === "credit_card" && newAccount.card_owner === "customer")
+                      ? "Kasayı Oluştur"
+                      : "Hesabı Kaydet"}
                 </button>
               </div>
             </form>

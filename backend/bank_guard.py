@@ -1,9 +1,13 @@
 """Entegre (API bağlı) banka hesaplarına manuel işlem engeli + kredi kartı tahsilat yasağı."""
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from fastapi import HTTPException
 
 NO_COLLECT_MSG = "Kredi kartı tahsilat için kullanılamaz. Tahsilatı kasa, banka veya POS hesabına alın."
+CUSTOMER_CARD_POOL_BANK = "Müşteri Kartları"
+CUSTOMER_CARD_POOL_NAME = "Müşteri Kredi Kartları"
 
 
 def parse_payment_target(value: Optional[str]) -> Tuple[str, str]:
@@ -16,12 +20,44 @@ def parse_payment_target(value: Optional[str]) -> Tuple[str, str]:
     return "account", raw
 
 
+def is_customer_card_pool(account: Optional[Dict[str, Any]]) -> bool:
+    return bool(account and account.get("type") == "credit_card" and account.get("is_customer_card_pool"))
+
+
 def is_customer_card(account: Optional[Dict[str, Any]]) -> bool:
+    """Per-cari müşteri kartı (havuz değil)."""
     if not account or account.get("type") != "credit_card":
+        return False
+    if account.get("is_customer_card_pool"):
         return False
     if str(account.get("card_owner") or "company") != "customer":
         return False
     return bool(account.get("linked_contact_id"))
+
+
+async def ensure_customer_card_pool(db, company_id: str) -> Dict[str, Any]:
+    """Şirket başına tek «Müşteri Kredi Kartları» kasası — cari virman hareketleri burada görünür."""
+    if not company_id:
+        raise HTTPException(status_code=400, detail="Şirket gerekli.")
+    existing = await db.bank_accounts.find_one({"company_id": company_id, "is_customer_card_pool": True})
+    if existing:
+        return existing
+    doc = {
+        "_id": str(uuid.uuid4()),
+        "company_id": company_id,
+        "type": "credit_card",
+        "bank_name": CUSTOMER_CARD_POOL_BANK,
+        "account_name": CUSTOMER_CARD_POOL_NAME,
+        "currency": "TRY",
+        "current_balance": 0.0,
+        "card_owner": "customer",
+        "is_customer_card_pool": True,
+        "linked_contact_id": None,
+        "linked_contact_name": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.bank_accounts.insert_one(doc)
+    return doc
 
 
 async def get_connection_for_account(db, account_id):
