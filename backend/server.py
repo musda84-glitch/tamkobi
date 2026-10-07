@@ -10813,9 +10813,15 @@ async def create_leave(req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Bitiş tarihi başlangıçtan önce olamaz.")
     days = float(req.get("days") or ((end - start).days + 1))
     leave_type = req.get("type", "annual")
-    remaining = emp.get("annual_leave_days", 14) - emp.get("used_leave_days", 0)
-    if leave_type == "annual" and days > remaining:
-        raise HTTPException(status_code=400, detail=f"Yetersiz yıllık izin bakiyesi. Kalan: {remaining} gün.")
+    if leave_type == "annual":
+        existing = await db.leave_requests.find({"employee_id": emp["_id"]}).to_list(500)
+        bal = attendance.compute_leave_balance(emp, existing)
+        if days > bal["available"] + 1e-9:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Yetersiz yıllık izin bakiyesi. Kalan: {bal['available']:g} gün"
+                + (f" ({bal['pending_days']:g} gün bekleyen talep var)." if bal["pending_days"] else "."),
+            )
     doc = {"_id": str(uuid.uuid4()), "company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": leave_type,
            "start_date": req["start_date"], "end_date": req["end_date"], "days": days, "reason": req.get("reason", ""), "status": "pending",
            "decided_at": None, "created_at": datetime.now(timezone.utc).isoformat()}
@@ -10823,11 +10829,8 @@ async def create_leave(req: Dict[str, Any]):
     return clean_doc(doc)
 
 async def _restore_approved_annual_leave(leave: dict):
-    if leave.get("status") == "approved" and leave.get("type") == "annual":
-        try:
-            days = float(leave.get("days") or 0)
-        except (TypeError, ValueError):
-            days = 0.0
+    if leave.get("status") == "approved" and attendance.is_annual_leave(leave):
+        days = attendance._leave_days_num(leave)
         if days:
             await db.employees.update_one({"_id": leave["employee_id"]}, {"$inc": {"used_leave_days": -days}})
 
@@ -10840,8 +10843,8 @@ async def decide_leave(leave_id: str, req: Dict[str, Any]):
     status_val = req.get("status")
     if status_val not in ("approved", "rejected"):
         raise HTTPException(status_code=400, detail="Geçersiz karar.")
-    if status_val == "approved" and leave.get("type") == "annual":
-        await db.employees.update_one({"_id": leave["employee_id"]}, {"$inc": {"used_leave_days": leave["days"]}})
+    if status_val == "approved" and attendance.is_annual_leave(leave):
+        await db.employees.update_one({"_id": leave["employee_id"]}, {"$inc": {"used_leave_days": float(leave.get("days") or 0)}})
     await db.leave_requests.update_one({"_id": leave_id}, {"$set": {"status": status_val, "decided_at": datetime.now(timezone.utc).isoformat(), "decision_note": req.get("note", "")}})
     return clean_doc(await db.leave_requests.find_one({"_id": leave_id}))
 
@@ -16394,7 +16397,14 @@ async def employee_card(emp_id: str):
     docs = clean_docs(await db.files.find({"entity": "employee", "entity_id": emp_id, "is_deleted": False}).sort("created_at", -1).to_list(200))
     user = await db.users.find_one({"$or": [{"employee_id": emp_id}, {"_id": emp.get("user_id") or "-"}]})
     invite = await db.user_invites.find_one({"employee_id": emp_id, "accepted_at": None})
-    used = sum(l.get("days", 0) for l in leaves if l.get("type") == "annual" and l.get("status") == "approved")
+    leave_bal = attendance.compute_leave_balance(emp, leaves)
+    # Denormalize drift: karttaki kullanılan ile employee.used_leave_days uyuşmazsa düzelt.
+    if abs(float(emp.get("used_leave_days") or 0) - float(leave_bal["used"])) > 0.001:
+        await db.employees.update_one(
+            {"_id": emp_id},
+            {"$set": {"used_leave_days": leave_bal["used"]}},
+        )
+        emp["used_leave_days"] = leave_bal["used"]
     company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
     schedule = attendance.merge_schedule(company, emp)
     att_sum = attendance.summarize(att)
@@ -16423,7 +16433,7 @@ async def employee_card(emp_id: str):
     if invite_payload:
         invite_payload["role_name"] = role_names.get(invite_payload.get("role"), invite_payload.get("role"))
     return {"employee": clean_doc(emp), "payrolls": payrolls, "leaves": leaves, "bonuses": bonuses,
-            "leave_balance": {**attendance.leave_year_balance({**emp, "used_leave_days": used or emp.get("used_leave_days", 0)}), "pending": sum(1 for l in leaves if l.get("status") == "pending")},
+            "leave_balance": leave_bal,
             "attendance": {"month": month, **att_sum},
             "overtime": {"hours": ot["overtime_hours"], "weekday_hours": ot["weekday_hours"], "holiday_hours": ot["holiday_hours"],
                          "amount": ot["amount"], "method": ot["method"], "weekday_rate": ot["weekday_rate"], "holiday_rate": ot["holiday_rate"]},
@@ -16641,9 +16651,7 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
     bonuses = clean_docs(await db.bonus_payments.find({"employee_id": emp_id}).sort("created_at", -1).to_list(100))
     leaves = clean_docs(await db.leave_requests.find({"employee_id": emp_id}).sort("start_date", -1).to_list(100))
     att_rows = await db.attendance.find({"employee_id": emp_id, "date": {"$regex": f"^{month}"}}).to_list(100)
-    used = sum(l.get("days", 0) for l in leaves if l.get("type") == "annual" and l.get("status") == "approved")
-    annual = emp.get("annual_leave_days", 14)
-    used_n = used or emp.get("used_leave_days", 0)
+    leave_bal = attendance.compute_leave_balance(emp, leaves)
 
     tasks, work_orders_all = await _employee_assigned_work(company_id, emp_id)
     work_orders = [
@@ -16700,10 +16708,7 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
         "compensation": compensation,
         "attendance": attendance.summarize(att_rows),
         "leaves": leaves[:20],
-        "leave_balance": {
-            "annual": annual, "used": used_n, "remaining": annual - used_n,
-            "pending": sum(1 for l in leaves if l.get("status") == "pending"),
-        },
+        "leave_balance": leave_bal,
         "payrolls": payroll_public,
         "bonuses": bonus_public,
         "balance": await _employee_receivable(emp, payrolls, bonuses, month),
