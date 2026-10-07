@@ -149,12 +149,17 @@ def test_frontend_wires_travist_jsencrypt():
     util = (root / "frontend/src/utils/jsencryptKuveyt.js").read_text(encoding="utf-8")
     pkg = (root / "frontend/package.json").read_text(encoding="utf-8")
     assert "github.com/travist/jsencrypt" in panel
+    assert "travistidwell.com/jsencrypt/demo" in panel
+    assert "KuveytTurk/SignatureGenerator2048" in panel
     assert "generateJsencryptKeyPair" in panel
     assert "conn-jsencrypt-generate-btn" in panel
     assert "API Market" in panel
-    assert "getPublicKey" in util
-    assert "default_key_size: 2048" in util
-    assert "getPrivateKey" in util
+    assert "GoLive Talep Yönetimi" in panel
+    # Golive: 2048-bit RSA; üretim Web Crypto / node-forge (JSEncrypt.signSha256 uyumlu PKCS1).
+    assert "KEY_BITS = 2048" in util
+    assert "generateJsencryptKeyPair" in util
+    assert "BEGIN" in util
+    assert "selfSignedCrtFromPrivatePem" in util
     assert "github:travist/jsencrypt" in pkg
 
 
