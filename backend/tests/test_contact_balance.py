@@ -20,6 +20,22 @@ def test_expense_tx_ignored():
     assert bank_tx_balance_delta(tx) == 0
 
 
+def test_virman_outflow_to_contact():
+    tx = {"contact_id": "c1", "type": "outflow", "amount": 80, "source": "virman", "category": "Virman Çıkışı (Cari)"}
+    assert bank_tx_balance_delta(tx) == 80
+
+
+def test_account_transfer_with_contact_display_ignored():
+    tx = {
+        "contact_id": "c1",
+        "type": "transfer",
+        "amount": 50,
+        "customer_card": True,
+        "source": "virman",
+    }
+    assert bank_tx_balance_delta(tx) == 0
+
+
 def test_cancelled_invoice_zero():
     assert invoice_balance_delta({"invoice_type": "sales", "status": "cancelled", "grand_total": 900}) == 0
 

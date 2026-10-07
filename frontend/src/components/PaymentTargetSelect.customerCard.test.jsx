@@ -18,6 +18,11 @@ beforeEach(() => {
   document.body.appendChild(host);
   axios.get.mockImplementation((url) => {
     if (String(url).includes("/banking/partners")) return Promise.resolve({ data: [] });
+    if (String(url).includes("/contacts")) {
+      return Promise.resolve({
+        data: [{ id: "cnt-1", name: "Acme Ltd", type: "customer", balance: 1200 }],
+      });
+    }
     if (String(url).includes("/banking/accounts")) {
       return Promise.resolve({
         data: [
@@ -60,4 +65,19 @@ test("spend select groups customer credit cards separately", async () => {
   expect(html).toContain("Müşteri Kredi Kartı");
   expect(html).toContain("Ayşe Yılmaz");
   expect(html).toContain("value=\"cc-cu\"");
+});
+
+test("virman select lists caris when includeContacts", async () => {
+  await act(async () => {
+    createRoot(host).render(
+      <PaymentTargetSelect companyId="c1" value="" onChange={() => {}} includePartners={false} includeContacts />,
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const html = host.innerHTML;
+  expect(html).toContain("Cariler");
+  expect(html).toContain("Acme Ltd");
+  expect(html).toContain("value=\"contact:cnt-1\"");
 });

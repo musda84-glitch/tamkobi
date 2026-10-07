@@ -5,7 +5,7 @@ import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { ErrorBanner, Field, H1, Muted, PrimaryButton, Screen } from "../components/kit";
 import { colors } from "../theme";
-import { validateVirman, virmanSelectGroups, type BankAccount, type Partner } from "../utils/finance";
+import { validateVirman, virmanSelectGroups, type BankAccount, type ContactLite, type Partner } from "../utils/finance";
 import { n } from "../components/chips";
 
 export function BankingVirmanScreen() {
@@ -13,6 +13,7 @@ export function BankingVirmanScreen() {
   const canEdit = can("/banking", "edit");
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [contacts, setContacts] = useState<ContactLite[]>([]);
   const [source, setSource] = useState("");
   const [target, setTarget] = useState("");
   const [amount, setAmount] = useState("");
@@ -22,12 +23,14 @@ export function BankingVirmanScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [rows, pts] = await Promise.all([
+      const [rows, pts, cts] = await Promise.all([
         get<BankAccount[]>(client, "/banking/accounts", { company_id: companyId }),
         get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
+        get<ContactLite[]>(client, "/contacts", { company_id: companyId, lite: "1" }).catch(() => []),
       ]);
       setAccounts(rows || []);
       setPartners(pts || []);
+      setContacts(Array.isArray(cts) ? cts : []);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err, "Hesaplar yüklenemedi."));
@@ -36,7 +39,7 @@ export function BankingVirmanScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const pool = useMemo(() => virmanSelectGroups(accounts, partners), [accounts, partners]);
+  const pool = useMemo(() => virmanSelectGroups(accounts, partners, contacts), [accounts, partners, contacts]);
 
   const save = async () => {
     const invalid = validateVirman(source, target, amount);
@@ -62,14 +65,14 @@ export function BankingVirmanScreen() {
   return (
     <Screen>
       <H1>Virman</H1>
-      <Muted>Kasa, banka, POS ve ortaklar arasında transfer. Entegre (canlı) bankalar virmana kapalı.</Muted>
+      <Muted>Kasa, banka, POS, cari ve ortaklar arasında transfer. Entegre (canlı) bankalar virmana kapalı.</Muted>
       <ErrorBanner message={error} />
       <GroupedSelect
         label="Kaynak hesap"
         testID="virman-source-select"
         value={source}
         onChange={setSource}
-        emptyLabel="Hesap / ortak seçin"
+        emptyLabel="Hesap / ortak / cari seçin"
         groups={pool}
       />
       <GroupedSelect
@@ -77,7 +80,7 @@ export function BankingVirmanScreen() {
         testID="virman-target-select"
         value={target}
         onChange={setTarget}
-        emptyLabel="Hesap / ortak seçin"
+        emptyLabel="Hesap / ortak / cari seçin"
         groups={pool}
       />
       <Field label="Tutar" testID="virman-amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />

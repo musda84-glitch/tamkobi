@@ -51,8 +51,22 @@ const ACCOUNT_GROUPS = [
   { type: "cash_box", badge: "Kasalar", unit: "Kasa", icon: Wallet, card: "bg-emerald-50/60 border-emerald-200", iconBox: "bg-emerald-100 text-emerald-700", badgeCls: "text-emerald-700 bg-emerald-100", border: "border-emerald-200/60" },
   { type: "pos", badge: "POS Hesapları", unit: "POS", icon: CreditCard, card: "bg-purple-50/60 border-purple-200", iconBox: "bg-purple-100 text-purple-700", badgeCls: "text-purple-700 bg-purple-100", border: "border-purple-200/60" },
   { type: "okc_pos", badge: "ÖKC POS Cihazları", unit: "ÖKC", icon: Cpu, card: "bg-teal-50/60 border-teal-200", iconBox: "bg-teal-100 text-teal-700", badgeCls: "text-teal-700 bg-teal-100", border: "border-teal-200/60" },
-  { type: "credit_card", badge: "Kredi Kartları", unit: "Kart", icon: CreditCard, card: "bg-fuchsia-50/60 border-fuchsia-200", iconBox: "bg-fuchsia-100 text-fuchsia-700", badgeCls: "text-fuchsia-700 bg-fuchsia-100", border: "border-fuchsia-200/60" }
+  { type: "credit_card", badge: "Kredi Kartları", unit: "Kart", icon: CreditCard, card: "bg-fuchsia-50/60 border-fuchsia-200", iconBox: "bg-fuchsia-100 text-fuchsia-700", badgeCls: "text-fuchsia-700 bg-fuchsia-100", border: "border-fuchsia-200/60" },
+  { type: "customer_credit_card", badge: "Müşteri Kartları", unit: "Kart", icon: CreditCard, card: "bg-rose-50/60 border-rose-200", iconBox: "bg-rose-100 text-rose-700", badgeCls: "text-rose-700 bg-rose-100", border: "border-rose-200/60" }
 ];
+
+const accountGroupType = (a) => (
+  a?.type === "credit_card" && String(a?.card_owner || "company") === "customer"
+    ? "customer_credit_card"
+    : (a?.type || "bank")
+);
+
+const txAccountLabel = (tx) => {
+  if (tx?.type === "transfer" && tx.target_account_name) {
+    return `${tx.account_name || "Hesap"} → ${tx.target_account_name}`;
+  }
+  return tx?.account_name || "—";
+};
 
 const emptyAccountForm = {
   type: "bank",
@@ -144,13 +158,23 @@ export default function BankingPage() {
       setTransactions(transactions);
       setContacts(asContactList(contacts));
       setPartnerSummary(psRes.data);
-      // Virman: entegre olmayan tüm hesaplar (kasa/banka/POS/kredi kartı). Ortaklar hesap değil, listede yok.
+      // Virman: entegre olmayan tüm hesaplar (kasa/banka/POS/kredi kartı). Cari URL'den gelirse kaynak olur.
       const manual = accRes.data.filter((a) => !a.is_integrated);
-      if (manual.length >= 2) {
-        setVirmanForm(prev => ({
+      const contactVirmanId = searchParams.get("contact_id");
+      if (contactVirmanId) {
+        const firstAcc = manual[0] ? (manual[0].id || manual[0]._id) : "";
+        setVirmanForm((prev) => ({
           ...prev,
-          source_account_id: manual[0].id || manual[0]._id,
-          target_account_id: manual[1].id || manual[1]._id
+          source_account_id: `contact:${contactVirmanId}`,
+          target_account_id: prev.target_account_id && !String(prev.target_account_id).startsWith("contact:")
+            ? prev.target_account_id
+            : firstAcc,
+        }));
+      } else if (manual.length >= 2) {
+        setVirmanForm((prev) => ({
+          ...prev,
+          source_account_id: prev.source_account_id || manual[0].id || manual[0]._id,
+          target_account_id: prev.target_account_id || manual[1].id || manual[1]._id
         }));
       }
     } catch (err) {
@@ -158,7 +182,7 @@ export default function BankingPage() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [companyId]);
+  }, [companyId, searchParams]);
   useEffect(() => { loadBankingData(); }, [loadBankingData]);
   const refreshCashSilent = useCallback(() => {
     setCashTick((n) => n + 1);
@@ -308,15 +332,18 @@ export default function BankingPage() {
   const totalLiquidity = accounts.filter((a) => a.type !== "credit_card").reduce((sum, a) => sum + (a.current_balance || 0), 0);
   const selectedAccount = accounts.find(a => (a.id || a._id) === selectedAccountId);
   const grouped = ACCOUNT_GROUPS.map((g) => {
-    const items = accounts.filter((a) => a.type === g.type);
+    const items = accounts.filter((a) => accountGroupType(a) === g.type);
     return { ...g, items, total: items.reduce((s, a) => s + (a.current_balance || 0), 0) };
   }).filter((g) => g.items.length > 0);
   const openGroup = grouped.find((g) => g.type === selectedGroup) || null;
   const groupIds = openGroup ? openGroup.items.map((a) => a.id || a._id) : null;
+  const matchesAccount = (tx, id) => (
+    tx.account_id === id || tx.target_account_id === id || tx.customer_card_account_id === id
+  );
   const visibleTx = selectedAccountId
-    ? transactions.filter(tx => tx.account_id === selectedAccountId || tx.target_account_id === selectedAccountId)
+    ? transactions.filter((tx) => matchesAccount(tx, selectedAccountId))
     : groupIds
-      ? transactions.filter(tx => groupIds.includes(tx.account_id) || groupIds.includes(tx.target_account_id))
+      ? transactions.filter((tx) => groupIds.some((id) => matchesAccount(tx, id)))
       : transactions;
   const simulatedVisible = visibleTx.filter((tx) => tx.source === "bank_sync" && tx.is_simulated);
   const txInflow = visibleTx.filter(tx => tx.type === 'inflow' || (tx.type === 'transfer' && tx.target_account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
@@ -459,7 +486,12 @@ export default function BankingPage() {
                 </div>
                 {g.type === "credit_card" && (
                   <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit">
-                    Tahsilat kapalı · şirket / müşteri kartı · tedarikçi ödemesi
+                    Tahsilat kapalı · şirket kartı · masraf / ekstre
+                  </div>
+                )}
+                {g.type === "customer_credit_card" && (
+                  <div className="text-[10px] font-bold text-rose-800 bg-rose-50 border border-rose-200 rounded-md px-2 py-0.5 w-fit">
+                    Müşteri kartı · cari bakiyesi · virman / tedarikçi ödemesi
                   </div>
                 )}
                 <div>
@@ -478,7 +510,7 @@ export default function BankingPage() {
               </div>
               <div className={`pt-3 border-t ${g.border} flex items-end justify-between gap-2`}>
                 <div>
-                  <div className="text-[10px] text-slate-400 uppercase font-semibold">{g.type === "credit_card" ? "Kart bakiyesi" : "Toplam Bakiye"}</div>
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">{g.type === "credit_card" || g.type === "customer_credit_card" ? "Kart bakiyesi" : "Toplam Bakiye"}</div>
                   <div className="text-xl font-bold text-slate-900 tracking-tight">{money(g.total)} ₺</div>
                 </div>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isOpen ? "bg-emerald-600 text-white" : "bg-white/80 text-slate-500"}`}>{isOpen ? "Hesaplar ↓" : "Hesapları Gör"}</span>
@@ -499,6 +531,7 @@ export default function BankingPage() {
               const accId = acc.id || acc._id;
               const isSelected = selectedAccountId === accId;
               const isCard = acc.type === "credit_card";
+              const isCustomerCard = isCard && acc.card_owner === "customer";
               return (
                 <div
                   key={accId}
@@ -537,9 +570,9 @@ export default function BankingPage() {
                       </div>
                     )}
                     {isCard && (
-                      <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit" data-testid={`card-no-collect-${accId}`}>
-                        {acc.card_owner === "customer"
-                          ? `Müşteri kartı · ${acc.linked_contact_name || "cari"} · tedarikçi ödemesi`
+                      <div className={`text-[10px] font-bold rounded-md px-2 py-0.5 w-fit border ${isCustomerCard ? "text-rose-800 bg-rose-50 border-rose-200" : "text-fuchsia-800 bg-fuchsia-50 border-fuchsia-200"}`} data-testid={`card-no-collect-${accId}`}>
+                        {isCustomerCard
+                          ? `Müşteri kartı · ${acc.linked_contact_name || "cari"} · virman / tedarikçi ödemesi`
                           : "Şirket kartı · tahsilat kapalı · masraf / ekstre"}
                       </div>
                     )}
@@ -637,7 +670,7 @@ export default function BankingPage() {
                 pagedTx.map((tx) => (
                   <tr key={tx.id || tx._id} className="hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_40px]" data-testid={`tx-row-${tx.id || tx._id}`}>
                     <td className="px-4 py-2.5 text-slate-500 font-mono">{tx.date}</td>
-                    <td className="px-4 py-2.5 font-semibold text-slate-900">{tx.account_name}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-900">{txAccountLabel(tx)}</td>
                     <td className="px-4 py-2.5">
                       <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md font-semibold ${
                         tx.type === 'inflow' ? 'bg-emerald-50 text-emerald-700' : tx.type === 'outflow' ? 'bg-rose-50 text-rose-700' : 'bg-indigo-50 text-indigo-700'
@@ -646,7 +679,7 @@ export default function BankingPage() {
                         {tx.category || tx.type}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-slate-700">{tx.description} {tx.source === 'bank_sync' && <span className={`ml-1 text-[9px] px-1 rounded font-bold ${tx.is_simulated ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{tx.is_simulated ? 'SİMÜLE' : 'BANKA'}</span>}{tx.source === 'bank_sync' && tx.match_status === 'matched' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`tx-matched-${tx.id}`}>{matchStatusLabel(tx)}</span>}{tx.source === 'bank_sync' && tx.match_status === 'unmatched' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}{tx.source === 'bank_match' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}</td>
+                    <td className="px-4 py-2.5 text-slate-700">{tx.description}{tx.contact_name && !String(tx.description || "").includes(tx.contact_name) ? ` · ${tx.contact_name}` : ""}{tx.owner_contact_name && tx.owner_contact_name !== tx.contact_name ? ` · kart sahibi ${tx.owner_contact_name}` : ""} {tx.customer_card && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`tx-customer-card-${tx.id || tx._id}`}>MÜŞTERİ KARTI</span>}{tx.source === 'bank_sync' && <span className={`ml-1 text-[9px] px-1 rounded font-bold ${tx.is_simulated ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{tx.is_simulated ? 'SİMÜLE' : 'BANKA'}</span>}{tx.source === 'bank_sync' && tx.match_status === 'matched' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`tx-matched-${tx.id}`}>{matchStatusLabel(tx)}</span>}{tx.source === 'bank_sync' && tx.match_status === 'unmatched' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}{tx.source === 'bank_match' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}</td>
                     <td className={`px-4 py-2.5 text-right font-bold ${
                       tx.type === 'inflow' ? 'text-emerald-600' : tx.type === 'outflow' ? 'text-rose-600' : 'text-indigo-600'
                     }`}>
@@ -689,7 +722,7 @@ export default function BankingPage() {
               </button>
             </div>
             <form onSubmit={handleExecuteVirman} className="space-y-3 text-xs">
-              <p className="text-[11px] text-slate-500">Kasa, banka, POS, kredi kartı ve ortaklar arasında transfer. Hesap→ortak para çekişi, ortak→hesap sermaye girişi olarak işlenir.</p>
+              <p className="text-[11px] text-slate-500">Kasa, banka, POS, kredi kartı, cari ve ortaklar arasında transfer. Hesap→cari ödeme, cari→hesap tahsilat; müşteri kartı virmanı Müşteri Kartları kasasında görünür.</p>
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Kaynak Hesap (Çıkış)</label>
                 <PaymentTargetSelect
@@ -699,6 +732,7 @@ export default function BankingPage() {
                   onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v })}
                   testId="virman-source-select"
                   includePartners
+                  includeContacts
                   excludeIntegrated
                 />
               </div>
@@ -712,6 +746,7 @@ export default function BankingPage() {
                   onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v })}
                   testId="virman-target-select"
                   includePartners
+                  includeContacts
                   excludeIntegrated
                 />
               </div>
