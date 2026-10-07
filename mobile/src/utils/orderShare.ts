@@ -30,6 +30,7 @@ import {
   type PrintProduct,
   type PrintTemplate,
 } from "./orderPrint";
+import { shouldUseIntegratorPdf } from "./printIntegratorPdf";
 
 export type CargoLabelMeta = {
   label_url?: string | null;
@@ -151,15 +152,25 @@ async function printHtmlDocument(
   const document = printDocumentHtml(title, bodyHtml, page, paper);
   const size = page === "thermal" ? THERMAL_LABEL_PX : paperPrintSize(paper);
   if (Platform.OS === "web" && openPrintHtml(title, bodyHtml, { page, paper })) return true;
+  // A4 forms: prefer PDF share on native (Print.printAsync + remote imgs often hangs on Android).
+  // Thermal labels: keep printer dialog first (small HTML, no remote images).
+  const preferPdf = Platform.OS !== "web" && page === "a4";
+  if (preferPdf) {
+    try {
+      if (await htmlToPdfFile(document, filename, size)) return true;
+    } catch {
+      /* try printer dialog */
+    }
+  }
   try {
     if (await printHtmlNative(document, size)) return true;
   } catch {
-    /* PDF file */
+    /* PDF fallback */
   }
   try {
     if (await htmlToPdfFile(document, filename, size)) return true;
   } catch {
-    /* last resort */
+    /* fail */
   }
   return false;
 }
@@ -173,24 +184,24 @@ export async function printBusinessForm(
 ): Promise<boolean> {
   const printCompany = await enrichPrintCompany(client, company);
   const template = await loadPrintTemplate(client, printCompany, docType);
-  const products = await loadPrintProducts(client, doc, printCompany);
+  const omitRemoteImages = Platform.OS !== "web";
+  const products = omitRemoteImages ? {} : await loadPrintProducts(client, doc, printCompany);
   const contactBalance = isOrderQuoteType(docType)
     ? await loadContactBalance(client, printCompany, doc)
     : null;
   const paper = printPageSize(template.paper);
   const html = orderFormHtml(doc, printCompany, {
-    template,
+    template: { ...template, show_images: omitRemoteImages ? false : template.show_images },
     products,
-    mediaBase: client?.baseUrl ? normalizeApiBase(client.baseUrl) : undefined,
+    mediaBase: omitRemoteImages ? undefined : (client?.baseUrl ? normalizeApiBase(client.baseUrl) : undefined),
     docType,
     contactBalance,
     paymentPlan: extras?.paymentPlan,
+    omitRemoteImages,
   });
   const label = formTitle(docType, doc);
   const filename = `${safePrintFilename(printDocFileBase(docType, doc), docType)}.pdf`;
   if (await printHtmlDocument(label, html, "a4", filename, paper)) return true;
-  const shared = await Share.share({ message: orderFormText(doc, printCompany), title: label }).catch(() => null);
-  if (shared) return true;
   throw new Error("Yazdırılamadı.");
 }
 
@@ -224,6 +235,20 @@ export async function printInvoiceForm(
   company?: PrintCompany | null,
   client?: ApiClient | null,
 ): Promise<boolean> {
+  if (client && shouldUseIntegratorPdf("invoice", invoice)) {
+    const id = idOf(invoice);
+    if (id) {
+      try {
+        const blob = await fetchApiBlob(client, `/invoices/${id}/pdf?require_integrator=1`);
+        if (blob) {
+          const ok = await printOfficialBlob(blob, safePrintFilename(String(invoice.invoice_number || id), "invoice"));
+          if (ok) return true;
+        }
+      } catch {
+        /* fall through to local HTML form */
+      }
+    }
+  }
   const docType: PrintDocType = invoice.invoice_type === "dispatch" ? "dispatch" : "invoice";
   const paymentPlan = docType === "invoice" ? await loadInvoicePaymentPlan(client, invoice) : null;
   return printBusinessForm(invoiceAsPrintOrder(invoice), company, client, docType, { paymentPlan });

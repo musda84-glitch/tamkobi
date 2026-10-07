@@ -14,6 +14,11 @@ import { createInvoiceButtonLabel, INVOICE_FILTERS, invoiceListSubtitle, invoice
 import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
 import { fmtMoney, idOf } from "../utils/money";
 
+const EXTRA_FILTERS = [
+  { key: "outgoing_e", label: "Giden e" },
+  { key: "incoming_e", label: "Gelen e" },
+] as const;
+
 const FILTER_ICONS: Record<string, { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
   all: { icon: "apps-outline", color: colors.slate800 },
   sales: { icon: "receipt-outline", color: colors.primary },
@@ -23,7 +28,20 @@ const FILTER_ICONS: Record<string, { icon: keyof typeof Ionicons.glyphMap; color
   export: { icon: "airplane-outline", color: "#0284C7" },
   import: { icon: "download-outline", color: "#7C3AED" },
   dispatch: { icon: "cube-outline", color: "#D97706" },
+  outgoing_e: { icon: "arrow-up-circle-outline", color: "#059669" },
+  incoming_e: { icon: "arrow-down-circle-outline", color: "#2563EB" },
 };
+
+function isOutgoingE(inv: Invoice): boolean {
+  if (!["e_invoice", "e_archive", "e_export"].includes(String(inv.e_type || ""))) return false;
+  if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return false;
+  return inv.invoice_type !== "purchase" || inv.direction === "outgoing";
+}
+
+function isIncomingE(inv: Invoice): boolean {
+  if (inv.direction === "incoming" || inv.source === "edoc_inbox" || inv.edoc_id) return true;
+  return inv.invoice_type === "purchase" && ["e_invoice", "e_archive", "e_export"].includes(String(inv.e_type || ""));
+}
 
 export function InvoicesScreen() {
   const { client, companyId, can } = useAuth();
@@ -36,10 +54,12 @@ export function InvoicesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
 
+  const apiType = type === "outgoing_e" || type === "incoming_e" ? undefined : (type === "all" ? undefined : type);
+
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const data = await get<Invoice[]>(client, "/invoices", { company_id: companyId, type: type === "all" ? undefined : type });
+      const data = await get<Invoice[]>(client, "/invoices", { company_id: companyId, type: apiType });
       setRows(data || []);
       setError(null);
     } catch (err) {
@@ -47,7 +67,7 @@ export function InvoicesScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [client, companyId, type]);
+  }, [client, companyId, apiType]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -89,68 +109,90 @@ export function InvoicesScreen() {
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const list = s
-      ? rows.filter((i) => [i.invoice_number, i.contact_name].some((v) => String(v || "").toLowerCase().includes(s)))
-      : [...rows];
+    let list = [...rows];
+    if (type === "outgoing_e") list = list.filter(isOutgoingE);
+    else if (type === "incoming_e") list = list.filter(isIncomingE);
+    if (s) {
+      list = list.filter((i) => [i.invoice_number, i.contact_name, i.gib_status, i.gib_tracking_id]
+        .some((v) => String(v || "").toLowerCase().includes(s)));
+    }
     list.sort((a, b) => compareInvoiceActivity(a, b, "desc"));
-    return list.slice(0, 80);
-  }, [q, rows]);
+    return list;
+  }, [q, rows, type]);
+
+  const filterTabs = [...INVOICE_FILTERS, ...EXTRA_FILTERS];
 
   return (
     <Screen
       onRefresh={load}
       refreshing={refreshing}
-      stickyTop={<Field label="Ara" value={q} onChangeText={setQ} placeholder="Fatura no / cari" testID="inv-search" />}
-    >
-      {canEdit ? (
-        <PrimaryButton
-          title={createInvoiceButtonLabel(type)}
-          onPress={() => go("InvoiceNew", { type })}
-          color={colors.primary}
-          testID="create-new-invoice-btn"
-        />
-      ) : null}
-      <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-        {INVOICE_FILTERS.map((f) => {
-          const meta = FILTER_ICONS[f.key] || FILTER_ICONS.all;
-          const active = type === f.key;
-          return (
-            <Pressable
-              key={f.key}
-              testID={`filter-tab-${f.key}`}
-              accessibilityLabel={f.label}
-              onPress={() => setType(f.key)}
-              style={{ width: "25%", alignItems: "center", gap: 4, paddingVertical: 6 }}
-            >
-              <View
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: active ? meta.color : colors.slate100,
-                }}
-              >
-                <Ionicons name={meta.icon} size={20} color={active ? "#fff" : colors.muted} />
+      stickyTop={(
+        <>
+          <Field label="Ara" value={q} onChangeText={setQ} placeholder="Fatura no / cari / GİB" testID="inv-search" />
+          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+            {filterTabs.map((f) => {
+              const meta = FILTER_ICONS[f.key] || FILTER_ICONS.all;
+              const active = type === f.key;
+              return (
+                <Pressable
+                  key={f.key}
+                  testID={`filter-tab-${f.key}`}
+                  accessibilityLabel={f.label}
+                  onPress={() => setType(f.key)}
+                  style={{ width: "20%", alignItems: "center", gap: 4, paddingVertical: 6 }}
+                >
+                  <View
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: active ? meta.color : colors.slate100,
+                    }}
+                  >
+                    <Ionicons name={meta.icon} size={18} color={active ? "#fff" : colors.muted} />
+                  </View>
+                  <Text numberOfLines={1} style={{ fontSize: 9, fontWeight: "800", color: active ? meta.color : colors.muted }}>
+                    {f.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {canEdit ? (
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <PrimaryButton
+                  title={createInvoiceButtonLabel(type === "outgoing_e" || type === "incoming_e" ? "all" : type)}
+                  onPress={() => go("InvoiceNew", { type: type === "outgoing_e" || type === "incoming_e" ? "all" : type })}
+                  color={colors.primary}
+                  testID="create-new-invoice-btn"
+                />
               </View>
-              <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: "800", color: active ? meta.color : colors.muted }}>
-                {f.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+              <View style={{ flex: 1 }}>
+                <PrimaryButton
+                  title="Gelen kutu"
+                  onPress={() => go("EdocInbox")}
+                  color={colors.indigo}
+                  testID="inv-edoc-inbox-btn"
+                />
+              </View>
+            </View>
+          ) : null}
+        </>
+      )}
+    >
       <ErrorBanner message={error} />
       {!filtered.length ? (
         <Empty
           icon="document-outline"
           title="Fatura yok"
-          hint={canEdit ? "Yeni fatura kesin veya taslak düzenleyin." : "Aramayı veya filtreyi değiştirin."}
+          hint={canEdit ? "Yeni fatura kesin veya gelen kutudan çekin." : "Aramayı veya filtreyi değiştirin."}
         />
       ) : (
         <>
-          {canEdit || canDelete ? <Muted>Silmek veya e-faturayı iptal etmek için satırı sola kaydırın.</Muted> : null}
+          <Muted>{filtered.length} fatura · silmek / iptal için sola kaydırın</Muted>
           {filtered.map((inv) => {
             const iid = idOf(inv);
             const danger = invoiceRowDangerAction(inv);

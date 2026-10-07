@@ -81,16 +81,20 @@ describe("orderShare native print", () => {
     (globalThis as { fetch: typeof fetch }).fetch = jest.fn() as typeof fetch;
   });
 
-  it("prints the sipariş formu as HTML, not a text share", async () => {
+  it("prints the sipariş formu as PDF share first (native), not a text share", async () => {
     const ok = await printOrderForm(order, { name: "Matek" }, null);
     expect(ok).toBe(true);
-    expect(printAsync).toHaveBeenCalledTimes(1);
-    const html = lastPrint().html || "";
+    expect(printToFileAsync).toHaveBeenCalledTimes(1);
+    const html = String(printToFileAsync.mock.calls[0]?.[0]?.html || "");
     expect(html).toContain("SİPARİŞ FORMU");
     expect(html).toContain("11573451170");
     expect(html).toContain("<!doctype html>");
     expect(html).not.toContain("window.print");
-    expect(lastPrint().width).toBe(595);
+    expect(html).not.toContain("<img ");
+    expect(shareAsync).toHaveBeenCalledWith(
+      "file:///cache/out.pdf",
+      expect.objectContaining({ mimeType: "application/pdf" }),
+    );
     expect(rnShare).not.toHaveBeenCalled();
   });
 
@@ -130,23 +134,18 @@ describe("orderShare native print", () => {
       items: [{ product_name: "Koltuk", quantity: 1, unit_price: 1000, total: 1000 }],
     }, { name: "Matek" }, null);
     expect(ok).toBe(true);
-    const html = lastPrint().html || "";
+    const html = String(printToFileAsync.mock.calls[0]?.[0]?.html || "");
     expect(html).toContain("FATURA");
     expect(html).toContain("SF-1");
     expect(html).toContain("data-print=\"invoice\"");
-    expect(html).toContain("Resim");
     expect(rnShare).not.toHaveBeenCalled();
   });
 
-  it("falls back to a PDF file share, still not text, if the printer dialog fails", async () => {
-    printAsync.mockRejectedValue(new Error("no printer"));
+  it("falls back to printer dialog if PDF file share fails", async () => {
+    printToFileAsync.mockRejectedValue(new Error("pdf fail"));
     const ok = await printOrderForm(order, { name: "Matek" }, null);
     expect(ok).toBe(true);
-    expect(printToFileAsync).toHaveBeenCalled();
-    expect(shareAsync).toHaveBeenCalledWith(
-      "file:///cache/out.pdf",
-      expect.objectContaining({ mimeType: "application/pdf" }),
-    );
+    expect(printAsync).toHaveBeenCalled();
     expect(rnShare).not.toHaveBeenCalled();
   });
 });

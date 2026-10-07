@@ -34,6 +34,7 @@ import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
 import { printInvoiceForm } from "../utils/orderShare";
+import { integratorPdfKindLabel, shouldUseIntegratorPdf } from "../utils/printIntegratorPdf";
 
 function confirmAction(title: string, msg: string, onYes: () => void) {
   if (Platform.OS === "web") {
@@ -297,13 +298,19 @@ export function InvoiceDetailScreen() {
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
       <PrimaryButton
-        title="Yazdır"
+        title={shouldUseIntegratorPdf("invoice", inv) ? `${integratorPdfKindLabel(inv)} yazdır` : "Yazdır"}
         testID="inv-print"
         color={colors.slate800}
         loading={busy}
         onPress={() => run(async () => {
           await printInvoiceForm(inv, activeCompany, client);
-          setMessage(inv.invoice_type === "dispatch" ? "İrsaliye yazdırmaya gönderildi." : "Fatura yazdırmaya gönderildi.");
+          setMessage(
+            shouldUseIntegratorPdf("invoice", inv)
+              ? `${integratorPdfKindLabel(inv)} PDF yazdırmaya / paylaşıma gönderildi.`
+              : inv.invoice_type === "dispatch"
+                ? "İrsaliye yazdırmaya gönderildi."
+                : "Fatura yazdırmaya gönderildi.",
+          );
         }, "Yazdırılamadı.")}
       />
       <Card>

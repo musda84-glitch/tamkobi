@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
 import React, { useEffect, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { go } from "../nav";
@@ -110,7 +110,7 @@ function IconBtn({
 
 export function OrderActions({
   order,
-  compact: _compact = false,
+  compact = false,
   onMessage,
   onError,
   onChanged,
@@ -156,7 +156,12 @@ export function OrderActions({
   const oid = idOf(order);
   const num = order.order_number || oid;
 
+  // List rows: skip N× contact overview fetches (major list lag). Detail screen loads flag.
   useEffect(() => {
+    if (compact) {
+      setContactFlag(null);
+      return;
+    }
     const cid = order.contact_id;
     if (!cid) {
       setContactFlag(null);
@@ -171,7 +176,7 @@ export function OrderActions({
       })
       .catch(() => { if (!cancelled) setContactFlag(null); });
     return () => { cancelled = true; };
-  }, [client, order.contact_id]);
+  }, [client, compact, order.contact_id]);
 
   const ensure = async () => {
     if (order.items?.length) return order;
@@ -898,16 +903,45 @@ export function OrderActions({
     ? "emerald"
     : "orange";
 
+  const printBtn: ActionDef = { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm };
+  const moreBtn: ActionDef | null = showMoreActions
+    ? { key: "more", label: "Diğer işlemler", icon: "ellipsis-vertical", tone: "slate", busyKey: "more", testID: `order-more-btn-${num}`, onPress: () => setMoreOpen(true) }
+    : null;
+
+  // List (compact): always keep Yazdır + Diğer visible — full toolbar overflows phones.
   const toolbar: ActionDef[] = isCartOrder
     ? [
+        printBtn,
         { key: "produce", label: "Eksik ürünleri üretime al", icon: "construct", tone: "orange", busyKey: "produce", testID: `order-produce-missing-${num}`, onPress: produceMissing },
         { key: "produceRecipe", label: produceTone === "emerald" ? "Üretime gönderildi" : "Üretim emri ver", icon: "business", tone: produceTone, busyKey: "produceRecipe", testID: `order-produce-btn-${num}`, onPress: produceOrderRecipe },
-        { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm },
+        ...(moreBtn ? [moreBtn] : []),
       ]
-    : [
+    : compact
+      ? [
+          printBtn,
+          ...(primary
+            ? [{
+                key: primary.id,
+                label: primary.label,
+                icon: "document-text" as const,
+                tone: "emerald" as const,
+                busyKey: "invoice",
+                testID: `order-primary-${num}`,
+                onPress: () => runMoreAction({ id: primary.id, label: primary.label, icon: "document-text", testId: primary.id, color: "#059669" }),
+              }]
+            : []),
+          ...(!order.cargo_tracking_number
+            ? [{ key: "cargo", label: "Kargola", icon: "car" as const, tone: "violet" as const, busyKey: "cargo", testID: `order-cargo-${oid}`, onPress: () => (showCargo ? openCargo() : openShip()) }]
+            : showCargoLabel
+              ? [{ key: "label", label: "Kargo etiketi", icon: "car" as const, tone: "teal" as const, busyKey: "label", testID: `order-label-${oid}`, onPress: printLabel }]
+              : []),
+          ...(moreBtn ? [moreBtn] : []),
+        ]
+      : [
     ...(showDelete
       ? [{ key: "delete", label: "Sil", icon: "trash" as const, tone: "rose" as const, busyKey: "delete", testID: `order-delete-${oid}`, onPress: remove }]
       : []),
+    printBtn,
     ...(primary
       ? [{
           key: primary.id,
@@ -938,22 +972,21 @@ export function OrderActions({
       ? [{ key: "approve", label: approveActionLabel(order), icon: "checkmark-circle" as const, tone: "emerald" as const, busyKey: "approve", testID: `order-approve-${oid}`, onPress: approve }]
       : []),
     { key: "produceRecipe", label: produceTone === "emerald" ? "Üretime gönderildi" : "Üretim emri ver", icon: "business", tone: produceTone as "emerald" | "orange", busyKey: "produceRecipe", testID: `order-produce-btn-${num}`, onPress: produceOrderRecipe },
-    { key: "print", label: "Yazdır", icon: "print", tone: printTone, busyKey: "print", testID: `print-order-btn-${num}`, onPress: printForm },
-    ...(showMoreActions
-      ? [{ key: "more", label: "Diğer işlemler", icon: "ellipsis-vertical" as const, tone: "slate" as const, busyKey: "more", testID: `order-more-btn-${num}`, onPress: () => setMoreOpen(true) }]
-      : []),
+    ...(moreBtn ? [moreBtn] : []),
   ];
 
   return (
     <>
-      <View
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
         testID={`order-actions-${num}`}
-        style={{ flexDirection: "row", alignItems: "center", flexWrap: "nowrap", gap: 4, paddingTop: 4, paddingBottom: 8 }}
+        contentContainerStyle={{ flexDirection: "row", alignItems: "center", gap: 4, paddingTop: 4, paddingBottom: 8, paddingRight: 8 }}
       >
         {toolbar.map((item) => (
           <IconBtn key={item.key} item={item} busy={busy} title={item.label} />
         ))}
-      </View>
+      </ScrollView>
       {busy ? <Muted>Hazırlanıyor…</Muted> : null}
 
       <B2BSheet
