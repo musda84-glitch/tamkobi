@@ -130,7 +130,7 @@ function ConnErrorBox({ connection, onEdit }) {
       <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg p-2.5 space-y-1.5" data-testid="conn-last-error-kuveyt-timeout">
         <div className="font-bold flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5 shrink-0" /> Banka yanıt vermedi (zaman aşımı / IP)</div>
         <p className="text-rose-700 leading-snug">
-          Canlı onay formunda yazdığınız sunucu IP’si dışından istek gelirse gateway engeller veya yanıt vermez. Testleri tanımlı üretim sunucusundan tetikleyin.
+          Identity veya Gateway zamanında yanıt vermedi. Canlı onay formundaki sunucu IP’si dışından istek gelirse gateway engeller; testleri tanımlı üretim sunucusundan tetikleyin.
         </p>
         {hosts.length > 0 && (
           <p className="text-rose-600 font-mono text-[10px] break-all">Denenen: {hosts.join(" · ")}</p>

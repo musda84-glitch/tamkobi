@@ -176,8 +176,32 @@ def has_credentials(conn: dict) -> bool:
 
 
 def _err_text(exc: BaseException) -> str:
+    """İnsan okunur hata; httpx zaman aşımında boş str(exc) → sınıf adı + istek URL’si."""
     msg = str(exc).strip()
+    if isinstance(exc, httpx.TimeoutException):
+        url = ""
+        try:
+            req = exc.request  # httpx: yoksa RuntimeError
+            url = str(getattr(req, "url", "") or "").strip()
+        except RuntimeError:
+            url = ""
+        if isinstance(exc, httpx.ReadTimeout):
+            kind = "yanıt süresi aşıldı (ReadTimeout)"
+        elif isinstance(exc, httpx.ConnectTimeout):
+            kind = "bağlantı süresi aşıldı (ConnectTimeout)"
+        elif isinstance(exc, httpx.WriteTimeout):
+            kind = "yazma süresi aşıldı (WriteTimeout)"
+        elif isinstance(exc, httpx.PoolTimeout):
+            kind = "havuz süresi aşıldı (PoolTimeout)"
+        else:
+            kind = msg or "zaman aşımı (Timeout)"
+        return f"{kind}: {url}" if url else kind
     return msg or exc.__class__.__name__
+
+
+# Kuveyt Identity/Gateway bazen yavaş; 20–25s ReadTimeout kullanıcıya çıplak "ReadTimeout" bırakıyordu.
+_KUVEYT_TOKEN_TIMEOUT = httpx.Timeout(45.0, connect=15.0)
+_KUVEYT_GATEWAY_TIMEOUT = httpx.Timeout(40.0, connect=15.0)
 
 
 def _basic_auth_header(client_id: str, client_secret: str) -> str:
@@ -791,11 +815,23 @@ async def _kuveyt_post_token(
     last_err = None
     last_code = 0
     for attempt in attempts:
-        try:
-            resp = await client.post(url, data=attempt["data"], headers=attempt["headers"])
-        except Exception as e:
-            last_err = f"{url} [{attempt['label']}] → {_err_text(e)}"
-            last_code = 0
+        resp = None
+        for try_i in range(2):  # tek yeniden deneme (yavaş Identity)
+            try:
+                resp = await client.post(url, data=attempt["data"], headers=attempt["headers"])
+                break
+            except httpx.TimeoutException as e:
+                last_err = f"{url} [{attempt['label']}] → {_err_text(e)}"
+                last_code = 0
+                if try_i == 0:
+                    continue
+                resp = None
+            except Exception as e:
+                last_err = f"{url} [{attempt['label']}] → {_err_text(e)}"
+                last_code = 0
+                resp = None
+                break
+        if resp is None:
             continue
         last_code = resp.status_code
         if resp.status_code < 400:
@@ -842,7 +878,8 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
     saw_invalid_client = False
     tried_urls: List[str] = []
     scope_list = list(scopes) if scopes is not None else _kuveyt_scope_candidates(conn)
-    async with httpx.AsyncClient(timeout=25) as client:
+    saw_timeout = False
+    async with httpx.AsyncClient(timeout=_KUVEYT_TOKEN_TIMEOUT) as client:
         for url in _kuveyt_token_urls(conn):
             tried_urls.append(url)
             for scope in scope_list:
@@ -855,6 +892,8 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
                     blob = err.lower()
                     if not primary_err:
                         primary_err = err
+                    if "timeout" in blob or "süresi aşıldı" in blob:
+                        saw_timeout = True
                     if "invalid_client" in blob:
                         saw_invalid_client = True
                         break
@@ -891,6 +930,12 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
 
     detail = primary_err or last_err
     hint = ""
+    if saw_timeout and not saw_invalid_client:
+        hosts = ", ".join(tried_urls[:4]) if tried_urls else "Identity"
+        hint = (
+            f" Identity zaman aşımı: {hosts}. "
+            "Sunucu çıkış IP’si banka whitelist’te mi ve prep-identity / idprep erişilebilir mi kontrol edin. "
+        )
     if saw_invalid_client:
         swaps = _kuveyt_cred_swap_hints(client_id, client_secret, api_key)
         hint = (
@@ -934,7 +979,7 @@ async def _kuveyt_refresh_user_token(conn: dict) -> str:
     if not refresh or not client_id or not client_secret:
         return ""
     for url in _kuveyt_token_urls(conn):
-        async with httpx.AsyncClient(timeout=25) as client:
+        async with httpx.AsyncClient(timeout=_KUVEYT_TOKEN_TIMEOUT) as client:
             try:
                 resp = await client.post(
                     url,
@@ -995,10 +1040,28 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
         headers = _kuveyt_headers(token, conn)
         last_probe = ""
         probe_ok = False
-        async with httpx.AsyncClient(timeout=20) as client:
+        timed_out: List[str] = []
+        async with httpx.AsyncClient(timeout=_KUVEYT_GATEWAY_TIMEOUT) as client:
             for base in _kuveyt_gateway_urls(conn):
                 url = f"{base}/v1/fx/rates"
-                resp = await client.get(url, headers=headers)
+                resp = None
+                for try_i in range(2):
+                    try:
+                        resp = await client.get(url, headers=headers)
+                        break
+                    except httpx.TimeoutException as e:
+                        last_probe = f"{url} → {_err_text(e)}"
+                        if try_i == 0:
+                            continue
+                        timed_out.append(url)
+                        resp = None
+                    except httpx.RequestError as e:
+                        last_probe = f"{url} → {_err_text(e)}"
+                        resp = None
+                        break
+                if resp is None:
+                    extra = f" ({last_probe})"
+                    continue
                 last_probe = f"{url} HTTP {resp.status_code}"
                 if resp.status_code in (401, 403):
                     detail = _api_error_detail(resp)
@@ -1043,6 +1106,14 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
                 extra = " GET /v1/fx/rates + RSA-SHA256 Signature doğrulandı."
                 probe_ok = True
                 break
+        if not probe_ok and timed_out:
+            raise RuntimeError(
+                "Kuveyt Türk gateway zaman aşımı (ReadTimeout). "
+                f"Denenen uçlar: {', '.join(timed_out)}. "
+                "Sandbox/Canlı için prep-gateway.kuveytturk.com.tr erişilebilir olmalı; "
+                "üretim çıkış IP’si banka whitelist’te değilse yanıt gelmez. "
+                f"Son: {last_probe[:180]}"
+            )
     sdk_host = _kuveyt_sdk_identity_host(conn)
     return {
         "ok": probe_ok,
@@ -1239,11 +1310,20 @@ async def fetch_kuveyt_fx_rates(conn: dict) -> tuple:
     if not pem:
         raise RuntimeError("Kuveyt Türk kurları için RSA private key (PKCS8 PEM) gerekli.")
     last = ""
-    async with httpx.AsyncClient(timeout=20) as client:
+    timed_out: List[str] = []
+    async with httpx.AsyncClient(timeout=_KUVEYT_GATEWAY_TIMEOUT) as client:
         for base in _kuveyt_gateway_urls(conn):
             url = f"{base}/v1/fx/rates"
             headers = _kuveyt_headers(token, conn)
-            resp = await client.get(url, headers=headers)
+            try:
+                resp = await client.get(url, headers=headers)
+            except httpx.TimeoutException as e:
+                timed_out.append(url)
+                last = f"GET {url} → {_err_text(e)}"
+                continue
+            except httpx.RequestError as e:
+                last = f"GET {url} → {_err_text(e)}"
+                continue
             last = f"GET {url} HTTP {resp.status_code}: {_api_error_detail(resp)}"
             if resp.status_code == 404:
                 continue
@@ -1263,6 +1343,10 @@ async def fetch_kuveyt_fx_rates(conn: dict) -> tuple:
             if rates:
                 return date_cls.today().isoformat(), rates, url
             last = f"GET {url} HTTP {resp.status_code}: kur satırı yok"
+    if timed_out:
+        raise RuntimeError(
+            f"Kuveyt Türk kurları zaman aşımı. Denenen: {', '.join(timed_out)}. {last[:220]}"
+        )
     raise RuntimeError(f"Kuveyt Türk kurları alınamadı. {last[:360]}")
 
 
@@ -1606,6 +1690,15 @@ async def test_connection(conn: dict) -> Dict[str, Any]:
     except httpx.HTTPStatusError as e:
         body = (e.response.text or "")[:120]
         return {"ok": False, "simulated": False, "message": f"Banka API hatası: HTTP {e.response.status_code} {body}".strip()}
+    except httpx.TimeoutException as e:
+        return {
+            "ok": False,
+            "simulated": False,
+            "message": (
+                f"Bağlantı kurulamadı: {_err_text(e)}. "
+                "İstek URL’si yanıt vermedi — banka host erişimi / whitelist kontrol edin."
+            ),
+        }
     except Exception as e:
         return {"ok": False, "simulated": False, "message": f"Bağlantı kurulamadı: {_err_text(e)}"}
 
