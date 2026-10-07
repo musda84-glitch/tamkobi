@@ -22,20 +22,23 @@ def _rsa_pem() -> str:
 def test_kuveyt_provider_identity_and_api_hosts():
     meta = bp.PROVIDERS["kuveytturk"]
     assert meta["sandbox_url"] == "https://prep-gateway.kuveytturk.com.tr"
-    assert meta["live_url"] == "https://gateway.kuveytturk.com.tr"
+    assert meta["live_url"] == "https://prep-gateway.kuveytturk.com.tr"
     assert meta["identity_sandbox_url"] == "https://prep-identity.kuveytturk.com.tr"
-    assert meta["identity_live_url"] == "https://identity.kuveytturk.com.tr"
+    assert meta["identity_live_url"] == "https://prep-identity.kuveytturk.com.tr"
     assert meta["token_path"] == "/connect/token"
     assert meta["legacy_identity_sandbox_url"] == "https://idprep.kuveytturk.com.tr"
     assert meta["legacy_identity_live_url"] == "https://id.kuveytturk.com.tr"
     assert meta["legacy_token_path"] == "/api/connect/token"
     assert meta["legacy_sandbox_url"] == "https://apitest.kuveytturk.com.tr/prep"
-    assert "private_key" in meta["fields"]
+    assert meta["fields"] == ["client_id", "client_secret", "api_key", "private_key"]
+    assert "access_token" not in meta["fields"]
+    assert "customer_number" not in meta["fields"]
+    assert "prep-identity.kuveytturk.com.tr" in meta["hint"]
+    assert "prep-gateway.kuveytturk.com.tr" in meta["hint"]
     assert "JSEncrypt" in meta["hint"]
     assert "travist/jsencrypt" in meta["hint"]
     assert "signSha256" in meta["hint"]
     assert "2048" in meta["hint"]
-    assert "RSA-SHA256" in meta["hint"] or "signSha256" in meta["hint"] or "JSEncrypt" in meta["hint"]
     assert "/v1/fx/rates" in meta["hint"]
     assert "/v3/accounts/{ekNo}/transactions" in meta["hint"]
     assert "itemCount" in meta["hint"]
@@ -50,21 +53,21 @@ def test_kuveyt_token_urls_sandbox_and_live():
     assert sand[0] == "https://idprep.kuveytturk.com.tr/api/connect/token"
     assert sand[1] == "https://prep-identity.kuveytturk.com.tr/connect/token"
     live = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "live"})
-    assert live[0] == "https://id.kuveytturk.com.tr/api/connect/token"
-    assert live[1] == "https://identity.kuveytturk.com.tr/connect/token"
+    assert live[0] == "https://prep-identity.kuveytturk.com.tr/connect/token"
+    assert live[1] == "https://id.kuveytturk.com.tr/api/connect/token"
     custom = bp._kuveyt_token_urls({
         "provider": "kuveytturk", "mode": "live",
-        "token_url": "https://identity.kuveytturk.com.tr/connect/token",
+        "token_url": "https://prep-identity.kuveytturk.com.tr/connect/token",
     })
-    assert custom[0] == "https://identity.kuveytturk.com.tr/connect/token"
-    assert custom.count("https://identity.kuveytturk.com.tr/connect/token") == 1
+    assert custom[0] == "https://prep-identity.kuveytturk.com.tr/connect/token"
+    assert custom.count("https://prep-identity.kuveytturk.com.tr/connect/token") == 1
     sdk = bp._kuveyt_normalize_token_url("https://id.kuveytturk.com.tr/connect/token")
     assert sdk == "https://id.kuveytturk.com.tr/api/connect/token"
 
 
 def test_kuveyt_base_url_prep_sandbox():
     assert bp._base_url({"provider": "kuveytturk", "mode": "sandbox"}) == "https://prep-gateway.kuveytturk.com.tr"
-    assert bp._base_url({"provider": "kuveytturk", "mode": "live"}) == "https://gateway.kuveytturk.com.tr"
+    assert bp._base_url({"provider": "kuveytturk", "mode": "live"}) == "https://prep-gateway.kuveytturk.com.tr"
 
 
 def test_kuveyt_query_string_order():
@@ -465,14 +468,14 @@ def test_kuveyt_token_auth_attempts_body_then_basic():
 def test_kuveyt_token_urls_oidc_connect_token():
     live = bp._kuveyt_token_urls({"provider": "kuveytturk", "mode": "live"})
     assert live == [
+        "https://prep-identity.kuveytturk.com.tr/connect/token",
         "https://id.kuveytturk.com.tr/api/connect/token",
-        "https://identity.kuveytturk.com.tr/connect/token",
     ]
     fixed = bp._kuveyt_token_urls({
         "provider": "kuveytturk", "mode": "live",
-        "token_url": "https://identity.kuveytturk.com.tr/api/connect/token",
+        "token_url": "https://prep-identity.kuveytturk.com.tr/api/connect/token",
     })
-    assert fixed[0] == "https://identity.kuveytturk.com.tr/connect/token"
+    assert fixed[0] == "https://prep-identity.kuveytturk.com.tr/connect/token"
     assert "https://id.kuveytturk.com.tr/api/connect/token" in fixed
 
 
@@ -481,7 +484,7 @@ def test_kuveyt_gateway_urls_include_iuysal_prep_host():
     assert sand[0] == "https://prep-gateway.kuveytturk.com.tr"
     assert sand[1] == "https://apitest.kuveytturk.com.tr/prep"
     live = bp._kuveyt_gateway_urls({"provider": "kuveytturk", "mode": "live"})
-    assert live[0] == "https://gateway.kuveytturk.com.tr"
+    assert live[0] == "https://prep-gateway.kuveytturk.com.tr"
     assert live[1] == "https://api.kuveytturk.com.tr"
 
 
@@ -608,9 +611,9 @@ def test_kuveyt_token_detects_live_sandbox_mismatch():
         assert "Sandbox" in msg or "prep-identity" in msg or "idprep" in msg
         assert "Mod=live" in msg
         urls = [c.args[0] for c in mock_client.post.await_args_list]
-        assert urls[0] == "https://id.kuveytturk.com.tr/api/connect/token"
-        assert "https://identity.kuveytturk.com.tr/connect/token" in urls
-        assert any("prep-identity" in u or "idprep" in u for u in urls)
+        assert urls[0] == "https://prep-identity.kuveytturk.com.tr/connect/token"
+        assert "https://id.kuveytturk.com.tr/api/connect/token" in urls
+        assert any("idprep" in u for u in urls)
         assert all("Authorization" not in c.kwargs["headers"] for c in mock_client.post.await_args_list)
 
 
@@ -646,7 +649,7 @@ def test_kuveyt_token_invalid_client_keeps_oauth_error_not_html_404():
         assert "<!DOCTYPE" not in msg
         assert "Api Anahtarı" in msg or "UUID" in msg or "secret≈uuid" in msg
         urls = [call.args[0] for call in mock_client.post.await_args_list]
-        assert "https://identity.kuveytturk.com.tr/connect/token" in urls
+        assert "https://prep-identity.kuveytturk.com.tr/connect/token" in urls
         assert "https://id.kuveytturk.com.tr/api/connect/token" in urls
 
 
@@ -704,7 +707,7 @@ def test_kuveyt_token_invalid_client_message_hints_api_key():
         msg = str(e)
         assert "invalid_client" in msg
         assert "Api Anahtarı" in msg or "Client Secret" in msg
-        assert "id.kuveytturk.com.tr" in msg or "identity.kuveytturk.com.tr" in msg
+        assert "id.kuveytturk.com.tr" in msg or "prep-identity.kuveytturk.com.tr" in msg
         assert "/connect/token" in msg
 
 
@@ -807,7 +810,7 @@ def test_fetch_kuveyt_signed_transactions():
     assert post_kwargs["data"].get("scope") == "public"
     get_calls = mock_client.get.await_args_list
     tx_url = get_calls[0].args[0]
-    assert tx_url == "https://gateway.kuveytturk.com.tr/v3/accounts/6/transactions"
+    assert tx_url == "https://prep-gateway.kuveytturk.com.tr/v3/accounts/6/transactions"
     assert "beginDate=" not in tx_url
     assert all("/v4/" not in c.args[0] for c in get_calls)
     assert all("/v1/accounts" not in c.args[0] for c in get_calls)
@@ -1030,7 +1033,7 @@ def test_fetch_kuveyt_fx_rates_signed_get():
     iso, rates, url = asyncio.run(_run())
     assert rates["USD"]["rate"] == 40.5
     assert url.endswith("/v1/fx/rates")
-    assert mock_client.get.await_args.args[0] == "https://gateway.kuveytturk.com.tr/v1/fx/rates"
+    assert mock_client.get.await_args.args[0] == "https://prep-gateway.kuveytturk.com.tr/v1/fx/rates"
     assert mock_client.get.await_args.kwargs["headers"]["Signature"]
     posted = [c.args[0] for c in mock_client.post.await_args_list]
     assert all("/v1/vpos/non3DPayment" not in u for u in posted)

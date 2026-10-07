@@ -24,12 +24,12 @@ import httpx
 PROVIDERS = {
     "kuveytturk": {
         "name": "Kuveyt Türk API Market",
-        # Resmi SDK (iuysal + Android): idprep|id /api/connect/token + apitest.../prep | api.kuveytturk.com.tr
-        # Gravitee API Market yedek: prep-identity|identity /connect/token + prep-gateway|gateway.
+        # Canlı (Postman / API Market): prep-identity + prep-gateway.
+        # Sandbox aynı Gravitee prep host’ları; SDK yedek idprep|id.
         "sandbox_url": "https://prep-gateway.kuveytturk.com.tr",
-        "live_url": "https://gateway.kuveytturk.com.tr",
+        "live_url": "https://prep-gateway.kuveytturk.com.tr",
         "identity_sandbox_url": "https://prep-identity.kuveytturk.com.tr",
-        "identity_live_url": "https://identity.kuveytturk.com.tr",
+        "identity_live_url": "https://prep-identity.kuveytturk.com.tr",
         "token_path": "/connect/token",
         "legacy_sandbox_url": "https://apitest.kuveytturk.com.tr/prep",
         "legacy_live_url": "https://api.kuveytturk.com.tr",
@@ -37,8 +37,8 @@ PROVIDERS = {
         "legacy_identity_live_url": "https://id.kuveytturk.com.tr",
         "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
-        "fields": ["client_id", "client_secret", "api_key", "private_key", "access_token", "refresh_token", "customer_number"],
-        "hint": "API Market abonelik (yalnız bunlar): GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions (Hesap Hareketleriniz V3: beginDate, endDate, itemCount; yanıt accountActivities), POST /v1/vpos/getMerchantOrderDetail, POST /v1/vpos/non3DPayment. Token: resmi SDK POST idprep|id /api/connect/token (client_credentials scope=public, body; Basic yok); Gravitee Identity yedek. RSA: travist/jsencrypt 2048-bit Private Key; Public Key’i portal uygulamaya yükleyin. İmza: JSEncrypt.signSha256(token+?query|json). Bağlantı testi fx/rates; hareket v3 ek no. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
+        "fields": ["client_id", "client_secret", "api_key", "private_key"],
+        "hint": "Canlı: https://prep-identity.kuveytturk.com.tr (token) + https://prep-gateway.kuveytturk.com.tr (API). Abonelik: GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions (beginDate/endDate/itemCount → accountActivities), POST /v1/vpos/getMerchantOrderDetail. Token: POST prep-identity /connect/token (client_credentials scope=public); SDK idprep/id yedek. RSA: travist/jsencrypt 2048-bit Private Key; Public Key portalde. İmza: JSEncrypt.signSha256. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -269,13 +269,17 @@ def _kuveyt_normalize_token_url(url: str) -> str:
 
 
 def _kuveyt_token_urls(conn: dict) -> List[str]:
-    """Resmi SDK Identity önce (idprep|id /api/connect/token); Gravitee yedek."""
+    """Canlı: Gravitee prep-identity önce (Postman); Sandbox: SDK idprep önce, Gravitee yedek."""
     urls: List[str] = []
     custom = (conn.get("token_url") or "").strip()
     if custom:
         urls.append(_kuveyt_normalize_token_url(custom))
-    urls.append(_kuveyt_sdk_identity_host(conn).rstrip("/") + _kuveyt_sdk_token_path())
-    urls.append(_kuveyt_identity_host(conn).rstrip("/") + _kuveyt_token_path())
+    gravitee = _kuveyt_identity_host(conn).rstrip("/") + _kuveyt_token_path()
+    sdk = _kuveyt_sdk_identity_host(conn).rstrip("/") + _kuveyt_sdk_token_path()
+    if _kuveyt_normalize_mode(conn) == "live":
+        urls.extend([gravitee, sdk])
+    else:
+        urls.extend([sdk, gravitee])
     seen = set()
     out = []
     for u in urls:
@@ -818,7 +822,7 @@ async def _kuveyt_post_token(
 
 
 async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -> str:
-    """Token: resmi SDK idprep|id /api/connect/token, sonra Gravitee /connect/token.
+    """Token: Canlı’da prep-identity /connect/token önce; Sandbox’ta idprep SDK önce.
 
     invalid_client bir host’ta diğer Identity ailesini durdurmaz (farklı OAuth sunucuları).
     404/HTML’de bir sonraki host denenir.
@@ -916,9 +920,9 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
         "Kuveyt Türk token alınamadı (Identity Server client_credentials)."
         f"{hint}"
         f"Mod={mode}; {fp}. "
-        "Token: POST resmi SDK …/api/connect/token (idprep|id) veya Gravitee …/connect/token "
+        "Token: POST Gravitee prep-identity …/connect/token veya resmi SDK …/api/connect/token "
         "(body: grant_type, client_id, client_secret, scope=public). "
-        f"(sandbox: idprep.kuveytturk.com.tr + prep-identity / canlı: id.kuveytturk.com.tr + identity). ({detail[:220]})"
+        f"(canlı: prep-identity + id.kuveytturk.com.tr / sandbox: idprep + prep-identity). ({detail[:220]})"
     )
 
 
