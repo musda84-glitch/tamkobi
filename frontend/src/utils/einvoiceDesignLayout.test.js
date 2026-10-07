@@ -1,5 +1,7 @@
 import {
   BLOCK_IDS,
+  blockFontFamily,
+  blockFontSize,
   defaultLayout,
   filledMetaFields,
   gibSafeLogoSrc,
@@ -10,6 +12,8 @@ import {
   normalizeLayout,
   packBlockRows,
   sampleMetaValue,
+  setBlockFont,
+  setBlockFontSize,
   setBlockHidden,
   setBlockSpan,
   xmlEscape,
@@ -534,4 +538,47 @@ test("layoutToXslt uses paper font size and spaced invoice dates", () => {
 
 test("xmlEscape encodes markup", () => {
   expect(xmlEscape(`a<"&>`)).toBe("a&lt;&quot;&amp;&gt;");
+});
+
+test("per-block fontSize/font persist and drive XSLT independently", () => {
+  let L = normalizeLayout({
+    font: "Tahoma",
+    fontSize: 12,
+    ettnFontSize: 18,
+    blocks: [
+      { id: "meta", fontSize: 9, font: "Arial" },
+      { id: "customer", fontSize: 14 },
+      { id: "ettn", fontSize: 20 },
+      { id: "lines", font: "Calibri", fontSize: 11 },
+    ],
+  });
+  expect(L.blocks.find((b) => b.id === "meta")).toMatchObject({ fontSize: 9, font: "Arial" });
+  expect(L.blocks.find((b) => b.id === "customer").fontSize).toBe(14);
+  expect(L.blocks.find((b) => b.id === "ettn").fontSize).toBe(20);
+  expect(L.ettnFontSize).toBe(20);
+  expect(blockFontSize(L, "meta")).toBe(9);
+  expect(blockFontFamily(L, "meta")).toBe("Arial");
+  expect(blockFontSize(L, "supplier")).toBe(12);
+  expect(blockFontFamily(L, "supplier")).toBe("Tahoma");
+  expect(blockFontSize(L, "ettn")).toBe(20);
+
+  L = normalizeLayout({
+    ...L,
+    blocks: setBlockFontSize(setBlockFont(L.blocks, "totals", "Times New Roman"), "totals", 13),
+  });
+  expect(L.blocks.find((b) => b.id === "totals")).toMatchObject({ fontSize: 13, font: "Times New Roman" });
+
+  const legacy = normalizeLayout({ ettnFontSize: 16, blocks: [{ id: "ettn" }] });
+  expect(legacy.blocks.find((b) => b.id === "ettn").fontSize).toBe(16);
+
+  const xslt = layoutToXslt(L);
+  expect(xslt).toContain(".inv-blk-meta");
+  expect(xslt).toMatch(/\.inv-blk-meta \{[^}]*font-family:"Arial"/);
+  expect(xslt).toMatch(/\.inv-blk-meta \{[^}]*font-size:9px/);
+  expect(xslt).toMatch(/\.inv-blk-customer \{[^}]*font-size:14px/);
+  expect(xslt).toMatch(/\.inv-blk-ettn \.inv-ettn-v \{[^}]*font-size:20px/);
+  expect(xslt).toMatch(/\.inv-blk-lines \{[^}]*font-family:"Calibri"/);
+  expect(xslt).toMatch(/\.inv-blk-totals \{[^}]*font-family:"Times New Roman"/);
+  expect(xslt).toContain('class="inv-blk-meta"');
+  expect(xslt).toContain('class="inv-blk-customer"');
 });
