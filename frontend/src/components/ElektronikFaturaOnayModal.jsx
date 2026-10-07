@@ -12,6 +12,8 @@ import {
   AlertCircle,
   CalendarClock,
   Printer,
+  Minus,
+  Maximize2,
 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
@@ -220,7 +222,7 @@ function ItemStatusIcon({ status }) {
 
 /**
  * Faturalaştı siparişte «E-Fatura Oluştur» / fatura ⋮ «E-Fatura / E-Arşiv (GİB)» onayı.
- * İşlem bitene kadar açık kalır; durum akışı + (toplu) belge durumları gösterilir.
+ * Gönderim sırasında küçültülebilir; sağ altta ön bilgi akışı kalır.
  */
 export function ElektronikFaturaOnayModal({
   order,
@@ -265,11 +267,50 @@ export function ElektronikFaturaOnayModal({
   const [itemStatuses, setItemStatuses] = useState([]);
   const [runError, setRunError] = useState("");
   const [summary, setSummary] = useState("");
+  const [minimized, setMinimized] = useState(false);
 
   const busy = phase === "running";
   const canDismiss = phase !== "running";
+  const canMinimize = phase === "running" || phase === "done";
 
-  useEscape(canDismiss ? onClose : () => {});
+  useEscape(canDismiss && !minimized ? onClose : () => {});
+
+  const activeStep = flowSteps.find((s) => s.status === "active");
+  const doneCount = itemStatuses.filter((i) => i.status === "ok" || i.status === "done").length;
+  const failCount = itemStatuses.filter((i) => i.status === "error" || i.status === "fail").length;
+  const runningItem = itemStatuses.find((i) => i.status === "running" || i.status === "active");
+  const miniHeadline = busy
+    ? (activeStep?.label || "Gönderim sürüyor…")
+    : runError
+      ? "İşlem tamamlandı (hata var)"
+      : "İşlem tamamlandı";
+  const miniDetail =
+    runningItem?.detail ||
+    activeStep?.detail ||
+    summary ||
+    runError ||
+    (itemStatuses.length
+      ? `${doneCount}/${itemStatuses.length} belge${failCount ? ` · ${failCount} hata` : ""}`
+      : "");
+  const recentFeed = [
+    ...flowSteps
+      .filter((s) => s.status === "active" || s.status === "done" || s.status === "error")
+      .map((s) => ({
+        key: `step-${s.id}`,
+        label: s.label,
+        detail: s.detail,
+        status: s.status,
+      })),
+    ...itemStatuses
+      .filter((i) => i.status !== "pending")
+      .slice(-4)
+      .map((i) => ({
+        key: `item-${i.id}`,
+        label: i.label,
+        detail: i.detail,
+        status: i.status === "ok" || i.status === "done" ? "done" : i.status === "error" || i.status === "fail" ? "error" : "active",
+      })),
+  ].slice(-6);
 
   const fallbackEFatura = orderCanIssueEFatura(doc, contacts);
   const isEFatura = gibMeta ? !!gibMeta.is_e_invoice_user : fallbackEFatura;
@@ -473,6 +514,92 @@ export function ElektronikFaturaOnayModal({
 
   const showConfirmForm = phase === "confirm";
 
+  if (minimized && canMinimize) {
+    return (
+      <div
+        className="fixed bottom-4 right-4 z-[90] w-[min(22rem,calc(100vw-1.5rem))]"
+        data-testid="efatura-onay-mini"
+        data-phase={phase}
+        data-mode={mode}
+      >
+        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden ring-1 ring-slate-900/5">
+          <div className="flex items-center gap-2 bg-sky-800 px-3 py-2.5">
+            <button
+              type="button"
+              onClick={() => setMinimized(false)}
+              className="flex-1 min-w-0 text-left"
+              data-testid="efatura-onay-restore"
+              title="Pencereyi büyüt"
+            >
+              <div className="text-[11px] font-semibold text-sky-100/90 truncate">{title}</div>
+              <div className="text-sm font-bold text-white truncate flex items-center gap-1.5">
+                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : null}
+                <span className="truncate">{miniHeadline}</span>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMinimized(false)}
+              className="text-white/85 hover:text-white p-1 rounded-md hover:bg-white/10"
+              aria-label="Büyüt"
+              data-testid="efatura-onay-maximize"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
+            {canDismiss ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="text-white/85 hover:text-white p-1 rounded-md hover:bg-white/10"
+                aria-label="Kapat"
+                data-testid="efatura-onay-mini-close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            ) : null}
+          </div>
+          <div className="px-3 py-2.5 space-y-2">
+            {miniDetail ? (
+              <p className="text-xs text-slate-600 leading-snug" data-testid="efatura-onay-mini-detail">
+                {miniDetail}
+              </p>
+            ) : null}
+            {itemStatuses.length > 0 && (
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                {doneCount}/{itemStatuses.length} fatura
+                {failCount ? ` · ${failCount} hata` : ""}
+                {busy ? " · gönderiliyor" : ""}
+              </p>
+            )}
+            {recentFeed.length > 0 && (
+              <ul
+                className="max-h-36 overflow-y-auto space-y-1.5 border-t border-slate-100 pt-2"
+                data-testid="efatura-onay-mini-feed"
+              >
+                {recentFeed.map((row) => (
+                  <li key={row.key} className="flex items-start gap-1.5 text-[11px] text-slate-700">
+                    <FlowStepIcon status={row.status === "ok" ? "done" : row.status} />
+                    <div className="min-w-0">
+                      <div className="font-medium truncate leading-snug">{row.label}</div>
+                      {row.detail ? (
+                        <div className="text-slate-500 break-words leading-snug">{row.detail}</div>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {busy ? (
+              <p className="text-[10px] text-slate-400 leading-snug">
+                Arka planda devam ediyor — sayfada gezebilirsiniz. GİB doğrulaması 30–60 sn sürebilir.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="fixed inset-0 z-[90] bg-slate-900/50 flex items-center justify-center p-4"
@@ -480,6 +607,7 @@ export function ElektronikFaturaOnayModal({
       data-testid="efatura-onay-modal"
       data-phase={phase}
       data-mode={mode}
+      data-minimized="false"
     >
       <div
         className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto"
@@ -489,16 +617,30 @@ export function ElektronikFaturaOnayModal({
           <h3 className="text-sm font-bold text-white" data-testid="efatura-onay-title">
             {title}
           </h3>
-          <button
-            type="button"
-            onClick={canDismiss ? onClose : undefined}
-            disabled={!canDismiss}
-            className="text-white/80 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-            aria-label="Kapat"
-            data-testid="efatura-onay-close"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            {canMinimize ? (
+              <button
+                type="button"
+                onClick={() => setMinimized(true)}
+                className="text-white/80 hover:text-white p-1 rounded-md hover:bg-white/10"
+                aria-label="Küçült"
+                title="Sağ alta küçült — işlem devam eder"
+                data-testid="efatura-onay-minimize"
+              >
+                <Minus className="w-5 h-5" />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={canDismiss ? onClose : undefined}
+              disabled={!canDismiss}
+              className="text-white/80 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed p-1 rounded-md hover:bg-white/10"
+              aria-label="Kapat"
+              data-testid="efatura-onay-close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="px-5 py-4 space-y-3">
@@ -693,7 +835,7 @@ export function ElektronikFaturaOnayModal({
                 {busy ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin text-sky-600" />
-                    İşlem sürüyor — pencereyi kapatmayın
+                    İşlem sürüyor — küçültüp sayfada gezinebilirsiniz
                   </>
                 ) : runError ? (
                   <>
@@ -790,15 +932,26 @@ export function ElektronikFaturaOnayModal({
               Kapat
             </button>
           ) : phase === "running" ? (
-            <button
-              type="button"
-              disabled
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-200 text-slate-500 text-sm font-semibold cursor-not-allowed"
-              data-testid="efatura-onay-busy"
-            >
-              <Loader2 className="w-4 h-4 animate-spin" />
-              İşleniyor…
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setMinimized(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold"
+                data-testid="efatura-onay-minimize-footer"
+              >
+                <Minus className="w-4 h-4" />
+                Küçült
+              </button>
+              <button
+                type="button"
+                disabled
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-200 text-slate-500 text-sm font-semibold cursor-not-allowed"
+                data-testid="efatura-onay-busy"
+              >
+                <Loader2 className="w-4 h-4 animate-spin" />
+                İşleniyor…
+              </button>
+            </div>
           ) : (
             <>
               <button

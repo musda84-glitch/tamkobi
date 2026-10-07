@@ -68,4 +68,9 @@ describe("onay progress flow helpers", () => {
     api.setItem("a", { status: "ok", detail: "Gönderildi" });
     expect(items[0]).toMatchObject({ id: "a", status: "ok", detail: "Gönderildi", sublabel: "Cari" });
   });
+
+  it("send flow includes gib refresh step used by mini ticker", () => {
+    expect(DEFAULT_SEND_FLOW.map((s) => s.id)).toEqual(["prepare", "send", "refresh", "done"]);
+    expect(DEFAULT_SEND_FLOW.find((s) => s.id === "send").label).toMatch(/GİB/);
+  });
 });
