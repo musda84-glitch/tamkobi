@@ -61,10 +61,14 @@ export function asQrSize(value, fallback = 96) {
   return QR_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
 }
 
-/** ETTN UUID punto seçenekleri (varsayılan 18 ≈ eski fs+6). */
+/** ETTN / blok punto seçenekleri (varsayılan ETTN 18 ≈ eski fs+6). */
 export const ETTN_FONT_SIZE_OPTIONS = [
+  { size: 8, label: "8" },
+  { size: 9, label: "9" },
   { size: 10, label: "10" },
+  { size: 11, label: "11" },
   { size: 12, label: "12" },
+  { size: 13, label: "13" },
   { size: 14, label: "14" },
   { size: 16, label: "16" },
   { size: 18, label: "18" },
@@ -205,9 +209,33 @@ export const FONT_SIZE_OPTIONS = [
   { size: 14, label: "14" },
 ];
 
+/** Blok punto: global 8–14 + ETTN geniş aralık. */
+export const BLOCK_FONT_SIZE_OPTIONS = ETTN_FONT_SIZE_OPTIONS;
+
 export function asFontSize(value, fallback = 12) {
   const n = Number(value);
   return FONT_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
+}
+
+export function asBlockFontSize(value, fallback = 12) {
+  const n = Number(value);
+  return BLOCK_FONT_SIZE_OPTIONS.some((o) => o.size === n) ? n : fallback;
+}
+
+export function asBlockFont(value, fallback = "Tahoma") {
+  const s = String(value || "").trim();
+  if (!s) return fallback;
+  if (FONT_OPTIONS.some((f) => f.id === s)) return s;
+  return s.slice(0, 80) || fallback;
+}
+
+/** Yazı tipi / punto uygulanabilir metin blokları (QR / mühür / spacer hariç). */
+export const BLOCKS_WITH_FONT = new Set([
+  "header", "supplier", "customer", "meta", "ettn", "lines", "totals", "notes", "iban", "balance",
+]);
+
+export function blockHasFont(id) {
+  return BLOCKS_WITH_FONT.has(id);
 }
 
 const HEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -264,25 +292,51 @@ function deriveMetaFields(raw) {
   });
 }
 
-function normalizeBlocks(raw, kind) {
+function normalizeBlockFontFields(b, id) {
+  const out = {};
+  if (b && b.fontSize != null && b.fontSize !== "") {
+    out.fontSize = asBlockFontSize(b.fontSize, null);
+    if (out.fontSize == null) delete out.fontSize;
+  }
+  if (b && typeof b.font === "string" && b.font.trim()) {
+    out.font = asBlockFont(b.font, "");
+    if (!out.font) delete out.font;
+  }
+  return out;
+}
+
+function normalizeBlocks(raw, kind, layoutFontHints = {}) {
   const seen = new Set();
   const out = [];
   for (const b of expandLegacyBlocks(raw, kind)) {
     const id = String(b?.id || "");
     if (!BLOCK_IDS.includes(id) || seen.has(id)) continue;
     seen.add(id);
+    const fonts = normalizeBlockFontFields(b, id);
+    // Eski layout.ettnFontSize → ettn bloğu fontSize
+    if (id === "ettn" && fonts.fontSize == null && layoutFontHints.ettnFontSize != null) {
+      const legacy = asEttnFontSize(layoutFontHints.ettnFontSize, null);
+      if (legacy != null) fonts.fontSize = legacy;
+    }
     out.push({
       id,
       hidden: !!b.hidden,
       span: asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[id] || 12),
+      ...fonts,
     });
   }
   for (const id of BLOCK_IDS) {
     if (seen.has(id)) continue;
+    const fonts = {};
+    if (id === "ettn" && layoutFontHints.ettnFontSize != null) {
+      const legacy = asEttnFontSize(layoutFontHints.ettnFontSize, null);
+      if (legacy != null) fonts.fontSize = legacy;
+    }
     out.push({
       id,
       hidden: !!BLOCK_HIDDEN_BY_DEFAULT[id],
       span: BLOCK_SPAN_BY_DEFAULT[id] || 12,
+      ...fonts,
     });
   }
   return out;
@@ -359,7 +413,10 @@ export function normalizeLayout(raw, kind) {
   out.qrSize = asQrSize(raw.qrSize, base.qrSize);
   out.ettnFontSize = asEttnFontSize(raw.ettnFontSize, base.ettnFontSize);
   if (typeof raw.companyTitle === "string") out.companyTitle = raw.companyTitle.slice(0, 120);
-  out.blocks = normalizeBlocks(raw.blocks, out.kind);
+  out.blocks = normalizeBlocks(raw.blocks, out.kind, { ettnFontSize: raw.ettnFontSize });
+  // ETTN punto artık blokta; layout.ettnFontSize senkron tut (eski okuyucular).
+  const ettnBlk = out.blocks.find((b) => b.id === "ettn");
+  if (ettnBlk?.fontSize != null) out.ettnFontSize = asEttnFontSize(ettnBlk.fontSize, out.ettnFontSize);
   const hasEttnBlock = Array.isArray(raw?.blocks) && raw.blocks.some((b) => b?.id === "ettn");
   if (!hasEttnBlock) {
     const ettnMeta = (Array.isArray(raw?.metaFields) ? raw.metaFields : []).find((f) => f?.id === "ettn");
@@ -392,6 +449,46 @@ export function setBlockHidden(blocks, id, hidden) {
 export function setBlockSpan(blocks, id, span) {
   const s = asSpan(span, 12);
   return (blocks || []).map((b) => (b.id === id ? { ...b, span: s } : { ...b }));
+}
+
+export function setBlockFontSize(blocks, id, size) {
+  const n = asBlockFontSize(size, null);
+  return (blocks || []).map((b) => {
+    if (b.id !== id) return { ...b };
+    if (n == null) {
+      const { fontSize: _drop, ...rest } = b;
+      return rest;
+    }
+    return { ...b, fontSize: n };
+  });
+}
+
+export function setBlockFont(blocks, id, font) {
+  const f = String(font || "").trim();
+  return (blocks || []).map((b) => {
+    if (b.id !== id) return { ...b };
+    if (!f) {
+      const { font: _drop, ...rest } = b;
+      return rest;
+    }
+    return { ...b, font: asBlockFont(f, f) };
+  });
+}
+
+/** Blok punto — yoksa layout varsayılanı; ETTN için eski ettnFontSize yedek. */
+export function blockFontSize(layout, blockId) {
+  const L = layout || {};
+  const blk = (L.blocks || []).find((b) => b.id === blockId);
+  if (blk?.fontSize != null) return asBlockFontSize(blk.fontSize, asFontSize(L.fontSize));
+  if (blockId === "ettn" && L.ettnFontSize != null) return asEttnFontSize(L.ettnFontSize, 18);
+  return asFontSize(L.fontSize);
+}
+
+export function blockFontFamily(layout, blockId) {
+  const L = layout || {};
+  const blk = (L.blocks || []).find((b) => b.id === blockId);
+  if (blk?.font) return asBlockFont(blk.font, L.font || "Tahoma");
+  return asBlockFont(L.font, "Tahoma");
 }
 
 export function packBlockRows(blocks) {
@@ -732,12 +829,46 @@ function xsltBlocks(L) {
   };
 }
 
+/** Blok yazı tipi/punto CSS — her metin alanı kendi fontunu taşır. */
+function xsltBlockFontRules(L) {
+  return Array.from(BLOCKS_WITH_FONT).map((id) => {
+    const size = blockFontSize(L, id);
+    const family = xmlEscape(blockFontFamily(L, id));
+    const k = Math.max(7, size - 2);
+    const no = size + 3;
+    const base = `.inv-blk-${id} { font-family:"${family}", Tahoma, Arial, Helvetica, sans-serif; font-size:${size}px; }`;
+    if (id === "ettn") {
+      return `${base}\n          .inv-blk-ettn .inv-ettn-v { font-size:${size}px; }`;
+    }
+    if (id === "meta") {
+      return `${base}\n          .inv-blk-meta .inv-meta td { font-size:${size}px; }`;
+    }
+    if (id === "lines") {
+      return `${base}\n          .inv-blk-lines .inv-lines th { font-size:${k}px; }\n          .inv-blk-lines .inv-lines td { font-size:${size}px; }`;
+    }
+    if (id === "totals") {
+      return `${base}\n          .inv-blk-totals .inv-grand td { font-size:${size + 1}px; }`;
+    }
+    if (id === "header") {
+      return `${base}\n          .inv-blk-header .inv-brand-name { font-size:${no}px; }\n          .inv-blk-header .inv-brand-addr, .inv-blk-header .inv-brand-vkn { font-size:${k}px; }`;
+    }
+    if (id === "notes" || id === "iban") {
+      return `${base}\n          .inv-blk-${id}.inv-notes, .inv-blk-${id}.inv-iban, .inv-blk-${id} { font-size:${size}px; }`;
+    }
+    return base;
+  }).join("\n          ");
+}
+
 function xsltPackedBody(L) {
   const map = xsltBlocks(L);
   return packBlockRows(L.blocks).map((row) => {
     const cells = row.map((b) => {
       const pct = Math.round((asSpan(b.span, BLOCK_SPAN_BY_DEFAULT[b.id] || 12) / 12) * 100);
-      return `<td width="${pct}%" valign="top" class="inv-cell">${map[b.id] || ""}</td>`;
+      const inner = map[b.id] || "";
+      const wrapped = blockHasFont(b.id)
+        ? `<div class="inv-blk-${b.id}">${inner}</div>`
+        : inner;
+      return `<td width="${pct}%" valign="top" class="inv-cell">${wrapped}</td>`;
     }).join("");
     return `<table class="inv-row" width="100%" cellpadding="4" cellspacing="0"><tr>${cells}</tr></table>`;
   }).join("\n");
@@ -783,7 +914,7 @@ export function layoutToXslt(layout, kind) {
           .inv-meta-k { white-space:nowrap; }
           .inv-meta-v { word-break:break-word; }
           .inv-ettn { word-break:break-all; }
-          .inv-ettn-v { font-size:${asEttnFontSize(L.ettnFontSize)}px; color:${L.primary}; margin-top:2px; }
+          .inv-ettn-v { color:${L.primary}; margin-top:2px; }
           .inv-lines { border-collapse:collapse; }
           .inv-lines th { background:${L.primary}; color:#fff; font-size:${k}px; }
           .inv-lines td { border-bottom:1px solid ${L.muted}22; font-size:${fs}px; }
@@ -795,6 +926,7 @@ export function layoutToXslt(layout, kind) {
           .inv-spacer { min-height:28px; }
           .inv-gib-seal { text-align:center; }
           .inv-gib-seal h1 { font-size:18px; margin:4px 0 0; color:${L.primary}; }
+          ${xsltBlockFontRules(L)}
         </style>
       </head>
       <body style="font-family:'${font}', Tahoma, Arial, Helvetica, sans-serif; font-size:${fs}px; color:${L.text}; background:${L.paper};">

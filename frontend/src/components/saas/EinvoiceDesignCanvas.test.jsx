@@ -277,7 +277,9 @@ test("ETTN is a separate palette block, not a fatura bilgileri field", async () 
     host.querySelector('[data-testid="einvoice-design-ettn-font-size-12"]').click();
   });
   expect(last.ettnFontSize).toBe(12);
+  expect(last.blocks.find((b) => b.id === "ettn").fontSize).toBe(12);
   expect(host.querySelector('[data-testid="einvoice-design-ettn"] .break-all')?.style.fontSize).toBe("12px");
+  expect(host.querySelector('[data-testid="einvoice-design-block-font-ettn"]')).not.toBeNull();
 });
 
 test("GIB e-Arşiv seal can be added next to e-Fatura seal", async () => {
@@ -365,18 +367,38 @@ test("header can show supplier name under the logo", async () => {
   expect(host.querySelector('[data-testid="einvoice-design-header-value-supplier_address"]')?.textContent).toContain("Kadıköy");
 });
 
-test("font size control shrinks preview and is stored on layout", async () => {
+test("each block has its own font size; global toolbar stays the paper default", async () => {
   const root = createRoot(host);
   await act(async () => {
     root.render(<Harness />);
   });
   expect(last.fontSize).toBe(12);
   expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.style.fontSize).toBe("12px");
+  expect(host.querySelector('[data-testid="einvoice-design-block-font-meta"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-font-customer"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-font-size-8"]')).not.toBeNull();
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-font-size-8"]').click();
   });
-  expect(last.fontSize).toBe(8);
-  expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.style.fontSize).toBe("8px");
-  expect(host.querySelector('[data-testid="einvoice-design-font-size"]')?.value).toBe("8");
+  expect(last.fontSize).toBe(12);
+  expect(last.blocks.find((b) => b.id === "meta").fontSize).toBe(8);
+  expect(host.querySelector('[data-testid="einvoice-design-preview"]')?.style.fontSize).toBe("12px");
+  expect(host.querySelector('[data-testid="einvoice-design-font-size"]')?.value).toBe("12");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-block-font-size-customer-14"]').click();
+  });
+  expect(last.blocks.find((b) => b.id === "customer").fontSize).toBe(14);
+  expect(last.blocks.find((b) => b.id === "meta").fontSize).toBe(8);
+  await act(async () => {
+    const sel = host.querySelector('[data-testid="einvoice-design-block-font-family-lines"]');
+    sel.value = "Arial";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(last.blocks.find((b) => b.id === "lines").font).toBe("Arial");
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-font-size"]').value = "9";
+    host.querySelector('[data-testid="einvoice-design-font-size"]').dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(last.fontSize).toBe(9);
+  expect(last.blocks.find((b) => b.id === "meta").fontSize).toBe(8);
 });

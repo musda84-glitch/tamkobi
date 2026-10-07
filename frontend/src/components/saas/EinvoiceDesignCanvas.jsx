@@ -4,9 +4,9 @@ import { QRCodeSVG } from "qrcode.react";
 import { compressImageFile } from "../../utils/compressImage";
 import {
   BLOCK_LABELS,
+  BLOCK_FONT_SIZE_OPTIONS,
   FONT_OPTIONS,
   FONT_SIZE_OPTIONS,
-  ETTN_FONT_SIZE_OPTIONS,
   LINE_COL_LABELS,
   META_FIELD_LABELS,
   HEADER_FIELD_LABELS,
@@ -17,6 +17,9 @@ import {
   QR_SIZE_OPTIONS,
   LOGO_SIZE_OPTIONS,
   TOTAL_ROW_LABELS,
+  blockFontFamily,
+  blockFontSize,
+  blockHasFont,
   gibSealAlt,
   gibSealCaption,
   gibSealKindForBlock,
@@ -33,6 +36,8 @@ import {
   moveVisible,
   normalizeLayout,
   sampleQrPayload,
+  setBlockFont,
+  setBlockFontSize,
   setBlockHidden,
   setBlockSpan,
   visibleLineCols,
@@ -44,6 +49,59 @@ import {
 } from "../../utils/einvoiceDesignLayout";
 import { inputCls } from "./saasUi";
 
+/** Her metin bloğu için yazı tipi + punto (global varsayılanın üzerine). */
+const BlockFontBar = ({ blockId, layout, onFontSize, onFont }) => {
+  if (!blockHasFont(blockId)) return null;
+  const fs = blockFontSize(layout, blockId);
+  const ff = blockFontFamily(layout, blockId);
+  return (
+    <div
+      className="flex flex-wrap items-center gap-1.5 mt-1.5 pt-1 border-t border-slate-100"
+      data-testid={`einvoice-design-block-font-${blockId}`}
+      style={{ fontFamily: "Tahoma, sans-serif", fontSize: "11px" }}
+    >
+      <label className="inline-flex items-center gap-1">
+        <span className="text-[9px] font-bold text-slate-500">Yazı tipi</span>
+        <select
+          value={ff}
+          onChange={(e) => { e.stopPropagation(); onFont?.(e.target.value); }}
+          onClick={(e) => e.stopPropagation()}
+          className="text-[9px] border border-slate-200 rounded px-1 py-0.5 bg-white max-w-[7.5rem]"
+          data-testid={`einvoice-design-block-font-family-${blockId}`}
+        >
+          {FONT_OPTIONS.map((f) => (
+            <option key={f.id} value={f.id}>{f.label}</option>
+          ))}
+        </select>
+      </label>
+      <div
+        className="flex items-center flex-wrap gap-1"
+        data-testid={blockId === "ettn" ? "einvoice-design-ettn-font-sizes" : `einvoice-design-block-font-sizes-${blockId}`}
+      >
+        <span className="text-[9px] font-bold text-slate-500">Punto</span>
+        {BLOCK_FONT_SIZE_OPTIONS.map((opt) => (
+          <button
+            key={opt.size}
+            type="button"
+            title={`${opt.size} px`}
+            onClick={(e) => { e.stopPropagation(); onFontSize?.(opt.size); }}
+            className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${fs === opt.size ? "bg-slate-800 text-white border-slate-800" : "text-slate-600 border-slate-200 hover:bg-slate-100"}`}
+            data-testid={
+              blockId === "ettn"
+                ? `einvoice-design-ettn-font-size-${opt.size}`
+                : blockId === "meta"
+                  ? `einvoice-design-font-size-${opt.size}`
+                  : `einvoice-design-block-font-size-${blockId}-${opt.size}`
+            }
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const fileToDataUrl = (file) => new Promise((resolve, reject) => {
   const r = new FileReader();
   r.onload = () => resolve(String(r.result || ""));
@@ -53,11 +111,11 @@ const fileToDataUrl = (file) => new Promise((resolve, reject) => {
 
 const PartyCard = ({ title, p, kCls, vCls }) => (
   <div className="border rounded-lg p-2.5 min-h-[7rem]" style={{ borderColor: `${kCls}33` }}>
-    <div className="text-[9px] font-bold uppercase tracking-wide" style={{ color: kCls }}>{title}</div>
+    <div className="font-bold uppercase tracking-wide" style={{ color: kCls, fontSize: "0.85em" }}>{title}</div>
     <div className="font-bold mt-0.5" style={{ color: vCls }}>{p.name}</div>
-    <div className="text-[10px] leading-snug mt-0.5">{p.address}</div>
-    <div className="text-[10px] mt-1">VKN/TCKN: {p.vkn}</div>
-    <div className="text-[10px]">VD: {p.taxOffice}</div>
+    <div className="leading-snug mt-0.5" style={{ fontSize: "0.92em" }}>{p.address}</div>
+    <div className="mt-1" style={{ fontSize: "0.92em" }}>VKN/TCKN: {p.vkn}</div>
+    <div style={{ fontSize: "0.92em" }}>VD: {p.taxOffice}</div>
   </div>
 );
 
@@ -120,7 +178,7 @@ const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDro
   />
 );
 
-const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, onFontSize, onEttnFontSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
+const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
   if (id === "header") {
     const logoSize = Number(layout.logoSize) || 72;
@@ -196,26 +254,11 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
     return <PartyCard title="Alıcı" p={s.customer} kCls={layout.muted} vCls={layout.primary} />;
   }
   if (id === "ettn") {
-    const ettnFs = Number(layout.ettnFontSize) || 18;
+    const ettnFs = blockFontSize(layout, "ettn");
     return (
       <div data-testid="einvoice-design-ettn" style={{ color: layout.text }}>
         <div className="font-normal">ETTN</div>
         <div className="break-all leading-tight" style={{ fontSize: `${ettnFs}px`, color: layout.primary }}>{s.ettn}</div>
-        <div className="flex items-center flex-wrap gap-1 mt-1.5" data-testid="einvoice-design-ettn-font-sizes">
-          <span className="text-[9px] font-bold text-slate-500">Punto</span>
-          {ETTN_FONT_SIZE_OPTIONS.map((opt) => (
-            <button
-              key={opt.size}
-              type="button"
-              title={`${opt.size} px`}
-              onClick={(e) => { e.stopPropagation(); onEttnFontSize?.(opt.size); }}
-              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${ettnFs === opt.size ? "bg-slate-800 text-white border-slate-800" : "text-slate-600 border-slate-200 hover:bg-slate-100"}`}
-              data-testid={`einvoice-design-ettn-font-size-${opt.size}`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
       </div>
     );
   }
@@ -241,21 +284,6 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
         <p className="text-[9px] text-slate-500 mt-1" data-testid="einvoice-design-meta-empty-hint">
           Gerçek faturada boş alanlar gizlenir; kalan satırlar sırayı koruyarak yukarı kayar.
         </p>
-        <div className="flex items-center flex-wrap gap-1 mt-1.5" data-testid="einvoice-design-font-sizes">
-          <span className="text-[9px] font-bold text-slate-500">Punto</span>
-          {FONT_SIZE_OPTIONS.map((opt) => (
-            <button
-              key={opt.size}
-              type="button"
-              title={`${opt.size} px`}
-              onClick={(e) => { e.stopPropagation(); onFontSize?.(opt.size); }}
-              className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${Number(layout.fontSize) === opt.size ? "bg-slate-800 text-white border-slate-800" : "text-slate-600 border-slate-200 hover:bg-slate-100"}`}
-              data-testid={`einvoice-design-font-size-${opt.size}`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
         <FieldChipsBar
           vis={fields}
           hid={hiddenMetaFields(layout)}
@@ -344,24 +372,24 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
   }
   if (id === "notes") {
     return (
-      <div className="pt-2 text-[10px]" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted }}>
-        <div className="font-bold uppercase text-[9px] mb-0.5">Notlar</div>
+      <div className="pt-2" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted }}>
+        <div className="font-bold uppercase mb-0.5" style={{ fontSize: "0.85em" }}>Notlar</div>
         {s.notes.map((n) => <div key={n}>{n}</div>)}
       </div>
     );
   }
   if (id === "iban") {
     return (
-      <div className="pt-2 text-[10px]" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted }}>
-        <div className="font-bold uppercase text-[9px] mb-0.5">IBAN / ödeme</div>
+      <div className="pt-2" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted }}>
+        <div className="font-bold uppercase mb-0.5" style={{ fontSize: "0.85em" }}>IBAN / ödeme</div>
         <div className="font-mono">{s.iban}</div>
       </div>
     );
   }
   if (id === "balance") {
     return (
-      <div className="flex items-center justify-between rounded-lg px-2.5 py-2 text-[11px]" style={{ border: `1px solid ${layout.accent}` }}>
-        <span className="font-bold uppercase text-[9px]" style={{ color: layout.muted }}>Güncel bakiye</span>
+      <div className="flex items-center justify-between rounded-lg px-2.5 py-2" style={{ border: `1px solid ${layout.accent}` }}>
+        <span className="font-bold uppercase" style={{ color: layout.muted, fontSize: "0.85em" }}>Güncel bakiye</span>
         <span className="font-bold" style={{ color: layout.primary }}>{s.balance}</span>
       </div>
     );
@@ -709,22 +737,37 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                   <button type="button" onClick={() => patchBlocks(moveVisible(L.blocks, b.id, 1))} className="p-0.5" title="Aşağı" data-testid={`einvoice-design-down-${b.id}`}><ArrowDown className="w-3 h-3" /></button>
                   <button type="button" onClick={() => patchBlocks(setBlockHidden(L.blocks, b.id, true))} className="p-0.5 text-rose-600" title="Gizle" data-testid={`einvoice-design-hide-${b.id}`}><EyeOff className="w-3 h-3" /></button>
                 </div>
-                <PreviewBlock
-                  id={b.id}
+                <div
+                  style={blockHasFont(b.id) ? {
+                    fontFamily: `"${blockFontFamily(L, b.id)}", Tahoma, sans-serif`,
+                    fontSize: `${blockFontSize(L, b.id)}px`,
+                  } : undefined}
+                >
+                  <PreviewBlock
+                    id={b.id}
+                    layout={L}
+                    onPatchCols={patchCols}
+                    onPatchMeta={patchMeta}
+                    onPatchHeader={patchHeader}
+                    onPatchTotals={patchTotals}
+                    onQrSize={(size) => patch({ qrSize: size })}
+                    onLogoSize={(size) => patch({ logoSize: size })}
+                    drag={dragId}
+                    onDragStart={onDragStart}
+                    onDragOver={onDragOverItem}
+                    onDrop={onDropItem}
+                    onDragEnd={clearDrag}
+                  />
+                </div>
+                <BlockFontBar
+                  blockId={b.id}
                   layout={L}
-                  onPatchCols={patchCols}
-                  onPatchMeta={patchMeta}
-                  onPatchHeader={patchHeader}
-                  onPatchTotals={patchTotals}
-                  onQrSize={(size) => patch({ qrSize: size })}
-                  onLogoSize={(size) => patch({ logoSize: size })}
-                  onFontSize={(size) => patch({ fontSize: size })}
-                  onEttnFontSize={(size) => patch({ ettnFontSize: size })}
-                  drag={dragId}
-                  onDragStart={onDragStart}
-                  onDragOver={onDragOverItem}
-                  onDrop={onDropItem}
-                  onDragEnd={clearDrag}
+                  onFont={(font) => patchBlocks(setBlockFont(L.blocks, b.id, font))}
+                  onFontSize={(size) => {
+                    const blocks = setBlockFontSize(L.blocks, b.id, size);
+                    if (b.id === "ettn") patch({ blocks, ettnFontSize: size });
+                    else patch({ blocks });
+                  }}
                 />
               </div>
             ))}
