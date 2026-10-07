@@ -103,7 +103,10 @@ if "@emergentbase/visual-edits" in deps:
     p.write_text(json.dumps(data, indent=2) + "\n")
 '
 if command -v yarn >/dev/null 2>&1; then
-  yarn install --network-timeout 600000
+  # VPS'te kalan package-lock.json yarn ile karışıp yeni package.json bağımlılıklarını
+  # (örn. node-forge) atlayabiliyor; npm kilidini temizle, eksik dosyaları denetle.
+  rm -f package-lock.json
+  yarn install --network-timeout 600000 --check-files
   CI=false GENERATE_SOURCEMAP=false DISABLE_ESLINT_PLUGIN=true \
     REACT_APP_GIT_SHA="$GIT_SHA" \
     REACT_APP_GIT_BRANCH="$GIT_BRANCH" \
