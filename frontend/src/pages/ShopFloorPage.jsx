@@ -395,7 +395,7 @@ export default function ShopFloorPage() {
     </div>); };
 
   return (
-    <div className={kiosk ? "fixed inset-0 z-[100] bg-slate-100 overflow-y-auto p-4 sm:p-6" : "space-y-5"} data-testid="shopfloor-page">
+    <div className={kiosk ? "fixed inset-0 z-[100] bg-slate-100 overflow-y-auto p-4 sm:p-6" : "space-y-3"} data-testid="shopfloor-page">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div><h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2"><Factory className="w-6 h-6 text-emerald-600" /> Üretim Ekranı (Atölye)</h1><p className="text-xs sm:text-sm text-slate-500">Makine başındaki tabletten iş emirlerini görün, adımları başlatın / bitirin</p></div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -406,34 +406,46 @@ export default function ShopFloorPage() {
         </div>
       </div>
       {!kiosk && <ProductionAiAdvisor companyId={companyId} compact />}
-      {!operator && <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 font-semibold" data-testid="shopfloor-no-operator">Başlamak için yukarıdan operatörü (kendinizi) seçin ve şifrenizi girin.</div>}
+      {!operator && <div className="bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 text-[11px] text-amber-800 font-semibold" data-testid="shopfloor-no-operator">Operatör seçin ve şifrenizi girin.</div>}
       {operator && !pauseAllowed && (
-        <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-sm text-slate-700" data-testid="shopfloor-pause-blocked">
+        <div className="bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] text-slate-700" data-testid="shopfloor-pause-blocked">
           Duraklat kapalı: {pausePolicy?.reason || "Mesai / mola / fazla mesai dışında."}
-          {pausePolicy?.deadline ? ` (otomatik duraklatma: ${pausePolicy.deadline})` : ""}
+          {pausePolicy?.deadline ? ` (otomatik: ${pausePolicy.deadline})` : ""}
         </div>
       )}
       {operator && pauseAllowed && pausePolicy?.phase && pausePolicy.phase !== "mesai" && (
-        <div className="bg-orange-50 border border-orange-100 rounded-xl px-3 py-2 text-xs text-orange-800 font-semibold" data-testid="shopfloor-pause-phase">
+        <div className="bg-orange-50 border border-orange-100 rounded-lg px-2.5 py-1 text-[11px] text-orange-800 font-semibold" data-testid="shopfloor-pause-phase">
           Duraklat aktif — {shopFloorPausePhaseLabel(pausePolicy.phase)}
-          {pausePolicy.deadline ? ` · otomatik duraklatma ${pausePolicy.deadline}` : ""}
+          {pausePolicy.deadline ? ` · ${pausePolicy.deadline}` : ""}
         </div>
       )}
-      <label className="flex items-start gap-2 cursor-pointer select-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 hover:bg-slate-50" data-testid="shopfloor-group-station-wrap">
+      <label
+        className="inline-flex items-center gap-2 cursor-pointer select-none rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 hover:bg-slate-50 max-w-full"
+        title="Açıkken iş emirleri istasyona göre gruplanır; kalan adımlar peşi sıra yeniden sıralanır."
+        data-testid="shopfloor-group-station-wrap"
+      >
         <input
           type="checkbox"
           checked={!!groupSameStation}
           disabled={groupBusy}
           onChange={(e) => toggleGroupSameStation(e.target.checked)}
-          className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
           data-testid="shopfloor-group-same-station"
         />
-        <span>
-          <span className="block font-semibold text-slate-800 text-sm">Aynı istasyonu peşi sıra işle</span>
-          <span className="block text-[11px] text-slate-500 font-normal mt-0.5">Açıkken iş emirleri istasyona göre gruplanır; kalan adımlar peşi sıra yeniden sıralanır (ör. tüm HOLZHER kesimleri ardışık).</span>
-        </span>
+        <span className="font-semibold text-slate-800 text-xs whitespace-nowrap">Aynı istasyonu peşi sıra işle</span>
       </label>
-      <div className="grid grid-cols-3 gap-3 text-center">{[["Hazır", wos.filter((w) => w.status === "ready").length, "text-blue-600"], ["Devam Eden", wos.filter((w) => ["in_progress", "paused"].includes(w.status)).length, "text-amber-600"], ["Bugün Biten", done.filter((w) => (w.finished_at || "").startsWith(new Date().toISOString().slice(0, 10))).length, "text-emerald-600"]].map(([l, v, c]) => <div key={l} className="bg-white border rounded-2xl p-3"><div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div><div className={`text-3xl font-black ${c}`}>{v}</div></div>)}</div>
+      <div className="grid grid-cols-3 gap-2 text-center" data-testid="shopfloor-stats">
+        {[
+          ["Hazır", wos.filter((w) => w.status === "ready").length, "text-blue-600"],
+          ["Devam Eden", wos.filter((w) => ["in_progress", "paused"].includes(w.status)).length, "text-amber-600"],
+          ["Bugün Biten", done.filter((w) => (w.finished_at || "").startsWith(new Date().toISOString().slice(0, 10))).length, "text-emerald-600"],
+        ].map(([l, v, c]) => (
+          <div key={l} className="bg-white border rounded-xl px-2 py-1.5">
+            <div className="text-[9px] uppercase font-semibold text-slate-400 leading-none">{l}</div>
+            <div className={`text-lg font-black leading-tight ${c}`}>{v}</div>
+          </div>
+        ))}
+      </div>
       <div className="bg-white border rounded-2xl p-3" data-testid="shopfloor-performance">
         <button onClick={() => setShowPerf(!showPerf)} className="w-full flex items-center justify-between text-sm font-bold text-slate-800" data-testid="shopfloor-perf-toggle"><span>Bugünkü Performans — operatör / istasyon ({perf?.total_done || 0} adım tamamlandı)</span><span className="text-xs text-slate-400">{showPerf ? "Gizle" : "Göster"}</span></button>
         {showPerf && perf && (
