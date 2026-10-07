@@ -456,10 +456,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       if (opts.scenario === "TEMEL" || opts.scenario === "TICARI") body.scenario = opts.scenario;
       const r = await axios.post(`${API_URL}/invoices/${inv.id}/send-to-gib`, body);
       toast.success(r.data.message || "E-Fatura GİB'e gönderildi.");
-      try {
-        const st = await axios.post(`${API_URL}/e-invoice/${inv.id}/refresh-status`);
-        if (st.data?.invoice_number) toast.message(`GİB fatura no: ${st.data.invoice_number}`);
-      } catch { /* ignore */ }
+      // Onay modalı send içinde zaten GİB poll eder; ekstra refresh süreyi uzatır.
+      if (!opts.skipRefresh) {
+        try {
+          const st = await axios.post(`${API_URL}/e-invoice/${inv.id}/refresh-status`);
+          if (st.data?.invoice_number) toast.message(`GİB fatura no: ${st.data.invoice_number}`);
+        } catch { /* ignore */ }
+      }
       load();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Gönderilemedi.");

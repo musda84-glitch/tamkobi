@@ -656,18 +656,23 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       if (opts.scenario === "TEMEL" || opts.scenario === "TICARI") body.scenario = opts.scenario;
       const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`, body);
       if (!opts.silentToast) toast.success(res.data.message);
-      // Portal/GİB fatura no + durumu gecikebilir — hemen bir kez daha çek
+      // Portal/GİB fatura no + durumu gecikebilir — hemen bir kez daha çek.
+      // Onay modalı zaten send içinde wait_for_gib poll eder; ekstra refresh süreyi uzatır.
       let refreshMsg = "";
-      try {
-        const st = await axios.post(`${API_URL}/e-invoice/${invId}/refresh-status`);
-        if (st.data?.invoice_number) {
-          refreshMsg = `GİB fatura no: ${st.data.invoice_number}`;
-          if (!opts.silentToast) toast.message(refreshMsg);
-        } else if (st.data?.gib_status) {
-          refreshMsg = st.data.gib_status;
-          if (!opts.silentToast) toast.message(refreshMsg);
-        }
-      } catch { /* liste yine yenilenecek */ }
+      if (!opts.skipRefresh) {
+        try {
+          const st = await axios.post(`${API_URL}/e-invoice/${invId}/refresh-status`);
+          if (st.data?.invoice_number) {
+            refreshMsg = `GİB fatura no: ${st.data.invoice_number}`;
+            if (!opts.silentToast) toast.message(refreshMsg);
+          } else if (st.data?.gib_status) {
+            refreshMsg = st.data.gib_status;
+            if (!opts.silentToast) toast.message(refreshMsg);
+          }
+        } catch { /* liste yine yenilenecek */ }
+      } else {
+        refreshMsg = res.data?.gib_status || res.data?.message || "";
+      }
       if (!opts.skipReload) loadData();
       return { message: res.data?.message || "Gönderildi", refreshMsg };
     } catch (err) {
@@ -1615,8 +1620,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   scenario,
                   silentToast: true,
                   skipReload: true,
+                  skipRefresh: true,
                 });
-                ctx?.setStep?.("refresh", "active");
+                ctx?.setStep?.("refresh", "active", "Gönderim yanıtından durum alındı");
                 ok++;
                 ctx?.setItem?.(invId, {
                   status: "ok",
@@ -1633,7 +1639,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
 
             ctx?.completeStep?.("prepare");
             ctx?.completeStep?.("send", `${ok} gönderildi${fail ? `, ${fail} hata` : ""}`);
-            ctx?.completeStep?.("refresh");
+            ctx?.completeStep?.("refresh", "Ek durum sorgusu atlandı (gönderimde doğrulandı)");
             ctx?.setStep?.("done", "done");
             setSelected([]);
             await loadData({ silent: true });
