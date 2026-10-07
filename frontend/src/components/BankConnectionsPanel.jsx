@@ -8,7 +8,7 @@ import { BankMatchRow } from "./BankMatchRow";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { formatTrAmount } from "../utils/money";
 import { matchActorName, matchActorTitle } from "../utils/bankMatchLabel";
-import { generateJsencryptKeyPair } from "../utils/jsencryptKuveyt";
+import { downloadTextFile, generateJsencryptKeyPair } from "../utils/jsencryptKuveyt";
 
 const LINKABLE_ACCOUNT_TYPES = new Set(["bank", "pos", "okc_pos"]);
 const PROVIDER_BANK_HINTS = {
@@ -67,7 +67,9 @@ function ConnErrorBox({ connection, onEdit }) {
   const isKuveyt = connection?.provider === "kuveytturk";
   const isEnpara = connection?.provider === "enpara";
   const invalidClient = /invalid_client/i.test(err);
-  const rsaBad = /RSA özel anahtar|RSA anahtarı|PRIVATE KEY|PKCS8|PKCS1|PUBLIC KEY|CERTIFICATE|imza anahtar|2048-bit|JSEncrypt Invalid key|openssl genrsa/i.test(err);
+  const signatureInvalid = isKuveyt && /signature\s*invalid|invalid\s*signature|imza\s*(hatası|geçersiz)|Signature Invalid|imza\/yetki/i.test(err);
+  const rsaBad = !signatureInvalid && /RSA özel anahtar|RSA anahtarı|PRIVATE KEY|PKCS8|PKCS1|PUBLIC KEY|CERTIFICATE|imza anahtar|2048-bit|JSEncrypt Invalid key|openssl genrsa/i.test(err);
+  const kuveytTimeout = isKuveyt && /ReadTimeout|ConnectTimeout|zaman aşımı|süresi aşıldı|gateway zaman aşımı|Identity zaman aşımı/i.test(err);
   const enparaIban = isEnpara && /364737|IBAN veya hesap no|Hesap numarası yada IBAN|26 haneli Enpara IBAN/i.test(err);
   if (enparaIban) {
     return (
@@ -93,8 +95,62 @@ function ConnErrorBox({ connection, onEdit }) {
       </div>
     );
   }
-  if (!isKuveyt || (!invalidClient && !rsaBad)) {
+  if (!isKuveyt || (!invalidClient && !rsaBad && !kuveytTimeout && !signatureInvalid)) {
     return <div className="text-[11px] text-rose-600 bg-rose-50 rounded-lg p-2" data-testid="conn-last-error">{err}</div>;
+  }
+  if (signatureInvalid && !invalidClient) {
+    return (
+      <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg p-2.5 space-y-1.5" data-testid="conn-last-error-kuveyt-signature">
+        <div className="font-bold flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5 shrink-0" /> İmza hatası (Signature Invalid)</div>
+        <p className="text-rose-700 leading-snug">
+          TamKobi’deki Private Key, API Market’e yüklediğiniz .crt / Public Key ile eşleşmiyor.
+        </p>
+        <ol className="list-decimal list-inside text-rose-700 space-y-0.5 pl-0.5">
+          <li>Düzenle → <b>JSEncrypt 2048-bit anahtar üret</b> (Private Key forma yazılır).</li>
+          <li><b>.crt indir</b> → aynı dosyayı Kuveyt API Market uygulamasına yükleyin.</li>
+          <li>Eski Public Key/sertifikayı portalde değiştirin; Private Key’i portala vermeyin.</li>
+          <li>Kaydet &amp; Test Et — test GET /v1/fx/rates imzayı doğrular.</li>
+        </ol>
+        {onEdit && (
+          <button type="button" onClick={onEdit} className="mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-rose-600 text-white font-semibold hover:bg-rose-700" data-testid="conn-error-edit-signature-btn">
+            <Pencil className="w-3 h-3" /> Düzenle &amp; anahtar/.crt yenile
+          </button>
+        )}
+        <details className="text-[10px] text-rose-500">
+          <summary className="cursor-pointer select-none">Teknik ayrıntı</summary>
+          <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-rose-600/90">{err}</pre>
+        </details>
+      </div>
+    );
+  }
+  if (kuveytTimeout && !invalidClient && !rsaBad) {
+    const hostMatch = err.match(/https?:\/\/[^\s,)]+/gi) || [];
+    const hosts = [...new Set(hostMatch)].slice(0, 3);
+    return (
+      <div className="text-[11px] text-rose-800 bg-rose-50 border border-rose-200 rounded-lg p-2.5 space-y-1.5" data-testid="conn-last-error-kuveyt-timeout">
+        <div className="font-bold flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5 shrink-0" /> Banka yanıt vermedi (zaman aşımı / IP)</div>
+        <p className="text-rose-700 leading-snug">
+          Canlı onay formunda yazdığınız sunucu IP’si dışından istek gelirse gateway engeller veya yanıt vermez. Testleri tanımlı üretim sunucusundan tetikleyin.
+        </p>
+        {hosts.length > 0 && (
+          <p className="text-rose-600 font-mono text-[10px] break-all">Denenen: {hosts.join(" · ")}</p>
+        )}
+        <ol className="list-decimal list-inside text-rose-700 space-y-0.5 pl-0.5">
+          <li>Üretim çıkış IP’sinin Kuveyt API Market / canlı onay whitelist’te olduğunu doğrulayın.</li>
+          <li>Mod (Sandbox/Canlı) portal uygulamasıyla aynı olsun.</li>
+          <li>Tanımlı sunucu üzerinden Kaydet &amp; Test Et’i tekrar deneyin.</li>
+        </ol>
+        {onEdit && (
+          <button type="button" onClick={onEdit} className="mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-rose-600 text-white font-semibold hover:bg-rose-700" data-testid="conn-error-edit-timeout-btn">
+            <Pencil className="w-3 h-3" /> Düzenle &amp; yeniden dene
+          </button>
+        )}
+        <details className="text-[10px] text-rose-500">
+          <summary className="cursor-pointer select-none">Teknik ayrıntı</summary>
+          <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-rose-600/90">{err}</pre>
+        </details>
+      </div>
+    );
   }
   if (rsaBad && !invalidClient) {
     const isPublic = /PUBLIC KEY|genel anahtar/i.test(err);
@@ -191,21 +247,32 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [showMatched, setShowMatched] = useState(false);
   const [genKeyBusy, setGenKeyBusy] = useState(false);
   const [ktPublicPem, setKtPublicPem] = useState("");
+  const [ktCrtPem, setKtCrtPem] = useState("");
 
   const fillJsencryptKey = async (target) => {
     if (genKeyBusy) return;
     setGenKeyBusy(true);
     try {
-      const { privateKey, publicKey } = await generateJsencryptKeyPair();
+      const { privateKey, publicKey, certificatePem } = await generateJsencryptKeyPair();
       if (target === "add") setForm((f) => ({ ...f, private_key: privateKey }));
       else setEditForm((f) => ({ ...f, private_key: privateKey }));
       setKtPublicPem(publicKey || "");
-      toast.success("Private Key forma yazıldı. Public Key’i Kuveyt API Market uygulamasına yükleyin.");
+      setKtCrtPem(certificatePem || "");
+      toast.success("Private Key forma yazıldı. .crt indirip API Market’e yükleyin (Private Key burada kalır).");
     } catch (err) {
       toast.error(err?.message || "JSEncrypt anahtar üretilemedi");
     } finally {
       setGenKeyBusy(false);
     }
+  };
+
+  const downloadKtCrt = () => {
+    if (!ktCrtPem) {
+      toast.error(".crt henüz yok — önce anahtar üretin.");
+      return;
+    }
+    downloadTextFile("kuveyt-public.crt", ktCrtPem);
+    toast.success("kuveyt-public.crt indirildi — API Market’e yükleyin.");
   };
 
   const load = useCallback(async () => {
@@ -554,14 +621,17 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                             {genKeyBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} JSEncrypt 2048-bit anahtar üret
                           </button>
                           <p className="text-[10px] text-slate-500">
-                            Kuveyt imzası <a href="https://github.com/travist/jsencrypt" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">travist/jsencrypt</a> <code className="font-mono">signSha256</code> ile üretilir.
-                            Üretilen <b>Public Key</b>’i API Market uygulamasına yükleyin (Private Key burada kalır).
+                            Kuveyt imzası <a href="https://github.com/travist/jsencrypt" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">travist/jsencrypt</a> <code className="font-mono">signSha256</code>.
+                            Private Key burada; eşleşen <b>.crt</b> API Market’e yüklenir.
                           </p>
                           {ktPublicPem && (
                             <div className="mt-1 space-y-1" data-testid="conn-jsencrypt-public-box">
-                              <label className="block font-semibold text-slate-700">Portal Public Key (kopyalayıp API Market’e yapıştırın)</label>
-                              <textarea className={`${inputCls} font-mono min-h-[72px]`} readOnly value={ktPublicPem} data-testid="conn-jsencrypt-public-pem" />
-                              <button type="button" className="px-2 py-1 rounded-md border text-[10px] font-semibold" onClick={() => { navigator.clipboard?.writeText(ktPublicPem); toast.success("Public Key kopyalandı."); }} data-testid="conn-jsencrypt-copy-public-btn">Public Key kopyala</button>
+                              <label className="block font-semibold text-slate-700">Portal Public Key / .crt</label>
+                              <textarea className={`${inputCls} font-mono min-h-[72px]`} readOnly value={ktCrtPem || ktPublicPem} data-testid="conn-jsencrypt-public-pem" />
+                              <div className="flex flex-wrap gap-1">
+                                <button type="button" className="px-2 py-1 rounded-md bg-emerald-600 text-white text-[10px] font-semibold disabled:opacity-50" onClick={downloadKtCrt} disabled={!ktCrtPem} data-testid="conn-jsencrypt-download-crt-btn">.crt indir</button>
+                                <button type="button" className="px-2 py-1 rounded-md border text-[10px] font-semibold" onClick={() => { navigator.clipboard?.writeText(ktPublicPem); toast.success("Public Key kopyalandı."); }} data-testid="conn-jsencrypt-copy-public-btn">Public Key kopyala</button>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -596,17 +666,25 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               </p>
             )}
             {editForm.provider === "kuveytturk" && (
-              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2" data-testid="kuveyt-edit-hint">
-                Canlı:{" "}
-                <a href="https://prep-identity.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-identity.kuveytturk.com.tr</a>
-                {" "}(token) ·{" "}
-                <a href="https://prep-gateway.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-gateway.kuveytturk.com.tr</a>
-                {" "}(API). Abonelik: <code className="font-mono">GET /v1/fx/rates</code>,{" "}
-                <code className="font-mono">GET /v3/accounts/&#123;ekNo&#125;/transactions</code>,{" "}
-                <code className="font-mono">POST /v1/vpos/getMerchantOrderDetail</code>.
-                Token: <code className="font-mono">POST /connect/token</code> (<b>client_credentials</b> scope=public). İmza: <code className="font-mono">JSEncrypt.signSha256</code>.
-                RSA Private Key burada; Public Key API Market’te.
-              </p>
+              <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-1.5" data-testid="kuveyt-edit-hint">
+                <p>
+                  Canlı:{" "}
+                  <a href="https://prep-identity.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-identity.kuveytturk.com.tr</a>
+                  {" "}(token) ·{" "}
+                  <a href="https://prep-gateway.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-gateway.kuveytturk.com.tr</a>
+                  {" "}(API).
+                </p>
+                <p>
+                  Abonelik: <code className="font-mono">GET /v1/fx/rates</code> (bağlantı testi),{" "}
+                  <code className="font-mono">GET /v3/accounts/&#123;ekNo&#125;/transactions</code> (hesap hareketleri),{" "}
+                  <code className="font-mono">POST /v1/vpos/getMerchantOrderDetail</code>.
+                  EFT/Havale ve <code className="font-mono">non3DPayment</code> otomatik çağrılmaz.
+                </p>
+                <ol className="list-decimal list-inside space-y-0.5 text-amber-900" data-testid="kuveyt-live-checklist">
+                  <li><b>İmza:</b> Private Key (.pem) burada; eşleşen <b>.crt</b> API Market’te olmalı — aksi halde Signature Invalid.</li>
+                  <li><b>IP:</b> Canlı onay formundaki sunucu IP’sinden test edin; diğer IP’ler gateway tarafından engellenir.</li>
+                </ol>
+              </div>
             )}
             <form onSubmit={saveEdit} className="space-y-3 text-xs">
               <div>
@@ -647,14 +725,16 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                             {genKeyBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} JSEncrypt 2048-bit anahtar üret
                           </button>
                           <p className="text-[10px] text-slate-500">
-                            İmza <code className="font-mono">JSEncrypt.signSha256</code> (<a href="https://github.com/travist/jsencrypt" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">github.com/travist/jsencrypt</a>).
-                            Public Key’i bu alana yapıştırmayın — API Market uygulamasına yükleyin.
+                            İmza <code className="font-mono">JSEncrypt.signSha256</code>. Private Key bu alanda kalır; <b>.crt indir</b> → API Market’e yükleyin (Public Key’i buraya yapıştırmayın).
                           </p>
                           {ktPublicPem && (
                             <div className="mt-1 space-y-1" data-testid="edit-jsencrypt-public-box">
-                              <label className="block font-semibold text-slate-700">Portal Public Key</label>
-                              <textarea className={`${inputCls} font-mono min-h-[72px]`} readOnly value={ktPublicPem} data-testid="edit-jsencrypt-public-pem" />
-                              <button type="button" className="px-2 py-1 rounded-md border text-[10px] font-semibold" onClick={() => { navigator.clipboard?.writeText(ktPublicPem); toast.success("Public Key kopyalandı."); }} data-testid="edit-jsencrypt-copy-public-btn">Public Key kopyala</button>
+                              <label className="block font-semibold text-slate-700">Portal .crt (Public Key sertifikası)</label>
+                              <textarea className={`${inputCls} font-mono min-h-[72px]`} readOnly value={ktCrtPem || ktPublicPem} data-testid="edit-jsencrypt-public-pem" />
+                              <div className="flex flex-wrap gap-1">
+                                <button type="button" className="px-2 py-1 rounded-md bg-emerald-600 text-white text-[10px] font-semibold disabled:opacity-50" onClick={downloadKtCrt} disabled={!ktCrtPem} data-testid="edit-jsencrypt-download-crt-btn">.crt indir</button>
+                                <button type="button" className="px-2 py-1 rounded-md border text-[10px] font-semibold" onClick={() => { navigator.clipboard?.writeText(ktPublicPem); toast.success("Public Key kopyalandı."); }} data-testid="edit-jsencrypt-copy-public-btn">Public Key kopyala</button>
+                              </div>
                             </div>
                           )}
                         </div>

@@ -16,7 +16,12 @@ jest.mock("axios", () => {
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }));
 jest.mock("../context/AuthContext", () => ({ API_URL: "/api" }));
 jest.mock("../utils/jsencryptKuveyt", () => ({
-  generateJsencryptKeyPair: jest.fn(async () => ({ privateKey: "PRIV", publicKey: "PUB" })),
+  generateJsencryptKeyPair: jest.fn(async () => ({
+    privateKey: "PRIV",
+    publicKey: "PUB",
+    certificatePem: "-----BEGIN CERTIFICATE-----\nCRT\n-----END CERTIFICATE-----",
+  })),
+  downloadTextFile: jest.fn(),
 }));
 
 const PROVIDERS = [{
@@ -75,13 +80,17 @@ async function renderPanel() {
   });
 }
 
-test("Kuveyt edit modal keeps only needed fields and shows prep hosts", async () => {
-  await renderPanel();
-  const editBtn = host.querySelector('[data-testid="edit-bank-connection-btn"]')
-    || [...host.querySelectorAll("button")].find((b) => /Düzenle/i.test(b.textContent || ""));
+async function openEditModal() {
+  const editBtn = host.querySelector('[data-testid="edit-conn-btn-c1"]')
+    || [...host.querySelectorAll("button")].find((b) => /^Düzenle$/i.test((b.textContent || "").trim()));
   expect(editBtn).toBeTruthy();
   await act(async () => { editBtn.click(); });
   await act(async () => { await Promise.resolve(); });
+}
+
+test("Kuveyt edit modal keeps only needed fields and shows prep hosts", async () => {
+  await renderPanel();
+  await openEditModal();
 
   const modal = host.querySelector('[data-testid="edit-bank-connection-modal"]');
   expect(modal).not.toBeNull();
@@ -100,4 +109,28 @@ test("Kuveyt edit modal keeps only needed fields and shows prep hosts", async ()
   expect(host.querySelector('[data-testid="edit-conn-refresh-token"]')).toBeNull();
   expect(host.querySelector('[data-testid="edit-conn-scope"]')).toBeNull();
   expect(host.querySelector('[data-testid="edit-conn-customer"]')).toBeNull();
+
+  const checklist = host.querySelector('[data-testid="kuveyt-live-checklist"]');
+  expect(checklist).not.toBeNull();
+  expect(checklist.textContent).toMatch(/İmza/i);
+  expect(checklist.textContent).toMatch(/\.crt/i);
+  expect(checklist.textContent).toMatch(/IP/i);
+});
+
+test("Kuveyt Signature Invalid shows crt checklist", async () => {
+  axios.get.mockImplementation((url) => {
+    const u = String(url);
+    if (u.includes("/banking/providers")) return Promise.resolve({ data: PROVIDERS });
+    if (u.includes("/banking/connections")) {
+      return Promise.resolve({
+        data: [{ ...CONN, last_error: "Bağlantı kurulamadı: Kuveyt Türk Signature Invalid (.crt)" }],
+      });
+    }
+    return Promise.resolve({ data: [] });
+  });
+  await renderPanel();
+  const box = host.querySelector('[data-testid="conn-last-error-kuveyt-signature"]');
+  expect(box).not.toBeNull();
+  expect(box.textContent).toMatch(/Signature Invalid/i);
+  expect(box.textContent).toMatch(/\.crt/i);
 });
