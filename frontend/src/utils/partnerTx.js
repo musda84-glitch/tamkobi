@@ -9,6 +9,50 @@ export const PARTNER_TX_LABEL = {
   salary: "Aylık Maaş",
 };
 
+/**
+ * Ortak bakiyesi (şirket defteri):
+ *   artı → şirket ortağa borçlu (ortak alacaklı / kasa borçlu)
+ *   eksi → ortak şirkete borçlu (şirket alacaklı / kasa alacaklı)
+ */
+export function partnerBalanceMeta(balance) {
+  const n = Number(balance);
+  const amount = Number.isFinite(n) ? n : 0;
+  if (amount > 0) {
+    return {
+      amount,
+      abs: amount,
+      label: "Ortak alacağı",
+      badge: "Ortak alacaklı",
+      hint: "Şirket (kasa) bu ortağa borçlu",
+      amountCls: "text-amber-700",
+      badgeCls: "bg-amber-100 text-amber-800 border-amber-200",
+      side: "credit",
+    };
+  }
+  if (amount < 0) {
+    return {
+      amount,
+      abs: Math.abs(amount),
+      label: "Ortak borcu",
+      badge: "Ortak borçlu",
+      hint: "Ortak şirkete / kasaya borçlu — kasa alacaklı",
+      amountCls: "text-rose-700",
+      badgeCls: "bg-rose-100 text-rose-800 border-rose-200",
+      side: "debit",
+    };
+  }
+  return {
+    amount: 0,
+    abs: 0,
+    label: "Ortak bakiyesi",
+    badge: "Denk",
+    hint: "Borç / alacak yok",
+    amountCls: "text-slate-800",
+    badgeCls: "bg-slate-100 text-slate-600 border-slate-200",
+    side: "zero",
+  };
+}
+
 /** Artı: ortak alacağı artar (para koy / alacak fişi / maaş). */
 export function partnerTxIncreasesBalance(type) {
   return type === "capital_in" || type === "credit" || type === "salary";

@@ -11,7 +11,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
-import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerSalaryCardText, partnerSalarySaveMessage, todayIsoDate } from "../utils/partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerBalanceMeta, partnerSalaryCardText, partnerSalarySaveMessage, todayIsoDate } from "../utils/partnerTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = PARTNER_TX_LABEL;
@@ -333,12 +333,21 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-          {[["Toplam Ortak Alacağı", summary.total_balance, "text-amber-700"], ["Toplam Sermaye Girişi", summary.total_capital_in, "text-emerald-700"], ["Toplam Çekilen", summary.total_withdrawn, "text-rose-700"], ["Dağıtılan Kâr", summary.total_profit_share, "text-indigo-700"]].map(([l, v, c]) => (
-            <div key={l} className="bg-white border border-slate-200 rounded-xl p-3" data-testid={`partner-summary-${l}`}>
+          {(() => {
+            const net = partnerBalanceMeta(summary.total_balance);
+            return [
+              ["net", net.label === "Ortak bakiyesi" ? "Net ortak bakiyesi" : `Net ${net.label.toLowerCase()}`, summary.total_balance, net.amountCls, net.hint],
+              ["capital", "Toplam Sermaye Girişi", summary.total_capital_in, "text-emerald-700", ""],
+              ["withdrawn", "Toplam Çekilen", summary.total_withdrawn, "text-rose-700", ""],
+              ["profit", "Dağıtılan Kâr", summary.total_profit_share, "text-indigo-700", ""],
+            ].map(([id, l, v, c, hint]) => (
+            <div key={id} className="bg-white border border-slate-200 rounded-xl p-3" data-testid={`partner-summary-${id}`} title={hint || undefined}>
               <div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div>
               <div className={`text-base font-bold ${c}`}>{fmt(v)} ₺</div>
+              {hint ? <div className="text-[10px] text-slate-500 mt-0.5">{hint}</div> : null}
             </div>
-          ))}
+          ));
+          })()}
         </div>
       )}
 
@@ -390,13 +399,22 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 <button type="button" onClick={(e) => openEditPartner(p, e)} className="p-1.5 text-slate-500 hover:text-indigo-600" title="Düzenle" data-testid={`edit-partner-${p.name}`}><Pencil className="w-4 h-4" /></button>
               </div>
             </div>
-            <div className="pt-2 border-t border-slate-100 flex items-end justify-between">
-              <div>
-                <div className="text-[10px] uppercase text-slate-400 font-semibold">Ortak Bakiyesi</div>
-                <div className="text-lg font-bold text-slate-900">{fmt(p.balance)} ₺</div>
+            {(() => {
+              const bm = partnerBalanceMeta(p.balance);
+              return (
+            <div className="pt-2 border-t border-slate-100 flex items-end justify-between" data-testid={`partner-balance-${p.id}`} title={bm.hint}>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="text-[10px] uppercase text-slate-400 font-semibold">{bm.label}</div>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${bm.badgeCls}`} data-testid={`partner-balance-badge-${p.id}`}>{bm.badge}</span>
+                </div>
+                <div className={`text-lg font-bold ${bm.amountCls}`} data-testid={`partner-balance-amount-${p.id}`}>{fmt(p.balance)} ₺</div>
+                <div className="text-[10px] text-slate-500 leading-snug">{bm.hint}</div>
               </div>
-              <button onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
+              <button onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600 shrink-0" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
             </div>
+              );
+            })()}
             <button
               type="button"
               onClick={(e) => openSalary(p, e)}

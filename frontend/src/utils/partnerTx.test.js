@@ -1,9 +1,25 @@
-import { isPartnerCashType, isPartnerLedgerType, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxIncreasesBalance, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, partnerBalanceMeta, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxIncreasesBalance, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
 
 describe("partnerTx", () => {
   it("labels debit and credit slips", () => {
     expect(PARTNER_TX_LABEL.debit).toMatch(/borç/i);
     expect(PARTNER_TX_LABEL.credit).toMatch(/alacak/i);
+  });
+
+  it("explains partner balance sign for company vs partner", () => {
+    const credit = partnerBalanceMeta(1200);
+    expect(credit.badge).toMatch(/alacaklı/i);
+    expect(credit.hint).toMatch(/şirket/i);
+    expect(credit.side).toBe("credit");
+
+    const debit = partnerBalanceMeta(-705389.78);
+    expect(debit.badge).toMatch(/borçlu/i);
+    expect(debit.label).toMatch(/borcu/i);
+    expect(debit.hint).toMatch(/kasa alacaklı/i);
+    expect(debit.side).toBe("debit");
+    expect(debit.abs).toBeCloseTo(705389.78);
+
+    expect(partnerBalanceMeta(0).badge).toMatch(/denk/i);
   });
 
   it("treats credit like capital_in for balance", () => {

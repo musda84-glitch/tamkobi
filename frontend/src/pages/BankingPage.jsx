@@ -400,8 +400,19 @@ export default function BankingPage() {
               </div>
             </div>
             <div className="pt-3 border-t border-amber-200/60">
-              <div className="text-[10px] text-slate-400 uppercase font-semibold">Ortak Alacağı (Bakiye)</div>
-              <div className="text-xl font-bold text-slate-900 tracking-tight">{formatTrAmount(partnerSummary.total_balance)} ₺</div>
+              {(() => {
+                const n = Number(partnerSummary.total_balance) || 0;
+                const label = n > 0 ? "Net ortak alacağı" : n < 0 ? "Net ortak borcu" : "Net ortak bakiyesi";
+                const hint = n > 0 ? "Şirket ortaklara borçlu" : n < 0 ? "Ortaklar şirkete / kasaya borçlu" : "Borç / alacak yok";
+                const cls = n > 0 ? "text-amber-800" : n < 0 ? "text-rose-700" : "text-slate-900";
+                return (
+                  <>
+                    <div className="text-[10px] text-slate-400 uppercase font-semibold">{label}</div>
+                    <div className={`text-xl font-bold tracking-tight ${cls}`}>{formatTrAmount(partnerSummary.total_balance)} ₺</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{hint}</div>
+                  </>
+                );
+              })()}
             </div>
           </button>
         )}
