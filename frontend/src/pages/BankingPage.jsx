@@ -13,8 +13,8 @@ import { matchActorTitle, matchStatusLabel } from "../utils/bankMatchLabel";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
 import { TxRowMenu } from "../components/TxRowMenu";
-import { PaymentTargetSelect } from "../components/PaymentTargetSelect";
 import { SearchSelect } from "../components/SearchSelect";
+import { VirmanPartySelect } from "../components/VirmanPartySelect";
 
 import { formatTrAmount } from "../utils/money";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
@@ -304,12 +304,16 @@ export default function BankingPage() {
 
   const handleExecuteVirman = async (e) => {
     e.preventDefault();
+    if (!virmanForm.source_account_id || !virmanForm.target_account_id) {
+      toast.error("Kaynak ve hedef seçiniz (hesap/ortak veya cari).");
+      return;
+    }
     if (!virmanForm.amount || Number(virmanForm.amount) <= 0) {
       toast.error("Geçerli bir tutar giriniz.");
       return;
     }
     if (virmanForm.source_account_id === virmanForm.target_account_id) {
-      toast.error("Kaynak ve hedef hesap aynı olamaz.");
+      toast.error("Kaynak ve hedef aynı olamaz.");
       return;
     }
     try {
@@ -714,7 +718,7 @@ export default function BankingPage() {
       {/* VIRMAN MODAL */}
       {showVirmanModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-slate-200" data-testid="virman-modal">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-200 max-h-[92vh] overflow-y-auto" data-testid="virman-modal">
             <div className="flex items-center justify-between border-b pb-2">
               <h3 className="text-base font-bold text-slate-900">Hesaplar Arası Virman (Para Transferi)</h3>
               <button onClick={() => setShowVirmanModal(false)} className="text-slate-400">
@@ -722,34 +726,29 @@ export default function BankingPage() {
               </button>
             </div>
             <form onSubmit={handleExecuteVirman} className="space-y-3 text-xs">
-              <p className="text-[11px] text-slate-500">Kasa, banka, POS, kredi kartı, cari ve ortaklar arasında transfer. Hesap→cari ödeme, cari→hesap tahsilat; müşteri kartı virmanı Müşteri Kartları kasasında görünür.</p>
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Kaynak Hesap (Çıkış)</label>
-                <PaymentTargetSelect
-                  companyId={companyId}
-                  accounts={accounts}
-                  value={virmanForm.source_account_id}
-                  onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v })}
-                  testId="virman-source-select"
-                  includePartners
-                  includeContacts
-                  excludeIntegrated
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Hedef Hesap (Giriş)</label>
-                <PaymentTargetSelect
-                  companyId={companyId}
-                  accounts={accounts}
-                  value={virmanForm.target_account_id}
-                  onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v })}
-                  testId="virman-target-select"
-                  includePartners
-                  includeContacts
-                  excludeIntegrated
-                />
-              </div>
+              <p className="text-[11px] text-slate-500">Kasa, banka, POS, kredi kartı, ortak veya cari arasında transfer. Kaynak/hedef için hesap veya cari ayrı seçilir; cari arama ile bulunur. Hesap→cari ödeme, cari→hesap tahsilat.</p>
+              <VirmanPartySelect
+                companyId={companyId}
+                accounts={accounts}
+                contacts={contacts}
+                value={virmanForm.source_account_id}
+                onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v })}
+                testId="virman-source"
+                label="Kaynak (Çıkış)"
+                includePartners
+                excludeIntegrated
+              />
+              <VirmanPartySelect
+                companyId={companyId}
+                accounts={accounts}
+                contacts={contacts}
+                value={virmanForm.target_account_id}
+                onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v })}
+                testId="virman-target"
+                label="Hedef (Giriş)"
+                includePartners
+                excludeIntegrated
+              />
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Transfer Tutarı (₺)</label>
