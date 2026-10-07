@@ -24,12 +24,12 @@ import httpx
 PROVIDERS = {
     "kuveytturk": {
         "name": "Kuveyt Türk API Market",
-        # Canlı (Postman / API Market): prep-identity + prep-gateway.
-        # Sandbox aynı Gravitee prep host’ları; SDK yedek idprep|id.
+        # Prep = test Gravitee. Canlı: identity.kuveytturk.com.tr + gateway.kuveytturk.com.tr.
+        # SDK yedek: idprep|id + apitest|api.
         "sandbox_url": "https://prep-gateway.kuveytturk.com.tr",
-        "live_url": "https://prep-gateway.kuveytturk.com.tr",
+        "live_url": "https://gateway.kuveytturk.com.tr",
         "identity_sandbox_url": "https://prep-identity.kuveytturk.com.tr",
-        "identity_live_url": "https://prep-identity.kuveytturk.com.tr",
+        "identity_live_url": "https://identity.kuveytturk.com.tr",
         "token_path": "/connect/token",
         "legacy_sandbox_url": "https://apitest.kuveytturk.com.tr/prep",
         "legacy_live_url": "https://api.kuveytturk.com.tr",
@@ -38,7 +38,7 @@ PROVIDERS = {
         "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key"],
-        "hint": "Canlı: https://prep-identity.kuveytturk.com.tr (token) + https://prep-gateway.kuveytturk.com.tr (API). Abonelik: GET /v1/fx/rates (test), GET /v3/accounts/{ekNo}/transactions (hesap hareketleri; beginDate/endDate/itemCount → accountActivities), POST /v1/vpos/getMerchantOrderDetail. Token: POST prep-identity /connect/token (client_credentials scope=public). RSA: Private Key TamKobi’de; eşleşen .crt (Public Key) API Market’te — aksi Signature Invalid. Canlı IP whitelist: yalnızca onay formundaki sunucu IP’sinden istek. İmza: JSEncrypt.signSha256. non3DPayment/EFT otomatik değil.",
+        "hint": "Canlı: https://identity.kuveytturk.com.tr (token) + https://gateway.kuveytturk.com.tr (API). Prep/test: prep-identity + prep-gateway. Abonelik: GET /v1/fx/rates (bağlantı testi, token scope=public), GET /v3/accounts/{ekNo}/transactions (hesap hareketleri; token scope=accounts; beginDate/endDate/itemCount → accountActivities), POST /v1/vpos/getMerchantOrderDetail. Token: POST …/connect/token (client_credentials). RSA: Private Key TamKobi’de; eşleşen .crt (Public Key) API Market’te — aksi Signature Invalid. Canlı IP whitelist: yalnızca onay formundaki sunucu IP’sinden istek. İmza: JSEncrypt.signSha256. non3DPayment/EFT otomatik değil.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -293,7 +293,7 @@ def _kuveyt_normalize_token_url(url: str) -> str:
 
 
 def _kuveyt_token_urls(conn: dict) -> List[str]:
-    """Canlı: Gravitee prep-identity önce (Postman); Sandbox: SDK idprep önce, Gravitee yedek."""
+    """Canlı: Gravitee identity.kuveytturk.com.tr önce; Sandbox: SDK idprep önce, prep-identity yedek."""
     urls: List[str] = []
     custom = (conn.get("token_url") or "").strip()
     if custom:
@@ -703,15 +703,18 @@ def _kuveyt_scope_candidates(conn: dict) -> List[str]:
 
 
 def _kuveyt_tx_scope_candidates(conn: dict) -> List[str]:
-    """Resmi SDK CC: scope=public önce; Postman v3 uzun liste yedek."""
+    """Hesap hareketi CC: Gateway JWT'de accounts ister (403 Invalid Scope).
+
+    Bağlantı testi / fx hâlâ `_kuveyt_scope_candidates` (public önce).
+    """
     out: List[str] = []
     custom = (conn.get("scope") or "").strip()
     for s in (
-        "public",
+        "accounts",
         custom,
         _KUVEYT_POSTMAN_TX_SCOPE,
-        "accounts",
         "accounts public",
+        "public",
         "",
     ):
         if s is None:
@@ -858,7 +861,7 @@ async def _kuveyt_post_token(
 
 
 async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -> str:
-    """Token: Canlı’da prep-identity /connect/token önce; Sandbox’ta idprep SDK önce.
+    """Token: Canlı’da identity.kuveytturk.com.tr /connect/token önce; Sandbox’ta idprep SDK önce.
 
     invalid_client bir host’ta diğer Identity ailesini durdurmaz (farklı OAuth sunucuları).
     404/HTML’de bir sonraki host denenir.
@@ -886,6 +889,7 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
                 token, err, code = await _kuveyt_post_token(client, url, client_id, client_secret, scope)
                 if token:
                     conn["_kuveyt_token_url"] = url
+                    conn["_kuveyt_token_scope"] = scope
                     return token
                 if err:
                     last_err = err
@@ -934,7 +938,7 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
         hosts = ", ".join(tried_urls[:4]) if tried_urls else "Identity"
         hint = (
             f" Identity zaman aşımı: {hosts}. "
-            "Sunucu çıkış IP’si banka whitelist’te mi ve prep-identity / idprep erişilebilir mi kontrol edin. "
+            "Sunucu çıkış IP’si banka whitelist’te mi ve identity / prep-identity / idprep erişilebilir mi kontrol edin. "
         )
     if saw_invalid_client:
         swaps = _kuveyt_cred_swap_hints(client_id, client_secret, api_key)
@@ -965,9 +969,9 @@ async def _kuveyt_access_token(conn: dict, scopes: Optional[List[str]] = None) -
         "Kuveyt Türk token alınamadı (Identity Server client_credentials)."
         f"{hint}"
         f"Mod={mode}; {fp}. "
-        "Token: POST Gravitee prep-identity …/connect/token veya resmi SDK …/api/connect/token "
-        "(body: grant_type, client_id, client_secret, scope=public). "
-        f"(canlı: prep-identity + id.kuveytturk.com.tr / sandbox: idprep + prep-identity). ({detail[:220]})"
+        "Token: POST Gravitee identity|prep-identity …/connect/token veya resmi SDK …/api/connect/token "
+        "(body: grant_type, client_id, client_secret, scope=public veya hesap hareketinde accounts). "
+        f"(canlı: identity.kuveytturk.com.tr + id.kuveytturk.com.tr / sandbox: idprep + prep-identity). ({detail[:220]})"
     )
 
 
@@ -1110,7 +1114,7 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
             raise RuntimeError(
                 "Kuveyt Türk gateway zaman aşımı (ReadTimeout). "
                 f"Denenen uçlar: {', '.join(timed_out)}. "
-                "Sandbox/Canlı için prep-gateway.kuveytturk.com.tr erişilebilir olmalı; "
+                "Sandbox için prep-gateway, canlı için gateway.kuveytturk.com.tr erişilebilir olmalı; "
                 "üretim çıkış IP’si banka whitelist’te değilse yanıt gelmez. "
                 f"Son: {last_probe[:180]}"
             )
@@ -1424,8 +1428,8 @@ def _enpara_dead_route(resp) -> bool:
     return "404-EPG96" in text or "404-QPG97" in text or code == 404
 
 
-def _jwt_expired(token: str, *, skew_sec: int = 30) -> Optional[bool]:
-    """True=süresi dolmuş, False=geçerli, None=JWT değil / exp yok."""
+def _jwt_unverified_payload(token: str) -> Optional[dict]:
+    """İmza doğrulamadan JWT gövdesi — yalnızca hata teşhisi (token loglanmaz)."""
     raw = (token or "").strip()
     parts = raw.split(".")
     if len(parts) != 3:
@@ -1433,6 +1437,30 @@ def _jwt_expired(token: str, *, skew_sec: int = 30) -> Optional[bool]:
     try:
         pad = "=" * (-len(parts[1]) % 4)
         payload = json.loads(base64.urlsafe_b64decode(parts[1] + pad))
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def _jwt_scope_claim(token: str) -> str:
+    payload = _jwt_unverified_payload(token) or {}
+    scp = payload.get("scope") or payload.get("scp") or ""
+    if isinstance(scp, (list, tuple)):
+        return " ".join(str(x) for x in scp).strip()
+    return str(scp).strip()
+
+
+def _kuveyt_is_invalid_scope(resp, detail: str = "") -> bool:
+    blob = f"{detail} {getattr(resp, 'text', '') or ''} {_api_error_detail(resp)}".lower()
+    return int(getattr(resp, "status_code", 0) or 0) == 403 and "invalid scope" in blob
+
+
+def _jwt_expired(token: str, *, skew_sec: int = 30) -> Optional[bool]:
+    """True=süresi dolmuş, False=geçerli, None=JWT değil / exp yok."""
+    payload = _jwt_unverified_payload(token)
+    if not payload:
+        return None
+    try:
         exp = payload.get("exp")
         if exp is None:
             return None
@@ -2792,8 +2820,8 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     """GET /v3/accounts/{ekNo}/transactions + RSA Signature (abonelikteki tek hareket ucu).
 
     Portal/Postman + resmi Hesap Hareketleriniz V3:
-      POST idprep|id /api/connect/token (client_credentials, scope=public)
-      GET  gateway|/prep /v3/accounts/{suffix}/transactions
+      POST identity|prep-identity /connect/token (client_credentials, scope=accounts)
+      GET  gateway|prep-gateway /v3/accounts/{suffix}/transactions
            Authorization: Bearer …  Signature: RSA-SHA256(token[+?query])
            Opsiyonel query: beginDate, endDate, itemCount
            Yanıt: value.accountActivities (date, amount, description, transactionReference, fxCode, balance)
@@ -2825,6 +2853,10 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
     saw_404 = False
     saw_ok_empty = False
     detail = ""
+    tried_tx_scopes: List[str] = []
+    used = conn.get("_kuveyt_token_scope")
+    if used is not None:
+        tried_tx_scopes.append(str(used))
 
     ranges = _kuveyt_tx_query_variants(since, end)
 
@@ -2848,7 +2880,38 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
                         f"GET {gw}{path} HTTP {resp.status_code} "
                         f"({qs_label}): {_api_error_detail(resp)}"
                     )
-                    if resp.status_code in (401, 403):
+                    if (
+                        token_kind == "cc"
+                        and _kuveyt_is_invalid_scope(resp, detail)
+                    ):
+                        remaining = [
+                            s
+                            for s in _kuveyt_tx_scope_candidates(conn)
+                            if s not in tried_tx_scopes
+                        ]
+                        recovered = False
+                        for nxt in remaining:
+                            tried_tx_scopes.append(nxt)
+                            try:
+                                token = await _kuveyt_access_token(conn, scopes=[nxt])
+                            except RuntimeError:
+                                continue
+                            resp = await _get(gw, path, params)
+                            detail = (
+                                f"GET {gw}{path} HTTP {resp.status_code} "
+                                f"({qs_label}): {_api_error_detail(resp)}"
+                            )
+                            if resp.status_code not in (401, 403):
+                                recovered = True
+                                break
+                            if not _kuveyt_is_invalid_scope(resp, detail):
+                                break
+                        if not recovered:
+                            saw_auth = True
+                            gw_auth = True
+                            best_err = detail
+                            break
+                    elif resp.status_code in (401, 403):
                         saw_auth = True
                         gw_auth = True
                         best_err = detail
@@ -2892,10 +2955,18 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
 
     hint = " Client ID/Secret, openssl genrsa private.pem (min 2048-bit) ve hesap ek no/IBAN’ı kontrol edin."
     if saw_auth:
+        asked = conn.get("_kuveyt_token_scope")
+        asked_label = "accounts" if asked is None else (asked or "(scope yok)")
+        jwt_sc = _jwt_scope_claim(token)
         hint = (
-            " GET /v3/accounts/{ekNo}/transactions yetki hatası. token scope=accounts "
-            "(client_credentials çoğu abonelikte yeter; gerekirse Access Token yapıştırın) "
-            "ve RSA Signature’ı kontrol edin."
+            " GET /v3/accounts/{ekNo}/transactions yetki hatası. "
+            f"Token isteği grant_type=client_credentials&scope={asked_label}."
+        )
+        if jwt_sc:
+            hint += f" JWT scope={jwt_sc}."
+        hint += (
+            " Hesap hareketi için Identity’ye scope=accounts gönderin; API Market’te "
+            "Accounts ürününe abone olun ve canlı/prep onayını tamamlayın. RSA Signature’ı da kontrol edin."
         )
         if token_kind == "cc":
             hint += " (Şu an client_credentials token kullanıldı.)"
