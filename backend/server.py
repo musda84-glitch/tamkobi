@@ -17735,12 +17735,16 @@ async def _restore_bank_tx(doc, _related):
 
 async def _restore_partner_tx(doc, _related):
     amount = float(doc.get("amount") or 0)
-    inc = {"capital_in": {"balance": amount, "total_capital_in": amount}, "withdrawal": {"balance": -amount, "total_withdrawn": amount},
-           "profit_share": {"total_profit_share": amount, **({"balance": -amount} if doc.get("is_paid") else {})}}.get(doc.get("type"), {})
-    if inc:
-        await db.partners.update_one({"_id": doc["partner_id"]}, {"$inc": inc})
-    if doc.get("account_id") and (doc.get("type") != "profit_share" or doc.get("is_paid")):
-        await _post_partner_cash_movement(doc["company_id"], doc["account_id"], doc["type"], amount, doc.get("partner_name", ""), doc.get("description", ""), doc.get("date"), partner_tx_id=doc["_id"])
+    t = doc.get("type")
+    if t in PARTNER_MUTABLE_TYPES:
+        await db.partners.update_one({"_id": doc["partner_id"]}, {"$inc": partner_pay.balance_inc(t, amount)})
+    elif t == "profit_share":
+        await db.partners.update_one(
+            {"_id": doc["partner_id"]},
+            {"$inc": {"total_profit_share": amount, **({"balance": -amount} if doc.get("is_paid") else {})}},
+        )
+    if doc.get("account_id") and (t != "profit_share" or doc.get("is_paid")) and t in PARTNER_CASH_TYPES:
+        await _post_partner_cash_movement(doc["company_id"], doc["account_id"], t, amount, doc.get("partner_name", ""), doc.get("description", ""), doc.get("date"), partner_tx_id=doc["_id"])
 
 async def _restore_leave(doc, _related):
     if doc.get("status") == "approved" and doc.get("type") == "annual":

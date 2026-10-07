@@ -96,7 +96,8 @@ async def _next_number(company_id: str) -> str:
 
 async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, partner_id: Optional[str] = None):
     if partner_id:
-        name = await partner_pay.withdraw(
+        # Ortak şirket masrafını öder → ortak alacaklı (credit), para çekişi değil.
+        name = await partner_pay.credit_expense(
             _db,
             exp["company_id"],
             partner_id,

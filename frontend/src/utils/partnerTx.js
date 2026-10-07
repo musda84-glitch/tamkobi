@@ -9,7 +9,7 @@ export const PARTNER_TX_LABEL = {
   salary: "Aylık Maaş",
 };
 
-/** Ortak kasasından masraf ödemesi withdrawal kaydıdır; etiket Para Çekişi değil Masraf Ödemesi. */
+/** Şirket masrafını ortak ödedi → ortak alacak (credit); etiket Masraf Ödemesi. */
 export function partnerTxLabel(tx) {
   if (!tx) return "";
   if (tx.expense_id || tx.source === "expense") return "Masraf Ödemesi";

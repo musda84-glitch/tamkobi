@@ -22,7 +22,7 @@ TX_LABELS = {
 
 
 def tx_display_label(tx: Optional[Dict[str, Any]]) -> str:
-    """Masraf ödemesi withdrawal olsa da 'Para Çekişi' değil 'Masraf Ödemesi' gösterilir."""
+    """Şirket masrafını ortağın ödemesi — 'Para Çekişi' değil 'Masraf Ödemesi' (ortak alacak)."""
     if not tx:
         return "İşlem"
     if tx.get("expense_id") or tx.get("source") == "expense":
@@ -212,6 +212,19 @@ async def move(db, company_id: str, partner_id: str, amount: float, tx_type: str
 async def withdraw(db, company_id: str, partner_id: str, amount: float, description: str, date: Optional[str] = None, extra: Optional[Dict[str, Any]] = None) -> str:
     """Company pays from the partner current account (balance decreases)."""
     return await move(db, company_id, partner_id, amount, "withdrawal", description, date, extra)
+
+
+async def credit_expense(
+    db,
+    company_id: str,
+    partner_id: str,
+    amount: float,
+    description: str,
+    date: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Şirket masrafını ortak ödedi → şirket ortağa borçlanır (ortak alacaklı, bakiye artar)."""
+    return await move(db, company_id, partner_id, amount, "credit", description, date, extra)
 
 
 async def reverse_one(db, query: Dict[str, Any]) -> bool:

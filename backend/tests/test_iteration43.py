@@ -77,7 +77,8 @@ class TestPartnerPaymentSource:
         assert paid["partner_id"] == p["id"]
         assert paid.get("account_id") in (None, "")
         p2 = _partner(api, p["id"])
-        assert p2["balance"] == pytest.approx(before - 80, abs=0.01)
+        # Ortak şirket masrafını öder → ortak alacaklı (bakiye artar)
+        assert p2["balance"] == pytest.approx(before + 80, abs=0.01)
         unpay = api.post(f"{API}/expenses/{exp['id']}/unpay", timeout=TIMEOUT)
         assert unpay.status_code == 200, unpay.text
         p3 = _partner(api, p["id"])
@@ -96,7 +97,7 @@ class TestPartnerPaymentSource:
         assert exp["payment_status"] == "paid"
         assert exp["partner_id"] == p["id"]
         p2 = _partner(api, p["id"])
-        assert p2["balance"] == pytest.approx(before - 12, abs=0.01)
+        assert p2["balance"] == pytest.approx(before + 12, abs=0.01)
         api.delete(f"{API}/expenses/{exp['id']}", timeout=TIMEOUT)
         p3 = _partner(api, p["id"])
         assert p3["balance"] == pytest.approx(before, abs=0.01)
