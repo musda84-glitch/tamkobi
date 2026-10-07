@@ -21,6 +21,8 @@ export type Employee = {
   status?: string;
   annual_leave_days?: number;
   used_leave_days?: number;
+  leave_carry_days?: number;
+  leave_balance?: { remaining?: number; annual?: number; used?: number; carry?: number };
   photo_url?: string | null;
   workplace?: Workplace | null;
   yevmiye_days?: number;
@@ -292,7 +294,7 @@ export type EmployeeCard = {
     method?: string;
   };
   workplace?: Workplace | null;
-  leave_balance?: { remaining?: number; annual?: number };
+  leave_balance?: { remaining?: number; annual?: number; used?: number; carry?: number };
   attendance?: { month?: string; days_present?: number; total_hours?: number; overtime_hours?: number };
   performance?: {
     overall?: number;
@@ -1702,7 +1704,13 @@ export function monthlyPayrollLoad(employees: Employee[]): number {
 }
 
 export function remainingLeaveDays(emp?: Employee | null): number {
-  return (Number(emp?.annual_leave_days) || 14) - (Number(emp?.used_leave_days) || 0);
+  const annual = Number(emp?.annual_leave_days) || 14;
+  const used = Number(emp?.used_leave_days) || 0;
+  const carry = Number(emp?.leave_carry_days) || 0;
+  if (emp?.leave_balance && emp.leave_balance.remaining != null) {
+    return Number(emp.leave_balance.remaining) || 0;
+  }
+  return Math.max(0, annual + carry - used);
 }
 
 export function leaveTypeTr(type?: string | null): string {

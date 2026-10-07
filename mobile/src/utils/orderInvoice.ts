@@ -54,13 +54,16 @@ export function eBelgeCreateBody(opts: {
   invoiceId?: string;
   companyId: string;
   eType: "e_invoice" | "e_archive";
+  scenario?: "TEMEL" | "TICARI";
 }) {
   return {
     invoice_id: opts.invoiceId || undefined,
     order_id: opts.orderId,
     company_id: opts.companyId,
     e_type: opts.eType,
-    scenario: opts.eType === "e_invoice" ? "TICARI" : undefined,
+    scenario: opts.eType === "e_invoice"
+      ? (opts.scenario || "TICARI")
+      : undefined,
   };
 }
 

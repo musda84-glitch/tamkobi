@@ -6,6 +6,7 @@ import { del, get, post, put } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { B2BSheet } from "../components/b2b/B2BSheet";
 import { Chip, n } from "../components/chips";
+import { ElektronikFaturaOnayModal } from "../components/ElektronikFaturaOnayModal";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Screen } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
@@ -13,6 +14,7 @@ import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice, Product } from "../types";
 import { splitPaymentTarget } from "../utils/contactDraft";
+import type { EfaturaOnayPayload } from "../utils/efaturaOnay";
 import { paymentTargetGroups, type BankAccount, type Partner } from "../utils/finance";
 import { computeLine, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
 import {
@@ -27,6 +29,7 @@ import {
   remainingAmount,
   type GdMode,
 } from "../utils/invoiceDraft";
+import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { eTypeTr, invoiceTypeTr, statusTr, tradeKindTr } from "../utils/labels";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 import { indexProductsByKey, lineItemImage, lineProductIds } from "../utils/productDisplay";
@@ -66,6 +69,8 @@ export function InvoiceDetailScreen() {
   const [gdMode, setGdMode] = useState<GdMode>("amount");
   const [gdValue, setGdValue] = useState("");
   const [catalog, setCatalog] = useState<Record<string, Product>>({});
+  const [efaturaOpen, setEfaturaOpen] = useState(false);
+  const [efaturaPreferred, setEfaturaPreferred] = useState<"e_invoice" | "e_archive" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -165,6 +170,52 @@ export function InvoiceDetailScreen() {
   const blockedItems = () => {
     setOpenRow(null);
     setError("Kesilmiş faturada kalemler değiştirilemez. Taslakken sola kaydırarak düzenleyin veya silin.");
+  };
+
+  const confirmEBelge = async (payload: EfaturaOnayPayload) => {
+    const label = payload.eType === "e_invoice" ? "E-Fatura" : "E-Arşiv";
+    setBusy(true);
+    setMessage(null);
+    try {
+      if (payload.alias && inv?.contact_id) {
+        try {
+          await put(client, `/contacts/${inv.contact_id}`, {
+            e_invoice_alias: payload.alias,
+            is_e_invoice_user: payload.eType === "e_invoice",
+          });
+        } catch {
+          /* gönderim yine denenecek */
+        }
+      }
+      const patch: Record<string, unknown> = {};
+      if (payload.stampNow) Object.assign(patch, nowIssueDateTime());
+      if (payload.withholding) {
+        patch.withholding_rate = Number(payload.withholding.withholding_rate || 0);
+        patch.withholding_code = payload.withholding.withholding_code || null;
+      }
+      if (payload.exemption?.tax_exemption_code) {
+        patch.tax_exemption_code = payload.exemption.tax_exemption_code;
+        patch.tax_exemption_reason = payload.exemption.tax_exemption_reason || null;
+      }
+      if (payload.returnRef?.original_invoice_number) {
+        patch.original_invoice_number = payload.returnRef.original_invoice_number;
+        patch.original_issue_date = payload.returnRef.original_issue_date || null;
+        if (payload.returnRef.notes) patch.notes = payload.returnRef.notes;
+      }
+      if (Object.keys(patch).length) {
+        await put(client, `/invoices/${id}`, patch);
+      }
+      const body: Record<string, unknown> = { e_type: payload.eType };
+      if (payload.scenario) body.scenario = payload.scenario;
+      await post(client, `/invoices/${id}/send-to-gib`, body);
+      setError(null);
+      setMessage(`${label} olarak kesildi.`);
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Fatura kesilemedi."));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const openItemEdit = (index: number) => {
@@ -369,16 +420,23 @@ export function InvoiceDetailScreen() {
       {canEdit && !issued && !incomingPending && inv.invoice_type !== "dispatch" ? (
         <Card>
           <Text style={{ fontWeight: "800", color: colors.text }}>GİB'e kes</Text>
-          <Muted>E-Fatura, e-Arşiv, e-İhracat veya kağıt olarak kesin.</Muted>
+          <Muted>E-Fatura / e-Arşiv onay penceresi; e-İhracat veya kağıt doğrudan kesilir.</Muted>
           <Row style={{ flexWrap: "wrap" }}>
             {E_TYPES.filter((t) => t.key !== "e_dispatch").map((t) => (
               <Pressable
                 key={t.key}
                 testID={`inv-issue-${t.key}`}
-                onPress={() => run(async () => {
-                  await post(client, `/invoices/${id}/send-to-gib`, { e_type: t.key });
-                  setMessage(`${t.label} olarak kesildi.`);
-                }, "Fatura kesilemedi.")}
+                onPress={() => {
+                  if (t.key === "e_invoice" || t.key === "e_archive") {
+                    setEfaturaPreferred(t.key);
+                    setEfaturaOpen(true);
+                    return;
+                  }
+                  run(async () => {
+                    await post(client, `/invoices/${id}/send-to-gib`, { e_type: t.key });
+                    setMessage(`${t.label} olarak kesildi.`);
+                  }, "Fatura kesilemedi.");
+                }}
                 style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: "#fff", borderWidth: 1, borderColor: colors.border }}
               >
                 <Text style={{ fontWeight: "700", fontSize: 12, color: colors.text }}>{t.label}</Text>
@@ -561,6 +619,14 @@ export function InvoiceDetailScreen() {
         </Row>
         <PrimaryButton title={busy ? "Kaydediliyor…" : "Kalemi kaydet"} onPress={saveItemEdit} loading={busy} color={colors.primary} testID="inv-item-save" />
       </B2BSheet>
+
+      <ElektronikFaturaOnayModal
+        visible={efaturaOpen}
+        invoice={inv}
+        preferredEType={efaturaPreferred}
+        onClose={() => setEfaturaOpen(false)}
+        onConfirm={confirmEBelge}
+      />
     </Screen>
   );
 }

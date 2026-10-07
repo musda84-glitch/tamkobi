@@ -39,6 +39,7 @@ describe("orderInvoice draft / post / e-belge", () => {
       scenario: undefined,
     });
     expect(eBelgeCreateBody({ orderId: "o1", companyId: "c1", eType: "e_invoice" }).scenario).toBe("TICARI");
+    expect(eBelgeCreateBody({ orderId: "o1", companyId: "c1", eType: "e_invoice", scenario: "TEMEL" }).scenario).toBe("TEMEL");
   });
 
   it("badge label/tone for draft vs posted", () => {
