@@ -497,7 +497,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
     e.target.value = "";
     if (!raw) return;
     try {
-      const file = await compressImageFile(raw, { maxEdge: 480, quality: 0.78, targetBytes: 80 * 1024, force: true });
+      const file = await compressImageFile(raw, { maxEdge: 480, quality: 0.78, targetBytes: 80 * 1024, force: true, preferJpeg: true });
       const data = await fileToDataUrl(file);
       patch({ logo: data });
     } catch {

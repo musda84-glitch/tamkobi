@@ -315,6 +315,14 @@ function asLogo(value) {
   return "";
 }
 
+/** GİB harici URL okumaz; data URI gömülür (WebP gönderimde JPEG'e çevrilir). */
+export function gibSafeLogoSrc(value) {
+  const s = String(value || "").trim().replace(/\s+/g, "");
+  if (!s.startsWith("data:image/")) return "";
+  if (/^data:image\/(jpeg|jpg|png|gif|webp);base64,[A-Za-z0-9+/=]+/i.test(s)) return s;
+  return "";
+}
+
 export function normalizeLayout(raw, kind) {
   const base = defaultLayout(kind);
   if (!raw || typeof raw !== "object") return base;
@@ -594,8 +602,9 @@ function xsltGibSeal(kind) {
 
 function xsltBlocks(L) {
   const logoH = asLogoSize(L.logoSize);
-  const logo = L.logo
-    ? `<img src="${xmlEscape(L.logo)}" alt="logo" style="height:${logoH}px;width:auto;max-width:100%;object-fit:contain;"/>`
+  const logoSrc = gibSafeLogoSrc(L.logo);
+  const logo = logoSrc
+    ? `<img alt="logo" height="${logoH}" src="${xmlEscape(logoSrc)}" style="height:${logoH}px;width:auto;border:0;"/>`
     : "";
   const headerVis = visibleHeaderFields(L);
   const headerBits = headerVis.map((f) => {
@@ -712,11 +721,13 @@ export function layoutToXslt(layout, kind) {
         <meta charset="UTF-8"/>
         <title><xsl:value-of select="/n1:Invoice/cbc:ID"/></title>
         <style type="text/css">
-          body { background:${L.paper}; color:${L.text}; font-family:"${font}", Tahoma, sans-serif; font-size:${fs}px; margin:0; padding:16px; }
+          body, table, td, th, div, span, h1 { font-family:"${font}", Tahoma, Arial, Helvetica, sans-serif; }
+          body { background:${L.paper}; color:${L.text}; font-size:${fs}px; margin:0; padding:16px; }
+          table { font-size:${fs}px; }
           h1 { font-size:${no}px; color:${L.primary}; margin:8px 0 0; }
           .inv-wrap { max-width:900px; margin:0 auto; }
           .inv-row { margin:0 0 8px; }
-          .inv-cell { padding:2px 4px; }
+          .inv-cell { padding:2px 4px; font-size:${fs}px; }
           .inv-header { border-bottom:3px solid ${L.accent}; padding-bottom:10px; }
           .inv-brand-name { font-size:${no}px; margin:6px 0 2px; color:${L.primary}; }
           .inv-brand-addr, .inv-brand-vkn { font-size:${k}px; }
@@ -732,10 +743,10 @@ export function layoutToXslt(layout, kind) {
           .inv-ettn-v { font-size:${fs + 6}px; color:${L.primary}; margin-top:2px; }
           .inv-lines { border-collapse:collapse; }
           .inv-lines th { background:${L.primary}; color:#fff; font-size:${k}px; }
-          .inv-lines td { border-bottom:1px solid ${L.muted}22; }
+          .inv-lines td { border-bottom:1px solid ${L.muted}22; font-size:${fs}px; }
           .inv-totals { min-width:260px; margin-top:8px; }
           .inv-grand td { font-weight:700; color:${L.primary}; font-size:${fs + 1}px; border-top:2px solid ${L.accent}; }
-          .inv-notes, .inv-iban { border-top:1px dashed ${L.muted}55; padding-top:8px; color:${L.muted}; }
+          .inv-notes, .inv-iban { border-top:1px dashed ${L.muted}55; padding-top:8px; color:${L.muted}; font-size:${fs}px; }
           .inv-balance { border:1px solid ${L.accent}; padding:8px 10px; }
           .inv-qr { text-align:right; }
           .inv-spacer { min-height:28px; }
@@ -743,7 +754,7 @@ export function layoutToXslt(layout, kind) {
           .inv-gib-seal h1 { font-size:18px; margin:4px 0 0; color:${L.primary}; }
         </style>
       </head>
-      <body>
+      <body style="font-family:'${font}', Tahoma, Arial, Helvetica, sans-serif; font-size:${fs}px; color:${L.text}; background:${L.paper};">
         <div class="inv-wrap">
           ${body || `<div>e-Fatura</div>`}
         </div>

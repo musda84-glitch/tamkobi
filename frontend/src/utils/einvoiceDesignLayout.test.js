@@ -1,6 +1,7 @@
 import {
   BLOCK_IDS,
   defaultLayout,
+  gibSafeLogoSrc,
   layoutToXslt,
   metaGridColsClass,
   moveBlock,
@@ -408,6 +409,25 @@ test("layoutToXslt writes GIB-style inline meta rows at any width", () => {
   expect(full).toContain("İrsaliye No:");
   expect(full).toContain("Son Ödeme Tarihi:");
   expect(full).toContain("' - '");
+});
+
+test("gibSafeLogoSrc keeps data URIs and drops http", () => {
+  expect(gibSafeLogoSrc("data:image/png;base64,aaa")).toContain("data:image/png");
+  expect(gibSafeLogoSrc("https://cdn.example/logo.png")).toBe("");
+  expect(gibSafeLogoSrc("/api/files/logo.png")).toBe("");
+});
+
+test("layoutToXslt writes inline body font size and skips http logos", () => {
+  const withHttp = layoutToXslt(normalizeLayout({
+    font: "Arial",
+    fontSize: 14,
+    logo: "https://cdn.example/logo.png",
+    blocks: [{ id: "header" }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
+  }));
+  expect(withHttp).toContain('font-size:14px');
+  expect(withHttp).toMatch(/<body style="[^"]*font-size:14px/);
+  expect(withHttp).toContain("Arial");
+  expect(withHttp).not.toContain("https://cdn.example/logo.png");
 });
 
 test("layoutToXslt uses selected logo height", () => {

@@ -13,6 +13,7 @@ export async function compressImageFile(file, opts = {}) {
   const quality = opts.quality ?? 0.78;
   const targetBytes = opts.targetBytes ?? 220 * 1024;
   const force = !!opts.force;
+  const preferJpeg = !!opts.preferJpeg;
   if (!file || typeof file.type !== "string") return file;
   if (!file.type.startsWith("image/")) return file;
   if (file.type === "image/gif" || file.type === "image/heic" || file.type === "image/heif") return file;
@@ -38,9 +39,9 @@ export async function compressImageFile(file, opts = {}) {
     const qualities = [quality, Math.max(0.45, quality - 0.12), Math.max(0.4, quality - 0.22)];
     let best = null;
     for (const q of qualities) {
-      const webp = await _canvasToBlob(canvas, "image/webp", q);
       const jpeg = await _canvasToBlob(canvas, "image/jpeg", q);
-      for (const blob of [webp, jpeg]) {
+      const webp = preferJpeg ? null : await _canvasToBlob(canvas, "image/webp", q);
+      for (const blob of [jpeg, webp]) {
         if (!blob) continue;
         if (!best || blob.size < best.size) best = blob;
       }

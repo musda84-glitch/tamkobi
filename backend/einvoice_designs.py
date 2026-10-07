@@ -1,6 +1,9 @@
 """Platform e-Fatura / e-Arşiv XSLT tasarımları (Sistem paneli)."""
 from __future__ import annotations
 
+import base64
+import gzip
+import io
 import json
 import os
 import re
@@ -139,6 +142,63 @@ async def selected_xslt(kind: str) -> Optional[str]:
     if not row:
         return None
     return row.get("xslt") or None
+
+
+_DATA_IMAGE_RE = re.compile(
+    r"data:image/(webp|jpeg|jpg|png|gif);base64,([A-Za-z0-9+/=\s]+)",
+    re.IGNORECASE,
+)
+
+
+def gzip_xslt_b64(xslt: str) -> str:
+    """GİB UBL: XSLT gzip + Base64 (EmbeddedDocumentBinaryObject)."""
+    raw = str(xslt or "").encode("utf-8")
+    return base64.b64encode(gzip.compress(raw, compresslevel=9)).decode("ascii")
+
+
+def _image_bytes_to_jpeg_b64(mime: str, payload_b64: str) -> str:
+    raw = base64.b64decode(re.sub(r"\s+", "", payload_b64 or ""))
+    kind = (mime or "").lower()
+    if kind in ("jpeg", "jpg") and raw[:2] == b"\xff\xd8":
+        return base64.b64encode(raw).decode("ascii")
+    from PIL import Image
+
+    im = Image.open(io.BytesIO(raw))
+    if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+        rgba = im.convert("RGBA")
+        bg = Image.new("RGB", rgba.size, (255, 255, 255))
+        bg.paste(rgba, mask=rgba.split()[-1])
+        im = bg
+    else:
+        im = im.convert("RGB")
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=85, optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def prepare_xslt_for_gib(xslt: str) -> str:
+    """GİB HTML görüntüleyici WebP/HTTP logo okumaz — JPEG data URI'ye çevir."""
+    text = str(xslt or "")
+
+    def _repl(match: re.Match) -> str:
+        mime, payload = match.group(1), match.group(2)
+        try:
+            jpeg_b64 = _image_bytes_to_jpeg_b64(mime, payload)
+        except Exception:
+            return match.group(0)
+        return f"data:image/jpeg;base64,{jpeg_b64}"
+
+    return _DATA_IMAGE_RE.sub(_repl, text)
+
+
+async def selected_xslt_for_e_type(e_type: str) -> Optional[str]:
+    """Giden UBL'ye gömülecek seçili tasarım (GİB-uyumlu JPEG logo)."""
+    raw_kind = str(e_type or "").strip().lower()
+    kind = "e_archive" if raw_kind in ("e_archive", "earsiv", "e-arsiv") else "e_invoice"
+    raw = await selected_xslt(kind)
+    if not raw:
+        return None
+    return prepare_xslt_for_gib(raw)
 
 
 async def _get(design_id: str) -> dict:

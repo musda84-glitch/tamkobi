@@ -108,7 +108,7 @@ def gib_invoice_id(invoice_number: str, issue_date: str) -> str:
     return f"TKB{year}{digits}"
 
 
-def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optional[str] = None) -> Tuple[str, str, str]:
+def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optional[str] = None, xslt: Optional[str] = None) -> Tuple[str, str, str]:
     """Return (xml, ettn, invoice_id) for UBL-TR 1.2.
 
     Not: İşNet gönderimi isnet.build_ubl / ubl_export kullanır (TEVKIFAT dahil).
@@ -311,6 +311,27 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
                 f"</cac:BillingReference>"
             )
 
+    xslt_ref = ""
+    xslt_text = str(xslt or "").strip()
+    if "<xsl:stylesheet" in xslt_text or "<xsl:transform" in xslt_text:
+        try:
+            import einvoice_designs as _ed
+            payload = _ed.gzip_xslt_b64(xslt_text)
+            fname = "earsiv.xslt" if e_type == "e_archive" else "efatura.xslt"
+            xslt_ref = (
+                "<cac:AdditionalDocumentReference>"
+                f"<cbc:ID>{uuid.uuid4()}</cbc:ID>"
+                f"<cbc:IssueDate>{issue}</cbc:IssueDate>"
+                "<cbc:DocumentType>XSLT</cbc:DocumentType>"
+                "<cac:Attachment>"
+                f'<cbc:EmbeddedDocumentBinaryObject mimeCode="application/xml" encodingCode="Base64" '
+                f'characterSetCode="UTF-8" filename="{fname}">{payload}</cbc:EmbeddedDocumentBinaryObject>'
+                "</cac:Attachment>"
+                "</cac:AdditionalDocumentReference>"
+            )
+        except Exception:
+            xslt_ref = ""
+
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
          xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
@@ -336,6 +357,7 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
   {archive_refs}
   {order_ref}
   {billing_ref}
+  {xslt_ref}
   {signature_block}
   <cac:AccountingSupplierParty>{party(seller_tax, seller_scheme, company.get("name") or "Satıcı", company)}</cac:AccountingSupplierParty>
   <cac:AccountingCustomerParty>{party(buyer_tax, buyer_scheme, buyer_name, contact_for_party)}</cac:AccountingCustomerParty>
@@ -547,7 +569,13 @@ async def send_document(settings: dict, password: str, invoice: dict, contact: O
     if e_type not in ("e_invoice", "e_archive"):
         raise HTTPException(status_code=400, detail="n11 Faturam yalnızca e-Fatura ve e-Arşiv gönderir.")
     ticket = await get_ticket(settings, password)
-    xml, ettn, inv_id = build_ubl(invoice, company or {}, contact)
+    xslt = None
+    try:
+        import einvoice_designs as _ed
+        xslt = await _ed.selected_xslt_for_e_type(e_type)
+    except Exception:
+        logger.exception("n11 selected xslt load failed")
+    xml, ettn, inv_id = build_ubl(invoice, company or {}, contact, xslt=xslt)
     raw = base64.b64encode(xml.encode("utf-8")).decode("ascii")
     corp = _esc((settings.get("corporate_code") or "").strip())
     map_code = _esc(invoice.get("id") or invoice.get("_id") or inv_id)
