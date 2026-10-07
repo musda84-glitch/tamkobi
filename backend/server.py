@@ -8036,13 +8036,19 @@ async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
             # id eşleşmesi kaçarsa string normalize dene
             aid = str(a.get("id") or "")
             conn = next((c for lid, c in conns.items() if str(lid) == aid), None)
-        out.append({
+        row = {
             **a,
             "is_integrated": bool(conn),
             "integration_provider": (conn.get("provider_name") if conn else None),
             "integration_status": (conn.get("status") if conn else None),
             "connection_id": (conn.get("_id") if conn else None),
-        })
+        }
+        # Müşteri Kartları havuzu: giriş+çıkış defteri — bakiye her zaman 0
+        if row.get("is_customer_card_pool"):
+            if float(row.get("current_balance") or 0) != 0.0:
+                await bank_guard.pin_customer_card_pool_balance(db, row.get("id") or row.get("_id"))
+            row["current_balance"] = 0.0
+        out.append(row)
     return out
 
 async def _resolve_card_owner_fields(company_id: str, payload: Dict[str, Any], *, existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -8188,8 +8194,19 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
             await db.contacts.update_one({"_id": tx["owner_contact_id"]}, {"$inc": {"balance": -amt}})
         return
     change = amt if tx.get("type") == "inflow" else -amt
-    if tx.get("account_id") and tx.get("source") != "ledger":
-        await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
+    # Müşteri Kartları havuzu defter: giriş/çıkış eşlenik, bakiye her zaman 0 — $inc yapma.
+    skip_account_bal = bool(tx.get("customer_card_pool_ledger")) or (
+        tx.get("via_customer_card") and tx.get("account_id") and tx.get("account_id") == tx.get("customer_card_account_id")
+    )
+    if tx.get("account_id") and tx.get("source") != "ledger" and not skip_account_bal:
+        acc_meta = await db.bank_accounts.find_one({"_id": tx["account_id"]}, {"is_customer_card_pool": 1, "type": 1})
+        if bank_guard.is_customer_card_pool(acc_meta):
+            skip_account_bal = True
+            await bank_guard.pin_customer_card_pool_balance(db, tx["account_id"])
+        else:
+            await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
+    elif skip_account_bal and tx.get("account_id"):
+        await bank_guard.pin_customer_card_pool_balance(db, tx["account_id"])
     # Masraf ödemesi oluştururken cariye yazılmaz; geri alırken de dokunma.
     # virman_card_mirror: bakiyeler asıl virman tarafında; havuz satırı yalnızca görünüm.
     if tx.get("source") == "virman_card_mirror":
@@ -8353,11 +8370,67 @@ def _stamp_via_customer_card_pool(tx_doc: Dict[str, Any], pool: Dict[str, Any], 
     """Cari virman «müşteri kartı ile» — hareket Müşteri Kredi Kartları kasasında görünür."""
     tx_doc["customer_card"] = True
     tx_doc["via_customer_card"] = True
+    tx_doc["customer_card_pool_ledger"] = True  # bakiyeyi değiştirme; havuz her zaman 0
     tx_doc["customer_card_account_id"] = pool.get("_id")
     tx_doc["customer_card_name"] = pool.get("account_name") or bank_guard.CUSTOMER_CARD_POOL_NAME
     note = "Müşteri kredi kartı ile"
     if note not in str(tx_doc.get("description") or ""):
         tx_doc["description"] = f"{tx_doc.get('description') or desc} · {note}"
+
+
+async def _insert_customer_card_pool_pair(
+    pool: Dict[str, Any],
+    *,
+    company_id: str,
+    amount: float,
+    desc: str,
+    today: str,
+    src_name: str,
+    tgt_name: str,
+    contact_id: str,
+    contact_name: str,
+    target_contact_id: str,
+    target_contact_name: str,
+) -> None:
+    """Cari↔cari müşteri kartı: eşlenik çıkış+giriş; kart bakiyesi 0 kalır."""
+    out_id = str(uuid.uuid4())
+    in_id = str(uuid.uuid4())
+    base = {
+        "company_id": company_id,
+        "account_id": pool["_id"],
+        "account_name": pool.get("account_name") or bank_guard.CUSTOMER_CARD_POOL_NAME,
+        "category": "Virman (Müşteri Kartı)",
+        "amount": amount,
+        "currency": pool.get("currency") or "TRY",
+        "date": today,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    out_tx = {
+        **base,
+        "_id": out_id,
+        "type": "outflow",
+        "description": f"Virman çıkış {src_name} → {tgt_name}: {desc}",
+        "contact_id": contact_id,
+        "contact_name": contact_name,
+        "target_contact_id": target_contact_id,
+        "target_contact_name": target_contact_name,
+        "source": "virman",
+        "pair_tx_id": in_id,
+    }
+    in_tx = {
+        **base,
+        "_id": in_id,
+        "type": "inflow",
+        "description": f"Virman giriş {src_name} → {tgt_name}: {desc}",
+        "contact_id": target_contact_id,
+        "contact_name": target_contact_name,
+        "source": "virman_card_mirror",
+        "pair_tx_id": out_id,
+    }
+    _stamp_via_customer_card_pool(out_tx, pool, desc)
+    _stamp_via_customer_card_pool(in_tx, pool, desc)
+    await db.bank_transactions.insert_many([out_tx, in_tx])
+    await bank_guard.pin_customer_card_pool_balance(db, pool["_id"])
 
 
 async def _apply_virman_customer_card(
@@ -8408,27 +8481,19 @@ async def _execute_virman_contact(
         await db.contacts.update_one({"_id": t_id}, {"$inc": {"balance": amount}})
         msg = f"{amount:,.2f} TL cari virman tamamlandı ({src_name} → {tgt_name})."
         if pool:
-            tx_doc = {
-                "_id": str(uuid.uuid4()),
-                "company_id": company_id,
-                "account_id": pool["_id"],
-                "account_name": pool.get("account_name") or bank_guard.CUSTOMER_CARD_POOL_NAME,
-                "type": "outflow",
-                "category": "Virman (Müşteri Kartı)",
-                "amount": amount,
-                "currency": pool.get("currency") or "TRY",
-                "description": f"Virman {src_name} → {tgt_name}: {desc}",
-                "contact_id": s_id,
-                "contact_name": src_name,
-                "target_contact_id": t_id,
-                "target_contact_name": tgt_name,
-                "source": "virman",
-                "date": today,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-            _stamp_via_customer_card_pool(tx_doc, pool, desc)
-            await db.bank_accounts.update_one({"_id": pool["_id"]}, {"$inc": {"current_balance": -amount}})
-            await db.bank_transactions.insert_one(tx_doc)
+            await _insert_customer_card_pool_pair(
+                pool,
+                company_id=company_id,
+                amount=amount,
+                desc=desc,
+                today=today,
+                src_name=src_name,
+                tgt_name=tgt_name,
+                contact_id=s_id,
+                contact_name=src_name,
+                target_contact_id=t_id,
+                target_contact_name=tgt_name,
+            )
             msg = f"{amount:,.2f} TL cari virman tamamlandı ({src_name} → {tgt_name}); Müşteri Kartları kasasına işlendi."
         return {"status": "success", "message": msg}
     if s_kind == "contact" and t_kind == "partner":
@@ -8456,8 +8521,8 @@ async def _execute_virman_contact(
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             _stamp_via_customer_card_pool(tx_doc, pool, desc)
-            await db.bank_accounts.update_one({"_id": pool["_id"]}, {"$inc": {"current_balance": -amount}})
             await db.bank_transactions.insert_one(tx_doc)
+            await bank_guard.pin_customer_card_pool_balance(db, pool["_id"])
         return result
     if s_kind == "partner" and t_kind == "contact":
         result = await _execute_contact_partner_payment({
@@ -8484,8 +8549,8 @@ async def _execute_virman_contact(
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             _stamp_via_customer_card_pool(tx_doc, pool, desc)
-            await db.bank_accounts.update_one({"_id": pool["_id"]}, {"$inc": {"current_balance": amount}})
             await db.bank_transactions.insert_one(tx_doc)
+            await bank_guard.pin_customer_card_pool_balance(db, pool["_id"])
         return result
     if s_kind == "contact" and t_kind == "account":
         contact = await _virman_load_contact(company_id, s_id)

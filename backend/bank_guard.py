@@ -35,12 +35,23 @@ def is_customer_card(account: Optional[Dict[str, Any]]) -> bool:
     return bool(account.get("linked_contact_id"))
 
 
+async def pin_customer_card_pool_balance(db, pool_id: Optional[str]) -> None:
+    """Havuz kasası defteridir: giriş+çıkış eşlenik; bakiye her zaman 0."""
+    if not pool_id:
+        return
+    await db.bank_accounts.update_one({"_id": pool_id, "is_customer_card_pool": True}, {"$set": {"current_balance": 0.0}})
+
+
 async def ensure_customer_card_pool(db, company_id: str) -> Dict[str, Any]:
     """Şirket başına tek «Müşteri Kredi Kartları» kasası — cari virman hareketleri burada görünür."""
     if not company_id:
         raise HTTPException(status_code=400, detail="Şirket gerekli.")
     existing = await db.bank_accounts.find_one({"company_id": company_id, "is_customer_card_pool": True})
     if existing:
+        # Eski tek yönlü kayıtlar bakiyeyi bozmuş olabilir — her zaman sıfırla.
+        if float(existing.get("current_balance") or 0) != 0.0:
+            await pin_customer_card_pool_balance(db, existing["_id"])
+            existing["current_balance"] = 0.0
         return existing
     doc = {
         "_id": str(uuid.uuid4()),
