@@ -17,7 +17,39 @@ import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseScanHint } from "../ut
 import { expenseDateRange } from "../utils/expenseDateRange";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
-const EXP_COLS = [{ key: "expense_number", label: "Masraf No" }, { key: "date", label: "Tarih" }, { key: "category", label: "Kategori" }, { key: "description", label: "Açıklama" }, { key: "contact_name", label: "Tedarikçi" }, { key: "employee_name", label: "Personel" }, { key: "amount", label: "Net", num: true }, { key: "vat_amount", label: "KDV", num: true }, { key: "total", label: "Toplam", num: true }, { label: "Ödeme", value: (r) => r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi" }];
+const EXP_COLS = [
+  { key: "expense_number", label: "Masraf No" },
+  { key: "date", label: "Tarih" },
+  { key: "category", label: "Kategori" },
+  { key: "description", label: "Açıklama" },
+  { key: "contact_name", label: "Tedarikçi" },
+  { key: "employee_name", label: "Personel" },
+  { key: "notes", label: "Not" },
+  { key: "account_name", label: "Ödeme Hesabı" },
+  { label: "Kullanıcı", value: (r) => r.paid_by_name || r.created_by_name || "" },
+  { key: "amount", label: "Net", num: true },
+  { key: "vat_amount", label: "KDV", num: true },
+  { key: "total", label: "Toplam", num: true },
+  { label: "Ödeme", value: (r) => (r.payment_status === "paid" ? `Ödendi (${r.account_name || ""})` : "Ödenmedi") },
+];
+
+/** Tedarikçi/Personel sütunu: not + ödeme hesabı + işlem yapan kullanıcı */
+const ExpensePartyCell = ({ x }) => {
+  const note = (x.notes || "").trim();
+  const account = x.payment_status === "paid" ? (x.account_name || "").trim() : "";
+  const actor = (x.paid_by_name || x.created_by_name || "").trim();
+  const empty = !x.contact_name && !x.employee_name && !note && !account && !actor;
+  return (
+    <td className="px-4 py-2.5 text-slate-600 max-w-[220px]" data-testid={`exp-party-${x.expense_number}`}>
+      {empty && <span className="text-slate-400">—</span>}
+      {x.contact_name && <div className="font-medium text-slate-800 truncate" title={x.contact_name}>{x.contact_name}</div>}
+      {x.employee_name && <div className={`truncate ${x.contact_name ? "text-[10px] text-indigo-600" : "font-medium text-slate-800"}`}>{x.employee_name}</div>}
+      {note && <div className="text-[10px] text-slate-500 truncate" title={note}>Not: {note}</div>}
+      {account && <div className="text-[10px] text-emerald-700 truncate" title={account}>Hesap: {account}</div>}
+      {actor && <div className="text-[10px] text-slate-500 truncate" title={actor}>Kullanıcı: {actor}</div>}
+    </td>
+  );
+};
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const inputCls = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -51,7 +83,7 @@ const accountLabel = (a) => {
   return `${bank ? `${bank} — ` : ""}${name} · ${fmt(a.current_balance)} ₺`;
 };
 
-const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, contacts, employees, projects: projectsProp, onClose, onSaved }) => {
+const ExpenseModal = ({ companyId, actorName, initial, categories, accounts: accountsProp, contacts: contactsProp, employees: employeesProp, projects: projectsProp, onClose, onSaved }) => {
   useEscape(onClose);
   const [f, setF] = useState(initial);
   const [newCat, setNewCat] = useState(false);
@@ -60,6 +92,8 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
   const camRef = React.useRef(null);
   const galRef = React.useRef(null);
   const pickGuard = React.useRef(0);
+  const [contacts, setContacts] = useState(contactsProp || []);
+  const [employees, setEmployees] = useState(employeesProp || []);
   const scanFile = async (file) => {
     if (!file || scanBusy || !companyId) return;
     setScanBusy(true);
@@ -91,24 +125,28 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
     pickGuard.current = Date.now() + 1500;
     (kind === "camera" ? camRef : galRef).current?.click();
   };
-  // Modal açılışında taze çek — sayfa açıkken eklenen kasa/banka eski listede kalmasın.
+  // Modal açılışında taze çek — liste yükünü şişirmemek için cari/personel/hesap burada.
   const [accounts, setAccounts] = useState(accountsProp || []);
   const [projects, setProjects] = useState(projectsProp || []);
   const [accountsLoading, setAccountsLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
     setAccountsLoading(true);
-    axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`)
-      .then((r) => { if (!cancelled) setAccounts(Array.isArray(r.data) ? r.data : []); })
-      .catch(() => { if (!cancelled) toast.error("Kasa / banka listesi yenilenemedi."); })
-      .finally(() => { if (!cancelled) setAccountsLoading(false); });
-    axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } })
-      .then((r) => {
-        if (cancelled) return;
-        const rows = Array.isArray(r.data) ? r.data : (r.data?.projects || []);
-        setProjects(rows.map((p) => ({ ...p, id: projectIdOf(p) })).filter((p) => p.id));
-      })
-      .catch(() => { if (!cancelled) setProjects(projectsProp || []); });
+    Promise.all([
+      axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`),
+      axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } }).catch(() => ({ data: [] })),
+      axios.get(`${API_URL}/contacts?company_id=${companyId}`).catch(() => ({ data: [] })),
+      axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`).catch(() => ({ data: [] })),
+    ]).then(([a, pr, ct, em]) => {
+      if (cancelled) return;
+      setAccounts(Array.isArray(a.data) ? a.data : []);
+      const rows = Array.isArray(pr.data) ? pr.data : (pr.data?.projects || []);
+      setProjects(rows.map((p) => ({ ...p, id: projectIdOf(p) })).filter((p) => p.id));
+      setContacts((Array.isArray(ct.data) ? ct.data : []).filter((x) => x.type !== "customer"));
+      setEmployees(Array.isArray(em.data) ? em.data : []);
+    }).catch(() => {
+      if (!cancelled) toast.error("Masraf formu listeleri yenilenemedi.");
+    }).finally(() => { if (!cancelled) setAccountsLoading(false); });
     return () => { cancelled = true; };
   }, [companyId]);
   const isEdit = !!initial.id;
@@ -129,7 +167,19 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
   const save = async (e) => {
     e.preventDefault(); setBusy(true);
     try {
-      const { account_id: _acc, ...rest } = f; const body = { ...rest, company_id: companyId, amount: Number(f.amount), vat_rate: Number(f.vat_rate), contact_id: f.contact_id || null, employee_id: f.employee_id || null, project_id: f.project_id || null, ...splitPaymentTarget(f.account_id) };
+      const { account_id: _acc, ...rest } = f;
+      const body = {
+        ...rest,
+        company_id: companyId,
+        amount: Number(f.amount),
+        vat_rate: Number(f.vat_rate),
+        contact_id: f.contact_id || null,
+        employee_id: f.employee_id || null,
+        project_id: f.project_id || null,
+        created_by_name: actorName || undefined,
+        paid_by_name: f.account_id ? (actorName || undefined) : undefined,
+        ...splitPaymentTarget(f.account_id),
+      };
       if (isEdit) await axios.put(`${API_URL}/expenses/${f.id}`, body); else await axios.post(`${API_URL}/expenses`, body);
       toast.success(isEdit ? "Masraf güncellendi." : `Masraf kaydedildi${f.account_id ? " ve ödendi" : ""}.`); if (f.account_id) await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); onSaved(); onClose();
     } catch (err) { toast.error(err.response?.data?.detail || "Kaydedilemedi."); } finally { setBusy(false); }
@@ -191,24 +241,41 @@ const ExpenseModal = ({ companyId, initial, categories, accounts: accountsProp, 
 };
 
 export default function ExpensesPage() {
-  const { activeCompany } = useAuth();
+  const { activeCompany, user } = useAuth();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const actorName = user?.name || user?.email || "";
   const [data, setData] = useState({ expenses: [], summary: null });
   const [categories, setCategories] = useState([]);
   const [accounts, setAccounts] = useState([]);
-  const [contacts, setContacts] = useState([]);
-  const [employees, setEmployees] = useState([]);
-  const [projects, setProjects] = useState([]);
   const [filters, setFilters] = useState({ q: "", category: "all", status: "all", preset: "month", from: range("month")[0], to: range("month")[1], sort: "date_desc" });
+  const [qDraft, setQDraft] = useState("");
   const [modal, setModal] = useState(null);
   const [payFor, setPayFor] = useState(null);
   const [payAcc, setPayAcc] = useState("");
+  // Debounce arama — her tuşta 6 API çağrısı yapmayalım.
+  useEffect(() => {
+    const t = setTimeout(() => setFilters((f) => (f.q === qDraft ? f : { ...f, q: qDraft })), 350);
+    return () => clearTimeout(t);
+  }, [qDraft]);
+  // Kategoriler şirket değişince bir kez (filtre değişiminde değil).
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`)
+      .then((r) => { if (!cancelled) setCategories(Array.isArray(r.data) ? r.data : []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [companyId]);
   const load = useCallback(async ({ silent = false } = {}) => {
-    const p = new URLSearchParams({ company_id: companyId, category: filters.category, status: filters.status, ...(filters.from && { date_from: filters.from }), ...(filters.to && { date_to: filters.to }), ...(filters.q && { q: filters.q }) });
-    const [e, c, a, ct, em, pr] = await Promise.all([axios.get(`${API_URL}/expenses?${p}`), axios.get(`${API_URL}/expenses/categories?company_id=${companyId}`), axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`), axios.get(`${API_URL}/contacts?company_id=${companyId}`), axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`), axios.get(`${API_URL}/projects`, { params: { company_id: companyId, light: 1 } }).catch(() => ({ data: [] }))]);
-    setData(e.data); setCategories(c.data); setAccounts(a.data); setContacts(ct.data.filter((x) => x.type !== "customer")); setEmployees(em.data);
-    const projRows = Array.isArray(pr.data) ? pr.data : (pr.data?.projects || []);
-    setProjects(projRows.map((x) => ({ ...x, id: projectIdOf(x) })).filter((x) => x.id));
+    const p = new URLSearchParams({
+      company_id: companyId,
+      category: filters.category,
+      status: filters.status,
+      ...(filters.from && { date_from: filters.from }),
+      ...(filters.to && { date_to: filters.to }),
+      ...(filters.q && { q: filters.q }),
+    });
+    const e = await axios.get(`${API_URL}/expenses?${p}`);
+    setData(e.data);
   }, [companyId, filters.category, filters.status, filters.from, filters.to, filters.q]);
   useEffect(() => { load().catch(() => toast.error("Masraflar yüklenemedi.")); }, [load]);
   const refreshLoadSilent = useCallback(() => load({ silent: true }), [load]);
@@ -220,11 +287,20 @@ export default function ExpensesPage() {
   const s = data.summary;
   const showThisMonth = () => {
     const [from, to] = range("month");
+    setQDraft("");
     setFilters((f) => ({ ...f, q: "", category: "all", status: "all", preset: "month", from, to }));
     requestAnimationFrame(() => document.querySelector("[data-testid='exp-table']")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
   const del = async (x) => { if (!window.confirm(`${x.expense_number} silinsin mi?`)) return; try { const r = await axios.delete(`${API_URL}/expenses/${x.id}`); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } };
-  const pay = async () => { try { await axios.post(`${API_URL}/expenses/${payFor.id}/pay`, { ...splitPaymentTarget(payAcc) }); toast.success("Masraf ödendi, kasa/banka hareketi oluşturuldu."); setPayFor(null); await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); } };
+  const pay = async () => {
+    try {
+      await axios.post(`${API_URL}/expenses/${payFor.id}/pay`, { ...splitPaymentTarget(payAcc), paid_by_name: actorName || undefined });
+      toast.success("Masraf ödendi, kasa/banka hareketi oluşturuldu.");
+      setPayFor(null);
+      await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] });
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Ödenemedi."); }
+  };
   const unpay = async (x) => { if (!window.confirm("Ödeme geri alınsın mı? Kasa/banka bakiyesi düzeltilir.")) return; try { await axios.post(`${API_URL}/expenses/${x.id}/unpay`); toast.success("Ödeme geri alındı."); await notifyDataChanged({ companyId, scopes: ["cash", "expenses"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); } };
   const runRecurring = async () => { try { const r = await axios.post(`${API_URL}/expenses/run-recurring`, { company_id: companyId }); toast.success(r.data.message); load(); } catch (err) { toast.error(err.response?.data?.detail || "Çalıştırılamadı."); } };
   const maxCat = s?.by_category?.[0]?.total || 1;
@@ -257,7 +333,7 @@ export default function ExpensesPage() {
       )}
       <BudgetPanel companyId={companyId} refreshKey={data.expenses.length} />
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3 flex flex-wrap items-center gap-2" data-testid="exp-toolbar">
-        <div className="relative flex-1 min-w-[200px]"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} placeholder="Açıklama, no, tedarikçi ara…" className="w-full pl-9 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500" data-testid="exp-search" /></div>
+        <div className="relative flex-1 min-w-[200px]"><Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" /><input value={qDraft} onChange={(e) => setQDraft(e.target.value)} placeholder="Açıklama, no, tedarikçi, not ara…" className="w-full pl-9 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-emerald-500" data-testid="exp-search" /></div>
         <select value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })} className={sel} data-testid="exp-filter-category"><option value="all">Tüm Kategoriler</option>{categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select>
         <select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })} className={sel} data-testid="exp-filter-status"><option value="all">Tümü</option><option value="paid">Ödendi</option><option value="unpaid">Ödenmedi</option></select>
         <select value={filters.preset} onChange={(e) => { const [from, to] = range(e.target.value); setFilters({ ...filters, preset: e.target.value, from, to }); }} className={sel} data-testid="exp-filter-preset">{PRESETS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
@@ -266,7 +342,7 @@ export default function ExpensesPage() {
       </div>
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden" data-testid="exp-table">
         <table className="w-full text-left text-xs text-slate-600">
-          <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold"><tr><th className="px-4 py-3">Masraf No / Tarih</th><th className="px-4 py-3">Kategori</th><th className="px-4 py-3">Açıklama</th><th className="px-4 py-3">Tedarikçi / Personel</th><th className="px-4 py-3 text-right">Net / KDV</th><th className="px-4 py-3 text-right">Toplam</th><th className="px-4 py-3">Ödeme</th><th className="px-4 py-3 text-center">İşlemler</th></tr></thead>
+          <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold"><tr><th className="px-4 py-3">Masraf No / Tarih</th><th className="px-4 py-3">Kategori</th><th className="px-4 py-3">Açıklama</th><th className="px-4 py-3">Tedarikçi / Personel / Not</th><th className="px-4 py-3 text-right">Net / KDV</th><th className="px-4 py-3 text-right">Toplam</th><th className="px-4 py-3">Ödeme</th><th className="px-4 py-3 text-center">İşlemler</th></tr></thead>
           <tbody className="divide-y divide-slate-100">
             {rows.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="exp-empty">Bu filtrede masraf yok. "Yeni Masraf" ile ekleyin.</td></tr>}
             {pagedRows.map((x) => (
@@ -274,7 +350,7 @@ export default function ExpensesPage() {
                 <td className="px-4 py-2.5"><div className="font-mono font-semibold text-slate-900">{x.expense_number}</div><div className="text-slate-400">{x.date}{x.is_recurring && <span className="ml-1 text-[9px] bg-violet-100 text-violet-700 px-1 rounded" title={`Sonraki: ${x.next_date}`}>AYLIK</span>}</div></td>
                 <td className="px-4 py-2.5"><span className="bg-slate-100 px-2 py-0.5 rounded-md font-semibold">{x.category}</span></td>
                 <td className="px-4 py-2.5 text-slate-800 max-w-[260px]"><div className="truncate" title={x.description}>{x.description}</div>{x.document_no && <div className="text-[10px] text-slate-400">Belge: {x.document_no}</div>}</td>
-                <td className="px-4 py-2.5 text-slate-600">{x.contact_name || "-"}{x.employee_name && <div className="text-[10px] text-indigo-600">{x.employee_name}</div>}</td>
+                <ExpensePartyCell x={x} />
                 <td className="px-4 py-2.5 text-right text-slate-500">{fmt(x.amount)} <span className="text-[10px]">/ {fmt(x.vat_amount)}</span></td>
                 <td className="px-4 py-2.5 text-right font-bold text-rose-600">{fmtMoney(x.total, x.currency || "TRY")}{(x.currency || "TRY") !== "TRY" && x.local_total != null && <div className="text-[10px] font-normal text-slate-400">{fmtMoney(x.local_total, "TRY")}</div>}</td>
                 <td className="px-4 py-2.5">{x.payment_status === "paid" ? <button onClick={() => unpay(x)} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700" title={`${x.account_name} · ${x.paid_date} — geri almak için tıkla`} data-testid={`exp-paid-${x.expense_number}`}><CheckCircle2 className="w-3 h-3" /> Ödendi</button> : <button onClick={async () => {
@@ -303,7 +379,7 @@ export default function ExpensesPage() {
           </div>
         )}
       </div>
-      {modal && <ExpenseModal companyId={companyId} initial={modal} categories={categories} accounts={accounts} contacts={contacts} employees={employees} projects={projects} onClose={() => setModal(null)} onSaved={load} />}
+      {modal && <ExpenseModal companyId={companyId} actorName={actorName} initial={modal} categories={categories} accounts={accounts} contacts={[]} employees={[]} projects={[]} onClose={() => setModal(null)} onSaved={load} />}
       {payFor && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4" {...backdropDismissProps(() => setPayFor(null))}>
           <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 text-xs shadow-2xl" data-testid="exp-pay-modal">

@@ -78,6 +78,23 @@ def _clean(d):
     return d
 
 
+def _actor_name(req: Optional[Dict[str, Any]], *keys: str) -> Optional[str]:
+    """Persist display name of the user who created/paid an expense."""
+    if not req:
+        return None
+    for k in keys or ("created_by_name", "paid_by_name", "user_name"):
+        v = (req.get(k) or "").strip()
+        if v:
+            return v[:120]
+    return None
+
+
+def _try_total(r: Dict[str, Any]) -> float:
+    if (r.get("currency") or "TRY").upper() != "TRY":
+        return float(r.get("local_total") or 0) or fx.local_of(r.get("total"), r.get("fx_rate") or 1)
+    return float(r.get("total") or 0)
+
+
 def _calc(data: Dict[str, Any]) -> Dict[str, Any]:
     amount = round(float(data.get("amount") or 0), 2)
     vat_rate = int(data.get("vat_rate") if data.get("vat_rate") is not None else 20)
@@ -261,22 +278,31 @@ async def list_expenses(company_id: str = "comp_nexus_main_01", date_from: Optio
     if project_id:
         query["project_id"] = project_id
     if q:
-        query["$or"] = [{"description": {"$regex": q, "$options": "i"}}, {"expense_number": {"$regex": q, "$options": "i"}}, {"contact_name": {"$regex": q, "$options": "i"}}, {"notes": {"$regex": q, "$options": "i"}}]
+        query["$or"] = [
+            {"description": {"$regex": q, "$options": "i"}},
+            {"expense_number": {"$regex": q, "$options": "i"}},
+            {"contact_name": {"$regex": q, "$options": "i"}},
+            {"notes": {"$regex": q, "$options": "i"}},
+            {"account_name": {"$regex": q, "$options": "i"}},
+            {"created_by_name": {"$regex": q, "$options": "i"}},
+            {"paid_by_name": {"$regex": q, "$options": "i"}},
+        ]
     rows = [_clean(x) for x in await _db.expenses.find(query).sort("date", -1).to_list(2000)]
     month = datetime.now(timezone.utc).strftime("%Y-%m")
-    all_rows = rows if not (date_from or date_to or category or status or employee_id or q) else [_clean(x) for x in await _db.expenses.find({"company_id": company_id}).to_list(5000)]
-    def _try(r):
-        if (r.get("currency") or "TRY").upper() != "TRY":
-            return float(r.get("local_total") or 0) or fx.local_of(r.get("total"), r.get("fx_rate") or 1)
-        return float(r.get("total") or 0)
+    # Targeted month/recurring stats — avoid second full-collection scan when filters are on.
+    month_proj = {"total": 1, "local_total": 1, "currency": 1, "fx_rate": 1, "date": 1}
+    month_rows = await _db.expenses.find(
+        {"company_id": company_id, "date": {"$regex": f"^{month}"}}, month_proj
+    ).to_list(5000)
+    recurring_count = await _db.expenses.count_documents({"company_id": company_id, "is_recurring": True})
     by_cat: Dict[str, float] = {}
     for r in rows:
-        by_cat[r.get("category", "Diğer")] = round(by_cat.get(r.get("category", "Diğer"), 0) + _try(r), 2)
-    summary = {"count": len(rows), "total": round(sum(_try(r) for r in rows), 2), "vat_total": round(sum(r.get("vat_amount", 0) for r in rows), 2),
-               "unpaid_total": round(sum(_try(r) for r in rows if r.get("payment_status") != "paid"), 2), "unpaid_count": sum(1 for r in rows if r.get("payment_status") != "paid"),
-               "this_month_total": round(sum(_try(r) for r in all_rows if (r.get("date") or "").startswith(month)), 2),
-               "this_month_count": sum(1 for r in all_rows if (r.get("date") or "").startswith(month)),
-               "recurring_count": sum(1 for r in all_rows if r.get("is_recurring")),
+        by_cat[r.get("category", "Diğer")] = round(by_cat.get(r.get("category", "Diğer"), 0) + _try_total(r), 2)
+    summary = {"count": len(rows), "total": round(sum(_try_total(r) for r in rows), 2), "vat_total": round(sum(r.get("vat_amount", 0) for r in rows), 2),
+               "unpaid_total": round(sum(_try_total(r) for r in rows if r.get("payment_status") != "paid"), 2), "unpaid_count": sum(1 for r in rows if r.get("payment_status") != "paid"),
+               "this_month_total": round(sum(_try_total(r) for r in month_rows), 2),
+               "this_month_count": len(month_rows),
+               "recurring_count": recurring_count,
                "by_category": sorted([{"category": k, "total": v} for k, v in by_cat.items()], key=lambda x: -x["total"])}
     return {"expenses": rows, "summary": summary}
 
@@ -292,10 +318,12 @@ async def create_expense(req: Dict[str, Any]):
     stamp = await fx.stamp(company_id, req.get("currency"), req.get("date"), fx.typed_rate(req.get("currency"), req.get("fx_rate"), req.get("fx_source")))
     contact = await _db.contacts.find_one({"_id": req["contact_id"]}) if req.get("contact_id") else None
     emp = await _db.employees.find_one({"_id": req["employee_id"]}) if req.get("employee_id") else None
+    actor = _actor_name(req, "created_by_name", "paid_by_name", "user_name")
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "expense_number": await _next_number(company_id), "date": req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"), "category": req.get("category") or "Diğer",
            "description": req["description"].strip(), **calc, **stamp, "local_total": fx.local_of(calc["total"], stamp["fx_rate"]), "payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None,
            "contact_id": contact["_id"] if contact else None, "contact_name": contact["name"] if contact else (req.get("contact_name") or None), "employee_id": emp["_id"] if emp else None, "employee_name": emp["full_name"] if emp else None,
-           "project_id": req.get("project_id") or None, "document_no": req.get("document_no") or "", "notes": req.get("notes") or "", "is_recurring": bool(req.get("is_recurring")), "recurrence": req.get("recurrence") or "monthly", "receipt_url": req.get("receipt_url"), "created_at": _now()}
+           "project_id": req.get("project_id") or None, "document_no": req.get("document_no") or "", "notes": req.get("notes") or "", "is_recurring": bool(req.get("is_recurring")), "recurrence": req.get("recurrence") or "monthly", "receipt_url": req.get("receipt_url"),
+           "created_by_name": actor, "paid_by_name": None, "created_at": _now()}
     if req.get("is_recurring"):
         d = date.fromisoformat(doc["date"])
         doc["next_date"] = (d.replace(day=1) + timedelta(days=32)).replace(day=min(d.day, 28)).isoformat()
@@ -304,8 +332,9 @@ async def create_expense(req: Dict[str, Any]):
     pay_partner = req.get("partner_id") or None
     if pay_acc or pay_partner:
         doc["account_name"] = await _post_payment(doc, pay_acc, doc["date"], partner_id=pay_partner)
-        doc.update({"payment_status": "paid", "account_id": None if pay_partner else pay_acc, "partner_id": pay_partner, "paid_date": doc["date"]})
-        await _db.expenses.update_one({"_id": doc["_id"]}, {"$set": {"payment_status": "paid", "account_id": doc["account_id"], "partner_id": pay_partner, "account_name": doc["account_name"], "paid_date": doc["date"]}})
+        payer = _actor_name(req, "paid_by_name", "created_by_name", "user_name") or actor
+        doc.update({"payment_status": "paid", "account_id": None if pay_partner else pay_acc, "partner_id": pay_partner, "paid_date": doc["date"], "paid_by_name": payer})
+        await _db.expenses.update_one({"_id": doc["_id"]}, {"$set": {"payment_status": "paid", "account_id": doc["account_id"], "partner_id": pay_partner, "account_name": doc["account_name"], "paid_date": doc["date"], "paid_by_name": payer}})
     if req.get("category") and req["category"] not in DEFAULT_CATEGORIES:
         await add_category({"company_id": company_id, "name": req["category"]})
     b = await _db.expense_budgets.find_one({"company_id": company_id, "category": doc["category"]})
@@ -373,7 +402,8 @@ async def pay_expense(expense_id: str, req: Dict[str, Any]):
     partner_id = req.get("partner_id") or None
     account_id = None if partner_id else req.get("account_id")
     name = await _post_payment(exp, account_id, pay_date, partner_id=partner_id)
-    await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": name, "paid_date": pay_date}})
+    payer = _actor_name(req, "paid_by_name", "user_name", "created_by_name")
+    await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "paid", "account_id": account_id, "partner_id": partner_id, "account_name": name, "paid_date": pay_date, "paid_by_name": payer}})
     return _clean(await _db.expenses.find_one({"_id": expense_id}))
 
 
@@ -385,7 +415,7 @@ async def unpay_expense(expense_id: str):
     if _from_statement(exp):
         raise HTTPException(status_code=400, detail="Ekstreden aktarılan masrafın ödemesi hesap hareketinden gelir; geri alınamaz.")
     await _reverse_payment(exp)
-    await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None}})
+    await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None, "paid_by_name": None}})
     return _clean(await _db.expenses.find_one({"_id": expense_id}))
 
 
