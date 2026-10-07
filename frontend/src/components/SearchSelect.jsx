@@ -37,6 +37,8 @@ export const SearchSelect = ({
   inline = false,
   clearable = false,
   clearLabel = "Seçimi kaldır",
+  /** Dropdown üstünde sabit aksiyon (ör. Perakende carisiz). { label, onSelect, testId?, icon? } */
+  leadingAction = null,
 }) => {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -82,6 +84,27 @@ export const SearchSelect = ({
   const panel = (
     <>
       <div className="relative border-b"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" /><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder} className="w-full pl-8 p-2 text-xs outline-none" data-testid={testId ? `${testId}-search` : undefined} /></div>
+      {leadingAction?.label && (
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              await leadingAction.onSelect?.();
+            } finally {
+              setOpen(false);
+              setQ("");
+            }
+          }}
+          className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-xs text-rose-800 hover:bg-rose-50 border-b border-rose-100 font-bold bg-rose-50/40"
+          data-testid={leadingAction.testId || (testId ? `${testId}-leading` : undefined)}
+        >
+          {leadingAction.icon || null}
+          <span className="flex-1 min-w-0">
+            <span className="block truncate">{leadingAction.label}</span>
+            {leadingAction.sub ? <span className="block text-[10px] font-medium text-rose-700/80 truncate">{leadingAction.sub}</span> : null}
+          </span>
+        </button>
+      )}
       {clearable && hasValue && (
         <button
           type="button"

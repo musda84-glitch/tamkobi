@@ -84,3 +84,29 @@ export function findRetailContact(contacts = []) {
     null
   );
 }
+
+export function retailContactCreatePayload(companyId) {
+  return {
+    company_id: companyId,
+    type: "customer",
+    name: RETAIL_CONTACT_NAME,
+    tax_number_or_id: RETAIL_CONTACT_TAX,
+    tax_office: "Perakende",
+    category: "Perakende",
+    kvkk_accepted: true,
+    city: "İstanbul",
+  };
+}
+
+/** Fatura formuna perakende (carisiz) cari uygula — satışta e-arşiv. */
+export function invoiceFormPatchForRetail(contact, formData = {}) {
+  const id = contact?.id || contact?._id || "";
+  const lockedE = ["paper", "e_export", "e_dispatch"].includes(formData.e_type);
+  const eType = formData.invoice_type === "sales" && !lockedE ? "e_archive" : formData.e_type;
+  return {
+    contact_id: id,
+    contact_name: contact?.name || RETAIL_CONTACT_NAME,
+    contact_tax_id: contact?.tax_number_or_id || contact?.tax_id || RETAIL_CONTACT_TAX,
+    e_type: eType,
+  };
+}
