@@ -217,7 +217,7 @@ export function EmployeeRequestChips({
 }
 
 /** Personel talepleri bildirim kutusu — izin / erken çıkış / puantaj itirazı */
-export function PersonnelRequestsInbox({ companyId, onChanged }) {
+export function PersonnelRequestsInbox({ companyId, onChanged, compact = false }) {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [count, setCount] = useState(0);
@@ -417,15 +417,17 @@ export function PersonnelRequestsInbox({ companyId, onChanged }) {
       </div>
 
       {loading && items.length === 0 ? (
-        <div className="px-4 py-8 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+        <div className={`px-4 ${compact ? "py-4" : "py-8"} text-center text-slate-400 text-xs flex items-center justify-center gap-2`}>
           <Loader2 className="w-4 h-4 animate-spin" /> Talepler yükleniyor…
         </div>
       ) : items.length === 0 ? (
-        <div className="px-4 py-6 text-center text-slate-400 text-xs" data-testid="personnel-requests-empty">
-          Şu an onay bekleyen izin, avans, yevmiye, konum dışı, teyitli giriş, erken çıkış, gün içi izin veya puantaj itirazı yok.
+        <div className={`px-4 ${compact ? "py-3" : "py-6"} text-center text-slate-400 text-xs`} data-testid="personnel-requests-empty">
+          {compact
+            ? "Onay bekleyen personel talebi yok."
+            : "Şu an onay bekleyen izin, avans, yevmiye, konum dışı, teyitli giriş, erken çıkış, gün içi izin veya puantaj itirazı yok."}
         </div>
       ) : (
-        <ul className="divide-y divide-slate-100 max-h-72 overflow-y-auto" data-testid="personnel-requests-list">
+        <ul className={`divide-y divide-slate-100 overflow-y-auto ${compact ? "max-h-36" : "max-h-72"}`} data-testid="personnel-requests-list">
           {items.map((it) => {
             const meta = KIND_META[it.kind] || KIND_META.leave;
             const Icon = meta.Icon;

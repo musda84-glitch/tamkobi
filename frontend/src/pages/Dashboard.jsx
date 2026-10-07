@@ -6,6 +6,7 @@ import { useDataRefresh } from "../utils/dataRefresh";
 import { OverviewPanel } from "../components/OverviewPanel";
 import { DemoContentCard } from "../components/DemoContentCard";
 import { PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
+import { EdocPendingInbox } from "../components/EdocPendingInbox";
 import { OpsAlertsPanel } from "../components/OpsAlertsPanel";
 import { StaffMessagesPanel } from "../components/StaffMessagesPanel";
 import { useDashboardLayout } from "../hooks/useDashboardLayout";
@@ -147,7 +148,10 @@ export default function Dashboard() {
     staff: staffRow,
     alerts: (
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4" data-testid="dashboard-alerts-row">
-        <PersonnelRequestsInbox companyId={companyId} />
+        <div className="space-y-4" data-testid="dashboard-alerts-left">
+          <PersonnelRequestsInbox companyId={companyId} compact />
+          <EdocPendingInbox companyId={companyId} />
+        </div>
         <OpsAlertsPanel companyId={companyId} />
       </div>
     ),
