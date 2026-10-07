@@ -90,7 +90,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
       {mode === "forgot" ? (
         <form onSubmit={forgot} className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 space-y-4" data-testid="login-forgot-form">
-          <div className="text-2xl font-black text-slate-900">Tam<span className="text-emerald-600">Kobi</span></div>
+          <LoginBrand subtitle="Şifre Sıfırlama" />
           <p className="text-xs text-slate-500">ERP veya personel hesabınız için sıfırlama bağlantısı alın. Eşleşen hesap varsa seçtiğiniz kanala gönderilir.</p>
           <div className="flex gap-2" data-testid="login-forgot-channel">
             <button type="button" onClick={() => { setChannel("email"); setResetInfo(null); setErr(""); }} className={`flex-1 py-2 rounded-xl border text-xs font-bold ${!smsMode ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700"}`} data-testid="login-forgot-channel-email">E-posta</button>
@@ -127,7 +127,7 @@ export default function LoginPage() {
         </form>
       ) : (
         <form onSubmit={submit} className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 space-y-4" data-testid="login-page">
-          <div className="text-2xl font-black text-slate-900">Tam<span className="text-emerald-600">Kobi</span></div>
+          <LoginBrand subtitle="KOBİ'LER İÇİN TAM ERP" />
           <p className="text-xs text-slate-500">Hesabınızla giriş yapın. Personel ve yönetici aynı ekranı kullanır.</p>
           <div>
             <label className="block text-xs font-semibold mb-1">E-posta</label>

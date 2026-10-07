@@ -42,7 +42,7 @@ export default function PricingPage() {
       />
       <section className="max-w-6xl mx-auto px-6 pt-10 pb-6">
         <div className="max-w-2xl">
-          <div className="text-[10px] uppercase tracking-[0.25em] text-emerald-400 font-semibold">tamkobi.com · Bulut ERP</div>
+          <div className="text-[10px] uppercase tracking-[0.25em] text-emerald-400 font-semibold">{brand.toLocaleUpperCase("tr-TR")} · Bulut ERP</div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] mt-3">İşletmenizi tek panelden yönetin, <span className="text-emerald-400">ihtiyacınız kadar</span> ödeyin.</h1>
           <p className="text-slate-400 text-sm sm:text-base mt-4">Fatura, cari, stok, e-ticaret, kargo, personel ve üretim. Hazır paketlerden birini seçin veya modülleri tek tek işaretleyerek kendi paketini oluşturun. {d?.trial_days || 14} gün ücretsiz deneyin, kredi kartı gerekmez.</p>
         </div>
@@ -90,7 +90,7 @@ export default function PricingPage() {
       )}
       <footer className="border-t border-white/10 py-6 text-center text-[11px] text-slate-500 space-y-2">
         <LegalFooterLinks className="text-slate-500" prefix="pricing-footer" />
-        <div>{brand}.com · {brand} ERP</div>
+        <div>{brand} · {brand} ERP</div>
       </footer>
     </div>
   );
