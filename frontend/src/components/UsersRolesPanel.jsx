@@ -285,7 +285,7 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
         )}
         {rolesData.features && (
           <div className="mb-3 border border-amber-200 bg-amber-50/40 rounded-xl p-2.5" data-testid="role-features">
-            <div className="font-bold text-slate-900 mb-1.5 flex items-center gap-1.5"><Eye className="w-3.5 h-3.5 text-amber-600" /> Ayrıntılı ayarlar (fiyat, üst bar, hesap, veri indirme)</div>
+            <div className="font-bold text-slate-900 mb-1.5 flex items-center gap-1.5"><Eye className="w-3.5 h-3.5 text-amber-600" /> Ayrıntılı ayarlar (fiyat, üst bar, AI üretim, Destek şeridi, hesap)</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">{rolesData.features.map((f) => (
               <label key={f.key} className="flex items-start gap-2 bg-white border rounded-lg px-2.5 py-1.5 cursor-pointer" title={f.help} data-testid={`feature-row-${f.key}`}>
                 <input type="checkbox" disabled={role?.code === "admin"} checked={role?.features?.[f.key] !== false} onChange={(e) => saveFeature(f.key, e.target.checked)} className="mt-0.5 accent-emerald-600" data-testid={`feature-toggle-${f.key}`} />

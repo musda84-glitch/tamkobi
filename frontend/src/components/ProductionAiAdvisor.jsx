@@ -14,14 +14,14 @@ const QUICK = [
  * Şirket bazlı ai.production eklentisi açıkken Üretim & Atölye’de yönetici AI yorumu.
  */
 export function ProductionAiAdvisor({ companyId, compact = false }) {
-  const { addonOn } = useAuth();
+  const { addonOn, feature } = useAuth();
   const [open, setOpen] = useState(!compact);
   const [busy, setBusy] = useState(false);
   const [advice, setAdvice] = useState("");
   const [metrics, setMetrics] = useState(null);
   const [q, setQ] = useState("");
 
-  if (!addonOn("ai.production")) return null;
+  if (!addonOn("ai.production") || !feature("production_ai")) return null;
 
   const run = async (message) => {
     const text = (message || q || "").trim();

@@ -8,6 +8,8 @@ def test_feature_keys_include_account_and_export():
     assert "export_personal_data" in keys
     assert "sevk_open_order" in keys
     assert "sevk_draft_invoice" in keys
+    assert "production_ai" in keys
+    assert "support_bar" in keys
 
 
 def test_personel_defaults_hide_companies_and_export():
@@ -15,11 +17,15 @@ def test_personel_defaults_hide_companies_and_export():
     assert feats["account_companies"] is False
     assert feats["export_personal_data"] is False
     assert feats["view_prices"] is False
+    assert feats["production_ai"] is False
+    assert feats["support_bar"] is False
 
 
 def test_production_defaults_hide_prices():
     feats = rbac.role_features({"code": "production", "features": {}})
     assert feats["view_prices"] is False
+    assert feats["production_ai"] is False
+    assert feats["support_bar"] is False
 
 
 def test_manager_defaults_allow_companies_and_export():
@@ -27,6 +33,8 @@ def test_manager_defaults_allow_companies_and_export():
     assert feats["account_companies"] is True
     assert feats["export_personal_data"] is True
     assert feats["view_prices"] is True
+    assert feats["production_ai"] is True
+    assert feats["support_bar"] is True
 
 
 def test_saved_false_overrides_default():

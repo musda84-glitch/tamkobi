@@ -118,6 +118,8 @@ FEATURES = [
     ("header_virman", "Üst bar: Hızlı virman", "Web üst çubuğundan hesaplar arası virman. Kapalıysa buton gizlenir."),
     ("header_invoice", "Üst bar: Hızlı fatura oluştur", "Web üst çubuğundaki Yeni Fatura kısayolu."),
     ("header_ai", "Üst bar: AI asistan", "Web üst çubuğundaki AI Danışman kısayolu (lisans eklentisi de gerekir)."),
+    ("production_ai", "AI Üretim & Reçete paneli", "Üretim ve Atölye sayfalarındaki AI Üretim & Reçete analiz paneli. Kapalıysa gizlenir; lisans eklentisi (ai.production) de gerekir."),
+    ("support_bar", "Üst kur / arama / Destek çubuğu", "Sayfa üstündeki kurlar, global arama ve Destek talep şeridi. Kapalıysa tüm şerit gizlenir."),
     ("order_cargo_label", "Sipariş: Kargo etiketi", "Sipariş satırındaki Kargo etiketi (yazdır) butonu. Kapalıysa web + mobil gizlenir; Kargola butonu etkilenmez."),
     ("order_more_actions", "Sipariş: Diğer işlemler", "Sipariş satırındaki Diğer işlemler (⋯) menüsü. Kapalıysa web + mobil gizlenir."),
     ("sevk_open_order", "Sevk: Siparişi aç", "Mobil Depo Sevkiyat toplama ekranındaki Siparişi aç butonu. Kapalıysa mobilde gizlenir; Siparişler modül yetkisi de gerekir."),
@@ -136,6 +138,9 @@ def feature_default(code: str, key: str) -> bool:
         return False
     # Personel / üretim: fiyatlar varsayılan kapalı (atölye ve saha operasyonları).
     if key == "view_prices" and code in ("personel", "production"):
+        return False
+    # Atölye / personel: AI üretim paneli ve üst destek şeridi varsayılan kapalı (yer kaplamasın).
+    if key in ("production_ai", "support_bar") and code in ("personel", "production"):
         return False
     return FEATURE_DEFAULTS.get(key, True)
 

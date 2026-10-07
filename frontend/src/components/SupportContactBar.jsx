@@ -12,7 +12,9 @@ import { supportContactAllowed, supportTicketsAllowed } from "../utils/supportAc
  * Destek bölümü rolde /support kapalıysa veya paket/eklenti yoksa gizlenir.
  */
 export const SupportContactBar = ({ companyId }) => {
-  const { license, addonOn, user, can, moduleOn } = useAuth();
+  const { license, addonOn, user, can, moduleOn, feature } = useAuth();
+  // Rol özelliği support_bar kapalıysa tüm şerit (kur / arama / Destek) gizlenir.
+  if (!feature("support_bar")) return null;
   const erpOk = personelCanUseErpShortcuts(user);
   const tickets = supportTicketsAllowed({ user, can, moduleOn, addonOn });
   const hasContact = supportContactAllowed({
