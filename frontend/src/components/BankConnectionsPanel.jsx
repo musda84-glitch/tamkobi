@@ -751,7 +751,9 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                             {genKeyBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} {genKeyBusy ? "Üretiliyor…" : "2048-bit RSA anahtar üret"}
                           </button>
                           <p className="text-[10px] text-slate-500">
-                            İmza <code className="font-mono">JSEncrypt.signSha256</code> (Golive SHA256RSA). Private Key bu alanda kalır; <b>.crt indir</b> → API Market’e yükleyin.
+                            İmza <code className="font-mono">JSEncrypt.signSha256</code> (
+                            <a href="https://github.com/travist/jsencrypt" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">github.com/travist/jsencrypt</a>
+                            , Golive SHA256RSA). Private Key bu alanda kalır; <b>.crt indir</b> → API Market’e yükleyin.
                             Araç:{" "}
                             <a href="https://github.com/KuveytTurk/SignatureGenerator2048" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">SignatureGenerator2048</a>.
                           </p>
