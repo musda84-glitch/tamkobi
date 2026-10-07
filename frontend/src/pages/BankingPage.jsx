@@ -14,6 +14,7 @@ import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
 import { TxRowMenu } from "../components/TxRowMenu";
 import { PaymentTargetSelect } from "../components/PaymentTargetSelect";
+import { SearchSelect } from "../components/SearchSelect";
 
 import { formatTrAmount } from "../utils/money";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
@@ -66,12 +67,19 @@ const emptyAccountForm = {
   card_last4: "",
   card_expiry: "",
   card_limit: "",
+  card_owner: "company",
+  linked_contact_id: "",
   okc_brand: "",
   okc_serial: "",
   okc_terminal_id: "",
   okc_api_url: "",
   okc_api_key: "",
 };
+
+/** Select value: müşteri kartı ayrı seçenek, kayıt type=credit_card + card_owner. */
+const accountTypeSelectValue = (a) => (
+  a?.type === "credit_card" && a?.card_owner === "customer" ? "customer_credit_card" : (a?.type || "bank")
+);
 
 export default function BankingPage() {
   const { activeCompany, addonOn } = useAuth();
@@ -107,7 +115,9 @@ export default function BankingPage() {
     card_holder: "",
     card_last4: "",
     card_expiry: "",
-    card_limit: ""
+    card_limit: "",
+    card_owner: "company",
+    linked_contact_id: "",
   };
 
   // New Account Form
@@ -165,6 +175,11 @@ export default function BankingPage() {
     try {
       const company_id = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
       const isCard = newAccount.type === "credit_card";
+      const isCustomerCard = isCard && newAccount.card_owner === "customer";
+      if (isCustomerCard && !newAccount.linked_contact_id) {
+        toast.error("Müşteri kredi kartı için cari seçin.");
+        return;
+      }
       const last4 = String(newAccount.card_last4 || "").replace(/\D/g, "").slice(-4);
       const payload = {
         type: newAccount.type,
@@ -178,6 +193,8 @@ export default function BankingPage() {
         payload.card_last4 = last4 || null;
         payload.card_expiry = (newAccount.card_expiry || "").trim() || null;
         payload.card_limit = newAccount.card_limit === "" || newAccount.card_limit == null ? null : Number(newAccount.card_limit);
+        payload.card_owner = isCustomerCard ? "customer" : "company";
+        payload.linked_contact_id = isCustomerCard ? newAccount.linked_contact_id : null;
       } else {
         payload.iban = newAccount.iban;
         payload.account_number = newAccount.account_number;
@@ -202,7 +219,13 @@ export default function BankingPage() {
         await bumpCashData();
       } else {
         const created = (await axios.post(`${API_URL}/banking/accounts`, { company_id, ...payload })).data;
-        toast.success(isCard ? "Kart hesabı kaydedildi. Ekstreyi AI ile yükleyebilirsiniz." : "Banka/Kasa hesabı başarıyla eklendi.");
+        toast.success(
+          isCustomerCard
+            ? "Müşteri kredi kartı kaydedildi. Tedarikçi ödemelerinde seçebilirsiniz."
+            : isCard
+              ? "Kart hesabı kaydedildi. Ekstreyi AI ile yükleyebilirsiniz."
+              : "Banka/Kasa hesabı başarıyla eklendi.",
+        );
         setShowAddAccountModal(false);
         setEditingAccount(null);
         setNewAccount(emptyAccountForm);
@@ -230,6 +253,8 @@ export default function BankingPage() {
       card_last4: acc.card_last4 || "",
       card_expiry: acc.card_expiry || "",
       card_limit: acc.card_limit ?? "",
+      card_owner: acc.type === "credit_card" && acc.card_owner === "customer" ? "customer" : "company",
+      linked_contact_id: acc.linked_contact_id || "",
       okc_brand: acc.okc_brand || "",
       okc_serial: acc.okc_serial || "",
       okc_terminal_id: acc.okc_terminal_id || "",
@@ -432,7 +457,11 @@ export default function BankingPage() {
                   <div className={`p-2 rounded-xl ${g.iconBox}`}><Icon className="w-5 h-5" /></div>
                   <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${g.badgeCls}`}>{g.badge}</span>
                 </div>
-                {g.type === "credit_card" && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit">Tahsilat kapalı · masraf / ekstre</div>}
+                {g.type === "credit_card" && (
+                  <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit">
+                    Tahsilat kapalı · şirket / müşteri kartı · tedarikçi ödemesi
+                  </div>
+                )}
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">{g.items.length} {g.unit}</h3>
                   <div className="text-xs text-slate-500 truncate">{g.items.map((a) => a.bank_name).filter(Boolean).slice(0, 3).join(" · ") || "—"}</div>
@@ -507,7 +536,13 @@ export default function BankingPage() {
                         {acc.integration_status === "connected" ? " · CANLI" : acc.integration_status === "error" ? " · HATA" : acc.integration_status === "simulated" ? " · SİMÜLE" : ""}
                       </div>
                     )}
-                    {isCard && <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit" data-testid={`card-no-collect-${accId}`}>Tahsilat kapalı · masraf / ekstre</div>}
+                    {isCard && (
+                      <div className="text-[10px] font-bold text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 rounded-md px-2 py-0.5 w-fit" data-testid={`card-no-collect-${accId}`}>
+                        {acc.card_owner === "customer"
+                          ? `Müşteri kartı · ${acc.linked_contact_name || "cari"} · tedarikçi ödemesi`
+                          : "Şirket kartı · tahsilat kapalı · masraf / ekstre"}
+                      </div>
+                    )}
                     {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺` : "Limit —"}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ""}</span><button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
                     {canUploadBankStatement(acc) && (
                       <div className="mt-1 flex items-center justify-end">
@@ -738,13 +773,24 @@ export default function BankingPage() {
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Hesap Türü</label>
                 <select
-                  value={newAccount.type}
+                  value={accountTypeSelectValue(newAccount)}
                   onChange={(e) => {
-                    const type = e.target.value;
+                    const v = e.target.value;
+                    const isCustomer = v === "customer_credit_card";
+                    const type = isCustomer ? "credit_card" : v;
+                    const defaultName = isCustomer
+                      ? "Müşteri Kartı"
+                      : type === "credit_card"
+                        ? "Şirket Kartı"
+                        : newAccount.account_name;
                     setNewAccount({
                       ...newAccount,
                       type,
-                      account_name: type === "credit_card" ? (newAccount.account_name === "Vadesiz TL Hesabı" ? "Şirket Kartı" : newAccount.account_name) : newAccount.account_name,
+                      card_owner: isCustomer ? "customer" : "company",
+                      linked_contact_id: isCustomer ? newAccount.linked_contact_id : "",
+                      account_name: (newAccount.account_name === "Vadesiz TL Hesabı" || newAccount.account_name === "Şirket Kartı" || newAccount.account_name === "Müşteri Kartı")
+                        ? defaultName
+                        : newAccount.account_name,
                     });
                     if (type !== "credit_card") setStmtFile(null);
                   }}
@@ -756,8 +802,26 @@ export default function BankingPage() {
                   <option value="pos">POS Cihazı / Sanal POS</option>
                   <option value="okc_pos">ÖKC POS Cihazı</option>
                   <option value="credit_card">Kredi Kartı (Şirket Kartı)</option>
+                  <option value="customer_credit_card">Müşteri Kredi Kartı</option>
                 </select>
               </div>
+              {newAccount.type === "credit_card" && newAccount.card_owner === "customer" && (
+                <div data-testid="customer-card-contact-field">
+                  <label className="block font-semibold text-slate-700 mb-1">Kart Sahibi Müşteri (Cari)</label>
+                  <SearchSelect
+                    value={newAccount.linked_contact_id}
+                    onChange={(id) => setNewAccount({ ...newAccount, linked_contact_id: id || "" })}
+                    options={contacts}
+                    getLabel={(c) => c.name}
+                    getSub={(c) => c.tax_number_or_id}
+                    placeholder="Müşteri ara…"
+                    testId="customer-card-contact-select"
+                  />
+                  <p className="mt-1 text-[11px] text-fuchsia-800">
+                    Bu kartla tedarikçiye ödeme yapınca tutar hem tedarikçi borcuna hem müşteri cari bakiyesine işlenir.
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">{newAccount.type === "okc_pos" ? "Marka / Kurum" : "Banka / Kurum Adı"}</label>
                 <input

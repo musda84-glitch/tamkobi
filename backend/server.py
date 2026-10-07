@@ -7611,7 +7611,7 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
             {"$inc": {"current_balance": posted if is_sales else -posted}}
         )
 
-        await db.bank_transactions.insert_one({
+        tx_doc = {
             "_id": str(uuid.uuid4()),
             "company_id": inv.get("company_id"),
             "account_id": account_id,
@@ -7626,7 +7626,15 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any]):
             "related_invoice_id": invoice_id,
             "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "created_at": datetime.now(timezone.utc).isoformat()
-        })
+        }
+        if not is_sales:
+            owner_meta = await bank_guard.apply_customer_card_owner_effect(
+                db, acc, "outflow", try_amt, inv.get("contact_id"), sign=1,
+            )
+            if owner_meta:
+                tx_doc["owner_contact_id"] = owner_meta["owner_contact_id"]
+                tx_doc["owner_contact_name"] = owner_meta.get("owner_contact_name") or None
+        await db.bank_transactions.insert_one(tx_doc)
 
         balance_change = -try_amt if is_sales else try_amt
         await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": balance_change}})
@@ -7979,9 +7987,40 @@ async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
         })
     return out
 
+async def _resolve_card_owner_fields(company_id: str, payload: Dict[str, Any], *, existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """credit_card + card_owner=customer ise linked_contact zorunlu."""
+    acc_type = payload.get("type") if "type" in payload else (existing or {}).get("type")
+    if acc_type != "credit_card":
+        payload["card_owner"] = "company"
+        payload["linked_contact_id"] = None
+        payload["linked_contact_name"] = None
+        return payload
+    owner = payload.get("card_owner")
+    if owner is None and existing is not None:
+        owner = existing.get("card_owner")
+    owner = "customer" if str(owner or "company") == "customer" else "company"
+    payload["card_owner"] = owner
+    if owner != "customer":
+        payload["linked_contact_id"] = None
+        payload["linked_contact_name"] = None
+        return payload
+    cid = payload.get("linked_contact_id")
+    if cid is None and existing is not None and "linked_contact_id" not in payload:
+        cid = existing.get("linked_contact_id")
+    if not cid:
+        raise HTTPException(status_code=400, detail="Müşteri kredi kartı için cari (müşteri) seçilmelidir.")
+    contact = await db.contacts.find_one({"_id": cid, "company_id": company_id})
+    if not contact:
+        raise HTTPException(status_code=400, detail="Kart sahibi cari bulunamadı.")
+    payload["linked_contact_id"] = contact["_id"]
+    payload["linked_contact_name"] = contact.get("name") or contact.get("company_title") or "Müşteri"
+    return payload
+
+
 @api_router.post("/banking/accounts")
 async def create_bank_account(account: BankAccount):
     doc = sanitize_card_fields(account.to_mongo())
+    doc = await _resolve_card_owner_fields(doc.get("company_id") or "", doc)
     await db.bank_accounts.insert_one(doc)
     return clean_doc(doc)
 
@@ -8003,6 +8042,7 @@ async def update_bank_account(account_id: str, req: Dict[str, Any]):
     allowed_keys = {
         "bank_name", "account_name", "iban", "account_number", "currency", "type",
         "pos_commission_rate", "card_holder", "card_last4", "card_expiry", "card_limit",
+        "card_owner", "linked_contact_id", "linked_contact_name",
         "okc_brand", "okc_serial", "okc_terminal_id", "okc_api_url", "okc_api_key",
     }
     allowed = {k: req[k] for k in allowed_keys if k in req}
@@ -8013,6 +8053,7 @@ async def update_bank_account(account_id: str, req: Dict[str, Any]):
     elif "card_limit" in allowed:
         allowed["card_limit"] = None
     allowed = sanitize_card_fields(allowed)
+    allowed = await _resolve_card_owner_fields(acc.get("company_id") or "", allowed, existing=acc)
     allowed["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.bank_accounts.update_one({"_id": account_id}, {"$set": allowed})
     return clean_doc(await db.bank_accounts.find_one({"_id": account_id}))
@@ -8031,6 +8072,13 @@ async def create_bank_transaction(tx: BankTransaction):
     if tx.type == "inflow":
         await bank_guard.assert_collection_allowed(db, tx.account_id)
     doc = tx.to_mongo()
+    acc = await db.bank_accounts.find_one({"_id": tx.account_id})
+    owner_meta = await bank_guard.apply_customer_card_owner_effect(
+        db, acc, tx.type, tx.amount, tx.contact_id, sign=1,
+    )
+    if owner_meta:
+        doc["owner_contact_id"] = owner_meta["owner_contact_id"]
+        doc["owner_contact_name"] = owner_meta.get("owner_contact_name") or None
     await db.bank_transactions.insert_one(doc)
 
     change = tx.amount if tx.type == "inflow" else -tx.amount
@@ -8055,6 +8103,9 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
         await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
     if tx.get("contact_id"):
         await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": -change}})
+    if tx.get("owner_contact_id"):
+        # create'te owner bakiyesine −amount yazılmıştı; sign=-1 → +amount
+        await db.contacts.update_one({"_id": tx["owner_contact_id"]}, {"$inc": {"balance": -amt}})
     if tx.get("related_invoice_id"):
         inv = await db.invoices.find_one({"_id": tx["related_invoice_id"]})
         if inv:

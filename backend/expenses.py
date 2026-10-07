@@ -4,7 +4,7 @@ from datetime import datetime, timezone, date, timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
-from bank_guard import assert_manual_allowed
+from bank_guard import assert_manual_allowed, apply_customer_card_owner_effect
 import partner_pay
 import fx
 
@@ -117,7 +117,7 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
     posted = exp["total"] if acc_ccy == exp_ccy else fx.try_amount(exp, exp.get("total"))
     posted_ccy = acc_ccy if acc_ccy == exp_ccy else "TRY"
     await _db.bank_accounts.update_one({"_id": account_id}, {"$inc": {"current_balance": -posted}})
-    await _db.bank_transactions.insert_one({
+    tx_doc = {
         "_id": str(uuid.uuid4()),
         "company_id": exp["company_id"],
         "account_id": account_id,
@@ -133,7 +133,14 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
         "expense_id": exp["_id"],
         "date": pay_date,
         "created_at": _now(),
-    })
+    }
+    owner_meta = await apply_customer_card_owner_effect(
+        _db, acc, "outflow", posted, exp.get("contact_id"), sign=1,
+    )
+    if owner_meta:
+        tx_doc["owner_contact_id"] = owner_meta["owner_contact_id"]
+        tx_doc["owner_contact_name"] = owner_meta.get("owner_contact_name") or None
+    await _db.bank_transactions.insert_one(tx_doc)
     return acc.get("account_name")
 
 
@@ -150,6 +157,11 @@ async def _reverse_payment(exp: dict):
     bt = await _db.bank_transactions.find_one({"expense_id": exp["_id"]})
     if bt:
         await _db.bank_accounts.update_one({"_id": bt["account_id"]}, {"$inc": {"current_balance": bt["amount"]}})
+        if bt.get("owner_contact_id"):
+            await _db.contacts.update_one(
+                {"_id": bt["owner_contact_id"]},
+                {"$inc": {"balance": float(bt.get("amount") or 0)}},
+            )
         await _db.bank_transactions.delete_one({"_id": bt["_id"]})
     await partner_pay.reverse_one(_db, {"expense_id": exp["_id"]})
 

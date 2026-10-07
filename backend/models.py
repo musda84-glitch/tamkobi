@@ -309,6 +309,10 @@ class BankAccount(BaseDocument):
     card_last4: Optional[str] = None
     card_expiry: Optional[str] = None
     card_limit: Optional[float] = None
+    # credit_card: company = şirket kartı; customer = müşteri kartı (tedarikçi ödemesi)
+    card_owner: Optional[str] = "company"
+    linked_contact_id: Optional[str] = None
+    linked_contact_name: Optional[str] = None
     okc_brand: Optional[str] = None
     okc_serial: Optional[str] = None
     okc_terminal_id: Optional[str] = None
@@ -327,6 +331,9 @@ class BankTransaction(BaseDocument):
     description: str
     contact_id: Optional[str] = None
     contact_name: Optional[str] = None
+    # Müşteri kartı ile tedarikçi ödemesinde kart sahibi cari (geri alma için)
+    owner_contact_id: Optional[str] = None
+    owner_contact_name: Optional[str] = None
     related_invoice_id: Optional[str] = None
     target_account_id: Optional[str] = None  # virman için
     target_account_name: Optional[str] = None
