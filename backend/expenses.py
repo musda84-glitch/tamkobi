@@ -163,6 +163,11 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
     if owner_meta:
         tx_doc["owner_contact_id"] = owner_meta["owner_contact_id"]
         tx_doc["owner_contact_name"] = owner_meta.get("owner_contact_name") or None
+    actor = (exp.get("paid_by_name") or exp.get("created_by_name") or "").strip()
+    if actor:
+        tx_doc["created_by_name"] = actor[:120]
+        if exp.get("created_by_id"):
+            tx_doc["created_by_id"] = exp.get("created_by_id")
     await _db.bank_transactions.insert_one(tx_doc)
     return acc.get("account_name")
 
