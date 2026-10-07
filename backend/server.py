@@ -90,6 +90,7 @@ import tax_obligations
 import vehicles
 import contact_payments
 import contact_balance
+import account_balance
 import finance
 import fx
 from card_match import sanitize_card_fields
@@ -8026,6 +8027,7 @@ async def list_bank_accounts(company_id: Optional[str] = "comp_nexus_main_01"):
     # Masraf, tahsilat ve virman ekranlarındaki kasa/banka seçicisini bu uç besliyor;
     # eksik dönen bir hesap kullanıcı için "kasam kayboldu" demek.
     accounts = await db.bank_accounts.find({"company_id": company_id}).sort("account_name", 1).to_list(2000)
+    accounts = await account_balance.sync_cash_box_balances(db, accounts)
     conns = {c["linked_account_id"]: c for c in await db.bank_connections.find({"company_id": company_id}).to_list(2000)}
     out = []
     for a in clean_docs(accounts):
@@ -8078,6 +8080,8 @@ async def create_bank_account(account: BankAccount):
     doc = sanitize_card_fields(account.to_mongo())
     doc = await _resolve_card_owner_fields(doc.get("company_id") or "", doc)
     await db.bank_accounts.insert_one(doc)
+    if str(doc.get("type") or "") == "cash_box":
+        await account_balance.ensure_opening_tx(db, doc)
     return clean_doc(doc)
 
 @api_router.put("/banking/accounts/{account_id}")
@@ -8118,8 +8122,8 @@ async def update_bank_account(account_id: str, req: Dict[str, Any]):
 async def list_bank_transactions(company_id: Optional[str] = "comp_nexus_main_01", account_id: Optional[str] = None):
     query = {"company_id": company_id}
     if account_id:
-        query["account_id"] = account_id
-    txs = await db.bank_transactions.find(query).sort("date", -1).to_list(500)
+        query["$or"] = [{"account_id": account_id}, {"target_account_id": account_id}]
+    txs = await db.bank_transactions.find(query).sort("date", -1).to_list(2000)
     return clean_docs(txs)
 
 @api_router.post("/banking/transactions")
