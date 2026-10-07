@@ -2240,7 +2240,13 @@ import project_tracking as project_tracking
 PROJECT_STATUS_LABELS = project_tracking.PROJECT_STATUS_LABELS
 
 
-def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: List[Dict[str, Any]], surveys: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _public_project_view(
+    p: Dict[str, Any],
+    company: Dict[str, Any],
+    quotes: List[Dict[str, Any]],
+    surveys: List[Dict[str, Any]],
+    work_orders: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     status = p.get("status") or "planning"
     quotes_pub = [{"quote_number": q.get("quote_number"), "title": q.get("title"), "status": q.get("status"),
                    "approval_status": (q.get("approval") or {}).get("status"), "issue_date": q.get("issue_date"),
@@ -2307,7 +2313,9 @@ def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: Lis
         "created_at": p.get("created_at"),
     }
     if p.get("show_production_steps") and (p.get("production_steps") or []):
-        stations = project_tracking.public_production_stations(p.get("production_steps"))
+        stations = project_tracking.public_production_stations(
+            p.get("production_steps"), work_orders=work_orders,
+        )
         if stations:
             view["production_steps"] = stations
     return view
@@ -2409,8 +2417,14 @@ async def public_project(token: str):
     company = await db.companies.find_one({"_id": p["company_id"]}) or {}
     quotes = await db.quotes.find({"project_id": p["_id"]}).sort("created_at", 1).to_list(100)
     surveys = await db.surveys.find({"project_id": p["_id"]}).sort("created_at", 1).to_list(100)
+    prod_wos: List[Dict[str, Any]] = []
+    if p.get("show_production_steps") and p.get("production_order_id"):
+        prod_wos = await db.work_orders.find(
+            {"order_id": p["production_order_id"]},
+            {"step_no": 1, "original_step_no": 1, "station": 1, "status": 1, "started_at": 1, "finished_at": 1},
+        ).to_list(500)
     await db.projects.update_one({"_id": p["_id"]}, {"$set": {"tracking.last_viewed_at": datetime.now(timezone.utc).isoformat()}, "$inc": {"tracking.view_count": 1}})
-    view = _public_project_view(p, company, quotes, surveys)
+    view = _public_project_view(p, company, quotes, surveys, work_orders=prod_wos)
     statement = await _project_statement(p, company)
     if statement:
         view["statement"] = {"rows": statement["rows"], "balance": statement["balance"]}
