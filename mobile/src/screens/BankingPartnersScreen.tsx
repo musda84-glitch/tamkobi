@@ -15,7 +15,7 @@ import {
   expensePayload,
   filterPartnerTxs,
   partnerCardTone,
-  partnerTxTr,
+  partnerTxLabel,
   validateExpenseDraft,
   type BankAccount,
   type ExpenseCategory,
@@ -56,7 +56,7 @@ function PartnerCard({
         <ListRow
           key={idOf(tx)}
           testID={`partner-tx-${idOf(tx)}`}
-          title={partnerTxTr(tx.type)}
+          title={partnerTxLabel(tx)}
           subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
           right={fmtMoney(tx.amount)}
           rightColor={tx.type === "withdrawal" ? colors.danger : colors.primary}
@@ -253,7 +253,7 @@ export function BankingPartnersPanel({
           {!txs.length ? <Muted>Hareket yok.</Muted> : txs.slice(0, 40).map((tx) => (
             <ListRow
               key={idOf(tx)}
-              title={`${partnerTxTr(tx.type)} · ${tx.partner_name || ""}`}
+              title={`${partnerTxLabel(tx)} · ${tx.partner_name || ""}`}
               subtitle={[fmtDate(tx.date), tx.account_name, tx.description].filter(Boolean).join(" · ")}
               right={fmtMoney(tx.amount)}
             />

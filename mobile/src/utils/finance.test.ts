@@ -32,6 +32,7 @@ import {
   recentPartnerTx,
   bankMovementNotice,
   partnerMovementNotice,
+  partnerTxLabel,
   partnerCardTone,
   partnerInitials,
   filterPartnerTxs,
@@ -316,6 +317,8 @@ describe("finance drafts", () => {
       { id: "p4", type: "capital_in", amount: 2, date: "2026-09-22" },
     ]).map((t) => t.id)).toEqual(["p4", "p2", "p3"]);
     expect(partnerMovementNotice({ id: "p2", type: "withdrawal", amount: 5 }).signed).toBe(-5);
+    expect(partnerTxLabel({ type: "withdrawal", expense_id: "e1" })).toBe("Masraf Ödemesi");
+    expect(partnerMovementNotice({ id: "p5", type: "withdrawal", amount: 40, expense_id: "e1" }).detail).toMatch(/Masraf Ödemesi/);
   });
 
   it("gives partners stable colors and filters their movements", () => {

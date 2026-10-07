@@ -8240,17 +8240,39 @@ async def update_bank_transaction(tx_id: str, req: Dict[str, Any]):
     await db.bank_transactions.update_one({"_id": tx_id}, {"$set": allowed})
     return clean_doc(await db.bank_transactions.find_one({"_id": tx_id}))
 
+async def _linked_expense_related(tx: Dict[str, Any]) -> list:
+    """Masrafa bağlı hareket silinince masrafı da aynı çöp kaydına taşı (çift reverse yok)."""
+    eid = tx.get("expense_id")
+    if not eid:
+        return []
+    exp = await db.expenses.find_one({"_id": eid})
+    if not exp or expenses._from_statement(exp):
+        return []
+    return [{"collection": "expenses", "docs": [exp]}]
+
+
 @api_router.delete("/banking/transactions/{tx_id}")
 async def delete_bank_transaction(tx_id: str):
     tx = await db.bank_transactions.find_one({"_id": tx_id})
     _assert_editable_tx(tx)
+    related = await _linked_expense_related(tx)
     await _reverse_tx_effects(tx, -1)
-    await trash.soft_delete("bank_transactions", tx, "bank_transaction", f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺", note=f"{tx.get('account_name')} · {tx.get('date')}")
+    await trash.soft_delete(
+        "bank_transactions",
+        tx,
+        "bank_transaction",
+        f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺",
+        related=related,
+        note=f"{tx.get('account_name')} · {tx.get('date')}" + (" · bağlı masraf" if related else ""),
+    )
     if tx.get("contact_id"):
         await contact_balance.sync_contact_balance(db, tx["contact_id"])
     if tx.get("owner_contact_id") and tx.get("owner_contact_id") != tx.get("contact_id"):
         await contact_balance.sync_contact_balance(db, tx["owner_contact_id"])
-    return {"status": "success", "message": "Hareket çöp kutusuna taşındı, bakiyeler geri alındı."}
+    msg = "Hareket çöp kutusuna taşındı, bakiyeler geri alındı."
+    if related:
+        msg = "Hareket ve bağlı masraf çöp kutusuna taşındı; bakiyeler geri alındı."
+    return {"status": "success", "message": msg}
 
 def _virman_endpoint(value: Optional[str]) -> tuple:
     """Parse virman source/target: ('partner'|'contact'|'account', id)."""
@@ -8663,6 +8685,8 @@ async def update_partner_transaction(tx_id: str, req: Dict[str, Any]):
     tx = await db.partner_transactions.find_one({"_id": tx_id})
     if not tx:
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
+    if tx.get("expense_id") or tx.get("source") == "expense":
+        raise HTTPException(status_code=400, detail="Masrafa bağlı ortak hareketi buradan düzenlenemez. Masraflar ekranından düzenleyin veya silin.")
     if tx["type"] == "profit_share":
         raise HTTPException(status_code=400, detail="Kâr payı kayıtları düzenlenemez; silip yeniden dağıtın.")
     if tx["type"] not in PARTNER_MUTABLE_TYPES:
@@ -8699,14 +8723,25 @@ async def delete_partner_transaction(tx_id: str):
     tx = await db.partner_transactions.find_one({"_id": tx_id})
     if not tx:
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
+    related = await _linked_expense_related(tx)
     await _reverse_partner_tx(tx)
-    await trash.soft_delete("partner_transactions", tx, "partner_transaction", f"{tx.get('partner_name')} · {PARTNER_TX_LABELS.get(tx.get('type'), tx.get('type'))} · {float(tx.get('amount') or 0):,.2f} ₺", note=tx.get("date") or "")
+    label = partner_pay.tx_display_label(tx)
+    await trash.soft_delete(
+        "partner_transactions",
+        tx,
+        "partner_transaction",
+        f"{tx.get('partner_name')} · {label} · {float(tx.get('amount') or 0):,.2f} ₺",
+        related=related,
+        note=(tx.get("date") or "") + (" · bağlı masraf" if related else ""),
+    )
     msg = "Hareket çöp kutusuna taşındı; ortak"
     if tx.get("contact_id"):
         msg += ", cari"
     if tx.get("account_id"):
         msg += " ve hesap"
     msg += " bakiyeleri geri alındı."
+    if related:
+        msg = "Hareket ve bağlı masraf çöp kutusuna taşındı; ortak bakiyesi geri alındı."
     return {"status": "success", "message": msg}
 
 async def _execute_partner_tx(req: Dict[str, Any]):

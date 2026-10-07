@@ -121,7 +121,9 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
     }
     setOpen(false);
     const kind = tx.is_simulated ? "simüle (demo) hareket" : txKindLabel(tx);
-    if (!window.confirm(`${(tx.amount || 0).toLocaleString("tr-TR")} ₺ tutarındaki ${kind} silinsin mi? Bakiyeler geri alınır.`)) return;
+    const linkedExp = Boolean(tx.expense_id || tx.source === "expense");
+    const balNote = linkedExp ? " Bağlı masraf da silinir; bakiyeler geri alınır." : " Bakiyeler geri alınır.";
+    if (!window.confirm(`${(tx.amount || 0).toLocaleString("tr-TR")} ₺ tutarındaki ${kind} silinsin mi?${balNote}`)) return;
     try {
       const r = await axios.delete(`${API_URL}/banking/transactions/${txId}`);
       toast.success(r.data.message || "Hareket çöp kutusuna taşındı.");

@@ -103,7 +103,12 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
             fx.try_amount(exp, exp.get("total")),
             f"{exp['expense_number']} {exp.get('description', '')}",
             pay_date,
-            extra={"expense_id": exp["_id"], "contact_id": exp.get("contact_id"), "contact_name": exp.get("contact_name")},
+            extra={
+                "expense_id": exp["_id"],
+                "source": "expense",
+                "contact_id": exp.get("contact_id"),
+                "contact_name": exp.get("contact_name"),
+            },
         )
         return f"{name} (Ortak)"
     if not account_id:
