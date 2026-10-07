@@ -27,7 +27,7 @@
       "versionCode": 50,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
-        "backgroundColor": "#0F172A",
+        "backgroundColor": "#0b0b14",
         "foregroundImage": "./assets/images/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -52,7 +52,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0F172A",
+          "backgroundColor": "#0b0b14",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 120
         }
@@ -83,7 +83,7 @@
       [
         "expo-notifications",
         {
-          "color": "#059669",
+          "color": "#7b3ff2",
           "defaultChannel": "tamkobi_chime",
           "sounds": [
             "./assets/sounds/tamkobi.wav"

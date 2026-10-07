@@ -249,12 +249,12 @@ export default function MainLayout({ children, onOpenQuickAction }) {
             data-testid="brand-logo-btn"
             title={staffUi ? "Mesaim" : "Genel Bakış"}
           >
-            <TamKobiMark className="w-8 h-8 shrink-0 rounded-lg shadow-lg shadow-emerald-500/25" />
+            <TamKobiMark className="w-8 h-8 shrink-0 rounded-lg shadow-lg shadow-[#7b3ff2]/30" />
             {!sidebarCollapsed && (
-              <>
-                <span>Tam<span className="text-emerald-400">Kobi</span></span>
-                <span className="text-[10px] uppercase tracking-widest bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono font-medium">ERP v2</span>
-              </>
+              <span className="leading-none tracking-tight">
+                <span className="font-bold text-white">Tam</span>
+                <span className="font-medium text-slate-300">Kobi</span>
+              </span>
             )}
           </Link>
           <button onClick={() => setMobileMenuOpen(false)} className="lg:hidden text-slate-400 hover:text-white">

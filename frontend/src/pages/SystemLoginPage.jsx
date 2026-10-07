@@ -2,9 +2,10 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
-import { ShieldCheck, LogIn, KeyRound, ArrowLeft } from "lucide-react";
+import { LogIn, KeyRound, ArrowLeft } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { BuildStamp } from "../components/BuildStamp";
+import TamKobiMark from "../components/TamKobiMark";
 import { REMEMBER_SYS_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
 
 export default function SystemLoginPage() {
@@ -67,7 +68,16 @@ export default function SystemLoginPage() {
       <div className="absolute -left-20 -top-20 w-96 h-96 rounded-full bg-amber-400/10 blur-3xl" />
       {mode === "forgot" ? (
         <form onSubmit={forgot} className="relative bg-[#0e1422] border border-white/10 rounded-3xl w-full max-w-sm p-8 space-y-4 text-slate-100" data-testid="sys-forgot-form">
-          <div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-xl bg-amber-400 flex items-center justify-center text-slate-900"><ShieldCheck className="w-5 h-5" /></div><div><div className="font-bold">Tam<span className="text-amber-400">Kobi</span></div><div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Şifre Sıfırlama</div></div></div>
+          <div className="flex items-center gap-2.5">
+            <TamKobiMark className="w-9 h-9 shrink-0 rounded-xl" />
+            <div>
+              <div className="tracking-tight">
+                <span className="font-bold text-white">Tam</span>
+                <span className="font-medium text-slate-300">Kobi</span>
+              </div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Şifre Sıfırlama</div>
+            </div>
+          </div>
           <p className="text-xs text-slate-400">Platform yönetici hesabınız için sıfırlama bağlantısı alın. Eşleşen hesap varsa seçtiğiniz kanala gider.</p>
           <div className="flex gap-2" data-testid="sys-forgot-channel">
             <button type="button" onClick={() => { setChannel("email"); setResetInfo(null); setErr(""); }} className={`flex-1 py-2 rounded-xl border text-xs font-bold ${!smsMode ? "bg-amber-400 text-slate-900 border-amber-400" : "bg-white/5 text-slate-300 border-white/10"}`} data-testid="sys-forgot-channel-email">E-posta</button>
@@ -94,7 +104,16 @@ export default function SystemLoginPage() {
         </form>
       ) : (
         <form onSubmit={submit} className="relative bg-[#0e1422] border border-white/10 rounded-3xl w-full max-w-sm p-8 space-y-4 text-slate-100" data-testid="system-login-page">
-          <div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-xl bg-amber-400 flex items-center justify-center text-slate-900"><ShieldCheck className="w-5 h-5" /></div><div><div className="font-bold" data-testid="sys-login-brand">Tam<span className="text-amber-400">Kobi</span></div><div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Platform Yönetimi</div></div></div>
+          <div className="flex items-center gap-2.5">
+            <TamKobiMark className="w-9 h-9 shrink-0 rounded-xl" />
+            <div>
+              <div className="tracking-tight" data-testid="sys-login-brand">
+                <span className="font-bold text-white">Tam</span>
+                <span className="font-medium text-slate-300">Kobi</span>
+              </div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Platform Yönetimi</div>
+            </div>
+          </div>
           <p className="text-xs text-slate-400">Bu alan müşteri ERP'sinden bağımsızdır; yalnızca platform yöneticileri giriş yapabilir.</p>
           <div><label className="block text-xs font-semibold mb-1 text-slate-300">E-posta</label><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50" data-testid="sys-login-email" /></div>
           <div><label className="block text-xs font-semibold mb-1 text-slate-300">Şifre</label><input type="password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50" data-testid="sys-login-password" /></div>

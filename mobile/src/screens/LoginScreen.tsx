@@ -216,7 +216,10 @@ export function LoginScreen() {
           <Image source={require("../../assets/icon.png")} style={styles.mark} />
           {mode === "erp" ? (
             <>
-              <Text style={styles.brand}>Tam<Text style={{ color: colors.primary }}>Kobi</Text></Text>
+              <Text style={styles.brand}>
+                <Text style={{ fontWeight: "800", color: "#0b0b14" }}>Tam</Text>
+                <Text style={{ fontWeight: "500", color: "#64748B" }}>Kobi</Text>
+              </Text>
               <Text style={styles.hint}>ERP veya personel hesabınızla giriş yapın. Web ile aynı kullanıcı.</Text>
               {error ? <Text style={styles.error} testID="login-error">{error}</Text> : null}
               <Field label="E-posta" testID="login-email" autoCapitalize="none" keyboardType="email-address" autoComplete="email" value={email} onChangeText={setEmail} />
@@ -313,7 +316,10 @@ export function LoginScreen() {
           ) : (
             <>
               <Text style={styles.eyebrow}>B2B Müşteri Girişi</Text>
-              <Text style={styles.brand}>Tam<Text style={{ color: colors.primary }}>Kobi</Text></Text>
+              <Text style={styles.brand}>
+                <Text style={{ fontWeight: "800", color: "#0b0b14" }}>Tam</Text>
+                <Text style={{ fontWeight: "500", color: "#64748B" }}>Kobi</Text>
+              </Text>
               <Text style={styles.hint}>Tedarikçinizin size verdiği e-posta / VKN ve şifre ile.</Text>
               {error ? <Text style={styles.error} testID="b2b-login-error">{error}</Text> : null}
               <Field label="E-posta veya VKN" testID="b2b-login-email" autoCapitalize="none" autoComplete="email" value={email} onChangeText={setEmail} />
