@@ -36,9 +36,10 @@ def test_kuveyt_provider_identity_and_api_hosts():
     assert "prep-identity.kuveytturk.com.tr" in meta["hint"]
     assert "prep-gateway.kuveytturk.com.tr" in meta["hint"]
     assert "JSEncrypt" in meta["hint"]
-    assert "travist/jsencrypt" in meta["hint"]
     assert "signSha256" in meta["hint"]
-    assert "2048" in meta["hint"]
+    assert ".crt" in meta["hint"]
+    assert "Signature Invalid" in meta["hint"]
+    assert "whitelist" in meta["hint"].lower() or "IP whitelist" in meta["hint"]
     assert "/v1/fx/rates" in meta["hint"]
     assert "/v3/accounts/{ekNo}/transactions" in meta["hint"]
     assert "itemCount" in meta["hint"]
@@ -709,6 +710,40 @@ def test_kuveyt_token_invalid_client_message_hints_api_key():
         assert "Api Anahtarı" in msg or "Client Secret" in msg
         assert "id.kuveytturk.com.tr" in msg or "prep-identity.kuveytturk.com.tr" in msg
         assert "/connect/token" in msg
+
+
+def test_kuveyt_probe_signature_invalid_message():
+    pem = _rsa_pem()
+    conn = {
+        "provider": "kuveytturk", "mode": "live",
+        "client_id": "cid", "client_secret": "sec", "private_key": pem,
+    }
+    token_resp = MagicMock()
+    token_resp.status_code = 200
+    token_resp.content = b'{"access_token":"tokSIG"}'
+    token_resp.json.return_value = {"access_token": "tokSIG"}
+
+    fx_resp = MagicMock()
+    fx_resp.status_code = 401
+    fx_resp.text = '{"error":"Signature Invalid"}'
+    fx_resp.json.return_value = {"error": "Signature Invalid"}
+    fx_resp.headers = {"content-type": "application/json"}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=token_resp)
+    mock_client.get = AsyncMock(return_value=fx_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch.object(httpx, "AsyncClient", return_value=mock_client):
+            return await bp.test_connection(conn)
+
+    out = asyncio.run(_run())
+    assert out["ok"] is False
+    msg = out["message"]
+    assert "Signature Invalid" in msg
+    assert ".crt" in msg or "Public Key" in msg
 
 
 def test_kuveyt_probe_signs_fx_rates_get():

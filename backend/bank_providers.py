@@ -38,7 +38,7 @@ PROVIDERS = {
         "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
         "fields": ["client_id", "client_secret", "api_key", "private_key"],
-        "hint": "Canlı: https://prep-identity.kuveytturk.com.tr (token) + https://prep-gateway.kuveytturk.com.tr (API). Abonelik: GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions (beginDate/endDate/itemCount → accountActivities), POST /v1/vpos/getMerchantOrderDetail. Token: POST prep-identity /connect/token (client_credentials scope=public); SDK idprep/id yedek. RSA: travist/jsencrypt 2048-bit Private Key; Public Key portalde. İmza: JSEncrypt.signSha256. non3DPayment kart çeker — TamKobi otomatik çağırmaz.",
+        "hint": "Canlı: https://prep-identity.kuveytturk.com.tr (token) + https://prep-gateway.kuveytturk.com.tr (API). Abonelik: GET /v1/fx/rates (test), GET /v3/accounts/{ekNo}/transactions (hesap hareketleri; beginDate/endDate/itemCount → accountActivities), POST /v1/vpos/getMerchantOrderDetail. Token: POST prep-identity /connect/token (client_credentials scope=public). RSA: Private Key TamKobi’de; eşleşen .crt (Public Key) API Market’te — aksi Signature Invalid. Canlı IP whitelist: yalnızca onay formundaki sunucu IP’sinden istek. İmza: JSEncrypt.signSha256. non3DPayment/EFT otomatik değil.",
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -1066,10 +1066,27 @@ async def _kuveyt_probe(conn: dict) -> Dict[str, Any]:
                 if resp.status_code in (401, 403):
                     detail = _api_error_detail(resp)
                     blob = f"{detail} {getattr(resp, 'text', '') or ''}".lower()
-                    if "sign" in blob or "imza" in blob or resp.status_code == 401:
+                    sig_bad = any(
+                        x in blob
+                        for x in (
+                            "signature invalid",
+                            "invalid signature",
+                            "signature_invalid",
+                            "imza geçersiz",
+                            "imza hatası",
+                        )
+                    ) or ("sign" in blob and "invalid" in blob)
+                    if sig_bad or "imza" in blob or ("sign" in blob and resp.status_code in (401, 403)):
+                        raise RuntimeError(
+                            "Kuveyt Türk Signature Invalid (imza/yetki hatası). "
+                            "TamKobi Private Key (.pem) ile API Market’e yüklenen .crt (Public Key) "
+                            "aynı anahtar çiftinden olmalı. Anahtar üret → .crt indir → portala yükle → "
+                            f"Kaydet & Test Et. HTTP {resp.status_code}. {detail[:160]}"
+                        )
+                    if resp.status_code == 401:
                         raise RuntimeError(
                             f"Kuveyt Türk imza/yetki hatası (HTTP {resp.status_code}). "
-                            "PKCS8 PEM private key ve Signature başlığını kontrol edin. "
+                            "Private Key / Signature veya token geçersiz olabilir. "
                             f"{detail[:160]}"
                         )
                 if resp.status_code == 404:
