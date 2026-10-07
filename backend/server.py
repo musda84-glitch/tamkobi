@@ -89,6 +89,7 @@ import expenses
 import tax_obligations
 import vehicles
 import contact_payments
+import contact_balance
 import finance
 import fx
 from card_match import sanitize_card_fields
@@ -4901,6 +4902,12 @@ async def get_contact_overview(contact_id: str):
         # BizimHesap chequeandbond snapshot'ı (ör. ERSAY 177.924,83) gerçek portföy değilse sıfırla.
         await db.contacts.update_one({"_id": contact_id}, {"$set": {"cheque_bond_balance": live_cheque}})
         contact["cheque_bond_balance"] = live_cheque
+    # Ödeme silme / fatura iptali sonrası kaymış bakiyeyi hareketlerden onar.
+    live_bal, bal_meta = await contact_balance.sync_contact_balance(db, contact_id)
+    if bal_meta.get("repaired"):
+        contact["balance"] = live_bal
+        if bal_meta.get("opening_balance") is not None:
+            contact["opening_balance"] = bal_meta["opening_balance"]
     projects = await db.projects.find({"contact_id": contact_id}).sort("created_at", -1).to_list(100)
     comm = sorted([{**clean_doc(s), "channel": "sms"} for s in sms] + [{**clean_doc(m), "channel": "email"} for m in mails[:50]] + [{**clean_doc(w), "channel": "whatsapp"} for w in wa], key=lambda x: x.get("created_at", ""), reverse=True)
     sales = [i for i in invoices if i.get("invoice_type") == "sales" and i.get("status") not in ("draft", "cancelled")]
@@ -4909,7 +4916,9 @@ async def get_contact_overview(contact_id: str):
     return {
         "contact": clean_doc(contact),
         "summary": {"invoice_count": len(invoices), "draft_count": sum(1 for i in invoices if i.get("status") == "draft"), "total_invoiced": total_invoiced,
-                    "total_paid": total_paid, "open_amount": total_invoiced - total_paid, "order_count": len(orders), "overdue_count": sum(1 for i in invoices if i.get("payment_status") != "paid" and i.get("invoice_type") == "sales")},
+                    "total_paid": total_paid, "open_amount": total_invoiced - total_paid, "order_count": len(orders), "overdue_count": sum(1 for i in invoices if i.get("payment_status") != "paid" and i.get("invoice_type") == "sales"),
+                    "opening_balance": float(contact.get("opening_balance") or 0),
+                    "balance_repaired": bool(bal_meta.get("repaired"))},
         "invoices": clean_docs(invoices), "payments": clean_docs(payments), "orders": clean_docs(orders), "communications": comm,
         "quotes": clean_docs(quotes), "surveys": clean_docs(surveys), "cheques": clean_docs(cheques_rows), "projects": clean_docs(projects),
         "email_deliveries": clean_docs(email_deliveries),
@@ -4968,6 +4977,25 @@ async def record_contact_payment(contact_id: str, req: Dict[str, Any], request: 
     if pending:
         return pending
     return await _execute_contact_partner_payment(payload)
+
+@api_router.post("/contacts/{contact_id}/clear-opening-balance")
+async def clear_contact_opening_balance(contact_id: str):
+    """Aktarım / BizimHesap açılış bakiyesini sıfırlar; fatura ve kasa hareketleri kalır."""
+    contact = await db.contacts.find_one({"_id": contact_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    await db.contacts.update_one(
+        {"_id": contact_id},
+        {"$set": {"opening_balance": 0.0}, "$unset": {"opening_balance_source": ""}},
+    )
+    live, meta = await contact_balance.sync_contact_balance(db, contact_id)
+    return {
+        "status": "success",
+        "balance": live,
+        "message": f"Açılış bakiyesi sıfırlandı. Güncel cari bakiye: {live:,.2f} ₺".replace(",", "X").replace(".", ",").replace("X", "."),
+        "repaired": bool(meta.get("repaired")),
+    }
+
 
 @api_router.post("/contacts/{contact_id}/ledger-slip")
 async def create_contact_ledger_slip(contact_id: str, req: Dict[str, Any]):
@@ -7275,6 +7303,31 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None):
     applied = bool(inv.get("effects_applied")) or inv.get("status") in ("approved", "sent_to_gib", "paid")
     if applied:
         await _reverse_invoice_effects(inv)
+    # Kasada duran tahsilat/ödeme satırlarının cari etkisini de geri al (kasa bakiyesi kalır).
+    pay_rows = await db.bank_transactions.find({"related_invoice_id": invoice_id}).to_list(200)
+    for ptx in pay_rows:
+        cid = ptx.get("contact_id")
+        if not cid or ptx.get("source") == "expense":
+            continue
+        amt = float(ptx.get("amount") or 0)
+        # create'te inflow → balance −amt; iptalde geri al → +amt
+        await db.contacts.update_one(
+            {"_id": cid},
+            {"$inc": {"balance": amt if ptx.get("type") == "inflow" else -amt}},
+        )
+        await db.bank_transactions.update_one(
+            {"_id": ptx["_id"]},
+            {"$unset": {"related_invoice_id": "", "related_invoice_number": ""},
+             "$set": {"category": "İptal fatura tahsilatı" if ptx.get("type") == "inflow" else "İptal fatura ödemesi"}},
+        )
+    for ptx in await db.partner_transactions.find({"related_invoice_id": invoice_id}).to_list(100):
+        delta = _contact_balance_delta_for_partner_tx(ptx)
+        if delta and ptx.get("contact_id"):
+            await db.contacts.update_one({"_id": ptx["contact_id"]}, {"$inc": {"balance": -delta}})
+        await db.partner_transactions.update_one(
+            {"_id": ptx["_id"]},
+            {"$unset": {"related_invoice_id": ""}},
+        )
     await _unlink_orders_from_invoice(invoice_id)
     if _is_dispatch_doc(inv):
         await _unlink_dispatch_refs(invoice_id)
@@ -7293,6 +7346,7 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None):
         "cancel_reason": note,
         "gib_status": "İptal edildi",
         "payment_status": "cancelled",
+        "paid_amount": 0,
     }
     # Gelen e-fatura: ticari ret değil; yerel iptal (onay sonrası düzeltme).
     if _is_incoming_purchase_invoice(inv):
@@ -7305,6 +7359,8 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None):
     elif inv.get("e_type") and inv.get("e_type") != "paper":
         updates["einvoice_state"] = "cancelled"
     await db.invoices.update_one({"_id": invoice_id}, {"$set": updates})
+    if inv.get("contact_id"):
+        await contact_balance.sync_contact_balance(db, inv["contact_id"])
     if _is_dispatch_doc(inv):
         msg = f"{inv.get('invoice_number')} irsaliyesi iptal edildi; bağlı sipariş irsaliye bağı koparıldı."
         msg += " GİB e-İrsaliye iptali ayrı süreçtir; gerekirse entegratörden iptal düzenleyin."
@@ -7312,8 +7368,8 @@ async def cancel_invoice(invoice_id: str, req: Dict[str, Any] = None):
         msg = f"{inv.get('invoice_number')} iptal edildi; cari/stok etkileri geri alındı, bağlı siparişler serbest bırakıldı."
         if inv.get("e_type") not in (None, "paper") and not _is_incoming_purchase_invoice(inv):
             msg += " GİB e-belge iptali ayrı süreçtir; gerekirse entegratörden iptal/iade düzenleyin."
-        if float(inv.get("paid_amount") or 0) > 0.01:
-            msg += " Tahsilat/ödeme kayıtları kasada durur; cari bakiyede alacak/borç olarak kalabilir."
+        if pay_rows:
+            msg += " Tahsilat/ödeme kasa kayıtları durur; cari bakiyesinden düşüldü."
     return {"status": "success", "message": msg}
 
 @api_router.post("/invoices/{invoice_id}/send-to-gib")
@@ -8101,7 +8157,8 @@ async def _reverse_tx_effects(tx: Dict[str, Any], sign: int = -1):
     change = amt if tx.get("type") == "inflow" else -amt
     if tx.get("account_id") and tx.get("source") != "ledger":
         await db.bank_accounts.update_one({"_id": tx["account_id"]}, {"$inc": {"current_balance": change}})
-    if tx.get("contact_id"):
+    # Masraf ödemesi oluştururken cariye yazılmaz; geri alırken de dokunma.
+    if tx.get("contact_id") and tx.get("source") != "expense":
         await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": -change}})
     if tx.get("owner_contact_id"):
         # create'te owner bakiyesine −amount yazılmıştı; sign=-1 → +amount
@@ -8182,6 +8239,10 @@ async def delete_bank_transaction(tx_id: str):
     _assert_editable_tx(tx)
     await _reverse_tx_effects(tx, -1)
     await trash.soft_delete("bank_transactions", tx, "bank_transaction", f"{tx.get('description')} · {float(tx.get('amount') or 0):,.2f} ₺", note=f"{tx.get('account_name')} · {tx.get('date')}")
+    if tx.get("contact_id"):
+        await contact_balance.sync_contact_balance(db, tx["contact_id"])
+    if tx.get("owner_contact_id") and tx.get("owner_contact_id") != tx.get("contact_id"):
+        await contact_balance.sync_contact_balance(db, tx["owner_contact_id"])
     return {"status": "success", "message": "Hareket çöp kutusuna taşındı, bakiyeler geri alındı."}
 
 def _virman_endpoint(value: Optional[str]) -> tuple:

@@ -888,13 +888,13 @@ async def bh_import_customers(req: Dict[str, Any]):
             if on_dup == "skip":
                 batch["skipped"] += 1; continue
             # Elle "Müşteri & Tedarikçi" yapılmış cariyi tek türe düşürmeyelim.
-            upd = {**data, "bizimhesap_id": ext_id, "balance": bal, "opening_balance_source": "bizimhesap",
+            upd = {**data, "bizimhesap_id": ext_id, "balance": bal, "opening_balance": bal, "opening_balance_source": "bizimhesap",
                    "type": "both" if existing.get("type") == "both" else ctype}
             await _db.contacts.update_one({"_id": existing["_id"]}, {"$set": upd})
             batch["updated"].append({"id": existing["_id"], "prev": {k: existing.get(k) for k in upd}})
         else:
             doc = _build_doc("contacts", company_id, {**data, "balance": bal, "type": ctype}, batch["_id"])
-            doc.update({"bizimhesap_id": ext_id, "source": "bizimhesap", "tax_number_or_id": data.get("tax_number_or_id") or "", "opening_balance_source": "bizimhesap"})
+            doc.update({"bizimhesap_id": ext_id, "source": "bizimhesap", "tax_number_or_id": data.get("tax_number_or_id") or "", "opening_balance": bal, "opening_balance_source": "bizimhesap"})
             await _db.contacts.insert_one(doc); batch["inserted_ids"].append(doc["_id"])
     await _db.migration_batches.insert_one(batch)
     last = {"at": _now(), "inserted": len(batch["inserted_ids"]), "updated": len(batch["updated"]), "total_balance": round(total_bal, 2), "total_cheque": round(total_cheque, 2), "include_cheques": include_cheques, "types": types}
