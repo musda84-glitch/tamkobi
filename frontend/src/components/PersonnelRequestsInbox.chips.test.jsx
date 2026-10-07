@@ -28,5 +28,9 @@ test("compact chips keep talep summary in the identity column", () => {
   });
   expect(host.textContent).toContain("Talepler (0)");
   expect(host.textContent).toContain("Talep yok");
-  expect(host.querySelector("[data-testid='employee-card-requests-1']").className).toContain("py-1");
+  const el = host.querySelector("[data-testid='employee-card-requests-1']");
+  expect(el.className).toContain("py-1");
+  expect(el.className).toMatch(/w-fit/);
+  expect(el.className).toMatch(/max-w-\[14rem\]/);
+  expect(el.className).toMatch(/self-start/);
 });

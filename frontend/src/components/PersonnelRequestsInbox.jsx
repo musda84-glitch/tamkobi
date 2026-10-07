@@ -50,17 +50,17 @@ export function EmployeeRequestChips({
     ? `${firstMeta.label} · ${first.title || "Talep"}${rows.length > 1 ? ` · +${rows.length - 1}` : ""}`
     : "Talep yok";
   return (
-    <div className={`rounded-lg border border-amber-200 bg-amber-50 ${compact ? "px-1.5 py-1 space-y-1" : "px-2 py-1.5 space-y-1.5"}`} data-testid={testId}>
+    <div className={`rounded-lg border border-amber-200 bg-amber-50 ${compact ? "px-1.5 py-1 space-y-1 w-fit max-w-[14rem] self-start" : "px-2 py-1.5 space-y-1.5"}`} data-testid={testId}>
       <button
         type="button"
         onClick={() => setOpen((cur) => !cur)}
         aria-label={requestsDetailsToggleLabel(open)}
-        className="flex w-full items-center gap-1.5 min-h-7"
+        className={`flex items-center gap-1.5 min-h-7 ${compact ? "w-auto max-w-full" : "w-full"}`}
         data-testid={`${testId}-toggle`}
       >
         <Bell className="w-3 h-3 text-amber-800 shrink-0" />
         <span className="text-[11px] font-extrabold text-amber-900 shrink-0">Talepler ({rows.length})</span>
-        <span className="min-w-0 flex-1 truncate text-[10px] font-semibold text-slate-500 text-left">{summary}</span>
+        <span className={`min-w-0 truncate text-[10px] font-semibold text-slate-500 text-left ${compact ? "max-w-[7.5rem]" : "flex-1"}`}>{summary}</span>
         <span className="inline-flex w-6 h-6 rounded-full bg-amber-200 text-amber-900 items-center justify-center shrink-0" data-testid={`${testId}-toggle-icon`}>
           {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
         </span>
