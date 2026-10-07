@@ -1,6 +1,62 @@
 """Proje dosyası: üretim emri adımları."""
-from production_work_orders import customer_work_order_steps
-from server import _public_project_view
+import os
+import sys
+from types import ModuleType
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _stub_emergent():
+    if "emergentintegrations" in sys.modules:
+        return
+    root = ModuleType("emergentintegrations")
+    llm = ModuleType("emergentintegrations.llm")
+    chat = ModuleType("emergentintegrations.llm.chat")
+
+    class LlmChat:
+        def __init__(self, *a, **k):
+            pass
+
+        async def send_message(self, *a, **k):
+            return ""
+
+    class UserMessage:
+        def __init__(self, *a, **k):
+            pass
+
+    chat.LlmChat = LlmChat
+    chat.UserMessage = UserMessage
+    payments = ModuleType("emergentintegrations.payments")
+    stripe_svc = ModuleType("emergentintegrations.payments.stripe")
+    stripe_checkout = ModuleType("emergentintegrations.payments.stripe.checkout")
+
+    class StripeCheckout:
+        def __init__(self, *a, **k):
+            pass
+
+    class CheckoutSessionRequest:
+        def __init__(self, *a, **k):
+            pass
+
+    class CheckoutSessionResponse:
+        def __init__(self, *a, **k):
+            pass
+
+    stripe_checkout.StripeCheckout = StripeCheckout
+    stripe_checkout.CheckoutSessionRequest = CheckoutSessionRequest
+    stripe_checkout.CheckoutSessionResponse = CheckoutSessionResponse
+    sys.modules["emergentintegrations"] = root
+    sys.modules["emergentintegrations.llm"] = llm
+    sys.modules["emergentintegrations.llm.chat"] = chat
+    sys.modules["emergentintegrations.payments"] = payments
+    sys.modules["emergentintegrations.payments.stripe"] = stripe_svc
+    sys.modules["emergentintegrations.payments.stripe.checkout"] = stripe_checkout
+
+
+_stub_emergent()
+
+from production_work_orders import customer_work_order_steps  # noqa: E402
+from server import _public_project_view  # noqa: E402
 
 
 def test_customer_work_order_steps_from_wos():
@@ -26,6 +82,23 @@ def test_public_view_shows_production_order_label():
         "production_steps": [{"no": 1, "name": "Kesim", "station": "CNC"}],
         "tasks": [],
     }
-    view = _public_project_view(p, {"name": "Firma"}, [], [])
-    assert view["recipe_name"] == "URT-2026-1 · Mutfak dolabı"
-    assert view["production_steps"][0]["name"] == "Kesim"
+    view = _public_project_view(
+        p,
+        {"name": "Firma"},
+        [],
+        [],
+        work_orders=[{
+            "step_no": 1,
+            "station": "CNC",
+            "status": "in_progress",
+            "started_at": "2026-03-07T08:45:00+00:00",
+        }],
+    )
+    assert "recipe_name" not in view
+    step = view["production_steps"][0]
+    assert step["station"] == "CNC"
+    assert step["status"] == "in_progress"
+    assert step["status_label"] == "İşlemde"
+    assert step["current"] is True
+    assert step["at"] == "07.03.2026 11:45"
+    assert "name" not in step
