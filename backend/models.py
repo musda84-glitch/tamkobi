@@ -349,6 +349,8 @@ class BankTransaction(BaseDocument):
     matched_at: Optional[str] = None
     matched_by_id: Optional[str] = None
     matched_by_name: Optional[str] = None
+    created_by_id: Optional[str] = None
+    created_by_name: Optional[str] = None
     date: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 

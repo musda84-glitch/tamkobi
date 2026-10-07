@@ -324,6 +324,25 @@ async def get_current_user(request: Request) -> dict:
         pass
     return user
 
+
+@app.middleware("http")
+async def _bank_tx_actor_middleware(request: Request, call_next):
+    """Kasa/banka insert'lerinde işlem yapan kullanıcıyı ContextVar ile taşı."""
+    import bank_tx
+    user = None
+    has_auth = bool(request.headers.get("Authorization") or request.cookies.get("access_token"))
+    if has_auth:
+        try:
+            user = await get_current_user(request)
+        except Exception:
+            user = None
+    tok = bank_tx.set_current_actor(user)
+    try:
+        return await call_next(request)
+    finally:
+        bank_tx.reset_current_actor(tok)
+
+
 # ----------------- AUTH ENDPOINTS -----------------
 class LoginRequest(BaseModel):
     email: str
@@ -9127,11 +9146,21 @@ async def approve_cash_request(req_id: str, request: Request):
     )
     if not claimed.modified_count:
         raise HTTPException(status_code=400, detail="Bu talep zaten sonuçlanmış.")
+    import bank_tx as _bank_tx
+    # Harekette talep eden yönetici görünsün; onaylayan ayrıca approval kaydında.
+    actor_tok = _bank_tx.set_current_actor({
+        "id": doc.get("requested_by"),
+        "name": doc.get("requested_by_name") or user.get("name"),
+        "email": doc.get("requested_by_email"),
+    })
     try:
-        result = await executor(doc.get("payload") or {})
-    except Exception:
-        await db.cash_approval_requests.update_one({"_id": req_id}, {"$set": {"status": "pending", "approved_by": None, "approved_by_name": None, "approved_at": None}})
-        raise
+        try:
+            result = await executor(doc.get("payload") or {})
+        except Exception:
+            await db.cash_approval_requests.update_one({"_id": req_id}, {"$set": {"status": "pending", "approved_by": None, "approved_by_name": None, "approved_at": None}})
+            raise
+    finally:
+        _bank_tx.reset_current_actor(actor_tok)
     import notify as _notify
     await _notify.insert_notification(db, {
         "_id": str(uuid.uuid4()),
@@ -17921,6 +17950,8 @@ data_sync.init(db)
 rbac.set_license_guard(saas.guard)
 demo.init(db)
 expenses.init(db)
+import bank_tx as _bank_tx
+_bank_tx.install(db)
 tax_obligations.init(db)
 vehicles.init(db)
 fx.init(db)
