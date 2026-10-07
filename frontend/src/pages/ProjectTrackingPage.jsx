@@ -177,12 +177,45 @@ export default function ProjectTrackingPage() {
                 <Factory className="w-3.5 h-3.5" /> Üretim adımları
               </div>
               <ol className="space-y-1.5">
-                {p.production_steps.map((st, i) => (
-                  <li key={`${st.no || i}-${st.station || st.name || i}`} className="flex items-center gap-2 text-xs bg-slate-50 rounded-lg px-3 py-2" data-testid={`public-project-prod-step-${st.no || i + 1}`}>
-                    <span className="font-mono text-slate-400 shrink-0">{st.no || i + 1}.</span>
-                    <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">{st.station || "İstasyon"}</span>
-                  </li>
-                ))}
+                {p.production_steps.map((st, i) => {
+                  const status = st.status || "waiting";
+                  const statusCls = status === "done"
+                    ? "bg-emerald-50 text-emerald-700"
+                    : status === "in_progress"
+                      ? "bg-amber-50 text-amber-800"
+                      : "bg-slate-100 text-slate-600";
+                  const rowCls = st.current
+                    ? "bg-indigo-50/70 border border-indigo-200"
+                    : status === "done"
+                      ? "bg-emerald-50/40 border border-transparent"
+                      : "bg-slate-50 border border-transparent";
+                  const when = st.at || st.finished_at || st.started_at || "";
+                  return (
+                    <li
+                      key={`${st.no || i}-${st.station || st.name || i}`}
+                      className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-xs rounded-lg px-3 py-2 ${rowCls}`}
+                      data-testid={`public-project-prod-step-${st.no || i + 1}`}
+                      data-status={status}
+                      data-current={st.current ? "1" : "0"}
+                    >
+                      <span className="font-mono text-slate-400 shrink-0">{st.no || i + 1}.</span>
+                      <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">{st.station || "İstasyon"}</span>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${statusCls}`} data-testid={`public-project-prod-status-${st.no || i + 1}`}>
+                        {st.status_label || (status === "done" ? "Tamamladı" : status === "in_progress" ? "İşlemde" : "Başlamayı bekliyor")}
+                      </span>
+                      {st.current ? (
+                        <span className="text-[10px] font-bold text-indigo-700 bg-white border border-indigo-200 px-1.5 py-0.5 rounded shrink-0" data-testid={`public-project-prod-next-${st.no || i + 1}`}>
+                          Sıradaki
+                        </span>
+                      ) : null}
+                      {when ? (
+                        <span className="ml-auto text-[10px] text-slate-500 font-medium tabular-nums shrink-0" data-testid={`public-project-prod-at-${st.no || i + 1}`}>
+                          {when}
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ol>
             </div>
           )}

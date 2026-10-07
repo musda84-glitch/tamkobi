@@ -1,12 +1,14 @@
-"""Müşteri proje takibi: üretim adımları yalnızca istasyon; peçete → Üretimde."""
+"""Müşteri proje takibi: üretim adımları istasyon + durum/tarih; peçete → Üretimde."""
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from project_tracking import (  # noqa: E402
+    format_public_dt,
     has_production_slip,
     public_production_stations,
+    public_step_status,
     work_step_label,
 )
 
@@ -28,13 +30,76 @@ def test_public_production_stations_masks_details():
         },
         {"no": 3, "name": "Üretim", "station": ""},
     ])
-    assert steps == [
-        {"no": 1, "station": "KESİM EBATLAMA HOLZHER"},
-        {"no": 2, "station": "DELİK İŞLEMİ OMAKSAN"},
+    assert [(s["no"], s["station"]) for s in steps] == [
+        (1, "KESİM EBATLAMA HOLZHER"),
+        (2, "DELİK İŞLEMİ OMAKSAN"),
     ]
     blob = str(steps)
     assert "BEYAZ PARLAK" not in blob
     assert "J016" not in blob
+    assert steps[0]["status"] == "waiting"
+    assert steps[0]["status_label"] == "Başlamayı bekliyor"
+    assert steps[0]["current"] is True
+    assert steps[1]["current"] is False
+
+
+def test_public_production_stations_live_status_and_times():
+    steps = public_production_stations(
+        [
+            {"no": 1, "station": "KESİM EBATLAMA HOLZHER"},
+            {"no": 2, "station": "DELİK İŞLEMİ OMAKSAN"},
+            {"no": 3, "station": "CNC"},
+        ],
+        work_orders=[
+            {
+                "step_no": 1,
+                "station": "KESİM EBATLAMA HOLZHER",
+                "status": "done",
+                "started_at": "2026-03-07T07:00:00+00:00",
+                "finished_at": "2026-03-07T08:30:00+00:00",
+            },
+            {
+                "step_no": 2,
+                "station": "DELİK İŞLEMİ OMAKSAN",
+                "status": "in_progress",
+                "started_at": "2026-03-07T08:45:00+00:00",
+                "finished_at": None,
+            },
+            {
+                "step_no": 3,
+                "station": "CNC",
+                "status": "waiting",
+            },
+        ],
+    )
+    assert steps[0]["status"] == "done"
+    assert steps[0]["status_label"] == "Tamamladı"
+    assert steps[0]["current"] is False
+    assert steps[0]["finished_at"] == "07.03.2026 11:30"
+    assert steps[0]["at"] == "07.03.2026 11:30"
+
+    assert steps[1]["status"] == "in_progress"
+    assert steps[1]["status_label"] == "İşlemde"
+    assert steps[1]["current"] is True
+    assert steps[1]["started_at"] == "07.03.2026 11:45"
+    assert steps[1]["at"] == "07.03.2026 11:45"
+
+    assert steps[2]["status"] == "waiting"
+    assert steps[2]["status_label"] == "Başlamayı bekliyor"
+    assert steps[2]["current"] is False
+    assert "at" not in steps[2]
+
+
+def test_public_step_status_labels():
+    assert public_step_status("ready") == ("waiting", "Başlamayı bekliyor")
+    assert public_step_status("paused") == ("in_progress", "İşlemde")
+    assert public_step_status("done") == ("done", "Tamamladı")
+
+
+def test_format_public_dt_istanbul():
+    assert format_public_dt("2026-03-07T08:30:00+00:00") == "07.03.2026 11:30"
+    assert format_public_dt(None) is None
+    assert format_public_dt("not-a-date") is None
 
 
 def test_work_step_uretimde_when_production_slip_linked():
