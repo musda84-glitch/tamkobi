@@ -20,6 +20,53 @@ def test_expense_tx_ignored():
     assert bank_tx_balance_delta(tx) == 0
 
 
+def test_virman_card_mirror_ignored():
+    """Ortak/hesap havuz görünüm satırı cari bakiyeyi etkilemesin."""
+    tx = {
+        "contact_id": "c1",
+        "type": "inflow",
+        "amount": 120,
+        "source": "virman_card_mirror",
+        "via_customer_card": True,
+    }
+    assert bank_tx_balance_delta(tx) == 0
+
+
+def test_legacy_cari_card_virman_pair_signs():
+    """Eski havuz çifti: kaynak outflow + hedef mirror inflow → doğru cari yön."""
+    amount = 100.0
+    legacy_src = {
+        "contact_id": "src",
+        "target_contact_id": "tgt",
+        "type": "outflow",
+        "amount": amount,
+        "source": "virman",
+        "via_customer_card": True,
+        "customer_card_pool_ledger": True,
+    }
+    legacy_tgt = {
+        "contact_id": "tgt",
+        "type": "inflow",
+        "amount": amount,
+        "source": "virman_card_mirror",
+        "via_customer_card": True,
+        "customer_card_pool_ledger": True,
+    }
+    assert bank_tx_balance_delta(legacy_src) == -amount
+    assert bank_tx_balance_delta(legacy_tgt) == amount
+
+
+def test_cari_virman_pair_signs_match_inc():
+    """Cari↔cari: kaynak inflow (−), hedef outflow (+) — $inc ile aynı yön."""
+    amount = 250.0
+    src_tx = {"contact_id": "src", "type": "inflow", "amount": amount, "source": "virman"}
+    tgt_tx = {"contact_id": "tgt", "type": "outflow", "amount": amount, "source": "virman"}
+    assert bank_tx_balance_delta(src_tx) == -amount
+    assert bank_tx_balance_delta(tgt_tx) == amount
+    assert compute_contact_balance(bank_txs=[src_tx]) == -amount
+    assert compute_contact_balance(bank_txs=[tgt_tx]) == amount
+
+
 def test_virman_outflow_to_contact():
     tx = {"contact_id": "c1", "type": "outflow", "amount": 80, "source": "virman", "category": "Virman Çıkışı (Cari)"}
     assert bank_tx_balance_delta(tx) == 80
