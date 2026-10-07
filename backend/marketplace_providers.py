@@ -1,5 +1,6 @@
 """Pazaryeri entegrasyonları — Trendyol Seller API (gerçek) + diğer kanallar için simülasyon."""
 import asyncio
+import json
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
@@ -7,6 +8,55 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
+
+# Trendyol QnA: cevaplanmayan soru süresi doldu (POST …/answers → 400).
+TY_QNA_TIME_LIMIT_KEY = "business.rule.question.unanswered.time.limit"
+TY_QNA_TIME_LIMIT_MSG = (
+    "Trendyol cevap süresi dolmuş — bu soruya artık yanıt verilemez. "
+    "Cevaplanmayan sorular için satıcı panelindeki süre limiti aşıldı; "
+    "soruyu panelden kapatın veya senkronize ederek listeden düşürün."
+)
+
+_TY_BUSINESS_RULE_MSGS = {
+    TY_QNA_TIME_LIMIT_KEY: TY_QNA_TIME_LIMIT_MSG,
+}
+
+
+def trendyol_error_detail(status: int, body: str) -> str:
+    """Ham JSON yerine okunabilir Türkçe (BusinessRuleException key → mesaj)."""
+    text = (body or "").strip()
+    try:
+        data = json.loads(text) if text else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        data = None
+    if isinstance(data, dict):
+        errors = data.get("errors")
+        if isinstance(errors, list):
+            for err in errors:
+                if not isinstance(err, dict):
+                    continue
+                key = str(err.get("key") or "").strip()
+                if key in _TY_BUSINESS_RULE_MSGS:
+                    return _TY_BUSINESS_RULE_MSGS[key]
+                msg = str(err.get("message") or "").strip()
+                if msg and len(msg) > 1:
+                    return f"Trendyol: {msg}"
+                if key:
+                    return f"Trendyol: {key}"
+        title = str(data.get("title") or "").strip()
+        exc = str(data.get("exception") or "").strip()
+        if title:
+            return f"Trendyol hata {status}: {title}"
+        if exc and exc != "BusinessRuleException":
+            return f"Trendyol hata {status}: {exc}"
+        if exc == "BusinessRuleException":
+            return f"Trendyol iş kuralı hatası ({status})."
+    return f"Trendyol hata {status}: {text[:300]}"
+
+
+def is_trendyol_qna_time_limit(detail: Any) -> bool:
+    blob = str(detail or "")
+    return TY_QNA_TIME_LIMIT_KEY in blob or "cevap süresi dolmuş" in blob.lower()
 
 TRENDYOL_BASE = "https://apigw.trendyol.com"
 # V1 /orders 15 Eki 2026'da kapanıyor; dönemsel 426 dönüyor. V2 zorunlu.
@@ -107,7 +157,10 @@ class TrendyolClient:
             if r.status_code == 403:
                 raise HTTPException(status_code=403, detail="Trendyol: Erişim reddedildi (403). Satıcı ID doğru mu? IP kısıtı / User-Agent kontrol edin.")
             if r.status_code >= 400:
-                raise HTTPException(status_code=502, detail=f"Trendyol hata {r.status_code}: {r.text[:300]}")
+                detail = trendyol_error_detail(r.status_code, r.text or "")
+                # 4xx istemci/iş kuralı; 5xx veya bilinmeyen → 502 entegrasyon.
+                code = r.status_code if 400 <= r.status_code < 500 else 502
+                raise HTTPException(status_code=code, detail=detail)
             try:
                 return r.json() if r.content else {}
             except ValueError:
