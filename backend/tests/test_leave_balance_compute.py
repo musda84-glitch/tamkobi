@@ -38,6 +38,13 @@ def test_approved_annual_used_filters_year_and_type():
     assert approved_annual_used(leaves, 2025) == 5.0
 
 
+def test_leave_year_balance_allows_zero_annual():
+    from attendance import leave_year_balance
+    bal = leave_year_balance({"annual_leave_days": 0, "used_leave_days": 0, "leave_carry_days": 0, "leave_year": 2026})
+    assert bal["annual"] == 0
+    assert bal["remaining"] == 0
+
+
 def test_compute_leave_balance_remaining_with_carry_and_pending():
     emp = {
         "annual_leave_days": 14,

@@ -233,7 +233,18 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
     try {
       await axios.put(`${API_URL}/personnel/employees/${id}`, annualLeaveDaysPayload(days));
       toast.success("Yıllık izin hakkı güncellendi.");
-      reload();
+      setCard((cur) => {
+        if (!cur) return cur;
+        const used = Number(cur.leave_balance?.used) || 0;
+        const carry = Number(cur.leave_balance?.carry) || 0;
+        const remaining = Math.max(0, days + carry - used);
+        return {
+          ...cur,
+          employee: { ...(cur.employee || {}), annual_leave_days: days },
+          leave_balance: { ...(cur.leave_balance || {}), annual: days, used, carry, remaining },
+        };
+      });
+      await reload();
       onChanged?.();
     } catch (err) {
       toast.error(err.response?.data?.detail || "İzin hakkı kaydedilemedi.");
