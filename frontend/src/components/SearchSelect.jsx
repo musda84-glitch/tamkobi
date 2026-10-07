@@ -26,6 +26,7 @@ export const SearchSelect = ({
   onChange,
   options,
   placeholder = "Ara...",
+  searchPlaceholder = "Ad, SKU veya barkod ile ara...",
   getLabel,
   getSub,
   getExtra,
@@ -80,7 +81,7 @@ export const SearchSelect = ({
   }).slice(0, 50);
   const panel = (
     <>
-      <div className="relative border-b"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" /><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ad, SKU veya barkod ile ara..." className="w-full pl-8 p-2 text-xs outline-none" data-testid={testId ? `${testId}-search` : undefined} /></div>
+      <div className="relative border-b"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" /><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={searchPlaceholder} className="w-full pl-8 p-2 text-xs outline-none" data-testid={testId ? `${testId}-search` : undefined} /></div>
       {clearable && hasValue && (
         <button
           type="button"

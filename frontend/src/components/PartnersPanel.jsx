@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Camera, Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, PieChart, X, Trash2, Pencil, Banknote } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
+import { VirmanPartySelect } from "./VirmanPartySelect";
 import { PartnerTxTable } from "./PartnerTxTable";
 import { CashApprovalsBanner } from "./CashApprovalsBanner";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
@@ -547,42 +548,34 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       {modal === "virman" && (
         <Modal title="Hesaplar Arası Virman" onClose={() => setModal(null)} testId="partner-virman-modal">
           <form onSubmit={saveVirman} className="space-y-3 text-xs">
-            <p className="text-[11px] text-slate-500">Kasa, banka, POS, kredi kartı, cari ve ortaklar arasında transfer. Hesap→ortak para çekişi, ortak→hesap sermaye girişi olarak işlenir; entegre hesaplar listelenmez.</p>
-            <div>
-              <label className="block font-semibold mb-1">Kaynak Hesap (Çıkış)</label>
-              <PaymentTargetSelect
-                companyId={companyId}
-                accounts={liveAccounts}
-                value={virmanForm.source_account_id}
-                onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v })}
-                testId="partner-virman-source"
-                includePartners
-                includeContacts
-                excludeIntegrated
-                disabled={accountsLoading}
-                emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined}
-                className={inputCls}
-              />
-            </div>
-            <div>
-              <label className="block font-semibold mb-1">Hedef Hesap (Giriş)</label>
-              <PaymentTargetSelect
-                companyId={companyId}
-                accounts={liveAccounts}
-                value={virmanForm.target_account_id}
-                onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v })}
-                testId="partner-virman-target"
-                includePartners
-                includeContacts
-                excludeIntegrated
-                disabled={accountsLoading}
-                emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined}
-                className={inputCls}
-              />
-            </div>
+            <p className="text-[11px] text-slate-500">Kasa, banka, POS, kredi kartı, ortak veya cari arasında transfer. Kaynak/hedef için hesap veya cari ayrı seçilir; cari arama ile bulunur. Hesap→ortak para çekişi, ortak→hesap sermaye girişi; entegre hesaplar listelenmez.</p>
+            <VirmanPartySelect
+              companyId={companyId}
+              accounts={liveAccounts}
+              value={virmanForm.source_account_id}
+              onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v })}
+              testId="partner-virman-source"
+              label="Kaynak (Çıkış)"
+              includePartners
+              excludeIntegrated
+              disabled={accountsLoading}
+              emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined}
+            />
+            <VirmanPartySelect
+              companyId={companyId}
+              accounts={liveAccounts}
+              value={virmanForm.target_account_id}
+              onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v })}
+              testId="partner-virman-target"
+              label="Hedef (Giriş)"
+              includePartners
+              excludeIntegrated
+              disabled={accountsLoading}
+              emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined}
+            />
             <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" className={`${inputCls} font-bold`} value={virmanForm.amount} onChange={(e) => setVirmanForm({ ...virmanForm, amount: e.target.value })} required data-testid="partner-virman-amount" /></div>
             <div><label className="block font-semibold mb-1">Açıklama</label><input className={inputCls} value={virmanForm.description} onChange={(e) => setVirmanForm({ ...virmanForm, description: e.target.value })} data-testid="partner-virman-desc" /></div>
-            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={accountsLoading || (transferAccounts.length + partners.filter((p) => p.is_active !== false).length) < 2 || virmanForm.source_account_id === virmanForm.target_account_id} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="partner-virman-submit">Virmanı Onayla</button></div>
+            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={accountsLoading || !virmanForm.source_account_id || !virmanForm.target_account_id || virmanForm.source_account_id === virmanForm.target_account_id} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="partner-virman-submit">Virmanı Onayla</button></div>
           </form>
         </Modal>
       )}
