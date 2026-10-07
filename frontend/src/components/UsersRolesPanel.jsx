@@ -243,7 +243,7 @@ const RolesTab = ({ companyId, rolesData, reload }) => {
           <input type="checkbox" checked={!!rolesData.policies?.cash_dual_approval} onChange={(e) => savePolicy("cash_dual_approval", e.target.checked)} className="mt-0.5 accent-indigo-600" data-testid="policy-cash-dual-approval" />
           <span>
             <span className="font-semibold text-slate-800">Entegre olmayan kasa/banka işlemlerinde diğer yöneticiden onay iste</span>
-            <div className="text-[10px] text-slate-500 leading-tight">Açıkken kâr payı dağıtımı (hemen öde), ortak para koy/çek, ortak borç/alacak fişi ve virman hemen uygulanmaz; başka bir Banka &amp; Kasa yetkilisinin onayı gerekir. Entegre hesaplar zaten manuel işleme kapalıdır.</div>
+            <div className="text-[10px] text-slate-500 leading-tight">Açıkken kâr payı dağıtımı (hemen öde), ortak para koy/çek, ortak borç/alacak fişi, ortak hesabından cari ödeme/tahsilat ve virman hemen uygulanmaz; başka bir Banka &amp; Kasa yetkilisinin onayı gerekir. Entegre hesaplar zaten manuel işleme kapalıdır.</div>
           </span>
         </label>
       </div>

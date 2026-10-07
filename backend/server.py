@@ -4915,8 +4915,8 @@ async def get_contact_overview(contact_id: str):
         "email_deliveries": clean_docs(email_deliveries),
     }
 
-@api_router.post("/contacts/{contact_id}/record-payment")
-async def record_contact_payment(contact_id: str, req: Dict[str, Any]):
+async def _execute_contact_partner_payment(req: Dict[str, Any]):
+    contact_id = req.get("contact_id")
     contact = await db.contacts.find_one({"_id": contact_id})
     if not contact:
         raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
@@ -4926,12 +4926,48 @@ async def record_contact_payment(contact_id: str, req: Dict[str, Any]):
     if not req.get("partner_id"):
         raise HTTPException(status_code=400, detail="Ortak hesabı seçin.")
     tx_type = req.get("type") or "inflow"
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     description = req.get("description") or ("Cari tahsilat" if tx_type == "inflow" else "Cari ödeme")
     ptype = "withdrawal" if tx_type == "inflow" else "capital_in"
-    name = await partner_pay.move(db, contact["company_id"], req["partner_id"], amount, ptype, f"{contact.get('name')}: {description}", today, extra={"contact_id": contact_id})
+    name = await partner_pay.move(
+        db, contact["company_id"], req["partner_id"], amount, ptype,
+        f"{contact.get('name')}: {description}", today,
+        extra={"contact_id": contact_id, "contact_name": contact.get("name")},
+    )
     await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": -amount if tx_type == "inflow" else amount}})
     return {"status": "success", "via": "partner", "account_name": name}
+
+
+@api_router.post("/contacts/{contact_id}/record-payment")
+async def record_contact_payment(contact_id: str, req: Dict[str, Any], request: Request):
+    contact = await db.contacts.find_one({"_id": contact_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    amount = float(req.get("amount") or 0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
+    if not req.get("partner_id"):
+        raise HTTPException(status_code=400, detail="Ortak hesabı seçin.")
+    tx_type = req.get("type") or "inflow"
+    payload = {
+        "contact_id": contact_id,
+        "partner_id": req["partner_id"],
+        "type": tx_type,
+        "amount": amount,
+        "description": req.get("description") or ("Cari tahsilat" if tx_type == "inflow" else "Cari ödeme"),
+        "date": req.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    }
+    user = await get_current_user(request)
+    label = "Cari tahsilat" if tx_type == "inflow" else "Cari ödeme"
+    pending = await cash_approval.maybe_queue(
+        db, company_id=contact["company_id"], kind="contact_partner_pay", payload=payload,
+        account_ids=[],
+        summary=f"{contact.get('name')}: {label} (ortak) {amount:,.2f} ₺",
+        user=user,
+    )
+    if pending:
+        return pending
+    return await _execute_contact_partner_payment(payload)
 
 @api_router.post("/contacts/{contact_id}/ledger-slip")
 async def create_contact_ledger_slip(contact_id: str, req: Dict[str, Any]):
@@ -8318,8 +8354,21 @@ async def _post_partner_cash_movement(company_id: str, account_id: str, tx_type:
     })
     return acc.get("account_name")
 
+def _contact_balance_delta_for_partner_tx(tx: dict) -> float:
+    """Cari bakiyesine yazılan etki: tahsilat (withdrawal) −, ödeme (capital_in) +."""
+    if not tx.get("contact_id"):
+        return 0.0
+    amount = float(tx.get("amount") or 0)
+    t = tx.get("type")
+    if t == "withdrawal":
+        return -amount
+    if t == "capital_in":
+        return amount
+    return 0.0
+
+
 async def _reverse_partner_tx(tx: dict):
-    """Undo balance + bank movement effects of a partner transaction."""
+    """Undo balance + bank movement + cari effects of a partner transaction."""
     amount = float(tx.get("amount", 0))
     t = tx.get("type")
     if t in PARTNER_MUTABLE_TYPES:
@@ -8327,6 +8376,9 @@ async def _reverse_partner_tx(tx: dict):
         await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {k: -v for k, v in inc.items()}})
     elif t == "profit_share":
         await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {"total_profit_share": -amount, **({"balance": amount} if tx.get("is_paid") else {})}})
+    contact_delta = _contact_balance_delta_for_partner_tx(tx)
+    if contact_delta:
+        await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": -contact_delta}})
     if tx.get("account_id") and (t != "profit_share" or tx.get("is_paid")) and t in PARTNER_CASH_TYPES:
         bt = await db.bank_transactions.find_one({"partner_tx_id": tx["_id"]}) or await db.bank_transactions.find_one({"source": "partner", "account_id": tx["account_id"], "amount": amount, "date": tx.get("date"), "description": {"$regex": f"^{re.escape(tx.get('partner_name', ''))}"}})
         if bt:
@@ -8358,6 +8410,15 @@ async def update_partner_transaction(tx_id: str, req: Dict[str, Any]):
         account_name = await _post_partner_cash_movement(tx["company_id"], account_id, tx["type"], amount, tx["partner_name"], description, date, partner_tx_id=tx_id)
         patch.update({"account_id": account_id, "account_name": account_name})
     await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": partner_pay.balance_inc(tx["type"], amount)})
+    # Cari bağlı ortak ödemesi / tahsilatı: yeni tutarı cari bakiyesine yeniden yaz.
+    if tx.get("contact_id") and tx["type"] in ("withdrawal", "capital_in"):
+        new_delta = -amount if tx["type"] == "withdrawal" else amount
+        await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": new_delta}})
+        patch["contact_id"] = tx["contact_id"]
+        if tx.get("contact_name"):
+            patch["contact_name"] = tx["contact_name"]
+        if tx.get("related_invoice_id"):
+            patch["related_invoice_id"] = tx["related_invoice_id"]
     await db.partner_transactions.update_one({"_id": tx_id}, {"$set": patch})
     return clean_doc(await db.partner_transactions.find_one({"_id": tx_id}))
 
@@ -8368,7 +8429,13 @@ async def delete_partner_transaction(tx_id: str):
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
     await _reverse_partner_tx(tx)
     await trash.soft_delete("partner_transactions", tx, "partner_transaction", f"{tx.get('partner_name')} · {PARTNER_TX_LABELS.get(tx.get('type'), tx.get('type'))} · {float(tx.get('amount') or 0):,.2f} ₺", note=tx.get("date") or "")
-    return {"status": "success", "message": "Hareket çöp kutusuna taşındı; ortak ve hesap bakiyeleri geri alındı."}
+    msg = "Hareket çöp kutusuna taşındı; ortak"
+    if tx.get("contact_id"):
+        msg += ", cari"
+    if tx.get("account_id"):
+        msg += " ve hesap"
+    msg += " bakiyeleri geri alındı."
+    return {"status": "success", "message": msg}
 
 async def _execute_partner_tx(req: Dict[str, Any]):
     partner = await db.partners.find_one({"_id": req.get("partner_id")})
@@ -8505,6 +8572,7 @@ CASH_APPROVAL_EXECUTORS = {
     "virman": _execute_virman,
     "partner_tx": _execute_partner_tx,
     "distribute_profit": _execute_distribute_profit,
+    "contact_partner_pay": _execute_contact_partner_payment,
 }
 
 

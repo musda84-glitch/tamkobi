@@ -28,6 +28,7 @@ import { ContactStatementMenu } from "./ContactStatementMenu";
 import { StatementShareBar, StatementPrint, buildStatementRows } from "./StatementShare";
 import { shareStatementLink } from "../utils/statementShare";
 import { buildContactPayForm, contactPayModalMeta } from "../utils/contactPayMenu";
+import { isLockedContactPay, isPartnerContactPay, lockedContactPayTitle } from "../utils/contactPayLock";
 import { applyReceiptDraft, receiptScanHint } from "../utils/receiptScan";
 import { openChequeBalance } from "../utils/chequeBalance";
 import { statusTr, channelTr, E_TYPE_TR } from "../utils/labels";
@@ -196,9 +197,11 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [surveyDetail, setSurveyDetail] = useState(null);
   const [trackingProject, setTrackingProject] = useState(null);
   const [editPay, setEditPay] = useState(null);
-  const isLockedTx = (p) => p.source === "bank_sync" || p.source === "partner" || p.source === "cheque" || p.virtual;
-  const lockedTxLabel = (p) => (p.source === "partner" ? "Ortak" : p.source === "cheque" || p.virtual ? "Çek" : "Banka");
-  const lockedTxTitle = (p) => (p.source === "cheque" || p.virtual ? "Çek/senet kaydından geldi — Çek/Senet modülünden yönetilir" : "Banka entegrasyonu / ortaklar hesabından geldi — düzenlenemez");
+  // Ortaklar hesabı cari ödemeleri düzenlenebilir/silinebilir; banka senkron ve çek kilitli kalır.
+  const isLockedTx = isLockedContactPay;
+  const isPartnerPay = isPartnerContactPay;
+  const lockedTxLabel = (p) => (p.source === "cheque" || p.virtual ? "Çek" : "Banka");
+  const lockedTxTitle = lockedContactPayTitle;
   const deletePay = async (p) => {
     const chequeId = p.cheque_id;
     const label = p.type === "inflow" ? "tahsilat" : "ödeme";
@@ -212,12 +215,20 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
       return;
     }
-    if (p.source === "bank_sync" || p.source === "partner") {
+    if (p.source === "bank_sync") {
       toast.error(lockedTxTitle(p));
       return;
     }
     if (!window.confirm(`${fmt(p.amount)} tutarındaki ${label} silinsin mi? Bakiyeler geri alınır.`)) return;
-    try { const r = await axios.delete(`${API_URL}/banking/transactions/${p.id}`); toast.success(r.data.message); await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] }); load(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
+    try {
+      const url = isPartnerPay(p)
+        ? `${API_URL}/banking/partners/transactions/${p.id}`
+        : `${API_URL}/banking/transactions/${p.id}`;
+      const r = await axios.delete(url);
+      toast.success(r.data.message);
+      await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] });
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
   };
   const openEditPay = async (p) => {
     if (p.cheque_id) {
@@ -237,11 +248,15 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       } catch (err) { toast.error(err.response?.data?.detail || "Çek/senet yüklenemedi."); }
       return;
     }
-    if (p.source === "bank_sync" || p.source === "partner") {
+    if (p.source === "bank_sync") {
       toast.error(lockedTxTitle(p));
       return;
     }
-    try { const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`); setAccounts(r.data); setEditPay({ ...p, cheque: false }); } catch { toast.error("Hesaplar yüklenemedi."); }
+    if (isPartnerPay(p)) {
+      setEditPay({ ...p, cheque: false, partner: true, account_id: p.account_id || "" });
+      return;
+    }
+    try { const r = await axios.get(`${API_URL}/banking/accounts?company_id=${c.company_id}`); setAccounts(r.data); setEditPay({ ...p, cheque: false, partner: false }); } catch { toast.error("Hesaplar yüklenemedi."); }
   };
   const savePayEdit = async (e) => {
     e.preventDefault();
@@ -253,6 +268,12 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           notes: editPay.description,
           serial_no: editPay.serial_no,
           bank_name: editPay.bank_name,
+        });
+      } else if (editPay.partner || editPay.source === "partner") {
+        await axios.put(`${API_URL}/banking/partners/transactions/${editPay.id}`, {
+          amount: Number(editPay.amount),
+          date: editPay.date,
+          description: editPay.description,
         });
       } else {
         await axios.put(`${API_URL}/banking/transactions/${editPay.id}`, { amount: Number(editPay.amount), date: editPay.date, description: editPay.description, account_id: editPay.account_id });
@@ -377,7 +398,14 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       } else {
         const target = splitPaymentTarget(payForm.account_id);
         if (target.partner_id) {
-          await axios.post(`${API_URL}/contacts/${c.id}/record-payment`, { partner_id: target.partner_id, type: payForm.type, amount, description: payForm.description });
+          const res = await axios.post(`${API_URL}/contacts/${c.id}/record-payment`, { partner_id: target.partner_id, type: payForm.type, amount, description: payForm.description });
+          if (res.data?.status === "pending_approval") {
+            toast.success(res.data.message || "Diğer yönetici onayı bekleniyor.");
+            setPayForm(null);
+            await notifyDataChanged({ companyId: c.company_id, scopes: ["cash", "contacts"] });
+            load();
+            return;
+          }
         } else {
           const acc = accounts.find((a) => a.id === payForm.account_id);
           await axios.post(`${API_URL}/banking/transactions`, { company_id: c.company_id, account_id: payForm.account_id, account_name: acc?.account_name, type: payForm.type, category: payForm.type === "inflow" ? "Cari Tahsilat" : "Cari Ödeme", amount, currency: "TRY", description: `${c.name}: ${payForm.description}`, contact_id: c.id, contact_name: c.name, source: "manual" });
@@ -687,7 +715,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 {data.payments.map((p) => (
                   <tr key={p.id} data-testid={`detail-pay-${p.id}`}>
                     <td className="py-2 font-mono text-slate-500">{p.date}</td>
-                    <td className="py-2 font-semibold">{p.account_name} {isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td>
+                    <td className="py-2 font-semibold">{p.account_name} {isPartnerPay(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-indigo-500 font-semibold ml-1" title="Ortaklar hesabı — düzenlenebilir / silinebilir">Ortak</span>}{isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td>
                     <td className="py-2 text-slate-600">{p.category} • {p.description}</td>
                     <td className={`py-2 text-right font-bold ${p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{p.type === "inflow" ? "+" : "-"}{fmt(p.amount)}</td>
                     <td className="py-2 text-right">
@@ -1028,6 +1056,10 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 <div className="grid grid-cols-2 gap-2">
                   <div><label className="block font-semibold mb-1">Seri no</label><input value={editPay.serial_no || ""} onChange={(e) => setEditPay({ ...editPay, serial_no: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-serial" /></div>
                   <div><label className="block font-semibold mb-1">Banka</label><input value={editPay.bank_name || ""} onChange={(e) => setEditPay({ ...editPay, bank_name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-bank" /></div>
+                </div>
+              ) : editPay.partner || editPay.source === "partner" ? (
+                <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-[11px] text-indigo-800" data-testid="pay-edit-partner-note">
+                  Ortaklar Hesabı — tutar/tarih/açıklama güncellenir; ortak ve cari bakiyeleri yeniden hesaplanır.
                 </div>
               ) : (
                 <div><label className="block font-semibold mb-1">Kasa / Banka / Kart / Ortak</label><PaymentTargetSelect companyId={c.company_id} accounts={accounts} value={editPay.account_id} onChange={(v) => setEditPay({ ...editPay, account_id: v })} testId="pay-edit-account" collectableOnly={editPay.type === "inflow"} includePartners={false} /></div>

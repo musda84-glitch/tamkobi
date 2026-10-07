@@ -17,6 +17,12 @@ export function isLockedTx(tx) {
   return LOCKED_TX_SOURCES.has(tx?.source);
 }
 
+function lockedTxHint(tx) {
+  if (tx?.source === "partner") return "Ortak nakit hareketi Ortaklar sekmesinden düzenlenir/silinir.";
+  if (tx?.source === "bank_match") return "Eşleştirilmiş banka hareketi — önce eşleşmeyi düzeltin.";
+  return "Banka entegrasyonundan gelen hareketler buradan düzenlenemez.";
+}
+
 function txKindLabel(tx) {
   if (tx?.type === "inflow") return "tahsilat";
   if (tx?.type === "outflow") return "ödeme";
@@ -93,7 +99,7 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
 
   const onEdit = () => {
     if (locked) {
-      toast.error("Banka entegrasyonu / ortaklar hesabından gelen hareketler düzenlenemez.");
+      toast.error(lockedTxHint(tx));
       return;
     }
     setOpen(false);
@@ -110,7 +116,7 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
 
   const onDelete = async () => {
     if (locked) {
-      toast.error("Banka entegrasyonu / ortaklar hesabından gelen hareketler silinemez.");
+      toast.error(lockedTxHint(tx));
       return;
     }
     setOpen(false);
