@@ -343,9 +343,10 @@ export default function BankingPage() {
 
   const totalLiquidity = accounts.filter((a) => a.type !== "credit_card").reduce((sum, a) => sum + (a.current_balance || 0), 0);
   const selectedAccount = accounts.find(a => (a.id || a._id) === selectedAccountId);
+  const accountDisplayBalance = (a) => (a?.is_customer_card_pool ? 0 : (Number(a?.current_balance) || 0));
   const grouped = ACCOUNT_GROUPS.map((g) => {
     const items = accounts.filter((a) => accountGroupType(a) === g.type);
-    return { ...g, items, total: items.reduce((s, a) => s + (a.current_balance || 0), 0) };
+    return { ...g, items, total: items.reduce((s, a) => s + accountDisplayBalance(a), 0) };
   }).filter((g) => g.items.length > 0);
   const openGroup = grouped.find((g) => g.type === selectedGroup) || null;
   const groupIds = openGroup ? openGroup.items.map((a) => a.id || a._id) : null;
@@ -609,7 +610,12 @@ export default function BankingPage() {
                   <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-2">
                     <div>
                       <div className="text-[10px] text-slate-400 uppercase font-semibold">{isCard ? "Kart bakiyesi" : "Mevcut Bakiye"}</div>
-                      <div className="text-lg font-bold text-slate-900 tracking-tight">{money(acc.current_balance)} ₺</div>
+                      <div className="text-lg font-bold text-slate-900 tracking-tight" data-testid={acc.is_customer_card_pool ? `pool-balance-${accId}` : undefined}>
+                        {money(acc.is_customer_card_pool ? 0 : acc.current_balance)} ₺
+                      </div>
+                      {acc.is_customer_card_pool && (
+                        <div className="text-[10px] text-slate-400 mt-0.5">Giriş + çıkış eşlenik · net 0</div>
+                      )}
                     </div>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${isSelected ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-500"}`}>{isSelected ? "Hareketler ↓" : "Hareketleri Gör"}</span>
                   </div>
