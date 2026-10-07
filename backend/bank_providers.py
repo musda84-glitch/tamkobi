@@ -37,8 +37,26 @@ PROVIDERS = {
         "legacy_identity_live_url": "https://id.kuveytturk.com.tr",
         "legacy_token_path": "/api/connect/token",
         "docs": "https://developer.kuveytturk.com.tr/",
+        "documentation": "https://developer.kuveytturk.com.tr/documentation",
+        "signature_tool": "https://github.com/KuveytTurk/SignatureGenerator2048",
+        "contact": "https://developer.kuveytturk.com.tr/contactus",
+        "contact_email": "apiekibi@kuveytturk.com.tr",
+        "jsencrypt_demo": "https://travistidwell.com/jsencrypt/demo/",
         "fields": ["client_id", "client_secret", "api_key", "private_key"],
-        "hint": "Canlı: https://identity.kuveytturk.com.tr (token) + https://gateway.kuveytturk.com.tr (API). Prep/test: prep-identity + prep-gateway. Abonelik: GET /v1/fx/rates (bağlantı testi, token scope=public), GET /v3/accounts/{ekNo}/transactions (hesap hareketleri; token scope=accounts; beginDate/endDate/itemCount → accountActivities), POST /v1/vpos/getMerchantOrderDetail. Token: POST …/connect/token (client_credentials). RSA: Private Key TamKobi’de; eşleşen .crt (Public Key) API Market’te — aksi Signature Invalid. Canlı IP whitelist: yalnızca onay formundaki sunucu IP’sinden istek. İmza: JSEncrypt.signSha256. non3DPayment/EFT otomatik değil.",
+        "hint": (
+            "API Golive: Canlı token https://identity.kuveytturk.com.tr · API https://gateway.kuveytturk.com.tr; "
+            "Prep/test: prep-identity + prep-gateway. "
+            "Token: POST …/connect/token (client_credentials; hesap hareketi scope=accounts). "
+            "İmza: SHA256RSA = PrivateKey + AccessToken + (GET ?query | POST body) — JSEncrypt.signSha256 / "
+            "github.com/KuveytTurk/SignatureGenerator2048. "
+            "Header: Authorization Bearer, Signature, Content-Type application/json (+ X-Gravitee-Api-Key). "
+            "RSA 2048: Private Key TamKobi’de; eşleşen .crt API Market’te. "
+            "Canlı: API Market → Uygulamalar → GoLive Talep Yönetimi → +Yeni Talep (yetkili kullanıcı) + IP whitelist. "
+            "Abonelik: GET /v1/fx/rates, GET /v3/accounts/{ekNo}/transactions "
+            "(beginDate/endDate/itemCount → accountActivities), POST /v1/vpos/getMerchantOrderDetail. "
+            "İletişim: apiekibi@kuveytturk.com.tr · developer.kuveytturk.com.tr/contactus. "
+            "non3DPayment/EFT otomatik değil."
+        ),
     },
     "enpara": {
         "name": "Enpara Şirketim API",
@@ -615,9 +633,11 @@ def _kuveyt_headers(
     params: Optional[Dict[str, Any]] = None,
     json_body: Optional[str] = None,
 ) -> Dict[str, str]:
+    # Golive dokümanı: Signature + access token + Content-Type application/json.
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
+        "Content-Type": "application/json",
         "LanguageId": "1",
     }
     api_key = _plain_secret(conn, "api_key")
@@ -627,11 +647,8 @@ def _kuveyt_headers(
     if pem:
         if json_body is not None:
             headers["Signature"] = _kuveyt_sign(token, pem, json_body=json_body)
-            headers["Content-Type"] = "application/json"
         else:
             headers["Signature"] = _kuveyt_sign(token, pem, query_string=_kuveyt_query_string(params))
-    elif json_body is not None:
-        headers["Content-Type"] = "application/json"
     return headers
 
 

@@ -166,10 +166,13 @@ function ConnErrorBox({ connection, onEdit }) {
               : "RSA Private Key alanı boş, bozuk veya 2048-bit değil. JSEncrypt Invalid key = BEGIN/END satırları eksik."}
         </p>
         <ol className="list-decimal list-inside text-rose-700 space-y-0.5 pl-0.5">
-          <li>JSEncrypt demo 2048-bit: <b>2048-bit anahtar üret</b> veya Private Key kutusunu yapıştırın.</li>
+          <li><b>2048-bit anahtar üret</b> veya{" "}
+            <a href="https://travistidwell.com/jsencrypt/demo/" target="_blank" rel="noreferrer" className="underline font-semibold">JSEncrypt demo</a>
+            {" "}(Key Size 2048) Private Key yapıştırın.
+          </li>
           <li>İlk satır <b>-----BEGIN RSA PRIVATE KEY-----</b> olmalı; BEGIN/END satırlarını silmeyin.</li>
           <li><b>Public Key</b> / PUBLIC KEY / sertifika / Api Anahtarı UUID’sini bu alana yapıştırmayın.</li>
-          <li>JSEncrypt varsayılan 1024-bit demo anahtarı olmaz — Key Size 2048.</li>
+          <li>JSEncrypt varsayılan 1024-bit demo anahtarı olmaz — Key Size 2048 (Golive şartı).</li>
           <li>Düzenle → RSA alanını temizleyip yeniden yapıştırın → Kaydet &amp; Test Et.</li>
         </ol>
         {onEdit && (
@@ -622,8 +625,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                             {genKeyBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} {genKeyBusy ? "Üretiliyor…" : "2048-bit RSA anahtar üret"}
                           </button>
                           <p className="text-[10px] text-slate-500">
-                            PKCS1 Private Key (JSEncrypt <code className="font-mono">signSha256</code> uyumlu). Üretim Web Crypto ile yapılır — eski JSEncrypt.getKey tarayıcıyı kilitleyebilirdi.
-                            Private Key burada; eşleşen <b>.crt</b> API Market’e yüklenir.
+                            PKCS1 Private Key (JSEncrypt <code className="font-mono">signSha256</code> /{" "}
+                            <a href="https://github.com/KuveytTurk/SignatureGenerator2048" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">SignatureGenerator2048</a>
+                            {" "}uyumlu, 2048-bit). Private Key burada; eşleşen <b>.crt</b> API Market’e yüklenir.
+                            Alternatif:{" "}
+                            <a href="https://travistidwell.com/jsencrypt/demo/" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">JSEncrypt demo</a>.
                           </p>
                           {ktPublicPem && (
                             <div className="mt-1 space-y-1" data-testid="conn-jsencrypt-public-box">
@@ -678,6 +684,19 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                   {" · "}
                   <a href="https://prep-gateway.kuveytturk.com.tr" target="_blank" rel="noreferrer" className="font-mono text-indigo-700 hover:underline">prep-gateway</a>.
                 </p>
+                <p data-testid="kuveyt-golive-links">
+                  Golive kaynakları:{" "}
+                  <a href="https://developer.kuveytturk.com.tr/" target="_blank" rel="noreferrer" className="text-indigo-700 hover:underline">API Market</a>
+                  {" · "}
+                  <a href="https://developer.kuveytturk.com.tr/documentation" target="_blank" rel="noreferrer" className="text-indigo-700 hover:underline">Dokümantasyon</a>
+                  {" · "}
+                  <a href="https://github.com/KuveytTurk/SignatureGenerator2048" target="_blank" rel="noreferrer" className="text-indigo-700 hover:underline">SignatureGenerator2048</a>
+                  {" · "}
+                  <a href="https://travistidwell.com/jsencrypt/demo/" target="_blank" rel="noreferrer" className="text-indigo-700 hover:underline">JSEncrypt demo</a>
+                  {" · "}
+                  <a href="https://developer.kuveytturk.com.tr/contactus" target="_blank" rel="noreferrer" className="text-indigo-700 hover:underline">İletişim</a>
+                  {" "}(<a href="mailto:apiekibi@kuveytturk.com.tr" className="text-indigo-700 hover:underline">apiekibi@kuveytturk.com.tr</a>)
+                </p>
                 <p>
                   Abonelik: <code className="font-mono">GET /v1/fx/rates</code> (bağlantı testi),{" "}
                   <code className="font-mono">GET /v3/accounts/&#123;ekNo&#125;/transactions</code> (hesap hareketleri),{" "}
@@ -685,10 +704,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                   EFT/Havale ve <code className="font-mono">non3DPayment</code> otomatik çağrılmaz.
                 </p>
                 <ol className="list-decimal list-inside space-y-0.5 text-amber-900" data-testid="kuveyt-live-checklist">
-                  <li><b>İmza:</b> Private Key (.pem) burada; eşleşen <b>.crt</b> API Market’te olmalı — aksi halde Signature Invalid.</li>
+                  <li><b>İmza:</b> Private Key (.pem) burada; eşleşen <b>.crt</b> API Market’te olmalı — aksi halde Signature Invalid. SHA256RSA(PrivateKey, AccessToken, GET ?query | POST body).</li>
                   <li><b>IP:</b> Canlı onay formundaki sunucu IP’sinden test edin; diğer IP’ler gateway tarafından engellenir.</li>
                   <li><b>Scope:</b> Hesap hareketi token’ı <code className="font-mono">grant_type=client_credentials&amp;scope=accounts</code> (client_credentials; kullanıcı girişi gerekmez). Invalid Scope = Accounts aboneliği yok veya Test/Prep host’a canlı kimlik gönderilmiş.</li>
                   <li><b>Hesap ek no:</b> Path <code className="font-mono">/v3/accounts/&#123;suffix&#125;/transactions</code> — müşteri numarası değil, hesap ek no (suffix).</li>
+                  <li><b>GoLive:</b> API Market → Uygulamalar → GoLive Talep Yönetimi → +Yeni Talep (yetkili kurumsal kullanıcı adı / müşteri no).</li>
                 </ol>
               </div>
             )}
@@ -731,7 +751,11 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                             {genKeyBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} {genKeyBusy ? "Üretiliyor…" : "2048-bit RSA anahtar üret"}
                           </button>
                           <p className="text-[10px] text-slate-500">
-                            İmza <code className="font-mono">JSEncrypt.signSha256</code>. Anahtar Web Crypto ile üretilir (takılma yok). Private Key bu alanda kalır; <b>.crt indir</b> → API Market’e yükleyin.
+                            İmza <code className="font-mono">JSEncrypt.signSha256</code> (
+                            <a href="https://github.com/travist/jsencrypt" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">github.com/travist/jsencrypt</a>
+                            , Golive SHA256RSA). Private Key bu alanda kalır; <b>.crt indir</b> → API Market’e yükleyin.
+                            Araç:{" "}
+                            <a href="https://github.com/KuveytTurk/SignatureGenerator2048" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">SignatureGenerator2048</a>.
                           </p>
                           {ktPublicPem && (
                             <div className="mt-1 space-y-1" data-testid="edit-jsencrypt-public-box">

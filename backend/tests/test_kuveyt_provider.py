@@ -40,8 +40,15 @@ def test_kuveyt_provider_identity_and_api_hosts():
     assert "scope=accounts" in meta["hint"]
     assert "JSEncrypt" in meta["hint"]
     assert "signSha256" in meta["hint"]
+    assert "SignatureGenerator2048" in meta["hint"]
+    assert "GoLive Talep Yönetimi" in meta["hint"]
+    assert "apiekibi@kuveytturk.com.tr" in meta["hint"]
+    assert meta["documentation"] == "https://developer.kuveytturk.com.tr/documentation"
+    assert meta["signature_tool"] == "https://github.com/KuveytTurk/SignatureGenerator2048"
+    assert meta["contact"] == "https://developer.kuveytturk.com.tr/contactus"
+    assert meta["jsencrypt_demo"] == "https://travistidwell.com/jsencrypt/demo/"
     assert ".crt" in meta["hint"]
-    assert "Signature Invalid" in meta["hint"]
+    assert "Signature Invalid" in meta["hint"] or "SHA256RSA" in meta["hint"]
     assert "whitelist" in meta["hint"].lower() or "IP whitelist" in meta["hint"]
     assert "/v1/fx/rates" in meta["hint"]
     assert "/v3/accounts/{ekNo}/transactions" in meta["hint"]
@@ -142,12 +149,17 @@ def test_frontend_wires_travist_jsencrypt():
     util = (root / "frontend/src/utils/jsencryptKuveyt.js").read_text(encoding="utf-8")
     pkg = (root / "frontend/package.json").read_text(encoding="utf-8")
     assert "github.com/travist/jsencrypt" in panel
+    assert "travistidwell.com/jsencrypt/demo" in panel
+    assert "KuveytTurk/SignatureGenerator2048" in panel
     assert "generateJsencryptKeyPair" in panel
     assert "conn-jsencrypt-generate-btn" in panel
     assert "API Market" in panel
-    assert "getPublicKey" in util
-    assert "default_key_size: 2048" in util
-    assert "getPrivateKey" in util
+    assert "GoLive Talep Yönetimi" in panel
+    # Golive: 2048-bit RSA; üretim Web Crypto / node-forge (JSEncrypt.signSha256 uyumlu PKCS1).
+    assert "KEY_BITS = 2048" in util
+    assert "generateJsencryptKeyPair" in util
+    assert "BEGIN" in util
+    assert "selfSignedCrtFromPrivatePem" in util
     assert "github:travist/jsencrypt" in pkg
 
 
@@ -192,7 +204,8 @@ def test_kuveyt_headers_include_signature_and_language():
     assert headers["LanguageId"] == "1"
     assert headers["Signature"]
     assert headers["X-Gravitee-Api-Key"] == "gravitee-uuid"
-    assert "Content-Type" not in headers
+    # Golive: Content-Type application/json (GET dahil)
+    assert headers["Content-Type"] == "application/json"
 
 
 def test_kuveyt_account_suffix_from_iban():

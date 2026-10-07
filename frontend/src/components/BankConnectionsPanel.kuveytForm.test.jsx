@@ -131,6 +131,16 @@ test("Kuveyt edit modal keeps only needed fields and shows live hosts", async ()
   expect(hrefs).toContain("https://prep-identity.kuveytturk.com.tr");
   expect(hrefs).toContain("https://prep-gateway.kuveytturk.com.tr");
 
+  const goliveLinks = host.querySelector('[data-testid="kuveyt-golive-links"]');
+  expect(goliveLinks).not.toBeNull();
+  const goliveHrefs = [...goliveLinks.querySelectorAll("a")].map((a) => a.getAttribute("href") || "");
+  expect(goliveHrefs).toContain("https://developer.kuveytturk.com.tr/");
+  expect(goliveHrefs).toContain("https://developer.kuveytturk.com.tr/documentation");
+  expect(goliveHrefs).toContain("https://github.com/KuveytTurk/SignatureGenerator2048");
+  expect(goliveHrefs).toContain("https://travistidwell.com/jsencrypt/demo/");
+  expect(goliveHrefs).toContain("https://developer.kuveytturk.com.tr/contactus");
+  expect(goliveHrefs).toContain("mailto:apiekibi@kuveytturk.com.tr");
+
   expect(host.querySelector('[data-testid="edit-conn-client-id"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="edit-conn-client-secret"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="edit-conn-api-key"]')).not.toBeNull();
@@ -149,6 +159,8 @@ test("Kuveyt edit modal keeps only needed fields and shows live hosts", async ()
   expect(checklist.textContent).toMatch(/IP/i);
   expect(checklist.textContent).toMatch(/scope=accounts/i);
   expect(checklist.textContent).toMatch(/suffix/i);
+  expect(checklist.textContent).toMatch(/GoLive/i);
+  expect(checklist.textContent).toMatch(/GoLive Talep Yönetimi/i);
 });
 
 test("Kuveyt Signature Invalid shows crt checklist", async () => {
