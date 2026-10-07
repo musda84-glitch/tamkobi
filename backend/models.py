@@ -313,6 +313,8 @@ class BankAccount(BaseDocument):
     card_owner: Optional[str] = "company"
     linked_contact_id: Optional[str] = None
     linked_contact_name: Optional[str] = None
+    # Tek şirket havuzu: cari virman «müşteri kartı ile» hareketleri burada listelenir
+    is_customer_card_pool: Optional[bool] = False
     okc_brand: Optional[str] = None
     okc_serial: Optional[str] = None
     okc_terminal_id: Optional[str] = None

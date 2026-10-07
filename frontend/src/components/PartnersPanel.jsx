@@ -58,7 +58,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const [partnerForm, setPartnerForm] = useState({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "", salary_start_date: "", salary_recurring: true });
   const [txForm, setTxForm] = useState({ partner_id: "", type: "capital_in", amount: "", account_id: "", description: "" });
   const [profitForm, setProfitForm] = useState({ total_profit: "", pay_now: true, account_id: "", period: new Date().toISOString().slice(0, 7) });
-  const [virmanForm, setVirmanForm] = useState({ source_account_id: "", target_account_id: "", amount: "", description: "Hesaplar arası transfer (Virman)" });
+  const [virmanForm, setVirmanForm] = useState({ source_account_id: "", target_account_id: "", amount: "", description: "Hesaplar arası transfer (Virman)", via_customer_card: false });
 
   const selectedPartner = useMemo(() => partners.find((p) => p.id === selectedPartnerId) || null, [partners, selectedPartnerId]);
   const visibleTxs = useMemo(() => filterPartnerTxs(txs, selectedPartnerId), [txs, selectedPartnerId]);
@@ -158,11 +158,12 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
         target_account_id: virmanForm.target_account_id,
         amount: Number(virmanForm.amount),
         description: virmanForm.description,
+        via_customer_card: Boolean(virmanForm.via_customer_card),
       });
       if (res.data?.status === "pending_approval") toast.success(res.data.message);
       else toast.success(res.data?.message || "Virman tamamlandı.");
       setModal(null);
-      setVirmanForm({ ...virmanForm, amount: "" });
+      setVirmanForm({ ...virmanForm, amount: "", via_customer_card: false });
       await refreshAccounts();
       await bumpCash();
     } catch (err) {
@@ -553,7 +554,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               companyId={companyId}
               accounts={liveAccounts}
               value={virmanForm.source_account_id}
-              onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v })}
+              onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v, via_customer_card: String(v || "").startsWith("contact:") || String(virmanForm.target_account_id || "").startsWith("contact:") ? virmanForm.via_customer_card : false })}
               testId="partner-virman-source"
               label="Kaynak (Çıkış)"
               includePartners
@@ -565,7 +566,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               companyId={companyId}
               accounts={liveAccounts}
               value={virmanForm.target_account_id}
-              onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v })}
+              onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v, via_customer_card: String(virmanForm.source_account_id || "").startsWith("contact:") || String(v || "").startsWith("contact:") ? virmanForm.via_customer_card : false })}
               testId="partner-virman-target"
               label="Hedef (Giriş)"
               includePartners
@@ -573,6 +574,21 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               disabled={accountsLoading}
               emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined}
             />
+            {(String(virmanForm.source_account_id || "").startsWith("contact:") || String(virmanForm.target_account_id || "").startsWith("contact:")) && (
+              <label className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50/50 p-3 cursor-pointer" data-testid="partner-virman-via-customer-card">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={Boolean(virmanForm.via_customer_card)}
+                  onChange={(e) => setVirmanForm({ ...virmanForm, via_customer_card: e.target.checked })}
+                  data-testid="partner-virman-via-customer-card-input"
+                />
+                <span>
+                  <span className="font-semibold text-rose-900">Müşteri kredi kartı ile virman yapıldı</span>
+                  <span className="block text-[11px] text-rose-800/90 mt-0.5">Hareket Müşteri Kredi Kartları kasasında listelenir.</span>
+                </span>
+              </label>
+            )}
             <div><label className="block font-semibold mb-1">Tutar (₺)</label><input type="number" step="0.01" className={`${inputCls} font-bold`} value={virmanForm.amount} onChange={(e) => setVirmanForm({ ...virmanForm, amount: e.target.value })} required data-testid="partner-virman-amount" /></div>
             <div><label className="block font-semibold mb-1">Açıklama</label><input className={inputCls} value={virmanForm.description} onChange={(e) => setVirmanForm({ ...virmanForm, description: e.target.value })} data-testid="partner-virman-desc" /></div>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" disabled={accountsLoading || !virmanForm.source_account_id || !virmanForm.target_account_id || virmanForm.source_account_id === virmanForm.target_account_id} className="px-4 py-1.5 bg-slate-800 text-white rounded-lg font-semibold disabled:opacity-50" data-testid="partner-virman-submit">Virmanı Onayla</button></div>
