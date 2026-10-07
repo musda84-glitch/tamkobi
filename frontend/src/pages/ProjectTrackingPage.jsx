@@ -175,18 +175,12 @@ export default function ProjectTrackingPage() {
             <div className="border-t pt-4 space-y-1.5" data-testid="public-project-production-steps">
               <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
                 <Factory className="w-3.5 h-3.5" /> Üretim adımları
-                {p.recipe_name ? <span className="font-normal text-slate-500">· {p.recipe_name}</span> : null}
               </div>
               <ol className="space-y-1.5">
                 {p.production_steps.map((st, i) => (
-                  <li key={`${st.no || i}-${st.name}`} className="flex items-start gap-2 text-xs bg-slate-50 rounded-lg px-3 py-2">
+                  <li key={`${st.no || i}-${st.station || st.name || i}`} className="flex items-center gap-2 text-xs bg-slate-50 rounded-lg px-3 py-2" data-testid={`public-project-prod-step-${st.no || i + 1}`}>
                     <span className="font-mono text-slate-400 shrink-0">{st.no || i + 1}.</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="font-semibold text-slate-800">{st.name}</span>
-                      {st.material_name ? <span className="text-slate-500"> — {st.material_name}</span> : null}
-                      {st.station ? <span className="ml-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">{st.station}</span> : null}
-                      {st.note ? <div className="text-[11px] text-slate-500 mt-0.5">{st.note}</div> : null}
-                    </span>
+                    <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">{st.station || "İstasyon"}</span>
                   </li>
                 ))}
               </ol>

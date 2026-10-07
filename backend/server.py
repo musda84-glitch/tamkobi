@@ -2216,12 +2216,9 @@ async def invoice_project(project_id: str, req: Dict[str, Any] = None):
     for q in pending:
         await db.quotes.update_one({"_id": q["_id"]}, {"$set": {"status": "accepted", "invoice_id": created["id"], "invoice_number": created["invoice_number"]}})
     return {"status": "success", "invoice": created, "message": f"{p.get('project_number')} → {created['invoice_number']} taslak fatura oluşturuldu."}
-PROJECT_STATUS_LABELS = {
-    "planning": "Planlama",
-    "active": "Devam Ediyor",
-    "on_hold": "Beklemede",
-    "completed": "Tamamlandı",
-}
+import project_tracking as project_tracking
+
+PROJECT_STATUS_LABELS = project_tracking.PROJECT_STATUS_LABELS
 
 
 def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: List[Dict[str, Any]], surveys: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -2245,12 +2242,13 @@ def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: Lis
     invoiced = any(q.get("invoice_id") for q in quotes)
     work_done = status == "completed"
     work_active = status in ("active", "on_hold")
+    work_label = project_tracking.work_step_label(status, p)
 
     steps = [
         {"key": "created", "label": "Proje açıldı", "done": True, "current": status == "planning" and not survey_started and not quote_sent},
         {"key": "survey", "label": "Saha keşfi", "done": survey_done, "current": survey_started and not survey_done and not work_done, "hidden": not survey_started},
         {"key": "quote", "label": "Teklif", "done": quote_accepted, "current": quote_sent and not quote_accepted and not work_done, "hidden": not quote_sent and not quotes},
-        {"key": "work", "label": "Beklemede" if status == "on_hold" else "Uygulama", "done": work_done, "current": work_active},
+        {"key": "work", "label": work_label, "done": work_done, "current": work_active},
         {"key": "invoice", "label": "Faturalama", "done": invoiced, "current": quote_accepted and not invoiced and not work_done, "hidden": not invoiced and not quote_accepted},
         {"key": "done", "label": "Teslim / Tamamlandı", "done": work_done, "current": False},
     ]
@@ -2290,19 +2288,9 @@ def _public_project_view(p: Dict[str, Any], company: Dict[str, Any], quotes: Lis
         "created_at": p.get("created_at"),
     }
     if p.get("show_production_steps") and (p.get("production_steps") or []):
-        view["production_steps"] = [
-            {
-                "no": int(s.get("no") or i + 1),
-                "name": str(s.get("name") or "").strip(),
-                "station": str(s.get("station") or "").strip(),
-                **({"note": str(s.get("note")).strip()} if str(s.get("note") or "").strip() else {}),
-                **({"material_name": str(s.get("material_name")).strip()} if str(s.get("material_name") or "").strip() else {}),
-            }
-            for i, s in enumerate(p.get("production_steps") or [])
-            if isinstance(s, dict) and str(s.get("name") or "").strip()
-        ]
-        if p.get("recipe_name"):
-            view["recipe_name"] = p.get("recipe_name")
+        stations = project_tracking.public_production_stations(p.get("production_steps"))
+        if stations:
+            view["production_steps"] = stations
     return view
 
 
