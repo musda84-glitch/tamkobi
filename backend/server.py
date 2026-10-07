@@ -12491,6 +12491,8 @@ async def answer_marketplace_question(question_id: str, req: Dict[str, Any]):
     qd = await db.marketplace_questions.find_one({"_id": question_id})
     if not qd:
         raise HTTPException(status_code=404, detail="Soru bulunamadı.")
+    if qd.get("status") == "ANSWER_EXPIRED" or qd.get("answer_blocked_reason") == "unanswered_time_limit":
+        raise HTTPException(status_code=400, detail=marketplace_providers.TY_QNA_TIME_LIMIT_MSG)
     if qd.get("status") != "WAITING_FOR_ANSWER":
         raise HTTPException(status_code=400, detail="Yalnızca cevap bekleyen sorular yanıtlanabilir.")
     cfg = await db.integration_configs.find_one({"company_id": qd["company_id"], "channel": qd["channel"]})
@@ -12500,6 +12502,19 @@ async def answer_marketplace_question(question_id: str, req: Dict[str, Any]):
         try:
             await client.answer(qd["external_id"], text)
             sent_live = True
+        except HTTPException as e:
+            if marketplace_providers.is_trendyol_qna_time_limit(e.detail):
+                now_blk = datetime.now(timezone.utc).isoformat()
+                await db.marketplace_questions.update_one(
+                    {"_id": question_id},
+                    {"$set": {
+                        "status": "ANSWER_EXPIRED",
+                        "answer_blocked_reason": "unanswered_time_limit",
+                        "answer_blocked_at": now_blk,
+                    }},
+                )
+                raise HTTPException(status_code=400, detail=marketplace_providers.TY_QNA_TIME_LIMIT_MSG)
+            raise
         finally:
             await client.close()
     now = datetime.now(timezone.utc).isoformat()

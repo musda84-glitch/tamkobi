@@ -55,6 +55,13 @@ export const CancelledPanel = ({ orders }) => {
   );
 };
 
+const Q_STATUS_TR = {
+  ANSWERED: "Cevaplandı",
+  WAITING_FOR_ANSWER: "Cevap bekliyor",
+  ANSWER_EXPIRED: "Süre doldu",
+  REJECTED: "Reddedildi",
+};
+
 export const QuestionsPanel = ({ companyId }) => {
   const [rows, setRows] = useState(null);
   const [draft, setDraft] = useState({});
@@ -63,8 +70,19 @@ export const QuestionsPanel = ({ companyId }) => {
   useEffect(() => { load(); }, [load]);
   const send = async (q) => {
     setBusy(q.id);
-    try { const r = await axios.post(`${API_URL}/marketplace/questions/${q.id}/answer`, { text: draft[q.id] || "" }); toast.success(r.data.message); setDraft({ ...draft, [q.id]: "" }); load(); }
-    catch (err) { toast.error(err.response?.data?.detail || "Gönderilemedi."); } finally { setBusy(null); }
+    try {
+      const r = await axios.post(`${API_URL}/marketplace/questions/${q.id}/answer`, { text: draft[q.id] || "" });
+      toast.success(r.data.message);
+      setDraft({ ...draft, [q.id]: "" });
+      load();
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === "string" ? detail : "Gönderilemedi.";
+      toast.error(msg, { duration: /cevap süresi dolmuş/i.test(msg) ? 8000 : 4000 });
+      if (/cevap süresi dolmuş|unanswered\.time\.limit/i.test(msg)) load();
+    } finally {
+      setBusy(null);
+    }
   };
   if (!rows) return <div className="p-6 text-xs text-slate-400">Yükleniyor…</div>;
   const waiting = rows.filter((q) => q.status === "WAITING_FOR_ANSWER");
@@ -72,13 +90,19 @@ export const QuestionsPanel = ({ companyId }) => {
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden" data-testid="questions-panel">
       <div className="px-4 py-3 border-b flex items-center justify-between"><b className="text-sm flex items-center gap-2"><MessageCircleQuestion className="w-4 h-4 text-indigo-600" /> Müşteri Soruları ({rows.length})</b>{waiting.length > 0 && <span className="text-[11px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded" data-testid="questions-waiting">{waiting.length} cevap bekliyor</span>}</div>
       {rows.length === 0 && <div className="p-10 text-center text-xs text-slate-400">Müşteri sorusu yok.</div>}
-      <div className="divide-y divide-slate-100 text-xs">{rows.map((q) => (
+      <div className="divide-y divide-slate-100 text-xs">{rows.map((q) => {
+        const expired = q.status === "ANSWER_EXPIRED" || q.answer_blocked_reason === "unanswered_time_limit";
+        const statusCls = q.status === "ANSWERED" ? "bg-emerald-100 text-emerald-700" : q.status === "WAITING_FOR_ANSWER" ? "bg-amber-100 text-amber-700" : expired ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600";
+        return (
         <div key={q.id} className="px-4 py-3 space-y-1.5" data-testid={`question-${q.external_id}`}>
-          <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-semibold bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">{channelTr(q.channel)}</span><span className="font-semibold text-slate-800">{q.product_name}</span><span className="text-slate-400">{dt(q.asked_at)}</span><span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded ${q.status === "ANSWERED" ? "bg-emerald-100 text-emerald-700" : q.status === "WAITING_FOR_ANSWER" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{q.status === "ANSWERED" ? "Cevaplandı" : q.status === "WAITING_FOR_ANSWER" ? "Cevap bekliyor" : q.status}</span></div>
+          <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-semibold bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">{channelTr(q.channel)}</span><span className="font-semibold text-slate-800">{q.product_name}</span><span className="text-slate-400">{dt(q.asked_at)}</span><span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded ${statusCls}`} data-testid={`question-status-${q.external_id}`}>{Q_STATUS_TR[q.status] || q.status}</span></div>
           <div className="bg-slate-50 rounded-xl p-2.5 text-slate-800">“{q.question}”</div>
           {q.answer ? <div className="bg-emerald-50 rounded-xl p-2.5 text-emerald-900"><b>Cevabınız:</b> {q.answer} <span className="text-emerald-600">· {dt(q.answered_at)}</span></div>
+            : expired ? <div className="bg-rose-50 border border-rose-200 rounded-xl p-2.5 text-rose-800" data-testid={`question-expired-${q.external_id}`}>Trendyol cevap süresi dolmuş — bu soruya artık yanıt verilemez.</div>
             : q.status === "WAITING_FOR_ANSWER" && <div className="flex gap-2"><textarea value={draft[q.id] || ""} onChange={(e) => setDraft({ ...draft, [q.id]: e.target.value })} rows={2} placeholder="Cevabınız (10–2000 karakter, müşteriye herkese açık gösterilir)" className="flex-1 border rounded-xl p-2 bg-white" data-testid={`answer-input-${q.external_id}`} /><button disabled={busy === q.id || (draft[q.id] || "").trim().length < 10} onClick={() => send(q)} className="self-end flex items-center gap-1 px-3 py-2 bg-indigo-600 text-white rounded-xl font-semibold disabled:opacity-50" data-testid={`answer-send-${q.external_id}`}>{busy === q.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Gönder</button></div>}
-        </div>))}</div>
+        </div>
+        );
+      })}</div>
     </div>
   );
 };
