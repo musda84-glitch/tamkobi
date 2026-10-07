@@ -11,6 +11,7 @@ import { go } from "../nav";
 import { colors } from "../theme";
 import type { Invoice } from "../types";
 import { createInvoiceButtonLabel, INVOICE_FILTERS, invoiceListSubtitle, invoiceListTitle, invoiceRowDangerAction } from "../utils/invoiceDraft";
+import { compareInvoiceActivity } from "../utils/invoiceSortStamp";
 import { fmtMoney, idOf } from "../utils/money";
 
 const FILTER_ICONS: Record<string, { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
@@ -90,7 +91,8 @@ export function InvoicesScreen() {
     const s = q.trim().toLowerCase();
     const list = s
       ? rows.filter((i) => [i.invoice_number, i.contact_name].some((v) => String(v || "").toLowerCase().includes(s)))
-      : rows;
+      : [...rows];
+    list.sort((a, b) => compareInvoiceActivity(a, b, "desc"));
     return list.slice(0, 80);
   }, [q, rows]);
 

@@ -611,6 +611,8 @@ describe("leave helpers", () => {
     expect(leaveTypeTr("annual")).toBe("Yıllık İzin");
     expect(leaveStatusTr("approved")).toBe("Onaylandı");
     expect(remainingLeaveDays({ annual_leave_days: 14, used_leave_days: 3 })).toBe(11);
+    expect(remainingLeaveDays({ annual_leave_days: 14, used_leave_days: 3, leave_carry_days: 2 })).toBe(13);
+    expect(remainingLeaveDays({ leave_balance: { remaining: 9 } })).toBe(9);
   });
 });
 

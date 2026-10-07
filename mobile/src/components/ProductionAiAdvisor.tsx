@@ -20,9 +20,9 @@ type Metrics = {
   paused_work_orders?: number;
 };
 
-/** Şirket ai.production eklentisi açıkken Atölye’de yönetici AI yorumu (web ProductionAiAdvisor). */
+/** Şirket ai.production eklentisi + production_ai özellik bayrağı açıkken (web ProductionAiAdvisor). */
 export function ProductionAiAdvisor({ companyId, compact = true }: { companyId: string; compact?: boolean }) {
-  const { client, addonOn } = useAuth();
+  const { client, addonOn, feature } = useAuth();
   const [open, setOpen] = useState(!compact);
   const [busy, setBusy] = useState(false);
   const [advice, setAdvice] = useState("");
@@ -30,7 +30,7 @@ export function ProductionAiAdvisor({ companyId, compact = true }: { companyId: 
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  if (!addonOn("ai.production")) return null;
+  if (!addonOn("ai.production") || !feature("production_ai")) return null;
 
   const run = async (message?: string) => {
     const text = String(message || q || "").trim();

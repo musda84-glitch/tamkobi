@@ -54,8 +54,11 @@ import {
 import { printCargoLabel, printInvoiceForm, printOrderForm } from "../utils/orderShare";
 import { emailComposerHref, smsComposerHref, smsSendFailed } from "../utils/quoteApproval";
 import { QUICK_TONE_COLORS, type QuickTone } from "../utils/quickMenu";
+import type { EfaturaOnayPayload } from "../utils/efaturaOnay";
+import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { B2BSheet } from "./b2b/B2BSheet";
 import { Chip, confirmAction } from "./chips";
+import { ElektronikFaturaOnayModal } from "./ElektronikFaturaOnayModal";
 import { GroupedSelect } from "./GroupedSelect";
 import { Field, Muted, PrimaryButton, Row } from "./kit";
 
@@ -142,6 +145,8 @@ export function OrderActions({
   const [carriers, setCarriers] = useState<CargoCatalogItem[]>(FALLBACK_CARGO_CATALOG);
   const [carrier, setCarrier] = useState(String(order.cargo_carrier || ""));
   const [contactFlag, setContactFlag] = useState<{ is_e_invoice_user?: boolean } | null>(null);
+  const [efaturaOpen, setEfaturaOpen] = useState(false);
+  const [efaturaPreferred, setEfaturaPreferred] = useState<"e_invoice" | "e_archive" | null>(null);
   const canEdit = can("/orders", "edit");
   const canMutate = canEdit || can("/saha", "edit");
   const canDelete = can("/orders", "delete") || can("/saha", "delete");
@@ -404,43 +409,59 @@ export function OrderActions({
     const resolved = eType === "e_invoice" && !canShowEFaturaOption(contactFlag)
       ? "e_archive"
       : (eType || orderEBelgeTypeFromContact(contactFlag));
+    setEfaturaPreferred(resolved);
+    setEfaturaOpen(true);
+  };
+
+  const confirmEBelge = async (payload: EfaturaOnayPayload) => {
+    const resolved = payload.eType;
     const label = resolved === "e_invoice" ? "E-Fatura" : "E-Arşiv";
-    confirmAction(
-      `${label} (GİB)`,
-      resolved !== eType && eType === "e_invoice"
-        ? `${order.order_number || "Sipariş"} cari e-fatura mükellefi değil; E-Arşiv GİB'e iletilsin mi?`
-        : `${order.order_number || "Sipariş"} için ${label} GİB'e iletilsin mi?`,
-      async () => {
-        setBusy("ebelge");
+    setBusy("ebelge");
+    try {
+      if (payload.alias && order.contact_id) {
         try {
-          let invoiceId = order.invoice_id;
-          if (!invoiceId) {
-            const draft = await post<{ invoice_id?: string }>(
-              client,
-              `/orders/${oid}/convert-to-invoice`,
-              convertToDraftBody(resolved),
-            );
-            invoiceId = draft.invoice_id;
-          }
-          const r = await post<{ message?: string }>(
-            client,
-            "/e-invoice/create",
-            eBelgeCreateBody({
-              orderId: oid,
-              invoiceId,
-              companyId: companyId || activeCompany?.id || "",
-              eType: resolved,
-            }),
-          );
-          onMessage?.(r.message || `${label} GİB'e iletildi.`);
-          onChanged?.();
-        } catch (err) {
-          onError?.(apiErrorMessage(err, `${label} kesilemedi.`));
-        } finally {
-          setBusy(null);
+          await put(client, `/contacts/${order.contact_id}`, {
+            e_invoice_alias: payload.alias,
+            is_e_invoice_user: resolved === "e_invoice",
+          });
+        } catch {
+          /* gönderim yine denenecek */
         }
-      },
-    );
+      }
+      let invoiceId = order.invoice_id;
+      if (!invoiceId) {
+        const draft = await post<{ invoice_id?: string }>(
+          client,
+          `/orders/${oid}/convert-to-invoice`,
+          convertToDraftBody(resolved),
+        );
+        invoiceId = draft.invoice_id;
+      }
+      if (payload.stampNow && invoiceId) {
+        try {
+          await put(client, `/invoices/${invoiceId}`, nowIssueDateTime());
+        } catch {
+          /* gönderim yine denenecek */
+        }
+      }
+      const r = await post<{ message?: string }>(
+        client,
+        "/e-invoice/create",
+        eBelgeCreateBody({
+          orderId: oid,
+          invoiceId,
+          companyId: companyId || activeCompany?.id || "",
+          eType: resolved,
+          scenario: payload.scenario,
+        }),
+      );
+      onMessage?.(r.message || `${label} GİB'e iletildi.`);
+      onChanged?.();
+    } catch (err) {
+      onError?.(apiErrorMessage(err, `${label} kesilemedi.`));
+    } finally {
+      setBusy(null);
+    }
   };
 
   const makeDispatch = () => {
@@ -1185,6 +1206,22 @@ export function OrderActions({
           onPress={sendNotify}
         />
       </B2BSheet>
+
+      <ElektronikFaturaOnayModal
+        visible={efaturaOpen}
+        order={{
+          id: oid,
+          order_number: order.order_number,
+          contact_name: order.customer_name,
+          customer_name: order.customer_name,
+          contact_id: order.contact_id,
+          is_e_invoice_user: contactFlag?.is_e_invoice_user,
+        }}
+        preferredEType={efaturaPreferred}
+        contactIsEInvoiceUser={contactFlag?.is_e_invoice_user}
+        onClose={() => setEfaturaOpen(false)}
+        onConfirm={confirmEBelge}
+      />
     </>
   );
 }
