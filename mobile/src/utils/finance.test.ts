@@ -186,6 +186,13 @@ describe("finance drafts", () => {
     );
     expect(groups.map((g) => g.label)).toEqual(["Kasa", "POS", "Ortaklar Hesabı", "Entegre banka"]);
     expect(groups.find((g) => g.label === "Ortaklar Hesabı")?.options[0].value).toBe("partner:p1");
+    const withCari = virmanSelectGroups(
+      [{ id: "k1", type: "cash_box", account_name: "Kasa", current_balance: 10 }],
+      [],
+      [{ id: "c9", name: "Acme Ltd", type: "customer", balance: 1200 }],
+    );
+    expect(withCari.map((g) => g.label)).toContain("Cariler");
+    expect(withCari.find((g) => g.label === "Cariler")?.options[0].value).toBe("contact:c9");
     expect(groups.find((g) => g.label === "Entegre banka")?.options[0]).toMatchObject({
       value: "integrated:b1",
       disabled: true,
@@ -217,6 +224,7 @@ describe("finance drafts", () => {
     ])).toBe(15);
     expect(virmanAccounts([{ is_integrated: true }, { is_integrated: false }])).toHaveLength(1);
     expect(splitPaymentTarget("partner:p1")).toEqual({ partner_id: "p1", account_id: null });
+    expect(splitPaymentTarget("contact:c9")).toEqual({ contact_id: "c9", account_id: null, partner_id: null });
     expect(validatePartner("", "10")).toBe("Ortak adı gerekli.");
     expect(validatePartner("Ali", "60", 50)).toBe("Toplam ortaklık payı %100'ü aşamaz.");
     expect(validatePartner("Ali", "40", 50)).toBeNull();

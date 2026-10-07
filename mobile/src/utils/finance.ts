@@ -96,6 +96,15 @@ export type BankTx = {
   target_account_name?: string;
 };
 
+export type ContactLite = {
+  id?: string;
+  _id?: string;
+  name?: string;
+  company_title?: string;
+  type?: string;
+  balance?: number;
+};
+
 export type Partner = {
   id?: string;
   _id?: string;
@@ -353,9 +362,22 @@ export function paymentTargetGroups(
   return groups;
 }
 
-/** Virman kaynak/hedef: kasa + banka + POS + ortaklar; entegre bankalar görünür ama kapalı. */
-export function virmanSelectGroups(accounts: BankAccount[], partners: Partner[] = []): PaymentTargetGroup[] {
+/** Virman kaynak/hedef: kasa + banka + POS + ortaklar + cariler; entegre bankalar görünür ama kapalı. */
+export function virmanSelectGroups(
+  accounts: BankAccount[],
+  partners: Partner[] = [],
+  contacts: ContactLite[] = [],
+): PaymentTargetGroup[] {
   const groups = paymentTargetGroups(virmanAccounts(accounts), partners);
+  if ((contacts || []).length) {
+    groups.push({
+      label: "Cariler",
+      options: contacts.map((c) => ({
+        value: `contact:${idOf(c)}`,
+        label: `${c.name || c.company_title || "Cari"} · ${fmtMoney(c.balance)}`,
+      })),
+    });
+  }
   const integrated = (accounts || []).filter((a) => a.is_integrated);
   if (integrated.length) {
     groups.push({
@@ -370,9 +392,10 @@ export function virmanSelectGroups(accounts: BankAccount[], partners: Partner[] 
   return groups;
 }
 
-export function splitPaymentTarget(value?: string | null): { partner_id?: string | null; account_id?: string | null } {
+export function splitPaymentTarget(value?: string | null): { partner_id?: string | null; account_id?: string | null; contact_id?: string | null } {
   const v = String(value || "");
   if (v.startsWith("partner:")) return { partner_id: v.slice(8), account_id: null };
+  if (v.startsWith("contact:")) return { contact_id: v.slice(8), account_id: null, partner_id: null };
   return { account_id: v || null, partner_id: null };
 }
 

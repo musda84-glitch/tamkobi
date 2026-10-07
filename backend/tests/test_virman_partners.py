@@ -121,6 +121,129 @@ def test_virman_partner_to_partner(admin):
     assert round(after[dst["id"]] - before_d, 2) == amount
 
 
+def _contacts(admin):
+    rows = admin.get(f"{API}/contacts", params={"company_id": CID, "lite": "1"}, timeout=20).json()
+    return rows if isinstance(rows, list) else []
+
+
+def _non_card_accounts(admin):
+    return [a for a in _manual_accounts(admin) if a.get("type") != "credit_card"]
+
+
+def test_virman_account_to_contact_outflow(admin):
+    accs = _non_card_accounts(admin)
+    contacts = _contacts(admin)
+    if not accs or not contacts:
+        pytest.skip("need cash/bank account + contact")
+    acc, contact = accs[0], contacts[0]
+    amount = 8.75
+    before_acc = acc["current_balance"]
+    before_c = float(contact.get("balance") or 0)
+    r = admin.post(
+        f"{API}/banking/virman",
+        json={
+            "company_id": CID,
+            "source_account_id": acc["id"],
+            "target_account_id": f"contact:{contact['id']}",
+            "amount": amount,
+            "description": f"test-virman-acc-contact-{uuid.uuid4().hex[:8]}",
+        },
+        timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    if body.get("status") == "pending_approval":
+        pytest.skip("cash dual approval enabled — pending queue")
+    assert body.get("status") == "success"
+    after_acc = next(a for a in _manual_accounts(admin) if a["id"] == acc["id"])
+    after_c = next(c for c in _contacts(admin) if c["id"] == contact["id"])
+    assert round(before_acc - after_acc["current_balance"], 2) == amount
+    assert round(float(after_c.get("balance") or 0) - before_c, 2) == amount
+    txs = admin.get(f"{API}/banking/transactions", params={"company_id": CID, "account_id": acc["id"]}, timeout=20).json()
+    hit = next((t for t in txs if t.get("contact_id") == contact["id"] and t.get("source") == "virman"), None)
+    assert hit and hit.get("type") == "outflow"
+    assert hit.get("category") == "Virman Çıkışı (Cari)"
+
+
+def test_virman_contact_to_account_inflow(admin):
+    accs = _non_card_accounts(admin)
+    contacts = _contacts(admin)
+    if not accs or not contacts:
+        pytest.skip("need cash/bank account + contact")
+    acc, contact = accs[0], contacts[0]
+    amount = 6.5
+    before_acc = acc["current_balance"]
+    before_c = float(contact.get("balance") or 0)
+    r = admin.post(
+        f"{API}/banking/virman",
+        json={
+            "company_id": CID,
+            "source_account_id": f"contact:{contact['id']}",
+            "target_account_id": acc["id"],
+            "amount": amount,
+            "description": f"test-virman-contact-acc-{uuid.uuid4().hex[:8]}",
+        },
+        timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    if body.get("status") == "pending_approval":
+        pytest.skip("cash dual approval enabled — pending queue")
+    assert body.get("status") == "success"
+    after_acc = next(a for a in _manual_accounts(admin) if a["id"] == acc["id"])
+    after_c = next(c for c in _contacts(admin) if c["id"] == contact["id"])
+    assert round(after_acc["current_balance"] - before_acc, 2) == amount
+    assert round(before_c - float(after_c.get("balance") or 0), 2) == amount
+
+
+def test_virman_customer_card_to_account_stamps_card(admin):
+    contacts = _contacts(admin)
+    accs = _non_card_accounts(admin)
+    if not contacts or not accs:
+        pytest.skip("need contact + cash/bank")
+    contact, acc = contacts[0], accs[0]
+    created = admin.post(
+        f"{API}/banking/accounts",
+        json={
+            "company_id": CID,
+            "type": "credit_card",
+            "bank_name": "Test Kart Bank",
+            "account_name": f"Musteri Kart {uuid.uuid4().hex[:6]}",
+            "currency": "TRY",
+            "current_balance": 0,
+            "card_owner": "customer",
+            "linked_contact_id": contact["id"],
+        },
+        timeout=20,
+    )
+    assert created.status_code == 200, created.text
+    card = created.json()
+    card["id"] = card.get("id") or card.get("_id")
+    amount = 4.25
+    r = admin.post(
+        f"{API}/banking/virman",
+        json={
+            "company_id": CID,
+            "source_account_id": card["id"],
+            "target_account_id": acc["id"],
+            "amount": amount,
+            "description": f"test-virman-custcard-{uuid.uuid4().hex[:8]}",
+        },
+        timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    if body.get("status") == "pending_approval":
+        pytest.skip("cash dual approval enabled — pending queue")
+    assert body.get("status") == "success"
+    txs = admin.get(f"{API}/banking/transactions", params={"company_id": CID, "account_id": card["id"]}, timeout=20).json()
+    hit = next((t for t in txs if t.get("customer_card") and t.get("amount") == amount), None)
+    assert hit, txs[:5]
+    assert hit.get("customer_card_account_id") == card["id"]
+    assert hit.get("type") == "transfer"
+    assert hit.get("target_account_id") == acc["id"]
+
+
 def test_virman_partner_to_credit_card_rejected(admin):
     cards = [a for a in _manual_accounts(admin) if a.get("type") == "credit_card"]
     partners = _partners(admin)

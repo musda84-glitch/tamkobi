@@ -5,6 +5,7 @@ import { useDataRefresh } from "../utils/dataRefresh";
 
 const fmt = (n) => (n || 0).toLocaleString("tr-TR");
 const TYPE_LABEL = { bank: "Banka", cash_box: "Kasa", pos: "POS", okc_pos: "ÖKC POS", credit_card: "Kredi Kartı", customer_credit_card: "Müşteri Kredi Kartı" };
+const CONTACT_TYPE_LABEL = { customer: "Müşteri", supplier: "Tedarikçi", both: "Cari" };
 /** Tahsilatta kredi kartı yok (backend reddeder); ödemede kart + ortaklar açık. */
 const COLLECT_TYPES = ["cash_box", "bank", "pos", "okc_pos"];
 const SPEND_TYPES = ["cash_box", "bank", "pos", "okc_pos", "credit_card", "customer_credit_card"];
@@ -32,7 +33,17 @@ const accLabel = (a) => {
 export const collectableAccounts = (accounts) => (accounts || []).filter((a) => normalizeType(a.type) !== "credit_card");
 export const isCreditCard = (a) => normalizeType(a?.type) === "credit_card";
 
-export const splitPaymentTarget = (value) => (value?.startsWith("partner:") ? { partner_id: value.slice(8) } : { account_id: value || null });
+export const splitPaymentTarget = (value) => {
+  if (value?.startsWith("partner:")) return { partner_id: value.slice(8) };
+  if (value?.startsWith("contact:")) return { contact_id: value.slice(8) };
+  return { account_id: value || null };
+};
+
+const contactLabel = (c) => {
+  const name = c.name || c.company_title || "Cari";
+  const kind = CONTACT_TYPE_LABEL[c.type] || "Cari";
+  return `${name} (${kind} · ${fmt(c.balance)} ₺)`;
+};
 
 export const PaymentTargetSelect = ({
   companyId,
@@ -43,6 +54,8 @@ export const PaymentTargetSelect = ({
   className = "",
   collectableOnly = false,
   includePartners = true,
+  /** Virman: kaynak/hedefe cari (müşteri/tedarikçi) uçları. */
+  includeContacts = false,
   includeCreditCards = true,
   /** Virman: entegre hesapları listeden tamamen çıkar (seçilemez gösterme). */
   excludeIntegrated = false,
@@ -52,6 +65,7 @@ export const PaymentTargetSelect = ({
   disabled = false,
 }) => {
   const [partners, setPartners] = useState([]);
+  const [contacts, setContacts] = useState([]);
   // Parent listesi stale olabilir; companyId varken her mount'ta taze çek.
   const [liveAccounts, setLiveAccounts] = useState(() => accounts || []);
   useEffect(() => { setLiveAccounts(accounts || []); }, [accounts]);
@@ -65,18 +79,27 @@ export const PaymentTargetSelect = ({
     ? allowedTypes.map((t) => normalizeType(t)).filter(Boolean)
     : null;
   const partnersAllowed = includePartners && !typeFilter;
+  const contactsAllowed = includeContacts && !typeFilter;
   const reloadPartners = useCallback(() => {
     if (!partnersAllowed || !companyId) { setPartners([]); return; }
     axios.get(`${API_URL}/banking/partners?company_id=${companyId}`)
       .then((r) => setPartners((r.data || []).filter((p) => p.is_active !== false)))
       .catch(() => setPartners([]));
   }, [companyId, partnersAllowed]);
+  const reloadContacts = useCallback(() => {
+    if (!contactsAllowed || !companyId) { setContacts([]); return; }
+    axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`)
+      .then((r) => setContacts(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setContacts([]));
+  }, [companyId, contactsAllowed]);
   useEffect(() => { reloadAccounts(); }, [reloadAccounts]);
   useEffect(() => { reloadPartners(); }, [reloadPartners]);
+  useEffect(() => { reloadContacts(); }, [reloadContacts]);
   const refreshLive = useCallback(() => {
     reloadAccounts();
     reloadPartners();
-  }, [reloadAccounts, reloadPartners]);
+    reloadContacts();
+  }, [reloadAccounts, reloadPartners, reloadContacts]);
   useDataRefresh(refreshLive, { companyId, scopes: ["cash"] });
 
   const typeOrder = typeFilter
@@ -110,6 +133,14 @@ export const PaymentTargetSelect = ({
       {partnersAllowed && partners.length > 0 && (
         <optgroup label="Ortaklar Hesabı">
           {partners.map((p) => <option key={p.id} value={`partner:${p.id}`}>{p.name} (Ortak • %{p.share_percent ?? 0} · {fmt(p.balance)} ₺)</option>)}
+        </optgroup>
+      )}
+      {contactsAllowed && contacts.length > 0 && (
+        <optgroup label="Cariler">
+          {contacts.map((c) => {
+            const id = c.id || c._id;
+            return <option key={id} value={`contact:${id}`}>{contactLabel(c)}</option>;
+          })}
         </optgroup>
       )}
     </select>

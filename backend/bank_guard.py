@@ -6,6 +6,24 @@ from fastapi import HTTPException
 NO_COLLECT_MSG = "Kredi kartı tahsilat için kullanılamaz. Tahsilatı kasa, banka veya POS hesabına alın."
 
 
+def parse_payment_target(value: Optional[str]) -> Tuple[str, str]:
+    """Virman / ödeme hedefi: ('partner'|'contact'|'account', id)."""
+    raw = str(value or "").strip()
+    if raw.startswith("partner:"):
+        return "partner", raw[8:]
+    if raw.startswith("contact:"):
+        return "contact", raw[8:]
+    return "account", raw
+
+
+def is_customer_card(account: Optional[Dict[str, Any]]) -> bool:
+    if not account or account.get("type") != "credit_card":
+        return False
+    if str(account.get("card_owner") or "company") != "customer":
+        return False
+    return bool(account.get("linked_contact_id"))
+
+
 async def get_connection_for_account(db, account_id):
     if not account_id:
         return None
@@ -39,9 +57,7 @@ def customer_card_owner_delta(
 
     Returns (owner_contact_id, balance_delta) or None.
     """
-    if not account or account.get("type") != "credit_card":
-        return None
-    if str(account.get("card_owner") or "company") != "customer":
+    if not is_customer_card(account):
         return None
     owner_id = account.get("linked_contact_id")
     if not owner_id:

@@ -1,5 +1,5 @@
 """Müşteri kredi kartı → tedarikçi ödemesinde cari sahibi bakiyesi."""
-from bank_guard import customer_card_owner_delta
+from bank_guard import customer_card_owner_delta, is_customer_card, parse_payment_target
 
 
 def test_company_card_no_owner_delta():
@@ -51,3 +51,19 @@ def test_requires_linked_contact():
         10,
         "sup1",
     ) is None
+
+
+def test_parse_payment_target_contact_and_partner():
+    assert parse_payment_target("partner:p1") == ("partner", "p1")
+    assert parse_payment_target("contact:c9") == ("contact", "c9")
+    assert parse_payment_target("acc_01") == ("account", "acc_01")
+
+
+def test_is_customer_card():
+    assert is_customer_card({
+        "type": "credit_card", "card_owner": "customer", "linked_contact_id": "c1",
+    })
+    assert not is_customer_card({
+        "type": "credit_card", "card_owner": "company", "linked_contact_id": "c1",
+    })
+    assert not is_customer_card({"type": "cash_box"})

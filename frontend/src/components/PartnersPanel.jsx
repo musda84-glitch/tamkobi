@@ -547,7 +547,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       {modal === "virman" && (
         <Modal title="Hesaplar Arası Virman" onClose={() => setModal(null)} testId="partner-virman-modal">
           <form onSubmit={saveVirman} className="space-y-3 text-xs">
-            <p className="text-[11px] text-slate-500">Kasa, banka, POS, kredi kartı ve ortaklar arasında transfer. Hesap→ortak para çekişi, ortak→hesap sermaye girişi olarak işlenir; entegre hesaplar listelenmez.</p>
+            <p className="text-[11px] text-slate-500">Kasa, banka, POS, kredi kartı, cari ve ortaklar arasında transfer. Hesap→ortak para çekişi, ortak→hesap sermaye girişi olarak işlenir; entegre hesaplar listelenmez.</p>
             <div>
               <label className="block font-semibold mb-1">Kaynak Hesap (Çıkış)</label>
               <PaymentTargetSelect
@@ -557,6 +557,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 onChange={(v) => setVirmanForm({ ...virmanForm, source_account_id: v })}
                 testId="partner-virman-source"
                 includePartners
+                includeContacts
                 excludeIntegrated
                 disabled={accountsLoading}
                 emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined}
@@ -572,6 +573,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 onChange={(v) => setVirmanForm({ ...virmanForm, target_account_id: v })}
                 testId="partner-virman-target"
                 includePartners
+                includeContacts
                 excludeIntegrated
                 disabled={accountsLoading}
                 emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined}
