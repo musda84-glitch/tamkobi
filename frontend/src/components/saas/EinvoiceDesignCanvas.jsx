@@ -547,13 +547,13 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
     <div className="space-y-3" data-testid="einvoice-design-canvas">
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <label className="block">
-          <span className="block font-semibold mb-1">Yazı tipi</span>
+          <span className="block font-semibold mb-1">Varsayılan yazı tipi</span>
           <select value={L.font} onChange={(e) => patch({ font: e.target.value })} className={inputCls} data-testid="einvoice-design-font">
             {FONT_OPTIONS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
           </select>
         </label>
         <label className="block">
-          <span className="block font-semibold mb-1">Punto</span>
+          <span className="block font-semibold mb-1">Varsayılan punto</span>
           <select value={L.fontSize} onChange={(e) => patch({ fontSize: Number(e.target.value) })} className={inputCls} data-testid="einvoice-design-font-size">
             {FONT_SIZE_OPTIONS.map((f) => <option key={f.size} value={f.size}>{f.label} px</option>)}
           </select>
