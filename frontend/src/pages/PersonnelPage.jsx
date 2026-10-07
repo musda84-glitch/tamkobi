@@ -666,13 +666,13 @@ export default function PersonnelPage() {
             return (
           <div
             key={empKey}
-            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_160px]"}`}
+            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_120px]"}`}
             data-testid={`employee-card-${emp.tc_kimlik}`}
             data-expanded={cardOpen ? "1" : "0"}
           >
           <div className="px-4 pt-3 pb-2 flex flex-col gap-2">
             <div className="flex flex-wrap items-start gap-3 justify-between">
-              <div className="flex items-start gap-2.5 min-w-0 sm:max-w-[280px] sm:shrink-0">
+              <div className="flex items-start gap-2.5 min-w-0 sm:max-w-[260px] sm:shrink-0">
                 <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 text-[11px] font-black text-slate-500" data-testid={`employee-photo-${emp.tc_kimlik || empKey}`}>
                   {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="w-full h-full object-cover" /> : (emp.full_name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
                 </div>
@@ -724,7 +724,7 @@ export default function PersonnelPage() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1.5 min-w-0 flex-1" data-testid={`employee-card-mid-${empKey}`}>
+              <div className="flex flex-col gap-1.5 min-w-0 flex-1 max-w-xl" data-testid={`employee-card-mid-${empKey}`}>
             <EmployeeRequestChips
               items={empReqs}
               compact
@@ -790,44 +790,14 @@ export default function PersonnelPage() {
             </div>
               </div>
 
-              <div className="flex flex-col items-end gap-1.5 shrink-0">
-              <div className="flex items-center flex-wrap justify-end gap-1 shrink-0">
-                {empReqs.length > 0 && (
-                  <span className="relative mr-0.5" title={`${empReqs.length} bekleyen talep`}>
-                    <Bell className="w-3.5 h-3.5 text-amber-600" />
-                    <span className="absolute -top-1.5 -right-1.5 min-w-[0.9rem] h-3.5 px-0.5 rounded-full bg-rose-600 text-white text-[8px] font-bold flex items-center justify-center">
-                      {empReqs.length}
-                    </span>
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => openEditEmployee(emp)}
-                  className="p-1.5 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-                  title="Düzenle"
-                  data-testid={`employee-edit-${emp.tc_kimlik || emp.id || emp._id}`}
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
-                {canDeletePersonnel ? (
-                <button
-                  type="button"
-                  onClick={() => handleDeleteEmployee(emp)}
-                  className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50"
-                  title="Sil"
-                  data-testid={`employee-delete-${emp.tc_kimlik || emp.id || emp._id}`}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-                ) : null}
-              </div>
+              <div className="flex flex-row flex-wrap items-start justify-end gap-1.5 shrink-0" data-testid={`employee-card-right-${empKey}`}>
               {(() => {
                 const punch = todayAttendanceParts(attToday[empKey]);
                 const otCap = assignedOvertimeCellCaption(attToday[empKey]);
                 const otOn = otCap !== "--:--";
                 return (
                   <div
-                    className="w-[220px] max-w-full rounded-lg border p-0.5 bg-slate-50 border-slate-200"
+                    className="w-[148px] max-w-full rounded-lg border p-0.5 bg-slate-50 border-slate-200"
                     data-testid={`employee-card-loc-${empKey}`}
                   >
                     <div className="grid grid-cols-2 gap-0.5">
@@ -896,6 +866,36 @@ export default function PersonnelPage() {
                   </div>
                 );
               })()}
+              <div className="flex items-center flex-wrap justify-end gap-1 shrink-0">
+                {empReqs.length > 0 && (
+                  <span className="relative mr-0.5" title={`${empReqs.length} bekleyen talep`}>
+                    <Bell className="w-3.5 h-3.5 text-amber-600" />
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[0.9rem] h-3.5 px-0.5 rounded-full bg-rose-600 text-white text-[8px] font-bold flex items-center justify-center">
+                      {empReqs.length}
+                    </span>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => openEditEmployee(emp)}
+                  className="p-1.5 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                  title="Düzenle"
+                  data-testid={`employee-edit-${emp.tc_kimlik || emp.id || emp._id}`}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+                {canDeletePersonnel ? (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteEmployee(emp)}
+                  className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50"
+                  title="Sil"
+                  data-testid={`employee-delete-${emp.tc_kimlik || emp.id || emp._id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+                ) : null}
+              </div>
               </div>
             </div>
 
