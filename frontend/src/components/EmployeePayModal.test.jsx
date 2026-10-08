@@ -53,10 +53,10 @@ const card = {
   },
 };
 
-test("Öde modalı tüm bakiye / ayrı ayrı ve hak ediş alanlarını gösterir", () => {
+test("Öde modalı tüm bakiye / ayrı ayrı ve ödeme tarihini gösterir", () => {
   render(
     <EmployeePayModal
-      employee={{ id: "e1", full_name: "Ali", pay_start_date: "2026-10-05", pay_recurring: true }}
+      employee={{ id: "e1", full_name: "Ali", pay_start_date: "2026-11-01", pay_recurring: true }}
       companyId="c1"
       accounts={[{ id: "acc1", type: "bank", account_name: "Banka" }]}
       card={card}
@@ -66,8 +66,14 @@ test("Öde modalı tüm bakiye / ayrı ayrı ve hak ediş alanlarını gösterir
   expect(host.querySelector('[data-testid="emp-pay-modal"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="emp-pay-mode-all"]')?.textContent).toContain("Tüm bakiyeyi öde");
   expect(host.querySelector('[data-testid="emp-pay-mode-split"]')?.textContent).toContain("Ayrı ayrı öde");
-  expect(host.querySelector('[data-testid="emp-pay-date"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="emp-pay-recurring"]')).not.toBeNull();
+  const dateInput = host.querySelector('[data-testid="emp-pay-date"]');
+  expect(dateInput).not.toBeNull();
+  expect(dateInput.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  // Hak ediş / her ay tekrarla ödeme ekranında yok
+  expect(host.querySelector('[data-testid="emp-pay-recurring"]')).toBeNull();
+  expect(host.textContent).not.toMatch(/Her ay tekrarla/);
+  expect(host.textContent).not.toMatch(/Hak ediş tarihinde maaş/);
+  expect(host.textContent).toContain("Ödeme tarihi");
   expect(host.textContent).toContain("Maaş");
   expect(host.textContent).toContain("Yemek");
   expect(host.textContent).toContain("Yol");

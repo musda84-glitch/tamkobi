@@ -187,10 +187,11 @@ describe("personnelCard", () => {
     expect(remainingDue({ remaining: -80 })).toBe(-80);
   });
 
-  test("list Öde button matches employee-card remaining plus overtime", () => {
+  test("list Öde button uses remaining (overtime already in balance.remaining)", () => {
     expect(employeePayButtonLabel({})).toBe("Öde");
-    expect(employeePayButtonDue({ balance: { remaining: 40000, overtime_due: 1500 } })).toBe(41500);
-    expect(employeePayButtonLabel({ balance: { remaining: 40000, overtime_due: 1500 } })).toMatch(/^Öde · /);
+    expect(employeePayButtonDue({ balance: { remaining: 41500, overtime_due: 1500 } })).toBe(41500);
+    expect(employeePayButtonLabel({ balance: { remaining: 41500, overtime_due: 1500 } })).toMatch(/^Öde · /);
     expect(employeePayButtonLabel({ balance: { remaining: 0, overtime_due: 0 } })).toBe("Öde");
+    expect(remainingDue({ remaining: -2500 })).toBe(-2500);
   });
 });
