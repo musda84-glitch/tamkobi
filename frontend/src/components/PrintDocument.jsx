@@ -10,11 +10,21 @@ import { BarcodeRenderer } from "./BarcodeRenderer";
 
 export { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
 
+const mediaUrl = (v) => {
+  if (v == null || v === "") return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "object") {
+    const u = v.url ?? v.image_url ?? v.thumbnail_url ?? v.src ?? "";
+    return u == null ? "" : String(u).trim();
+  }
+  return String(v).trim();
+};
+
 const pickItemImage = (it = {}, prod = {}) => (
-  it.thumbnail_url || it.image_url
-  || prod.thumbnail_url || prod.image_url
-  || (Array.isArray(it.images) && it.images[0])
-  || (Array.isArray(prod.images) && prod.images[0])
+  mediaUrl(it.thumbnail_url) || mediaUrl(it.image_url)
+  || mediaUrl(prod.thumbnail_url) || mediaUrl(prod.image_url)
+  || (Array.isArray(it.images) && mediaUrl(it.images[0]))
+  || (Array.isArray(prod.images) && mediaUrl(prod.images[0]))
   || ""
 );
 
@@ -191,6 +201,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   const [tplKey, setTplKey] = useState(docType);
   const [formOptions, setFormOptions] = useState([]);
   const [prodById, setProdById] = useState({});
+  const [prodBySku, setProdBySku] = useState({});
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [contactBalance, setContactBalance] = useState(null);
@@ -202,21 +213,43 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
     () => [...new Set(items.map((it) => it.product_id).filter(Boolean))],
     [items]
   );
+  const productSkus = useMemo(
+    () => [...new Set(items.map((it) => String(it.sku || "").trim()).filter(Boolean))],
+    [items]
+  );
+  const resolveProd = (it) => (
+    (it?.product_id && prodById[it.product_id])
+    || (it?.sku && prodBySku[String(it.sku).trim()])
+    || {}
+  );
   useEffect(() => {
+    if (!productIds.length && !productSkus.length) {
+      setProdById({});
+      setProdBySku({});
+      return undefined;
+    }
     const qs = new URLSearchParams({ company_id: companyId, lite: "1" });
     if (productIds.length) qs.set("ids", productIds.join(","));
+    if (productSkus.length) qs.set("skus", productSkus.join(","));
     let cancelled = false;
     axios.get(`${API_URL}/products?${qs}`).then((r) => {
       if (cancelled) return;
-      const m = {};
-      (r.data || []).forEach((p) => { m[p.id || p._id] = p; });
-      setProdById(m);
+      const byId = {};
+      const bySku = {};
+      (r.data || []).forEach((p) => {
+        const id = p.id || p._id;
+        if (id) byId[id] = p;
+        const sku = String(p.sku || "").trim();
+        if (sku) bySku[sku] = p;
+      });
+      setProdById(byId);
+      setProdBySku(bySku);
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [companyId, productIds]);
+  }, [companyId, productIds, productSkus]);
   useEffect(() => {
     const urls = items
-      .map((it) => printThumbUrl(pickItemImage(it, prodById[it.product_id] || {})))
+      .map((it) => printThumbUrl(pickItemImage(it, resolveProd(it))))
       .filter(Boolean);
     const loaders = urls.map((src) => {
       const img = new Image();
@@ -226,7 +259,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
       return img;
     });
     return () => { loaders.forEach((img) => { img.src = ""; }); };
-  }, [items, prodById]);
+  }, [items, prodById, prodBySku]);
   useEffect(() => {
     const load = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => {
       const all = r.data || {};
@@ -439,7 +472,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
               </tr>
             </thead>
             <tbody>{items.map((it, i) => {
-              const prod = prodById[it.product_id] || {};
+              const prod = resolveProd(it);
               const img = printThumbUrl(pickItemImage(it, prod));
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               const shelf = printShelfLabel(it, prod);
@@ -500,7 +533,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
               </tr>
             </thead>
             <tbody>{items.map((it, i) => {
-              const prod = prodById[it.product_id] || {};
+              const prod = resolveProd(it);
               const img = printThumbUrl(pickItemImage(it, prod));
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               return (
