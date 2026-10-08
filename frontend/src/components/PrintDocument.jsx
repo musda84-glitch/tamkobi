@@ -6,6 +6,7 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix, formatTrAmount, fmtDate } from "../utils/money";
 import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
 import { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
+import { resolvePrintPartyAddress, resolvePrintPartyCity, resolvePrintPartyPhone } from "../utils/printPartyAddress";
 import { BarcodeRenderer } from "./BarcodeRenderer";
 
 export { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
@@ -290,17 +291,28 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
       setContactBalance(Number(doc.contact_balance));
     }
     let cancelled = false;
-    axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`).then((r) => {
+    const applyHit = (hit) => {
       if (cancelled) return;
-      const rows = Array.isArray(r.data) ? r.data : [];
-      const hit = (cid && rows.find((c) => (c.id || c._id) === cid))
-        || rows.find((c) => String(c.name || "").trim().toLocaleLowerCase("tr-TR") === name)
-        || null;
-      setPartyContact(hit);
+      setPartyContact(hit || null);
       if (doc.contact_balance == null || doc.contact_balance === "") {
         setContactBalance(hit && hit.balance != null ? Number(hit.balance) : null);
       }
-    }).catch(() => {
+    };
+    // Önce cari id ile doğrudan çek (lite listede kaçırma / adres eksikliği olmasın)
+    const load = cid
+      ? axios.get(`${API_URL}/contacts/${cid}`).then((r) => applyHit(r.data)).catch(() =>
+          axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`).then((r) => {
+            const rows = Array.isArray(r.data) ? r.data : [];
+            applyHit(rows.find((c) => (c.id || c._id) === cid)
+              || rows.find((c) => String(c.name || "").trim().toLocaleLowerCase("tr-TR") === name)
+              || null);
+          })
+        )
+      : axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`).then((r) => {
+          const rows = Array.isArray(r.data) ? r.data : [];
+          applyHit(rows.find((c) => String(c.name || "").trim().toLocaleLowerCase("tr-TR") === name) || null);
+        });
+    load.catch(() => {
       if (!cancelled) {
         setPartyContact(null);
         if (doc.contact_balance == null || doc.contact_balance === "") setContactBalance(null);
@@ -324,16 +336,9 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   };
   const number = docType === "quote" ? doc.quote_number : docType === "order" ? doc.order_number : (doc.invoice_number || doc.quote_number || "");
   const customer = doc.contact_name || doc.customer_name || "";
-  const rawPartyAddress = String(
-    doc.shipping_address || doc.address || partyContact?.address || ""
-  ).trim();
-  const partyAddress = rawPartyAddress && rawPartyAddress !== "-" ? rawPartyAddress : "";
-  const partyCity = String(doc.city || partyContact?.city || "").trim();
-  const partyCityShown = partyCity && partyCity !== "-"
-    && !partyAddress.toLocaleLowerCase("tr-TR").includes(partyCity.toLocaleLowerCase("tr-TR"))
-    ? partyCity
-    : "";
-  const partyPhone = doc.customer_phone || partyContact?.phone || "";
+  const partyAddress = resolvePrintPartyAddress(doc, partyContact);
+  const partyCityShown = resolvePrintPartyCity(doc, partyContact, partyAddress);
+  const partyPhone = resolvePrintPartyPhone(doc, partyContact);
   const total = doc.grand_total ?? doc.total_amount ?? 0;
   const color = layout === "minimal" ? "#0f172a" : (tpl.primary_color || "#059669");
   const textSize = tpl.font_size === "xs" ? "text-[10px]" : tpl.font_size === "base" ? "text-sm" : "text-xs";
