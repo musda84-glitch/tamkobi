@@ -59,7 +59,7 @@ export default function CargoPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Kargo Entegrasyonları</h1>
-          <p className="text-xs sm:text-sm text-slate-500">Kargo firmaları + kargo pazaryerleri (Navlungo, Geliver, Kolay Kargo, BasitKargo) API bağlantıları & barkodlu kargo fişi</p>
+          <p className="text-xs sm:text-sm text-slate-500">Kargo firmaları + kargo pazaryerleri (Navlungo, Geliver resmi SDK, Kolay Kargo, BasitKargo) API bağlantıları & barkodlu kargo fişi</p>
         </div>
       </div>
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3" data-testid="cargo-catalog">
