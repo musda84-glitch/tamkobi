@@ -335,6 +335,11 @@ async def reverse_one(db, query: Dict[str, Any]) -> bool:
     if t in MUTABLE_TYPES:
         inc = {k: -v for k, v in balance_inc(t, amount).items()}
         await db.partners.update_one({"_id": ptx["partner_id"]}, {"$inc": inc})
+    elif t == "profit_share":
+        await db.partners.update_one(
+            {"_id": ptx["partner_id"]},
+            {"$inc": profit_share_inc(amount, bool(ptx.get("is_paid")), applying=False)},
+        )
     await db.partner_transactions.delete_one({"_id": ptx["_id"]})
     return True
 
