@@ -13595,7 +13595,31 @@ async def test_cargo_integration(carrier_id: str):
         raise HTTPException(status_code=404, detail="Kargo entegrasyonu bulunamadı.")
     if cfg.get("carrier_code") != "geliver":
         return {"ok": True, "simulated": True, "message": f"{cfg.get('carrier_name')} için canlı API bağlantısı henüz yok; gönderiler SİMÜLE oluşturulur."}
-    r = await cargo_providers.geliver_test(cfg)
+    try:
+        r = await cargo_providers.geliver_test(cfg)
+    except HTTPException as exc:
+        detail = str(exc.detail or "")
+        low = detail.lower()
+        # Broken Fernet blob or expired/invalid token: clear stored key so UI asks for a fresh paste.
+        if any(x in low for x in ("okunamadı", "şifreleme", "geçersiz", "yetkiniz yok", "unauthorized")):
+            raw_key = cfg.get("api_key") or ""
+            if raw_key and (
+                "okunamadı" in low
+                or "şifreleme" in low
+                or (comm_service.looks_like_fernet_token(str(raw_key)) and comm_service.try_decrypt(raw_key) is None)
+            ):
+                await db.cargo_configs.update_one(
+                    {"_id": carrier_id},
+                    {
+                        "$unset": {"api_key": ""},
+                        "$set": {
+                            "status": "not_configured",
+                            "is_active": False,
+                            "verify_message": "Kayıtlı Geliver API token okunamadı; lütfen yeniden girip Kaydet / Bağlantıyı Test Et yapın.",
+                        },
+                    },
+                )
+        raise
     await db.cargo_configs.update_one({"_id": carrier_id}, {"$set": {"status": "connected", "is_active": True, "last_test_at": datetime.now(timezone.utc).isoformat(), "sender_addresses": r["addresses"]}})
     return {**r, "simulated": False}
 

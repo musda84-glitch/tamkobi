@@ -110,6 +110,65 @@ def test_geliver_friendly_error_yetki():
     assert "yetkiniz yok" in msg.lower()
     assert "bakiye" in msg.lower()
     assert "test" in msg.lower()
+    assert "geliver:" in msg.lower()
+
+
+def test_geliver_token_rejects_undecryptable_fernet_blob():
+    """Rotated encryption key must not send ciphertext to Geliver as Bearer token."""
+    import cargo_providers as cp
+
+    cfg = {"api_key": "gAAAA" + ("A" * 80)}
+    with pytest.raises(HTTPException) as exc:
+        cp.geliver_token(cfg)
+    assert "okunamadı" in str(exc.value.detail).lower() or "token" in str(exc.value.detail).lower()
+
+
+def test_geliver_token_strips_bearer_prefix():
+    import cargo_providers as cp
+
+    assert cp.geliver_token({"api_key": "Bearer abc.def"}) == "abc.def"
+    assert cp.geliver_token({"api_key": "  plain-token  "}) == "plain-token"
+
+
+def test_geliver_test_uses_unfiltered_addresses_first():
+    """Connection test must hit bare /addresses first (filter caused 403 on some accounts)."""
+    import cargo_providers as cp
+
+    calls = []
+
+    async def fake_geliver(method, path, token, **kwargs):
+        calls.append((method, path, kwargs.get("params")))
+        if path == "/prices/balance":
+            return {"balance": 100}
+        assert method == "GET" and path == "/addresses"
+        return {
+            "items": [
+                {
+                    "id": "addr_sender",
+                    "name": "Depo",
+                    "cityName": "İstanbul",
+                    "districtName": "Kadıköy",
+                    "isRecipientAddress": False,
+                },
+                {
+                    "id": "addr_recv",
+                    "name": "Alıcı",
+                    "cityName": "Ankara",
+                    "districtName": "Çankaya",
+                    "isRecipientAddress": True,
+                },
+            ]
+        }
+
+    with patch.object(cp, "_geliver", side_effect=fake_geliver):
+        result = asyncio.run(cp.geliver_test({"api_key": "plain-token", "test_mode": True}))
+
+    addr_call = next(c for c in calls if c[1] == "/addresses")
+    assert addr_call[2] == {"limit": 50}
+    assert "isRecipientAddress" not in (addr_call[2] or {})
+    assert len(result["addresses"]) == 1
+    assert result["addresses"][0]["id"] == "addr_sender"
+    assert result["ok"] is True
 
 
 def test_geliver_accept_yetki_soft_fails():
