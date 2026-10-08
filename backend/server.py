@@ -6335,7 +6335,7 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
     data = await file.read()
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Görsel boyutu en fazla 5 MB olabilir.")
-    opt = image_opt.optimize_upload(data, content_type, file.filename or "")
+    opt = image_opt.optimize_product_upload(data, content_type, file.filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
     company_id = product.get("company_id") or "comp_nexus_main_01"
     await saas.check_storage_limit(company_id, len(data))

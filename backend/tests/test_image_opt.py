@@ -192,3 +192,22 @@ def test_make_thumbnail_is_small_list_preview():
     im = Image.open(io.BytesIO(thumb.data))
     im.load()
     assert max(im.size) <= 320
+
+
+def test_product_profile_prefers_webp_and_smaller_edge():
+    raw = _photo_jpeg(w=2000, h=1500, quality=95)
+    r = image_opt.optimize_product_upload(raw, "image/jpeg", "product.jpg")
+    assert r.optimized is True
+    assert r.content_type == "image/webp"
+    assert r.ext == "webp"
+    assert r.stored_size < len(raw) * 0.45
+    assert max(r.width or 0, r.height or 0) <= 1280
+
+
+def test_product_profile_png_photo_becomes_webp():
+    raw = _photo_png(w=1400, h=1000)
+    r = image_opt.optimize_product_upload(raw, "image/png", "shot.png")
+    assert r.optimized is True
+    assert r.content_type == "image/webp"
+    assert r.ext == "webp"
+    assert r.stored_size < len(raw)

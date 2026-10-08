@@ -48,19 +48,32 @@ def enabled() -> bool:
     return os.environ.get("IMAGE_OPTIMIZE", "1").lower() not in {"0", "false", "no"}
 
 
-def _settings():
-    """Panel görselleri için agresif ama kaliteli varsayılanlar (MB tasarrufu)."""
+def _settings(profile: str = "default"):
+    """Panel görselleri için agresif ama kaliteli varsayılanlar (MB tasarrufu).
+
+    profile=product → ürün galerisi: daha küçük kenar + WebP önceliği.
+    """
     try:
         min_savings = float(os.environ.get("IMAGE_MIN_SAVINGS", "0.05"))
     except (TypeError, ValueError):
         min_savings = 0.05
+    is_product = (profile or "").strip().lower() == "product"
     return {
-        # 1920px çoğu panel/ürün kartı için yeterli; 4K yüklemeleri budar
-        "max_edge": _i("IMAGE_MAX_EDGE", 1920),
-        "jpeg_quality": _i("IMAGE_JPEG_QUALITY", 80),
-        "webp_quality": _i("IMAGE_WEBP_QUALITY", 78),
-        "min_savings": min_savings,
+        # 1920px genel; ürün kartları için 1280 yeterli
+        "max_edge": _i("IMAGE_PRODUCT_MAX_EDGE" if is_product else "IMAGE_MAX_EDGE", 1280 if is_product else 1920),
+        "jpeg_quality": _i(
+            "IMAGE_PRODUCT_JPEG_QUALITY" if is_product else "IMAGE_JPEG_QUALITY",
+            70 if is_product else 80,
+        ),
+        "webp_quality": _i(
+            "IMAGE_PRODUCT_WEBP_QUALITY" if is_product else "IMAGE_WEBP_QUALITY",
+            68 if is_product else 78,
+        ),
+        "min_savings": float(os.environ.get("IMAGE_PRODUCT_MIN_SAVINGS", "0.02")) if is_product else min_savings,
         "skip_under": _i("IMAGE_SKIP_UNDER_BYTES", 4096),
+        # Ürün: mümkünse her zaman WebP sakla (en küçük + tutarlı uzantı)
+        "prefer_webp": is_product,
+        "profile": "product" if is_product else "default",
     }
 
 
@@ -274,8 +287,36 @@ def make_thumbnail(
         return None
 
 
-def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> OptimizeResult:
-    """Orijinal veya daha küçük yüksek kaliteli varyant döner. Asla raise etmez."""
+def _pick_best_candidate(
+    candidates: list[Tuple[bytes, str, str]],
+    *,
+    prefer_webp: bool,
+) -> Optional[Tuple[bytes, str, str]]:
+    if not candidates:
+        return None
+    smallest = min(candidates, key=lambda c: len(c[0]))
+    if not prefer_webp:
+        return smallest
+    webps = [c for c in candidates if c[1] == "image/webp"]
+    if not webps:
+        return smallest
+    best_webp = min(webps, key=lambda c: len(c[0]))
+    # WebP en fazla %8 daha büyükse yine WebP seç (tutarlı .webp uzantısı)
+    if len(best_webp[0]) <= int(len(smallest[0]) * 1.08):
+        return best_webp
+    return smallest
+
+
+def optimize_upload(
+    data: bytes,
+    content_type: str = "",
+    filename: str = "",
+    profile: str = "default",
+) -> OptimizeResult:
+    """Orijinal veya daha küçük yüksek kaliteli varyant döner. Asla raise etmez.
+
+    profile=\"product\": ürün galerisi — daha agresif kenar/kalite + WebP tercihi.
+    """
     original = OptimizeResult(
         data=data,
         content_type=(content_type or "application/octet-stream").split(";")[0].strip()
@@ -285,7 +326,7 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
         stored_size=len(data),
         reason="skipped",
     )
-    cfg = _settings()
+    cfg = _settings(profile)
     if not enabled() or not data:
         original.reason = "disabled"
         return original
@@ -337,7 +378,9 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
             if im.mode == "RGBA" and not alpha
             else (im if im.mode == "RGB" else im.convert("RGB"))
         )
-        if not alpha:
+        prefer_webp = bool(cfg.get("prefer_webp"))
+        # Ürün profilinde JPEG adayı yalnızca WebP başarısız olursa yedek olarak kalsın
+        if not alpha and not prefer_webp:
             candidates.append(
                 (
                     _save(
@@ -371,23 +414,48 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
                 )
         except Exception:
             pass
-        if original.content_type == "image/png" or alpha:
+        if prefer_webp and not alpha and not any(c[1] == "image/webp" for c in candidates):
+            candidates.append(
+                (
+                    _save(
+                        rgb,
+                        "JPEG",
+                        quality=cfg["jpeg_quality"],
+                        optimize=True,
+                        progressive=True,
+                    ),
+                    "image/jpeg",
+                    "jpg",
+                )
+            )
+        if not prefer_webp and (original.content_type == "image/png" or alpha):
             png_src = im.convert("RGBA") if alpha else rgb
             candidates.append(
                 (_save(png_src, "PNG", optimize=True, compress_level=9), "image/png", "png")
             )
+        elif prefer_webp and alpha and not any(c[1] == "image/webp" for c in candidates):
+            png_src = im.convert("RGBA")
+            candidates.append(
+                (_save(png_src, "PNG", optimize=True, compress_level=9), "image/png", "png")
+            )
 
-        best = min(candidates, key=lambda c: len(c[0])) if candidates else None
+        best = _pick_best_candidate(candidates, prefer_webp=prefer_webp)
         if not best:
             original.reason = "no_candidate"
             return original
         payload, ctype, ext = best
-        if len(payload) >= int(len(data) * (1.0 - cfg["min_savings"])):
+        # Ürün WebP: orijinalden büyük değilse kabul (uzantı değişimi için min_savings esnek)
+        if prefer_webp and ctype == "image/webp":
+            accept = len(payload) <= len(data)
+        else:
+            accept = len(payload) < int(len(data) * (1.0 - cfg["min_savings"]))
+        if not accept:
             original.reason = "no_savings"
             original.width, original.height = im.size
             return original
         logger.info(
-            "image_opt: %s → %s (%s→%s bytes, -%s%%, %sx%s)",
+            "image_opt[%s]: %s → %s (%s→%s bytes, -%s%%, %sx%s)",
+            cfg.get("profile") or "default",
             filename or sniffed,
             ext,
             len(data),
@@ -411,4 +479,9 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
         logger.warning("image optimize failed (%s); storing original", e)
         original.reason = "error"
         return original
+
+
+def optimize_product_upload(data: bytes, content_type: str = "", filename: str = "") -> OptimizeResult:
+    """Ürün galerisi: WebP öncelikli, daha küçük kenar/kalite."""
+    return optimize_upload(data, content_type, filename, profile="product")
 
