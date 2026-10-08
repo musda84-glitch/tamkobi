@@ -33,6 +33,16 @@ export function productListImageUrl(product) {
   );
 }
 
+/** Sipariş satırı + stok kartı birleşik liste görseli. */
+export function orderLineListImageUrl(item, product) {
+  return (
+    mediaRef(item?.thumbnail_url)
+    || mediaRef(item?.image_url)
+    || productListImageUrl(product)
+    || ""
+  );
+}
+
 export function productIdOf(product) {
   return product?.id || product?._id || "";
 }

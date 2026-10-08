@@ -37,6 +37,7 @@ import { useNavigate } from "react-router-dom";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { DocumentLineEditor } from "./DocumentLineEditor";
 import { documentLineTotals, hydrateLine } from "../utils/documentLines";
+import { withMarketplaceVatFlag } from "../utils/marketplaceVat";
 import { orderFooterTotals } from "../utils/orderMoney";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { ContactForm } from "./ContactForm";
@@ -1366,9 +1367,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               )}
               {orderDetail.cargo_tracking_number && <div className="text-slate-600"><b>Kargo:</b> {orderDetail.cargo_carrier} • <span className="font-mono">{orderDetail.cargo_tracking_number}</span></div>}
               <div className="overflow-x-auto"><table className="w-full min-w-[640px]"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="py-1 text-left">Stok adı</th><th className="py-1 text-right">Miktar</th><th className="py-1 text-right">KDV'siz</th><th className="py-1 text-right">KDV'li</th><th className="py-1 text-center">İsk %</th><th className="py-1 text-center">KDV</th><th className="py-1 text-right">Hariç</th><th className="py-1 text-right">Dahil</th></tr></thead>
-                <tbody className="divide-y divide-slate-100">{(orderDetail.items || []).map((it, i) => { const line = hydrateLine(it); return (<tr key={i}><td className="py-1.5"><div className="font-semibold">{line.product_name || line.name}</div><div className="font-mono text-slate-400">{it.sku}</div>{it.note ? <div className="text-slate-500 italic">{it.note}</div> : null}</td><td className="py-1.5 text-right">{line.quantity}</td><td className="py-1.5 text-right">{fmtMoney(line.unit_price)}</td><td className="py-1.5 text-right">{fmtMoney(line.unit_price_incl)}</td><td className="py-1.5 text-center">{line.discount_rate || 0}</td><td className="py-1.5 text-center">%{line.vat_rate}</td><td className="py-1.5 text-right">{fmtMoney(line.total)}</td><td className="py-1.5 text-right font-bold">{fmtMoney(line.total_incl)}</td></tr>); })}</tbody></table></div>
+                <tbody className="divide-y divide-slate-100">{(orderDetail.items || []).map((it, i) => { const line = hydrateLine(withMarketplaceVatFlag(it, orderDetail.channel)); return (<tr key={i}><td className="py-1.5"><div className="font-semibold">{line.product_name || line.name}</div><div className="font-mono text-slate-400">{it.sku}</div>{it.note ? <div className="text-slate-500 italic">{it.note}</div> : null}</td><td className="py-1.5 text-right">{line.quantity}</td><td className="py-1.5 text-right">{fmtMoney(line.unit_price)}</td><td className="py-1.5 text-right">{fmtMoney(line.unit_price_incl)}</td><td className="py-1.5 text-center">{line.discount_rate || 0}</td><td className="py-1.5 text-center">%{line.vat_rate}</td><td className="py-1.5 text-right">{fmtMoney(line.total)}</td><td className="py-1.5 text-right font-bold">{fmtMoney(line.total_incl)}</td></tr>); })}</tbody></table></div>
               {(() => {
-                const t = documentLineTotals(orderDetail.items || []);
+                const t = documentLineTotals((orderDetail.items || []).map((it) => withMarketplaceVatFlag(it, orderDetail.channel)));
                 const footer = orderFooterTotals(orderDetail, t);
                 return (
               <div className="space-y-0.5 border-t pt-2"><div className="flex justify-between"><span>KDV Hariç</span><span>{fmtMoney(footer.subtotal)}</span></div><div className="flex justify-between"><span>KDV</span><span>{fmtMoney(footer.vat)}</span></div><div className="flex justify-between font-bold"><span>Genel Toplam (KDV Dahil)</span><span>{fmtMoney(footer.grandTotal)}</span></div></div>

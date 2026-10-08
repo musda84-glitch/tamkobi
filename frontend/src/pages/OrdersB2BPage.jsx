@@ -24,7 +24,8 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InvoicePrintShareModal } from "../components/InvoicePrintShareModal";
 import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listImageUrl } from "../utils/imageUrl";
+import { orderLineListImageUrl } from "../utils/productImages";
 import { Printer, Tag, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Factory } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { printMiniInvoices, printMiniInvoicesFromIntegrator } from "../utils/miniInvoicePrint";
@@ -1580,15 +1581,16 @@ export default function OrdersB2BPage() {
                       <div className="text-[11px] text-slate-400">{ord.city}</div>
                     </td>
                     <td className="px-4 py-3 align-top overflow-hidden">
-                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it) => { const p = productCatalog.find((x) => (it.product_id && (x.id === it.product_id || x._id === it.product_id)) || (it.sku && x.sku === it.sku)); return resolveImageUrl(it.image_url || p?.image_url); }; return (
+                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it, p) => listImageUrl(orderLineListImageUrl(it, p), open ? 80 : 64); return (
                         <div data-testid={`order-items-${ord.order_number}`}>
                           <div className={open ? "flex flex-col gap-1 max-h-64 overflow-y-auto pr-1 mb-1.5" : "space-y-1"}>
                           {shown.map((it, idx) => {
                             const lineProd = resolveOrderLineProduct(it, productCatalog);
                             const canProduce = orderLineCanProduce(lineProd);
+                            const thumb = img(it, lineProd);
                             return (
                             <div key={idx} className={`flex items-center gap-2 ${open ? `rounded-lg p-1.5 ${idx % 2 === 0 ? "bg-slate-50" : "bg-emerald-50/80"}` : ""}`}>
-                              {img(it) ? <img src={img(it)} alt="" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
+                              {thumb ? <img src={thumb} alt="" width={open ? 40 : 32} height={open ? 40 : 32} loading="lazy" decoding="async" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
                               <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); openOrderLineStock(ord, it, idx); }}

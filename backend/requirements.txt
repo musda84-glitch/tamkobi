@@ -47,6 +47,8 @@ hf-xet==1.6.0
 httpcore==1.0.9
 httplib2==0.32.0
 httpx==0.28.1
+# Official Geliver Kargo Pazaryeri SDK — https://github.com/GeliverApp/geliver-python
+geliver==0.4.0
 huggingface_hub==1.30.0
 idna==3.19
 importlib_metadata==9.0.1

@@ -415,7 +415,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     if (!newParam) return;
     if (newContactParam && contacts.length === 0) return;
     const c = contacts.find((x) => x.id === newContactParam);
-    setFormData((fd) => ({ ...fd, invoice_type: newParam === "purchase" ? "purchase" : "sales", e_type: newParam === "purchase" ? "paper" : (c?.is_e_invoice_user ? "e_invoice" : "e_archive"), contact_id: c?.id || fd.contact_id || "", contact_name: c?.name || fd.contact_name || "", project_id: newProjectParam || fd.project_id || "" }));
+    setFormData((fd) => ({
+      ...fd,
+      invoice_type: newParam === "purchase" ? "purchase" : "sales",
+      e_type: newParam === "purchase" ? "paper" : (c?.is_e_invoice_user ? "e_invoice" : "e_archive"),
+      contact_id: c?.id || fd.contact_id || "",
+      contact_name: c?.name || fd.contact_name || "",
+      shipping_address: c?.address || fd.shipping_address || "",
+      city: c?.city || fd.city || "",
+      customer_phone: c?.phone || fd.customer_phone || "",
+      project_id: newProjectParam || fd.project_id || "",
+    }));
     setShowNewModal(true);
     setSearchParams({}, { replace: true });
   }, [newParam, newContactParam, newProjectParam, contacts, setSearchParams]);
@@ -509,6 +519,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       status: "draft",
       contact_id: inv.contact_id || "",
       contact_name: inv.contact_name || "",
+      shipping_address: inv.shipping_address || inv.address || "",
+      city: inv.city || "",
+      customer_phone: inv.customer_phone || "",
       issue_date: (inv.issue_date || "").slice(0, 10),
       issue_time: (inv.issue_time || "").slice(0, 8) || nowIssueDateTime().issue_time,
       due_date: (inv.due_date || "").slice(0, 10),
@@ -639,9 +652,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     try {
       const t = calculateTotals();
       if (formData.items.some((it) => !(it.name || it.product_name))) { toast.error("Her satır için ürün seçin ya da hizmet adı yazın."); return; }
+      const contactRow = contacts.find((x) => x.id === formData.contact_id || x._id === formData.contact_id);
+      const ship = String(formData.shipping_address || contactRow?.address || "").trim();
+      const city = String(formData.city || contactRow?.city || "").trim();
+      const phone = String(formData.customer_phone || contactRow?.phone || "").trim();
       const payload = {
         company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
         ...formData,
+        shipping_address: ship && ship !== "-" ? ship : (formData.shipping_address || null),
+        city: city && city !== "-" ? city : (formData.city || null),
+        customer_phone: phone || formData.customer_phone || null,
         items: formData.items.map((it) => {
           const line = computeLine(it);
           return { ...line, unit_price: Number(Number(line.unit_price).toFixed(4)), product_id: it.is_service ? "" : it.product_id };
@@ -1830,7 +1850,15 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     placeholder="Cari ara ve seç..."
                     getLabel={(c) => c.name}
                     getSub={(c) => `${c.type === 'customer' ? 'Müşteri' : c.type === 'supplier' ? 'Tedarikçi' : 'Müşteri & Tedarikçi'} • VKN ${c.tax_number_or_id}`}
-                    onChange={(id, c) => setFormData({ ...formData, contact_id: id, contact_name: c?.name || "", e_type: c && formData.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(formData.e_type) ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : formData.e_type })}
+                    onChange={(id, c) => setFormData({
+                      ...formData,
+                      contact_id: id,
+                      contact_name: c?.name || "",
+                      shipping_address: c?.address || formData.shipping_address || "",
+                      city: c?.city || formData.city || "",
+                      customer_phone: c?.phone || formData.customer_phone || "",
+                      e_type: c && formData.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(formData.e_type) ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : formData.e_type,
+                    })}
                     testId="inv-contact-select"
                     leadingAction={formData.invoice_type !== "purchase" ? {
                       label: "Perakende (carisiz)",
@@ -1861,11 +1889,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 {quickContact && (
                   <div className="sm:col-span-3">
                     <QuickContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} defaultType={formData.invoice_type === "purchase" ? "supplier" : "customer"} onCancel={() => setQuickContact(false)}
-                      onCreated={(c) => { setContacts((prev) => [c, ...prev]); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, e_type: fd.invoice_type === "sales" && fd.e_type !== "paper" ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : fd.e_type })); setQuickContact(false); }} />
+                      onCreated={(c) => { setContacts((prev) => [c, ...prev]); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, shipping_address: c.address || "", city: c.city || "", customer_phone: c.phone || "", e_type: fd.invoice_type === "sales" && fd.e_type !== "paper" ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : fd.e_type })); setQuickContact(false); }} />
                   </div>
                 )}
                 <div className="sm:col-span-3">
-                  <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
+                  <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, shipping_address: c.address || f.shipping_address || "", city: c.city || f.city || "", customer_phone: c.phone || f.customer_phone || "", e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
                 </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
