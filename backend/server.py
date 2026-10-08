@@ -11915,10 +11915,12 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
         if not channel or not order_number:
             continue
         key = {"company_id": company_id, "channel": channel, "order_number": order_number}
+        d = marketplace_providers.normalize_marketplace_order_prices(d)
         d["updated_at"] = datetime.now(timezone.utc).isoformat()
         existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
         if existing:
             payload = merge_keep_fields(existing, d)
+            payload = marketplace_providers.normalize_marketplace_order_prices(payload)
             await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
             if not existing.get("contact_id"):
                 await _ensure_order_contact({**existing, **payload})
@@ -11946,6 +11948,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
                 existing = await db.orders.find_one(key)
             if existing:
                 payload = merge_keep_fields(existing, d)
+                payload = marketplace_providers.normalize_marketplace_order_prices(payload)
                 await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
                 if not existing.get("contact_id"):
                     await _ensure_order_contact({**existing, **payload})
