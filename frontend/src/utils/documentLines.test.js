@@ -23,6 +23,19 @@ test("editing KDV'li unit price back-calculates net", () => {
   expect(row.total_incl).toBeCloseTo(120);
 });
 
+test("editing total_incl back-calculates unit prices", () => {
+  const row = computeLine({
+    ...emptyLine(),
+    quantity: 2,
+    vat_rate: 20,
+    unit_price: 50,
+    total_incl: 240,
+  }, "total_incl");
+  expect(row.total_incl).toBeCloseTo(240);
+  expect(row.unit_price).toBeCloseTo(100);
+  expect(row.unit_price_incl).toBeCloseTo(120);
+});
+
 test("selectable VAT percent recalculates gross from stored net", () => {
   const row = computeLine({ ...emptyLine(), quantity: 1, unit_price: 200, vat_rate: 10 }, "vat_rate");
   expect(row.unit_price_incl).toBeCloseTo(220);

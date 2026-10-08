@@ -80,17 +80,27 @@ function resolveLineNames(item, editedField) {
 }
 
 export function computeLine(item, editedField) {
-  const qty = num(item.quantity);
+  const qty = Math.max(num(item.quantity), 0);
   const vat = num(item.vat_rate, 20);
   const disc = Math.min(Math.max(num(item.discount_rate), 0), 100);
+  const factor = 1 - disc / 100;
   let excl = num(item.unit_price);
   let incl = num(item.unit_price_incl);
-  if (editedField === "unit_price_incl") {
+
+  // Satır toplamı (KDV dahil) düzenlenince birim fiyata geri yay.
+  if (editedField === "total_incl") {
+    const q = qty > 0 ? qty : 1;
+    const f = factor > 0 ? factor : 1;
+    const targetIncl = Math.max(num(item.total_incl), 0);
+    const lineExcl = vat === -100 ? targetIncl : targetIncl / (1 + vat / 100);
+    excl = lineExcl / (q * f);
+    incl = excl * (1 + vat / 100);
+  } else if (editedField === "unit_price_incl") {
     excl = vat === -100 ? incl : incl / (1 + vat / 100);
   } else {
     incl = excl * (1 + vat / 100);
   }
-  const factor = 1 - disc / 100;
+
   // Backend enrich_line ile aynı: satır tutarları 2 haneye yuvarlanır.
   const total = Math.round(qty * excl * factor * 100) / 100;
   const vatAmount = Math.round(total * vat / 100 * 100) / 100;

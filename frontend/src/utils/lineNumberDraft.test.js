@@ -1,10 +1,12 @@
 import { lineDraftKey, lineNumberCommit, lineNumberOnFocus, lineNumberShown, parseLineNumber } from "./lineNumberDraft";
 
 describe("lineNumberDraft", () => {
-  it("clears on focus so qty 1 and price 0 can be typed over", () => {
-    expect(lineNumberOnFocus()).toBe("");
-    expect(lineNumberShown({ "0:quantity": "" }, "0:quantity", 1)).toBe("");
-    expect(lineNumberShown({ "0:unit_price": "" }, "0:unit_price", 0)).toBe("");
+  it("keeps stored value on focus so numbers are not wiped", () => {
+    expect(lineNumberOnFocus(11999)).toBe("11999");
+    expect(lineNumberOnFocus(0)).toBe("0");
+    expect(lineNumberOnFocus("")).toBe("");
+    expect(lineNumberShown({ "0:quantity": "1" }, "0:quantity", 1)).toBe("1");
+    expect(lineNumberShown({ "0:unit_price": "0" }, "0:unit_price", 0)).toBe("0");
   });
 
   it("shows stored number when the field is not being edited", () => {
