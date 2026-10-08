@@ -63,6 +63,22 @@ export function productCardPrice(prod, invoiceType = "sales") {
   return num(prod.sale_price);
 }
 
+function resolveLineNames(item, editedField) {
+  // name / product_name düzenlenirken boş string korunur; aksi halde biri diğerine düşer
+  // ve kullanıcı metni silemez ("" || eskiAd → eskiAd).
+  if (editedField === "name") {
+    const name = item.name == null ? "" : String(item.name);
+    return { name, product_name: name };
+  }
+  if (editedField === "product_name") {
+    const product_name = item.product_name == null ? "" : String(item.product_name);
+    return { name: product_name, product_name };
+  }
+  const name = item.name || item.product_name || "";
+  const product_name = item.product_name || item.name || "";
+  return { name, product_name };
+}
+
 export function computeLine(item, editedField) {
   const qty = num(item.quantity);
   const vat = num(item.vat_rate, 20);
@@ -78,6 +94,7 @@ export function computeLine(item, editedField) {
   // Backend enrich_line ile aynı: satır tutarları 2 haneye yuvarlanır.
   const total = Math.round(qty * excl * factor * 100) / 100;
   const vatAmount = Math.round(total * vat / 100 * 100) / 100;
+  const names = resolveLineNames(item, editedField);
   return {
     ...item,
     unit: item.unit || "Adet",
@@ -88,8 +105,7 @@ export function computeLine(item, editedField) {
     total,
     total_incl: Math.round((total + vatAmount) * 100) / 100,
     vat_amount: vatAmount,
-    name: item.name || item.product_name || "",
-    product_name: item.product_name || item.name || "",
+    ...names,
   };
 }
 

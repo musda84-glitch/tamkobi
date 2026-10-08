@@ -54,7 +54,16 @@ export function DocumentLineEditor({
   const setRows = (next) => onChange(next.map((it) => computeLine(it)));
 
   const patch = (index, field, value) => {
-    const next = rows.map((it, i) => (i === index ? computeLine({ ...it, [field]: value }, field) : it));
+    const next = rows.map((it, i) => {
+      if (i !== index) return it;
+      const updated = { ...it, [field]: value };
+      // Ad alanları senkron kalsın; boşaltınca product_name eski değeri geri getirmesin.
+      if (field === "name" || field === "product_name") {
+        updated.name = value;
+        updated.product_name = value;
+      }
+      return computeLine(updated, field);
+    });
     setRows(next);
   };
 
@@ -86,7 +95,15 @@ export function DocumentLineEditor({
     const qty = latest[index]?.quantity || 1;
     const next = latest.map((it, i) => {
       if (i !== index) return it;
-      if (!prod) return { ...it, product_id: id || it.product_id };
+      if (!prod) {
+        // Seçim kaldırıldıysa product_id temizlensin ("" || eskiId hatası olmasın).
+        const cleared = id == null || id === "";
+        return {
+          ...it,
+          product_id: cleared ? "" : (id || it.product_id),
+          ...(cleared ? { name: it.name || it.product_name || "", product_name: it.product_name || it.name || "" } : {}),
+        };
+      }
       return lineFromProduct(prod, { invoiceType, quantity: qty });
     });
     setRows(next);
@@ -197,7 +214,10 @@ export function DocumentLineEditor({
                               return `Stok kartı: ${fmtMoney(price, ccy)}${incl ? " (KDV dahil)" : ""}`;
                             })}
                             getImage={(p) => p.image_url}
+                            valueLabel={nameOf(item)}
                             onChange={(id, p) => pickProduct(idx, id, p)}
+                            clearable
+                            clearLabel="Ürün seçimini kaldır"
                             inline
                             testId={kind === "invoice" ? `inv-item-product-${idx}` : kind === "order" ? `new-order-product-${idx}` : `${testIdPrefix}-product-${idx}`}
                           />
@@ -208,7 +228,7 @@ export function DocumentLineEditor({
                               onChange={(e) => patch(idx, kind === "order" ? "product_name" : "name", e.target.value)}
                               placeholder="Stokta yoksa serbest ad yazın"
                               className={`${inp} mt-1`}
-                              data-testid={kind === "order" ? `new-order-freename-${idx}` : `${testIdPrefix}-freename-${idx}`}
+                              data-testid={kind === "order" ? `new-order-freename-${idx}` : `${testIdPrefix}-name-${idx}`}
                             />
                           )}
                         </>

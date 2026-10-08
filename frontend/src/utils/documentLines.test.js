@@ -39,6 +39,30 @@ test("hydrateLine maps product_name and discount_percent", () => {
   expect(row.total_incl).toBeCloseTo(54);
 });
 
+test("computeLine allows clearing stock name without resurrecting product_name", () => {
+  const cleared = computeLine({
+    ...emptyLine(),
+    name: "",
+    product_name: "Eski Ürün Adı",
+    quantity: 1,
+    unit_price: 10,
+  }, "name");
+  expect(cleared.name).toBe("");
+  expect(cleared.product_name).toBe("");
+});
+
+test("computeLine syncs product_name edit into name", () => {
+  const row = computeLine({
+    ...emptyLine(),
+    name: "Eski",
+    product_name: "Yeni ad",
+    quantity: 1,
+    unit_price: 5,
+  }, "product_name");
+  expect(row.name).toBe("Yeni ad");
+  expect(row.product_name).toBe("Yeni ad");
+});
+
 test("lineFromProduct uses sale vs purchase price and product VAT", () => {
   const prod = { id: "p1", name: "Kart", sale_price: 100, purchase_price: 80, vat_rate: 10, sku: "SKU-1", unit: "Koli" };
   const sale = lineFromProduct(prod, { invoiceType: "sales", quantity: 2 });
