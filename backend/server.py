@@ -6361,18 +6361,58 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     image_url = f"/api/files/{result['path']}"
+    thumbnail_url = None
+    thumb = image_opt.make_thumbnail(data, content_type, file.filename or "")
+    if thumb and thumb.data:
+        try:
+            try:
+                import storage_manager as _sm
+                thumb_path = _sm.object_path(company_id, "product", thumb.ext)
+            except Exception:
+                thumb_path = f"{APP_NAME}/products/{company_id}/thumbs/{uuid.uuid4()}.{thumb.ext}"
+            thumb_res = put_object(thumb_path, thumb.data, thumb.content_type)
+            await db.files.insert_one({
+                "_id": str(uuid.uuid4()),
+                "storage_path": thumb_res["path"],
+                "original_filename": f"thumb_{file.filename or 'image'}.{thumb.ext}",
+                "content_type": thumb.content_type,
+                "size": thumb_res.get("size", len(thumb.data)),
+                "original_size": opt.original_size,
+                "optimized": True,
+                "company_id": company_id,
+                "entity": "product_thumb",
+                "entity_id": product_id,
+                "area_key": area_key,
+                "is_deleted": False,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            thumbnail_url = f"/api/files/{thumb_res['path']}"
+        except Exception as e:
+            logger.warning("Product thumbnail upload failed product=%s: %s", product_id, e)
+            thumbnail_url = None
     if variant_id:
+        vset = {"variants.$.image_url": image_url}
+        if thumbnail_url:
+            vset["variants.$.thumbnail_url"] = thumbnail_url
         await db.products.update_one(
             {"_id": product_id, "variants.variant_id": variant_id},
-            {"$set": {"variants.$.image_url": image_url}}
+            {"$set": vset},
         )
     else:
-        update = {"$push": {"images": image_url}}
+        update: Dict[str, Any] = {"$push": {"images": image_url}}
+        cover_set: Dict[str, Any] = {}
         if not product.get("image_url"):
-            update["$set"] = {"image_url": image_url}
+            cover_set["image_url"] = image_url
+        if thumbnail_url and (not product.get("image_url") or not product.get("thumbnail_url")):
+            cover_set["thumbnail_url"] = thumbnail_url
+        if cover_set:
+            update["$set"] = cover_set
         await db.products.update_one({"_id": product_id}, update)
     updated = await db.products.find_one({"_id": product_id})
-    return {"image_url": image_url, "product": clean_doc(updated), **opt.as_meta()}
+    out = {"image_url": image_url, "product": clean_doc(updated), **opt.as_meta()}
+    if thumbnail_url:
+        out["thumbnail_url"] = thumbnail_url
+    return out
 
 @api_router.put("/products/{product_id}/images")
 async def update_product_images(product_id: str, req: Dict[str, Any]):

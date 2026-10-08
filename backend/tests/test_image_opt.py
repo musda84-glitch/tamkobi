@@ -178,3 +178,17 @@ def test_photo_prefers_small_webp_or_jpeg():
     assert r.stored_size < len(raw) * 0.5
     assert r.content_type in {"image/jpeg", "image/webp"}
     assert max(r.width or 0, r.height or 0) <= image_opt._settings()["max_edge"]
+
+
+def test_make_thumbnail_is_small_list_preview():
+    raw = _photo_jpeg(w=1600, h=1200, quality=92)
+    thumb = image_opt.make_thumbnail(raw, "image/jpeg", "photo.jpg", max_edge=320)
+    assert thumb is not None
+    assert thumb.optimized is True
+    assert thumb.reason == "thumbnail"
+    assert thumb.stored_size < len(raw)
+    assert max(thumb.width or 0, thumb.height or 0) <= 320
+    assert thumb.content_type in {"image/webp", "image/jpeg", "image/png"}
+    im = Image.open(io.BytesIO(thumb.data))
+    im.load()
+    assert max(im.size) <= 320

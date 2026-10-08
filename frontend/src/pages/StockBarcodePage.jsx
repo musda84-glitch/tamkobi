@@ -13,6 +13,7 @@ import { cachedList, productFilter, patchCached } from "../utils/dataSync";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { AiStockImportModal } from "../components/AiStockImportModal";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { productListImageUrl } from "../utils/productImages";
 import { ScanButton } from "../components/CameraScanner";
 import { SearchSelect } from "../components/SearchSelect";
 import { barcodeSaleLine, barcodeSalePayload, findRetailContact, pickCashAccount, RETAIL_CONTACT_NAME, RETAIL_CONTACT_TAX } from "../utils/barcodeSale";
@@ -860,7 +861,7 @@ export default function StockBarcodePage() {
                           title="Görselleri Yönet"
                           data-testid={`product-thumb-${prod.sku}`}
                         >
-                          {prod.image_url ? <img src={resolveImageUrl(prod.image_url)} alt={prod.name} className="w-full h-full object-cover" /> : <Package className="w-4 h-4" />}
+                          {productListImageUrl(prod) ? <img src={resolveImageUrl(productListImageUrl(prod))} alt={prod.name} loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-4 h-4" />}
                         </button>
                         <div>
                           <div className="font-bold text-slate-900">{prod.name}</div>

@@ -113,6 +113,7 @@ class ProductVariant(BaseModel):
     price: float = 0.0
     attributes: Dict[str, str] = {}  # {"Renk": "Mavi", "Beden": "L"}
     image_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
 
 class VariantOption(BaseModel):
     name: str  # Renk, Beden
@@ -140,6 +141,7 @@ class Product(BaseDocument):
     variant_options: List[VariantOption] = []
     variants: List[ProductVariant] = []
     image_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None  # Liste/kart küçük önizleme
     images: List[str] = []
     label_image_url: Optional[str] = None  # Barkod etiket tasarımında kullanılan görsel
     label_template_id: Optional[str] = None  # Etiket Tasarımı şablonu (label_templates._id)

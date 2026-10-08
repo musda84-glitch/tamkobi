@@ -211,6 +211,69 @@ def prepare_vision_image(
     return data, mime
 
 
+def make_thumbnail(
+    data: bytes,
+    content_type: str = "",
+    filename: str = "",
+    max_edge: int = 320,
+    quality: int = 72,
+) -> Optional[OptimizeResult]:
+    """Liste/kart için küçük WebP (veya JPEG) önizleme. Başarısızsa None."""
+    if not data:
+        return None
+    sniffed = _sniff_type(data, content_type or "")
+    name = (filename or "").lower()
+    if sniffed in {"image/heic", "image/heif"} or name.endswith((".heic", ".heif", ".avif")):
+        _try_register_heif()
+    try:
+        from PIL import Image, ImageOps
+    except Exception:
+        return None
+    try:
+        im = Image.open(io.BytesIO(data))
+        im.load()
+        if getattr(im, "is_animated", False) and getattr(im, "n_frames", 1) > 1:
+            im.seek(0)
+        im = ImageOps.exif_transpose(im) or im
+        edge = max(64, int(max_edge or 320))
+        if max(im.size) > edge:
+            im.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+        alpha = _has_alpha(im)
+        if alpha:
+            if im.mode != "RGBA":
+                im = im.convert("RGBA")
+            try:
+                payload = _save(im, "WEBP", quality=int(quality or 72), method=4)
+                ctype, ext = "image/webp", "webp"
+            except Exception:
+                payload = _save(im, "PNG", optimize=True, compress_level=8)
+                ctype, ext = "image/png", "png"
+        else:
+            rgb = im.convert("RGB")
+            try:
+                payload = _save(rgb, "WEBP", quality=int(quality or 72), method=4)
+                ctype, ext = "image/webp", "webp"
+            except Exception:
+                payload = _save(rgb, "JPEG", quality=int(quality or 72), optimize=True)
+                ctype, ext = "image/jpeg", "jpg"
+        if not payload:
+            return None
+        return OptimizeResult(
+            data=payload,
+            content_type=ctype,
+            ext=ext,
+            original_size=len(data),
+            stored_size=len(payload),
+            width=im.size[0],
+            height=im.size[1],
+            optimized=True,
+            reason="thumbnail",
+        )
+    except Exception as e:
+        logger.warning("make_thumbnail failed (%s)", e)
+        return None
+
+
 def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> OptimizeResult:
     """Orijinal veya daha küçük yüksek kaliteli varyant döner. Asla raise etmez."""
     original = OptimizeResult(

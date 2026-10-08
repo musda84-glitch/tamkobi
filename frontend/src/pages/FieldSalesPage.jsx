@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { productListImageUrl } from "../utils/productImages";
 import { statusTr } from "../utils/labels";
 import { orderStatusLabel } from "../utils/warehouseShip";
 import { lineFromProduct } from "../utils/documentLines";
@@ -325,7 +326,7 @@ export default function FieldSalesPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[52vh] overflow-y-auto">
             {prodHits.map((p) => (
               <button key={pid(p)} type="button" onClick={() => addProduct(p)} className="text-left flex gap-3 bg-slate-50 hover:bg-indigo-50 border border-slate-200 rounded-xl p-3 min-h-16" data-testid={`saha-product-${pid(p)}`}>
-                {resolveImageUrl(p.image_url) ? <img src={resolveImageUrl(p.image_url)} alt="" className="w-14 h-14 rounded-lg object-cover bg-white border shrink-0" /> : <div className="w-14 h-14 rounded-lg border bg-white flex items-center justify-center text-slate-300 shrink-0"><Package className="w-6 h-6" /></div>}
+                {resolveImageUrl(productListImageUrl(p)) ? <img src={resolveImageUrl(productListImageUrl(p))} alt="" loading="lazy" decoding="async" className="w-14 h-14 rounded-lg object-cover bg-white border shrink-0" /> : <div className="w-14 h-14 rounded-lg border bg-white flex items-center justify-center text-slate-300 shrink-0"><Package className="w-6 h-6" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold text-slate-900 truncate">{p.name}</div>
                   <div className="text-[11px] text-slate-500 truncate">{p.sku || p.barcode || "—"} · stok {p.stock_quantity ?? "—"}</div>
