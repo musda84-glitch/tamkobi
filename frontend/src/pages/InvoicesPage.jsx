@@ -35,6 +35,7 @@ import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { InvoiceGibBar } from "../components/InvoiceGibBar";
 import { isEinvoiceConfigured, supportsEDispatch } from "../utils/einvoiceIntegrator";
 import { findRetailContact, invoiceFormPatchForRetail, retailContactCreatePayload } from "../utils/barcodeSale";
+import { paymentAskMessage, shouldAskPaymentAfterSave } from "../utils/invoiceAskPayment";
 
 import {
   FileText,
@@ -643,6 +644,23 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
   };
 
+  const askPaymentAfterSave = async (inv) => {
+    if (!shouldAskPaymentAfterSave(inv)) return;
+    if (!window.confirm(paymentAskMessage(inv))) return;
+    let ready = inv;
+    if (String(inv.status || "") === "draft") {
+      try {
+        await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
+        ready = { ...inv, status: "approved" };
+        toast.success("Fatura onaylandı (cariye işlendi).");
+      } catch (err) {
+        toast.error(err.response?.data?.detail || "Onaylanamadı; ödeme açılamadı.");
+        return;
+      }
+    }
+    openPayment(ready);
+  };
+
   const handleCreateInvoice = async (e) => {
     e.preventDefault();
     if (!formData.contact_id) {
@@ -674,18 +692,28 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         status: formData.invoice_type === "dispatch" ? "draft" : (formData.status || "draft"),
         gib_status: (formData.status || "draft") === "draft" ? "Taslak" : "Onaylandı"
       };
+      let saved = null;
       if (editingInvoice) {
         const { company_id, invoice_type, gib_status, ...upd } = payload;
-        await axios.put(`${API_URL}/invoices/${editingInvoice.id}`, { ...upd, invoice_type });
+        const putRes = await axios.put(`${API_URL}/invoices/${editingInvoice.id}`, { ...upd, invoice_type });
         if (payload.status === "approved") await axios.post(`${API_URL}/invoices/${editingInvoice.id}/approve`);
         toast.success("Taslak fatura güncellendi.");
+        saved = putRes?.data || {
+          ...editingInvoice,
+          ...upd,
+          id: editingInvoice.id || editingInvoice._id,
+          status: payload.status === "approved" ? "approved" : (editingInvoice.status || payload.status),
+          grand_total: Number(putRes?.data?.grand_total ?? t.grandTotal ?? editingInvoice.grand_total ?? 0),
+        };
         setEditingInvoice(null);
       } else {
-      await axios.post(`${API_URL}/invoices`, payload);
-      toast.success(payload.status === "draft" ? "Fatura taslak olarak kaydedildi." : "Fatura başarıyla oluşturuldu ve cariye işlendi.");
+        const res = await axios.post(`${API_URL}/invoices`, payload);
+        saved = res.data;
+        toast.success(payload.status === "draft" ? "Fatura taslak olarak kaydedildi." : "Fatura başarıyla oluşturuldu ve cariye işlendi.");
       }
       setShowNewModal(false);
       loadData();
+      await askPaymentAfterSave(saved);
     } catch (err) {
       const detail = err?.response?.data?.detail;
       let msg = "Fatura kaydedilemedi.";
@@ -2038,6 +2066,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <span className="font-semibold">{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</span>
                   </div>
                 )}
+              </div>
+
+              <div className="w-full" data-testid="inv-notes-block">
+                <label className="block font-semibold text-slate-700 mb-1">Fatura notu</label>
+                <textarea
+                  rows={2}
+                  value={formData.notes || ""}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  placeholder="Fatura altına yazılacak not / açıklama…"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800"
+                  data-testid="inv-notes-input"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
