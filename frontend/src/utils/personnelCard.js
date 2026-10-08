@@ -31,14 +31,39 @@ export function employeePayButtonLabel(emp) {
   return due ? `Öde · ${formatTrAmount(due)} ₺` : "Öde";
 }
 
+/**
+ * Yıllık izin hakkı (gün).
+ * null/undefined/""/NaN/0 → 14 (eski kayıtlarda 0 çoğu zaman boş kayıttır;
+ * `or 14` ile kartta 14/0 gibi tutarsızlık olmasın).
+ */
+export function leaveEntitlementDays(emp) {
+  const raw = emp?.leave_balance?.annual ?? emp?.annual_leave_days;
+  if (raw == null || raw === "") return 14;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 14;
+  return Math.min(365, Math.trunc(n));
+}
+
 export function remainingLeaveDays(emp) {
-  const annual = Number(emp?.annual_leave_days) || 14;
-  const used = Number(emp?.used_leave_days) || 0;
-  const carry = Number(emp?.leave_carry_days) || 0;
-  if (emp?.leave_balance && emp.leave_balance.remaining != null) {
-    return Number(emp.leave_balance.remaining) || 0;
+  const bal = emp?.leave_balance;
+  const annual = leaveEntitlementDays(emp);
+  const usedRaw = bal?.used ?? emp?.used_leave_days;
+  const carryRaw = bal?.carry ?? emp?.leave_carry_days;
+  const used = Number(usedRaw) || 0;
+  const carry = Number(carryRaw) || 0;
+  const hasParts = bal?.annual != null || bal?.used != null
+    || emp?.annual_leave_days != null || emp?.used_leave_days != null
+    || emp?.leave_carry_days != null || bal?.carry != null;
+  if (!hasParts && bal?.remaining != null && bal.remaining !== "") {
+    const r = Number(bal.remaining);
+    if (Number.isFinite(r)) return Math.max(0, r);
   }
   return Math.max(0, annual + carry - used);
+}
+
+/** Liste kartı: "Kalan izin: 11 / 14 gün" — kalan ve hak aynı kaynaktan. */
+export function formatLeaveRemainingLine(emp) {
+  return `Kalan izin: ${remainingLeaveDays(emp)} / ${leaveEntitlementDays(emp)} gün`;
 }
 
 export function employeeCompRows(emp, balance, opts = {}) {

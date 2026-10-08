@@ -2092,7 +2092,12 @@ def leave_year_balance(emp: Optional[dict] = None) -> dict:
     emp = emp or {}
     raw_annual = emp.get("annual_leave_days")
     try:
-        annual = max(0, int(14 if raw_annual is None or raw_annual == "" else raw_annual))
+        # 0 / boş çoğu zaman formda temizlenmiş kayıt — yasal varsayılan 14 gün.
+        # Aksi halde liste kartında "Kalan izin: 14 / 0" gibi tutarsız çift oluşuyordu.
+        if raw_annual is None or raw_annual == "" or int(raw_annual) <= 0:
+            annual = 14
+        else:
+            annual = max(0, int(raw_annual))
     except (TypeError, ValueError):
         annual = 14
     used = max(0, float(emp.get("used_leave_days") or 0))
