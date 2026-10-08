@@ -91,6 +91,7 @@ import tax_obligations
 import vehicles
 import contact_payments
 import contact_balance
+import contact_activity
 import account_balance
 import finance
 import fx
@@ -3233,12 +3234,20 @@ async def get_dashboard_stats(company_id: Optional[str] = "comp_nexus_main_01"):
 
 # ----------------- CARİLER (MÜŞTERİ & TEDARİKÇİ) -----------------
 @api_router.get("/contacts")
-async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: Optional[str] = None, lite: bool = False):
-    """lite=1: form/select için — yalnızca kimlik ve iletişim alanları."""
+async def list_contacts(
+    company_id: Optional[str] = "comp_nexus_main_01",
+    type: Optional[str] = None,
+    lite: bool = False,
+    include_inactive: Optional[bool] = None,
+):
+    """lite=1: form/select için — yalnızca kimlik ve iletişim alanları. Seçicilerde pasif cariler gizlenir."""
     query = {"company_id": company_id}
     if type and type != "all":
         query["type"] = type
-    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "city": 1, "district": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1, "balance": 1, "company_title": 1} if lite else None
+    show_inactive = include_inactive if include_inactive is not None else (not lite)
+    if not show_inactive:
+        query["is_active"] = {"$ne": False}
+    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "city": 1, "district": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1, "balance": 1, "company_title": 1, "is_active": 1} if lite else None
     contacts = await db.contacts.find(query, proj).sort("name", 1).to_list(5000 if lite else 10000)
     docs = clean_docs(contacts)
     if not lite:
@@ -3306,6 +3315,8 @@ async def get_contact(contact_id: str):
 @api_router.put("/contacts/{contact_id}")
 async def update_contact(contact_id: str, updated: Dict[str, Any]):
     updated = {k: v for k, v in updated.items() if k not in ("id", "_id", "company_id", "balance", "b2b_token", "b2b_password_hash", "created_at")}
+    if "is_active" in updated:
+        updated["is_active"] = updated.get("is_active") not in (False, 0, "0", "false", "False", None)
     if updated.get("b2b_password"):
         updated["b2b_password_hash"] = hash_password(str(updated.pop("b2b_password")))
     else:
@@ -3319,6 +3330,10 @@ async def delete_contact(contact_id: str):
     c = await db.contacts.find_one({"_id": contact_id})
     if not c:
         raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    counts = await contact_activity.contact_activity_counts(db, contact_id)
+    msg = contact_activity.activity_block_message(counts, balance=c.get("balance") or 0)
+    if msg:
+        raise HTTPException(status_code=400, detail=msg)
     await trash.soft_delete("contacts", c, "contact", c.get("name"), note=f"Bakiye: {float(c.get('balance') or 0):,.2f} ₺")
     return {"status": "success", "message": "Cari çöp kutusuna taşındı."}
 
@@ -3618,6 +3633,8 @@ async def b2b_login(req: Dict[str, Any], request: Request):
     if not c or not c.get("b2b_password_hash") or not verify_password(pwd, c["b2b_password_hash"]):
         applog.log_auth("b2b_login_failed", ident, email=ident, ip=applog.client_ip(request), user_email=ident)
         raise HTTPException(status_code=401, detail="Bilgiler hatalı ya da B2B erişiminiz tanımlı değil. Tedarikçinizle iletişime geçin.")
+    if c.get("is_active") is False:
+        raise HTTPException(status_code=403, detail="Cari hesap pasif. B2B girişi kapalı.")
     company = await db.companies.find_one({"_id": c["company_id"]}) or {}
     bs = resolve_b2b_settings(company, c)
     if not bs.get("enabled", True):
@@ -4281,7 +4298,7 @@ def _b2b_catalog_product(p: Dict[str, Any], disc: float) -> Dict[str, Any]:
 
 async def _b2b_contact(token: str) -> Dict[str, Any]:
     c = await db.contacts.find_one({"b2b_token": token})
-    if not c or not c.get("b2b_enabled", False):
+    if not c or not c.get("b2b_enabled", False) or c.get("is_active") is False:
         raise HTTPException(status_code=404, detail="B2B erişimi bulunamadı veya kapatılmış.")
     return c
 
