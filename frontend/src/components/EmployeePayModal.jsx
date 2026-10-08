@@ -20,8 +20,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
   const lines = useMemo(() => employeeDueLines(card?.balance, employee), [card?.balance, employee]);
   const [mode, setMode] = useState(() => employeePayModalStart(initialKind, employeeDueLines(card?.balance, employee)).mode);
   const [selected, setSelected] = useState(() => employeePayModalStart(initialKind, employeeDueLines(card?.balance, employee)).selected);
-  const [date, setDate] = useState(() => e.pay_start_date || todayIsoDate());
-  const [recurring, setRecurring] = useState(e.pay_recurring !== false);
+  const [date, setDate] = useState(() => todayIsoDate());
   const [accountId, setAccountId] = useState("");
   const [advance, setAdvance] = useState("");
   const [newExp, setNewExp] = useState({ amount: "", category: "Personel Masrafı", description: "" });
@@ -41,7 +40,7 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
 
   const submit = async (ev) => {
     ev.preventDefault();
-    if (!date) { toast.error("Hak ediş tarihi girin."); return; }
+    if (!date) { toast.error("Ödeme tarihi girin."); return; }
     if (!accountId) { toast.error("Kasa / banka veya ortak hesabı seçin."); return; }
     const payKinds = employeePayKindsForSubmit(mode, lines, selected);
     if (!payKinds.length && !Number(advance) && !Number(newExp.amount)) {
@@ -54,7 +53,6 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
         mode,
         kinds: payKinds,
         date,
-        recurring,
         ...splitPaymentTarget(accountId),
       };
       if (Number(advance) > 0) body.advance = Number(advance);
@@ -98,17 +96,11 @@ export const EmployeePayModal = ({ employee, companyId, accounts, card, initialK
             ))}
           </div>
         )}
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="block font-semibold mb-1">Hak ediş tarihi</label>
-            <input type="date" required value={date} onChange={(ev) => setDate(ev.target.value)} className={inputCls} data-testid="emp-pay-date" />
-          </div>
-          <label className="flex items-center gap-2 mt-5 text-slate-700">
-            <input type="checkbox" checked={recurring} onChange={(ev) => setRecurring(ev.target.checked)} data-testid="emp-pay-recurring" />
-            Her ay tekrarla
-          </label>
+        <div>
+          <label className="block font-semibold mb-1">Ödeme tarihi</label>
+          <input type="date" required value={date} onChange={(ev) => setDate(ev.target.value)} className={inputCls} data-testid="emp-pay-date" />
+          <p className="text-[10px] text-slate-400 mt-1">Varsayılan bugün. Hak edişten önce ödeme kalan alacağı eksiye düşürebilir.</p>
         </div>
-        <p className="text-[11px] text-slate-500">Hak ediş tarihinde maaş, yemek ve yol yazılır. Her ay tekrarla açıksa sonraki ayların aynı gününde tekrarlanır.</p>
         <div className="grid grid-cols-2 gap-2 border-t pt-2">
           <div>
             <label className="block font-semibold mb-1">Avans (₺)</label>

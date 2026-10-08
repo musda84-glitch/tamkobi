@@ -16581,7 +16581,6 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
                 slots = []
             if any(per == month for per, _due in slots):
                 unpaid_payroll = round(_emp_num(emp.get("salary")), 2)
-    remaining = round(unpaid_payroll + unpaid_expenses + meal_due + transport_due + bonus_pending - extra_advance - bakiye_paid, 2)
     ot_earned = round(_emp_num(emp.get("_overtime_pay")), 2)
     ot_hours = round(_emp_num(emp.get("_overtime_hours")), 2)
     ot_paid = round(sum(
@@ -16593,6 +16592,12 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
         if str(p.get("period") or "").startswith(month) and p.get("status") != "rejected"
     ), 2)
     overtime_due = round(max(0.0, ot_earned - ot_paid - ot_in_payroll), 2)
+    # Mesai hesaplanınca alacağa yazılır; avans/erken ödeme kalanı eksiye çekebilir.
+    remaining = round(
+        unpaid_payroll + unpaid_expenses + meal_due + transport_due + bonus_pending + overtime_due
+        - extra_advance - bakiye_paid,
+        2,
+    )
     return {
         "remaining": remaining, "unpaid_payroll": unpaid_payroll, "unpaid_expenses": unpaid_expenses,
         "meal_due": meal_due, "transport_due": transport_due, "bonus_pending": bonus_pending, "advances": extra_advance,
@@ -16833,23 +16838,16 @@ async def employee_card(emp_id: str):
 
 @api_router.post("/personnel/employees/{emp_id}/settle")
 async def settle_employee(emp_id: str, req: Dict[str, Any]):
-    """Karttan tek seferde veya kalem kalem personel alacağı öde; hak ediş tarihi + aylık tekrar kaydet."""
+    """Karttan tek seferde veya kalem kalem personel alacağı öde.
+
+    Ödeme tarihi hareket kaydına yazılır; personelin hak ediş (pay_start_date /
+    pay_recurring) ayarlarına dokunulmaz — bunlar ücret formundan yönetilir.
+    """
     emp = await db.employees.find_one({"_id": emp_id})
     if not emp:
         raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
     payload = req or {}
-    pay_date = attendance._ymd(payload.get("date") or payload.get("pay_start_date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    fields = employee_pay.prepare_employee_pay({
-        "pay_start_date": pay_date,
-        "pay_recurring": payload["recurring"] if "recurring" in payload else emp.get("pay_recurring", True),
-    })
-    await db.employees.update_one({"_id": emp_id}, {"$set": {
-        "pay_start_date": fields.get("pay_start_date"),
-        "pay_day": fields.get("pay_day"),
-        "pay_recurring": fields.get("pay_recurring"),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }})
-    emp = {**emp, **fields}
+    pay_date = attendance._ymd(payload.get("date")) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     month = pay_date[:7]
     company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
     ot = await attendance.overtime_pay_for_period(company, emp, month)
@@ -16957,7 +16955,6 @@ async def settle_employee(emp_id: str, req: Dict[str, Any]):
         "status": "success",
         "paid": paid,
         "date": pay_date,
-        "recurring": fields.get("pay_recurring"),
         "message": f"{emp.get('full_name')} için {len(paid)} ödeme kalemi işlendi.",
     }
 

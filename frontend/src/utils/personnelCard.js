@@ -20,10 +20,9 @@ export function remainingDue(balance, unpaidFallback = 0) {
   return unpaidFallback;
 }
 
-/** Liste / kart Öde butonu: kalan alacak + fazla mesai. */
+/** Liste / kart Öde butonu: kalan alacak (mesai bakiyeye dahil). */
 export function employeePayButtonDue(emp) {
-  const remaining = remainingDue(emp?.balance);
-  return remaining + overtimeDue(emp?.balance);
+  return remainingDue(emp?.balance);
 }
 
 export function employeePayButtonLabel(emp) {
