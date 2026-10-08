@@ -24,7 +24,8 @@ import { QuickMessageModal, TEMPLATES } from "../components/QuickMessageModal";
 import { PrintDocument, PrintTemplateEditor } from "../components/PrintDocument";
 import { InvoicePrintShareModal } from "../components/InvoicePrintShareModal";
 import { usePersistedColumnWidths } from "../hooks/usePersistedColumnWidths";
-import { resolveImageUrl } from "../utils/imageUrl";
+import { listImageUrl } from "../utils/imageUrl";
+import { orderLineListImageUrl } from "../utils/productImages";
 import { Printer, Tag, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Factory } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
 import { printMiniInvoices, printMiniInvoicesFromIntegrator } from "../utils/miniInvoicePrint";
@@ -48,6 +49,7 @@ import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
 import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
+import { hydratePrintItemImages, mergeInvoiceItemsIntoOrder } from "../utils/printOrderDoc";
 import { eBelgeMenuItems, orderEBelgeType } from "../utils/orderEBelge";
 import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued, orderGibInvoiceNumber } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
@@ -56,6 +58,7 @@ import { BulkEInvoiceConfirmModal } from "../components/BulkEInvoiceConfirmModal
 import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
+import { OrderLineStockModal } from "../components/OrderLineStockModal";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import {
@@ -640,7 +643,20 @@ export default function OrdersB2BPage() {
   const [produceFromOrder, setProduceFromOrder] = useState(null);
   const [produceBusyId, setProduceBusyId] = useState(null);
   const [produceRecipeOrd, setProduceRecipeOrd] = useState(null);
+  const [lineStock, setLineStock] = useState(null);
   const productCatalog = allProducts.length ? allProducts : products;
+  const openOrderLineStock = (ord, it, idx) => {
+    const resolved = resolveOrderLineProduct(it, productCatalog);
+    setLineStock({ order: ord, item: it, itemIndex: idx, product: resolved });
+    if (resolved?.id || resolved?._id) {
+      // Lite listede eksik alan varsa tam kartı çek
+      axios.get(`${API_URL}/products/${encodeURIComponent(resolved.id || resolved._id)}`)
+        .then((r) => {
+          if (r.data) setLineStock((prev) => (prev && prev.itemIndex === idx ? { ...prev, product: r.data } : prev));
+        })
+        .catch(() => {});
+    }
+  };
   const openProduceForLine = (ord, it, idx) => {
     const p = resolveOrderLineProduct(it, productCatalog);
     if (!p) {
@@ -706,6 +722,55 @@ export default function OrdersB2BPage() {
       toast.error(err.response?.data?.detail || "Taslak fatura oluşturulamadı.");
     }
   };
+
+  /** Sipariş formu yazdır: varsa fatura kalemlerini (güncel ad/ürün) kullan; görselleri stoktan bas. */
+  const openPrintOrder = useCallback(async (ord) => {
+    if (!ord) return;
+    let doc = ord;
+    const invId = ord.invoice_id;
+    if (invId) {
+      try {
+        const r = await axios.get(`${API_URL}/invoices/${invId}`);
+        doc = mergeInvoiceItemsIntoOrder(ord, r.data) || ord;
+      } catch {
+        doc = ord;
+      }
+    }
+    const items = doc.items || [];
+    const missingImg = items.some((it) => !(it.image_url || it.thumbnail_url));
+    if (missingImg && items.length) {
+      try {
+        const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+        const ids = [...new Set(items.map((it) => it.product_id).filter(Boolean))];
+        const skus = [...new Set(items.map((it) => String(it.sku || "").trim()).filter(Boolean))];
+        let products = [];
+        if (ids.length || skus.length) {
+          const qs = new URLSearchParams({ company_id: companyId, lite: "1" });
+          if (ids.length) qs.set("ids", ids.join(","));
+          if (skus.length) qs.set("skus", skus.join(","));
+          const r = await axios.get(`${API_URL}/products?${qs}`);
+          products = Array.isArray(r.data) ? r.data : [];
+        }
+        const stillMissing = hydratePrintItemImages(items, products).some((it) => !(it.image_url || it.thumbnail_url));
+        if (stillMissing) {
+          const all = await axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`);
+          const extra = Array.isArray(all.data) ? all.data : [];
+          const seen = new Set(products.map((p) => p.id || p._id));
+          extra.forEach((p) => {
+            const id = p.id || p._id;
+            if (id && !seen.has(id)) {
+              seen.add(id);
+              products.push(p);
+            }
+          });
+        }
+        doc = { ...doc, items: hydratePrintItemImages(items, products) };
+      } catch {
+        /* yazdırma yine açılsın */
+      }
+    }
+    setPrintOrder(doc);
+  }, [activeCompany]);
 
   /** Faturalaştır → cariye işlenmiş fatura (yeşil). E-belge ayrıca kesilir. */
   const handleFaturalastir = async (ord) => {
@@ -932,7 +997,7 @@ export default function OrdersB2BPage() {
         setLabelOrder(ord);
         return;
       case "print_form":
-        setPrintOrder(ord);
+        openPrintOrder(ord);
         return;
       case "notify":
         setNotifyOrder(ord);
@@ -1327,6 +1392,29 @@ export default function OrdersB2BPage() {
       )}
       {autoShip && <AutoShipModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAutoShip(false)} onDone={loadData} />}
       {aiImport && <AiOrderImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiImport(false)} onSaved={loadData} />}
+      {lineStock && (
+        <OrderLineStockModal
+          order={lineStock.order}
+          item={lineStock.item}
+          itemIndex={lineStock.itemIndex}
+          product={lineStock.product}
+          products={productCatalog}
+          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          onClose={() => setLineStock(null)}
+          onMatched={(updated) => {
+            if (updated) {
+              setOrders((prev) => prev.map((o) => ((o.id || o._id) === (updated.id || updated._id) ? { ...o, ...updated } : o)));
+            } else {
+              loadData();
+            }
+          }}
+          onProductUpdated={() => {
+            axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`)
+              .then((r) => setAllProducts(r.data || []))
+              .catch(() => {});
+          }}
+        />
+      )}
 
       {activeTab === "orders" ? (<>
         <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} rows={visibleOrders} selectedCount={selected.length} bulkBusy={bulkBusy} onBulkAction={bulk} />
@@ -1384,7 +1472,7 @@ export default function OrdersB2BPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setPrintOrder(ord)}
+                        onClick={() => openPrintOrder(ord)}
                         className={printOrderButtonClass(ord)}
                         title={printOrderTitle(ord)}
                         data-testid={`print-order-mobile-${ord.order_number}`}
@@ -1430,7 +1518,7 @@ export default function OrdersB2BPage() {
                       ) : null}
                       <button
                         type="button"
-                        onClick={() => setPrintOrder(ord)}
+                        onClick={() => openPrintOrder(ord)}
                         className={printOrderButtonClass(ord)}
                         title={printOrderTitle(ord)}
                         data-testid={`print-order-mobile-${ord.order_number}`}
@@ -1510,6 +1598,15 @@ export default function OrdersB2BPage() {
                         >
                           {orderStatusLabel(ord, statusTr(ord.order_status))}
                         </span>
+                        {(ord.payment_method || ord.bank_name) ? (
+                          <span
+                            className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-800 max-w-[14rem] truncate"
+                            title={[ord.payment_method, ord.bank_name].filter(Boolean).join(" · ")}
+                            data-testid={`order-payment-${ord.order_number}`}
+                          >
+                            {ord.payment_method || ord.bank_name}
+                          </span>
+                        ) : null}
                       </div>
                     </td>
                     <td className="px-4 py-3 cursor-pointer group overflow-hidden" onClick={() => goContact(ord)} title="Cariye git" data-testid={`order-customer-${ord.order_number}`}>
@@ -1517,18 +1614,25 @@ export default function OrdersB2BPage() {
                       <div className="text-[11px] text-slate-400">{ord.city}</div>
                     </td>
                     <td className="px-4 py-3 align-top overflow-hidden">
-                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it) => { const p = productCatalog.find((x) => (it.product_id && (x.id === it.product_id || x._id === it.product_id)) || (it.sku && x.sku === it.sku)); return resolveImageUrl(it.image_url || p?.image_url); }; return (
+                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it, p) => listImageUrl(orderLineListImageUrl(it, p), open ? 80 : 48); return (
                         <div data-testid={`order-items-${ord.order_number}`}>
                           <div className={open ? "flex flex-col gap-1 max-h-64 overflow-y-auto pr-1 mb-1.5" : "space-y-1"}>
                           {shown.map((it, idx) => {
                             const lineProd = resolveOrderLineProduct(it, productCatalog);
                             const canProduce = orderLineCanProduce(lineProd);
+                            const thumb = img(it, lineProd);
                             return (
                             <div key={idx} className={`flex items-center gap-2 ${open ? `rounded-lg p-1.5 ${idx % 2 === 0 ? "bg-slate-50" : "bg-emerald-50/80"}` : ""}`}>
-                              {img(it) ? <img src={img(it)} alt="" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
-                              <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`); }} className="text-left min-w-0 flex-1 text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
+                              {thumb ? <img src={thumb} alt="" width={open ? 40 : 32} height={open ? 40 : 32} loading="lazy" decoding="async" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); openOrderLineStock(ord, it, idx); }}
+                                className={`text-left min-w-0 flex-1 hover:underline decoration-dotted ${lineProd ? "text-slate-700 hover:text-indigo-700" : "text-amber-800 hover:text-amber-900"}`}
+                                title={lineProd ? "Stok kartını aç" : "Stok kartına eşleştir"}
+                                data-testid={`order-item-link-${ord.order_number}-${idx}`}
+                              >
                                 <div className={`${open ? "font-semibold" : ""} truncate`}>{it.quantity}x {it.product_name || it.name}</div>
-                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{showPrices && it.unit_price != null ? `${formatTrAmount(Number(it.unit_price))} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
+                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{showPrices && it.unit_price != null ? `${formatTrAmount(Number(it.unit_price))} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}{!lineProd ? " · eşleşmedi" : ""}</div>}
                               </button>
                               {canProduce ? (
                                 <button
@@ -1602,7 +1706,7 @@ export default function OrdersB2BPage() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setPrintOrder(ord)}
+                              onClick={() => openPrintOrder(ord)}
                               className={printOrderButtonClass(ord)}
                               title={printOrderTitle(ord)}
                               aria-label={printOrderTitle(ord)}
@@ -1766,7 +1870,7 @@ export default function OrdersB2BPage() {
                         ) : null}
                         <button
                           type="button"
-                          onClick={() => setPrintOrder(ord)}
+                          onClick={() => openPrintOrder(ord)}
                           className={printOrderButtonClass(ord)}
                           title={printOrderTitle(ord)}
                           aria-label={printOrderTitle(ord)}

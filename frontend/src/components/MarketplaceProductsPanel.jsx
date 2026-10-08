@@ -2,9 +2,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { RefreshCw, Upload, Link2, Loader2, Search, PackagePlus, AlertTriangle } from "lucide-react";
+import { RefreshCw, Upload, Link2, Loader2, Search, PackagePlus, AlertTriangle, Sparkles } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { SearchSelect } from "./SearchSelect";
+import {
+  fillMarketplaceMatchSuggestions,
+  matchSuggestionLabel,
+  suggestMarketplaceProductMatches,
+} from "../utils/marketplaceProductMatch";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 // Adı ve yönelme hâli ayrı: "Trendyol'a" ile "web sitesine" aynı ekten türemiyor.
@@ -14,6 +20,7 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [channel, setChannel] = useState("trendyol");
   const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
   const [sel, setSel] = useState([]);
@@ -32,6 +39,7 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
   }, [companyId, channel]);
   useEffect(() => { load(); }, [load]);
 
+  const products = d?.products || [];
   const rows = useMemo(() => (d?.rows || []).filter((r) => {
     if (filter === "unmatched" && r.product_id) return false;
     if (filter === "price_diff" && !(r.price_diff && Math.abs(r.price_diff) >= 0.01)) return false;
@@ -39,6 +47,16 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
     const s = q.trim().toLowerCase();
     return !s || (r.title || "").toLowerCase().includes(s) || (r.barcode || "").includes(s) || (r.stock_code || "").toLowerCase().includes(s) || (r.product_name || "").toLowerCase().includes(s);
   }), [d, filter, q]);
+
+  const unmatchedRows = useMemo(() => rows.filter((r) => !r.product_id), [rows]);
+
+  const localSuggestions = useMemo(() => {
+    const map = {};
+    for (const r of unmatchedRows) {
+      map[r.barcode] = suggestMarketplaceProductMatches(r, products, { limit: 3, minScore: 0.45 });
+    }
+    return map;
+  }, [unmatchedRows, products]);
 
   const toggle = (bc) => setSel((s) => (s.includes(bc) ? s.filter((x) => x !== bc) : [...s, bc]));
   const push = async (fromStock) => {
@@ -59,14 +77,70 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
     try { const res = await axios.post(`${API_URL}/marketplace/products/push`, { company_id: companyId, channel, items: [{ barcode: r.barcode, stock_code: r.stock_code, active: active ? 1 : 0 }] }); toast.success(res.data.message); load(); loadLogs(); }
     catch (e) { toast.error(e.response?.data?.detail || "Satış durumu değiştirilemedi."); } finally { setBusy(false); }
   };
-  const match = async (r) => {
-    const pid = matchSel[r.barcode];
+  const match = async (r, productId) => {
+    const pid = productId || matchSel[r.barcode];
     if (!pid) { toast.error("Stok kartı seçin."); return; }
-    try { const res = await axios.post(`${API_URL}/marketplace/product-match`, { product_id: pid, alias: r.barcode }); toast.success(res.data.message); load(); } catch (e) { toast.error(e.response?.data?.detail || "Eşleştirilemedi."); }
+    try {
+      const res = await axios.post(`${API_URL}/marketplace/product-match`, { product_id: pid, alias: r.barcode });
+      toast.success(res.data.message);
+      setMatchSel((cur) => {
+        const next = { ...cur };
+        delete next[r.barcode];
+        return next;
+      });
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Eşleştirilemedi.");
+    }
   };
   const createCard = async (r) => {
     try { const res = await axios.post(`${API_URL}/marketplace/product-create`, { company_id: companyId, product_name: r.title, barcode: r.barcode, sku: r.stock_code, sale_price: r.sale_price, stock_quantity: r.quantity, vat_rate: r.vat_rate || 20, category: r.category, channel }); toast.success(res.data.message); load(); }
     catch (e) { toast.error(e.response?.data?.detail || "Stok kartı oluşturulamadı."); }
+  };
+
+  const applyAiSuggestions = async ({ useAi = true } = {}) => {
+    if (!unmatchedRows.length) {
+      toast.info("Eşleşmeyen ürün yok.");
+      return;
+    }
+    setAiBusy(true);
+    try {
+      // Anında yerel skorla doldur
+      const local = fillMarketplaceMatchSuggestions(unmatchedRows, products, { minScore: 0.55 });
+      setMatchSel((cur) => ({ ...cur, ...local }));
+      let apiFilled = 0;
+      try {
+        const r = await axios.post(`${API_URL}/marketplace/product-match-suggest`, {
+          company_id: companyId,
+          use_ai: useAi,
+          min_score: 0.45,
+          limit: 3,
+          rows: unmatchedRows.map((row) => ({
+            barcode: row.barcode,
+            title: row.title,
+            stock_code: row.stock_code,
+            sku: row.stock_code,
+          })),
+        });
+        const next = {};
+        Object.entries(r.data?.suggestions || {}).forEach(([bc, list]) => {
+          const top = (list || [])[0];
+          if (top?.product_id && Number(top.score) >= 0.55) {
+            next[bc] = top.product_id;
+            apiFilled += 1;
+          }
+        });
+        if (apiFilled) setMatchSel((cur) => ({ ...cur, ...next }));
+        const mode = r.data?.mode === "ai" ? "AI" : "akıllı";
+        toast.success(`${Math.max(Object.keys(local).length, apiFilled)} ürün için ${mode} eşleşme önerisi dolduruldu — kontrol edip Eşle’ye basın.`);
+      } catch {
+        const n = Object.keys(local).length;
+        if (n) toast.success(`${n} ürün için akıllı öneri dolduruldu — kontrol edip Eşle’ye basın.`);
+        else toast.error("Uygun öneri bulunamadı. Arama ile stok kartı seçin.");
+      }
+    } finally {
+      setAiBusy(false);
+    }
   };
 
   const equalizeAll = async () => {
@@ -108,7 +182,7 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
     <div className="space-y-3" data-testid="marketplace-products-panel">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><select value={channel} onChange={(e) => { setChannel(e.target.value); setSel([]); setEdits({}); }} className="border rounded-lg p-1 text-xs" data-testid="mp-channel-select"><option value="trendyol">Trendyol</option><option value="shopphp">ShopPHP (Web Sitesi)</option></select> Ürünleri — Fiyat & Stok, Eşleşme</h3>
+          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2"><select value={channel} onChange={(e) => { setChannel(e.target.value); setSel([]); setEdits({}); setMatchSel({}); }} className="border rounded-lg p-1 text-xs" data-testid="mp-channel-select"><option value="trendyol">Trendyol</option><option value="shopphp">ShopPHP (Web Sitesi)</option></select> Ürünleri — Fiyat & Stok, Eşleşme</h3>
           <p className="text-[11px] text-slate-500">{d.live ? `Canlı · ${d.count} ürün · ${d.matched} eşleşmiş${d.push_supported === false ? " · XML servisi salt-okunur (fiyat/stok gönderimi yok)" : ""}` : "Canlı bağlantı yok — E-Ticaret Entegrasyon ekranından API/XML bilgilerini girin."}{d.fetched_at ? ` · Son çekim ${new Date(d.fetched_at).toLocaleString("tr-TR")}` : ""}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -119,6 +193,18 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
         {[["all", "Tümü"], ["unmatched", "Eşleşmeyen"], ["price_diff", "Fiyat farkı"], ["stock_diff", "Stok farkı"]].map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className={`px-3 py-1.5 rounded-lg border font-semibold ${filter === k ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-200"}`} data-testid={`mp-filter-${k}`}>{l} ({counts[k]})</button>)}
         <div className="relative ml-auto"><Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ürün adı, marka, stok kodu, barkod…" className="pl-8 pr-3 py-2 bg-white border border-slate-200 rounded-xl w-60" data-testid="mp-search" /></div>
         <span className="text-slate-400">{rows.length} ürün</span>
+        <button
+          type="button"
+          onClick={() => applyAiSuggestions({ useAi: true })}
+          disabled={aiBusy || !unmatchedRows.length}
+          className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
+          title="Barkod/SKU/ad benzerliği + AI ile stok kartı önerilerini doldur"
+          data-testid="mp-ai-suggest-btn"
+        >
+          {aiBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+          AI eşleşme öner
+          {unmatchedRows.length ? ` (${unmatchedRows.length})` : ""}
+        </button>
         <div className="flex items-center gap-1 border-l pl-2"><input type="number" min="0" value={bulkQty} onChange={(e) => setBulkQty(e.target.value)} placeholder="Toplu stok" className="w-24 bg-white border border-slate-200 rounded-lg p-1.5" data-testid="mp-bulk-qty" /><button onClick={applyBulkQty} className="px-2 py-1.5 border border-slate-200 bg-white rounded-lg font-semibold" data-testid="mp-bulk-apply">Tümüne Uygula</button></div>
         <div className="flex items-center gap-1 border-l pl-2 text-[10px] text-slate-500">Stok kaynağı: {[["marketplace", "Pazaryeri"], ["crm", "Stok Kartı"]].map(([k, l]) => <button key={k} onClick={() => setStockSrc(k)} className={`px-2 py-1 rounded-lg border text-xs font-semibold ${stockSrc === k ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-white border-slate-200 text-slate-600"}`} data-testid={`mp-stocksrc-${k}`}>{l}</button>)}</div>
         {d.push_supported !== false && <button onClick={() => push(stockSrc === "crm")} disabled={busy || !sel.length} className="px-3 py-1.5 bg-amber-500 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="mp-send-btn"><Upload className="w-3.5 h-3.5" /> Stok/Fiyat Gönder{sel.length ? ` (${sel.length})` : ""}</button>}
@@ -138,10 +224,13 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
         <table className="w-full text-left text-xs text-slate-600">
           <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold text-[10px]"><tr>
             <th className="px-3 py-2.5 w-8"><input type="checkbox" checked={rows.length > 0 && sel.length === rows.length} onChange={(e) => setSel(e.target.checked ? rows.map((r) => r.barcode) : [])} data-testid="mp-select-all" /></th>
-            <th className="px-3 py-2.5">Görsel</th><th className="px-3 py-2.5">Ürün</th><th className="px-3 py-2.5">Marka / Kategori</th><th className="px-3 py-2.5">Stok Kodu</th><th className="px-3 py-2.5">Stok Kartı</th><th className="px-3 py-2.5 text-right">Stok</th><th className="px-3 py-2.5 text-right">Pazaryeri Stoğu</th><th className="px-3 py-2.5 text-right">Fiyat</th><th className="px-3 py-2.5 text-right">Yeni Fiyat</th><th className="px-3 py-2.5">Durum</th></tr></thead>
+            <th className="px-3 py-2.5">Görsel</th><th className="px-3 py-2.5">Ürün</th><th className="px-3 py-2.5">Marka / Kategori</th><th className="px-3 py-2.5">Stok Kodu</th><th className="px-3 py-2.5 min-w-[280px]">Stok Kartı</th><th className="px-3 py-2.5 text-right">Stok</th><th className="px-3 py-2.5 text-right">Pazaryeri Stoğu</th><th className="px-3 py-2.5 text-right">Fiyat</th><th className="px-3 py-2.5 text-right">Yeni Fiyat</th><th className="px-3 py-2.5">Durum</th></tr></thead>
           <tbody className="divide-y divide-slate-100">
             {rows.length === 0 && <tr><td colSpan={11} className="p-10 text-center text-slate-400" data-testid="mp-empty">{d.live ? "Bu filtrede ürün yok." : `Canlı ${ch.name} bağlantısı olmadan ürün listesi çekilemez.`}</td></tr>}
-            {rows.map((r) => (
+            {rows.map((r) => {
+              const sug = !r.product_id ? (localSuggestions[r.barcode] || []) : [];
+              const top = sug[0];
+              return (
               <tr key={r.barcode} className="hover:bg-slate-50/60" data-testid={`mp-row-${r.barcode}`}>
                 <td className="px-3 py-2"><input type="checkbox" checked={sel.includes(r.barcode)} onChange={() => toggle(r.barcode)} data-testid={`mp-select-${r.barcode}`} /></td>
                 <td className="px-3 py-2">{r.image ? <img src={r.image} alt="" className="w-10 h-10 rounded-lg object-cover border" /> : <div className="w-10 h-10 rounded-lg bg-slate-100" />}</td>
@@ -149,10 +238,49 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
                 <td className="px-3 py-2"><div className="font-semibold text-slate-700">{r.brand || "—"}</div><div className="text-[10px] text-slate-400">{r.category || ""}</div></td>
                 <td className="px-3 py-2 font-mono text-[11px]">{r.stock_code || "—"}</td>
                 <td className="px-3 py-2">{r.product_id ? <span className="inline-flex items-center gap-1 text-emerald-700" title={r.product_name}><Link2 className="w-3 h-3" /> <span className="line-clamp-1 max-w-[140px]">{r.product_name}</span></span> : (
-                  <div className="flex items-center gap-1">
-                    <select value={matchSel[r.barcode] || ""} onChange={(e) => setMatchSel({ ...matchSel, [r.barcode]: e.target.value })} className="bg-amber-50 border border-amber-200 rounded-lg p-1 w-32" data-testid={`mp-match-select-${r.barcode}`}><option value="">Eşleştir…</option>{d.products.map((p) => <option key={p.id} value={p.id}>{p.sku ? `${p.name} (${p.sku})` : p.name}</option>)}</select>
-                    <button onClick={() => match(r)} className="px-2 py-1 bg-slate-900 text-white rounded-lg font-semibold" data-testid={`mp-match-btn-${r.barcode}`}>Eşle</button>
-                    <button onClick={() => createCard(r)} className="px-2 py-1 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1" title={`${ch.name} bilgileriyle stok kartı oluştur`} data-testid={`mp-create-btn-${r.barcode}`}><PackagePlus className="w-3 h-3" /> Kart Aç</button>
+                  <div className="space-y-1 min-w-[260px]" data-testid={`mp-match-box-${r.barcode}`}>
+                    {top ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const pid = top.product.id || top.product._id;
+                          setMatchSel((cur) => ({ ...cur, [r.barcode]: pid }));
+                        }}
+                        className="inline-flex items-center gap-1 max-w-full px-1.5 py-0.5 rounded-md bg-violet-50 border border-violet-200 text-[10px] font-semibold text-violet-800 hover:bg-violet-100"
+                        title={`${top.product.name} — tıkla seç`}
+                        data-testid={`mp-ai-chip-${r.barcode}`}
+                      >
+                        <Sparkles className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{matchSuggestionLabel(top.score)}: {top.product.name}</span>
+                      </button>
+                    ) : null}
+                    <div className="flex items-center gap-1">
+                      <SearchSelect
+                        value={matchSel[r.barcode] || ""}
+                        onChange={(id) => setMatchSel({ ...matchSel, [r.barcode]: id })}
+                        options={products}
+                        placeholder="Eşleştir… ara"
+                        searchPlaceholder="Ad, SKU veya barkod ara…"
+                        getLabel={(p) => p.name}
+                        getSub={(p) => [p.sku, p.barcode].filter(Boolean).join(" · ")}
+                        getImage={(p) => p.image_url}
+                        className="w-44 [&_button]:bg-amber-50 [&_button]:border-amber-200"
+                        testId={`mp-match-select-${r.barcode}`}
+                      />
+                      <button onClick={() => match(r)} className="px-2 py-1 bg-slate-900 text-white rounded-lg font-semibold shrink-0" data-testid={`mp-match-btn-${r.barcode}`}>Eşle</button>
+                      {top ? (
+                        <button
+                          type="button"
+                          onClick={() => match(r, top.product.id || top.product._id)}
+                          className="px-2 py-1 bg-violet-600 text-white rounded-lg font-semibold shrink-0"
+                          title="AI önerisini doğrudan eşle"
+                          data-testid={`mp-ai-match-btn-${r.barcode}`}
+                        >
+                          AI Eşle
+                        </button>
+                      ) : null}
+                      <button onClick={() => createCard(r)} className="px-2 py-1 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 shrink-0" title={`${ch.name} bilgileriyle stok kartı oluştur`} data-testid={`mp-create-btn-${r.barcode}`}><PackagePlus className="w-3 h-3" /> Kart Aç</button>
+                    </div>
                   </div>)}</td>
                 <td className={`px-3 py-2 text-right font-bold ${r.local_stock != null && r.local_stock <= 0 ? "text-rose-600" : "text-slate-900"}`}>{r.local_stock != null ? r.local_stock : "—"}</td>
                 <td className="px-3 py-2 text-right"><div className="inline-flex items-center gap-1.5"><input type="number" step="1" value={edits[r.barcode]?.qty ?? r.quantity} onChange={(e) => { setEdits({ ...edits, [r.barcode]: { ...edits[r.barcode], qty: Number(e.target.value) } }); if (!sel.includes(r.barcode)) toggle(r.barcode); }} className={`w-16 text-right bg-slate-50 border rounded-lg p-1 ${r.stock_diff && Math.abs(r.stock_diff) >= 1 ? "border-amber-400" : ""}`} data-testid={`mp-qty-input-${r.barcode}`} /></div></td>
@@ -162,7 +290,9 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
                   {channel === "shopphp" && d.push_supported !== false && (r.is_variant
                     ? <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[10px] font-semibold" title="Varyasyonlu ürünlerin satış durumu mağaza panelinden değiştirilir">Varyasyon</span>
                     : <button onClick={() => setActive(r, !r.on_sale)} disabled={busy} className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border disabled:opacity-50 ${r.on_sale ? "bg-white border-rose-200 text-rose-700" : "bg-white border-emerald-200 text-emerald-700"}`} data-testid={`mp-active-toggle-${r.barcode}`}>{r.on_sale ? "Satıştan Kaldır" : "Satışa Aç"}</button>)}</div></td>
-              </tr>))}
+              </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

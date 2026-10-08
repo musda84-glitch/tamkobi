@@ -9,6 +9,48 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import HTTPException
 
+from line_totals import enrich_items
+
+# Müşteriye gösterilen / XML'deki birim fiyat KDV dahildir.
+VAT_INCL_CHANNELS = frozenset({
+    "shopphp", "trendyol", "hepsiburada", "n11", "amazon",
+    "ciceksepeti", "shopify", "woocommerce",
+})
+
+
+def normalize_marketplace_order_prices(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Pazaryeri satırlarını net/brüt ayır; sipariş toplamlarını KDV dahil ödeme ile hizala.
+
+    ShopPHP FIYAT / Trendyol price müşterinin ödediği KDV dahil tutardır.
+    Saklanan unit_price her zaman KDV hariç; unit_price_incl + total_incl brüttür.
+    """
+    if not isinstance(doc, dict):
+        return doc
+    ch = str(doc.get("channel") or "").lower()
+    items = list(doc.get("items") or [])
+    if not items:
+        return doc
+    force = ch in VAT_INCL_CHANNELS
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        if force or it.get("price_includes_vat"):
+            it["price_includes_vat"] = True
+    enrich_items(items, price_mode="excl", default_vat=20.0)
+    doc["items"] = items
+    subtotal = round(sum(float(it.get("total") or 0) for it in items), 2)
+    vat_total = round(sum(float(it.get("vat_amount") or 0) for it in items), 2)
+    grand = round(sum(float(it.get("total_incl") or 0) for it in items), 2)
+    doc["subtotal"] = subtotal
+    doc["vat_total"] = vat_total
+    paid = float(doc.get("total_amount") or doc.get("gross_total") or 0)
+    if paid > 0 and abs(paid - grand) <= 0.05:
+        doc["grand_total"] = round(paid, 2)
+    else:
+        doc["grand_total"] = grand
+        doc["total_amount"] = grand
+    return doc
+
 # Trendyol QnA: cevaplanmayan soru süresi doldu (POST …/answers → 400).
 TY_QNA_TIME_LIMIT_KEY = "business.rule.question.unanswered.time.limit"
 TY_QNA_TIME_LIMIT_MSG = (
@@ -290,7 +332,8 @@ def map_trendyol_order(pkg: dict, company_id: str, channel: str) -> dict:
     inv = pkg.get("invoiceAddress") or {}
     lines = pkg.get("lines") or []
     items = [{"product_name": l.get("productName"), "sku": l.get("merchantSku") or l.get("sku"), "barcode": l.get("barcode"), "quantity": l.get("quantity", 1), "unit_price": float(l.get("price") or 0),
-              "total": round(float(l.get("price") or 0) * int(l.get("quantity") or 1), 2), "line_id": l.get("id"), "order_line_id": l.get("orderLineId"), "line_status": l.get("orderLineItemStatusName"), "vat_rate": l.get("vatBaseAmount") and 20} for l in lines]
+              "total": round(float(l.get("price") or 0) * int(l.get("quantity") or 1), 2), "line_id": l.get("id"), "order_line_id": l.get("orderLineId"), "line_status": l.get("orderLineItemStatusName"),
+              "vat_rate": l.get("vatBaseAmount") and 20, "price_includes_vat": True} for l in lines]
     ty_status = pkg.get("shipmentPackageStatus") or pkg.get("status") or "Created"
     return {"company_id": company_id, "channel": channel, "order_number": str(pkg.get("orderNumber")), "external_id": str(pkg.get("id")), "shipment_package_id": pkg.get("id"),
             "customer_name": f"{pkg.get('customerFirstName', '')} {pkg.get('customerLastName', '')}".strip() or addr.get("fullName"), "customer_email": pkg.get("customerEmail"),
@@ -629,7 +672,19 @@ def map_shopphp_xml_order(s: ET.Element, company_id: str, channel: str) -> dict:
     for ln in s.findall("SATIRLAR/SATIR"):
         qty = _xf(ln, "MIKTAR", 1) or 1; price = _xf(ln, "FIYAT")
         var = " / ".join(v for v in (_xt(ln, "VAR1"), _xt(ln, "VAR2")) if v)
-        items.append({"product_id": _xt(ln, "URUN_ID"), "product_name": _xt(ln, "ADI") + (f" ({var})" if var else ""), "sku": _xt(ln, "VARKOD") or _xt(ln, "KOD"), "barcode": _xt(ln, "VARBARKOD") or _xt(ln, "UBARKOD"), "quantity": int(round(qty)), "unit_price": price, "total": round(qty * price, 2), "vat_rate": _xf(ln, "KDV", 20), "variant": var, "desi": _xf(ln, "DESI")})
+        items.append({
+            "product_id": _xt(ln, "URUN_ID"),
+            "product_name": _xt(ln, "ADI") + (f" ({var})" if var else ""),
+            "sku": _xt(ln, "VARKOD") or _xt(ln, "KOD"),
+            "barcode": _xt(ln, "VARBARKOD") or _xt(ln, "UBARKOD"),
+            "quantity": int(round(qty)),
+            "unit_price": price,
+            "total": round(qty * price, 2),
+            "vat_rate": _xf(ln, "KDV", 20),
+            "price_includes_vat": True,  # ShopPHP FIYAT müşterinin ödediği KDV dahil tutar
+            "variant": var,
+            "desi": _xf(ln, "DESI"),
+        })
     status_no = _xt(s, "DURUM_NO", "2")
     date = _xt(s, "TARIH"); time_ = _xt(s, "ZAMAN", "00:00:00")
     try:

@@ -250,11 +250,16 @@ async def _enrich(doc: dict, company_id: str):
             if k:
                 idx[str(k).strip().lower()] = p
     names = {p["name"].strip().lower(): p for p in products if p.get("name")}
+    close_b2b_ids = set()
     for ln in doc["lines"]:
         if ln.get("product_id"):
             continue
         p = idx.get(str(ln.get("barcode") or "").lower()) or idx.get(str(ln.get("sku") or "").lower()) or names.get(str(ln.get("name") or "").lower())
         ln["product_id"], ln["product_name"], ln["auto_matched"] = (p["_id"], p["name"], True) if p else (None, None, False)
+        if p:
+            close_b2b_ids.add(p["_id"])
+    if close_b2b_ids:
+        await _db.products.update_many({"_id": {"$in": list(close_b2b_ids)}}, {"$set": {"show_in_b2b": False}})
     doc["matched_lines"] = sum(1 for l in doc["lines"] if l.get("product_id"))
     return doc
 
@@ -658,8 +663,12 @@ async def set_lines(doc_id: str, req: Dict[str, Any]):
         if 0 <= i < len(d["lines"]):
             p = await _db.products.find_one({"_id": m.get("product_id")}) if m.get("product_id") else None
             d["lines"][i].update({"product_id": p["_id"] if p else None, "product_name": p["name"] if p else None, "auto_matched": False})
-            if p and d["lines"][i].get("sku") and d["lines"][i]["sku"] not in (p.get("supplier_codes") or []):
-                await _db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"supplier_codes": d["lines"][i]["sku"]}})
+            if p:
+                # Eşleştirilen stok kartı B2B kataloğunda kapalı olsun.
+                prod_upd = {"$set": {"show_in_b2b": False}}
+                if d["lines"][i].get("sku") and d["lines"][i]["sku"] not in (p.get("supplier_codes") or []):
+                    prod_upd["$addToSet"] = {"supplier_codes": d["lines"][i]["sku"]}
+                await _db.products.update_one({"_id": p["_id"]}, prod_upd)
     d["matched_lines"] = sum(1 for l in d["lines"] if l.get("product_id"))
     await _db.incoming_edocs.update_one({"_id": doc_id}, {"$set": {"lines": d["lines"], "matched_lines": d["matched_lines"]}})
     return _clean(d)
@@ -672,7 +681,18 @@ async def create_product_from_line(doc_id: str, req: Dict[str, Any]):
     if not d or not (0 <= i < len(d["lines"])):
         raise HTTPException(status_code=404, detail="Satır bulunamadı.")
     ln = d["lines"][i]
-    p = await _deps["create_product"]({"company_id": d["company_id"], "product_name": ln["name"], "barcode": ln.get("barcode"), "sku": ln.get("sku"), "purchase_price": ln.get("unit_price"), "sale_price": round(float(ln.get("unit_price") or 0) * float(req.get("markup") or 1.4), 2), "vat_rate": int(ln.get("vat_rate") or 20), "category": req.get("category") or "Tedarik", "channel": "edoc"})
+    p = await _deps["create_product"]({
+        "company_id": d["company_id"],
+        "product_name": ln["name"],
+        "barcode": ln.get("barcode"),
+        "sku": ln.get("sku"),
+        "purchase_price": ln.get("unit_price"),
+        "sale_price": round(float(ln.get("unit_price") or 0) * float(req.get("markup") or 1.4), 2),
+        "vat_rate": int(ln.get("vat_rate") or 20),
+        "category": req.get("category") or "Tedarik",
+        "channel": "edoc",
+        "show_in_b2b": False,
+    })
     return await set_lines(doc_id, {"lines": [{"idx": i, "product_id": p["product"]["id"]}]})
 
 
@@ -701,6 +721,7 @@ async def ensure_products_for_unmatched(doc: dict, *, markup: float = 1.4) -> in
             "vat_rate": int(ln.get("vat_rate") or 20),
             "category": "Tedarik",
             "channel": "edoc",
+            "show_in_b2b": False,
         })
         pid = (p.get("product") or {}).get("id") or (p.get("product") or {}).get("_id")
         pname = (p.get("product") or {}).get("name") or name

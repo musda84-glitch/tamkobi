@@ -113,6 +113,7 @@ class ProductVariant(BaseModel):
     price: float = 0.0
     attributes: Dict[str, str] = {}  # {"Renk": "Mavi", "Beden": "L"}
     image_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
 
 class VariantOption(BaseModel):
     name: str  # Renk, Beden
@@ -140,6 +141,7 @@ class Product(BaseDocument):
     variant_options: List[VariantOption] = []
     variants: List[ProductVariant] = []
     image_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None  # Liste/kart küçük önizleme
     images: List[str] = []
     label_image_url: Optional[str] = None  # Barkod etiket tasarımında kullanılan görsel
     label_template_id: Optional[str] = None  # Etiket Tasarımı şablonu (label_templates._id)
@@ -204,12 +206,13 @@ class WarehouseTransfer(BaseDocument):
 
 # Faturalar (Satış, Alış, E-Fatura, E-Arşiv)
 class InvoiceItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     product_id: Optional[str] = None
     name: str
     quantity: float
     unit: str = "Adet"
     unit_price: float
-    unit_price_incl: float = 0.0
+    unit_price_incl: Optional[float] = 0.0
     vat_rate: int = 20
     discount_percent: float = 0.0
     discount_rate: float = 0.0
@@ -219,6 +222,8 @@ class InvoiceItem(BaseModel):
     is_service: bool = False
     sku: Optional[str] = ""
     barcode: Optional[str] = ""
+    # Stok kartı KDV dahil fiyat — _fill_stock_codes satıra yazar; yoksa kayıt 500 verirdi
+    price_includes_vat: Optional[bool] = None
     gtip: Optional[str] = None
     origin_country: Optional[str] = None
     net_weight: Optional[float] = None
@@ -238,6 +243,9 @@ class Invoice(BaseDocument):
     contact_id: str
     contact_name: str
     contact_tax_id: Optional[str] = None
+    shipping_address: Optional[str] = None
+    city: Optional[str] = None
+    customer_phone: Optional[str] = None
     issue_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     issue_time: Optional[str] = None  # HH:MM:SS (24 saat)
     due_date: Optional[str] = None

@@ -65,7 +65,7 @@ PROVIDERS = {
         "token_path": "/securedomain/oauth/token",
         "docs": "https://developer.qnb.com.tr/",  # portal Enpara ürününü de listeler; API host api.enpara.com
         "fields": ["access_token", "refresh_token", "client_id", "client_secret", "customer_number"],
-        "hint": "Hesap Hareketleri: POST /v1/account-statement JSON (startDateTime, endDateTime yyyy-MM-ddTHH:mm:ss+HH:mm; iban 26 hane zorunlu — resultCode 364737). status=SUCCESS çoğu zaman ticket üretir — hareket GET/POST /ticket ile alınır; SUCCESS boş ekstre değildir. /list kayıtlı hesap bakiyesi. Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır. Production IP 85.95.240.136. HTTP 405 METHOD NOT ALLOWED IP engeli değildir.",
+        "hint": "Hesap Hareketleri: POST /v1/account-statement JSON (startDateTime, endDateTime yyyy-MM-ddTHH:mm:ss+HH:mm; iban 26 hane zorunlu — resultCode 364737). status=SUCCESS çoğu zaman ticket üretir — hareket GET/POST /ticket ile alınır; SUCCESS boş ekstre değildir. /list kayıtlı hesap bakiyesi. Access Token, Refresh Token ve Client ID yalnızca sunucuda saklanır. Production IP 85.95.240.136 ve 85.95.240.184 (ikisi de whitelist). HTTP 405 METHOD NOT ALLOWED IP engeli değildir.",
     },
     "qnb": {
         "name": "QNB Open Banking",
@@ -2826,10 +2826,10 @@ async def _fetch_enpara_statement(conn: dict, since: datetime) -> Dict[str, Any]
         hint = (
             " HTTP 405 (METHOD NOT ALLOWED) IP engeli değildir. "
             "Hareket POST /v1/account-statement JSON (startDateTime, endDateTime) ile alınır. "
-            "Production çıkış 85.95.240.136 whitelist hatırlatmasıdır, 405 nedeni değil."
+            "Production çıkış 85.95.240.136 / 85.95.240.184 whitelist hatırlatmasıdır, 405 nedeni değil."
         )
     elif any(x in last_detail.lower() for x in ("your ip", "ip is not", "whitelist", "ip filtering")):
-        hint = " Sunucu IP’si Enpara portalında izinli değil (tamkobi.com çıkışı 85.95.240.136)."
+        hint = " Sunucu IP’si Enpara portalında izinli değil (tamkobi.com çıkışı 85.95.240.136 ve 85.95.240.184)."
     raise RuntimeError(f"Enpara hesap hareketi alınamadı.{hint} Son yanıt: {last_detail[:360]}")
 
 

@@ -114,7 +114,21 @@ def build_invoice_pdf(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
     c.setFont(PDF_FONT, 9)
     buyer_tax = buyer.get("tax_number_or_id") or buyer.get("tax_number") or inv.get("contact_tax_id") or "-"
     buyer_name = buyer.get("name") or inv.get("contact_name") or ""
-    for i, line in enumerate([buyer_name, f"VKN/TCKN: {buyer_tax}", f"{buyer.get('city') or ''}  {buyer.get('email') or ''}", buyer.get("phone") or ""]):
+    buyer_addr = (buyer.get("address") or inv.get("shipping_address") or inv.get("address") or "").strip()
+    if buyer_addr == "-":
+        buyer_addr = ""
+    buyer_city = (buyer.get("city") or inv.get("city") or "").strip()
+    if buyer_city == "-":
+        buyer_city = ""
+    buyer_phone = buyer.get("phone") or inv.get("customer_phone") or ""
+    buyer_lines = [
+        buyer_name,
+        f"VKN/TCKN: {buyer_tax}",
+        buyer_addr[:90] if buyer_addr else "",
+        f"{buyer_city}  {buyer.get('email') or ''}".strip(),
+        buyer_phone or "",
+    ]
+    for i, line in enumerate([ln for ln in buyer_lines if ln]):
         c.drawString(18 * mm, y - (5 + i * 4.5) * mm, str(line))
     y -= 32 * mm
     c.setFillColor(colors.HexColor("#f1f5f9")); c.rect(18 * mm, y - 2 * mm, w - 36 * mm, 8 * mm, fill=1, stroke=0)

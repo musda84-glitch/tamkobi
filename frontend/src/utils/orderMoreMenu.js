@@ -37,9 +37,10 @@ export function isPanelOrder(ord) {
 
 /**
  * E-fatura / e-arşiv GİB üzerinden kesilmiş mi?
- * Panelde yalnızca gerçek GİB gönderimi (einvoice_state) sayılır;
- * cariye faturalaşma (is_invoiced) tek başına e-belge değildir.
- * Pazaryeri siparişlerinde faturalı e-belge tipi = kesilmiş kabul edilir.
+ * Yalnızca gerçek GİB / entegratör gönderim sinyalleri sayılır.
+ * Cariye faturalaşma (is_invoiced) veya e_type tek başına e-belge değildir —
+ * aksi halde pazaryeri siparişleri yanlışlıkla kırmızı «Faturalaşmış (E-Arşiv)»
+ * rozeti alır (yeşil «Faturalaştı» olması gerekir).
  */
 export function orderHasEInvoiceIssued(ord) {
   if (!ord) return false;
@@ -50,11 +51,6 @@ export function orderHasEInvoiceIssued(ord) {
   const gs = String(ord.invoice_gib_status || ord.gib_status || "");
   // "GİB'e Gönderildi" / iletildi / ziplenmiş — yerel "Gönderilmedi" ile karışmaz
   if (/ziplen|zarflan|ileti|gönderildi|1300|başarıyla tamamland/i.test(gs) && !/^\s*hata\s*:/i.test(gs)) return true;
-  const eType = String(ord.e_type || ord.invoice_e_type || "").toLowerCase();
-  if (eType === "paper" || eType === "expense_slip") return false;
-  if (isIntegrationOrder(ord) && ord.is_invoiced && ["e_invoice", "e_archive", "e_export"].includes(eType)) {
-    return true;
-  }
   return false;
 }
 
@@ -119,8 +115,9 @@ export function orderMoreMenuKind(ord) {
   if (ord?.is_held_cart || ord?.order_status === "held_cart" || ord?.is_active_cart || ord?.order_status === "active_cart") return "held_cart";
   if (isPanelOrder(ord) && orderHasEInvoiceIssued(ord)) return "panel_einvoice";
   if (isIntegrationOrder(ord) && orderHasEInvoiceIssued(ord)) return "integration_einvoice";
-  // Panel: cariye faturalaştı, henüz GİB e-belgesi yok → e-belge kes
-  if (isPanelOrder(ord) && ord?.is_invoiced) return "panel_invoiced";
+  // Cariye faturalaştı, henüz GİB e-belgesi yok → yeşil Faturalaştı / E-Fatura Oluştur
+  // (panel + pazaryeri; e_type tek başına kırmızı rozet üretmez)
+  if (ord?.is_invoiced) return "panel_invoiced";
   if (isPanelOrder(ord) && !ord?.is_invoiced) return "panel_draft";
   return "default";
 }

@@ -37,6 +37,7 @@ import { useNavigate } from "react-router-dom";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { DocumentLineEditor } from "./DocumentLineEditor";
 import { documentLineTotals, hydrateLine } from "../utils/documentLines";
+import { withMarketplaceVatFlag } from "../utils/marketplaceVat";
 import { orderFooterTotals } from "../utils/orderMoney";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { ContactForm } from "./ContactForm";
@@ -83,6 +84,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const [orderDetail, setOrderDetail] = useState(null);
   const [editOrder, setEditOrder] = useState(null);
   const [orderProducts, setOrderProducts] = useState([]);
+  const [invoiceProducts, setInvoiceProducts] = useState([]);
   const [printDoc, setPrintDoc] = useState(null);
   const [editTpl, setEditTpl] = useState(null);
   const navigate = useNavigate();
@@ -130,6 +132,29 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Eksik ürünler üretime alınamadı."); }
   };
+  const loadStockProducts = () => {
+    const companyId = data?.contact?.company_id;
+    if (!companyId) return;
+    if (invoiceProducts.length === 0) {
+      axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`)
+        .then((r) => {
+          const list = r.data || [];
+          setInvoiceProducts(list);
+          if (orderProducts.length === 0) setOrderProducts(list);
+        })
+        .catch(() => {});
+    }
+  };
+
+  const openEditInvoice = (inv) => {
+    if (!inv) return;
+    setEditInv({
+      ...inv,
+      items: (inv.items || []).map((it) => hydrateLine({ ...it, is_service: it.is_service || !it.product_id })),
+    });
+    loadStockProducts();
+  };
+
   const openEditOrder = (o) => {
     const reason = orderEditBlockedReason(o);
     if (reason) { toast.error(reason); return; }
@@ -141,8 +166,16 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       items: (o.items || []).map((it) => hydrateLine(it)),
       linesLocked: orderChannelLocked(o),
     });
-    if (!orderChannelLocked(o) && orderProducts.length === 0 && data?.contact?.company_id) {
-      axios.get(`${API_URL}/products?company_id=${data.contact.company_id}&lite=1`).then((r) => setOrderProducts(r.data || [])).catch(() => {});
+    if (!orderChannelLocked(o)) {
+      if (orderProducts.length === 0 && data?.contact?.company_id) {
+        axios.get(`${API_URL}/products?company_id=${data.contact.company_id}&lite=1`)
+          .then((r) => {
+            const list = r.data || [];
+            setOrderProducts(list);
+            if (invoiceProducts.length === 0) setInvoiceProducts(list);
+          })
+          .catch(() => {});
+      }
     }
   };
   const saveEditOrder = async () => {
@@ -172,8 +205,23 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       return;
     }
     const inv = result?.invoice;
-    if (inv) setEditInv({ ...inv });
-  }, [load, navigate]);
+    if (inv) {
+      setEditInv({
+        ...inv,
+        items: (inv.items || []).map((it) => hydrateLine({ ...it, is_service: it.is_service || !it.product_id })),
+      });
+      const companyId = data?.contact?.company_id;
+      if (companyId && invoiceProducts.length === 0) {
+        axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`)
+          .then((r) => {
+            const list = r.data || [];
+            setInvoiceProducts(list);
+            setOrderProducts((prev) => (prev.length ? prev : list));
+          })
+          .catch(() => {});
+      }
+    }
+  }, [load, navigate, data?.contact?.company_id, invoiceProducts.length]);
   const invoiceCopy = useInvoiceCopyFromContext({
     companyId: data?.contact?.company_id || activeCompany?.id || activeCompany?._id,
     onCopied: onInvoiceCopied,
@@ -662,7 +710,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               <tbody className="divide-y divide-slate-100">
                 {data.invoices.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">Fatura yok.</td></tr>}
                 {sortedInvoices.map((inv) => { const incoming = isIncomingPurchaseInvoice(inv); const isDisp = isDispatchDocument(inv); const cells = {
-                    number: <td key="number" className="py-2 font-mono font-semibold text-slate-900">{canEditInvoice(inv) ? (<button onClick={() => setEditInv({ ...inv })} className="hover:underline text-emerald-700" title="Faturayı düzenle" data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button>) : (<span data-testid={`detail-inv-no-${inv.invoice_number}`}>{inv.invoice_number}</span>)}</td>,
+                    number: <td key="number" className="py-2 font-mono font-semibold text-slate-900">{canEditInvoice(inv) ? (<button onClick={() => openEditInvoice(inv)} className="hover:underline text-emerald-700" title="Faturayı düzenle" data-testid={`detail-inv-edit-${inv.invoice_number}`}>{inv.invoice_number}</button>) : (<span data-testid={`detail-inv-no-${inv.invoice_number}`}>{inv.invoice_number}</span>)}</td>,
                     date: <td key="date" className="py-2 text-slate-500">{fmtDate(inv.issue_date)}</td>,
                     type: <td key="type" className="py-2"><span className="bg-slate-100 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase">{inv.invoice_type === "sales" ? "Satış" : inv.invoice_type === "purchase" ? "Alış" : inv.invoice_type === "dispatch" ? "İrsaliye" : inv.invoice_type}</span> <span className="text-slate-400">{invoiceETypeLabel(inv)}</span></td>,
                     amount: <td key="amount" className={`py-2 text-right font-bold ${inv.status === "draft" || isDisp ? "text-slate-400" : ""}`}>{fmt(inv.grand_total)}{isDisp ? <div className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide" data-testid={`detail-inv-dispatch-nobal-${inv.invoice_number}`}>İrsaliye · bakiye dışı{(inv.invoice_ref_number || inv.converted_invoice_number) ? ` · fatura ${inv.invoice_ref_number || inv.converted_invoice_number}` : ""}</div> : inv.status === "draft" ? <div className="text-[9px] font-semibold text-amber-700 uppercase tracking-wide" data-testid={`detail-inv-draft-${inv.invoice_number}`}>Taslak · bakiye dışı</div> : null}</td>,
@@ -674,7 +722,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                     <td className="py-2">
                       <div className="flex items-center justify-end gap-0.5">
                         {canEditInvoice(inv) ? (
-                          <button onClick={() => setEditInv({ ...inv })} className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition" title="Faturayı düzenle" data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
+                          <button onClick={() => openEditInvoice(inv)} className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition" title="Faturayı düzenle" data-testid={`detail-inv-edit-btn-${inv.invoice_number}`}><Pencil className="w-4 h-4" /></button>
                         ) : <span className="w-7 h-7" aria-hidden="true" />}
                         <button onClick={() => setPrintDoc(inv)} className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition" title="Görüntüle / Şablonlu Yazdır" data-testid={`detail-inv-print-${inv.invoice_number}`}><Printer className="w-4 h-4" /></button>
                         {onMessage && !incoming ? (
@@ -1017,7 +1065,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             </div>
           </div>
         )}
-        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} companyId={activeCompany?.id || activeCompany?._id || c?.company_id} onIssue={issueFromMenu} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onEdit={(inv) => setEditInv({ ...inv })} onDelete={deleteInvoice} onCancel={cancelInvoice} onExpenseSlip={issueExpenseSlip} onCopy={invoiceCopy.handleCopyMode} apiBase={API_URL} />
+        <InvoiceContextMenu menu={invCtx} onClose={closeInvCtx} companyId={activeCompany?.id || activeCompany?._id || c?.company_id} onIssue={issueFromMenu} onPreview={(inv) => setPrintDoc(inv)} onPrint={(inv) => setPrintDoc(inv)} onNotify={() => onMessage?.(c)} onPayment={() => openPay()} onAcceptIncoming={acceptIncoming} onRejectIncoming={rejectIncoming} onEdit={(inv) => openEditInvoice(inv)} onDelete={deleteInvoice} onCancel={cancelInvoice} onExpenseSlip={issueExpenseSlip} onCopy={invoiceCopy.handleCopyMode} apiBase={API_URL} />
         {eFaturaInvoice && (
           <ElektronikFaturaOnayModal
             invoice={eFaturaInvoice}
@@ -1271,11 +1319,12 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 </div>
               </div>
               <DocumentLineEditor
-                items={(editInv.items || []).map(hydrateLine)}
+                items={editInv.items || []}
                 onChange={(items) => setEditInv({ ...editInv, items })}
-                products={[]}
+                products={invoiceProducts.length ? invoiceProducts : orderProducts}
                 kind="invoice"
                 allowService
+                invoiceType={editInv.invoice_type || "sales"}
                 currency={editInv.currency || "TRY"}
                 disabled={isGibIssued(editInv)}
                 testIdPrefix="edit-inv-item"
@@ -1308,11 +1357,19 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             <div className="bg-white rounded-2xl max-w-5xl w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="order-detail-modal">
               <div className="flex justify-between items-start border-b pb-2"><div><h3 className="text-sm font-bold text-slate-900">Sipariş {orderDetail.order_number}</h3><p className="text-slate-500">{new Date(orderDetail.order_date).toLocaleString("tr-TR")} • {channelTr(orderDetail.channel)} • <b>{orderStatusLabel(orderDetail, statusTr(orderDetail.order_status))}</b></p></div><button onClick={() => setOrderDetail(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div className="text-slate-600"><b>Teslimat:</b> {orderDetail.shipping_address}, {orderDetail.city} {orderDetail.customer_phone && `• ${orderDetail.customer_phone}`}</div>
+              {(orderDetail.payment_method || orderDetail.bank_name) && (
+                <div className="text-slate-600" data-testid="order-detail-payment">
+                  <b>Ödeme:</b> {[orderDetail.payment_method, orderDetail.bank_name].filter(Boolean).join(" · ")}
+                  {orderDetail.settlement?.account_name ? (
+                    <span className="ml-2 text-emerald-700 font-semibold">· Hakediş: {orderDetail.settlement.account_name} ({Number(orderDetail.settlement.net || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺)</span>
+                  ) : null}
+                </div>
+              )}
               {orderDetail.cargo_tracking_number && <div className="text-slate-600"><b>Kargo:</b> {orderDetail.cargo_carrier} • <span className="font-mono">{orderDetail.cargo_tracking_number}</span></div>}
               <div className="overflow-x-auto"><table className="w-full min-w-[640px]"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="py-1 text-left">Stok adı</th><th className="py-1 text-right">Miktar</th><th className="py-1 text-right">KDV'siz</th><th className="py-1 text-right">KDV'li</th><th className="py-1 text-center">İsk %</th><th className="py-1 text-center">KDV</th><th className="py-1 text-right">Hariç</th><th className="py-1 text-right">Dahil</th></tr></thead>
-                <tbody className="divide-y divide-slate-100">{(orderDetail.items || []).map((it, i) => { const line = hydrateLine(it); return (<tr key={i}><td className="py-1.5"><div className="font-semibold">{line.product_name || line.name}</div><div className="font-mono text-slate-400">{it.sku}</div>{it.note ? <div className="text-slate-500 italic">{it.note}</div> : null}</td><td className="py-1.5 text-right">{line.quantity}</td><td className="py-1.5 text-right">{fmtMoney(line.unit_price)}</td><td className="py-1.5 text-right">{fmtMoney(line.unit_price_incl)}</td><td className="py-1.5 text-center">{line.discount_rate || 0}</td><td className="py-1.5 text-center">%{line.vat_rate}</td><td className="py-1.5 text-right">{fmtMoney(line.total)}</td><td className="py-1.5 text-right font-bold">{fmtMoney(line.total_incl)}</td></tr>); })}</tbody></table></div>
+                <tbody className="divide-y divide-slate-100">{(orderDetail.items || []).map((it, i) => { const line = hydrateLine(withMarketplaceVatFlag(it, orderDetail.channel)); return (<tr key={i}><td className="py-1.5"><div className="font-semibold">{line.product_name || line.name}</div><div className="font-mono text-slate-400">{it.sku}</div>{it.note ? <div className="text-slate-500 italic">{it.note}</div> : null}</td><td className="py-1.5 text-right">{line.quantity}</td><td className="py-1.5 text-right">{fmtMoney(line.unit_price)}</td><td className="py-1.5 text-right">{fmtMoney(line.unit_price_incl)}</td><td className="py-1.5 text-center">{line.discount_rate || 0}</td><td className="py-1.5 text-center">%{line.vat_rate}</td><td className="py-1.5 text-right">{fmtMoney(line.total)}</td><td className="py-1.5 text-right font-bold">{fmtMoney(line.total_incl)}</td></tr>); })}</tbody></table></div>
               {(() => {
-                const t = documentLineTotals(orderDetail.items || []);
+                const t = documentLineTotals((orderDetail.items || []).map((it) => withMarketplaceVatFlag(it, orderDetail.channel)));
                 const footer = orderFooterTotals(orderDetail, t);
                 return (
               <div className="space-y-0.5 border-t pt-2"><div className="flex justify-between"><span>KDV Hariç</span><span>{fmtMoney(footer.subtotal)}</span></div><div className="flex justify-between"><span>KDV</span><span>{fmtMoney(footer.vat)}</span></div><div className="flex justify-between font-bold"><span>Genel Toplam (KDV Dahil)</span><span>{fmtMoney(footer.grandTotal)}</span></div></div>

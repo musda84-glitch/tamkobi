@@ -23,6 +23,19 @@ test("editing KDV'li unit price back-calculates net", () => {
   expect(row.total_incl).toBeCloseTo(120);
 });
 
+test("editing total_incl back-calculates unit prices", () => {
+  const row = computeLine({
+    ...emptyLine(),
+    quantity: 2,
+    vat_rate: 20,
+    unit_price: 50,
+    total_incl: 240,
+  }, "total_incl");
+  expect(row.total_incl).toBeCloseTo(240);
+  expect(row.unit_price).toBeCloseTo(100);
+  expect(row.unit_price_incl).toBeCloseTo(120);
+});
+
 test("selectable VAT percent recalculates gross from stored net", () => {
   const row = computeLine({ ...emptyLine(), quantity: 1, unit_price: 200, vat_rate: 10 }, "vat_rate");
   expect(row.unit_price_incl).toBeCloseTo(220);
@@ -37,6 +50,43 @@ test("hydrateLine maps product_name and discount_percent", () => {
   expect(row.unit).toBe("Adet");
   expect(row.total).toBeCloseTo(45);
   expect(row.total_incl).toBeCloseTo(54);
+});
+
+test("hydrateLine treats marketplace unit_price as KDV dahil when flagged", () => {
+  const row = hydrateLine({
+    product_name: "ShopPHP Ürün",
+    quantity: 1,
+    unit_price: 11999,
+    vat_rate: 20,
+    price_includes_vat: true,
+  });
+  expect(row.unit_price_incl).toBeCloseTo(11999);
+  expect(row.unit_price).toBeCloseTo(9999.1667, 3);
+  expect(row.total_incl).toBeCloseTo(11999);
+});
+
+test("computeLine allows clearing stock name without resurrecting product_name", () => {
+  const cleared = computeLine({
+    ...emptyLine(),
+    name: "",
+    product_name: "Eski Ürün Adı",
+    quantity: 1,
+    unit_price: 10,
+  }, "name");
+  expect(cleared.name).toBe("");
+  expect(cleared.product_name).toBe("");
+});
+
+test("computeLine syncs product_name edit into name", () => {
+  const row = computeLine({
+    ...emptyLine(),
+    name: "Eski",
+    product_name: "Yeni ad",
+    quantity: 1,
+    unit_price: 5,
+  }, "product_name");
+  expect(row.name).toBe("Yeni ad");
+  expect(row.product_name).toBe("Yeni ad");
 });
 
 test("lineFromProduct uses sale vs purchase price and product VAT", () => {

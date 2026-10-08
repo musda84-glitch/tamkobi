@@ -23,6 +23,28 @@ export function productLabelImageUrl(product) {
   return mediaRef(product?.label_image_url) || mediaRef(product?.image_url) || "";
 }
 
+/** Liste/kart küçük önizleme — thumbnail yoksa kapak. */
+export function productListImageUrl(product) {
+  return (
+    mediaRef(product?.thumbnail_url)
+    || mediaRef(product?.image_url)
+    || (Array.isArray(product?.images) && mediaRef(product.images[0]))
+    || ""
+  );
+}
+
+/** Sipariş satırı + stok kartı birleşik liste görseli (küçük önizleme öncelikli). */
+export function orderLineListImageUrl(item, product) {
+  return (
+    mediaRef(item?.thumbnail_url)
+    || mediaRef(product?.thumbnail_url)
+    || mediaRef(item?.image_url)
+    || mediaRef(product?.image_url)
+    || (Array.isArray(product?.images) && mediaRef(product.images[0]))
+    || ""
+  );
+}
+
 export function productIdOf(product) {
   return product?.id || product?._id || "";
 }

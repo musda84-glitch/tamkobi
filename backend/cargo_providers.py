@@ -1,11 +1,12 @@
 """Live cargo provider clients. Currently: Geliver (kargo pazaryeri) REST API v1.
 
-Aligned with the official Geliver Python SDK:
-https://github.com/GeliverApp/geliver-python
+Uses the official Geliver Python SDK for HTTP transport:
+https://github.com/GeliverApp/geliver-python  (`pip install geliver`)
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 from typing import Any, Dict, List, Optional
@@ -15,9 +16,13 @@ from fastapi import HTTPException
 
 import comm_service
 
+logger = logging.getLogger("TamKobiERP")
+
 # Official default: https://api.geliver.io/api/v1
 GELIVER_BASE = os.environ.get("GELIVER_BASE_URL", "https://api.geliver.io/api/v1").rstrip("/")
 SECRET_FIELDS = ("api_key", "api_secret", "api_password")
+# 1 = resmi geliver SDK (varsayılan); 0 = yalnızca ham httpx
+USE_GELIVER_SDK = os.environ.get("GELIVER_USE_SDK", "1").lower() not in {"0", "false", "no"}
 
 CITY_CODES = {
     "adana": "01", "adıyaman": "02", "afyonkarahisar": "03", "afyon": "03", "ağrı": "04", "amasya": "05",
@@ -234,7 +239,40 @@ def _geliver_friendly_error(msg: str, *, status_code: int = 0, path: str = "") -
     return f"Geliver hatası: {msg}"
 
 
-async def _geliver(method: str, path: str, token: str, **kwargs: Any) -> Any:
+def make_geliver_client(token: str):
+    """Resmi GeliverClient (senkron). Testlerde / opsiyonel kapalıyken None dönmez — import hatası yükselir."""
+    from geliver import ClientOptions, GeliverClient
+
+    return GeliverClient(ClientOptions(token=token, base_url=GELIVER_BASE, timeout=45.0))
+
+
+def _geliver_via_sdk(method: str, path: str, token: str, **kwargs: Any) -> Any:
+    """Official SDK low-level request (sync)."""
+    from geliver.client import GeliverError
+
+    client = make_geliver_client(token)
+    try:
+        return client._request(
+            method,
+            path,
+            params=kwargs.get("params"),
+            json_body=kwargs.get("json"),
+        )
+    except GeliverError as e:
+        status = int(e.status or 400)
+        msg = e.additional_message or str(e) or "API error"
+        raise HTTPException(
+            status_code=502 if status >= 500 else 400,
+            detail=_geliver_friendly_error(msg, status_code=status, path=path),
+        ) from e
+    finally:
+        try:
+            client._client.close()
+        except Exception:
+            pass
+
+
+async def _geliver_via_httpx(method: str, path: str, token: str, **kwargs: Any) -> Any:
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"}
     try:
         async with httpx.AsyncClient(base_url=GELIVER_BASE, timeout=45.0) as client:
@@ -254,7 +292,24 @@ async def _geliver(method: str, path: str, token: str, **kwargs: Any) -> Any:
             status_code=502 if r.status_code >= 500 else 400,
             detail=_geliver_friendly_error(str(msg), status_code=r.status_code, path=path),
         )
+    # Paginated envelope: keep full body (SDK ile aynı)
+    if isinstance(body, dict) and any(k in body for k in ("limit", "page", "totalRows", "totalPages")):
+        return body
     return body.get("data", body) if isinstance(body, dict) else body
+
+
+async def _geliver(method: str, path: str, token: str, **kwargs: Any) -> Any:
+    """Geliver REST çağrısı — varsayılan resmi `geliver` SDK; yoksa/kapalıysa httpx."""
+    if USE_GELIVER_SDK:
+        try:
+            return await asyncio.to_thread(_geliver_via_sdk, method, path, token, **kwargs)
+        except HTTPException:
+            raise
+        except ImportError:
+            logger.warning("geliver SDK yüklü değil; httpx yedeğine düşülüyor (pip install geliver)")
+        except Exception as e:
+            logger.warning("geliver SDK isteği başarısız (%s); httpx yedeği", e)
+    return await _geliver_via_httpx(method, path, token, **kwargs)
 
 
 def _geliver_address_items(data: Any) -> List[dict]:

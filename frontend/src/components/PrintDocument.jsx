@@ -6,15 +6,26 @@ import { resolveImageUrl } from "../utils/imageUrl";
 import { moneySuffix, formatTrAmount, fmtDate } from "../utils/money";
 import { balanceSentence, isOrderQuotePrint, lineTotalIncl, printDiscountLabel, printNetAmount, printQtyLabel, printQtyTotalLabel, printShelfLabel, printVatLines, vatRateLabel } from "../utils/printFormLayout";
 import { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
+import { resolvePrintPartyAddress, resolvePrintPartyCity, resolvePrintPartyPhone } from "../utils/printPartyAddress";
 import { BarcodeRenderer } from "./BarcodeRenderer";
 
 export { shouldUseIntegratorPdf, integratorPdfKindLabel } from "../utils/printIntegratorPdf";
 
+const mediaUrl = (v) => {
+  if (v == null || v === "") return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "object") {
+    const u = v.url ?? v.image_url ?? v.thumbnail_url ?? v.src ?? "";
+    return u == null ? "" : String(u).trim();
+  }
+  return String(v).trim();
+};
+
 const pickItemImage = (it = {}, prod = {}) => (
-  it.thumbnail_url || it.image_url
-  || prod.thumbnail_url || prod.image_url
-  || (Array.isArray(it.images) && it.images[0])
-  || (Array.isArray(prod.images) && prod.images[0])
+  mediaUrl(it.thumbnail_url) || mediaUrl(it.image_url)
+  || mediaUrl(prod.thumbnail_url) || mediaUrl(prod.image_url)
+  || (Array.isArray(it.images) && mediaUrl(it.images[0]))
+  || (Array.isArray(prod.images) && mediaUrl(prod.images[0]))
   || ""
 );
 
@@ -191,31 +202,100 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   const [tplKey, setTplKey] = useState(docType);
   const [formOptions, setFormOptions] = useState([]);
   const [prodById, setProdById] = useState({});
+  const [prodBySku, setProdBySku] = useState({});
+  const [prodByName, setProdByName] = useState({});
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [contactBalance, setContactBalance] = useState(null);
-  const companyId = company?.id || "comp_nexus_main_01";
+  const [partyContact, setPartyContact] = useState(null);
+  const companyId = company?.id || company?._id || "comp_nexus_main_01";
   const compactForm = isOrderQuotePrint(docType);
   const items = doc.items || [];
   const productIds = useMemo(
     () => [...new Set(items.map((it) => it.product_id).filter(Boolean))],
     [items]
   );
+  const productSkus = useMemo(
+    () => [...new Set(items.map((it) => String(it.sku || "").trim()).filter(Boolean))],
+    [items]
+  );
+  const productIdsKey = productIds.join(",");
+  const productSkusKey = productSkus.join(",");
+  const resolveProd = (it) => (
+    (it?.product_id && prodById[it.product_id])
+    || (it?.sku && prodBySku[String(it.sku).trim()])
+    || prodByName[String(it?.name || it?.product_name || "").trim().toLocaleLowerCase("tr-TR")]
+    || {}
+  );
   useEffect(() => {
+    const needsNameFallback = items.some((it) => {
+      if (it.image_url || it.thumbnail_url) return false;
+      if (it.product_id || String(it.sku || "").trim()) return false;
+      return !!(it.name || it.product_name);
+    });
+    if (!productIds.length && !productSkus.length && !needsNameFallback) {
+      setProdById({});
+      setProdBySku({});
+      setProdByName({});
+      return undefined;
+    }
     const qs = new URLSearchParams({ company_id: companyId, lite: "1" });
     if (productIds.length) qs.set("ids", productIds.join(","));
+    if (productSkus.length) qs.set("skus", productSkus.join(","));
     let cancelled = false;
-    axios.get(`${API_URL}/products?${qs}`).then((r) => {
+    const applyRows = (rows) => {
       if (cancelled) return;
-      const m = {};
-      (r.data || []).forEach((p) => { m[p.id || p._id] = p; });
-      setProdById(m);
-    }).catch(() => {});
+      const byId = {};
+      const bySku = {};
+      const byName = {};
+      (rows || []).forEach((p) => {
+        const id = p.id || p._id;
+        if (id) byId[id] = p;
+        const sku = String(p.sku || "").trim();
+        if (sku) bySku[sku] = p;
+        const name = String(p.name || "").trim().toLocaleLowerCase("tr-TR");
+        if (name) byName[name] = p;
+      });
+      setProdById(byId);
+      setProdBySku(bySku);
+      setProdByName(byName);
+    };
+    const load = async () => {
+      try {
+        if (!productIds.length && !productSkus.length && needsNameFallback) {
+          const r = await axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`);
+          applyRows(r.data);
+          return;
+        }
+        const r = await axios.get(`${API_URL}/products?${qs}`);
+        let rows = Array.isArray(r.data) ? r.data : [];
+        if (needsNameFallback) {
+          const all = await axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`);
+          const extra = Array.isArray(all.data) ? all.data : [];
+          const seen = new Set(rows.map((p) => p.id || p._id));
+          extra.forEach((p) => {
+            const id = p.id || p._id;
+            if (id && !seen.has(id)) {
+              seen.add(id);
+              rows.push(p);
+            }
+          });
+        }
+        applyRows(rows);
+      } catch {
+        if (!cancelled) {
+          setProdById({});
+          setProdBySku({});
+          setProdByName({});
+        }
+      }
+    };
+    load();
     return () => { cancelled = true; };
-  }, [companyId, productIds]);
+  }, [companyId, productIdsKey, productSkusKey, items]);
   useEffect(() => {
     const urls = items
-      .map((it) => printThumbUrl(pickItemImage(it, prodById[it.product_id] || {})))
+      .map((it) => printThumbUrl(pickItemImage(it, resolveProd(it))))
       .filter(Boolean);
     const loaders = urls.map((src) => {
       const img = new Image();
@@ -225,7 +305,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
       return img;
     });
     return () => { loaders.forEach((img) => { img.src = ""; }); };
-  }, [items, prodById]);
+  }, [items, prodById, prodBySku, prodByName]);
   useEffect(() => {
     const load = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => {
       const all = r.data || {};
@@ -245,27 +325,46 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   }, [docType, companyId]);
   useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [docType, doc.installment_plan, doc.id]);
   useEffect(() => {
-    if (!compactForm) return undefined;
-    if (doc.contact_balance != null && doc.contact_balance !== "") {
-      setContactBalance(Number(doc.contact_balance));
-      return undefined;
-    }
     const cid = doc.contact_id;
     const name = String(doc.contact_name || doc.customer_name || "").trim().toLocaleLowerCase("tr-TR");
     if (!cid && !name) {
+      setPartyContact(null);
       setContactBalance(null);
       return undefined;
     }
+    if (doc.contact_balance != null && doc.contact_balance !== "") {
+      setContactBalance(Number(doc.contact_balance));
+    }
     let cancelled = false;
-    axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`).then((r) => {
+    const applyHit = (hit) => {
       if (cancelled) return;
-      const rows = Array.isArray(r.data) ? r.data : [];
-      const hit = (cid && rows.find((c) => (c.id || c._id) === cid))
-        || rows.find((c) => String(c.name || "").trim().toLocaleLowerCase("tr-TR") === name);
-      setContactBalance(hit && hit.balance != null ? Number(hit.balance) : null);
-    }).catch(() => { if (!cancelled) setContactBalance(null); });
+      setPartyContact(hit || null);
+      if (doc.contact_balance == null || doc.contact_balance === "") {
+        setContactBalance(hit && hit.balance != null ? Number(hit.balance) : null);
+      }
+    };
+    // Önce cari id ile doğrudan çek (lite listede kaçırma / adres eksikliği olmasın)
+    const load = cid
+      ? axios.get(`${API_URL}/contacts/${cid}`).then((r) => applyHit(r.data)).catch(() =>
+          axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`).then((r) => {
+            const rows = Array.isArray(r.data) ? r.data : [];
+            applyHit(rows.find((c) => (c.id || c._id) === cid)
+              || rows.find((c) => String(c.name || "").trim().toLocaleLowerCase("tr-TR") === name)
+              || null);
+          })
+        )
+      : axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`).then((r) => {
+          const rows = Array.isArray(r.data) ? r.data : [];
+          applyHit(rows.find((c) => String(c.name || "").trim().toLocaleLowerCase("tr-TR") === name) || null);
+        });
+    load.catch(() => {
+      if (!cancelled) {
+        setPartyContact(null);
+        if (doc.contact_balance == null || doc.contact_balance === "") setContactBalance(null);
+      }
+    });
     return () => { cancelled = true; };
-  }, [compactForm, companyId, doc.contact_id, doc.contact_name, doc.customer_name, doc.contact_balance]);
+  }, [companyId, doc.contact_id, doc.contact_name, doc.customer_name, doc.contact_balance]);
   if (!tpl) return null;
   const layout = tpl.layout || "classic";
   const pickLayout = async (l) => {
@@ -282,6 +381,9 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   };
   const number = docType === "quote" ? doc.quote_number : docType === "order" ? doc.order_number : (doc.invoice_number || doc.quote_number || "");
   const customer = doc.contact_name || doc.customer_name || "";
+  const partyAddress = resolvePrintPartyAddress(doc, partyContact);
+  const partyCityShown = resolvePrintPartyCity(doc, partyContact, partyAddress);
+  const partyPhone = resolvePrintPartyPhone(doc, partyContact);
   const total = doc.grand_total ?? doc.total_amount ?? 0;
   const color = layout === "minimal" ? "#0f172a" : (tpl.primary_color || "#059669");
   const textSize = tpl.font_size === "xs" ? "text-[10px]" : tpl.font_size === "base" ? "text-sm" : "text-xs";
@@ -383,8 +485,12 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
             <div>
               <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Sayın</div>
               <div className="font-bold text-base">{customer}</div>
-              {(doc.shipping_address || doc.address) && <div className="text-slate-500">{doc.shipping_address || doc.address} {doc.city || ""}</div>}
-              {doc.customer_phone && <div className="text-slate-500">{doc.customer_phone}</div>}
+              {partyAddress && (
+                <div className="text-slate-500" data-testid="print-party-address">
+                  {partyAddress}{partyCityShown ? ` ${partyCityShown}` : ""}
+                </div>
+              )}
+              {partyPhone && <div className="text-slate-500" data-testid="print-party-phone">{partyPhone}</div>}
               {(() => {
                 const custNo = String(
                   doc.customer_order_number || doc.po_number || doc.buyer_order_number
@@ -416,7 +522,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
               </tr>
             </thead>
             <tbody>{items.map((it, i) => {
-              const prod = prodById[it.product_id] || {};
+              const prod = resolveProd(it);
               const img = printThumbUrl(pickItemImage(it, prod));
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               const shelf = printShelfLabel(it, prod);
@@ -477,7 +583,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
               </tr>
             </thead>
             <tbody>{items.map((it, i) => {
-              const prod = prodById[it.product_id] || {};
+              const prod = resolveProd(it);
               const img = printThumbUrl(pickItemImage(it, prod));
               const code = it.barcode || prod.barcode || it.sku || prod.sku;
               return (

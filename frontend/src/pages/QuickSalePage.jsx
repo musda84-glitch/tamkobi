@@ -29,6 +29,7 @@ import { isWeighableUnit, scaleSupported } from "../utils/scaleBridge";
 import { ScalePromptModal } from "../components/ScalePromptModal";
 import { printThermalReceipt } from "../utils/thermalReceipt";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { productListImageUrl } from "../utils/productImages";
 import { fmtMoney } from "../utils/money";
 import { parseBarcodeWithQty, parseScanQtyInput, scanQtyOnBlur, scanQtyOnFocus, scanQtyShown } from "../utils/scanQty";
 
@@ -89,7 +90,7 @@ const PAYMENT_OPTIONS = [
 ];
 
 function ShortcutTile({ product, onClick, tablet }) {
-  const img = resolveImageUrl(product.image_url);
+  const img = resolveImageUrl(productListImageUrl(product));
   return (
     <button
       type="button"
@@ -98,7 +99,7 @@ function ShortcutTile({ product, onClick, tablet }) {
       data-testid={`pos-shortcut-${productKey(product)}`}
     >
       <div className={`bg-slate-50 flex items-center justify-center overflow-hidden ${tablet ? "aspect-[4/3]" : "aspect-square"}`}>
-        {img ? <img src={img} alt="" className="w-full h-full object-cover" /> : <Package className="w-8 h-8 text-slate-300" />}
+        {img ? <img src={img} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-8 h-8 text-slate-300" />}
       </div>
       <div className="p-2.5">
         <div className={`font-semibold text-slate-900 line-clamp-2 ${tablet ? "text-sm" : "text-xs"}`}>{product.name}</div>
@@ -910,11 +911,11 @@ export default function QuickSalePage() {
               {editorProducts.map((p) => {
                 const id = productKey(p);
                 const checked = editorSection.productIds.includes(id);
-                const img = resolveImageUrl(p.image_url);
+                const img = resolveImageUrl(productListImageUrl(p));
                 return (
                   <button key={id} type="button" onClick={() => toggleProductInSection(editorSection.id, id)} className={`flex items-center gap-3 text-left border rounded-xl p-2.5 min-h-16 ${checked ? "border-emerald-500 bg-emerald-50" : "border-slate-200 hover:bg-slate-50"}`} data-testid={`pos-section-product-${id}`}>
                     <div className="w-14 h-14 rounded-lg bg-slate-100 border overflow-hidden shrink-0 flex items-center justify-center">
-                      {img ? <img src={img} alt="" className="w-full h-full object-cover" /> : <Package className="w-5 h-5 text-slate-300" />}
+                      {img ? <img src={img} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <Package className="w-5 h-5 text-slate-300" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-semibold text-sm text-slate-900 truncate">{p.name}</div>

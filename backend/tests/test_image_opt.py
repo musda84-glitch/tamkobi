@@ -178,3 +178,50 @@ def test_photo_prefers_small_webp_or_jpeg():
     assert r.stored_size < len(raw) * 0.5
     assert r.content_type in {"image/jpeg", "image/webp"}
     assert max(r.width or 0, r.height or 0) <= image_opt._settings()["max_edge"]
+
+
+def test_make_thumbnail_is_small_list_preview():
+    raw = _photo_jpeg(w=1600, h=1200, quality=92)
+    thumb = image_opt.make_thumbnail(raw, "image/jpeg", "photo.jpg", max_edge=320)
+    assert thumb is not None
+    assert thumb.optimized is True
+    assert thumb.reason == "thumbnail"
+    assert thumb.stored_size < len(raw)
+    assert max(thumb.width or 0, thumb.height or 0) <= 320
+    assert thumb.content_type in {"image/webp", "image/jpeg", "image/png"}
+    im = Image.open(io.BytesIO(thumb.data))
+    im.load()
+    assert max(im.size) <= 320
+
+
+def test_make_thumbnail_w64_much_smaller_than_full():
+    raw = _photo_jpeg(w=1400, h=1000, quality=90)
+    tiny = image_opt.make_thumbnail(raw, "image/jpeg", "big.jpg", max_edge=64, quality=70)
+    assert tiny is not None
+    assert tiny.stored_size < len(raw) * 0.15
+    assert max(tiny.width or 0, tiny.height or 0) <= 64
+
+
+def test_resize_cache_path_derives_sidecar():
+    assert image_opt.resize_cache_path("tamkobi/products/a.webp", 64) == "tamkobi/products/a.w64.webp"
+    assert image_opt.resize_cache_path("tamkobi/products/a.w64.webp", 64) == "tamkobi/products/a.w64.webp"
+    assert image_opt.resize_cache_path("/x/y.jpg", 48) == "x/y.w48.webp"
+
+
+def test_product_profile_prefers_webp_and_smaller_edge():
+    raw = _photo_jpeg(w=2000, h=1500, quality=95)
+    r = image_opt.optimize_product_upload(raw, "image/jpeg", "product.jpg")
+    assert r.optimized is True
+    assert r.content_type == "image/webp"
+    assert r.ext == "webp"
+    assert r.stored_size < len(raw) * 0.45
+    assert max(r.width or 0, r.height or 0) <= 1280
+
+
+def test_product_profile_png_photo_becomes_webp():
+    raw = _photo_png(w=1400, h=1000)
+    r = image_opt.optimize_product_upload(raw, "image/png", "shot.png")
+    assert r.optimized is True
+    assert r.content_type == "image/webp"
+    assert r.ext == "webp"
+    assert r.stored_size < len(raw)

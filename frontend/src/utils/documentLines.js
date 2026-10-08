@@ -63,21 +63,48 @@ export function productCardPrice(prod, invoiceType = "sales") {
   return num(prod.sale_price);
 }
 
+function resolveLineNames(item, editedField) {
+  // name / product_name düzenlenirken boş string korunur; aksi halde biri diğerine düşer
+  // ve kullanıcı metni silemez ("" || eskiAd → eskiAd).
+  if (editedField === "name") {
+    const name = item.name == null ? "" : String(item.name);
+    return { name, product_name: name };
+  }
+  if (editedField === "product_name") {
+    const product_name = item.product_name == null ? "" : String(item.product_name);
+    return { name: product_name, product_name };
+  }
+  const name = item.name || item.product_name || "";
+  const product_name = item.product_name || item.name || "";
+  return { name, product_name };
+}
+
 export function computeLine(item, editedField) {
-  const qty = num(item.quantity);
+  const qty = Math.max(num(item.quantity), 0);
   const vat = num(item.vat_rate, 20);
   const disc = Math.min(Math.max(num(item.discount_rate), 0), 100);
+  const factor = 1 - disc / 100;
   let excl = num(item.unit_price);
   let incl = num(item.unit_price_incl);
-  if (editedField === "unit_price_incl") {
+
+  // Satır toplamı (KDV dahil) düzenlenince birim fiyata geri yay.
+  if (editedField === "total_incl") {
+    const q = qty > 0 ? qty : 1;
+    const f = factor > 0 ? factor : 1;
+    const targetIncl = Math.max(num(item.total_incl), 0);
+    const lineExcl = vat === -100 ? targetIncl : targetIncl / (1 + vat / 100);
+    excl = lineExcl / (q * f);
+    incl = excl * (1 + vat / 100);
+  } else if (editedField === "unit_price_incl") {
     excl = vat === -100 ? incl : incl / (1 + vat / 100);
   } else {
     incl = excl * (1 + vat / 100);
   }
-  const factor = 1 - disc / 100;
+
   // Backend enrich_line ile aynı: satır tutarları 2 haneye yuvarlanır.
   const total = Math.round(qty * excl * factor * 100) / 100;
   const vatAmount = Math.round(total * vat / 100 * 100) / 100;
+  const names = resolveLineNames(item, editedField);
   return {
     ...item,
     unit: item.unit || "Adet",
@@ -88,8 +115,7 @@ export function computeLine(item, editedField) {
     total,
     total_incl: Math.round((total + vatAmount) * 100) / 100,
     vat_amount: vatAmount,
-    name: item.name || item.product_name || "",
-    product_name: item.product_name || item.name || "",
+    ...names,
   };
 }
 
@@ -102,6 +128,10 @@ export function hydrateLine(item) {
     product_name: item.product_name || item.name || "",
     discount_rate: item.discount_rate ?? item.discount_percent ?? 0,
   };
+  // Pazaryeri / ShopPHP: unit_price müşterinin ödediği KDV dahil tutarsa nete indir.
+  if (item.price_includes_vat && !num(next.unit_price_incl) && num(next.unit_price)) {
+    return computeLine({ ...next, unit_price_incl: next.unit_price }, "unit_price_incl");
+  }
   if (!num(next.unit_price_incl) && num(next.unit_price)) {
     return computeLine(next, "unit_price");
   }
@@ -172,7 +202,7 @@ export function invoiceMoneyTotals(items = [], {
 }
 
 export function documentLineTotals(items = []) {
-  const rows = items.map((it) => computeLine(it));
+  const rows = items.map((it) => hydrateLine(it));
   const subtotal = Math.round(rows.reduce((s, it) => s + num(it.total), 0) * 100) / 100;
   const vat = Math.round(rows.reduce((s, it) => s + num(it.vat_amount), 0) * 100) / 100;
   const lineDiscount = Math.round(rows.reduce(

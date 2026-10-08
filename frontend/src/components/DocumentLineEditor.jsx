@@ -54,14 +54,27 @@ export function DocumentLineEditor({
   const setRows = (next) => onChange(next.map((it) => computeLine(it)));
 
   const patch = (index, field, value) => {
-    const next = rows.map((it, i) => (i === index ? computeLine({ ...it, [field]: value }, field) : it));
+    const next = rows.map((it, i) => {
+      if (i !== index) return it;
+      const updated = { ...it, [field]: value };
+      // Ad alanları senkron kalsın; boşaltınca product_name eski değeri geri getirmesin.
+      if (field === "name" || field === "product_name") {
+        updated.name = value;
+        updated.product_name = value;
+      }
+      return computeLine(updated, field);
+    });
     setRows(next);
   };
 
   const shownLine = (index, field, stored) => lineNumberShown(lineDrafts, lineDraftKey(index, field), stored);
 
-  const focusLine = (index, field) => {
-    setLineDrafts((m) => ({ ...m, [lineDraftKey(index, field)]: lineNumberOnFocus() }));
+  const focusLine = (index, field, stored) => {
+    setLineDrafts((m) => ({ ...m, [lineDraftKey(index, field)]: lineNumberOnFocus(stored) }));
+  };
+
+  const selectOnFocus = (e) => {
+    try { e.target.select(); } catch { /* ignore */ }
   };
 
   const changeLine = (index, field, raw, emptyFallback) => {
@@ -86,7 +99,15 @@ export function DocumentLineEditor({
     const qty = latest[index]?.quantity || 1;
     const next = latest.map((it, i) => {
       if (i !== index) return it;
-      if (!prod) return { ...it, product_id: id || it.product_id };
+      if (!prod) {
+        // Seçim kaldırıldıysa product_id temizlensin ("" || eskiId hatası olmasın).
+        const cleared = id == null || id === "";
+        return {
+          ...it,
+          product_id: cleared ? "" : (id || it.product_id),
+          ...(cleared ? { name: it.name || it.product_name || "", product_name: it.product_name || it.name || "" } : {}),
+        };
+      }
       return lineFromProduct(prod, { invoiceType, quantity: qty });
     });
     setRows(next);
@@ -197,7 +218,10 @@ export function DocumentLineEditor({
                               return `Stok kartı: ${fmtMoney(price, ccy)}${incl ? " (KDV dahil)" : ""}`;
                             })}
                             getImage={(p) => p.image_url}
+                            valueLabel={nameOf(item)}
                             onChange={(id, p) => pickProduct(idx, id, p)}
+                            clearable
+                            clearLabel="Ürün seçimini kaldır"
                             inline
                             testId={kind === "invoice" ? `inv-item-product-${idx}` : kind === "order" ? `new-order-product-${idx}` : `${testIdPrefix}-product-${idx}`}
                           />
@@ -208,7 +232,7 @@ export function DocumentLineEditor({
                               onChange={(e) => patch(idx, kind === "order" ? "product_name" : "name", e.target.value)}
                               placeholder="Stokta yoksa serbest ad yazın"
                               className={`${inp} mt-1`}
-                              data-testid={kind === "order" ? `new-order-freename-${idx}` : `${testIdPrefix}-freename-${idx}`}
+                              data-testid={kind === "order" ? `new-order-freename-${idx}` : `${testIdPrefix}-name-${idx}`}
                             />
                           )}
                         </>
@@ -224,7 +248,7 @@ export function DocumentLineEditor({
                     min="0"
                     step="any"
                     value={shownLine(idx, "quantity", item.quantity)}
-                    onFocus={() => focusLine(idx, "quantity")}
+                    onFocus={(e) => { focusLine(idx, "quantity", item.quantity); selectOnFocus(e); }}
                     onBlur={() => blurLine(idx, "quantity", 1)}
                     onChange={(e) => changeLine(idx, "quantity", e.target.value, 1)}
                     className={`${inp} text-center`}
@@ -252,7 +276,7 @@ export function DocumentLineEditor({
                     step={inputStepForPrice(item.unit_price)}
                     min="0"
                     value={shownLine(idx, "unit_price", item.unit_price)}
-                    onFocus={() => focusLine(idx, "unit_price")}
+                    onFocus={(e) => { focusLine(idx, "unit_price", item.unit_price); selectOnFocus(e); }}
                     onBlur={() => blurLine(idx, "unit_price", 0)}
                     onChange={(e) => changeLine(idx, "unit_price", e.target.value, 0)}
                     className={`${inp} text-right`}
@@ -267,7 +291,7 @@ export function DocumentLineEditor({
                     step={inputStepForPrice(item.unit_price_incl)}
                     min="0"
                     value={shownLine(idx, "unit_price_incl", Math.round((Number(item.unit_price_incl) || 0) * 10000) / 10000)}
-                    onFocus={() => focusLine(idx, "unit_price_incl")}
+                    onFocus={(e) => { focusLine(idx, "unit_price_incl", Math.round((Number(item.unit_price_incl) || 0) * 10000) / 10000); selectOnFocus(e); }}
                     onBlur={() => blurLine(idx, "unit_price_incl", 0)}
                     onChange={(e) => changeLine(idx, "unit_price_incl", e.target.value, 0)}
                     className={`${inp} text-right`}
@@ -283,7 +307,7 @@ export function DocumentLineEditor({
                     max="100"
                     step="0.01"
                     value={shownLine(idx, "discount_rate", item.discount_rate || "")}
-                    onFocus={() => focusLine(idx, "discount_rate")}
+                    onFocus={(e) => { focusLine(idx, "discount_rate", item.discount_rate || ""); selectOnFocus(e); }}
                     onBlur={() => blurLine(idx, "discount_rate", 0)}
                     onChange={(e) => changeLine(idx, "discount_rate", e.target.value, 0)}
                     className={`${inp} text-center text-rose-700 border-rose-200`}
@@ -306,8 +330,21 @@ export function DocumentLineEditor({
                 <td className="px-2 py-1.5 text-right font-semibold text-slate-800 whitespace-nowrap" data-testid={`${testIdPrefix}-total-excl-${idx}`}>
                   {fmtMoney(item.total, ccy)}
                 </td>
-                <td className="px-2 py-1.5 text-right font-bold text-emerald-800 whitespace-nowrap" data-testid={`${testIdPrefix}-total-incl-${idx}`}>
-                  {fmtMoney(item.total_incl, ccy)}
+                <td className="px-2 py-1.5">
+                  <input
+                    disabled={disabled}
+                    type="text"
+                    inputMode="decimal"
+                    min="0"
+                    step={inputStepForPrice(item.total_incl)}
+                    value={shownLine(idx, "total_incl", item.total_incl)}
+                    onFocus={(e) => { focusLine(idx, "total_incl", item.total_incl); selectOnFocus(e); }}
+                    onBlur={() => blurLine(idx, "total_incl", 0)}
+                    onChange={(e) => changeLine(idx, "total_incl", e.target.value, 0)}
+                    className={`${inp} text-right font-bold text-emerald-800`}
+                    title="Satır toplamını (KDV dahil) düzenle — birim fiyata yansır"
+                    data-testid={`${testIdPrefix}-total-incl-${idx}`}
+                  />
                 </td>
                 <td className="px-1 py-1.5 text-center">
                   <button

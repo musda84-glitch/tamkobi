@@ -3238,7 +3238,7 @@ async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: 
     query = {"company_id": company_id}
     if type and type != "all":
         query["type"] = type
-    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "city": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1, "balance": 1, "company_title": 1} if lite else None
+    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "city": 1, "district": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1, "balance": 1, "company_title": 1} if lite else None
     contacts = await db.contacts.find(query, proj).sort("name", 1).to_list(5000 if lite else 10000)
     docs = clean_docs(contacts)
     if not lite:
@@ -3294,6 +3294,14 @@ async def global_search(q: str, company_id: str = "comp_nexus_main_01"):
     orders = await db.orders.find({"company_id": company_id, "$or": [{"order_number": rx}, {"customer_name": rx}, {"cargo_tracking_number": rx}]}, {"order_number": 1, "customer_name": 1, "total_amount": 1, "order_status": 1}).sort("order_date", -1).limit(6).to_list(6)
     invoices = await db.invoices.find({"company_id": company_id, "$or": [{"invoice_number": rx}, {"contact_name": rx}]}, {"invoice_number": 1, "contact_name": 1, "grand_total": 1, "invoice_type": 1}).sort("issue_date", -1).limit(6).to_list(6)
     return {"contacts": clean_docs(contacts), "products": clean_docs(products), "orders": clean_docs(orders), "invoices": clean_docs(invoices)}
+
+@api_router.get("/contacts/{contact_id}")
+async def get_contact(contact_id: str):
+    contact = await db.contacts.find_one({"_id": contact_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    return clean_doc(contact)
+
 
 @api_router.put("/contacts/{contact_id}")
 async def update_contact(contact_id: str, updated: Dict[str, Any]):
@@ -5191,6 +5199,7 @@ async def list_products(
     b2b_only: bool = False,
     lite: bool = False,
     ids: Optional[str] = None,
+    skus: Optional[str] = None,
 ):
     """lite=1: teklif/yazdırma — maliyet geçmişi hesaplanmaz. ids=virgülle ürün id listesi."""
     query = {"company_id": company_id}
@@ -5207,8 +5216,13 @@ async def list_products(
     if type and type != "all":
         query["type"] = type
     id_list = [x.strip() for x in (ids or "").split(",") if x.strip()]
-    if id_list:
+    sku_list = [x.strip() for x in (skus or "").split(",") if x.strip()]
+    if id_list and sku_list:
+        query["$or"] = [{"_id": {"$in": id_list}}, {"sku": {"$in": sku_list}}]
+    elif id_list:
         query["_id"] = {"$in": id_list}
+    elif sku_list:
+        query["sku"] = {"$in": sku_list}
     # Yazdırma / seçici: barkod + görsel alanları da gelsin (purchase_costs yok)
     proj = {
         "name": 1, "sku": 1, "barcode": 1, "sale_price": 1, "vat_rate": 1, "unit": 1,
@@ -5218,10 +5232,12 @@ async def list_products(
         "stock_quantity": 1, "min_stock_alert": 1, "track_stock": 1, "has_recipe": 1,
         "purchase_price": 1, "category": 1,
     } if lite else None
-    limit = min(len(id_list), 500) if id_list else (5000 if lite else 10000)
-    if id_list and limit < 1:
+    keyed = bool(id_list or sku_list)
+    key_count = len(id_list) + len(sku_list)
+    limit = min(max(key_count, 1), 500) if keyed else (5000 if lite else 10000)
+    if keyed and key_count < 1:
         return []
-    products = await db.products.find(query, proj).to_list(limit if id_list else (5000 if lite else 10000))
+    products = await db.products.find(query, proj).to_list(limit if keyed else (5000 if lite else 10000))
     if lite:
         # Maliyet / son alış taranmaz — web liste ve mobil ilk boya hızı için.
         return [clean_doc(p) for p in products]
@@ -6327,7 +6343,7 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
     data = await file.read()
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Görsel boyutu en fazla 5 MB olabilir.")
-    opt = image_opt.optimize_upload(data, content_type, file.filename or "")
+    opt = image_opt.optimize_product_upload(data, content_type, file.filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
     company_id = product.get("company_id") or "comp_nexus_main_01"
     await saas.check_storage_limit(company_id, len(data))
@@ -6361,18 +6377,58 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     image_url = f"/api/files/{result['path']}"
+    thumbnail_url = None
+    thumb = image_opt.make_thumbnail(data, content_type, file.filename or "")
+    if thumb and thumb.data:
+        try:
+            try:
+                import storage_manager as _sm
+                thumb_path = _sm.object_path(company_id, "product", thumb.ext)
+            except Exception:
+                thumb_path = f"{APP_NAME}/products/{company_id}/thumbs/{uuid.uuid4()}.{thumb.ext}"
+            thumb_res = put_object(thumb_path, thumb.data, thumb.content_type)
+            await db.files.insert_one({
+                "_id": str(uuid.uuid4()),
+                "storage_path": thumb_res["path"],
+                "original_filename": f"thumb_{file.filename or 'image'}.{thumb.ext}",
+                "content_type": thumb.content_type,
+                "size": thumb_res.get("size", len(thumb.data)),
+                "original_size": opt.original_size,
+                "optimized": True,
+                "company_id": company_id,
+                "entity": "product_thumb",
+                "entity_id": product_id,
+                "area_key": area_key,
+                "is_deleted": False,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            thumbnail_url = f"/api/files/{thumb_res['path']}"
+        except Exception as e:
+            logger.warning("Product thumbnail upload failed product=%s: %s", product_id, e)
+            thumbnail_url = None
     if variant_id:
+        vset = {"variants.$.image_url": image_url}
+        if thumbnail_url:
+            vset["variants.$.thumbnail_url"] = thumbnail_url
         await db.products.update_one(
             {"_id": product_id, "variants.variant_id": variant_id},
-            {"$set": {"variants.$.image_url": image_url}}
+            {"$set": vset},
         )
     else:
-        update = {"$push": {"images": image_url}}
+        update: Dict[str, Any] = {"$push": {"images": image_url}}
+        cover_set: Dict[str, Any] = {}
         if not product.get("image_url"):
-            update["$set"] = {"image_url": image_url}
+            cover_set["image_url"] = image_url
+        if thumbnail_url and (not product.get("image_url") or not product.get("thumbnail_url")):
+            cover_set["thumbnail_url"] = thumbnail_url
+        if cover_set:
+            update["$set"] = cover_set
         await db.products.update_one({"_id": product_id}, update)
     updated = await db.products.find_one({"_id": product_id})
-    return {"image_url": image_url, "product": clean_doc(updated), **opt.as_meta()}
+    out = {"image_url": image_url, "product": clean_doc(updated), **opt.as_meta()}
+    if thumbnail_url:
+        out["thumbnail_url"] = thumbnail_url
+    return out
 
 @api_router.put("/products/{product_id}/images")
 async def update_product_images(product_id: str, req: Dict[str, Any]):
@@ -6392,8 +6448,30 @@ async def update_product_images(product_id: str, req: Dict[str, Any]):
     return clean_doc(updated)
 
 @api_router.get("/files/{path:path}")
-async def serve_file(path: str):
+async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
+    """Dosya sunumu. w=64|128|320 → küçük WebP (önbellekli; liste/kart tam dosya çekmez)."""
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
+    # Önce cache: hit olursa orijinali storage'dan hiç okuma
+    if w:
+        cache_key = image_opt.resize_cache_path(path, int(w), "webp")
+        if cache_key != path:
+            try:
+                cached, cached_ct = get_object(cache_key)
+                if cached and len(cached) > 32:
+                    return Response(
+                        content=cached,
+                        media_type=cached_ct or "image/webp",
+                        headers={
+                            "Cache-Control": "public, max-age=604800, immutable",
+                            "Vary": "Accept",
+                            "X-Image-Resize": str(w),
+                            "X-Image-Cache": "hit",
+                        },
+                    )
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                logger.debug("thumb cache read miss path=%s: %s", cache_key, e)
     try:
         data, content_type = get_object(path)
     except FileNotFoundError:
@@ -6405,6 +6483,25 @@ async def serve_file(path: str):
     head = data[:240].lstrip().lower()
     if head.startswith(b"<!doctype") or head.startswith(b"<html") or b"413 request entity too large" in head:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+    if w and media.startswith("image/") and media != "image/svg+xml":
+        cache_key = image_opt.resize_cache_path(path, int(w), "webp")
+        thumb = image_opt.make_thumbnail(data, media, path, max_edge=int(w), quality=70)
+        if thumb and thumb.data and len(thumb.data) < len(data):
+            if cache_key != path:
+                try:
+                    put_object(cache_key, thumb.data, thumb.content_type)
+                except Exception as e:
+                    logger.debug("thumb cache write failed path=%s: %s", cache_key, e)
+            return Response(
+                content=thumb.data,
+                media_type=thumb.content_type,
+                headers={
+                    "Cache-Control": "public, max-age=604800, immutable",
+                    "Vary": "Accept",
+                    "X-Image-Resize": str(w),
+                    "X-Image-Cache": "miss",
+                },
+            )
     return Response(content=data, media_type=media, headers={"Cache-Control": "public, max-age=86400"})
 
 class VariantsUpdateRequest(BaseModel):
@@ -6494,8 +6591,15 @@ def _line_get(it, key, default=""):
 def _line_set(it, key, val):
     if isinstance(it, dict):
         it[key] = val
-    else:
+        return
+    try:
         setattr(it, key, val)
+    except (ValueError, TypeError, AttributeError):
+        # Pydantic v2: modelde olmayan alan (ör. eski InvoiceItem) — sessizce atla
+        try:
+            object.__setattr__(it, key, val)
+        except Exception:
+            pass
 
 async def _fill_stock_codes(company_id: str, items: list):
     """Copy product SKU / barcode onto document lines when missing (print + scan)."""
@@ -6940,10 +7044,27 @@ async def create_invoice(invoice: Invoice):
         for it in invoice.items:
             it.vat_rate = 0
 
-    if not invoice.due_date and invoice.contact_id:
-        _c = await db.contacts.find_one({"_id": invoice.contact_id})
-        if _c and _c.get("payment_term_days"):
-            invoice.due_date = (date.fromisoformat(invoice.issue_date) + timedelta(days=int(_c["payment_term_days"]))).isoformat()
+    _contact_row = None
+    if invoice.contact_id:
+        _contact_row = await db.contacts.find_one({"_id": invoice.contact_id})
+    if not invoice.due_date and _contact_row and _contact_row.get("payment_term_days"):
+        invoice.due_date = (date.fromisoformat(invoice.issue_date) + timedelta(days=int(_contact_row["payment_term_days"]))).isoformat()
+    # Yazdırma SAYIN bloğu için adres: boşsa cariden doldur
+    if _contact_row:
+        _ship = (invoice.shipping_address or "").strip()
+        if not _ship or _ship == "-":
+            _addr = (_contact_row.get("address") or "").strip()
+            if _addr and _addr != "-":
+                invoice.shipping_address = _addr
+        _city = (invoice.city or "").strip()
+        if not _city or _city == "-":
+            _ccity = (_contact_row.get("city") or "").strip()
+            if _ccity and _ccity != "-":
+                invoice.city = _ccity
+        if not (invoice.customer_phone or "").strip():
+            _phone = (_contact_row.get("phone") or "").strip()
+            if _phone:
+                invoice.customer_phone = _phone
     given_rate = fx.typed_rate(invoice.currency, invoice.fx_rate, invoice.fx_source)
     fx_stamp = await fx.stamp(invoice.company_id, invoice.currency, invoice.issue_date, given_rate)
     invoice.currency = fx_stamp["currency"]
@@ -7140,7 +7261,24 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
             raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
-    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}}
+    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}}
+    if "contact_id" in allowed and allowed.get("contact_id"):
+        _c = await db.contacts.find_one({"_id": allowed["contact_id"]})
+        if _c:
+            ship = str(allowed.get("shipping_address") or "").strip()
+            if not ship or ship == "-":
+                addr = str(_c.get("address") or "").strip()
+                if addr and addr != "-":
+                    allowed["shipping_address"] = addr
+            city = str(allowed.get("city") or "").strip()
+            if not city or city == "-":
+                ccity = str(_c.get("city") or "").strip()
+                if ccity and ccity != "-":
+                    allowed["city"] = ccity
+            if not str(allowed.get("customer_phone") or "").strip():
+                phone = str(_c.get("phone") or "").strip()
+                if phone:
+                    allowed["customer_phone"] = phone
     if "issue_time" in allowed and allowed["issue_time"] is not None:
         t = str(allowed["issue_time"] or "").strip()
         if len(t) == 5 and t[2] == ":":
@@ -7457,12 +7595,19 @@ async def _set_invoice_item_product(inv: dict, idx: int, product_id: Optional[st
         item["product_id"] = p["_id"]
         item["is_service"] = False
         item["matched_product_name"] = p.get("name")
+        # Gelen belge eşleştirmesinde ürün B2B'de kapalı kalsın / kapansın.
+        prod_patch: Dict[str, Any] = {"show_in_b2b": False}
         sku = str(item.get("sku") or "").strip()
+        add_ops: Dict[str, Any] = {}
         if sku and sku not in (p.get("supplier_codes") or []):
-            await db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"supplier_codes": sku}})
+            add_ops.setdefault("$addToSet", {})["supplier_codes"] = sku
         alias = str(item.get("name") or item.get("description") or "").strip().lower()
         if alias:
-            await db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"marketplace_aliases": alias}})
+            add_ops.setdefault("$addToSet", {})["marketplace_aliases"] = alias
+        upd: Dict[str, Any] = {"$set": prod_patch}
+        if add_ops:
+            upd.update(add_ops)
+        await db.products.update_one({"_id": p["_id"]}, upd)
     else:
         item["product_id"] = ""
         item["matched_product_name"] = None
@@ -7496,6 +7641,7 @@ async def _create_product_for_invoice_line(inv: dict, idx: int, *, markup: float
         "vat_rate": int(ln.get("vat_rate") or 20),
         "category": "Tedarik",
         "channel": "edoc",
+        "show_in_b2b": False,
     })
     pid = (created.get("product") or {}).get("id") or (created.get("product") or {}).get("_id")
     return await _set_invoice_item_product(inv, idx, pid)
@@ -10920,6 +11066,55 @@ async def _staff_rebuild_order_items(company_id: str, raw_items: list) -> list:
     return rows
 
 
+@api_router.post("/orders/{order_id}/items/match")
+async def match_order_item_product(order_id: str, req: Dict[str, Any]):
+    """Tek sipariş satırını stok kartına bağla (pazaryeri dahil; kalem içeriği değişmez)."""
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    items = list(o.get("items") or [])
+    idx = int(req.get("idx", -1))
+    if not (0 <= idx < len(items)):
+        raise HTTPException(status_code=404, detail="Satır bulunamadı.")
+    product_id = str(req.get("product_id") or "").strip()
+    if not product_id:
+        raise HTTPException(status_code=400, detail="Stok kartı gerekli.")
+    p = await db.products.find_one({"_id": product_id, "company_id": o.get("company_id")})
+    if not p:
+        raise HTTPException(status_code=404, detail="Stok kartı bulunamadı.")
+    line = dict(items[idx])
+    line["product_id"] = p["_id"]
+    if p.get("name"):
+        line["matched_product_name"] = p["name"]
+        # Satır adı yoksa stok adını doldur; pazaryeri görünen adını koru.
+        if not (line.get("product_name") or line.get("name")):
+            line["product_name"] = p["name"]
+    if p.get("sku") and not line.get("sku"):
+        line["sku"] = p["sku"]
+    if p.get("barcode") and not line.get("barcode"):
+        line["barcode"] = p["barcode"]
+    items[idx] = line
+    aliases = []
+    for key in (line.get("barcode"), line.get("sku"), line.get("product_name"), line.get("name")):
+        a = str(key or "").strip()
+        if a:
+            aliases.append(a if key in (line.get("barcode"), line.get("sku")) else a.lower())
+    prod_upd: Dict[str, Any] = {}
+    if aliases:
+        prod_upd["$addToSet"] = {"marketplace_aliases": {"$each": list(dict.fromkeys(aliases))}}
+    if prod_upd:
+        await db.products.update_one({"_id": p["_id"]}, prod_upd)
+    stamp = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one({"_id": order_id}, {"$set": {"items": items, "updated_at": stamp}})
+    updated = {**o, "items": items, "updated_at": stamp}
+    return {
+        "status": "success",
+        "order": clean_doc(updated),
+        "product": clean_doc(p),
+        "message": f"'{p.get('name')}' stok kartıyla eşleştirildi.",
+    }
+
+
 @api_router.put("/orders/{order_id}")
 async def update_order(order_id: str, req: Dict[str, Any]):
     o = await db.orders.find_one({"_id": order_id})
@@ -11276,6 +11471,12 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         "marketplace": "pazaryeri senkronunda",
         "import": "içe aktarımda",
     }.get(source, "alışında")
+    _ship = (order.get("shipping_address") or "").strip()
+    if not _ship or _ship == "-":
+        _ship = (contact.get("address") or "").strip()
+    _city = (order.get("city") or "").strip()
+    if not _city or _city == "-":
+        _city = (contact.get("city") or "").strip()
     doc = {
         "_id": inv_id,
         "company_id": order.get("company_id"),
@@ -11284,6 +11485,9 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         "contact_id": contact["_id"],
         "contact_name": contact.get("name") or order.get("customer_name") or "",
         "contact_tax_id": contact.get("tax_number_or_id") or "11111111111",
+        "shipping_address": _ship or None,
+        "city": _city or None,
+        "customer_phone": order.get("customer_phone") or contact.get("phone") or None,
         "e_type": e_type,
         "issue_date": now.strftime("%Y-%m-%d"),
         "due_date": (now + timedelta(days=term_days)).strftime("%Y-%m-%d"),
@@ -11849,10 +12053,12 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
         if not channel or not order_number:
             continue
         key = {"company_id": company_id, "channel": channel, "order_number": order_number}
+        d = marketplace_providers.normalize_marketplace_order_prices(d)
         d["updated_at"] = datetime.now(timezone.utc).isoformat()
         existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
         if existing:
             payload = merge_keep_fields(existing, d)
+            payload = marketplace_providers.normalize_marketplace_order_prices(payload)
             await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
             if not existing.get("contact_id"):
                 await _ensure_order_contact({**existing, **payload})
@@ -11862,8 +12068,16 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
         d["created_at"] = d["updated_at"]
         try:
             await db.orders.insert_one(d)
-            await _ensure_order_contact(d)
-            await _attach_draft_invoice_on_intake(d, source="marketplace")
+            contact = await _ensure_order_contact(d)
+            inv = await _attach_draft_invoice_on_intake(d, source="marketplace")
+            # ShopPHP vb. ön ödemeli kanallar: hakediş hesabı seçiliyse sipariş gelince tahsilat yaz.
+            if inv and contact and (d.get("channel") or "").lower() == "shopphp":
+                try:
+                    fresh = await db.orders.find_one({"_id": d["_id"]}) or d
+                    if not (fresh.get("settlement") or {}).get("tx_id"):
+                        await _post_marketplace_settlement(fresh, inv, contact)
+                except Exception:
+                    logging.getLogger(__name__).exception("ShopPHP hakediş yazılamadı: %s", d.get("order_number"))
             inserted += 1
         except DuplicateKeyError:
             # Eşzamanlı sync kazanmış; güncelle + ekstra satırları birleştir.
@@ -11872,6 +12086,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
                 existing = await db.orders.find_one(key)
             if existing:
                 payload = merge_keep_fields(existing, d)
+                payload = marketplace_providers.normalize_marketplace_order_prices(payload)
                 await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
                 if not existing.get("contact_id"):
                     await _ensure_order_contact({**existing, **payload})
@@ -12199,6 +12414,10 @@ async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict
     channel = (order.get("channel") or "").lower()
     if channel in ("", "b2b", "manual", "saha"):
         return None
+    if (order.get("settlement") or {}).get("tx_id"):
+        return None
+    if not invoice or not invoice.get("_id"):
+        return None
     cfg = await db.integration_configs.find_one({"company_id": order["company_id"], "channel": channel})
     if not cfg or not cfg.get("settlement_account_id"):
         return None
@@ -12372,7 +12591,7 @@ async def test_ecommerce_connection(channel_id: str):
         except HTTPException as e:
             await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail}})
             return {"status": "error", "message": e.detail}
-        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "xml_resolved": {k: bool(v) for k, v in r.items()}}})
+        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "xml_resolved": {k: bool(v) for k, v in r.items()}}})
         return {"status": "success", "live": True, "message": f"ShopPHP XML bağlantısı başarılı: sipariş XML'inde {len(orders)} sipariş{prod_note}." + (" RSS beslemesi (c=rss) fiyat/stok içermediği için kullanılmaz." if r.get("rss") else "")}
     if not marketplace_providers.has_live_credentials(config):
         return {"status": "error", "message": "API Key, API Secret ve Satıcı ID (supplier/seller ID) eksiksiz doldurulmalı."}
@@ -12453,7 +12672,7 @@ async def sync_ecommerce_channel(channel_id: str, days: Optional[int] = None):
             await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
             raise
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_shopphp_xml_order(o, company_id, channel) for o in raw_orders])
-        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
+        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
         return {"status": "success", "live": True, "channel": channel, "days": sync_days, **res, "message": f"ShopPHP: {len(raw_orders)} sipariş okundu → {res['inserted']} yeni, {res['updated']} güncellendi."}
     if channel == "trendyol" and marketplace_providers.has_live_credentials(config):
         client = marketplace_providers.TrendyolClient(config)
@@ -13040,11 +13259,19 @@ async def create_product_from_marketplace(req: Dict[str, Any]):
     if await db.products.find_one({"company_id": company_id, "sku": sku}):
         sku = f"{sku}-{uuid.uuid4().hex[:4].upper()}"
     aliases = [a for a in {barcode, (req.get("sku") or "").strip(), name.lower()} if a]
+    channel = str(req.get("channel") or "").strip().lower()
+    # Gelen e-belge / alış faturası kaynaklı kartlar B2B kataloğunda kapalı açılsın.
+    if "show_in_b2b" in req:
+        show_b2b = bool(req.get("show_in_b2b"))
+    else:
+        show_b2b = channel not in ("edoc", "invoice", "purchase", "incoming")
     p = Product(company_id=company_id, name=name, sku=sku, barcode=barcode or f"868{str(uuid.uuid4().int)[:10]}", category=req.get("category") or "Pazaryeri", sale_price=float(req.get("sale_price") or 0),
-                purchase_price=float(req.get("purchase_price") or 0), stock_quantity=float(req.get("stock_quantity") or 0), vat_rate=int(req.get("vat_rate") or 20))
+                purchase_price=float(req.get("purchase_price") or 0), stock_quantity=float(req.get("stock_quantity") or 0), vat_rate=int(req.get("vat_rate") or 20),
+                show_in_b2b=show_b2b)
     doc = p.to_mongo()
     doc["marketplace_aliases"] = aliases
     doc["source"] = f"marketplace:{req.get('channel') or ''}"
+    doc["show_in_b2b"] = show_b2b
     await db.products.insert_one(doc)
     await _remember_category(company_id, doc["category"])
     await _remember_unit(company_id, doc.get("unit"))
@@ -13058,6 +13285,78 @@ async def match_marketplace_product(req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Ürün ve pazaryeri barkod/SKU gerekli.")
     await db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"marketplace_aliases": alias}})
     return {"status": "success", "message": f"'{alias}' → {p.get('name')} eşleştirildi. Kârlılık ve stok düşümü bu ürün üzerinden hesaplanır."}
+
+
+@api_router.post("/marketplace/product-match-suggest")
+async def suggest_marketplace_product_matches(req: Dict[str, Any]):
+    """Pazaryeri satırları için stok kartı önerileri (barkod/SKU/ad benzerliği + isteğe bağlı AI)."""
+    import marketplace_match as mpm
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    rows = list(req.get("rows") or [])
+    if not rows:
+        return {"suggestions": {}, "mode": "empty", "count": 0}
+    products = await db.products.find(
+        {"company_id": company_id},
+        {"name": 1, "sku": 1, "barcode": 1, "marketplace_aliases": 1},
+    ).to_list(5000)
+    for p in products:
+        p["id"] = p.get("_id")
+    min_score = float(req.get("min_score") or 0.45)
+    limit = max(1, min(5, int(req.get("limit") or 3)))
+    suggestions = mpm.suggest_for_rows(rows, products, limit=limit, min_score=min_score)
+    mode = "smart"
+    # Düşük güvenli satırlarda AI ile yeniden sıralama (anahtar yoksa atlanır)
+    if req.get("use_ai"):
+        weak = []
+        for row in rows:
+            bc = str(row.get("barcode") or "").strip()
+            top = (suggestions.get(bc) or [None])[0]
+            if not top or float(top.get("score") or 0) < 0.75:
+                weak.append(row)
+        if weak:
+            try:
+                catalog = "\n".join(
+                    f"- id={p.get('_id')} | {p.get('name')} | sku={p.get('sku') or ''} | bc={p.get('barcode') or ''}"
+                    for p in products[:400]
+                )
+                lines = "\n".join(
+                    f"- barcode={r.get('barcode')} | title={r.get('title') or ''} | stock_code={r.get('stock_code') or ''}"
+                    for r in weak[:40]
+                )
+                prompt = (
+                    "Pazaryeri ürünlerini stok kartlarıyla eşleştir. "
+                    "Her satır için en iyi product id'yi JSON olarak ver: "
+                    '{"matches":[{"barcode":"...","product_id":"...","confidence":0.0}]}. '
+                    "Emin değilsen product_id boş bırak.\n\n"
+                    f"STOK KARTLARI:\n{catalog}\n\nPAZARYERI:\n{lines}"
+                )
+                advice = await get_financial_ai_advice({"task": "marketplace_product_match"}, prompt)
+                import json as _json
+                raw = advice if isinstance(advice, str) else str(advice or "")
+                m = re.search(r"\{[\s\S]*\}", raw)
+                if m:
+                    parsed = _json.loads(m.group(0))
+                    by_id = {p["_id"]: p for p in products}
+                    for hit in parsed.get("matches") or []:
+                        bc = str(hit.get("barcode") or "").strip()
+                        pid = hit.get("product_id")
+                        conf = float(hit.get("confidence") or 0.7)
+                        if not bc or not pid or pid not in by_id:
+                            continue
+                        p = by_id[pid]
+                        suggestions[bc] = [{
+                            "product_id": pid,
+                            "name": p.get("name"),
+                            "sku": p.get("sku"),
+                            "barcode": p.get("barcode"),
+                            "score": round(max(0.55, min(0.99, conf)), 2),
+                            "reason": "ai",
+                        }] + [s for s in (suggestions.get(bc) or []) if s.get("product_id") != pid][: limit - 1]
+                    mode = "ai"
+            except Exception as e:  # noqa: BLE001
+                logger.warning("marketplace match AI suggest skipped: %s", e)
+    count = sum(1 for v in suggestions.values() if v)
+    return {"suggestions": suggestions, "mode": mode, "count": count}
 
 @api_router.get("/marketplace/claims")
 async def list_marketplace_claims(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
@@ -13250,7 +13549,7 @@ async def get_order_cargo_label_file(order_id: str):
 # ----------------- KARGO ENTEGRASYONLARI -----------------
 CARGO_CATALOG = [
     {"carrier_code": "navlungo", "carrier_name": "Navlungo (Kargo Pazaryeri)", "kind": "marketplace", "desc": "Tüm kargo firmalarını tek panelden karşılaştır, indirimli gönder", "fields": ["api_key"]},
-    {"carrier_code": "geliver", "carrier_name": "Geliver (Kargo Pazaryeri)", "kind": "marketplace", "desc": "Anlaşmalı fiyatlarla çoklu kargo, otomatik etiket — CANLI API (api.geliver.io)", "fields": ["api_key", "sender_address_id"], "live": True},
+    {"carrier_code": "geliver", "carrier_name": "Geliver (Kargo Pazaryeri)", "kind": "marketplace", "desc": "Anlaşmalı fiyatlarla çoklu kargo, otomatik etiket — resmi geliver Python SDK (api.geliver.io)", "fields": ["api_key", "sender_address_id"], "live": True},
     {"carrier_code": "kolaykargo", "carrier_name": "Kolay Kargo (Pazaryeri)", "kind": "marketplace", "desc": "Sözleşmesiz indirimli kargo, Trendyol/Hepsiburada uyumlu", "fields": ["api_key"]},
     {"carrier_code": "basitkargo", "carrier_name": "BasitKargo (Pazaryeri)", "kind": "marketplace", "desc": "Toplu gönderi, kapıdan alım", "fields": ["api_key", "api_secret"]},
     {"carrier_code": "kargomsende", "carrier_name": "Kargom Sende (Pazaryeri)", "kind": "marketplace", "desc": "Çoklu kargo karşılaştırma", "fields": ["api_key"]},

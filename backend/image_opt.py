@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 from dataclasses import asdict, dataclass
 from typing import Optional, Tuple
 
@@ -48,19 +49,32 @@ def enabled() -> bool:
     return os.environ.get("IMAGE_OPTIMIZE", "1").lower() not in {"0", "false", "no"}
 
 
-def _settings():
-    """Panel görselleri için agresif ama kaliteli varsayılanlar (MB tasarrufu)."""
+def _settings(profile: str = "default"):
+    """Panel görselleri için agresif ama kaliteli varsayılanlar (MB tasarrufu).
+
+    profile=product → ürün galerisi: daha küçük kenar + WebP önceliği.
+    """
     try:
         min_savings = float(os.environ.get("IMAGE_MIN_SAVINGS", "0.05"))
     except (TypeError, ValueError):
         min_savings = 0.05
+    is_product = (profile or "").strip().lower() == "product"
     return {
-        # 1920px çoğu panel/ürün kartı için yeterli; 4K yüklemeleri budar
-        "max_edge": _i("IMAGE_MAX_EDGE", 1920),
-        "jpeg_quality": _i("IMAGE_JPEG_QUALITY", 80),
-        "webp_quality": _i("IMAGE_WEBP_QUALITY", 78),
-        "min_savings": min_savings,
+        # 1920px genel; ürün kartları için 1280 yeterli
+        "max_edge": _i("IMAGE_PRODUCT_MAX_EDGE" if is_product else "IMAGE_MAX_EDGE", 1280 if is_product else 1920),
+        "jpeg_quality": _i(
+            "IMAGE_PRODUCT_JPEG_QUALITY" if is_product else "IMAGE_JPEG_QUALITY",
+            70 if is_product else 80,
+        ),
+        "webp_quality": _i(
+            "IMAGE_PRODUCT_WEBP_QUALITY" if is_product else "IMAGE_WEBP_QUALITY",
+            68 if is_product else 78,
+        ),
+        "min_savings": float(os.environ.get("IMAGE_PRODUCT_MIN_SAVINGS", "0.02")) if is_product else min_savings,
         "skip_under": _i("IMAGE_SKIP_UNDER_BYTES", 4096),
+        # Ürün: mümkünse her zaman WebP sakla (en küçük + tutarlı uzantı)
+        "prefer_webp": is_product,
+        "profile": "product" if is_product else "default",
     }
 
 
@@ -211,8 +225,114 @@ def prepare_vision_image(
     return data, mime
 
 
-def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> OptimizeResult:
-    """Orijinal veya daha küçük yüksek kaliteli varyant döner. Asla raise etmez."""
+def resize_cache_path(storage_path: str, edge: int, ext: str = "webp") -> str:
+    """GET /files?w= için türetilmiş önbellek anahtarı (orijinalin yanında)."""
+    path = (storage_path or "").strip().lstrip("/")
+    e = max(16, min(1280, int(edge or 64)))
+    ex = (ext or "webp").lstrip(".").lower() or "webp"
+    if not path:
+        return f"_thumbs/w{e}.{ex}"
+    # Zaten cache dosyasıysa yeniden üretme
+    if re.search(r"\.w\d+\.[a-z0-9]+$", path, re.I):
+        return path
+    base, _, _old = path.rpartition(".")
+    stem = base if base else path
+    return f"{stem}.w{e}.{ex}"
+
+
+def make_thumbnail(
+    data: bytes,
+    content_type: str = "",
+    filename: str = "",
+    max_edge: int = 320,
+    quality: int = 72,
+) -> Optional[OptimizeResult]:
+    """Liste/kart için küçük WebP (veya JPEG) önizleme. Başarısızsa None."""
+    if not data:
+        return None
+    sniffed = _sniff_type(data, content_type or "")
+    name = (filename or "").lower()
+    if sniffed in {"image/heic", "image/heif"} or name.endswith((".heic", ".heif", ".avif")):
+        _try_register_heif()
+    try:
+        from PIL import Image, ImageOps
+    except Exception:
+        return None
+    try:
+        im = Image.open(io.BytesIO(data))
+        im.load()
+        if getattr(im, "is_animated", False) and getattr(im, "n_frames", 1) > 1:
+            im.seek(0)
+        im = ImageOps.exif_transpose(im) or im
+        edge = max(64, int(max_edge or 320))
+        if max(im.size) > edge:
+            im.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+        alpha = _has_alpha(im)
+        if alpha:
+            if im.mode != "RGBA":
+                im = im.convert("RGBA")
+            try:
+                payload = _save(im, "WEBP", quality=int(quality or 72), method=4)
+                ctype, ext = "image/webp", "webp"
+            except Exception:
+                payload = _save(im, "PNG", optimize=True, compress_level=8)
+                ctype, ext = "image/png", "png"
+        else:
+            rgb = im.convert("RGB")
+            try:
+                payload = _save(rgb, "WEBP", quality=int(quality or 72), method=4)
+                ctype, ext = "image/webp", "webp"
+            except Exception:
+                payload = _save(rgb, "JPEG", quality=int(quality or 72), optimize=True)
+                ctype, ext = "image/jpeg", "jpg"
+        if not payload:
+            return None
+        return OptimizeResult(
+            data=payload,
+            content_type=ctype,
+            ext=ext,
+            original_size=len(data),
+            stored_size=len(payload),
+            width=im.size[0],
+            height=im.size[1],
+            optimized=True,
+            reason="thumbnail",
+        )
+    except Exception as e:
+        logger.warning("make_thumbnail failed (%s)", e)
+        return None
+
+
+def _pick_best_candidate(
+    candidates: list[Tuple[bytes, str, str]],
+    *,
+    prefer_webp: bool,
+) -> Optional[Tuple[bytes, str, str]]:
+    if not candidates:
+        return None
+    smallest = min(candidates, key=lambda c: len(c[0]))
+    if not prefer_webp:
+        return smallest
+    webps = [c for c in candidates if c[1] == "image/webp"]
+    if not webps:
+        return smallest
+    best_webp = min(webps, key=lambda c: len(c[0]))
+    # WebP en fazla %8 daha büyükse yine WebP seç (tutarlı .webp uzantısı)
+    if len(best_webp[0]) <= int(len(smallest[0]) * 1.08):
+        return best_webp
+    return smallest
+
+
+def optimize_upload(
+    data: bytes,
+    content_type: str = "",
+    filename: str = "",
+    profile: str = "default",
+) -> OptimizeResult:
+    """Orijinal veya daha küçük yüksek kaliteli varyant döner. Asla raise etmez.
+
+    profile=\"product\": ürün galerisi — daha agresif kenar/kalite + WebP tercihi.
+    """
     original = OptimizeResult(
         data=data,
         content_type=(content_type or "application/octet-stream").split(";")[0].strip()
@@ -222,7 +342,7 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
         stored_size=len(data),
         reason="skipped",
     )
-    cfg = _settings()
+    cfg = _settings(profile)
     if not enabled() or not data:
         original.reason = "disabled"
         return original
@@ -274,7 +394,9 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
             if im.mode == "RGBA" and not alpha
             else (im if im.mode == "RGB" else im.convert("RGB"))
         )
-        if not alpha:
+        prefer_webp = bool(cfg.get("prefer_webp"))
+        # Ürün profilinde JPEG adayı yalnızca WebP başarısız olursa yedek olarak kalsın
+        if not alpha and not prefer_webp:
             candidates.append(
                 (
                     _save(
@@ -308,23 +430,48 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
                 )
         except Exception:
             pass
-        if original.content_type == "image/png" or alpha:
+        if prefer_webp and not alpha and not any(c[1] == "image/webp" for c in candidates):
+            candidates.append(
+                (
+                    _save(
+                        rgb,
+                        "JPEG",
+                        quality=cfg["jpeg_quality"],
+                        optimize=True,
+                        progressive=True,
+                    ),
+                    "image/jpeg",
+                    "jpg",
+                )
+            )
+        if not prefer_webp and (original.content_type == "image/png" or alpha):
             png_src = im.convert("RGBA") if alpha else rgb
             candidates.append(
                 (_save(png_src, "PNG", optimize=True, compress_level=9), "image/png", "png")
             )
+        elif prefer_webp and alpha and not any(c[1] == "image/webp" for c in candidates):
+            png_src = im.convert("RGBA")
+            candidates.append(
+                (_save(png_src, "PNG", optimize=True, compress_level=9), "image/png", "png")
+            )
 
-        best = min(candidates, key=lambda c: len(c[0])) if candidates else None
+        best = _pick_best_candidate(candidates, prefer_webp=prefer_webp)
         if not best:
             original.reason = "no_candidate"
             return original
         payload, ctype, ext = best
-        if len(payload) >= int(len(data) * (1.0 - cfg["min_savings"])):
+        # Ürün WebP: orijinalden büyük değilse kabul (uzantı değişimi için min_savings esnek)
+        if prefer_webp and ctype == "image/webp":
+            accept = len(payload) <= len(data)
+        else:
+            accept = len(payload) < int(len(data) * (1.0 - cfg["min_savings"]))
+        if not accept:
             original.reason = "no_savings"
             original.width, original.height = im.size
             return original
         logger.info(
-            "image_opt: %s → %s (%s→%s bytes, -%s%%, %sx%s)",
+            "image_opt[%s]: %s → %s (%s→%s bytes, -%s%%, %sx%s)",
+            cfg.get("profile") or "default",
             filename or sniffed,
             ext,
             len(data),
@@ -348,4 +495,9 @@ def optimize_upload(data: bytes, content_type: str = "", filename: str = "") -> 
         logger.warning("image optimize failed (%s); storing original", e)
         original.reason = "error"
         return original
+
+
+def optimize_product_upload(data: bytes, content_type: str = "", filename: str = "") -> OptimizeResult:
+    """Ürün galerisi: WebP öncelikli, daha küçük kenar/kalite."""
+    return optimize_upload(data, content_type, filename, profile="product")
 

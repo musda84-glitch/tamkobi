@@ -35,6 +35,7 @@ import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { InvoiceGibBar } from "../components/InvoiceGibBar";
 import { isEinvoiceConfigured, supportsEDispatch } from "../utils/einvoiceIntegrator";
 import { findRetailContact, invoiceFormPatchForRetail, retailContactCreatePayload } from "../utils/barcodeSale";
+import { paymentAskMessage, shouldAskPaymentAfterSave } from "../utils/invoiceAskPayment";
 
 import {
   FileText,
@@ -415,7 +416,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     if (!newParam) return;
     if (newContactParam && contacts.length === 0) return;
     const c = contacts.find((x) => x.id === newContactParam);
-    setFormData((fd) => ({ ...fd, invoice_type: newParam === "purchase" ? "purchase" : "sales", e_type: newParam === "purchase" ? "paper" : (c?.is_e_invoice_user ? "e_invoice" : "e_archive"), contact_id: c?.id || fd.contact_id || "", contact_name: c?.name || fd.contact_name || "", project_id: newProjectParam || fd.project_id || "" }));
+    setFormData((fd) => ({
+      ...fd,
+      invoice_type: newParam === "purchase" ? "purchase" : "sales",
+      e_type: newParam === "purchase" ? "paper" : (c?.is_e_invoice_user ? "e_invoice" : "e_archive"),
+      contact_id: c?.id || fd.contact_id || "",
+      contact_name: c?.name || fd.contact_name || "",
+      shipping_address: c?.address || fd.shipping_address || "",
+      city: c?.city || fd.city || "",
+      customer_phone: c?.phone || fd.customer_phone || "",
+      project_id: newProjectParam || fd.project_id || "",
+    }));
     setShowNewModal(true);
     setSearchParams({}, { replace: true });
   }, [newParam, newContactParam, newProjectParam, contacts, setSearchParams]);
@@ -509,6 +520,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       status: "draft",
       contact_id: inv.contact_id || "",
       contact_name: inv.contact_name || "",
+      shipping_address: inv.shipping_address || inv.address || "",
+      city: inv.city || "",
+      customer_phone: inv.customer_phone || "",
       issue_date: (inv.issue_date || "").slice(0, 10),
       issue_time: (inv.issue_time || "").slice(0, 8) || nowIssueDateTime().issue_time,
       due_date: (inv.due_date || "").slice(0, 10),
@@ -630,6 +644,23 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     }
   };
 
+  const askPaymentAfterSave = async (inv) => {
+    if (!shouldAskPaymentAfterSave(inv)) return;
+    if (!window.confirm(paymentAskMessage(inv))) return;
+    let ready = inv;
+    if (String(inv.status || "") === "draft") {
+      try {
+        await axios.post(`${API_URL}/invoices/${inv.id || inv._id}/approve`);
+        ready = { ...inv, status: "approved" };
+        toast.success("Fatura onaylandı (cariye işlendi).");
+      } catch (err) {
+        toast.error(err.response?.data?.detail || "Onaylanamadı; ödeme açılamadı.");
+        return;
+      }
+    }
+    openPayment(ready);
+  };
+
   const handleCreateInvoice = async (e) => {
     e.preventDefault();
     if (!formData.contact_id) {
@@ -639,9 +670,16 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     try {
       const t = calculateTotals();
       if (formData.items.some((it) => !(it.name || it.product_name))) { toast.error("Her satır için ürün seçin ya da hizmet adı yazın."); return; }
+      const contactRow = contacts.find((x) => x.id === formData.contact_id || x._id === formData.contact_id);
+      const ship = String(formData.shipping_address || contactRow?.address || "").trim();
+      const city = String(formData.city || contactRow?.city || "").trim();
+      const phone = String(formData.customer_phone || contactRow?.phone || "").trim();
       const payload = {
         company_id: activeCompany?.id || activeCompany?._id || "comp_nexus_main_01",
         ...formData,
+        shipping_address: ship && ship !== "-" ? ship : (formData.shipping_address || null),
+        city: city && city !== "-" ? city : (formData.city || null),
+        customer_phone: phone || formData.customer_phone || null,
         items: formData.items.map((it) => {
           const line = computeLine(it);
           return { ...line, unit_price: Number(Number(line.unit_price).toFixed(4)), product_id: it.is_service ? "" : it.product_id };
@@ -654,20 +692,40 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
         status: formData.invoice_type === "dispatch" ? "draft" : (formData.status || "draft"),
         gib_status: (formData.status || "draft") === "draft" ? "Taslak" : "Onaylandı"
       };
+      let saved = null;
       if (editingInvoice) {
         const { company_id, invoice_type, gib_status, ...upd } = payload;
-        await axios.put(`${API_URL}/invoices/${editingInvoice.id}`, { ...upd, invoice_type });
+        const putRes = await axios.put(`${API_URL}/invoices/${editingInvoice.id}`, { ...upd, invoice_type });
         if (payload.status === "approved") await axios.post(`${API_URL}/invoices/${editingInvoice.id}/approve`);
         toast.success("Taslak fatura güncellendi.");
+        saved = putRes?.data || {
+          ...editingInvoice,
+          ...upd,
+          id: editingInvoice.id || editingInvoice._id,
+          status: payload.status === "approved" ? "approved" : (editingInvoice.status || payload.status),
+          grand_total: Number(putRes?.data?.grand_total ?? t.grandTotal ?? editingInvoice.grand_total ?? 0),
+        };
         setEditingInvoice(null);
       } else {
-      await axios.post(`${API_URL}/invoices`, payload);
-      toast.success(payload.status === "draft" ? "Fatura taslak olarak kaydedildi." : "Fatura başarıyla oluşturuldu ve cariye işlendi.");
+        const res = await axios.post(`${API_URL}/invoices`, payload);
+        saved = res.data;
+        toast.success(payload.status === "draft" ? "Fatura taslak olarak kaydedildi." : "Fatura başarıyla oluşturuldu ve cariye işlendi.");
       }
       setShowNewModal(false);
       loadData();
+      await askPaymentAfterSave(saved);
     } catch (err) {
-      toast.error(err.response?.data?.detail ? (typeof err.response.data.detail === "string" ? err.response.data.detail : "Eksik alan: " + err.response.data.detail.map(d => d.loc?.slice(-1)[0]).join(", ")) : "Fatura kaydedilemedi.");
+      const detail = err?.response?.data?.detail;
+      let msg = "Fatura kaydedilemedi.";
+      if (typeof detail === "string" && detail.trim()) msg = detail;
+      else if (Array.isArray(detail) && detail.length) {
+        msg = "Eksik alan: " + detail.map((d) => d?.loc?.slice(-1)?.[0] || d?.msg || "?").filter(Boolean).join(", ");
+      } else if (err?.response?.status) {
+        msg = `Fatura kaydedilemedi (HTTP ${err.response.status}).`;
+      } else if (err?.message) {
+        msg = `Fatura kaydedilemedi: ${err.message}`;
+      }
+      toast.error(msg);
     }
   };
 
@@ -1830,7 +1888,15 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     placeholder="Cari ara ve seç..."
                     getLabel={(c) => c.name}
                     getSub={(c) => `${c.type === 'customer' ? 'Müşteri' : c.type === 'supplier' ? 'Tedarikçi' : 'Müşteri & Tedarikçi'} • VKN ${c.tax_number_or_id}`}
-                    onChange={(id, c) => setFormData({ ...formData, contact_id: id, contact_name: c?.name || "", e_type: c && formData.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(formData.e_type) ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : formData.e_type })}
+                    onChange={(id, c) => setFormData({
+                      ...formData,
+                      contact_id: id,
+                      contact_name: c?.name || "",
+                      shipping_address: c?.address || formData.shipping_address || "",
+                      city: c?.city || formData.city || "",
+                      customer_phone: c?.phone || formData.customer_phone || "",
+                      e_type: c && formData.invoice_type === "sales" && !["paper", "e_export", "e_dispatch"].includes(formData.e_type) ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : formData.e_type,
+                    })}
                     testId="inv-contact-select"
                     leadingAction={formData.invoice_type !== "purchase" ? {
                       label: "Perakende (carisiz)",
@@ -1840,7 +1906,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       onSelect: pickRetailContact,
                     } : null}
                   />
-                  {formData.invoice_type !== "purchase" && (
+                  {formData.invoice_type !== "purchase" && !formData.contact_id && (
                     <button
                       type="button"
                       onClick={pickRetailContact}
@@ -1861,11 +1927,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 {quickContact && (
                   <div className="sm:col-span-3">
                     <QuickContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} defaultType={formData.invoice_type === "purchase" ? "supplier" : "customer"} onCancel={() => setQuickContact(false)}
-                      onCreated={(c) => { setContacts((prev) => [c, ...prev]); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, e_type: fd.invoice_type === "sales" && fd.e_type !== "paper" ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : fd.e_type })); setQuickContact(false); }} />
+                      onCreated={(c) => { setContacts((prev) => [c, ...prev]); setFormData((fd) => ({ ...fd, contact_id: c.id, contact_name: c.name, shipping_address: c.address || "", city: c.city || "", customer_phone: c.phone || "", e_type: fd.invoice_type === "sales" && fd.e_type !== "paper" ? (c.is_e_invoice_user ? "e_invoice" : "e_archive") : fd.e_type })); setQuickContact(false); }} />
                   </div>
                 )}
                 <div className="sm:col-span-3">
-                  <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
+                  <GibContactLookup companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onSelect={(c, eType) => { setContacts((prev) => prev.some((x) => x.id === c.id) ? prev : [c, ...prev]); setFormData((f) => ({ ...f, contact_id: c.id, contact_name: c.name, shipping_address: c.address || f.shipping_address || "", city: c.city || f.city || "", customer_phone: c.phone || f.customer_phone || "", e_type: f.invoice_type === "sales" ? eType : f.e_type })); }} />
                 </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
@@ -2000,6 +2066,18 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                     <span className="font-semibold">{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</span>
                   </div>
                 )}
+              </div>
+
+              <div className="w-full" data-testid="inv-notes-block">
+                <label className="block font-semibold text-slate-700 mb-1">Fatura notu</label>
+                <textarea
+                  rows={2}
+                  value={formData.notes || ""}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  placeholder="Fatura altına yazılacak not / açıklama…"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800"
+                  data-testid="inv-notes-input"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">

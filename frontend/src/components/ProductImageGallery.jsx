@@ -151,7 +151,7 @@ export const ProductImageGallery = ({ product, onUpdated }) => {
         </label>
       </div>
       {images.length === 0 && (
-        <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><ImageIcon className="w-3.5 h-3.5" /> Henüz görsel yok. Yüklerken kırpabilir; WebP/JPEG olarak sıkıştırılır (maks. 5 MB).</p>
+        <p className="text-[11px] text-slate-500 flex items-center gap-1.5"><ImageIcon className="w-3.5 h-3.5" /> Henüz görsel yok. Yüklerken kırpabilir; otomatik WebP’ye çevrilip sıkıştırılır (az yer kaplar, maks. 5 MB).</p>
       )}
       {images.length > 0 && (
         <p className="text-[11px] text-slate-500">Kapak: liste/kart. <span className="text-indigo-600 font-semibold">Etiket</span>: barkod etiket tasarımında kullanılan görsel (etiket ikonuna tıklayın).</p>

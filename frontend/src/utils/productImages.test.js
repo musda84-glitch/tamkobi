@@ -1,4 +1,4 @@
-import { mediaRef, productGalleryUrls, productIdOf } from "./productImages";
+import { mediaRef, orderLineListImageUrl, productGalleryUrls, productIdOf, productListImageUrl } from "./productImages";
 
 describe("productImages", () => {
   test("mediaRef reads strings and object fields", () => {
@@ -23,5 +23,19 @@ describe("productImages", () => {
     expect(productIdOf({ id: "p1" })).toBe("p1");
     expect(productIdOf({ _id: "p2" })).toBe("p2");
     expect(productIdOf(null)).toBe("");
+  });
+
+  test("productListImageUrl prefers thumbnail", () => {
+    expect(productListImageUrl({ thumbnail_url: "/t.webp", image_url: "/full.jpg" })).toBe("/t.webp");
+    expect(productListImageUrl({ image_url: "/full.jpg" })).toBe("/full.jpg");
+    expect(productListImageUrl({ images: ["/a.jpg"] })).toBe("/a.jpg");
+    expect(productListImageUrl({})).toBe("");
+  });
+
+  test("orderLineListImageUrl prefers thumbs over full line image", () => {
+    expect(orderLineListImageUrl({ image_url: "/line.jpg" }, { thumbnail_url: "/t.webp" })).toBe("/t.webp");
+    expect(orderLineListImageUrl({ thumbnail_url: "/line-t.webp", image_url: "/line.jpg" }, { thumbnail_url: "/t.webp" })).toBe("/line-t.webp");
+    expect(orderLineListImageUrl({}, { thumbnail_url: "/t.webp", image_url: "/full.jpg" })).toBe("/t.webp");
+    expect(orderLineListImageUrl({}, { image_url: "/full.jpg" })).toBe("/full.jpg");
   });
 });
