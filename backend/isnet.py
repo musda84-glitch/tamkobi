@@ -53,6 +53,8 @@ LIVE_SOAP_HOST = "einvoiceservice.isnet.net.tr"
 LIVE_REST_HOST = "einvoiceapi.isnet.net.tr"
 # İşNet destek — canlıda firewall IP–VKN tanımı için
 SUPPORT_EMAIL = "efaturadestek@nettefatura.com.tr"
+# VPS çıkış IP (İşNet / banka whitelist). DNS A kaydı yoksa destek paketinde yedek.
+DECLARED_PRODUCTION_IP = os.environ.get("TAMKOBI_PRODUCTION_IP", "85.95.240.184").strip() or "85.95.240.184"
 # İşNet test portalı (http://efatura.isnet.net.tr) — resmi deneme hesabı
 TEST_PORTAL_USER = "12345678901"
 TEST_PORTAL_PASSWORD = "1234"
@@ -1129,10 +1131,11 @@ async def build_isnet_support_pack(settings: Optional[dict] = None) -> Dict[str,
     except Exception as e:
         rest_text = f"{type(e).__name__}: {e}"
     soap_probe = diag.get("soap") or {}
+    prod_ips = resolve_host_ipv4(public_app_host()) or [DECLARED_PRODUCTION_IP]
     response_txt = (
         f"captured_at_utc={captured_at}\n"
         f"client_egress_ip={', '.join(egress) or '?'}\n"
-        f"declared_isnet_ip=85.95.240.136\n"
+        f"declared_isnet_ip={', '.join(prod_ips)}\n"
         f"vkn={company_tax_code(settings) or '?'}\n"
         f"method=POST\n"
         f"url={endpoint}\n"
