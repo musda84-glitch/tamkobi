@@ -113,6 +113,7 @@ class ProductVariant(BaseModel):
     price: float = 0.0
     attributes: Dict[str, str] = {}  # {"Renk": "Mavi", "Beden": "L"}
     image_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
 
 class VariantOption(BaseModel):
     name: str  # Renk, Beden

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Plus, X, Wand2, Trash2, Save, ImagePlus, Loader2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { resolveImageUrl } from "../utils/imageUrl";
-import { compressImageFile } from "../utils/compressImage";
+import { compressProductImageFile } from "../utils/compressImage";
 
 const cartesian = (options) =>
   options.reduce((acc, opt) => acc.flatMap((combo) => opt.values.map((v) => ({ ...combo, [opt.name]: v }))), [{}]);
@@ -61,7 +61,7 @@ const VariantImageCell = ({ product, variant, onUpdated }) => {
     if (!raw || !pid) return;
     setBusy(true);
     try {
-      const file = await compressImageFile(raw);
+      const file = await compressProductImageFile(raw);
       const form = new FormData();
       form.append("file", file);
       const res = await axios.post(`${API_URL}/products/${pid}/image?variant_id=${variant.variant_id}`, form, { withCredentials: true });

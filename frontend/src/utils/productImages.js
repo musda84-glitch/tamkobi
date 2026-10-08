@@ -23,6 +23,16 @@ export function productLabelImageUrl(product) {
   return mediaRef(product?.label_image_url) || mediaRef(product?.image_url) || "";
 }
 
+/** Liste/kart küçük önizleme — thumbnail yoksa kapak. */
+export function productListImageUrl(product) {
+  return (
+    mediaRef(product?.thumbnail_url)
+    || mediaRef(product?.image_url)
+    || (Array.isArray(product?.images) && mediaRef(product.images[0]))
+    || ""
+  );
+}
+
 export function productIdOf(product) {
   return product?.id || product?._id || "";
 }

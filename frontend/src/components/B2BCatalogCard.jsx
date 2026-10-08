@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useState } from "react";
 import { Check, Package, ShoppingCart } from "lucide-react";
 import { resolveImageUrl } from "../utils/imageUrl";
+import { productListImageUrl } from "../utils/productImages";
 import { fmt, b2bGross } from "./B2BPortalParts";
 import { catalogAddChrome } from "../utils/b2bCart";
 import { parseDraftQty, qtyDraftAfterAdd, qtyDraftOnBlur, qtyDraftOnFocus } from "../utils/b2bSearch";
@@ -35,8 +36,8 @@ export const B2BCatalogCard = memo(function B2BCatalogCard({
       data-testid={`b2b-product-${p.sku}`}
     >
       <div className="relative aspect-[3/2] bg-slate-50 rounded-xl flex items-center justify-center overflow-hidden" data-testid={`b2b-image-${p.sku}`}>
-        {p.image_url
-          ? <img src={resolveImageUrl(p.image_url)} alt="" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-contain" />
+        {productListImageUrl(p)
+          ? <img src={resolveImageUrl(productListImageUrl(p))} alt="" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-contain" />
           : <Package className="w-8 h-8 text-slate-300" />}
         {addChrome.inCart ? (
           <span
