@@ -158,8 +158,12 @@ export const CargoConfigModal = ({ config, catalogItem, onClose, onSaved }) => {
               Token <b>app.geliver.io → API Tokens</b> sayfasından alınır (mağaza domain’i veya oturum anahtarı değil).
             </div>
             <div className="text-[11px] bg-slate-50 border border-slate-200 text-slate-700 rounded-lg p-2 leading-relaxed">
-              <b>«Yetkiniz yok»</b> çoğunlukla Geliver hesabından gelir: <b>Test modunu açın</b>, bakiyeyi kontrol edin, token’ı API Tokens’tan yenileyin.
-              Gönderici adres alanına <code className="font-mono">xxx.geliver.io</code> yazmayın — «Bağlantıyı Test Et» sonrası listeden seçin.
+              <b>«Yetkiniz yok»</b> Geliver API’sinden gelir (TamKobi yetkisi değil). Çözüm:
+              {" "}<b>1)</b> Test modunu açın · <b>2)</b>{" "}
+              <a className="underline font-semibold" href="https://app.geliver.io/apitokens" target="_blank" rel="noreferrer">app.geliver.io/apitokens</a>
+              {" "}yeni token oluşturup buraya yapıştırın · <b>3)</b> Kaydet / Bağlantıyı Test Et ·
+              {" "}<b>4)</b> Gönderici adresi listeden seçilir (<code className="font-mono">xxx.geliver.io</code> yazmayın).
+              Ortam/şifreleme değiştiyse eski kayıtlı token bozulabilir — yeniden yapıştırmanız gerekir.
             </div>
           </div>
         )}

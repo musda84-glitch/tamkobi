@@ -58,10 +58,21 @@ def normalize_phone_e164(phone: Optional[str]) -> str:
 def decrypt_secret(value: Optional[str]) -> str:
     if not value:
         return ""
+    raw = str(value).strip()
     try:
-        return comm_service.decrypt(value)
+        return str(comm_service.decrypt(raw) or "").strip()
     except Exception:
-        return value
+        # Encrypted blob that no longer decrypts (key rotated / wrong env) — never send ciphertext to Geliver.
+        if comm_service.looks_like_fernet_token(raw):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Kayıtlı Geliver API token okunamadı (şifreleme anahtarı değişmiş olabilir). "
+                    "Kargo → Geliver ayarlarında API Token alanına app.geliver.io → API Tokens’tan "
+                    "yeni tokenu yapıştırıp Kaydet / Bağlantıyı Test Et yapın."
+                ),
+            )
+        return raw
 
 
 def normalize_package_opts(
@@ -185,6 +196,9 @@ def geliver_token(config: dict) -> str:
     token = decrypt_secret(config.get("api_key"))
     if not token:
         raise HTTPException(status_code=400, detail="Geliver API token girilmemiş.")
+    # Users sometimes paste "Bearer xxx" from curl samples.
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
     return token
 
 
@@ -195,7 +209,8 @@ def _geliver_friendly_error(msg: str, *, status_code: int = 0, path: str = "") -
         return (
             "Geliver API token geçersiz veya yetkisiz. "
             "app.geliver.io → API Tokens sayfasından yeni bir token alın; "
-            "kullanıcı oturum anahtarı değil, API token kullanın."
+            "kullanıcı oturum anahtarı değil, API token kullanın. "
+            f"(Geliver: {msg})"
         )
     if "yetki" in low or "permission" in low or "forbidden" in low or status_code == 403:
         hint = (
@@ -207,10 +222,13 @@ def _geliver_friendly_error(msg: str, *, status_code: int = 0, path: str = "") -
             "5) Geliver panelinde mağaza/anlaşma aktif mi?"
         )
         if path.startswith("/addresses"):
-            hint += " (Bağlantı testi / adres listesi — token geçersiz, süresi dolmuş veya API Tokens sayfasından alınmamış olabilir.)"
+            hint += (
+                " (Bağlantı testi / adres listesi — çoğu zaman token süresi dolmuş, "
+                "yanlış organizasyon token’ı veya kayıtlı anahtarın yeniden girilmesi gerekir.)"
+            )
         if path.startswith("/transactions"):
             hint += " (Etiket satın alma / teklif kabul adımında reddedildi — çoğu zaman bakiye veya canlı hesap kısıtı.)"
-        return hint
+        return f"{hint} (Geliver: {msg})"
     if "bakiye" in low or "balance" in low or "insufficient" in low:
         return f"Geliver bakiyesi yetersiz: {msg}. app.geliver.io üzerinden bakiye yükleyin veya Test modunu kullanın."
     return f"Geliver hatası: {msg}"
@@ -239,12 +257,35 @@ async def _geliver(method: str, path: str, token: str, **kwargs: Any) -> Any:
     return body.get("data", body) if isinstance(body, dict) else body
 
 
-async def geliver_test(config: dict) -> Dict[str, Any]:
-    token = geliver_token(config)
-    data = await _geliver("GET", "/addresses", token, params={"limit": 50, "isRecipientAddress": "false"})
+def _geliver_address_items(data: Any) -> List[dict]:
     items = data.get("items") if isinstance(data, dict) else data
     if isinstance(data, dict) and not items and isinstance(data.get("data"), list):
         items = data["data"]
+    return [a for a in (items or []) if isinstance(a, dict) and a.get("id")]
+
+
+async def geliver_test(config: dict) -> Dict[str, Any]:
+    token = geliver_token(config)
+    # Unfiltered list first (original working path). Some accounts 403 on isRecipientAddress filter.
+    try:
+        data = await _geliver("GET", "/addresses", token, params={"limit": 50})
+    except HTTPException as first:
+        detail_l = str(first.detail or "").lower()
+        if "yetki" not in detail_l and "403" not in detail_l and first.status_code not in (400, 403):
+            raise
+        # Retry once with explicit sender filter (SDK-style) in case bare list is blocked.
+        try:
+            data = await _geliver(
+                "GET", "/addresses", token, params={"limit": 50, "isRecipientAddress": "false"}
+            )
+        except HTTPException:
+            raise first
+    items = _geliver_address_items(data)
+    # Prefer sender-side addresses when the flag is present on items.
+    senders = [
+        a for a in items
+        if a.get("isRecipientAddress") is False or a.get("isRecipientAddress") is None
+    ]
     addresses = [
         {
             "id": a.get("id"),
@@ -254,8 +295,7 @@ async def geliver_test(config: dict) -> Dict[str, Any]:
             "phone": a.get("phone"),
             "zip": a.get("zip"),
         }
-        for a in (items or [])
-        if isinstance(a, dict) and a.get("id")
+        for a in (senders or items)
     ]
     balance = None
     try:
@@ -465,7 +505,12 @@ def encrypt_secrets(data: dict) -> dict:
     for k in SECRET_FIELDS:
         v = out.get(k)
         if v and v != "••••••••":
-            out[k] = comm_service.encrypt(v)
+            cleaned = str(v).strip()
+            if cleaned.lower().startswith("bearer "):
+                cleaned = cleaned[7:].strip()
+            out[k] = comm_service.encrypt(cleaned) if cleaned else None
+            if not cleaned:
+                out.pop(k, None)
         elif k in out:
             out.pop(k)
     return out
