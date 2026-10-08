@@ -1614,7 +1614,7 @@ export default function OrdersB2BPage() {
                       <div className="text-[11px] text-slate-400">{ord.city}</div>
                     </td>
                     <td className="px-4 py-3 align-top overflow-hidden">
-                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it, p) => listImageUrl(orderLineListImageUrl(it, p), open ? 80 : 64); return (
+                      {(() => { const items = ord.items || []; const open = expandedItems === ord.id; const shown = open ? items : items.slice(0, 2); const img = (it, p) => listImageUrl(orderLineListImageUrl(it, p), open ? 80 : 48); return (
                         <div data-testid={`order-items-${ord.order_number}`}>
                           <div className={open ? "flex flex-col gap-1 max-h-64 overflow-y-auto pr-1 mb-1.5" : "space-y-1"}>
                           {shown.map((it, idx) => {

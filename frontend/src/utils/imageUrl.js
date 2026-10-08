@@ -47,6 +47,14 @@ export function listImageUrl(url, edge = 64) {
     const isLocalFile = u.pathname.startsWith("/api/files/");
     if (!isLocalFile) return resolved;
     if (/^(data:|blob:)/i.test(resolved)) return resolved;
+    // Yükleme sırasında üretilmiş thumb dosyası — yeniden boyutlama gerekmez
+    if (/\/thumbs\//i.test(u.pathname) || /\.w\d+\./i.test(u.pathname)) {
+      return typeof window !== "undefined" && u.origin === window.location.origin
+        ? `${u.pathname}${u.search}`
+        : resolved.includes("://")
+          ? resolved
+          : `${u.pathname}${u.search}`;
+    }
     u.searchParams.set("w", String(w));
     // same-origin absolute → relative path+query (proxy dostu)
     if (typeof window !== "undefined" && u.origin === window.location.origin) {
@@ -54,6 +62,7 @@ export function listImageUrl(url, edge = 64) {
     }
     return u.toString();
   } catch {
+    if (/\/thumbs\//i.test(resolved) || /\.w\d+\./i.test(resolved)) return resolved;
     if (resolved.includes("/api/files/") && !/[?&]w=/.test(resolved)) {
       return `${resolved}${resolved.includes("?") ? "&" : "?"}w=${w}`;
     }

@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 from dataclasses import asdict, dataclass
 from typing import Optional, Tuple
 
@@ -222,6 +223,21 @@ def prepare_vision_image(
     if mime == "image/jpg":
         mime = "image/jpeg"
     return data, mime
+
+
+def resize_cache_path(storage_path: str, edge: int, ext: str = "webp") -> str:
+    """GET /files?w= için türetilmiş önbellek anahtarı (orijinalin yanında)."""
+    path = (storage_path or "").strip().lstrip("/")
+    e = max(16, min(1280, int(edge or 64)))
+    ex = (ext or "webp").lstrip(".").lower() or "webp"
+    if not path:
+        return f"_thumbs/w{e}.{ex}"
+    # Zaten cache dosyasıysa yeniden üretme
+    if re.search(r"\.w\d+\.[a-z0-9]+$", path, re.I):
+        return path
+    base, _, _old = path.rpartition(".")
+    stem = base if base else path
+    return f"{stem}.w{e}.{ex}"
 
 
 def make_thumbnail(
