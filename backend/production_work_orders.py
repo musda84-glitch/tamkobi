@@ -533,6 +533,16 @@ def _looks_like_qty_times_label(note: str) -> bool:
     return bool(re.match(r"^\d+([.,]\d+)?\s*[×xX]\s+\S", s))
 
 
+def _material_stock_note(materials: Optional[List[Dict[str, Any]]] = None) -> str:
+    for m in materials or []:
+        if not isinstance(m, dict):
+            continue
+        sn = str(m.get("stock_note") or m.get("note") or "").strip()
+        if sn:
+            return sn[:500]
+    return ""
+
+
 def preferred_atolye_step_note(
     *,
     wo_note: Any = "",
@@ -540,12 +550,13 @@ def preferred_atolye_step_note(
     materials: Optional[List[Dict[str, Any]]] = None,
     material_name: Any = "",
 ) -> str:
-    """Atölye Not: B2B sipariş stok notu / stok açıklaması; eski 10× ad yedeğini düş."""
+    """Atölye kart Not: önce reçete adım notu, yoksa B2B stok notu; eski 10× ad yedeğini düş.
+
+    Paylaşılan sipariş stok notunu her adıma yazmak yerine adımın kendi notunu
+    korur; aksi halde çok adımlı reçetede tüm kartlar aynı görünür.
+    """
     mats = [m for m in (materials or []) if isinstance(m, dict)]
-    for m in mats:
-        sn = str(m.get("stock_note") or m.get("note") or "").strip()
-        if sn:
-            return sn[:500]
+    stock = _material_stock_note(mats)
     mname = str(material_name or "").strip()
     if not mname:
         for m in mats:
@@ -554,11 +565,20 @@ def preferred_atolye_step_note(
                 break
     rs = str(recipe_step_note or "").strip()
     wo = str(wo_note or "").strip()
+
+    # 1) Gerçek adım notu (reçete) — stok notundan önce
+    if rs and not _looks_like_qty_times_label(rs):
+        return rs[:500]
+
+    # 2) B2B sipariş stok notu (tek adımlı / adım notu boşken)
+    if stock:
+        return stock
+
+    # 3) Eski 10× etiket → ürün/stok adı; diğer wo/rs yedekleri
     for candidate in (rs, wo):
         if not candidate:
             continue
         if mname and _looks_like_qty_times_label(candidate):
-            # '10× 2,7 mm … Mdf' → stok açıklaması (ürün adı)
             return mname[:500]
         if not _looks_like_qty_times_label(candidate):
             return candidate[:500]

@@ -89,6 +89,7 @@ def test_enrich_force_step_note_overwrites_stale_qty():
 def test_preferred_atolye_step_note_prefers_stock_then_description():
     from production_work_orders import preferred_atolye_step_note
 
+    # Adım notu yok / 10× otomatik → B2B stok notu
     assert preferred_atolye_step_note(
         wo_note="10× MDF",
         recipe_step_note="10× MDF",
@@ -105,6 +106,29 @@ def test_preferred_atolye_step_note_prefers_stock_then_description():
         recipe_step_note="özel kesim",
         materials=[{"product_name": "MDF"}],
     ) == "özel kesim"
+
+
+def test_preferred_atolye_step_note_keeps_per_step_over_shared_stock():
+    """Çok adımlı reçetede paylaşılan sipariş stok notu her kartı aynı yapmasın."""
+    from production_work_orders import preferred_atolye_step_note
+
+    mats = [{"product_name": "MDF", "stock_note": "20x30 cm"}]
+    assert preferred_atolye_step_note(
+        wo_note="20x30 cm",
+        recipe_step_note="Kesim: freze profil",
+        materials=mats,
+    ) == "Kesim: freze profil"
+    assert preferred_atolye_step_note(
+        wo_note="20x30 cm",
+        recipe_step_note="Kenar bant beyaz",
+        materials=mats,
+    ) == "Kenar bant beyaz"
+    # Adım notu boşsa stok notuna düş
+    assert preferred_atolye_step_note(
+        wo_note="",
+        recipe_step_note="",
+        materials=mats,
+    ) == "20x30 cm"
 
 
 def test_flatten_keeps_station_only_step():
