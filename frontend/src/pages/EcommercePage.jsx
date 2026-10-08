@@ -106,11 +106,22 @@ export default function EcommercePage() {
   const handleSaveConfig = async (e) => {
     e.preventDefault();
     try {
+      const id = selectedConfig.id || selectedConfig._id;
       const { settlement_account_id, settlement_account_name, ...rest } = selectedConfig;
-      await axios.put(`${API_URL}/integrations/ecommerce/${selectedConfig.id || selectedConfig._id}`, rest);
-      await axios.put(`${API_URL}/integrations/ecommerce/${selectedConfig.id || selectedConfig._id}/settlement-account`, { account_id: settlement_account_id || null });
+      await axios.put(`${API_URL}/integrations/ecommerce/${id}`, {
+        ...rest,
+        // Kaydet & Bağlan: kanalı aktif işaretle (sipariş çekilebiliyorsa kart "Bağlı Değil" kalmasın)
+        is_active: true,
+      });
+      await axios.put(`${API_URL}/integrations/ecommerce/${id}/settlement-account`, { account_id: settlement_account_id || null });
       toast.success(`${selectedConfig.channel_name} ayarları kaydedildi.`);
       setSelectedConfig(null);
+      try {
+        const test = await axios.post(`${API_URL}/integrations/ecommerce/${id}/test-connection`);
+        if (test.data?.message) toast.success(test.data.message);
+      } catch (testErr) {
+        toast.error(testErr.response?.data?.detail || testErr.response?.data?.message || "Bağlantı testi başarısız.");
+      }
       loadIntegrations();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Ayarlar kaydedilemedi.");

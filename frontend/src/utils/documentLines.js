@@ -118,6 +118,10 @@ export function hydrateLine(item) {
     product_name: item.product_name || item.name || "",
     discount_rate: item.discount_rate ?? item.discount_percent ?? 0,
   };
+  // Pazaryeri / ShopPHP: unit_price müşterinin ödediği KDV dahil tutarsa nete indir.
+  if (item.price_includes_vat && !num(next.unit_price_incl) && num(next.unit_price)) {
+    return computeLine({ ...next, unit_price_incl: next.unit_price }, "unit_price_incl");
+  }
   if (!num(next.unit_price_incl) && num(next.unit_price)) {
     return computeLine(next, "unit_price");
   }
@@ -188,7 +192,7 @@ export function invoiceMoneyTotals(items = [], {
 }
 
 export function documentLineTotals(items = []) {
-  const rows = items.map((it) => computeLine(it));
+  const rows = items.map((it) => hydrateLine(it));
   const subtotal = Math.round(rows.reduce((s, it) => s + num(it.total), 0) * 100) / 100;
   const vat = Math.round(rows.reduce((s, it) => s + num(it.vat_amount), 0) * 100) / 100;
   const lineDiscount = Math.round(rows.reduce(

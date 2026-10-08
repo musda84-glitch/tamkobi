@@ -1547,6 +1547,15 @@ export default function OrdersB2BPage() {
                         >
                           {orderStatusLabel(ord, statusTr(ord.order_status))}
                         </span>
+                        {(ord.payment_method || ord.bank_name) ? (
+                          <span
+                            className="inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-800 max-w-[14rem] truncate"
+                            title={[ord.payment_method, ord.bank_name].filter(Boolean).join(" · ")}
+                            data-testid={`order-payment-${ord.order_number}`}
+                          >
+                            {ord.payment_method || ord.bank_name}
+                          </span>
+                        ) : null}
                       </div>
                     </td>
                     <td className="px-4 py-3 cursor-pointer group overflow-hidden" onClick={() => goContact(ord)} title="Cariye git" data-testid={`order-customer-${ord.order_number}`}>

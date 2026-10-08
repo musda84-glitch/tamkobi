@@ -39,6 +39,19 @@ test("hydrateLine maps product_name and discount_percent", () => {
   expect(row.total_incl).toBeCloseTo(54);
 });
 
+test("hydrateLine treats marketplace unit_price as KDV dahil when flagged", () => {
+  const row = hydrateLine({
+    product_name: "ShopPHP Ürün",
+    quantity: 1,
+    unit_price: 11999,
+    vat_rate: 20,
+    price_includes_vat: true,
+  });
+  expect(row.unit_price_incl).toBeCloseTo(11999);
+  expect(row.unit_price).toBeCloseTo(9999.1667, 3);
+  expect(row.total_incl).toBeCloseTo(11999);
+});
+
 test("computeLine allows clearing stock name without resurrecting product_name", () => {
   const cleared = computeLine({
     ...emptyLine(),

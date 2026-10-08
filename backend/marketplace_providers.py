@@ -290,7 +290,8 @@ def map_trendyol_order(pkg: dict, company_id: str, channel: str) -> dict:
     inv = pkg.get("invoiceAddress") or {}
     lines = pkg.get("lines") or []
     items = [{"product_name": l.get("productName"), "sku": l.get("merchantSku") or l.get("sku"), "barcode": l.get("barcode"), "quantity": l.get("quantity", 1), "unit_price": float(l.get("price") or 0),
-              "total": round(float(l.get("price") or 0) * int(l.get("quantity") or 1), 2), "line_id": l.get("id"), "order_line_id": l.get("orderLineId"), "line_status": l.get("orderLineItemStatusName"), "vat_rate": l.get("vatBaseAmount") and 20} for l in lines]
+              "total": round(float(l.get("price") or 0) * int(l.get("quantity") or 1), 2), "line_id": l.get("id"), "order_line_id": l.get("orderLineId"), "line_status": l.get("orderLineItemStatusName"),
+              "vat_rate": l.get("vatBaseAmount") and 20, "price_includes_vat": True} for l in lines]
     ty_status = pkg.get("shipmentPackageStatus") or pkg.get("status") or "Created"
     return {"company_id": company_id, "channel": channel, "order_number": str(pkg.get("orderNumber")), "external_id": str(pkg.get("id")), "shipment_package_id": pkg.get("id"),
             "customer_name": f"{pkg.get('customerFirstName', '')} {pkg.get('customerLastName', '')}".strip() or addr.get("fullName"), "customer_email": pkg.get("customerEmail"),
@@ -629,7 +630,19 @@ def map_shopphp_xml_order(s: ET.Element, company_id: str, channel: str) -> dict:
     for ln in s.findall("SATIRLAR/SATIR"):
         qty = _xf(ln, "MIKTAR", 1) or 1; price = _xf(ln, "FIYAT")
         var = " / ".join(v for v in (_xt(ln, "VAR1"), _xt(ln, "VAR2")) if v)
-        items.append({"product_id": _xt(ln, "URUN_ID"), "product_name": _xt(ln, "ADI") + (f" ({var})" if var else ""), "sku": _xt(ln, "VARKOD") or _xt(ln, "KOD"), "barcode": _xt(ln, "VARBARKOD") or _xt(ln, "UBARKOD"), "quantity": int(round(qty)), "unit_price": price, "total": round(qty * price, 2), "vat_rate": _xf(ln, "KDV", 20), "variant": var, "desi": _xf(ln, "DESI")})
+        items.append({
+            "product_id": _xt(ln, "URUN_ID"),
+            "product_name": _xt(ln, "ADI") + (f" ({var})" if var else ""),
+            "sku": _xt(ln, "VARKOD") or _xt(ln, "KOD"),
+            "barcode": _xt(ln, "VARBARKOD") or _xt(ln, "UBARKOD"),
+            "quantity": int(round(qty)),
+            "unit_price": price,
+            "total": round(qty * price, 2),
+            "vat_rate": _xf(ln, "KDV", 20),
+            "price_includes_vat": True,  # ShopPHP FIYAT müşterinin ödediği KDV dahil tutar
+            "variant": var,
+            "desi": _xf(ln, "DESI"),
+        })
     status_no = _xt(s, "DURUM_NO", "2")
     date = _xt(s, "TARIH"); time_ = _xt(s, "ZAMAN", "00:00:00")
     try:
