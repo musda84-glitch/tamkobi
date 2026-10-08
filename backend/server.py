@@ -11870,8 +11870,16 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
         d["created_at"] = d["updated_at"]
         try:
             await db.orders.insert_one(d)
-            await _ensure_order_contact(d)
-            await _attach_draft_invoice_on_intake(d, source="marketplace")
+            contact = await _ensure_order_contact(d)
+            inv = await _attach_draft_invoice_on_intake(d, source="marketplace")
+            # ShopPHP vb. ön ödemeli kanallar: hakediş hesabı seçiliyse sipariş gelince tahsilat yaz.
+            if inv and contact and (d.get("channel") or "").lower() == "shopphp":
+                try:
+                    fresh = await db.orders.find_one({"_id": d["_id"]}) or d
+                    if not (fresh.get("settlement") or {}).get("tx_id"):
+                        await _post_marketplace_settlement(fresh, inv, contact)
+                except Exception:
+                    logging.getLogger(__name__).exception("ShopPHP hakediş yazılamadı: %s", d.get("order_number"))
             inserted += 1
         except DuplicateKeyError:
             # Eşzamanlı sync kazanmış; güncelle + ekstra satırları birleştir.
@@ -12207,6 +12215,10 @@ async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict
     channel = (order.get("channel") or "").lower()
     if channel in ("", "b2b", "manual", "saha"):
         return None
+    if (order.get("settlement") or {}).get("tx_id"):
+        return None
+    if not invoice or not invoice.get("_id"):
+        return None
     cfg = await db.integration_configs.find_one({"company_id": order["company_id"], "channel": channel})
     if not cfg or not cfg.get("settlement_account_id"):
         return None
@@ -12380,7 +12392,7 @@ async def test_ecommerce_connection(channel_id: str):
         except HTTPException as e:
             await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail}})
             return {"status": "error", "message": e.detail}
-        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "xml_resolved": {k: bool(v) for k, v in r.items()}}})
+        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "xml_resolved": {k: bool(v) for k, v in r.items()}}})
         return {"status": "success", "live": True, "message": f"ShopPHP XML bağlantısı başarılı: sipariş XML'inde {len(orders)} sipariş{prod_note}." + (" RSS beslemesi (c=rss) fiyat/stok içermediği için kullanılmaz." if r.get("rss") else "")}
     if not marketplace_providers.has_live_credentials(config):
         return {"status": "error", "message": "API Key, API Secret ve Satıcı ID (supplier/seller ID) eksiksiz doldurulmalı."}
@@ -12461,7 +12473,7 @@ async def sync_ecommerce_channel(channel_id: str, days: Optional[int] = None):
             await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "error", "last_error": e.detail, "last_sync_attempt_at": now}})
             raise
         res = await _upsert_marketplace_orders(company_id, [marketplace_providers.map_shopphp_xml_order(o, company_id, channel) for o in raw_orders])
-        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
+        await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"status": "connected", "is_active": True, "live": True, "last_error": None, "last_synced_at": now, "last_sync_attempt_at": now}, "$inc": {"synced_orders": res["inserted"]}})
         return {"status": "success", "live": True, "channel": channel, "days": sync_days, **res, "message": f"ShopPHP: {len(raw_orders)} sipariş okundu → {res['inserted']} yeni, {res['updated']} güncellendi."}
     if channel == "trendyol" and marketplace_providers.has_live_credentials(config):
         client = marketplace_providers.TrendyolClient(config)
