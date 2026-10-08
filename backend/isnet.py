@@ -53,8 +53,26 @@ LIVE_SOAP_HOST = "einvoiceservice.isnet.net.tr"
 LIVE_REST_HOST = "einvoiceapi.isnet.net.tr"
 # İşNet destek — canlıda firewall IP–VKN tanımı için
 SUPPORT_EMAIL = "efaturadestek@nettefatura.com.tr"
-# VPS çıkış IP (İşNet / banka whitelist). DNS A kaydı yoksa destek paketinde yedek.
-DECLARED_PRODUCTION_IP = os.environ.get("TAMKOBI_PRODUCTION_IP", "85.95.240.184").strip() or "85.95.240.184"
+# VPS üretim IP’leri (birincil + ikincil). İşNet / banka whitelist’e ikisi de yazılır.
+_DEFAULT_PRODUCTION_IPS = "85.95.240.136,85.95.240.184"
+
+
+def declared_production_ips() -> List[str]:
+    """Env TAMKOBI_PRODUCTION_IPS (virgüllü) veya tek TAMKOBI_PRODUCTION_IP."""
+    raw = (
+        os.environ.get("TAMKOBI_PRODUCTION_IPS")
+        or os.environ.get("TAMKOBI_PRODUCTION_IP")
+        or _DEFAULT_PRODUCTION_IPS
+    )
+    found: List[str] = []
+    for part in re.split(r"[\s,;]+", (raw or "").strip()):
+        if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", part) and part not in found:
+            found.append(part)
+    return found or ["85.95.240.136", "85.95.240.184"]
+
+
+# Geriye dönük tek IP sabiti (birincil).
+DECLARED_PRODUCTION_IP = declared_production_ips()[0]
 # İşNet test portalı (http://efatura.isnet.net.tr) — resmi deneme hesabı
 TEST_PORTAL_USER = "12345678901"
 TEST_PORTAL_PASSWORD = "1234"
@@ -323,10 +341,13 @@ async def detect_egress_ips() -> List[str]:
 
 
 async def isnet_ip_registration_info() -> Dict[str, Any]:
-    """Canlı SOAP için: bu ortamın çıkışı + üretim A kaydı."""
+    """Canlı SOAP için: bu ortamın çıkışı + üretim A kaydı + bilinen ikincil IP."""
     egress = await detect_egress_ips()
     host = public_app_host()
-    prod = resolve_host_ipv4(host)
+    prod: List[str] = []
+    for ip in list(resolve_host_ipv4(host)) + list(declared_production_ips()):
+        if ip and ip not in prod:
+            prod.append(ip)
     overlap = bool(set(egress) & set(prod))
     return {
         "egress_ips": egress,
@@ -1131,7 +1152,12 @@ async def build_isnet_support_pack(settings: Optional[dict] = None) -> Dict[str,
     except Exception as e:
         rest_text = f"{type(e).__name__}: {e}"
     soap_probe = diag.get("soap") or {}
-    prod_ips = resolve_host_ipv4(public_app_host()) or [DECLARED_PRODUCTION_IP]
+    dns_ips = resolve_host_ipv4(public_app_host())
+    declared = declared_production_ips()
+    prod_ips: List[str] = []
+    for ip in list(dns_ips) + list(declared):
+        if ip and ip not in prod_ips:
+            prod_ips.append(ip)
     response_txt = (
         f"captured_at_utc={captured_at}\n"
         f"client_egress_ip={', '.join(egress) or '?'}\n"

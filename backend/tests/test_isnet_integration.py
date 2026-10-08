@@ -242,6 +242,23 @@ def test_public_app_host_falls_back_from_localhost():
         assert isnet.public_app_host() == "tamkobi.com"
 
 
+def test_declared_production_ips_dual_default():
+    with patch.dict(
+        os.environ,
+        {"TAMKOBI_PRODUCTION_IPS": "", "TAMKOBI_PRODUCTION_IP": ""},
+        clear=False,
+    ):
+        os.environ.pop("TAMKOBI_PRODUCTION_IPS", None)
+        os.environ.pop("TAMKOBI_PRODUCTION_IP", None)
+        ips = isnet.declared_production_ips()
+    assert ips == ["85.95.240.136", "85.95.240.184"]
+
+
+def test_declared_production_ips_env_override():
+    with patch.dict(os.environ, {"TAMKOBI_PRODUCTION_IPS": "1.2.3.4,5.6.7.8"}, clear=False):
+        assert isnet.declared_production_ips() == ["1.2.3.4", "5.6.7.8"]
+
+
 def test_login_401_raises():
     class _Resp:
         status_code = 401

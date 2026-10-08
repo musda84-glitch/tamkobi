@@ -1,59 +1,63 @@
-# Üretim çıkış IP — 85.95.240.184
+# Üretim IP’leri (çift adres)
 
-Sağlayıcı ataması:
+Her iki IP de kullanılacak:
 
-| | |
-|---|---|
-| IP | `85.95.240.184` |
-| Netmask | `255.255.255.0` (`/24`) |
-| Gateway | `85.95.240.1` |
+| Rol | IP | Netmask | Gateway |
+|-----|-----|---------|---------|
+| Birincil (mevcut) | `85.95.240.136` | `/24` | `85.95.240.1` |
+| İkincil (yeni) | `85.95.240.184` | `/24` | `85.95.240.1` |
 
-## 1) VPS’e ekle + reboot
+## 1) VPS’e ikincil IP ekle + reboot
 
 ```bash
 cd /var/www/tamkobi.com   # veya repo yolu
 sudo bash deploy/add-production-ip.sh
 ```
 
-Sağlayıcı paneli: **power off → power on**.
+- Birincil `85.95.240.136` korunur (varsayılan çıkış).
+- İkincil `85.95.240.184` alias olarak eklenir.
+- Sağlayıcı paneli: **power off → power on**.
 
-Mevcut netplan dosyanızda `addresses` altına şunu ekleyin (DHCP/static şablonunu bozmadan):
+Netplan `addresses` örneği:
 
 ```yaml
-- 85.95.240.184/24
+addresses:
+  - 85.95.240.136/24
+  - 85.95.240.184/24
 ```
 
-Çıkışın yeni IP’den gitmesi için (whitelist için şart):
+Çıkışı bilinçli olarak ikincilden almak isterseniz (genelde gerekmez):
 
 ```bash
-sudo ip route replace default via 85.95.240.1 src 85.95.240.184
-curl -4 https://api.ipify.org   # → 85.95.240.184
+TAMKOBI_EGRESS_SRC=secondary sudo bash deploy/add-production-ip.sh
 ```
 
 ## 2) DNS
 
-`tamkobi.com` (ve `www`) **A** kaydı → `85.95.240.184`.
+- Ana A kaydı: `tamkobi.com` → `85.95.240.136` (mevcut kalsın).
+- İsteğe bağlı ikinci A: `tamkobi.com` → `85.95.240.184` (aynı hosta iki A; istemciler rastgele seçer).
 
 ## 3) İşNet
 
-Canlı SOAP kimlik doğrulama = çıkış IP + VKN.
+Canlı SOAP = çıkış IP + VKN. **İki IP’yi de** allow-list’e yazdırın:
 
-Kayıt metni örneği:
-
-> VKN: … · IP: 85.95.240.184 · InvoiceService / einvoiceservice.isnet.net.tr SOAP WCF
+> VKN: … · IP: 85.95.240.136 ve 85.95.240.184 · InvoiceService / einvoiceservice.isnet.net.tr SOAP WCF
 
 → `efaturadestek@nettefatura.com.tr`
 
-Uygulama: Ayarlar → E-Fatura → İşNet canlı IP paneli / destek paketi.
-
 ## 4) Bankalar
 
-- Enpara Şirketim API portal whitelist → `85.95.240.184`
-- Kuveyt Türk canlı onay / API Market IP listesi → `85.95.240.184`
+Enpara ve Kuveyt portal whitelist’e **her iki IP**:
 
-Eski `85.95.240.136` kaldırılabilir (artık kullanılmıyorsa).
+- `85.95.240.136`
+- `85.95.240.184`
 
-## 5) Uygulama sabiti
+## 5) Uygulama
 
-Kodda yedek: `TAMKOBI_PRODUCTION_IP` env (varsayılan `85.95.240.184`).
-Destek paketindeki `declared_isnet_ip` önce DNS A kaydını, yoksa bu sabiti kullanır.
+Env (virgüllü liste):
+
+```bash
+TAMKOBI_PRODUCTION_IPS=85.95.240.136,85.95.240.184
+```
+
+Destek paketindeki `declared_isnet_ip` = DNS A + bu liste birleşimi.
