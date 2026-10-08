@@ -101,7 +101,7 @@ function WoCard({
         </Text>
         {String(w.step_note || "").trim() ? (
           <View testID={`wo-step-note-${key}`} style={{ flexDirection: "row", alignItems: "flex-start", gap: 6, width: "100%", maxWidth: "100%" }}>
-            <Text style={{ fontSize: 12, color: colors.muted }}>Sipariş stok notu:</Text>
+            <Text style={{ fontSize: 12, color: colors.muted }}>Adım notu:</Text>
             <Text style={{ flexGrow: 1, flexShrink: 1, flexBasis: 0, fontSize: 12, fontWeight: "700", color: "#92400E" }}>
               {String(w.step_note).trim()}
             </Text>
