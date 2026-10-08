@@ -16412,13 +16412,16 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
     payrolls = await db.payrolls.find({"employee_id": {"$in": ids}}).to_list(4000)
     bonuses = await db.bonus_payments.find({"employee_id": {"$in": ids}}).to_list(4000)
     expenses = await db.expenses.find({"employee_id": {"$in": ids}}).to_list(8000)
-    pmap, bmap, emap = {}, {}, {}
+    leave_rows = await db.leave_requests.find({"employee_id": {"$in": ids}}).to_list(8000)
+    pmap, bmap, emap, lmap = {}, {}, {}, {}
     for p in payrolls:
         pmap.setdefault(p.get("employee_id"), []).append(p)
     for b in bonuses:
         bmap.setdefault(b.get("employee_id"), []).append(b)
     for x in expenses:
         emap.setdefault(x.get("employee_id"), []).append(x)
+    for lv in leave_rows:
+        lmap.setdefault(lv.get("employee_id"), []).append(lv)
     company = await db.companies.find_one({"_id": company_id}) or {}
     today_s = attendance._today(attendance.merge_schedule(company))
     workplaces = await attendance.workplaces_by_employee(company_id, ids, today_s, company.get("location"))
@@ -16473,6 +16476,11 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
                 pass
         doc["yevmiye_days"] = yev_days
         doc["yevmiye_due"] = round(yev_amt, 2)
+        leave_bal = attendance.compute_leave_balance(e, lmap.get(eid) or [])
+        doc["leave_balance"] = leave_bal
+        # Liste kartı ile kart detayı aynı hak/kullanılan değerlerini göstersin
+        doc["annual_leave_days"] = leave_bal["annual"]
+        doc["used_leave_days"] = leave_bal["used"]
         out.append(doc)
     return out
 

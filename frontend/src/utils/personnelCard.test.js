@@ -31,6 +31,8 @@ import {
   presenceTodayOf,
   remainingDue,
   remainingLeaveDays,
+  leaveEntitlementDays,
+  formatLeaveRemainingLine,
 } from "./personnelCard";
 
 describe("personnelCard", () => {
@@ -45,6 +47,14 @@ describe("personnelCard", () => {
     expect(remainingLeaveDays({ annual_leave_days: 14, used_leave_days: 3 })).toBe(11);
     expect(remainingLeaveDays({ annual_leave_days: 14, used_leave_days: 3, leave_carry_days: 2 })).toBe(13);
     expect(remainingLeaveDays({ leave_balance: { remaining: 9 } })).toBe(9);
+    // annual=0 / eksik hak → varsayılan 14; kalan ve hak aynı kaynaktan (eski 14/0 hatası)
+    expect(leaveEntitlementDays({ annual_leave_days: 0 })).toBe(14);
+    expect(remainingLeaveDays({ annual_leave_days: 0, used_leave_days: 0 })).toBe(14);
+    expect(formatLeaveRemainingLine({ annual_leave_days: 0 })).toBe("Kalan izin: 14 / 14 gün");
+    expect(formatLeaveRemainingLine({ annual_leave_days: 14, used_leave_days: 0 })).toBe("Kalan izin: 14 / 14 gün");
+    expect(formatLeaveRemainingLine({ leave_balance: { remaining: 14, annual: 0, used: 0, carry: 0 } })).toBe("Kalan izin: 14 / 14 gün");
+    expect(formatLeaveRemainingLine({ annual_leave_days: 14, used_leave_days: 3 })).toBe("Kalan izin: 11 / 14 gün");
+    expect(leaveEntitlementDays({})).toBe(14);
   });
 
   test("shows live presence next to Aktif: iş yeri, görev, mesai bitti, fazla mesai", () => {

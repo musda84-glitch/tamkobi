@@ -18,13 +18,14 @@ import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTa
 import { EmployeeRequestChips, PersonnelRequestsInbox } from "../components/PersonnelRequestsInbox";
 import { empIdOf } from "../utils/personnelIds";
 import { assignedOvertimeCellCaption, cardPunchAttempts, cardPunchConfirmMessage, cardPunchDraftTime, cardPunchPayload, cardPunchRequiresTime, cardPunchTimeHint, locationControllerLabel, locationTrackingTogglePayload, todayAttendanceParts } from "../utils/employeeCardStatus";
-import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, employeePresenceChip, fmtCardMoney, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, presenceTodayOf, remainingDue, remainingLeaveDays } from "../utils/personnelCard";
+import { employeeCompGroups, employeeCompRowCaption, employeeCompRows, employeePayButtonLabel, employeePresenceChip, fmtCardMoney, formatLeaveRemainingLine, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, presenceTodayOf, remainingDue } from "../utils/personnelCard";
 import { punchLabelClass } from "../utils/punchLabels";
 import { positionOptionsFromRoles } from "../utils/employeePosition";
 import { EmployeeLedgerModal } from "../components/EmployeeLedgerModal";
 import { EmployeeYevmiyeModal } from "../components/EmployeeYevmiyeModal";
 import { isDailyWage, payrollWageLine, totalMonthlyLoad, yevmiyeDaysOf } from "../utils/personnelWage";
 import { BLOOD_TYPE_OPTIONS, hasExtraEmployeeDetails, MARITAL_STATUS_OPTIONS } from "../utils/employeeDetails";
+import { annualLeaveDaysError, parseAnnualLeaveDays } from "../utils/employeeCardSummary";
 import { workplaceShort } from "../utils/workplace";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
@@ -301,11 +302,12 @@ export default function PersonnelPage() {
     const daily = Number(newEmployee.daily_wage || 0);
     const monthly = Number(newEmployee.salary || 0);
     const isDaily = newEmployee.pay_type === "daily";
-    const annualLeave = Math.trunc(Number(newEmployee.annual_leave_days));
-    if (!Number.isFinite(annualLeave) || annualLeave < 0 || annualLeave > 365) {
-      toast.error("Yıllık izin günü 0–365 arası olmalı.");
+    const leaveErr = annualLeaveDaysError(newEmployee.annual_leave_days);
+    if (leaveErr) {
+      toast.error(leaveErr);
       return;
     }
+    const annualLeave = parseAnnualLeaveDays(newEmployee.annual_leave_days);
     const body = {
       ...newEmployee,
       pay_type: isDaily ? "daily" : "monthly",
@@ -712,7 +714,7 @@ export default function PersonnelPage() {
                   <div className="text-xs text-indigo-600 font-semibold">{emp.position}</div>
                   <div className="text-[11px] text-slate-400">{emp.department}</div>
                   <div className="text-[11px] text-slate-500 mt-0.5" data-testid={`employee-leave-${empKey}`}>
-                    Kalan izin: {emp.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {emp.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
+                    {formatLeaveRemainingLine(emp)}
                     {emp.performance?.overall != null ? ` · performans %${emp.performance.overall}` : ""}
                   </div>
                   <div className="text-[11px] mt-0.5" data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
