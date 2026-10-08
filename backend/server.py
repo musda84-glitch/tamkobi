@@ -13456,7 +13456,7 @@ async def get_order_cargo_label_file(order_id: str):
 # ----------------- KARGO ENTEGRASYONLARI -----------------
 CARGO_CATALOG = [
     {"carrier_code": "navlungo", "carrier_name": "Navlungo (Kargo Pazaryeri)", "kind": "marketplace", "desc": "Tüm kargo firmalarını tek panelden karşılaştır, indirimli gönder", "fields": ["api_key"]},
-    {"carrier_code": "geliver", "carrier_name": "Geliver (Kargo Pazaryeri)", "kind": "marketplace", "desc": "Anlaşmalı fiyatlarla çoklu kargo, otomatik etiket — CANLI API (api.geliver.io)", "fields": ["api_key", "sender_address_id"], "live": True},
+    {"carrier_code": "geliver", "carrier_name": "Geliver (Kargo Pazaryeri)", "kind": "marketplace", "desc": "Anlaşmalı fiyatlarla çoklu kargo, otomatik etiket — resmi geliver Python SDK (api.geliver.io)", "fields": ["api_key", "sender_address_id"], "live": True},
     {"carrier_code": "kolaykargo", "carrier_name": "Kolay Kargo (Pazaryeri)", "kind": "marketplace", "desc": "Sözleşmesiz indirimli kargo, Trendyol/Hepsiburada uyumlu", "fields": ["api_key"]},
     {"carrier_code": "basitkargo", "carrier_name": "BasitKargo (Pazaryeri)", "kind": "marketplace", "desc": "Toplu gönderi, kapıdan alım", "fields": ["api_key", "api_secret"]},
     {"carrier_code": "kargomsende", "carrier_name": "Kargom Sende (Pazaryeri)", "kind": "marketplace", "desc": "Çoklu kargo karşılaştırma", "fields": ["api_key"]},
