@@ -1,4 +1,4 @@
-/** Fatura / sipariş satırındaki miktar-fiyat: odaklanınca boş, yazılınca parse. */
+/** Fatura / sipariş satırındaki miktar-fiyat: odaklanınca değer kalır (seçilir), yazılınca parse. */
 
 export function lineDraftKey(index, field) {
   return `${index}:${field}`;
@@ -12,8 +12,10 @@ export function lineNumberShown(drafts, key, stored) {
   return String(stored);
 }
 
-export function lineNumberOnFocus() {
-  return "";
+/** Odakta değeri silme — mevcut rakamı draft'a koy (kullanıcı üzerine yazar / seçer). */
+export function lineNumberOnFocus(stored) {
+  if (stored == null || stored === "") return "";
+  return String(stored);
 }
 
 export function parseLineNumber(raw, emptyFallback = 0) {
