@@ -687,7 +687,17 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       setShowNewModal(false);
       loadData();
     } catch (err) {
-      toast.error(err.response?.data?.detail ? (typeof err.response.data.detail === "string" ? err.response.data.detail : "Eksik alan: " + err.response.data.detail.map(d => d.loc?.slice(-1)[0]).join(", ")) : "Fatura kaydedilemedi.");
+      const detail = err?.response?.data?.detail;
+      let msg = "Fatura kaydedilemedi.";
+      if (typeof detail === "string" && detail.trim()) msg = detail;
+      else if (Array.isArray(detail) && detail.length) {
+        msg = "Eksik alan: " + detail.map((d) => d?.loc?.slice(-1)?.[0] || d?.msg || "?").filter(Boolean).join(", ");
+      } else if (err?.response?.status) {
+        msg = `Fatura kaydedilemedi (HTTP ${err.response.status}).`;
+      } else if (err?.message) {
+        msg = `Fatura kaydedilemedi: ${err.message}`;
+      }
+      toast.error(msg);
     }
   };
 
@@ -1868,7 +1878,7 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                       onSelect: pickRetailContact,
                     } : null}
                   />
-                  {formData.invoice_type !== "purchase" && (
+                  {formData.invoice_type !== "purchase" && !formData.contact_id && (
                     <button
                       type="button"
                       onClick={pickRetailContact}

@@ -6591,8 +6591,15 @@ def _line_get(it, key, default=""):
 def _line_set(it, key, val):
     if isinstance(it, dict):
         it[key] = val
-    else:
+        return
+    try:
         setattr(it, key, val)
+    except (ValueError, TypeError, AttributeError):
+        # Pydantic v2: modelde olmayan alan (ör. eski InvoiceItem) — sessizce atla
+        try:
+            object.__setattr__(it, key, val)
+        except Exception:
+            pass
 
 async def _fill_stock_codes(company_id: str, items: list):
     """Copy product SKU / barcode onto document lines when missing (print + scan)."""
