@@ -56,6 +56,7 @@ import { BulkEInvoiceConfirmModal } from "../components/BulkEInvoiceConfirmModal
 import { buildProduceFromOrderPayload, orderHasProductionOrder, orderLineCanProduce, orderProduceButtonClass, orderProduceButtonTitle, producibleLinesForOrder, resolveOrderLineProduct } from "../utils/orderProduce";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
+import { OrderLineStockModal } from "../components/OrderLineStockModal";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import {
@@ -640,7 +641,20 @@ export default function OrdersB2BPage() {
   const [produceFromOrder, setProduceFromOrder] = useState(null);
   const [produceBusyId, setProduceBusyId] = useState(null);
   const [produceRecipeOrd, setProduceRecipeOrd] = useState(null);
+  const [lineStock, setLineStock] = useState(null);
   const productCatalog = allProducts.length ? allProducts : products;
+  const openOrderLineStock = (ord, it, idx) => {
+    const resolved = resolveOrderLineProduct(it, productCatalog);
+    setLineStock({ order: ord, item: it, itemIndex: idx, product: resolved });
+    if (resolved?.id || resolved?._id) {
+      // Lite listede eksik alan varsa tam kartı çek
+      axios.get(`${API_URL}/products/${encodeURIComponent(resolved.id || resolved._id)}`)
+        .then((r) => {
+          if (r.data) setLineStock((prev) => (prev && prev.itemIndex === idx ? { ...prev, product: r.data } : prev));
+        })
+        .catch(() => {});
+    }
+  };
   const openProduceForLine = (ord, it, idx) => {
     const p = resolveOrderLineProduct(it, productCatalog);
     if (!p) {
@@ -1327,6 +1341,29 @@ export default function OrdersB2BPage() {
       )}
       {autoShip && <AutoShipModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAutoShip(false)} onDone={loadData} />}
       {aiImport && <AiOrderImportModal companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} onClose={() => setAiImport(false)} onSaved={loadData} />}
+      {lineStock && (
+        <OrderLineStockModal
+          order={lineStock.order}
+          item={lineStock.item}
+          itemIndex={lineStock.itemIndex}
+          product={lineStock.product}
+          products={productCatalog}
+          companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
+          onClose={() => setLineStock(null)}
+          onMatched={(updated) => {
+            if (updated) {
+              setOrders((prev) => prev.map((o) => ((o.id || o._id) === (updated.id || updated._id) ? { ...o, ...updated } : o)));
+            } else {
+              loadData();
+            }
+          }}
+          onProductUpdated={() => {
+            axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`)
+              .then((r) => setAllProducts(r.data || []))
+              .catch(() => {});
+          }}
+        />
+      )}
 
       {activeTab === "orders" ? (<>
         <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} rows={visibleOrders} selectedCount={selected.length} bulkBusy={bulkBusy} onBulkAction={bulk} />
@@ -1526,9 +1563,15 @@ export default function OrdersB2BPage() {
                             return (
                             <div key={idx} className={`flex items-center gap-2 ${open ? `rounded-lg p-1.5 ${idx % 2 === 0 ? "bg-slate-50" : "bg-emerald-50/80"}` : ""}`}>
                               {img(it) ? <img src={img(it)} alt="" className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md object-cover border bg-white shrink-0`} /> : <div className={`${open ? "w-10 h-10" : "w-8 h-8"} rounded-md border bg-white flex items-center justify-center text-slate-300 shrink-0`}><PackageIcon className="w-4 h-4" /></div>}
-                              <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/stock?q=${encodeURIComponent(it.sku || it.product_name || it.name || "")}`); }} className="text-left min-w-0 flex-1 text-slate-700 hover:text-indigo-700 hover:underline decoration-dotted" title="Stok kartını aç" data-testid={`order-item-link-${ord.order_number}-${idx}`}>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); openOrderLineStock(ord, it, idx); }}
+                                className={`text-left min-w-0 flex-1 hover:underline decoration-dotted ${lineProd ? "text-slate-700 hover:text-indigo-700" : "text-amber-800 hover:text-amber-900"}`}
+                                title={lineProd ? "Stok kartını aç" : "Stok kartına eşleştir"}
+                                data-testid={`order-item-link-${ord.order_number}-${idx}`}
+                              >
                                 <div className={`${open ? "font-semibold" : ""} truncate`}>{it.quantity}x {it.product_name || it.name}</div>
-                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{showPrices && it.unit_price != null ? `${formatTrAmount(Number(it.unit_price))} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}</div>}
+                                {open && <div className="text-[10px] text-slate-400">{it.sku ? `SKU ${it.sku} · ` : ""}{showPrices && it.unit_price != null ? `${formatTrAmount(Number(it.unit_price))} ₺` : ""}{it.variant ? ` · ${it.variant}` : ""}{!lineProd ? " · eşleşmedi" : ""}</div>}
                               </button>
                               {canProduce ? (
                                 <button
