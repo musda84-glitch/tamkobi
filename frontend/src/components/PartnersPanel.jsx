@@ -338,7 +338,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           {(() => {
             const net = partnerBalanceMeta(summary.total_balance);
             return [
-              ["net", net.label === "Ortak bakiyesi" ? "Net ortak bakiyesi" : `Net ${net.label.toLowerCase()}`, summary.total_balance, net.amountCls, net.hint],
+              ["net", net.label === "Ortak bakiyesi" ? "Net ortak bakiyesi" : `Net ${net.label.toLowerCase()}`, net.abs, net.amountCls, net.hint],
               ["capital", "Toplam Sermaye Girişi", summary.total_capital_in, "text-emerald-700", ""],
               ["withdrawn", "Toplam Çekilen", summary.total_withdrawn, "text-rose-700", ""],
               ["profit", "Dağıtılan Kâr", summary.total_profit_share, "text-indigo-700", ""],
@@ -410,7 +410,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                   <div className="text-[10px] uppercase text-slate-400 font-semibold">{bm.label}</div>
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${bm.badgeCls}`} data-testid={`partner-balance-badge-${p.id}`}>{bm.badge}</span>
                 </div>
-                <div className={`text-lg font-bold ${bm.amountCls}`} data-testid={`partner-balance-amount-${p.id}`}>{fmt(p.balance)} ₺</div>
+                <div className={`text-lg font-bold ${bm.amountCls}`} data-testid={`partner-balance-amount-${p.id}`}>{fmt(bm.abs)} ₺</div>
                 <div className="text-[10px] text-slate-500 leading-snug">{bm.hint}</div>
               </div>
               <button onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600 shrink-0" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>

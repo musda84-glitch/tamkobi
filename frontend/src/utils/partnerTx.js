@@ -64,13 +64,16 @@ export function partnerBalanceMeta(balance) {
   };
 }
 
-/** Artı: ortak alacağı artar (para koy / alacak fişi / maaş). */
-export function partnerTxIncreasesBalance(type) {
-  return type === "capital_in" || type === "credit" || type === "salary";
+/** Artı: ortak alacağı artar (para koy / alacak fişi / maaş / tahakkuk kâr payı). */
+export function partnerTxIncreasesBalance(type, tx) {
+  if (type === "capital_in" || type === "credit" || type === "salary") return true;
+  // Tahakkuk kâr payı bakiyeyi artırır; peşin ödeme yalnızca kasadan çıkar.
+  if (type === "profit_share") return !(tx && tx.is_paid);
+  return false;
 }
 
-export function partnerTxSign(type) {
-  return partnerTxIncreasesBalance(type) ? "+" : "-";
+export function partnerTxSign(type, tx) {
+  return partnerTxIncreasesBalance(type, tx) ? "+" : "-";
 }
 
 export function isPartnerLedgerType(type) {
