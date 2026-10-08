@@ -238,6 +238,9 @@ class Invoice(BaseDocument):
     contact_id: str
     contact_name: str
     contact_tax_id: Optional[str] = None
+    shipping_address: Optional[str] = None
+    city: Optional[str] = None
+    customer_phone: Optional[str] = None
     issue_date: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     issue_time: Optional[str] = None  # HH:MM:SS (24 saat)
     due_date: Optional[str] = None

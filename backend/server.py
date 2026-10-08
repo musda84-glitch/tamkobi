@@ -11333,6 +11333,12 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         "marketplace": "pazaryeri senkronunda",
         "import": "içe aktarımda",
     }.get(source, "alışında")
+    _ship = (order.get("shipping_address") or "").strip()
+    if not _ship or _ship == "-":
+        _ship = (contact.get("address") or "").strip()
+    _city = (order.get("city") or "").strip()
+    if not _city or _city == "-":
+        _city = (contact.get("city") or "").strip()
     doc = {
         "_id": inv_id,
         "company_id": order.get("company_id"),
@@ -11341,6 +11347,9 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         "contact_id": contact["_id"],
         "contact_name": contact.get("name") or order.get("customer_name") or "",
         "contact_tax_id": contact.get("tax_number_or_id") or "11111111111",
+        "shipping_address": _ship or None,
+        "city": _city or None,
+        "customer_phone": order.get("customer_phone") or contact.get("phone") or None,
         "e_type": e_type,
         "issue_date": now.strftime("%Y-%m-%d"),
         "due_date": (now + timedelta(days=term_days)).strftime("%Y-%m-%d"),

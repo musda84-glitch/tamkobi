@@ -21,6 +21,8 @@ describe("invoicePrintShare", () => {
     customer_name: "Acme A.Ş.",
     customer_phone: "0532 111 22 33",
     customer_email: "a@x.com",
+    shipping_address: "Atatürk Cad. No:1 Kadıköy",
+    city: "İstanbul",
     grand_total: 1210,
     order_number: "B2B-2026-0065",
   };
@@ -38,6 +40,10 @@ describe("invoicePrintShare", () => {
     expect(doc.id).toBe("inv-1");
     expect(doc.e_type).toBe("e_invoice");
     expect(doc.einvoice_state).toBe("sent");
+    expect(doc.shipping_address).toBe("Atatürk Cad. No:1 Kadıköy");
+    expect(doc.address).toBe("Atatürk Cad. No:1 Kadıköy");
+    expect(doc.city).toBe("İstanbul");
+    expect(doc.customer_phone).toBe("0532 111 22 33");
     expect(invoicePrintShareDocFromOrder({})).toBeNull();
   });
 
