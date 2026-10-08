@@ -7457,12 +7457,19 @@ async def _set_invoice_item_product(inv: dict, idx: int, product_id: Optional[st
         item["product_id"] = p["_id"]
         item["is_service"] = False
         item["matched_product_name"] = p.get("name")
+        # Gelen belge eşleştirmesinde ürün B2B'de kapalı kalsın / kapansın.
+        prod_patch: Dict[str, Any] = {"show_in_b2b": False}
         sku = str(item.get("sku") or "").strip()
+        add_ops: Dict[str, Any] = {}
         if sku and sku not in (p.get("supplier_codes") or []):
-            await db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"supplier_codes": sku}})
+            add_ops.setdefault("$addToSet", {})["supplier_codes"] = sku
         alias = str(item.get("name") or item.get("description") or "").strip().lower()
         if alias:
-            await db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"marketplace_aliases": alias}})
+            add_ops.setdefault("$addToSet", {})["marketplace_aliases"] = alias
+        upd: Dict[str, Any] = {"$set": prod_patch}
+        if add_ops:
+            upd.update(add_ops)
+        await db.products.update_one({"_id": p["_id"]}, upd)
     else:
         item["product_id"] = ""
         item["matched_product_name"] = None
@@ -7496,6 +7503,7 @@ async def _create_product_for_invoice_line(inv: dict, idx: int, *, markup: float
         "vat_rate": int(ln.get("vat_rate") or 20),
         "category": "Tedarik",
         "channel": "edoc",
+        "show_in_b2b": False,
     })
     pid = (created.get("product") or {}).get("id") or (created.get("product") or {}).get("_id")
     return await _set_invoice_item_product(inv, idx, pid)
@@ -13040,11 +13048,19 @@ async def create_product_from_marketplace(req: Dict[str, Any]):
     if await db.products.find_one({"company_id": company_id, "sku": sku}):
         sku = f"{sku}-{uuid.uuid4().hex[:4].upper()}"
     aliases = [a for a in {barcode, (req.get("sku") or "").strip(), name.lower()} if a]
+    channel = str(req.get("channel") or "").strip().lower()
+    # Gelen e-belge / alış faturası kaynaklı kartlar B2B kataloğunda kapalı açılsın.
+    if "show_in_b2b" in req:
+        show_b2b = bool(req.get("show_in_b2b"))
+    else:
+        show_b2b = channel not in ("edoc", "invoice", "purchase", "incoming")
     p = Product(company_id=company_id, name=name, sku=sku, barcode=barcode or f"868{str(uuid.uuid4().int)[:10]}", category=req.get("category") or "Pazaryeri", sale_price=float(req.get("sale_price") or 0),
-                purchase_price=float(req.get("purchase_price") or 0), stock_quantity=float(req.get("stock_quantity") or 0), vat_rate=int(req.get("vat_rate") or 20))
+                purchase_price=float(req.get("purchase_price") or 0), stock_quantity=float(req.get("stock_quantity") or 0), vat_rate=int(req.get("vat_rate") or 20),
+                show_in_b2b=show_b2b)
     doc = p.to_mongo()
     doc["marketplace_aliases"] = aliases
     doc["source"] = f"marketplace:{req.get('channel') or ''}"
+    doc["show_in_b2b"] = show_b2b
     await db.products.insert_one(doc)
     await _remember_category(company_id, doc["category"])
     await _remember_unit(company_id, doc.get("unit"))
