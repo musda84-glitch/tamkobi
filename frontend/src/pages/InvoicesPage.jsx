@@ -2029,55 +2029,56 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                 />
               </div>
 
-              {/* Totals Summary */}
-              <div className="bg-slate-100 p-3 rounded-xl flex flex-col items-end space-y-1 text-slate-700">
-                <div className="flex justify-between w-80">
-                  <span>Mal / Hizmet Toplamı:</span>
-                  <span className="font-semibold">{money(totals.itemsSum)}</span>
+              {/* Totals + fatura notu */}
+              <div className="bg-slate-100 p-3 rounded-xl flex flex-col sm:flex-row gap-3 sm:gap-4 text-slate-700">
+                <div className="flex-1 min-w-0 flex flex-col" data-testid="inv-notes-block">
+                  <label className="block font-semibold text-slate-700 mb-1">Fatura notu</label>
+                  <textarea
+                    rows={5}
+                    value={formData.notes || ""}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder="Fatura altına yazılacak not / açıklama…"
+                    className="w-full flex-1 min-h-[7.5rem] bg-white border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 resize-y"
+                    data-testid="inv-notes-input"
+                  />
                 </div>
-                {totals.lineDiscount > 0 && <div className="flex justify-between w-80 text-rose-600"><span>Satır İskontoları:</span><span>-{money(totals.lineDiscount)}</span></div>}
-                <div className="flex items-center justify-between w-80 gap-2" data-testid="general-discount-row">
-                  <span>Genel İskonto:</span>
-                  <div className="flex items-center gap-1">
-                    <div className="flex rounded-lg border border-slate-300 overflow-hidden text-[10px] font-bold">
-                      <button type="button" onClick={() => setGdMode("percent")} className={`px-2 py-1 ${gdMode === "percent" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-percent">%</button>
-                      <button type="button" onClick={() => setGdMode("amount")} className={`px-2 py-1 ${gdMode === "amount" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-amount">₺</button>
+                <div className="shrink-0 flex flex-col items-end space-y-1 sm:ml-auto">
+                  <div className="flex justify-between w-80 max-w-full">
+                    <span>Mal / Hizmet Toplamı:</span>
+                    <span className="font-semibold">{money(totals.itemsSum)}</span>
+                  </div>
+                  {totals.lineDiscount > 0 && <div className="flex justify-between w-80 max-w-full text-rose-600"><span>Satır İskontoları:</span><span>-{money(totals.lineDiscount)}</span></div>}
+                  <div className="flex items-center justify-between w-80 max-w-full gap-2" data-testid="general-discount-row">
+                    <span>Genel İskonto:</span>
+                    <div className="flex items-center gap-1">
+                      <div className="flex rounded-lg border border-slate-300 overflow-hidden text-[10px] font-bold">
+                        <button type="button" onClick={() => setGdMode("percent")} className={`px-2 py-1 ${gdMode === "percent" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-percent">%</button>
+                        <button type="button" onClick={() => setGdMode("amount")} className={`px-2 py-1 ${gdMode === "amount" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`} data-testid="gd-mode-amount">₺</button>
+                      </div>
+                      <input type="number" min="0" value={gdMode === "percent" ? (formData.general_discount_rate || "") : (formData.general_discount_amount || "")} onChange={(e) => setFormData({ ...formData, [gdMode === "percent" ? "general_discount_rate" : "general_discount_amount"]: e.target.value })} placeholder="0" className="w-20 bg-white border border-rose-200 rounded-lg p-1 text-right text-rose-700 font-semibold" data-testid="general-discount-input" />
+                      <span className="text-rose-600 font-semibold w-24 text-right">-{money(totals.gd)}</span>
                     </div>
-                    <input type="number" min="0" value={gdMode === "percent" ? (formData.general_discount_rate || "") : (formData.general_discount_amount || "")} onChange={(e) => setFormData({ ...formData, [gdMode === "percent" ? "general_discount_rate" : "general_discount_amount"]: e.target.value })} placeholder="0" className="w-20 bg-white border border-rose-200 rounded-lg p-1 text-right text-rose-700 font-semibold" data-testid="general-discount-input" />
-                    <span className="text-rose-600 font-semibold w-24 text-right">-{money(totals.gd)}</span>
                   </div>
-                </div>
-                <div className="flex justify-between w-80 border-t border-slate-300 pt-1">
-                  <span>Ara Toplam (İskontolu):</span>
-                  <span className="font-semibold">{money(totals.subtotal)}</span>
-                </div>
-                <div className="flex justify-between w-80">
-                  <span>Toplam KDV:</span>
-                  <span className="font-semibold" data-testid="inv-vat-total">{money(totals.vat)}</span>
-                </div>
-                {totals.withholding > 0 && <div className="flex justify-between w-80 text-indigo-700" data-testid="withholding-row"><span>Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]} KDV):</span><span>-{money(totals.withholding)}</span></div>}
-                <div className="flex justify-between w-80 text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
-                  <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam:"}</span>
-                  <span className="text-emerald-700" data-testid="inv-grand-total">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
-                </div>
-                {(formData.currency || "TRY") !== "TRY" && Number(formData.fx_rate) > 0 && (
-                  <div className="flex justify-between w-80 text-slate-500" data-testid="inv-try-equivalent">
-                    <span>TL karşılığı (kur {Number(formData.fx_rate).toLocaleString("tr-TR")}):</span>
-                    <span className="font-semibold">{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</span>
+                  <div className="flex justify-between w-80 max-w-full border-t border-slate-300 pt-1">
+                    <span>Ara Toplam (İskontolu):</span>
+                    <span className="font-semibold">{money(totals.subtotal)}</span>
                   </div>
-                )}
-              </div>
-
-              <div className="w-full" data-testid="inv-notes-block">
-                <label className="block font-semibold text-slate-700 mb-1">Fatura notu</label>
-                <textarea
-                  rows={2}
-                  value={formData.notes || ""}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="Fatura altına yazılacak not / açıklama…"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800"
-                  data-testid="inv-notes-input"
-                />
+                  <div className="flex justify-between w-80 max-w-full">
+                    <span>Toplam KDV:</span>
+                    <span className="font-semibold" data-testid="inv-vat-total">{money(totals.vat)}</span>
+                  </div>
+                  {totals.withholding > 0 && <div className="flex justify-between w-80 max-w-full text-indigo-700" data-testid="withholding-row"><span>Tevkifat ({WITHHOLDING.find(([v]) => v.startsWith(`${formData.withholding_rate}|`))?.[1]?.split(" – ")[0]} KDV):</span><span>-{money(totals.withholding)}</span></div>}
+                  <div className="flex justify-between w-80 max-w-full text-sm font-bold text-slate-900 pt-1 border-t border-slate-300">
+                    <span>{totals.withholding > 0 ? "Ödenecek Tutar:" : "Genel Toplam:"}</span>
+                    <span className="text-emerald-700" data-testid="inv-grand-total">{fmtMoney(totals.grandTotal, formData.currency || "TRY")}</span>
+                  </div>
+                  {(formData.currency || "TRY") !== "TRY" && Number(formData.fx_rate) > 0 && (
+                    <div className="flex justify-between w-80 max-w-full text-slate-500" data-testid="inv-try-equivalent">
+                      <span>TL karşılığı (kur {Number(formData.fx_rate).toLocaleString("tr-TR")}):</span>
+                      <span className="font-semibold">{fmtMoney(totals.grandTotal * Number(formData.fx_rate), "TRY")}</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
