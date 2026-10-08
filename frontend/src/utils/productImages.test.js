@@ -1,4 +1,4 @@
-import { mediaRef, productGalleryUrls, productIdOf, productListImageUrl } from "./productImages";
+import { mediaRef, orderLineListImageUrl, productGalleryUrls, productIdOf, productListImageUrl } from "./productImages";
 
 describe("productImages", () => {
   test("mediaRef reads strings and object fields", () => {
@@ -30,5 +30,11 @@ describe("productImages", () => {
     expect(productListImageUrl({ image_url: "/full.jpg" })).toBe("/full.jpg");
     expect(productListImageUrl({ images: ["/a.jpg"] })).toBe("/a.jpg");
     expect(productListImageUrl({})).toBe("");
+  });
+
+  test("orderLineListImageUrl prefers line then product thumb", () => {
+    expect(orderLineListImageUrl({ image_url: "/line.jpg" }, { thumbnail_url: "/t.webp" })).toBe("/line.jpg");
+    expect(orderLineListImageUrl({}, { thumbnail_url: "/t.webp", image_url: "/full.jpg" })).toBe("/t.webp");
+    expect(orderLineListImageUrl({}, { image_url: "/full.jpg" })).toBe("/full.jpg");
   });
 });

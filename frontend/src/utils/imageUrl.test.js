@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-import { resolveImageUrl } from "./imageUrl";
+import { listImageUrl, resolveImageUrl } from "./imageUrl";
 
 jest.mock("../api/client", () => ({
   BACKEND_URL: "",
@@ -28,5 +28,13 @@ describe("resolveImageUrl", () => {
     expect(resolveImageUrl("/api/files/tamkobi/products/a.jpg")).toBe("/api/files/tamkobi/products/a.jpg");
     expect(resolveImageUrl("tamkobi/products/a.jpg")).toBe("/api/files/tamkobi/products/a.jpg");
     expect(resolveImageUrl("api/files/x.jpg")).toBe("/api/files/x.jpg");
+  });
+
+  test("listImageUrl adds w= for local files only", () => {
+    expect(listImageUrl("/api/files/tamkobi/products/a.webp", 64)).toBe(
+      "/api/files/tamkobi/products/a.webp?w=64",
+    );
+    expect(listImageUrl("https://cdn.example/a.jpg", 64)).toBe("https://cdn.example/a.jpg");
+    expect(listImageUrl("", 64)).toBe("");
   });
 });
