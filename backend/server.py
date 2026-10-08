@@ -10928,6 +10928,55 @@ async def _staff_rebuild_order_items(company_id: str, raw_items: list) -> list:
     return rows
 
 
+@api_router.post("/orders/{order_id}/items/match")
+async def match_order_item_product(order_id: str, req: Dict[str, Any]):
+    """Tek sipariş satırını stok kartına bağla (pazaryeri dahil; kalem içeriği değişmez)."""
+    o = await db.orders.find_one({"_id": order_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    items = list(o.get("items") or [])
+    idx = int(req.get("idx", -1))
+    if not (0 <= idx < len(items)):
+        raise HTTPException(status_code=404, detail="Satır bulunamadı.")
+    product_id = str(req.get("product_id") or "").strip()
+    if not product_id:
+        raise HTTPException(status_code=400, detail="Stok kartı gerekli.")
+    p = await db.products.find_one({"_id": product_id, "company_id": o.get("company_id")})
+    if not p:
+        raise HTTPException(status_code=404, detail="Stok kartı bulunamadı.")
+    line = dict(items[idx])
+    line["product_id"] = p["_id"]
+    if p.get("name"):
+        line["matched_product_name"] = p["name"]
+        # Satır adı yoksa stok adını doldur; pazaryeri görünen adını koru.
+        if not (line.get("product_name") or line.get("name")):
+            line["product_name"] = p["name"]
+    if p.get("sku") and not line.get("sku"):
+        line["sku"] = p["sku"]
+    if p.get("barcode") and not line.get("barcode"):
+        line["barcode"] = p["barcode"]
+    items[idx] = line
+    aliases = []
+    for key in (line.get("barcode"), line.get("sku"), line.get("product_name"), line.get("name")):
+        a = str(key or "").strip()
+        if a:
+            aliases.append(a if key in (line.get("barcode"), line.get("sku")) else a.lower())
+    prod_upd: Dict[str, Any] = {}
+    if aliases:
+        prod_upd["$addToSet"] = {"marketplace_aliases": {"$each": list(dict.fromkeys(aliases))}}
+    if prod_upd:
+        await db.products.update_one({"_id": p["_id"]}, prod_upd)
+    stamp = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one({"_id": order_id}, {"$set": {"items": items, "updated_at": stamp}})
+    updated = {**o, "items": items, "updated_at": stamp}
+    return {
+        "status": "success",
+        "order": clean_doc(updated),
+        "product": clean_doc(p),
+        "message": f"'{p.get('name')}' stok kartıyla eşleştirildi.",
+    }
+
+
 @api_router.put("/orders/{order_id}")
 async def update_order(order_id: str, req: Dict[str, Any]):
     o = await db.orders.find_one({"_id": order_id})
