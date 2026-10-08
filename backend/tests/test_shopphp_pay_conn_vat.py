@@ -62,8 +62,21 @@ def test_map_shopphp_xml_order_payment_and_vat_inclusive():
     assert doc["bank_name"] == "Kredi Kartı ile Ödeme"
     assert doc["total_amount"] == 12548.90
     assert all(it.get("price_includes_vat") is True for it in doc["items"])
-    assert doc["items"][0]["unit_price"] == 11999
+    assert doc["items"][0]["unit_price"] == 11999  # ham XML brüt; normalize nete indirir
     assert abs(sum(it["total"] for it in doc["items"]) - 12548.90) < 0.01
+
+
+def test_normalize_shopphp_stores_net_and_keeps_paid_grand_total():
+    root = ET.fromstring(SAMPLE)
+    doc = mp.map_shopphp_xml_order(root.find("SIPARIS"), "c1", "shopphp")
+    out = mp.normalize_marketplace_order_prices(doc)
+    assert out["items"][0]["unit_price_incl"] == 11999
+    assert abs(out["items"][0]["unit_price"] - 9999.1667) < 0.01
+    assert out["items"][1]["unit_price_incl"] == 549.90
+    assert out["grand_total"] == 12548.90
+    assert out["total_amount"] == 12548.90
+    assert abs(out["subtotal"] + out["vat_total"] - out["grand_total"]) < 0.02
+    assert abs(sum(it["total_incl"] for it in out["items"]) - 12548.90) < 0.02
 
 
 def test_map_trendyol_marks_price_includes_vat():
@@ -79,3 +92,6 @@ def test_map_trendyol_marks_price_includes_vat():
     }
     doc = mp.map_trendyol_order(pkg, "c1", "trendyol")
     assert doc["items"][0]["price_includes_vat"] is True
+    norm = mp.normalize_marketplace_order_prices(doc)
+    assert norm["items"][0]["unit_price_incl"] == 100
+    assert abs(norm["items"][0]["unit_price"] - 100 / 1.2) < 0.01
