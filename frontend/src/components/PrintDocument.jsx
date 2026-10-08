@@ -194,6 +194,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [contactBalance, setContactBalance] = useState(null);
+  const [partyContact, setPartyContact] = useState(null);
   const companyId = company?.id || "comp_nexus_main_01";
   const compactForm = isOrderQuotePrint(docType);
   const items = doc.items || [];
@@ -245,27 +246,35 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   }, [docType, companyId]);
   useEffect(() => { if (docType === "invoice" && doc.installment_plan && doc.id) axios.get(`${API_URL}/invoices/${doc.id}/installments`).then((r) => setPlan(r.data)).catch(() => {}); }, [docType, doc.installment_plan, doc.id]);
   useEffect(() => {
-    if (!compactForm) return undefined;
-    if (doc.contact_balance != null && doc.contact_balance !== "") {
-      setContactBalance(Number(doc.contact_balance));
-      return undefined;
-    }
     const cid = doc.contact_id;
     const name = String(doc.contact_name || doc.customer_name || "").trim().toLocaleLowerCase("tr-TR");
     if (!cid && !name) {
+      setPartyContact(null);
       setContactBalance(null);
       return undefined;
+    }
+    if (doc.contact_balance != null && doc.contact_balance !== "") {
+      setContactBalance(Number(doc.contact_balance));
     }
     let cancelled = false;
     axios.get(`${API_URL}/contacts?company_id=${companyId}&lite=1`).then((r) => {
       if (cancelled) return;
       const rows = Array.isArray(r.data) ? r.data : [];
       const hit = (cid && rows.find((c) => (c.id || c._id) === cid))
-        || rows.find((c) => String(c.name || "").trim().toLocaleLowerCase("tr-TR") === name);
-      setContactBalance(hit && hit.balance != null ? Number(hit.balance) : null);
-    }).catch(() => { if (!cancelled) setContactBalance(null); });
+        || rows.find((c) => String(c.name || "").trim().toLocaleLowerCase("tr-TR") === name)
+        || null;
+      setPartyContact(hit);
+      if (doc.contact_balance == null || doc.contact_balance === "") {
+        setContactBalance(hit && hit.balance != null ? Number(hit.balance) : null);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setPartyContact(null);
+        if (doc.contact_balance == null || doc.contact_balance === "") setContactBalance(null);
+      }
+    });
     return () => { cancelled = true; };
-  }, [compactForm, companyId, doc.contact_id, doc.contact_name, doc.customer_name, doc.contact_balance]);
+  }, [companyId, doc.contact_id, doc.contact_name, doc.customer_name, doc.contact_balance]);
   if (!tpl) return null;
   const layout = tpl.layout || "classic";
   const pickLayout = async (l) => {
@@ -282,6 +291,16 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   };
   const number = docType === "quote" ? doc.quote_number : docType === "order" ? doc.order_number : (doc.invoice_number || doc.quote_number || "");
   const customer = doc.contact_name || doc.customer_name || "";
+  const rawPartyAddress = String(
+    doc.shipping_address || doc.address || partyContact?.address || ""
+  ).trim();
+  const partyAddress = rawPartyAddress && rawPartyAddress !== "-" ? rawPartyAddress : "";
+  const partyCity = String(doc.city || partyContact?.city || "").trim();
+  const partyCityShown = partyCity && partyCity !== "-"
+    && !partyAddress.toLocaleLowerCase("tr-TR").includes(partyCity.toLocaleLowerCase("tr-TR"))
+    ? partyCity
+    : "";
+  const partyPhone = doc.customer_phone || partyContact?.phone || "";
   const total = doc.grand_total ?? doc.total_amount ?? 0;
   const color = layout === "minimal" ? "#0f172a" : (tpl.primary_color || "#059669");
   const textSize = tpl.font_size === "xs" ? "text-[10px]" : tpl.font_size === "base" ? "text-sm" : "text-xs";
@@ -383,8 +402,12 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
             <div>
               <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Sayın</div>
               <div className="font-bold text-base">{customer}</div>
-              {(doc.shipping_address || doc.address) && <div className="text-slate-500">{doc.shipping_address || doc.address} {doc.city || ""}</div>}
-              {doc.customer_phone && <div className="text-slate-500">{doc.customer_phone}</div>}
+              {partyAddress && (
+                <div className="text-slate-500" data-testid="print-party-address">
+                  {partyAddress}{partyCityShown ? ` ${partyCityShown}` : ""}
+                </div>
+              )}
+              {partyPhone && <div className="text-slate-500" data-testid="print-party-phone">{partyPhone}</div>}
               {(() => {
                 const custNo = String(
                   doc.customer_order_number || doc.po_number || doc.buyer_order_number
