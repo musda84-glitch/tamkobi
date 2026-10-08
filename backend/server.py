@@ -13059,6 +13059,78 @@ async def match_marketplace_product(req: Dict[str, Any]):
     await db.products.update_one({"_id": p["_id"]}, {"$addToSet": {"marketplace_aliases": alias}})
     return {"status": "success", "message": f"'{alias}' → {p.get('name')} eşleştirildi. Kârlılık ve stok düşümü bu ürün üzerinden hesaplanır."}
 
+
+@api_router.post("/marketplace/product-match-suggest")
+async def suggest_marketplace_product_matches(req: Dict[str, Any]):
+    """Pazaryeri satırları için stok kartı önerileri (barkod/SKU/ad benzerliği + isteğe bağlı AI)."""
+    import marketplace_match as mpm
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    rows = list(req.get("rows") or [])
+    if not rows:
+        return {"suggestions": {}, "mode": "empty", "count": 0}
+    products = await db.products.find(
+        {"company_id": company_id},
+        {"name": 1, "sku": 1, "barcode": 1, "marketplace_aliases": 1},
+    ).to_list(5000)
+    for p in products:
+        p["id"] = p.get("_id")
+    min_score = float(req.get("min_score") or 0.45)
+    limit = max(1, min(5, int(req.get("limit") or 3)))
+    suggestions = mpm.suggest_for_rows(rows, products, limit=limit, min_score=min_score)
+    mode = "smart"
+    # Düşük güvenli satırlarda AI ile yeniden sıralama (anahtar yoksa atlanır)
+    if req.get("use_ai"):
+        weak = []
+        for row in rows:
+            bc = str(row.get("barcode") or "").strip()
+            top = (suggestions.get(bc) or [None])[0]
+            if not top or float(top.get("score") or 0) < 0.75:
+                weak.append(row)
+        if weak:
+            try:
+                catalog = "\n".join(
+                    f"- id={p.get('_id')} | {p.get('name')} | sku={p.get('sku') or ''} | bc={p.get('barcode') or ''}"
+                    for p in products[:400]
+                )
+                lines = "\n".join(
+                    f"- barcode={r.get('barcode')} | title={r.get('title') or ''} | stock_code={r.get('stock_code') or ''}"
+                    for r in weak[:40]
+                )
+                prompt = (
+                    "Pazaryeri ürünlerini stok kartlarıyla eşleştir. "
+                    "Her satır için en iyi product id'yi JSON olarak ver: "
+                    '{"matches":[{"barcode":"...","product_id":"...","confidence":0.0}]}. '
+                    "Emin değilsen product_id boş bırak.\n\n"
+                    f"STOK KARTLARI:\n{catalog}\n\nPAZARYERI:\n{lines}"
+                )
+                advice = await get_financial_ai_advice({"task": "marketplace_product_match"}, prompt)
+                import json as _json
+                raw = advice if isinstance(advice, str) else str(advice or "")
+                m = re.search(r"\{[\s\S]*\}", raw)
+                if m:
+                    parsed = _json.loads(m.group(0))
+                    by_id = {p["_id"]: p for p in products}
+                    for hit in parsed.get("matches") or []:
+                        bc = str(hit.get("barcode") or "").strip()
+                        pid = hit.get("product_id")
+                        conf = float(hit.get("confidence") or 0.7)
+                        if not bc or not pid or pid not in by_id:
+                            continue
+                        p = by_id[pid]
+                        suggestions[bc] = [{
+                            "product_id": pid,
+                            "name": p.get("name"),
+                            "sku": p.get("sku"),
+                            "barcode": p.get("barcode"),
+                            "score": round(max(0.55, min(0.99, conf)), 2),
+                            "reason": "ai",
+                        }] + [s for s in (suggestions.get(bc) or []) if s.get("product_id") != pid][: limit - 1]
+                    mode = "ai"
+            except Exception as e:  # noqa: BLE001
+                logger.warning("marketplace match AI suggest skipped: %s", e)
+    count = sum(1 for v in suggestions.values() if v)
+    return {"suggestions": suggestions, "mode": mode, "count": count}
+
 @api_router.get("/marketplace/claims")
 async def list_marketplace_claims(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
     q: Dict[str, Any] = {"company_id": company_id}
