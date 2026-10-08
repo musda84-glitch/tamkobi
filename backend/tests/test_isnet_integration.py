@@ -212,7 +212,7 @@ def test_live_connection_failure_includes_egress_ip():
 
     with patch("isnet.soap_health_check", side_effect=_fail), patch(
         "isnet.detect_egress_ips", side_effect=_ips
-    ), patch("isnet.resolve_host_ipv4", return_value=["85.95.240.136"]), patch(
+    ), patch("isnet.resolve_host_ipv4", return_value=["85.95.240.184"]), patch(
         "isnet.public_app_host", return_value="tamkobi.com"
     ), patch("isnet.health_check", side_effect=_rest_ok), patch(
         "isnet.diagnose_live_soap_path", side_effect=_diag
@@ -230,16 +230,33 @@ def test_live_connection_failure_includes_egress_ip():
 
 
 def test_live_soap_tls_blackhole_hint_mentions_rest_vs_soap():
-    h = isnet.live_soap_tls_blackhole_hint("6131659091", "85.95.240.136", True)
+    h = isnet.live_soap_tls_blackhole_hint("6131659091", "85.95.240.184", True)
     assert "213.143.252.136" in h
     assert "InvoiceService" in h
     assert "6131659091" in h
-    assert "85.95.240.136" in h
+    assert "85.95.240.184" in h
 
 
 def test_public_app_host_falls_back_from_localhost():
     with patch.dict(os.environ, {"PUBLIC_APP_URL": "http://127.0.0.1"}, clear=False):
         assert isnet.public_app_host() == "tamkobi.com"
+
+
+def test_declared_production_ips_dual_default():
+    with patch.dict(
+        os.environ,
+        {"TAMKOBI_PRODUCTION_IPS": "", "TAMKOBI_PRODUCTION_IP": ""},
+        clear=False,
+    ):
+        os.environ.pop("TAMKOBI_PRODUCTION_IPS", None)
+        os.environ.pop("TAMKOBI_PRODUCTION_IP", None)
+        ips = isnet.declared_production_ips()
+    assert ips == ["85.95.240.136", "85.95.240.184"]
+
+
+def test_declared_production_ips_env_override():
+    with patch.dict(os.environ, {"TAMKOBI_PRODUCTION_IPS": "1.2.3.4,5.6.7.8"}, clear=False):
+        assert isnet.declared_production_ips() == ["1.2.3.4", "5.6.7.8"]
 
 
 def test_login_401_raises():
