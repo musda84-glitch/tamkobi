@@ -6432,7 +6432,8 @@ async def update_product_images(product_id: str, req: Dict[str, Any]):
     return clean_doc(updated)
 
 @api_router.get("/files/{path:path}")
-async def serve_file(path: str):
+async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
+    """Dosya sunumu. w=64|128|320 → anlık küçük WebP (liste/kart; tam dosya cache'den ayrı)."""
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
     try:
         data, content_type = get_object(path)
@@ -6445,6 +6446,18 @@ async def serve_file(path: str):
     head = data[:240].lstrip().lower()
     if head.startswith(b"<!doctype") or head.startswith(b"<html") or b"413 request entity too large" in head:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+    if w and media.startswith("image/") and media != "image/svg+xml":
+        thumb = image_opt.make_thumbnail(data, media, path, max_edge=int(w), quality=70)
+        if thumb and thumb.data and len(thumb.data) < len(data):
+            return Response(
+                content=thumb.data,
+                media_type=thumb.content_type,
+                headers={
+                    "Cache-Control": "public, max-age=604800, immutable",
+                    "Vary": "Accept",
+                    "X-Image-Resize": str(w),
+                },
+            )
     return Response(content=data, media_type=media, headers={"Cache-Control": "public, max-age=86400"})
 
 class VariantsUpdateRequest(BaseModel):

@@ -192,3 +192,11 @@ def test_make_thumbnail_is_small_list_preview():
     im = Image.open(io.BytesIO(thumb.data))
     im.load()
     assert max(im.size) <= 320
+
+
+def test_make_thumbnail_w64_much_smaller_than_full():
+    raw = _photo_jpeg(w=1400, h=1000, quality=90)
+    tiny = image_opt.make_thumbnail(raw, "image/jpeg", "big.jpg", max_edge=64, quality=70)
+    assert tiny is not None
+    assert tiny.stored_size < len(raw) * 0.15
+    assert max(tiny.width or 0, tiny.height or 0) <= 64
