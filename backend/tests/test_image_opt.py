@@ -202,6 +202,12 @@ def test_make_thumbnail_w64_much_smaller_than_full():
     assert max(tiny.width or 0, tiny.height or 0) <= 64
 
 
+def test_resize_cache_path_derives_sidecar():
+    assert image_opt.resize_cache_path("tamkobi/products/a.webp", 64) == "tamkobi/products/a.w64.webp"
+    assert image_opt.resize_cache_path("tamkobi/products/a.w64.webp", 64) == "tamkobi/products/a.w64.webp"
+    assert image_opt.resize_cache_path("/x/y.jpg", 48) == "x/y.w48.webp"
+
+
 def test_product_profile_prefers_webp_and_smaller_edge():
     raw = _photo_jpeg(w=2000, h=1500, quality=95)
     r = image_opt.optimize_product_upload(raw, "image/jpeg", "product.jpg")

@@ -37,4 +37,13 @@ describe("resolveImageUrl", () => {
     expect(listImageUrl("https://cdn.example/a.jpg", 64)).toBe("https://cdn.example/a.jpg");
     expect(listImageUrl("", 64)).toBe("");
   });
+
+  test("listImageUrl skips resize for stored thumbs", () => {
+    expect(listImageUrl("/api/files/tamkobi/products/x/thumbs/a.webp", 64)).toBe(
+      "/api/files/tamkobi/products/x/thumbs/a.webp",
+    );
+    expect(listImageUrl("/api/files/tamkobi/products/a.w64.webp", 64)).toBe(
+      "/api/files/tamkobi/products/a.w64.webp",
+    );
+  });
 });

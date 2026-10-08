@@ -33,12 +33,14 @@ export function productListImageUrl(product) {
   );
 }
 
-/** Sipariş satırı + stok kartı birleşik liste görseli. */
+/** Sipariş satırı + stok kartı birleşik liste görseli (küçük önizleme öncelikli). */
 export function orderLineListImageUrl(item, product) {
   return (
     mediaRef(item?.thumbnail_url)
+    || mediaRef(product?.thumbnail_url)
     || mediaRef(item?.image_url)
-    || productListImageUrl(product)
+    || mediaRef(product?.image_url)
+    || (Array.isArray(product?.images) && mediaRef(product.images[0]))
     || ""
   );
 }

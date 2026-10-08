@@ -6449,8 +6449,29 @@ async def update_product_images(product_id: str, req: Dict[str, Any]):
 
 @api_router.get("/files/{path:path}")
 async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
-    """Dosya sunumu. w=64|128|320 → anlık küçük WebP (liste/kart; tam dosya cache'den ayrı)."""
+    """Dosya sunumu. w=64|128|320 → küçük WebP (önbellekli; liste/kart tam dosya çekmez)."""
     record = await db.files.find_one({"storage_path": path, "is_deleted": False})
+    # Önce cache: hit olursa orijinali storage'dan hiç okuma
+    if w:
+        cache_key = image_opt.resize_cache_path(path, int(w), "webp")
+        if cache_key != path:
+            try:
+                cached, cached_ct = get_object(cache_key)
+                if cached and len(cached) > 32:
+                    return Response(
+                        content=cached,
+                        media_type=cached_ct or "image/webp",
+                        headers={
+                            "Cache-Control": "public, max-age=604800, immutable",
+                            "Vary": "Accept",
+                            "X-Image-Resize": str(w),
+                            "X-Image-Cache": "hit",
+                        },
+                    )
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                logger.debug("thumb cache read miss path=%s: %s", cache_key, e)
     try:
         data, content_type = get_object(path)
     except FileNotFoundError:
@@ -6463,8 +6484,14 @@ async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
     if head.startswith(b"<!doctype") or head.startswith(b"<html") or b"413 request entity too large" in head:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
     if w and media.startswith("image/") and media != "image/svg+xml":
+        cache_key = image_opt.resize_cache_path(path, int(w), "webp")
         thumb = image_opt.make_thumbnail(data, media, path, max_edge=int(w), quality=70)
         if thumb and thumb.data and len(thumb.data) < len(data):
+            if cache_key != path:
+                try:
+                    put_object(cache_key, thumb.data, thumb.content_type)
+                except Exception as e:
+                    logger.debug("thumb cache write failed path=%s: %s", cache_key, e)
             return Response(
                 content=thumb.data,
                 media_type=thumb.content_type,
@@ -6472,6 +6499,7 @@ async def serve_file(path: str, w: Optional[int] = Query(None, ge=16, le=1280)):
                     "Cache-Control": "public, max-age=604800, immutable",
                     "Vary": "Accept",
                     "X-Image-Resize": str(w),
+                    "X-Image-Cache": "miss",
                 },
             )
     return Response(content=data, media_type=media, headers={"Cache-Control": "public, max-age=86400"})
