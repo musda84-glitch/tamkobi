@@ -202,11 +202,12 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
   const [formOptions, setFormOptions] = useState([]);
   const [prodById, setProdById] = useState({});
   const [prodBySku, setProdBySku] = useState({});
+  const [prodByName, setProdByName] = useState({});
   const [plan, setPlan] = useState(doc.payment_plan?.rows || null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [contactBalance, setContactBalance] = useState(null);
   const [partyContact, setPartyContact] = useState(null);
-  const companyId = company?.id || "comp_nexus_main_01";
+  const companyId = company?.id || company?._id || "comp_nexus_main_01";
   const compactForm = isOrderQuotePrint(docType);
   const items = doc.items || [];
   const productIds = useMemo(
@@ -217,36 +218,80 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
     () => [...new Set(items.map((it) => String(it.sku || "").trim()).filter(Boolean))],
     [items]
   );
+  const productIdsKey = productIds.join(",");
+  const productSkusKey = productSkus.join(",");
   const resolveProd = (it) => (
     (it?.product_id && prodById[it.product_id])
     || (it?.sku && prodBySku[String(it.sku).trim()])
+    || prodByName[String(it?.name || it?.product_name || "").trim().toLocaleLowerCase("tr-TR")]
     || {}
   );
   useEffect(() => {
-    if (!productIds.length && !productSkus.length) {
+    const needsNameFallback = items.some((it) => {
+      if (it.image_url || it.thumbnail_url) return false;
+      if (it.product_id || String(it.sku || "").trim()) return false;
+      return !!(it.name || it.product_name);
+    });
+    if (!productIds.length && !productSkus.length && !needsNameFallback) {
       setProdById({});
       setProdBySku({});
+      setProdByName({});
       return undefined;
     }
     const qs = new URLSearchParams({ company_id: companyId, lite: "1" });
     if (productIds.length) qs.set("ids", productIds.join(","));
     if (productSkus.length) qs.set("skus", productSkus.join(","));
     let cancelled = false;
-    axios.get(`${API_URL}/products?${qs}`).then((r) => {
+    const applyRows = (rows) => {
       if (cancelled) return;
       const byId = {};
       const bySku = {};
-      (r.data || []).forEach((p) => {
+      const byName = {};
+      (rows || []).forEach((p) => {
         const id = p.id || p._id;
         if (id) byId[id] = p;
         const sku = String(p.sku || "").trim();
         if (sku) bySku[sku] = p;
+        const name = String(p.name || "").trim().toLocaleLowerCase("tr-TR");
+        if (name) byName[name] = p;
       });
       setProdById(byId);
       setProdBySku(bySku);
-    }).catch(() => {});
+      setProdByName(byName);
+    };
+    const load = async () => {
+      try {
+        if (!productIds.length && !productSkus.length && needsNameFallback) {
+          const r = await axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`);
+          applyRows(r.data);
+          return;
+        }
+        const r = await axios.get(`${API_URL}/products?${qs}`);
+        let rows = Array.isArray(r.data) ? r.data : [];
+        if (needsNameFallback) {
+          const all = await axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`);
+          const extra = Array.isArray(all.data) ? all.data : [];
+          const seen = new Set(rows.map((p) => p.id || p._id));
+          extra.forEach((p) => {
+            const id = p.id || p._id;
+            if (id && !seen.has(id)) {
+              seen.add(id);
+              rows.push(p);
+            }
+          });
+        }
+        applyRows(rows);
+      } catch {
+        if (!cancelled) {
+          setProdById({});
+          setProdBySku({});
+          setProdByName({});
+        }
+      }
+    };
+    load();
     return () => { cancelled = true; };
-  }, [companyId, productIds, productSkus]);
+  }, [companyId, productIdsKey, productSkusKey, items]);
   useEffect(() => {
     const urls = items
       .map((it) => printThumbUrl(pickItemImage(it, resolveProd(it))))
@@ -259,7 +304,7 @@ const TemplatePrintDocument = ({ docType, doc, company, onClose, onEditTemplate,
       return img;
     });
     return () => { loaders.forEach((img) => { img.src = ""; }); };
-  }, [items, prodById, prodBySku]);
+  }, [items, prodById, prodBySku, prodByName]);
   useEffect(() => {
     const load = () => axios.get(`${API_URL}/companies/${companyId}/print-templates`).then((r) => {
       const all = r.data || {};

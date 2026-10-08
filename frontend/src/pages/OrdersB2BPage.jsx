@@ -48,7 +48,7 @@ import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
 import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
-import { mergeInvoiceItemsIntoOrder } from "../utils/printOrderDoc";
+import { hydratePrintItemImages, mergeInvoiceItemsIntoOrder } from "../utils/printOrderDoc";
 import { eBelgeMenuItems, orderEBelgeType } from "../utils/orderEBelge";
 import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued, orderGibInvoiceNumber } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
@@ -722,7 +722,7 @@ export default function OrdersB2BPage() {
     }
   };
 
-  /** Sipariş formu yazdır: varsa fatura kalemlerini (güncel ad/ürün) kullan. */
+  /** Sipariş formu yazdır: varsa fatura kalemlerini (güncel ad/ürün) kullan; görselleri stoktan bas. */
   const openPrintOrder = useCallback(async (ord) => {
     if (!ord) return;
     let doc = ord;
@@ -735,8 +735,41 @@ export default function OrdersB2BPage() {
         doc = ord;
       }
     }
+    const items = doc.items || [];
+    const missingImg = items.some((it) => !(it.image_url || it.thumbnail_url));
+    if (missingImg && items.length) {
+      try {
+        const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+        const ids = [...new Set(items.map((it) => it.product_id).filter(Boolean))];
+        const skus = [...new Set(items.map((it) => String(it.sku || "").trim()).filter(Boolean))];
+        let products = [];
+        if (ids.length || skus.length) {
+          const qs = new URLSearchParams({ company_id: companyId, lite: "1" });
+          if (ids.length) qs.set("ids", ids.join(","));
+          if (skus.length) qs.set("skus", skus.join(","));
+          const r = await axios.get(`${API_URL}/products?${qs}`);
+          products = Array.isArray(r.data) ? r.data : [];
+        }
+        const stillMissing = hydratePrintItemImages(items, products).some((it) => !(it.image_url || it.thumbnail_url));
+        if (stillMissing) {
+          const all = await axios.get(`${API_URL}/products?company_id=${companyId}&lite=1`);
+          const extra = Array.isArray(all.data) ? all.data : [];
+          const seen = new Set(products.map((p) => p.id || p._id));
+          extra.forEach((p) => {
+            const id = p.id || p._id;
+            if (id && !seen.has(id)) {
+              seen.add(id);
+              products.push(p);
+            }
+          });
+        }
+        doc = { ...doc, items: hydratePrintItemImages(items, products) };
+      } catch {
+        /* yazdırma yine açılsın */
+      }
+    }
     setPrintOrder(doc);
-  }, []);
+  }, [activeCompany]);
 
   /** Faturalaştır → cariye işlenmiş fatura (yeşil). E-belge ayrıca kesilir. */
   const handleFaturalastir = async (ord) => {
