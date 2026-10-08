@@ -5191,6 +5191,7 @@ async def list_products(
     b2b_only: bool = False,
     lite: bool = False,
     ids: Optional[str] = None,
+    skus: Optional[str] = None,
 ):
     """lite=1: teklif/yazdırma — maliyet geçmişi hesaplanmaz. ids=virgülle ürün id listesi."""
     query = {"company_id": company_id}
@@ -5207,8 +5208,13 @@ async def list_products(
     if type and type != "all":
         query["type"] = type
     id_list = [x.strip() for x in (ids or "").split(",") if x.strip()]
-    if id_list:
+    sku_list = [x.strip() for x in (skus or "").split(",") if x.strip()]
+    if id_list and sku_list:
+        query["$or"] = [{"_id": {"$in": id_list}}, {"sku": {"$in": sku_list}}]
+    elif id_list:
         query["_id"] = {"$in": id_list}
+    elif sku_list:
+        query["sku"] = {"$in": sku_list}
     # Yazdırma / seçici: barkod + görsel alanları da gelsin (purchase_costs yok)
     proj = {
         "name": 1, "sku": 1, "barcode": 1, "sale_price": 1, "vat_rate": 1, "unit": 1,
@@ -5218,10 +5224,12 @@ async def list_products(
         "stock_quantity": 1, "min_stock_alert": 1, "track_stock": 1, "has_recipe": 1,
         "purchase_price": 1, "category": 1,
     } if lite else None
-    limit = min(len(id_list), 500) if id_list else (5000 if lite else 10000)
-    if id_list and limit < 1:
+    keyed = bool(id_list or sku_list)
+    key_count = len(id_list) + len(sku_list)
+    limit = min(max(key_count, 1), 500) if keyed else (5000 if lite else 10000)
+    if keyed and key_count < 1:
         return []
-    products = await db.products.find(query, proj).to_list(limit if id_list else (5000 if lite else 10000))
+    products = await db.products.find(query, proj).to_list(limit if keyed else (5000 if lite else 10000))
     if lite:
         # Maliyet / son alış taranmaz — web liste ve mobil ilk boya hızı için.
         return [clean_doc(p) for p in products]

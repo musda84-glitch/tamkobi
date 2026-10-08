@@ -48,6 +48,7 @@ import { formatTrAmount } from "../utils/money";
 import { orderEditBlockedReason } from "../utils/orderEdit";
 import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
+import { mergeInvoiceItemsIntoOrder } from "../utils/printOrderDoc";
 import { eBelgeMenuItems, orderEBelgeType } from "../utils/orderEBelge";
 import { orderMoreMenuItems, orderMoreMenuKind, orderInvoiceBadge, orderHasEInvoiceIssued, orderGibInvoiceNumber } from "../utils/orderMoreMenu";
 import { ORDER_COL_DEFAULTS, ORDER_COL_LIMITS, ORDER_SELECT_COL, ORDER_ACTIONS_COL, orderTableMinWidth } from "../utils/orderTableLayout";
@@ -721,6 +722,22 @@ export default function OrdersB2BPage() {
     }
   };
 
+  /** Sipariş formu yazdır: varsa fatura kalemlerini (güncel ad/ürün) kullan. */
+  const openPrintOrder = useCallback(async (ord) => {
+    if (!ord) return;
+    let doc = ord;
+    const invId = ord.invoice_id;
+    if (invId) {
+      try {
+        const r = await axios.get(`${API_URL}/invoices/${invId}`);
+        doc = mergeInvoiceItemsIntoOrder(ord, r.data) || ord;
+      } catch {
+        doc = ord;
+      }
+    }
+    setPrintOrder(doc);
+  }, []);
+
   /** Faturalaştır → cariye işlenmiş fatura (yeşil). E-belge ayrıca kesilir. */
   const handleFaturalastir = async (ord) => {
     if (ord.is_invoiced) {
@@ -946,7 +963,7 @@ export default function OrdersB2BPage() {
         setLabelOrder(ord);
         return;
       case "print_form":
-        setPrintOrder(ord);
+        openPrintOrder(ord);
         return;
       case "notify":
         setNotifyOrder(ord);
@@ -1421,7 +1438,7 @@ export default function OrdersB2BPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setPrintOrder(ord)}
+                        onClick={() => openPrintOrder(ord)}
                         className={printOrderButtonClass(ord)}
                         title={printOrderTitle(ord)}
                         data-testid={`print-order-mobile-${ord.order_number}`}
@@ -1467,7 +1484,7 @@ export default function OrdersB2BPage() {
                       ) : null}
                       <button
                         type="button"
-                        onClick={() => setPrintOrder(ord)}
+                        onClick={() => openPrintOrder(ord)}
                         className={printOrderButtonClass(ord)}
                         title={printOrderTitle(ord)}
                         data-testid={`print-order-mobile-${ord.order_number}`}
@@ -1645,7 +1662,7 @@ export default function OrdersB2BPage() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setPrintOrder(ord)}
+                              onClick={() => openPrintOrder(ord)}
                               className={printOrderButtonClass(ord)}
                               title={printOrderTitle(ord)}
                               aria-label={printOrderTitle(ord)}
@@ -1809,7 +1826,7 @@ export default function OrdersB2BPage() {
                         ) : null}
                         <button
                           type="button"
-                          onClick={() => setPrintOrder(ord)}
+                          onClick={() => openPrintOrder(ord)}
                           className={printOrderButtonClass(ord)}
                           title={printOrderTitle(ord)}
                           aria-label={printOrderTitle(ord)}
