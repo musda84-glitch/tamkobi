@@ -35,12 +35,13 @@ import {
 } from "lucide-react";
 import { useDataRefresh } from "../utils/dataRefresh";
 import { fmtDate, fmtMoney } from "../utils/money";
-const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
+const CONTACT_COLS = [{ key: "name", label: "Ünvan" }, { label: "Tip", value: (r) => r.type === "customer" ? "Müşteri" : r.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi" }, { label: "Durum", value: (r) => r.is_active === false ? "Pasif" : "Aktif" }, { key: "tax_number_or_id", label: "VKN/TCKN" }, { key: "tax_office", label: "Vergi Dairesi" }, { key: "phone", label: "Telefon" }, { key: "email", label: "E-posta" }, { key: "city", label: "Şehir" }, { key: "address", label: "Adres" }, { key: "balance", label: "Bakiye", num: true }, { label: "E-Fatura", value: (r) => r.is_e_invoice_user ? "Evet" : "Hayır" }];
 
 export default function ContactsPage() {
   const { activeCompany } = useAuth();
   const [contacts, setContacts] = useState([]);
   const [filterType, setFilterType] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [flags, setFlags] = useState({});
   const [finFilter, setFinFilter] = useState("all");
   const [searchTerm, setSearchTerm] = useState(() => new URLSearchParams(window.location.search).get("search") || "");
@@ -89,13 +90,18 @@ export default function ContactsPage() {
 
   const finMatch = (c) => { const f = flags[c.id] || {}; switch (finFilter) { case "debtors": return (c.balance || 0) > 0; case "creditors": return (c.balance || 0) < 0; case "overdue": return f.overdue_count > 0 || f.installment_overdue_count > 0; case "installments": return f.installment_due_count > 0; case "clear": return !(c.balance || 0); default: return true; } };
   const FIN_FILTERS = [["all", "Tümü", contacts.length], ["debtors", "Bize Borçlu (Alacağımız var)", contacts.filter((c) => (c.balance || 0) > 0).length], ["creditors", "Bize Alacaklı (Borcumuz var)", contacts.filter((c) => (c.balance || 0) < 0).length], ["overdue", "Vadesi Geçenler", contacts.filter((c) => (flags[c.id]?.overdue_count || 0) > 0 || (flags[c.id]?.installment_overdue_count || 0) > 0).length], ["installments", "Taksit Ödemesi Gelenler (7 gün)", contacts.filter((c) => (flags[c.id]?.installment_due_count || 0) > 0).length], ["clear", "Bakiyesi Sıfır", contacts.filter((c) => !(c.balance || 0)).length]];
-  const filtered = contacts.filter((c) => finMatch(c)).filter(c =>
+  const statusMatch = (c) => {
+    if (statusFilter === "active") return c.is_active !== false;
+    if (statusFilter === "inactive") return c.is_active === false;
+    return true;
+  };
+  const filtered = contacts.filter((c) => finMatch(c)).filter(statusMatch).filter(c =>
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (c.company_title && c.company_title.toLowerCase().includes(searchTerm.toLowerCase())) ||
     c.tax_number_or_id.includes(searchTerm)
   );
   const { visible: pagedContacts, hasMore: contactsHasMore, sentinelRef: contactsSentinelRef } = useInfiniteRows(filtered, {
-    resetKey: `${filterType}|${finFilter}|${searchTerm}`,
+    resetKey: `${filterType}|${finFilter}|${statusFilter}|${searchTerm}`,
   });
 
   return (
@@ -131,6 +137,24 @@ export default function ContactsPage() {
                 filterType === t.id ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
               }`}
               data-testid={`contact-filter-${t.id}`}
+            >
+              {t.label}
+            </button>
+          ))}
+          <span className="w-px h-5 bg-slate-200 mx-1" aria-hidden="true" />
+          {[
+            { id: "all", label: "Aktif+Pasif" },
+            { id: "active", label: "Aktif" },
+            { id: "inactive", label: "Pasif" },
+          ].map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setStatusFilter(t.id)}
+              className={`px-3 py-1.5 rounded-lg font-medium transition ${
+                statusFilter === t.id ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"
+              }`}
+              data-testid={`contact-status-filter-${t.id}`}
             >
               {t.label}
             </button>
@@ -197,7 +221,7 @@ export default function ContactsPage() {
         />
       )}
 
-      {(showAddModal || editContact) && <ContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contact={editContact} onClose={() => { setShowAddModal(false); setEditContact(null); }} onSaved={() => { setShowAddModal(false); setEditContact(null); loadContacts(); }} />}
+      {(showAddModal || editContact) && <ContactForm companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} contact={editContact} onClose={() => { setShowAddModal(false); setEditContact(null); }} onSaved={(saved) => { setShowAddModal(false); setEditContact(null); if (saved?.deleted && detailContactId) setSearchParams({}); loadContacts(); }} />}
 
       {/* CARİ EKSTRESİ MODAL */}
       {selectedContactStatement && statementData && (

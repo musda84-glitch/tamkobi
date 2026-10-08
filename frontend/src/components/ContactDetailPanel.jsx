@@ -615,6 +615,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
             {c.logo_url ? <div className="w-12 h-12 rounded-xl border border-slate-200 bg-white overflow-hidden shrink-0" data-testid="detail-contact-logo"><img src={resolveImageUrl(c.logo_url)} alt="" className="w-full h-full object-contain" /></div> : null}
             <div className="min-w-0">
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${c.type === "customer" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>{c.type === "customer" ? "Müşteri" : c.type === "supplier" ? "Tedarikçi" : "Müşteri & Tedarikçi"}</span>
+            {c.is_active === false && <span className="ml-1.5 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200" data-testid="detail-contact-inactive">Pasif</span>}
             <h2 className="text-lg font-bold text-slate-900 mt-1">{c.name}</h2>
             <div className="text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-1 mt-1">
               <span>VKN/TCKN: {c.tax_number_or_id}</span>
@@ -1393,7 +1394,11 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
           companyId={c.company_id || activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
           contact={c}
           onClose={() => setEditContactOpen(false)}
-          onSaved={() => { setEditContactOpen(false); load(); }}
+          onSaved={(saved) => {
+            setEditContactOpen(false);
+            if (saved?.deleted) { onClose?.(); return; }
+            load();
+          }}
         />
       )}
       </div>

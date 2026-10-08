@@ -88,7 +88,7 @@ export const ContactRow = React.memo(({ contact, flag, onOpen, onEdit, onMessage
     }
   };
   return (
-    <div className={`bg-white rounded-xl border border-slate-200/90 shadow-sm hover:shadow-md hover:border-emerald-200 transition grid grid-cols-12 gap-3 items-center px-4 py-3 [content-visibility:auto] [contain-intrinsic-size:auto_88px] ${menu ? "relative z-50" : ""}`} data-testid={`contact-card-${tid}`}>
+    <div className={`bg-white rounded-xl border border-slate-200/90 shadow-sm hover:shadow-md hover:border-emerald-200 transition grid grid-cols-12 gap-3 items-center px-4 py-3 [content-visibility:auto] [contain-intrinsic-size:auto_88px] ${menu ? "relative z-50" : ""} ${contact.is_active === false ? "opacity-70" : ""}`} data-testid={`contact-card-${tid}`}>
       <div className="col-span-12 md:col-span-3 flex items-center gap-3 min-w-0">
         <div className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center font-black text-sm overflow-hidden ${contact.type === "customer" ? "bg-blue-50 text-blue-700" : contact.type === "supplier" ? "bg-amber-50 text-amber-700" : "bg-violet-50 text-violet-700"}`}>{contact.logo_url ? <img src={resolveImageUrl(contact.logo_url)} alt="" className="w-full h-full object-contain bg-white" /> : (contact.name?.slice(0, 2).toUpperCase())}</div>
         <div className="min-w-0">
@@ -97,7 +97,10 @@ export const ContactRow = React.memo(({ contact, flag, onOpen, onEdit, onMessage
             <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase ${contact.type === "customer" ? "bg-blue-50 text-blue-700" : contact.type === "supplier" ? "bg-amber-50 text-amber-700" : "bg-violet-50 text-violet-700"}`}>{contact.type === "customer" ? "Müşteri" : contact.type === "supplier" ? "Tedarikçi" : "Müşteri & Ted."}</span>
             {contact.is_e_invoice_user && <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-mono font-medium" title="E-Fatura Mükellefi">E-Fatura</span>}
           </div>
-          <div className="text-[11px] text-slate-500 truncate">{contact.company_title || contact.category}</div>
+          <div className="text-[11px] text-slate-500 truncate flex items-center gap-1.5">
+            <span className="truncate">{contact.company_title || contact.category}</span>
+            {contact.is_active === false && <span className="shrink-0 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border bg-slate-100 text-slate-600 border-slate-200" data-testid={`contact-inactive-badge-${tid}`}>Pasif</span>}
+          </div>
           {(flag?.overdue_count > 0 || flag?.installment_due_count > 0) && (
             <div className="flex flex-wrap gap-1 mt-1" data-testid={`contact-flags-${tid}`}>
               {flag.overdue_count > 0 && <span className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded font-semibold">Vadesi geçti: {money(flag.overdue_amount)} ₺</span>}
