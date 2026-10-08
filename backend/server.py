@@ -8964,11 +8964,13 @@ async def perform_virman(req: Dict[str, Any], request: Request):
 # ----------------- ORTAKLAR HESABI -----------------
 @api_router.get("/banking/partners")
 async def list_partners(company_id: Optional[str] = "comp_nexus_main_01"):
+    await partner_pay.sync_company_partners(db, company_id)
     partners = await db.partners.find({"company_id": company_id}).sort("created_at", 1).to_list(100)
     return clean_docs(partners)
 
 @api_router.get("/banking/partners/summary")
 async def partners_summary(company_id: Optional[str] = "comp_nexus_main_01"):
+    await partner_pay.sync_company_partners(db, company_id)
     partners = await db.partners.find({"company_id": company_id}).to_list(100)
     return {
         "partner_count": len(partners),
@@ -9103,6 +9105,16 @@ def _contact_balance_delta_for_partner_tx(tx: dict) -> float:
     return 0.0
 
 
+def _partner_tx_touches_cash(tx: dict) -> bool:
+    """Para koy/çek veya peşin ödenen kâr payı kasa/banka satırı oluşturur."""
+    t = tx.get("type")
+    if not tx.get("account_id"):
+        return False
+    if t in PARTNER_CASH_TYPES:
+        return True
+    return t == "profit_share" and bool(tx.get("is_paid"))
+
+
 async def _reverse_partner_tx(tx: dict):
     """Undo balance + bank movement + cari effects of a partner transaction."""
     amount = float(tx.get("amount", 0))
@@ -9111,11 +9123,15 @@ async def _reverse_partner_tx(tx: dict):
         inc = partner_pay.balance_inc(t, amount)
         await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {k: -v for k, v in inc.items()}})
     elif t == "profit_share":
-        await db.partners.update_one({"_id": tx["partner_id"]}, {"$inc": {"total_profit_share": -amount, **({"balance": amount} if tx.get("is_paid") else {})}})
+        # Tahakkuk silinince bakiyeyi düş; peşin ödemede bakiye hiç artmamıştı.
+        await db.partners.update_one(
+            {"_id": tx["partner_id"]},
+            {"$inc": partner_pay.profit_share_inc(amount, bool(tx.get("is_paid")), applying=False)},
+        )
     contact_delta = _contact_balance_delta_for_partner_tx(tx)
     if contact_delta:
         await db.contacts.update_one({"_id": tx["contact_id"]}, {"$inc": {"balance": -contact_delta}})
-    if tx.get("account_id") and (t != "profit_share" or tx.get("is_paid")) and t in PARTNER_CASH_TYPES:
+    if _partner_tx_touches_cash(tx):
         bt = await db.bank_transactions.find_one({"partner_tx_id": tx["_id"]}) or await db.bank_transactions.find_one({"source": "partner", "account_id": tx["account_id"], "amount": amount, "date": tx.get("date"), "description": {"$regex": f"^{re.escape(tx.get('partner_name', ''))}"}})
         if bt:
             inflow = bt.get("type") == "inflow"
@@ -18372,9 +18388,9 @@ async def _restore_partner_tx(doc, _related):
     elif t == "profit_share":
         await db.partners.update_one(
             {"_id": doc["partner_id"]},
-            {"$inc": {"total_profit_share": amount, **({"balance": -amount} if doc.get("is_paid") else {})}},
+            {"$inc": partner_pay.profit_share_inc(amount, bool(doc.get("is_paid")), applying=True)},
         )
-    if doc.get("account_id") and (t != "profit_share" or doc.get("is_paid")) and t in PARTNER_CASH_TYPES:
+    if _partner_tx_touches_cash(doc):
         await _post_partner_cash_movement(doc["company_id"], doc["account_id"], t, amount, doc.get("partner_name", ""), doc.get("description", ""), doc.get("date"), partner_tx_id=doc["_id"])
 
 async def _restore_leave(doc, _related):

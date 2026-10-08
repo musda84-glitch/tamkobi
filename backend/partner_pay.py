@@ -173,12 +173,111 @@ def prepare_partner_salary(doc: Dict[str, Any], *, fill_start: bool = True) -> D
 
 
 def balance_inc(tx_type: str, amount: float) -> Dict[str, float]:
-    """Ortak bakiyesi: artı = şirket ortağa borçlu. credit/capital_in/salary +, debit/withdrawal −."""
-    if tx_type in ("capital_in", "credit", "salary"):
+    """Ortak bakiyesi: artı = şirket ortağa borçlu. credit/capital_in/salary +, debit/withdrawal −.
+
+    Sermaye / çekiş sayaçları yalnızca para koy / para çek hareketlerinde artar;
+    alacak/borç fişi ve maaş bakiyeyi etkiler ama Giriş/Çekiş özetini şişirmez.
+    """
+    if tx_type == "capital_in":
         return {"balance": amount, "total_capital_in": amount}
-    if tx_type in ("withdrawal", "debit"):
+    if tx_type == "withdrawal":
         return {"balance": -amount, "total_withdrawn": amount}
+    if tx_type in ("credit", "salary"):
+        return {"balance": amount}
+    if tx_type == "debit":
+        return {"balance": -amount}
     raise HTTPException(status_code=400, detail="Geçersiz işlem türü.")
+
+
+def tx_balance_delta(tx: Dict[str, Any]) -> float:
+    """Tek hareketin ortak bakiyesine etkisi (tahakkuk kâr payı +, peşin ödenen 0)."""
+    try:
+        amount = float(tx.get("amount") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    t = tx.get("type")
+    if t in ("capital_in", "credit", "salary"):
+        return amount
+    if t in ("withdrawal", "debit"):
+        return -amount
+    if t == "profit_share":
+        return 0.0 if tx.get("is_paid") else amount
+    return 0.0
+
+
+def profit_share_inc(amount: float, is_paid: bool, *, applying: bool) -> Dict[str, float]:
+    """Kâr payı tahakkuk/ödeme: applying=True oluştur/geri getir, False geri al.
+
+    Tahakkuk (is_paid=False) bakiyeyi artırır; peşin ödeme yalnızca total_profit_share yazar.
+    """
+    try:
+        amt = float(amount or 0)
+    except (TypeError, ValueError):
+        amt = 0.0
+    sign = 1.0 if applying else -1.0
+    inc: Dict[str, float] = {"total_profit_share": sign * amt}
+    if not is_paid:
+        inc["balance"] = sign * amt
+    return inc
+
+
+def ledger_totals(txs: List[Dict[str, Any]]) -> Dict[str, float]:
+    """Hareket listesinden bakiye + özet sayaçları."""
+    balance = 0.0
+    capital = 0.0
+    withdrawn = 0.0
+    profit = 0.0
+    for tx in txs or []:
+        balance += tx_balance_delta(tx)
+        try:
+            amt = float(tx.get("amount") or 0)
+        except (TypeError, ValueError):
+            amt = 0.0
+        t = tx.get("type")
+        if t == "capital_in":
+            capital += amt
+        elif t == "withdrawal":
+            withdrawn += amt
+        elif t == "profit_share":
+            profit += amt
+    return {
+        "balance": round(balance, 2),
+        "total_capital_in": round(capital, 2),
+        "total_withdrawn": round(withdrawn, 2),
+        "total_profit_share": round(profit, 2),
+    }
+
+
+async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, Any]]:
+    """Kayıtlı bakiyeyi hareketlerden yeniden hesapla; kaymayı onar."""
+    partner = await db.partners.find_one({"_id": partner_id})
+    if not partner:
+        return None
+    txs = await db.partner_transactions.find({"partner_id": partner_id}).to_list(20000)
+    live = ledger_totals(txs)
+    prev = {
+        "balance": float(partner.get("balance") or 0),
+        "total_capital_in": float(partner.get("total_capital_in") or 0),
+        "total_withdrawn": float(partner.get("total_withdrawn") or 0),
+        "total_profit_share": float(partner.get("total_profit_share") or 0),
+    }
+    repaired = any(abs(live[k] - prev[k]) > 0.005 for k in live)
+    if repaired:
+        await db.partners.update_one(
+            {"_id": partner_id},
+            {"$set": {**live, "balance_synced_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    return {**live, "previous": prev, "repaired": repaired}
+
+
+async def sync_company_partners(db, company_id: str) -> List[Dict[str, Any]]:
+    partners = await db.partners.find({"company_id": company_id}).to_list(200)
+    out: List[Dict[str, Any]] = []
+    for p in partners:
+        meta = await sync_partner_from_ledger(db, p["_id"])
+        if meta:
+            out.append({"partner_id": p["_id"], **meta})
+    return out
 
 
 async def move(db, company_id: str, partner_id: str, amount: float, tx_type: str, description: str, date: Optional[str] = None, extra: Optional[Dict[str, Any]] = None) -> str:

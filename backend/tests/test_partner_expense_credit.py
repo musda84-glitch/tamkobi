@@ -8,7 +8,7 @@ from partner_pay import balance_inc, tx_display_label  # noqa: E402
 
 
 def test_expense_credit_increases_partner_claim():
-    assert balance_inc("credit", 4000) == {"balance": 4000, "total_capital_in": 4000}
+    assert balance_inc("credit", 4000) == {"balance": 4000}
     assert balance_inc("withdrawal", 4000) == {"balance": -4000, "total_withdrawn": 4000}
 
 

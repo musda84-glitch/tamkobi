@@ -41,6 +41,13 @@ describe("partnerTx", () => {
     expect(partnerTxIncreasesBalance("withdrawal")).toBe(false);
   });
 
+  it("marks accrued profit share as increasing balance, paid as cash out", () => {
+    expect(partnerTxIncreasesBalance("profit_share", { is_paid: false })).toBe(true);
+    expect(partnerTxSign("profit_share", { is_paid: false })).toBe("+");
+    expect(partnerTxIncreasesBalance("profit_share", { is_paid: true })).toBe(false);
+    expect(partnerTxSign("profit_share", { is_paid: true })).toBe("-");
+  });
+
   it("classifies ledger vs cash types", () => {
     expect(isPartnerLedgerType("debit")).toBe(true);
     expect(isPartnerLedgerType("credit")).toBe(true);

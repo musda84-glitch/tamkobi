@@ -473,7 +473,7 @@ export default function BankingPage() {
                 return (
                   <>
                     <div className="text-[10px] text-slate-400 uppercase font-semibold">{label}</div>
-                    <div className={`text-xl font-bold tracking-tight ${cls}`}>{formatTrAmount(partnerSummary.total_balance)} ₺</div>
+                    <div className={`text-xl font-bold tracking-tight ${cls}`}>{formatTrAmount(Math.abs(n))} ₺</div>
                     <div className="text-[10px] text-slate-500 mt-0.5">{hint}</div>
                   </>
                 );
