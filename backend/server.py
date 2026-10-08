@@ -3238,7 +3238,7 @@ async def list_contacts(company_id: Optional[str] = "comp_nexus_main_01", type: 
     query = {"company_id": company_id}
     if type and type != "all":
         query["type"] = type
-    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "city": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1, "balance": 1, "company_title": 1} if lite else None
+    proj = {"name": 1, "phone": 1, "email": 1, "address": 1, "city": 1, "district": 1, "type": 1, "company_id": 1, "tax_number_or_id": 1, "balance": 1, "company_title": 1} if lite else None
     contacts = await db.contacts.find(query, proj).sort("name", 1).to_list(5000 if lite else 10000)
     docs = clean_docs(contacts)
     if not lite:
@@ -3294,6 +3294,14 @@ async def global_search(q: str, company_id: str = "comp_nexus_main_01"):
     orders = await db.orders.find({"company_id": company_id, "$or": [{"order_number": rx}, {"customer_name": rx}, {"cargo_tracking_number": rx}]}, {"order_number": 1, "customer_name": 1, "total_amount": 1, "order_status": 1}).sort("order_date", -1).limit(6).to_list(6)
     invoices = await db.invoices.find({"company_id": company_id, "$or": [{"invoice_number": rx}, {"contact_name": rx}]}, {"invoice_number": 1, "contact_name": 1, "grand_total": 1, "invoice_type": 1}).sort("issue_date", -1).limit(6).to_list(6)
     return {"contacts": clean_docs(contacts), "products": clean_docs(products), "orders": clean_docs(orders), "invoices": clean_docs(invoices)}
+
+@api_router.get("/contacts/{contact_id}")
+async def get_contact(contact_id: str):
+    contact = await db.contacts.find_one({"_id": contact_id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    return clean_doc(contact)
+
 
 @api_router.put("/contacts/{contact_id}")
 async def update_contact(contact_id: str, updated: Dict[str, Any]):
@@ -6988,10 +6996,27 @@ async def create_invoice(invoice: Invoice):
         for it in invoice.items:
             it.vat_rate = 0
 
-    if not invoice.due_date and invoice.contact_id:
-        _c = await db.contacts.find_one({"_id": invoice.contact_id})
-        if _c and _c.get("payment_term_days"):
-            invoice.due_date = (date.fromisoformat(invoice.issue_date) + timedelta(days=int(_c["payment_term_days"]))).isoformat()
+    _contact_row = None
+    if invoice.contact_id:
+        _contact_row = await db.contacts.find_one({"_id": invoice.contact_id})
+    if not invoice.due_date and _contact_row and _contact_row.get("payment_term_days"):
+        invoice.due_date = (date.fromisoformat(invoice.issue_date) + timedelta(days=int(_contact_row["payment_term_days"]))).isoformat()
+    # Yazdırma SAYIN bloğu için adres: boşsa cariden doldur
+    if _contact_row:
+        _ship = (invoice.shipping_address or "").strip()
+        if not _ship or _ship == "-":
+            _addr = (_contact_row.get("address") or "").strip()
+            if _addr and _addr != "-":
+                invoice.shipping_address = _addr
+        _city = (invoice.city or "").strip()
+        if not _city or _city == "-":
+            _ccity = (_contact_row.get("city") or "").strip()
+            if _ccity and _ccity != "-":
+                invoice.city = _ccity
+        if not (invoice.customer_phone or "").strip():
+            _phone = (_contact_row.get("phone") or "").strip()
+            if _phone:
+                invoice.customer_phone = _phone
     given_rate = fx.typed_rate(invoice.currency, invoice.fx_rate, invoice.fx_source)
     fx_stamp = await fx.stamp(invoice.company_id, invoice.currency, invoice.issue_date, given_rate)
     invoice.currency = fx_stamp["currency"]
@@ -7188,7 +7213,24 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
             raise HTTPException(status_code=400, detail="GİB'e iletilmiş faturada sadece vade ve not düzenlenebilir.")
         await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
         return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
-    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}}
+    allowed = {k: v for k, v in req.items() if k in {"items", "e_type", "due_date", "issue_date", "issue_time", "notes", "contact_id", "contact_name", "shipping_address", "city", "customer_phone", "withholding_rate", "withholding_code", "price_mode", "invoice_type", "general_discount_rate", "general_discount_amount", "currency", "fx_rate", "fx_source", "trade_kind", "incoterm", "country", "customs_office", "regime_code", "declaration_no", "declaration_date", "dab_no", "bl_awb", "certificate", "trade_file_id", "trade_file_number", "original_invoice_number", "original_issue_date", "billing_reference_id", "billing_reference_date", "tax_exemption_code", "tax_exemption_reason", "vat_exemption_code"}}
+    if "contact_id" in allowed and allowed.get("contact_id"):
+        _c = await db.contacts.find_one({"_id": allowed["contact_id"]})
+        if _c:
+            ship = str(allowed.get("shipping_address") or "").strip()
+            if not ship or ship == "-":
+                addr = str(_c.get("address") or "").strip()
+                if addr and addr != "-":
+                    allowed["shipping_address"] = addr
+            city = str(allowed.get("city") or "").strip()
+            if not city or city == "-":
+                ccity = str(_c.get("city") or "").strip()
+                if ccity and ccity != "-":
+                    allowed["city"] = ccity
+            if not str(allowed.get("customer_phone") or "").strip():
+                phone = str(_c.get("phone") or "").strip()
+                if phone:
+                    allowed["customer_phone"] = phone
     if "issue_time" in allowed and allowed["issue_time"] is not None:
         t = str(allowed["issue_time"] or "").strip()
         if len(t) == 5 and t[2] == ":":
