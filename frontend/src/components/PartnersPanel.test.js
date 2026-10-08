@@ -1,4 +1,5 @@
 import { filterPartnerTxs } from "./PartnersPanel";
+import { partnerLedgerBreakdown } from "../utils/partnerTx";
 
 test("filterPartnerTxs keeps all rows when no partner is selected", () => {
   const txs = [
@@ -18,4 +19,16 @@ test("filterPartnerTxs returns only the selected partner ledger", () => {
   ];
   expect(filterPartnerTxs(txs, "ali").map((t) => t.id)).toEqual(["1", "3"]);
   expect(filterPartnerTxs(txs, "missing")).toEqual([]);
+});
+
+test("selected partner ledger check flags mismatch for 688189.78 card", () => {
+  const txs = filterPartnerTxs([
+    { partner_id: "5a7cba2b", type: "capital_in", amount: 700000 },
+    { partner_id: "other", type: "salary", amount: 999999 },
+    { partner_id: "5a7cba2b", type: "withdrawal", amount: 11810.22 },
+  ], "5a7cba2b");
+  const br = partnerLedgerBreakdown(txs, 688189.78);
+  expect(br.ledger).toBeCloseTo(688189.78, 2);
+  expect(br.drift).toBe(false);
+  expect(br.count).toBe(2);
 });

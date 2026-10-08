@@ -12,7 +12,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
-import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerBalanceMeta, partnerSalaryCardText, partnerSalarySaveMessage, todayIsoDate } from "../utils/partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryCardText, partnerSalarySaveMessage, todayIsoDate } from "../utils/partnerTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = PARTNER_TX_LABEL;
@@ -62,6 +62,10 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
   const selectedPartner = useMemo(() => partners.find((p) => p.id === selectedPartnerId) || null, [partners, selectedPartnerId]);
   const visibleTxs = useMemo(() => filterPartnerTxs(txs, selectedPartnerId), [txs, selectedPartnerId]);
+  const selectedLedger = useMemo(
+    () => (selectedPartner ? partnerLedgerBreakdown(visibleTxs, selectedPartner.balance) : null),
+    [selectedPartner, visibleTxs],
+  );
 
   useEffect(() => {
     if (selectedPartnerId && !partners.some((p) => p.id === selectedPartnerId)) setSelectedPartnerId(null);
@@ -458,6 +462,40 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             </button>
           )}
         </div>
+        {selectedLedger && (
+          <div
+            className={`px-5 py-3 border-b text-xs space-y-2 ${selectedLedger.drift ? "bg-rose-50/80 border-rose-100" : "bg-slate-50/80 border-slate-100"}`}
+            data-testid="partner-ledger-check"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div className="font-bold text-slate-800">Bakiye kontrolü</div>
+              <div className={selectedLedger.drift ? "text-rose-700 font-semibold" : "text-emerald-700 font-semibold"} data-testid="partner-ledger-match">
+                {selectedLedger.drift
+                  ? `Sapma: kart ${fmt(selectedLedger.stored)} ₺ ≠ hareket ${fmt(selectedLedger.ledger)} ₺`
+                  : `Kart = hareket toplamı (${fmt(selectedLedger.ledger)} ₺ · ${selectedLedger.count} kayıt)`}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2" data-testid="partner-ledger-buckets">
+              {[
+                ["Sermaye", selectedLedger.buckets.capital_in, "text-emerald-700"],
+                ["Çekiş", selectedLedger.buckets.withdrawal, "text-rose-700"],
+                ["Alacak / masraf", selectedLedger.buckets.credit, "text-amber-800"],
+                ["Borç fişi", selectedLedger.buckets.debit, "text-rose-700"],
+                ["Maaş", selectedLedger.buckets.salary, "text-amber-800"],
+                ["Kâr (tahakkuk)", selectedLedger.buckets.profit_accrual, "text-indigo-700"],
+              ].map(([label, val, cls]) => (
+                <div key={label} className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
+                  <div className="text-[10px] uppercase text-slate-400 font-semibold">{label}</div>
+                  <div className={`font-bold ${cls}`}>{fmt(val)} ₺</div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-500 leading-snug">
+              Formül: sermaye + alacak + maaş + tahakkuk kâr − çekiş − borç fişi. Peşin ödenen kâr payı bakiyeyi değiştirmez.
+              {selectedLedger.buckets.profit_paid > 0 ? ` Peşin kâr ödemesi: ${fmt(selectedLedger.buckets.profit_paid)} ₺.` : ""}
+            </p>
+          </div>
+        )}
         <PartnerTxTable txs={visibleTxs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); bumpCash(); }} />
       </div>
 

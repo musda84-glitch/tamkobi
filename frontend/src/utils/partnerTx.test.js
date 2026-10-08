@@ -1,4 +1,4 @@
-import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxIncreasesBalance, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
+import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxBalanceDelta, partnerTxIncreasesBalance, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
 
 describe("partnerTx", () => {
   it("labels debit and credit slips", () => {
@@ -46,6 +46,26 @@ describe("partnerTx", () => {
     expect(partnerTxSign("profit_share", { is_paid: false })).toBe("+");
     expect(partnerTxIncreasesBalance("profit_share", { is_paid: true })).toBe(false);
     expect(partnerTxSign("profit_share", { is_paid: true })).toBe("-");
+  });
+
+  it("reconciles card balance to ledger buckets (688189.78 style)", () => {
+    const txs = [
+      { type: "capital_in", amount: 500000 },
+      { type: "salary", amount: 150000 },
+      { type: "credit", amount: 50000 },
+      { type: "profit_share", amount: 20000, is_paid: false },
+      { type: "withdrawal", amount: 31810.22 },
+      { type: "profit_share", amount: 9000, is_paid: true },
+    ];
+    const ledger = 500000 + 150000 + 50000 + 20000 - 31810.22;
+    expect(partnerTxBalanceDelta(txs[0])).toBe(500000);
+    expect(partnerTxBalanceDelta(txs[5])).toBe(0);
+    const br = partnerLedgerBreakdown(txs, ledger);
+    expect(br.ledger).toBeCloseTo(688189.78, 2);
+    expect(br.drift).toBe(false);
+    expect(br.buckets.salary).toBe(150000);
+    expect(br.buckets.profit_paid).toBe(9000);
+    expect(partnerLedgerBreakdown(txs, ledger + 1).drift).toBe(true);
   });
 
   it("classifies ledger vs cash types", () => {

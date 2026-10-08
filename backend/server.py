@@ -8981,6 +8981,38 @@ async def partners_summary(company_id: Optional[str] = "comp_nexus_main_01"):
         "total_profit_share": sum(p.get("total_profit_share", 0) for p in partners),
     }
 
+
+@api_router.get("/banking/partners/{partner_id}/ledger")
+async def partner_ledger_check(partner_id: str):
+    """Kart bakiyesi ile hareket toplamını karşılaştır; sapmayı onar."""
+    meta = await partner_pay.sync_partner_from_ledger(db, partner_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
+    txs = await db.partner_transactions.find({"partner_id": partner_id}).sort("date", -1).to_list(5000)
+    by_type: Dict[str, float] = {}
+    for tx in txs:
+        key = tx.get("type") or "other"
+        if key == "profit_share":
+            key = "profit_paid" if tx.get("is_paid") else "profit_accrual"
+        by_type[key] = round(by_type.get(key, 0) + float(tx.get("amount") or 0), 2)
+    partner = await db.partners.find_one({"_id": partner_id})
+    return {
+        "partner_id": partner_id,
+        "partner_name": (partner or {}).get("name"),
+        "stored_before": meta.get("previous", {}).get("balance"),
+        "balance": meta.get("balance"),
+        "ledger_balance": meta.get("balance"),
+        "repaired": meta.get("repaired"),
+        "totals": {
+            "total_capital_in": meta.get("total_capital_in"),
+            "total_withdrawn": meta.get("total_withdrawn"),
+            "total_profit_share": meta.get("total_profit_share"),
+        },
+        "by_type": by_type,
+        "tx_count": len(txs),
+        "transactions": clean_docs(txs),
+    }
+
 @api_router.post("/banking/partners")
 async def create_partner(partner: Partner):
     existing = await db.partners.find({"company_id": partner.company_id}).to_list(100)

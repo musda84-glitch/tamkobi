@@ -76,6 +76,59 @@ export function partnerTxSign(type, tx) {
   return partnerTxIncreasesBalance(type, tx) ? "+" : "-";
 }
 
+/** Tek hareketin ortak bakiyesine net etkisi. */
+export function partnerTxBalanceDelta(tx) {
+  if (!tx) return 0;
+  const amt = Number(tx.amount);
+  if (!Number.isFinite(amt)) return 0;
+  if (partnerTxIncreasesBalance(tx.type, tx)) return amt;
+  if (tx.type === "withdrawal" || tx.type === "debit") return -amt;
+  return 0;
+}
+
+/**
+ * Seçili ortağın hareketlerinden bakiye mutabakatı.
+ * Kart bakiyesi ile hareket toplamı sapıyorsa drift=true.
+ */
+export function partnerLedgerBreakdown(txs, storedBalance) {
+  const rows = Array.isArray(txs) ? txs : [];
+  const buckets = {
+    capital_in: 0,
+    withdrawal: 0,
+    credit: 0,
+    debit: 0,
+    salary: 0,
+    profit_accrual: 0,
+    profit_paid: 0,
+    other: 0,
+  };
+  let ledger = 0;
+  for (const tx of rows) {
+    const amt = Number(tx.amount);
+    const n = Number.isFinite(amt) ? amt : 0;
+    const delta = partnerTxBalanceDelta(tx);
+    ledger += delta;
+    if (tx.type === "capital_in") buckets.capital_in += n;
+    else if (tx.type === "withdrawal") buckets.withdrawal += n;
+    else if (tx.type === "credit") buckets.credit += n;
+    else if (tx.type === "debit") buckets.debit += n;
+    else if (tx.type === "salary") buckets.salary += n;
+    else if (tx.type === "profit_share" && !tx.is_paid) buckets.profit_accrual += n;
+    else if (tx.type === "profit_share" && tx.is_paid) buckets.profit_paid += n;
+    else buckets.other += n;
+  }
+  ledger = Math.round(ledger * 100) / 100;
+  const stored = Number(storedBalance);
+  const storedN = Number.isFinite(stored) ? Math.round(stored * 100) / 100 : 0;
+  return {
+    count: rows.length,
+    ledger,
+    stored: storedN,
+    drift: Math.abs(ledger - storedN) > 0.005,
+    buckets,
+  };
+}
+
 export function isPartnerLedgerType(type) {
   return type === "credit" || type === "debit" || type === "salary";
 }
