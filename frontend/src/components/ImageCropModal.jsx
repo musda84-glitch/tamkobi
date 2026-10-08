@@ -128,13 +128,30 @@ export const ImageCropModal = ({ file, onCancel, onConfirm, title = "Görseli K�
       canvas.height = sh;
       const ctx = canvas.getContext("2d");
       ctx.drawImage(imgRef.current, sx, sy, sw, sh, 0, 0, sw, sh);
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      // PNG yerine WebP/JPEG — kırpma çıktısı depolamada az yer tutsun
+      const blob = await new Promise((resolve) => {
+        canvas.toBlob(
+          (webp) => {
+            if (webp && webp.type === "image/webp" && webp.size > 0) {
+              resolve(webp);
+              return;
+            }
+            canvas.toBlob((jpeg) => resolve(jpeg), "image/jpeg", 0.82);
+          },
+          "image/webp",
+          0.8,
+        );
+      });
       if (!blob) {
         onCancel?.();
         return;
       }
       const base = (file?.name || "image").replace(/\.[^.]+$/, "");
-      const out = new File([blob], `${base}-crop.png`, { type: "image/png", lastModified: Date.now() });
+      const ext = blob.type === "image/webp" ? "webp" : "jpg";
+      const out = new File([blob], `${base}-crop.${ext}`, {
+        type: blob.type || "image/webp",
+        lastModified: Date.now(),
+      });
       await onConfirm(out, { width: sw, height: sh });
     } finally {
       setBusy(false);

@@ -7,6 +7,8 @@
  *  - quality (default 0.78)
  *  - targetBytes — mümkünse bu boyutun altına in (kalite basamakları)
  *  - force — küçük dosyalarda da yeniden kodla (kırpma sonrası)
+ *  - preferWebp — WebP varsa onu tercih et (ürün galerisi)
+ *  - preferJpeg — yalnızca JPEG dene
  */
 export async function compressImageFile(file, opts = {}) {
   const maxEdge = opts.maxEdge ?? 1600;
@@ -14,6 +16,7 @@ export async function compressImageFile(file, opts = {}) {
   const targetBytes = opts.targetBytes ?? 220 * 1024;
   const force = !!opts.force;
   const preferJpeg = !!opts.preferJpeg;
+  const preferWebp = !!opts.preferWebp && !preferJpeg;
   if (!file || typeof file.type !== "string") return file;
   if (!file.type.startsWith("image/")) return file;
   if (file.type === "image/gif" || file.type === "image/heic" || file.type === "image/heif") return file;
@@ -36,16 +39,42 @@ export async function compressImageFile(file, opts = {}) {
     if (!ctx) return file;
     ctx.drawImage(bitmap, 0, 0, width, height);
 
-    const qualities = [quality, Math.max(0.45, quality - 0.12), Math.max(0.4, quality - 0.22)];
+    const qualities = [
+      quality,
+      Math.max(0.42, quality - 0.12),
+      Math.max(0.38, quality - 0.22),
+      Math.max(0.35, quality - 0.32),
+    ];
     let best = null;
+    let bestWebp = null;
     for (const q of qualities) {
-      const jpeg = await _canvasToBlob(canvas, "image/jpeg", q);
       const webp = preferJpeg ? null : await _canvasToBlob(canvas, "image/webp", q);
-      for (const blob of [jpeg, webp]) {
-        if (!blob) continue;
-        if (!best || blob.size < best.size) best = blob;
+      const jpeg = preferWebp ? null : await _canvasToBlob(canvas, "image/jpeg", q);
+      // preferWebp: önce WebP; yoksa JPEG yedek
+      if (preferWebp) {
+        if (webp && webp.type === "image/webp") {
+          if (!bestWebp || webp.size < bestWebp.size) bestWebp = webp;
+          if (!best || webp.size < best.size) best = webp;
+        } else if (jpeg && (!best || jpeg.size < best.size)) {
+          best = jpeg;
+        }
+      } else {
+        for (const blob of [jpeg, webp]) {
+          if (!blob) continue;
+          if (!best || blob.size < best.size) best = blob;
+        }
       }
-      if (best && best.size <= targetBytes) break;
+      const hit = preferWebp ? bestWebp || best : best;
+      if (hit && hit.size <= targetBytes) break;
+    }
+    if (preferWebp && bestWebp) best = bestWebp;
+    // preferWebp iken tarayıcı WebP üretmediyse JPEG ile bir kez daha dene
+    if (preferWebp && !bestWebp && !best) {
+      for (const q of qualities) {
+        const jpeg = await _canvasToBlob(canvas, "image/jpeg", q);
+        if (jpeg && (!best || jpeg.size < best.size)) best = jpeg;
+        if (best && best.size <= targetBytes) break;
+      }
     }
     if (!best) return file;
     // Kırpma sonrası (force) her zaman yeni format; aksi halde yalnızca anlamlı kazançta değiştir
@@ -56,9 +85,15 @@ export async function compressImageFile(file, opts = {}) {
   }
 }
 
-/** Ürün galerisi: daha agresif sıkıştırma (etiket/kart için yeterli). */
+/** Ürün galerisi: WebP öncelikli agresif sıkıştırma (kart/etiket için yeterli). */
 export function compressProductImageFile(file) {
-  return compressImageFile(file, { maxEdge: 1280, quality: 0.72, targetBytes: 160 * 1024, force: true });
+  return compressImageFile(file, {
+    maxEdge: 1200,
+    quality: 0.66,
+    targetBytes: 100 * 1024,
+    force: true,
+    preferWebp: true,
+  });
 }
 
 function _asFile(blob, originalName, type) {
