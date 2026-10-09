@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Loader2, Sparkles } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
+import { txDescriptionLabel } from "../utils/bankMatchLabel";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { SearchSelect } from "./SearchSelect";
 
@@ -48,8 +49,11 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
     <tr data-testid={`unmatched-tx-${tx.id}`} className="align-top">
       <td className="px-4 py-2 font-mono text-slate-500 whitespace-nowrap">{tx.date}</td>
       <td className="px-4 py-2 font-semibold text-slate-900">{tx.account_name}</td>
-      <td className="px-4 py-2 max-w-[260px]">{tx.description} {tx.is_simulated && <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 rounded font-bold">SİMÜLE</span>}
-        {tx.suggested_contact_name && <div className="text-[10px] text-violet-700 flex items-center gap-1 mt-0.5"><Sparkles className="w-3 h-3" /> Öneri: {tx.suggested_contact_name}</div>}</td>
+      <td className="px-4 py-2 max-w-[260px]">
+        <span className="font-medium text-slate-800">{txDescriptionLabel(tx)}</span>
+        {tx.is_simulated && <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 rounded font-bold">SİMÜLE</span>}
+        {tx.suggested_contact_name && <div className="text-[10px] text-violet-700 flex items-center gap-1 mt-0.5"><Sparkles className="w-3 h-3" /> Öneri: {tx.suggested_contact_name}</div>}
+      </td>
       <td className={`px-4 py-2 text-right font-bold whitespace-nowrap ${isIn ? "text-emerald-600" : "text-rose-600"}`}>{isIn ? "+" : "-"}{fmt(tx.amount)} ₺</td>
       <td className="px-4 py-2">
         <div className="flex flex-wrap gap-1.5 items-center">

@@ -1,6 +1,27 @@
-import { matchActorTitle, matchStatusLabel, matchTargetLabel, txCreatedByLabel } from "./bankMatchLabel";
+import { matchActorTitle, matchStatusLabel, matchTargetLabel, txCreatedByLabel, txDescriptionLabel } from "./bankMatchLabel";
 
 describe("bankMatchLabel", () => {
+  it("txDescriptionLabel prefers real description and counterparty over generic Banka Hareketi", () => {
+    expect(txDescriptionLabel({
+      description: "Banka Hareketi",
+      counterparty: "AHMET YILMAZ",
+      type: "outflow",
+    })).toBe("AHMET YILMAZ");
+    expect(txDescriptionLabel({
+      description: "EFT Ücreti",
+      counterparty: "Garanti",
+    })).toBe("EFT Ücreti · Garanti");
+    expect(txDescriptionLabel({
+      description: "Banka Hareketi",
+      type: "inflow",
+      suggested_contact_name: "Trendyol",
+    })).toBe("Gelen · Trendyol");
+    expect(txDescriptionLabel({
+      description: "Havale · Mustafa Bal",
+      contact_name: "Mustafa Bal",
+    })).toBe("Havale · Mustafa Bal");
+  });
+
   it("shows contact, then actor who matched", () => {
     expect(matchStatusLabel({
       contact_name: "Mustafa Bal",

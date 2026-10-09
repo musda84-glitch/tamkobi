@@ -9,7 +9,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
 import { asContactList, canUploadBankStatement } from "../utils/bankStatementUpload";
-import { matchActorTitle, matchStatusLabel, txCreatedByLabel } from "../utils/bankMatchLabel";
+import { matchActorTitle, matchStatusLabel, txCreatedByLabel, txDescriptionLabel } from "../utils/bankMatchLabel";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
 import { TxRowMenu } from "../components/TxRowMenu";
@@ -700,7 +700,16 @@ export default function BankingPage() {
                         {tx.category || tx.type}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-slate-700">{tx.description}{tx.contact_name && !String(tx.description || "").includes(tx.contact_name) ? ` · ${tx.contact_name}` : ""}{tx.owner_contact_name && tx.owner_contact_name !== tx.contact_name ? ` · kart sahibi ${tx.owner_contact_name}` : ""} {tx.customer_card && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`tx-customer-card-${tx.id || tx._id}`}>MÜŞTERİ KARTI</span>}{tx.source === 'bank_sync' && <span className={`ml-1 text-[9px] px-1 rounded font-bold ${tx.is_simulated ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{tx.is_simulated ? 'SİMÜLE' : 'BANKA'}</span>}{tx.source === 'bank_sync' && tx.match_status === 'matched' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`tx-matched-${tx.id}`}>{matchStatusLabel(tx)}</span>}{tx.source === 'bank_sync' && tx.match_status === 'unmatched' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}{tx.source === 'bank_match' && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}</td>
+                    <td className="px-4 py-2.5 text-slate-700" data-testid={`tx-desc-${tx.id || tx._id}`}>
+                      <span className="font-medium text-slate-800">{txDescriptionLabel(tx)}</span>
+                      {tx.owner_contact_name && tx.owner_contact_name !== tx.contact_name ? ` · kart sahibi ${tx.owner_contact_name}` : ""}
+                      {" "}
+                      {tx.customer_card && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-rose-100 text-rose-800" data-testid={`tx-customer-card-${tx.id || tx._id}`}>MÜŞTERİ KARTI</span>}
+                      {tx.source === "bank_sync" && <span className={`ml-1 text-[9px] px-1 rounded font-bold ${tx.is_simulated ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>{tx.is_simulated ? "SİMÜLE" : "BANKA"}</span>}
+                      {tx.source === "bank_sync" && tx.match_status === "matched" && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-emerald-100 text-emerald-700" title={matchActorTitle(tx)} data-testid={`tx-matched-${tx.id}`}>{matchStatusLabel(tx)}</span>}
+                      {tx.source === "bank_sync" && tx.match_status === "unmatched" && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-slate-100 text-slate-500">EŞLEŞME BEKLİYOR</span>}
+                      {tx.source === "bank_match" && <span className="ml-1 text-[9px] px-1 rounded font-bold bg-indigo-100 text-indigo-700">BANKA VİRMANI</span>}
+                    </td>
                     <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap" data-testid={`tx-actor-${tx.id || tx._id}`} title={txCreatedByLabel(tx) || undefined}>
                       {txCreatedByLabel(tx) || <span className="text-slate-300">—</span>}
                     </td>
