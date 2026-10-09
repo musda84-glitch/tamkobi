@@ -536,14 +536,14 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "capital_in" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "capital_in" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white"}`} data-testid="partner-tx-type-in"><ArrowDownRight className="w-4 h-4" /> Para Koy</button>
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "withdrawal" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "withdrawal" ? "bg-rose-600 text-white border-rose-600" : "bg-white"}`} data-testid="partner-tx-type-out"><ArrowUpRight className="w-4 h-4" /> Para Çek</button>
-              <button type="button" onClick={() => setTxForm({ ...txForm, type: "credit", account_id: "" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "credit" ? "bg-emerald-700 text-white border-emerald-700" : "bg-white"}`} data-testid="partner-tx-type-credit" title="Kasa/bankaya dokunmadan ortak bakiyesini artırır">Alacaklandır</button>
+              <button type="button" onClick={() => setTxForm({ ...txForm, type: "credit", account_id: "" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "credit" ? "bg-rose-700 text-white border-rose-700" : "bg-white"}`} data-testid="partner-tx-type-credit" title="Ortak alacak fişi — listede Çıkış (−) görünür">Alacaklandır</button>
               <button type="button" onClick={() => setTxForm({ ...txForm, type: "debit", account_id: "" })} className={`p-2 rounded-lg border font-semibold flex items-center justify-center gap-1 ${txForm.type === "debit" ? "bg-rose-700 text-white border-rose-700" : "bg-white"}`} data-testid="partner-tx-type-debit" title="Kasa/bankaya dokunmadan ortak bakiyesini düşürür">Borçlandır</button>
             </div>
             {isPartnerCashType(txForm.type) ? (
               <div><label className="block font-semibold mb-1">{txForm.type === "capital_in" ? "Kasa / Banka Hesabı" : "Kasa / Banka / Kart"}</label><PaymentTargetSelect companyId={companyId} accounts={liveAccounts} value={txForm.account_id} onChange={(v) => setTxForm({ ...txForm, account_id: v })} testId="partner-tx-account-select" includePartners={false} collectableOnly={txForm.type === "capital_in"} disabled={accountsLoading} emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined} className={inputCls} /></div>
             ) : (
               <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2" data-testid="partner-tx-ledger-hint">
-                {txForm.type === "credit" ? "Alacak fişi ortak bakiyesini artırır (para girişi)." : "Borç fişi ortak bakiyesini düşürür (para çıkışı)." }
+                {txForm.type === "credit" ? "Alacak fişi ortak alacağını artırır; listede Çıkış (−) / kasa eksi görünür." : "Borç fişi ortak bakiyesini düşürür (Çıkış)." }
                 {" "}Kasa/banka bakiyesi değişmez. Firma politikası açıksa diğer yöneticinin onayı gerekir.
               </p>
             )}
