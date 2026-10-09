@@ -9088,6 +9088,7 @@ async def partner_ledger_check(partner_id: str):
         "balance": meta.get("balance"),
         "ledger_balance": meta.get("balance"),
         "repaired": meta.get("repaired"),
+        "expense_rows_repaired": meta.get("expense_rows_repaired", 0),
         "totals": {
             "total_capital_in": meta.get("total_capital_in"),
             "total_withdrawn": meta.get("total_withdrawn"),

@@ -248,11 +248,44 @@ def ledger_totals(txs: List[Dict[str, Any]]) -> Dict[str, float]:
     }
 
 
+def is_legacy_expense_withdrawal(tx: Optional[Dict[str, Any]]) -> bool:
+    """Eski masraf ödemesi yanlışlıkla withdrawal yazılmış mı? (doğrusu credit)."""
+    if not tx or tx.get("type") != "withdrawal":
+        return False
+    if tx.get("expense_id"):
+        return True
+    return tx.get("source") == "expense"
+
+
+async def repair_legacy_expense_withdrawals(db, partner_id: Optional[str] = None) -> int:
+    """Masraf → ortak satırlarını withdrawal→credit çevir (alacak +2× tutar onarımı).
+
+    Eski kod şirket masrafını ortaktan `withdraw` ile düşüyordu; doğrusu `credit`
+    (şirket ortağa borçlanır). Tip düzeltilmeden ledger sync yanlış bakiyeyi kalıcılaştırır.
+    """
+    q: Dict[str, Any] = {"type": "withdrawal"}
+    if partner_id:
+        q["partner_id"] = partner_id
+    txs = await db.partner_transactions.find(q).to_list(20000)
+    fixed = 0
+    now = datetime.now(timezone.utc).isoformat()
+    for tx in txs:
+        if not is_legacy_expense_withdrawal(tx):
+            continue
+        await db.partner_transactions.update_one(
+            {"_id": tx["_id"]},
+            {"$set": {"type": "credit", "legacy_expense_repaired_at": now}},
+        )
+        fixed += 1
+    return fixed
+
+
 async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, Any]]:
     """Kayıtlı bakiyeyi hareketlerden yeniden hesapla; kaymayı onar."""
     partner = await db.partners.find_one({"_id": partner_id})
     if not partner:
         return None
+    expense_rows_repaired = await repair_legacy_expense_withdrawals(db, partner_id)
     txs = await db.partner_transactions.find({"partner_id": partner_id}).to_list(20000)
     live = ledger_totals(txs)
     prev = {
@@ -261,13 +294,18 @@ async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, An
         "total_withdrawn": float(partner.get("total_withdrawn") or 0),
         "total_profit_share": float(partner.get("total_profit_share") or 0),
     }
-    repaired = any(abs(live[k] - prev[k]) > 0.005 for k in live)
+    repaired = expense_rows_repaired > 0 or any(abs(live[k] - prev[k]) > 0.005 for k in live)
     if repaired:
         await db.partners.update_one(
             {"_id": partner_id},
             {"$set": {**live, "balance_synced_at": datetime.now(timezone.utc).isoformat()}},
         )
-    return {**live, "previous": prev, "repaired": repaired}
+    return {
+        **live,
+        "previous": prev,
+        "repaired": repaired,
+        "expense_rows_repaired": expense_rows_repaired,
+    }
 
 
 async def sync_company_partners(db, company_id: str) -> List[Dict[str, Any]]:
