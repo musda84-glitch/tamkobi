@@ -526,7 +526,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             </div>
             <label className="flex items-start gap-2 text-slate-700">
               <input type="checkbox" className="mt-0.5" checked={partnerForm.salary_recurring !== false} onChange={(e) => setPartnerForm({ ...partnerForm, salary_recurring: e.target.checked })} data-testid="card-partner-salary-recurring" />
-              <span>Her ay tekrarla <span className="text-slate-500 font-normal">(aynı günde otomatik cebine yazılır)</span></span>
+              <span>Her ay tekrarla <span className="text-slate-500 font-normal">(aynı günde; geçmiş aylar geriye yazılmaz)</span></span>
             </label>
             <p className="text-[11px] text-slate-500">Kasa ve banka değişmez; ödeme istediğinizde çıkış (para çek) yaparsınız.</p>
             <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-amber-600 text-white rounded-lg font-semibold" data-testid="save-partner-salary-btn">Kaydet</button></div>

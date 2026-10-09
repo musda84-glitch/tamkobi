@@ -97,8 +97,8 @@ def period_is_entitled(emp: Dict[str, Any], month: str, as_of: Optional[str] = N
     if not emp or not emp.get("pay_start_date"):
         return False
     today = partner_pay.parse_iso_date(as_of) or datetime.now(timezone.utc).date()
-    slots = partner_pay.salary_slots(pay_slot_emp(emp), today)
-    return any(per == month for per, _due in slots)
+    slots = partner_pay.salary_slots(pay_slot_emp(emp), today, explicit_period=month)
+    return any(per == month and due <= today for per, due in slots)
 
 
 def allowance_due(amount: Any, category: str, expenses: Optional[List[dict]], month: str) -> float:
@@ -179,7 +179,10 @@ async def accrue_allowances(
         if not emp.get("pay_start_date"):
             skipped.append({"employee_id": emp.get("_id"), "reason": "no_date"})
             continue
-        slots = partner_pay.salary_slots(pay_slot_emp(emp), today, force_start=force_start)
+        # Personel yemek/yol: geçmiş ayları da yakala (ortak maaşı catch_up=False)
+        slots = partner_pay.salary_slots(
+            pay_slot_emp(emp), today, force_start=force_start, catch_up=True
+        )
         if not slots:
             start = partner_pay.parse_iso_date(emp.get("pay_start_date"))
             due_date = start.isoformat() if start and start > today else None

@@ -320,6 +320,7 @@ describe("finance drafts", () => {
     expect(partnerTxLabel({ type: "withdrawal", expense_id: "e1" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "capital_in" })).toBe("Giriş");
     expect(partnerTxLabel({ type: "credit", expense_id: "e1" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "salary" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "withdrawal", contact_id: "c1" })).toBe("Giriş");
     // Banka çıkışı → etiket Giriş; bakiye tipi withdrawal
     expect(partnerTxLabel({

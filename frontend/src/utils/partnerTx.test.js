@@ -18,7 +18,7 @@ describe("partnerTx", () => {
     expect(partnerTxLabel({ type: "withdrawal", description: "Virman → ortak" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "capital_in" })).toBe("Giriş");
     expect(partnerTxLabel({ type: "capital_in", contact_id: "c1" })).toBe("Çıkış");
-    expect(partnerTxLabel({ type: "salary" })).toBe("Giriş");
+    expect(partnerTxLabel({ type: "salary" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "debit" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "profit_share", is_paid: false })).toBe("Giriş");
     expect(partnerTxLabel({ type: "profit_share", is_paid: true })).toBe("Çıkış");
@@ -167,9 +167,9 @@ describe("partnerTx", () => {
     expect(br.drift).toBe(false);
     expect(br.buckets.salary).toBe(150000);
     expect(br.buckets.profit_paid).toBe(9000);
-    // Kart = Giriş + Çıkış (kasa neti)
-    expect(br.girisDisplay).toBeCloseTo(500000 + 150000 + 20000, 2);
-    expect(br.cikisDisplay).toBeCloseTo(-(50000 + 31810.22 + 9000), 2);
+    // Kart = Giriş + Çıkış (kasa neti); maaş Çıkış
+    expect(br.girisDisplay).toBeCloseTo(500000 + 20000, 2);
+    expect(br.cikisDisplay).toBeCloseTo(-(150000 + 50000 + 31810.22 + 9000), 2);
     expect(br.cardDisplay).toBeCloseTo(br.netDisplay, 2);
     expect(br.netMatchesCard).toBe(true);
     expect(partnerLedgerBreakdown(txs, ledger + 1).drift).toBe(true);
@@ -184,10 +184,11 @@ describe("partnerTx", () => {
     expect(isPartnerCashType("salary")).toBe(false);
   });
 
-  it("treats monthly salary like pocket inflow (Giriş)", () => {
-    expect(PARTNER_TX_LABEL.salary).toBe("Giriş");
+  it("treats monthly salary as Çıkış (pocket still increases)", () => {
+    expect(PARTNER_TX_LABEL.salary).toBe("Çıkış");
     expect(partnerTxIncreasesBalance("salary")).toBe(true);
-    expect(partnerTxSign("salary")).toBe("+");
+    expect(partnerTxIsCashInflow({ type: "salary", amount: 150000 })).toBe(false);
+    expect(partnerTxSign("salary", { type: "salary", amount: 150000 })).toBe("-");
   });
   it("prompts to set salary on the partner card when amount is empty", () => {
     expect(partnerSalaryActionLabel(0)).toBe("Belirle");
