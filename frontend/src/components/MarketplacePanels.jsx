@@ -2,38 +2,217 @@
 import React, { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { RotateCcw, XCircle, MessageCircleQuestion, Send, PackageCheck, Loader2 } from "lucide-react";
+import { RotateCcw, XCircle, MessageCircleQuestion, Send, PackageCheck, Loader2, Receipt, Ban, Truck } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { channelTr, marketplaceStatusTr } from "../utils/labels";
 import { formatTrAmount } from "../utils/money";
+import {
+  claimCanApprove,
+  claimCanExpenseSlip,
+  claimCanReject,
+  claimCargoArrived,
+  claimStatusClass,
+  claimStatusLabel,
+} from "../utils/marketplaceClaims";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const dt = (s) => (s ? new Date(s).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" }) : "—");
-const CLAIM_TR = { Created: "Yeni Talep", WaitingInAction: "Aksiyon Bekliyor", Accepted: "Kabul Edildi", Rejected: "Reddedildi", Cancelled: "İptal", Unresolved: "Çözümsüz", InAnalysis: "İncelemede" };
 
 export const ClaimsPanel = ({ companyId }) => {
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(null);
+  const [syncing, setSyncing] = useState(false);
   const load = useCallback(() => axios.get(`${API_URL}/marketplace/claims?company_id=${companyId}`).then((r) => setRows(r.data)).catch(() => toast.error("İadeler yüklenemedi.")), [companyId]);
   useEffect(() => { load(); }, [load]);
+  const syncClaims = async () => {
+    setSyncing(true);
+    try {
+      const r = await axios.post(`${API_URL}/marketplace/claims/sync`, { company_id: companyId, days: 14 }, { timeout: 120000 });
+      toast.success(r.data.message || "İadeler çekildi.");
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İadeler çekilemedi.");
+    } finally {
+      setSyncing(false);
+    }
+  };
   const approve = async (c, restock) => {
     if (!window.confirm(`${c.order_number} iadesi onaylansın mı?${restock ? " Ürün stoğa geri eklenecek." : ""}`)) return;
-    setBusy(c.id);
+    setBusy(`${c.id}:approve`);
     try { await axios.post(`${API_URL}/marketplace/claims/${c.id}/approve`, { restock }); toast.success("İade onaylandı" + (restock ? ", stok güncellendi." : ".")); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "Onaylanamadı."); } finally { setBusy(null); }
   };
+  const reject = async (c) => {
+    if (!window.confirm(`${c.order_number} iadesi reddedilsin mi? Trendyol'a sorun bildirimi iletilir.`)) return;
+    setBusy(`${c.id}:reject`);
+    try {
+      await axios.post(`${API_URL}/marketplace/claims/${c.id}/reject`, { note: "İade paketi kabul edilmedi." });
+      toast.success("İade reddedildi / sorun bildirildi.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Reddedilemedi.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const expenseSlip = async (c) => {
+    if (!window.confirm(`${c.order_number} için gider pusulası düzenlensin mi?\nBağlı satış faturasından alış pusulası oluşur.`)) return;
+    setBusy(`${c.id}:slip`);
+    try {
+      const r = await axios.post(`${API_URL}/marketplace/claims/${c.id}/expense-slip`);
+      toast.success(r.data.message || "Gider pusulası oluşturuldu.");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Gider pusulası oluşturulamadı.");
+    } finally {
+      setBusy(null);
+    }
+  };
   if (!rows) return <div className="p-6 text-xs text-slate-400">Yükleniyor…</div>;
+  const waiting = rows.filter((c) => claimCargoArrived(c) && claimCanApprove(c)).length;
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden" data-testid="claims-panel">
-      <div className="px-4 py-3 border-b flex items-center justify-between"><b className="text-sm flex items-center gap-2"><RotateCcw className="w-4 h-4 text-amber-600" /> İade Talepleri ({rows.length})</b><span className="text-[11px] text-slate-500">Pazaryerinden "Senkronize Et" ile çekilir; onay Trendyol'a iletilir</span></div>
-      {rows.length === 0 && <div className="p-10 text-center text-xs text-slate-400">İade talebi yok.</div>}
-      <div className="divide-y divide-slate-100 text-xs">{rows.map((c) => (
-        <div key={c.id} className="px-4 py-3 flex flex-wrap items-start gap-3" data-testid={`claim-${c.external_id}`}>
-          <div className="flex-1 min-w-[220px]"><div className="font-bold text-slate-900">{c.order_number} <span className="text-[10px] font-semibold bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded ml-1">{channelTr(c.channel)}</span></div><div className="text-slate-500">{c.customer_name} · {dt(c.claim_date)}{c.cargo_tracking_number ? ` · İade kargo ${c.cargo_provider || ""} ${c.cargo_tracking_number}` : ""}</div>
-            <ul className="mt-1 space-y-0.5">{(c.items || []).map((it, i) => <li key={i} className="text-slate-700">• {it.product_name} <span className="text-slate-400">— {it.reason || "sebep belirtilmedi"}{it.note ? ` · "${it.note}"` : ""}</span></li>)}</ul></div>
-          <div className="text-right space-y-1"><div className="font-bold">{fmt(c.total)} ₺</div><span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded ${c.status === "Accepted" ? "bg-emerald-100 text-emerald-700" : c.status === "Rejected" ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`} data-testid={`claim-status-${c.external_id}`}>{CLAIM_TR[c.status] || c.status}</span></div>
-          {["Created", "WaitingInAction", "InAnalysis"].includes(c.status) && <div className="flex flex-col gap-1"><button disabled={busy === c.id} onClick={() => approve(c, true)} className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50" data-testid={`claim-approve-restock-${c.external_id}`}>{busy === c.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <PackageCheck className="w-3.5 h-3.5" />} Onayla + Stoğa Al</button><button disabled={busy === c.id} onClick={() => approve(c, false)} className="px-2.5 py-1.5 border rounded-lg font-semibold" data-testid={`claim-approve-${c.external_id}`}>Sadece Onayla</button></div>}
-        </div>))}</div>
+      <div className="px-4 py-3 border-b flex flex-wrap items-center justify-between gap-2">
+        <b className="text-sm flex items-center gap-2"><RotateCcw className="w-4 h-4 text-amber-600" /> İade Talepleri ({rows.length})</b>
+        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+          {waiting > 0 && (
+            <span className="font-bold text-sky-800 bg-sky-100 px-2 py-0.5 rounded" data-testid="claims-cargo-waiting">
+              {waiting} kargo ulaştı
+            </span>
+          )}
+          <span className="hidden sm:inline">Kargo Ulaştı → Onay / Red / Gider Pusulası</span>
+          <button
+            type="button"
+            onClick={syncClaims}
+            disabled={syncing}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            data-testid="claims-sync-btn"
+            title="Trendyol iade taleplerini çek"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
+            İadeleri Çek
+          </button>
+        </div>
+      </div>
+      {rows.length === 0 && (
+        <div className="p-10 text-center text-xs text-slate-400 space-y-2" data-testid="claims-empty">
+          <div>İade talebi yok.</div>
+          <p className="text-slate-500 max-w-md mx-auto">
+            Trendyol’dan çekmek için <b className="text-slate-700">İadeleri Çek</b> kullanın.
+            Depoya ulaşan iadelerde durum <b className="text-sky-800">Kargo Ulaştı</b> olur; Onayla / Reddet ve bağlı fatura varsa <b className="text-rose-700">Gider Pusulası Düzenle</b> çıkar.
+          </p>
+        </div>
+      )}
+      <div className="divide-y divide-slate-100 text-xs">
+        {rows.map((c) => {
+          const arrived = claimCargoArrived(c);
+          const canAppr = claimCanApprove(c);
+          const canRej = claimCanReject(c);
+          const canSlip = claimCanExpenseSlip(c);
+          const rowBusy = busy && String(busy).startsWith(String(c.id));
+          return (
+            <div key={c.id} className="px-4 py-3 flex flex-wrap items-start gap-3" data-testid={`claim-${c.external_id}`}>
+              <div className="flex-1 min-w-[240px]">
+                <div className="font-bold text-slate-900">
+                  {c.order_number}{" "}
+                  <span className="text-[10px] font-semibold bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded ml-1">{channelTr(c.channel)}</span>
+                  {arrived ? (
+                    <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-bold text-sky-800 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded" data-testid={`claim-arrived-${c.external_id}`}>
+                      <Truck className="w-3 h-3" /> Kargo ulaştı
+                    </span>
+                  ) : null}
+                </div>
+                <div className="text-slate-500">
+                  {c.customer_name} · {dt(c.claim_date)}
+                  {c.cargo_tracking_number ? ` · İade kargo ${c.cargo_provider || ""} ${c.cargo_tracking_number}` : ""}
+                  {c.invoice_number ? ` · Fatura ${c.invoice_number}` : ""}
+                </div>
+                <ul className="mt-1 space-y-0.5">
+                  {(c.items || []).map((it, i) => (
+                    <li key={i} className="text-slate-700 flex flex-wrap items-baseline gap-1.5">
+                      <span>• {it.quantity && it.quantity > 1 ? `${it.quantity}× ` : ""}{it.product_name || "Ürün"}</span>
+                      <span className={`text-[9px] font-bold px-1 py-0.5 rounded border ${claimStatusClass(it.status || c.status)}`}>
+                        {claimStatusLabel(it.status || c.status)}
+                      </span>
+                      <span className="text-slate-400">— {it.reason || "sebep belirtilmedi"}{it.note ? ` · "${it.note}"` : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+                {c.expense_slip_number ? (
+                  <div className="mt-1 text-[10px] font-semibold text-rose-700" data-testid={`claim-slip-done-${c.external_id}`}>
+                    Gider pusulası: {c.expense_slip_number}
+                  </div>
+                ) : null}
+              </div>
+              <div className="text-right space-y-1 shrink-0">
+                <div className="font-bold">{fmt(c.total)} ₺</div>
+                <span
+                  className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded border ${claimStatusClass(c.status)}`}
+                  data-testid={`claim-status-${c.external_id}`}
+                  title={`Entegrasyon durumu: ${c.status}`}
+                >
+                  {claimStatusLabel(c.status)}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1 min-w-[9.5rem]" data-testid={`claim-actions-${c.external_id}`}>
+                {canAppr ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={rowBusy}
+                      onClick={() => approve(c, true)}
+                      className="flex items-center justify-center gap-1 px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold disabled:opacity-50"
+                      data-testid={`claim-approve-restock-${c.external_id}`}
+                    >
+                      {busy === `${c.id}:approve` ? <Loader2 className="w-3 h-3 animate-spin" /> : <PackageCheck className="w-3.5 h-3.5" />}
+                      Onayla + Stoğa Al
+                    </button>
+                    <button
+                      type="button"
+                      disabled={rowBusy}
+                      onClick={() => approve(c, false)}
+                      className="px-2.5 py-1.5 border rounded-lg font-semibold disabled:opacity-50"
+                      data-testid={`claim-approve-${c.external_id}`}
+                    >
+                      Sadece Onayla
+                    </button>
+                  </>
+                ) : null}
+                {canRej ? (
+                  <button
+                    type="button"
+                    disabled={rowBusy}
+                    onClick={() => reject(c)}
+                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 border border-rose-200 text-rose-700 rounded-lg font-semibold disabled:opacity-50"
+                    data-testid={`claim-reject-${c.external_id}`}
+                  >
+                    {busy === `${c.id}:reject` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                    Reddet
+                  </button>
+                ) : null}
+                {canSlip ? (
+                  <button
+                    type="button"
+                    disabled={rowBusy}
+                    onClick={() => expenseSlip(c)}
+                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 bg-rose-700 text-white rounded-lg font-semibold disabled:opacity-50"
+                    title="Kargosu ulaşmış iade için gider pusulası"
+                    data-testid={`claim-expense-slip-${c.external_id}`}
+                  >
+                    {busy === `${c.id}:slip` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Receipt className="w-3.5 h-3.5" />}
+                    Gider Pusulası Düzenle
+                  </button>
+                ) : null}
+                {!canAppr && !canRej && !canSlip && c.status === "Created" ? (
+                  <span className="text-[10px] text-slate-400 text-right" data-testid={`claim-wait-cargo-${c.external_id}`}>
+                    İade kargosu bekleniyor
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };

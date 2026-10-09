@@ -58,6 +58,10 @@ def merge_keep_fields(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dic
     for k in KEEP_FIELDS:
         if existing.get(k) is not None:
             out[k] = existing[k]
+    # Eski sync: Shipped/Delivered → is_invoiced=True yazılmış, invoice_id yok.
+    # Yerel fatura kaydı yokken True'yu koruma; taslak açılsın ve rozet düzeltilsin.
+    if out.get("is_invoiced") and not (out.get("invoice_id") or existing.get("invoice_id")):
+        out["is_invoiced"] = False
     return out
 
 

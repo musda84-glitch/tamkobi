@@ -110,7 +110,7 @@ export function fillMarketplaceMatchSuggestions(rows, products, { minScore = 0.5
 
 export function matchSuggestionLabel(score) {
   const pct = Math.round((Number(score) || 0) * 100);
-  if (pct >= 95) return `AI %${pct} · kesin`;
-  if (pct >= 70) return `AI %${pct} · güçlü`;
-  return `AI %${pct} · öneri`;
+  if (pct >= 95) return `%${pct} · kesin`;
+  if (pct >= 70) return `%${pct} · güçlü`;
+  return `%${pct} · öneri`;
 }

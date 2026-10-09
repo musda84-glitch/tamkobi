@@ -43,9 +43,10 @@ import { MarketplaceProductsPanel } from "../components/MarketplaceProductsPanel
 import { NewOrderModal, AiOrderImportModal, OrderEditModal } from "../components/OrderCreateModals";
 import { AutoShipModal } from "../components/AutoShipModal";
 import { PricingCenter } from "../components/PricingCenter";
-import { OrdersToolbar, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
+import { OrdersToolbar, ORDER_PAGE_SIZES, applyOrderFilters, orderFiltersFromSearch } from "../components/OrdersToolbar";
 import { exportExcel, exportPdf } from "../components/ExportButtons";
 import { formatTrAmount } from "../utils/money";
+import { formatOrderDateTime, orderTerminRemaining } from "../utils/orderTermin";
 import { orderEditBlockedReason } from "../utils/orderEdit";
 import { stripNewOrderParam } from "../utils/ordersNewQuery";
 import { cargoActionButtonClass, cargoActionTitle, printOrderButtonClass, printOrderTitle, orderIsShipped } from "../utils/orderActionBadges";
@@ -602,11 +603,26 @@ export default function OrdersB2BPage() {
     </th>
   );
   const visibleTotal = useMemo(() => visibleOrders.reduce((t, o) => t + (Number(o.total_amount) || 0), 0), [visibleOrders]);
+  const [pageSize, setPageSize] = useState(() => {
+    try {
+      const n = Number(localStorage.getItem("orders-page-size") || 50);
+      return ORDER_PAGE_SIZES.includes(n) ? n : 50;
+    } catch {
+      return 50;
+    }
+  });
+  const setPageSizePersist = useCallback((n) => {
+    const v = ORDER_PAGE_SIZES.includes(n) ? n : 50;
+    setPageSize(v);
+    try { localStorage.setItem("orders-page-size", String(v)); } catch { /* ignore */ }
+  }, []);
   const ordersListResetKey = useMemo(
-    () => `${customerFilter || ""}|${JSON.stringify(ordF)}|${sort.key}|${sort.dir}`,
-    [customerFilter, ordF, sort.key, sort.dir],
+    () => `${customerFilter || ""}|${JSON.stringify(ordF)}|${sort.key}|${sort.dir}|${pageSize}`,
+    [customerFilter, ordF, sort.key, sort.dir, pageSize],
   );
   const { visible: pagedOrders, hasMore: ordersHasMore, sentinelRef: ordersSentinelRef } = useInfiniteRows(visibleOrders, {
+    initial: pageSize,
+    step: pageSize,
     resetKey: ordersListResetKey,
   });
   const [products, setProducts] = useState([]);
@@ -619,17 +635,19 @@ export default function OrdersB2BPage() {
   const [b2bCustomer, setB2bCustomer] = useState("");
 
   const loadData = useCallback(async () => {
+    const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
     try {
       setLoading(true);
+      // lite=1: liste için kimlik/görsel alanları — çift products isteği yok
       const [ordRes, prodRes, cntRes] = await Promise.all([
-        axios.get(`${API_URL}/orders?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`),
-        axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&b2b_only=true`),
-        axios.get(`${API_URL}/contacts?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}&type=customer`)
+        axios.get(`${API_URL}/orders?company_id=${cid}`),
+        axios.get(`${API_URL}/products?company_id=${cid}&lite=1`),
+        axios.get(`${API_URL}/contacts?company_id=${cid}&type=customer&lite=1`),
       ]);
       setOrders(ordRes.data);
       setProducts(prodRes.data);
+      setAllProducts(prodRes.data);
       setContacts(cntRes.data);
-      axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || 'comp_nexus_main_01'}`).then((r) => setAllProducts(r.data)).catch(() => {});
       if (cntRes.data.length > 0) setB2bCustomer(cntRes.data[0].id || cntRes.data[0]._id);
     } catch (err) {
       toast.error("Sipariş verileri yüklenemedi.");
@@ -1363,7 +1381,7 @@ export default function OrdersB2BPage() {
         </div>
         </div>
       </div>
-      {activeTab === "claims" && <ClaimsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
+      {activeTab === "claims" && <ClaimsPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
       {activeTab === "cancelled" && <CancelledPanel orders={orders} />}
       {activeTab === "profit" && <ProfitabilityPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "questions" && <QuestionsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
@@ -1409,15 +1427,29 @@ export default function OrdersB2BPage() {
             }
           }}
           onProductUpdated={() => {
-            axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}`)
-              .then((r) => setAllProducts(r.data || []))
+            axios.get(`${API_URL}/products?company_id=${activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}&lite=1`)
+              .then((r) => { setAllProducts(r.data || []); setProducts(r.data || []); })
               .catch(() => {});
           }}
         />
       )}
 
       {activeTab === "orders" ? (<>
-        <OrdersToolbar f={ordF} setF={setOrdF} orders={orders} count={visibleOrders.length} total={visibleTotal} rows={visibleOrders} selectedCount={selected.length} bulkBusy={bulkBusy} onBulkAction={bulk} />
+        <OrdersToolbar
+          f={ordF}
+          setF={setOrdF}
+          orders={orders}
+          count={visibleOrders.length}
+          total={visibleTotal}
+          rows={visibleOrders}
+          selectedCount={selected.length}
+          bulkBusy={bulkBusy}
+          onBulkAction={bulk}
+          pageSize={pageSize}
+          onPageSizeChange={setPageSizePersist}
+          onRefresh={loadData}
+          refreshBusy={loading}
+        />
 
         {/* Mobil: sade kart + aynı Diğer işlemler menüsü */}
         <div className="md:hidden space-y-2" data-testid="orders-mobile-list">
@@ -1437,6 +1469,20 @@ export default function OrdersB2BPage() {
                 <div className="flex justify-between gap-2 items-start">
                   <div className="min-w-0">
                     <div className="font-mono font-bold text-slate-900 truncate">{ord.held_label || ord.order_number}</div>
+                    {(() => {
+                      const od = formatOrderDateTime(ord.order_date || ord.created_at);
+                      const termin = orderTerminRemaining(ord.estimated_delivery);
+                      return (
+                        <div className="mt-0.5 space-y-0.5" data-testid={`order-dates-mobile-${ord.order_number}`}>
+                          {od ? <div className="text-[10px] text-slate-500">{od}</div> : null}
+                          {termin ? (
+                            <div className={`text-[10px] font-semibold ${termin.overdue ? "text-rose-600" : "text-amber-700"}`} title={termin.title}>
+                              {termin.label}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
                     <div className="mt-0.5 flex flex-wrap items-center gap-1">
                       <span className="text-[10px] uppercase font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">{channelTr(ord.channel)}</span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${orderStatusBadgeClass(ord.order_status)}`}>{orderStatusLabel(ord, statusTr(ord.order_status))}</span>
@@ -1579,6 +1625,24 @@ export default function OrdersB2BPage() {
                         <div className="text-[10px] text-slate-400 font-mono">{ord.order_number}</div>
                       ) : null}
                       {ord.customer_order_number ? <div className="text-[10px] text-slate-500 font-mono" data-testid={`order-customer-no-${ord.order_number}`}>Müşteri no: {ord.customer_order_number}</div> : null}
+                      {(() => {
+                        const od = formatOrderDateTime(ord.order_date || ord.created_at);
+                        const termin = orderTerminRemaining(ord.estimated_delivery);
+                        return (
+                          <div className="mt-0.5 space-y-0.5" data-testid={`order-dates-${ord.order_number}`}>
+                            {od ? <div className="text-[10px] text-slate-500" title="Sipariş tarihi">{od}</div> : null}
+                            {termin ? (
+                              <div
+                                className={`text-[10px] font-semibold ${termin.overdue ? "text-rose-600" : "text-amber-700"}`}
+                                title={termin.title}
+                                data-testid={`order-termin-${ord.order_number}`}
+                              >
+                                {termin.label}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
                       {(() => {
                         const gibNo = orderGibInvoiceNumber(ord);
                         return gibNo ? (

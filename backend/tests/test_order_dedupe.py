@@ -41,3 +41,13 @@ def test_merge_keep_fields_preserves_invoice():
     assert m["is_invoiced"] is True
     assert m["contact_id"] == "c1"
     assert m["marketplace_status"] == "Shipped"
+
+
+def test_merge_clears_marketplace_false_invoiced_without_invoice():
+    """Eski TY sync Shipped→is_invoiced=True yazmış; invoice_id yoksa False'a düş."""
+    existing = {"is_invoiced": True, "marketplace_status": "Shipped", "contact_id": "c1"}
+    incoming = {"marketplace_status": "Delivered", "order_status": "delivered", "is_invoiced": False}
+    m = merge_keep_fields(existing, incoming)
+    assert m["is_invoiced"] is False
+    assert m["contact_id"] == "c1"
+    assert m["marketplace_status"] == "Delivered"

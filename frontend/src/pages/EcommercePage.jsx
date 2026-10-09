@@ -153,7 +153,7 @@ export default function EcommercePage() {
       <div className="bg-indigo-50/80 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3 text-xs text-indigo-950">
         <Zap className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
         <div>
-          <span className="font-bold">Otomatik API Bağlantısı:</span> API anahtarlarınızı kaydettiğiniz andan itibaren siparişler otomatik çekilir, E-Arşiv/E-Faturası anında kesilir ve stoklar tüm pazaryerlerinde eş zamanlı güncellenir.
+          <span className="font-bold">Otomatik API Bağlantısı:</span> «Siparişleri otomatik çek» açıkken kanallar 10 dakikada bir senkronize edilir; liste yükü için sık çekim yapılmaz. E-Arşiv/E-Fatura ve stok eşitleme kanal ayarlarınıza göre çalışır.
         </div>
       </div>
 
@@ -335,7 +335,7 @@ export default function EcommercePage() {
                     onChange={(e) => setSelectedConfig({ ...selectedConfig, auto_sync_orders: e.target.checked })}
                     className="rounded text-emerald-600"
                   />
-                  <span>Siparişleri otomatik çek</span>
+                  <span>Siparişleri otomatik çek <span className="text-slate-400 font-normal">(10 dk)</span></span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input

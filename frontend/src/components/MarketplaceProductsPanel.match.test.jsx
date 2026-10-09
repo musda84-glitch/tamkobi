@@ -62,7 +62,7 @@ afterEach(() => {
   host.remove();
 });
 
-test("stok kartı eşleştirmede arama select ve AI öneri çipi gösterir", async () => {
+test("stok kartı eşleştirmede arama select ve yerel öneri çipi gösterir (AI yok)", async () => {
   const root = createRoot(host);
   await act(async () => {
     root.render(<MarketplaceProductsPanel companyId="c1" />);
@@ -73,7 +73,8 @@ test("stok kartı eşleştirmede arama select ve AI öneri çipi gösterir", asy
   });
   expect(host.querySelector('[data-testid="mp-match-select-8692577197348"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="mp-match-select-8692577197348-trigger"]')).not.toBeNull();
-  expect(host.querySelector('[data-testid="mp-ai-chip-8692577197348"]')?.textContent).toMatch(/AI/);
-  expect(host.querySelector('[data-testid="mp-ai-suggest-btn"]')?.textContent).toMatch(/AI eşleşme/);
+  expect(host.querySelector('[data-testid="mp-suggest-chip-8692577197348"]')?.textContent).toMatch(/%\d+/);
+  expect(host.querySelector('[data-testid="mp-suggest-btn"]')?.textContent).toMatch(/Eşleşme öner/);
+  expect(host.querySelector('[data-testid="mp-ai-suggest-btn"]')).toBeNull();
   expect(host.querySelector("select.bg-amber-50")).toBeNull();
 });

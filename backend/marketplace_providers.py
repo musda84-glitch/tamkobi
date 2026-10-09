@@ -253,17 +253,37 @@ class TrendyolClient:
         return out
 
     async def claims(self, days: int = 14) -> List[dict]:
+        """İade paketleri — Trendyol claimItemStatus ile filtre ister; durumları tek tek çek."""
         end = int(datetime.now(timezone.utc).timestamp() * 1000)
         start_all = end - max(1, int(days)) * 86400000
+        # Docs: Created / WaitingInAction / Accepted / Cancelled / Rejected / Unresolved / InAnalysis
+        statuses = (
+            "Created", "WaitingInAction", "Accepted", "Cancelled",
+            "Rejected", "Unresolved", "InAnalysis",
+        )
         seen, out = set(), []
-        cur_end = end
-        while cur_end > start_all:
-            cur_start = max(start_all, cur_end - TY_WINDOW_MS + 1)
-            for c in await self._paged(f"/integration/order/sellers/{self.seller_id}/claims", cur_start, cur_end, 200, max_pages=20):
-                if c.get("id") not in seen:
-                    seen.add(c.get("id"))
-                    out.append(c)
-            cur_end = cur_start - 1
+        path = f"/integration/order/sellers/{self.seller_id}/claims"
+        for st in statuses:
+            cur_end = end
+            while cur_end > start_all:
+                cur_start = max(start_all, cur_end - TY_WINDOW_MS + 1)
+                try:
+                    chunk = await self._paged(
+                        path, cur_start, cur_end, 200,
+                        extra={"claimItemStatus": st},
+                        max_pages=20,
+                    )
+                except HTTPException as e:
+                    # Tek durum 4xx ise diğerlerini dene
+                    if 400 <= int(getattr(e, "status_code", 0) or 0) < 500:
+                        break
+                    raise
+                for c in chunk:
+                    cid = c.get("id")
+                    if cid not in seen:
+                        seen.add(cid)
+                        out.append(c)
+                cur_end = cur_start - 1
         return out
 
     async def questions(self, status: str = "WAITING_FOR_ANSWER") -> List[dict]:
@@ -275,6 +295,25 @@ class TrendyolClient:
 
     async def approve_claim(self, claim_id: str, line_ids: List[str]) -> Any:
         return await self._call("PUT", f"/integration/order/sellers/{self.seller_id}/claims/{claim_id}/items/approve", json={"claimLineItemIdList": line_ids, "params": {}})
+
+    async def reject_claim(
+        self,
+        claim_id: str,
+        line_ids: List[str],
+        reason_id: int = 1651,
+        description: str = "İade paketi kabul edilmedi.",
+    ) -> Any:
+        """WaitingInAction iadeleri için sorun bildir / red (dosyasız sebep 1651)."""
+        ids = ",".join(str(x) for x in line_ids if x)
+        return await self._call(
+            "POST",
+            f"/integration/order/sellers/{self.seller_id}/claims/{claim_id}/issue",
+            params={
+                "claimIssueReasonId": int(reason_id),
+                "claimItemIdList": ids,
+                "description": (description or "")[:500],
+            },
+        )
 
     async def set_package_status(self, package_id: str, status: str, lines: List[dict], invoice_number: Optional[str] = None) -> Any:
         body: Dict[str, Any] = {"status": status, "lines": lines, "params": {}}
@@ -343,8 +382,27 @@ def map_trendyol_order(pkg: dict, company_id: str, channel: str) -> dict:
             "order_status": TY_STATUS.get(ty_status, "pending"), "marketplace_status": ty_status, "cargo_carrier": TY_CARRIER.get(pkg.get("cargoProviderName"), (pkg.get("cargoProviderName") or "").split(" ")[0].lower() or None),
             "cargo_carrier_name": pkg.get("cargoProviderName"), "cargo_tracking_number": str(pkg.get("cargoTrackingNumber") or "") or None, "cargo_tracking_url": pkg.get("cargoTrackingLink"),
             "cargo_barcode": pkg.get("cargoSenderNumber") or str(pkg.get("cargoTrackingNumber") or "") or None, "estimated_delivery": _ms(pkg.get("estimatedDeliveryEndDate")),
-            "order_date": _ms(pkg.get("orderDate")) or datetime.now(timezone.utc).isoformat(), "marketplace_updated_at": _ms(pkg.get("lastModifiedDate")), "is_invoiced": ty_status in ("Invoiced", "Shipped", "Delivered"),
+            "order_date": _ms(pkg.get("orderDate")) or datetime.now(timezone.utc).isoformat(), "marketplace_updated_at": _ms(pkg.get("lastModifiedDate")),
+            # Trendyol paket durumu (Invoiced/Shipped/Delivered) yerel cari faturalaşma değildir.
+            # True yazılırsa taslak fatura açılmaz ve listede yanlış yeşil «Faturalaştı» görünür.
+            "is_invoiced": False,
             "source": "marketplace_sync", "raw_status": ty_status}
+
+
+# Trendyol claimItemStatus → satıcı aksiyonu
+# WaitingInAction = iade kargosu depoya ulaştı (onay/red + gider pusulası)
+TY_CLAIM_ACTIONABLE = frozenset({"WaitingInAction"})
+TY_CLAIM_STATUS_ORDER = (
+    "WaitingInAction", "Created", "InAnalysis", "Unresolved",
+    "Accepted", "Rejected", "Cancelled",
+)
+
+
+def _claim_status_priority(name: str) -> int:
+    try:
+        return TY_CLAIM_STATUS_ORDER.index(name)
+    except ValueError:
+        return 99
 
 
 def map_trendyol_claim(c: dict, company_id: str, channel: str) -> dict:
@@ -352,11 +410,46 @@ def map_trendyol_claim(c: dict, company_id: str, channel: str) -> dict:
     flat = []
     for it in items:
         for ci in it.get("claimItems") or []:
-            flat.append({"claim_item_id": ci.get("id"), "order_line_id": ci.get("orderLineItemId"), "status": (ci.get("claimItemStatus") or {}).get("name"), "reason": (ci.get("customerClaimItemReason") or {}).get("name"),
-                         "note": ci.get("customerNote"), "product_name": (it.get("orderLine") or {}).get("productName"), "barcode": (it.get("orderLine") or {}).get("barcode"), "price": (it.get("orderLine") or {}).get("price")})
-    return {"company_id": company_id, "channel": channel, "external_id": str(c.get("id")), "order_number": str(c.get("orderNumber")), "customer_name": f"{c.get('customerFirstName', '')} {c.get('customerLastName', '')}".strip(),
-            "claim_date": _ms(c.get("claimDate")), "cargo_tracking_number": str(c.get("cargoTrackingNumber") or "") or None, "cargo_provider": c.get("cargoProviderName"), "items": flat,
-            "status": (flat[0]["status"] if flat else "Created"), "total": round(sum(float(x.get("price") or 0) for x in flat), 2), "kind": "return", "source": "marketplace_sync"}
+            st = (ci.get("claimItemStatus") or {})
+            st_name = st.get("name") or "Created"
+            flat.append({
+                "claim_item_id": ci.get("id"),
+                "order_line_id": ci.get("orderLineItemId"),
+                "status": st_name,
+                "status_id": st.get("id"),
+                "reason": (ci.get("customerClaimItemReason") or {}).get("name"),
+                "note": ci.get("customerNote"),
+                "product_name": (it.get("orderLine") or {}).get("productName"),
+                "barcode": (it.get("orderLine") or {}).get("barcode"),
+                "sku": (it.get("orderLine") or {}).get("merchantSku") or (it.get("orderLine") or {}).get("sku"),
+                "price": (it.get("orderLine") or {}).get("price"),
+                "quantity": int((it.get("orderLine") or {}).get("quantity") or 1),
+            })
+    # Paket durumu: aksiyon bekleyen kalem varsa WaitingInAction öne alınır
+    status = "Created"
+    if flat:
+        status = sorted((x.get("status") or "Created" for x in flat), key=_claim_status_priority)[0]
+    cargo_arrived = status == "WaitingInAction" or any((x.get("status") == "WaitingInAction") for x in flat)
+    return {
+        "company_id": company_id,
+        "channel": channel,
+        "external_id": str(c.get("id")),
+        "order_number": str(c.get("orderNumber") or ""),
+        "customer_name": f"{c.get('customerFirstName', '')} {c.get('customerLastName', '')}".strip(),
+        "claim_date": _ms(c.get("claimDate")),
+        "last_modified": _ms(c.get("lastModifiedDate")),
+        "cargo_tracking_number": str(c.get("cargoTrackingNumber") or "") or None,
+        "cargo_provider": c.get("cargoProviderName"),
+        "items": flat,
+        "status": status,
+        "cargo_arrived": cargo_arrived,
+        "can_approve": cargo_arrived,
+        "can_reject": cargo_arrived,
+        "total": round(sum(float(x.get("price") or 0) * max(1, int(x.get("quantity") or 1)) for x in flat), 2),
+        "kind": "return",
+        "source": "marketplace_sync",
+        "raw_claim_id": c.get("id"),
+    }
 
 
 def map_trendyol_question(q: dict, company_id: str, channel: str) -> dict:
