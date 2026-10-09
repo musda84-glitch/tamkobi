@@ -94,8 +94,59 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
     }
   };
   const createCard = async (r) => {
-    try { const res = await axios.post(`${API_URL}/marketplace/product-create`, { company_id: companyId, product_name: r.title, barcode: r.barcode, sku: r.stock_code, sale_price: r.sale_price, stock_quantity: r.quantity, vat_rate: r.vat_rate || 20, category: r.category, channel }); toast.success(res.data.message); load(); }
-    catch (e) { toast.error(e.response?.data?.detail || "Stok kartı oluşturulamadı."); }
+    try {
+      const res = await axios.post(`${API_URL}/marketplace/product-create`, {
+        company_id: companyId,
+        product_name: r.title,
+        barcode: r.barcode,
+        sku: r.stock_code,
+        sale_price: r.sale_price,
+        stock_quantity: r.quantity,
+        vat_rate: r.vat_rate || 20,
+        category: r.category,
+        channel,
+        image: r.image || undefined,
+        image_url: r.image || undefined,
+      });
+      toast.success(res.data.message);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Stok kartı oluşturulamadı.");
+    }
+  };
+
+  const createUnmatchedCards = async () => {
+    const list = unmatchedRows;
+    if (!list.length) {
+      toast.info("Eşleşmeyen ürün yok.");
+      return;
+    }
+    if (!window.confirm(`${list.length} eşleşmeyen ürün için stok kartı açılsın mı? Entegrasyon görselleri de yüklenecek.`)) return;
+    setBusy(true);
+    try {
+      const res = await axios.post(`${API_URL}/marketplace/product-create-bulk`, {
+        company_id: companyId,
+        channel,
+        items: list.map((r) => ({
+          product_name: r.title,
+          barcode: r.barcode,
+          sku: r.stock_code,
+          sale_price: r.sale_price,
+          stock_quantity: r.quantity,
+          vat_rate: r.vat_rate || 20,
+          category: r.category,
+          image: r.image || undefined,
+          image_url: r.image || undefined,
+        })),
+      });
+      toast.success(res.data.message);
+      (res.data.errors || []).slice(0, 3).forEach((err) => toast.error(`${err.barcode || "?"}: ${err.detail}`));
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Toplu kart açılamadı.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const applyLocalSuggestions = () => {
@@ -175,6 +226,18 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
         >
           {suggestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
           Eşleşme öner
+          {unmatchedRows.length ? ` (${unmatchedRows.length})` : ""}
+        </button>
+        <button
+          type="button"
+          onClick={createUnmatchedCards}
+          disabled={busy || !unmatchedRows.length}
+          className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
+          title={`${ch.name} bilgileri ve görselleriyle eşleşmeyen tüm ürünlere stok kartı aç`}
+          data-testid="mp-bulk-create-btn"
+        >
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackagePlus className="w-3.5 h-3.5" />}
+          Eşleşmeyenlere Kart Aç
           {unmatchedRows.length ? ` (${unmatchedRows.length})` : ""}
         </button>
         <div className="flex items-center gap-1 border-l pl-2"><input type="number" min="0" value={bulkQty} onChange={(e) => setBulkQty(e.target.value)} placeholder="Toplu stok" className="w-24 bg-white border border-slate-200 rounded-lg p-1.5" data-testid="mp-bulk-qty" /><button onClick={applyBulkQty} className="px-2 py-1.5 border border-slate-200 bg-white rounded-lg font-semibold" data-testid="mp-bulk-apply">Tümüne Uygula</button></div>

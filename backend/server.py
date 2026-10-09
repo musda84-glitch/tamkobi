@@ -6349,22 +6349,23 @@ async def get_product(product_id: str):
     hist = (await _purchase_costs_by_product(product.get("company_id"), limit_each=12)).get(product_id) or []
     return _with_purchase_costs(product, hist)
 
-@api_router.post("/products/{product_id}/image")
-async def upload_product_image(product_id: str, file: UploadFile = File(...), variant_id: Optional[str] = Query(None)):
-    product = await db.products.find_one({"_id": product_id})
-    if not product:
-        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
-    content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
+async def _store_product_image_bytes(
+    product: dict,
+    data: bytes,
+    content_type: str,
+    filename: str = "image.jpg",
+    variant_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Optimize + put_object + ürün kaydına kapak/galeri görseli yaz."""
+    product_id = product["_id"]
     if content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF veya HEIC yükleyebilirsiniz.")
-    data = await file.read()
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Görsel boyutu en fazla 5 MB olabilir.")
-    opt = image_opt.optimize_product_upload(data, content_type, file.filename or "")
+    opt = image_opt.optimize_product_upload(data, content_type, filename or "")
     data, content_type, ext = opt.data, opt.content_type, opt.ext
     company_id = product.get("company_id") or "comp_nexus_main_01"
     await saas.check_storage_limit(company_id, len(data))
-    # Uzantı optimize sonucundan gelsin (WebP'ye çevrilmiş JPG .jpg yazılmasın)
     try:
         import storage_manager
         await storage_manager.ensure_account_folders(company_id)
@@ -6381,7 +6382,7 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
     await db.files.insert_one({
         "_id": str(uuid.uuid4()),
         "storage_path": result["path"],
-        "original_filename": file.filename,
+        "original_filename": filename,
         "content_type": content_type,
         "size": result.get("size", len(data)),
         "original_size": opt.original_size,
@@ -6395,7 +6396,7 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
     })
     image_url = f"/api/files/{result['path']}"
     thumbnail_url = None
-    thumb = image_opt.make_thumbnail(data, content_type, file.filename or "")
+    thumb = image_opt.make_thumbnail(data, content_type, filename or "")
     if thumb and thumb.data:
         try:
             try:
@@ -6407,7 +6408,7 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
             await db.files.insert_one({
                 "_id": str(uuid.uuid4()),
                 "storage_path": thumb_res["path"],
-                "original_filename": f"thumb_{file.filename or 'image'}.{thumb.ext}",
+                "original_filename": f"thumb_{filename or 'image'}.{thumb.ext}",
                 "content_type": thumb.content_type,
                 "size": thumb_res.get("size", len(thumb.data)),
                 "original_size": opt.original_size,
@@ -6446,6 +6447,63 @@ async def upload_product_image(product_id: str, file: UploadFile = File(...), va
     if thumbnail_url:
         out["thumbnail_url"] = thumbnail_url
     return out
+
+
+async def _attach_product_image_from_url(product_id: str, image_url: Optional[str]) -> Optional[str]:
+    """Pazaryeri/uzak URL'den görseli indirip stok kartına yükle. Hata olursa None (kart oluşturulmaya devam eder)."""
+    url = str(image_url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return None
+    product = await db.products.find_one({"_id": product_id})
+    if not product:
+        return None
+    try:
+        from urllib.parse import urlparse
+        async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as http:
+            r = await http.get(url)
+        if r.status_code >= 400 or not r.content:
+            logger.warning("marketplace image download failed product=%s status=%s", product_id, r.status_code)
+            return None
+        data = r.content
+        if len(data) > MAX_IMAGE_BYTES:
+            logger.warning("marketplace image too large product=%s bytes=%s", product_id, len(data))
+            return None
+        path_name = urlparse(url).path.rsplit("/", 1)[-1] or "marketplace.jpg"
+        fname = path_name.split("?")[0] or "marketplace.jpg"
+        ct = _sniff_upload_content_type(fname, r.headers.get("content-type"))
+        if ct not in ALLOWED_IMAGE_TYPES:
+            if data.startswith(b"\xff\xd8"):
+                ct, fname = "image/jpeg", "marketplace.jpg"
+            elif data.startswith(b"\x89PNG"):
+                ct, fname = "image/png", "marketplace.png"
+            elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+                ct, fname = "image/webp", "marketplace.webp"
+            elif data[:6] in (b"GIF87a", b"GIF89a"):
+                ct, fname = "image/gif", "marketplace.gif"
+            else:
+                logger.warning("marketplace image type unsupported product=%s ct=%s", product_id, ct)
+                return None
+        out = await _store_product_image_bytes(product, data, ct, fname)
+        return out.get("image_url")
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.warning("marketplace image attach skipped product=%s: %s", product_id, e)
+        return None
+
+
+@api_router.post("/products/{product_id}/image")
+async def upload_product_image(product_id: str, file: UploadFile = File(...), variant_id: Optional[str] = Query(None)):
+    product = await db.products.find_one({"_id": product_id})
+    if not product:
+        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    content_type = _sniff_upload_content_type(file.filename or "", file.content_type)
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="Sadece JPG, PNG, WEBP, GIF veya HEIC yükleyebilirsiniz.")
+    data = await file.read()
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Görsel boyutu en fazla 5 MB olabilir.")
+    return await _store_product_image_bytes(product, data, content_type, file.filename or "image.jpg", variant_id)
 
 @api_router.put("/products/{product_id}/images")
 async def update_product_images(product_id: str, req: Dict[str, Any]):
@@ -13356,7 +13414,109 @@ async def create_product_from_marketplace(req: Dict[str, Any]):
     await db.products.insert_one(doc)
     await _remember_category(company_id, doc["category"])
     await _remember_unit(company_id, doc.get("unit"))
-    return {"status": "success", "product": clean_doc(doc), "message": f"'{name}' stok kartı oluşturuldu ve pazaryeri ürünüyle eşleştirildi. Alış fiyatını girmeyi unutmayın."}
+    image_src = req.get("image_url") or req.get("image")
+    stored_image = None
+    if image_src:
+        try:
+            stored_image = await _attach_product_image_from_url(doc["_id"], image_src)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("product-create image attach skipped: %s", e)
+            stored_image = None
+    if stored_image:
+        updated = await db.products.find_one({"_id": doc["_id"]})
+        if updated:
+            doc = updated
+    msg = f"'{name}' stok kartı oluşturuldu ve pazaryeri ürünüyle eşleştirildi. Alış fiyatını girmeyi unutmayın."
+    if stored_image:
+        msg = f"'{name}' stok kartı oluşturuldu (görsel yüklendi) ve pazaryeri ürünüyle eşleştirildi. Alış fiyatını girmeyi unutmayın."
+    return {"status": "success", "product": clean_doc(doc), "image_url": stored_image, "message": msg}
+
+
+@api_router.post("/marketplace/product-create-bulk")
+async def create_products_from_marketplace_bulk(req: Dict[str, Any]):
+    """Eşleşmeyen pazaryeri ürünlerine toplu stok kartı aç; entegrasyon görsellerini de yükler."""
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    channel = str(req.get("channel") or "trendyol").strip().lower()
+    items = list(req.get("items") or [])
+    if not items:
+        cache = await db.marketplace_product_cache.find_one({"company_id": company_id, "channel": channel}) or {}
+        cache_items = list(cache.get("items") or [])
+        products = await db.products.find({"company_id": company_id}).to_list(5000)
+        idx: Dict[str, dict] = {}
+        for p in products:
+            for key in [p.get("barcode"), p.get("sku"), *(p.get("marketplace_aliases") or [])] + [v.get("barcode") for v in (p.get("variants") or []) if v.get("barcode")]:
+                if key:
+                    idx[str(key).strip().lower()] = p
+        for it in cache_items:
+            bc = str(it.get("barcode") or "").strip()
+            sc = str(it.get("stock_code") or "").strip()
+            if not bc and not sc:
+                continue
+            matched = (idx.get(bc.lower()) if bc else None) or (idx.get(sc.lower()) if sc else None)
+            if matched:
+                continue
+            items.append({
+                "product_name": it.get("title"),
+                "barcode": bc,
+                "sku": sc,
+                "sale_price": it.get("sale_price"),
+                "stock_quantity": it.get("quantity"),
+                "vat_rate": it.get("vat_rate") or 20,
+                "category": it.get("category"),
+                "image": it.get("image"),
+                "image_url": it.get("image"),
+            })
+    if not items:
+        return {"status": "success", "created": 0, "skipped": 0, "errors": [], "with_image": 0, "message": "Eşleşmeyen ürün yok."}
+    created: List[dict] = []
+    skipped: List[dict] = []
+    errors: List[dict] = []
+    with_image = 0
+    for it in items:
+        payload = {
+            "company_id": company_id,
+            "channel": channel,
+            "product_name": it.get("product_name") or it.get("title"),
+            "barcode": it.get("barcode"),
+            "sku": it.get("sku") or it.get("stock_code"),
+            "sale_price": it.get("sale_price"),
+            "stock_quantity": it.get("stock_quantity") if it.get("stock_quantity") is not None else it.get("quantity"),
+            "vat_rate": it.get("vat_rate") or 20,
+            "category": it.get("category"),
+            "image": it.get("image") or it.get("image_url"),
+            "image_url": it.get("image_url") or it.get("image"),
+        }
+        try:
+            out = await create_product_from_marketplace(payload)
+            prod = out.get("product") or {}
+            created.append({"barcode": payload.get("barcode"), "product_id": prod.get("id") or prod.get("_id"), "image_url": out.get("image_url")})
+            if out.get("image_url"):
+                with_image += 1
+        except HTTPException as e:
+            detail = e.detail if isinstance(e.detail, str) else str(e.detail)
+            if e.status_code == 400 and ("zaten var" in detail.lower() or "gerekli" in detail.lower()):
+                skipped.append({"barcode": payload.get("barcode"), "detail": detail})
+            else:
+                errors.append({"barcode": payload.get("barcode"), "detail": detail})
+        except Exception as e:  # noqa: BLE001
+            errors.append({"barcode": payload.get("barcode"), "detail": str(e)})
+    parts = [f"{len(created)} stok kartı açıldı"]
+    if with_image:
+        parts.append(f"{with_image} görsel yüklendi")
+    if skipped:
+        parts.append(f"{len(skipped)} atlandı")
+    if errors:
+        parts.append(f"{len(errors)} hata")
+    return {
+        "status": "success" if created or not errors else "error",
+        "created": len(created),
+        "with_image": with_image,
+        "skipped": len(skipped),
+        "errors": errors[:20],
+        "skipped_items": skipped[:20],
+        "products": created,
+        "message": ", ".join(parts) + ".",
+    }
 
 @api_router.post("/marketplace/product-match")
 async def match_marketplace_product(req: Dict[str, Any]):
