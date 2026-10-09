@@ -34,14 +34,14 @@ def should_reverse_settlement_on_status(status: Optional[str] = None) -> bool:
 
 
 def is_marketplace_settlement_tx(tx: Optional[Dict[str, Any]] = None) -> bool:
-    """Hakediş tahsilatı veya pazaryeri kesinti ledger satırı mı?"""
+    """Hakediş tahsilatı, cari mahsup veya pazaryeri kesinti ledger satırı mı?"""
     if not tx:
         return False
     src = (tx.get("source") or "").strip().lower()
     cat = (tx.get("category") or "").strip()
     if src == "marketplace_settlement":
         return True
-    if cat == "Pazaryeri Hakedişi":
+    if cat in ("Pazaryeri Hakedişi", "Pazaryeri Mahsup", "Pazaryeri Tahsilat"):
         return True
     if src == "ledger" and cat == "Pazaryeri Kesintisi":
         return True

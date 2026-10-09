@@ -7282,7 +7282,31 @@ async def approve_invoice(invoice_id: str):
     await db.invoices.update_one({"_id": invoice_id}, {"$set": {"status": "approved", "effects_applied": True, "gib_status": inv.get("gib_status") if inv.get("gib_status") not in (None, "Taslak") else ("Kağıt Fatura (Matbu)" if inv.get("e_type") == "paper" else "Onaylandı"), "approved_at": datetime.now(timezone.utc).isoformat()}})
     inv = await db.invoices.find_one({"_id": invoice_id}) or inv
     await _mark_order_invoiced_from_invoice(inv)
-    return {"status": "success", "message": "Fatura onaylandı; cari bakiyesi ve stok işlendi.", "invoice_id": invoice_id, "order_id": inv.get("order_id")}
+    settlement = None
+    if inv.get("order_id"):
+        order = await db.orders.find_one({"_id": inv["order_id"]})
+        if order:
+            contact = None
+            if inv.get("contact_id"):
+                contact = await db.contacts.find_one({"_id": inv["contact_id"]})
+            if not contact:
+                contact = await _ensure_order_contact(order)
+            try:
+                settlement = await _post_marketplace_settlement(order, inv, contact or {})
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Pazaryeri hakediş yazılamadı (approve): %s", order.get("order_number")
+                )
+    msg = "Fatura onaylandı; cari bakiyesi ve stok işlendi."
+    if settlement:
+        msg += f" · {settlement['net']:,.2f} ₺ net hakediş {settlement['account_name']} hesabına işlendi."
+    return {
+        "status": "success",
+        "message": msg,
+        "invoice_id": invoice_id,
+        "order_id": inv.get("order_id"),
+        "settlement": settlement,
+    }
 
 
 async def _mark_order_invoiced_from_invoice(inv: dict) -> None:
@@ -12596,7 +12620,7 @@ async def _ensure_marketplace_contact(company_id: str, channel: str) -> Optional
     return c
 
 async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict) -> Optional[dict]:
-    """Kanal için hakediş hesabı seçiliyse: net tutar hesaba tahsilat, kesinti pazaryeri carisine ve 'Pazaryeri Komisyonu' masrafına."""
+    """Kanal için hakediş hesabı seçiliyse: net tutar hesaba tahsilat, müşteri carisine ödeme, kesinti pazaryeri carisine."""
     channel = (order.get("channel") or "").lower()
     if channel in ("", "b2b", "manual", "saha"):
         return None
@@ -12613,13 +12637,77 @@ async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict
     p = _order_profit(order, _channel_fees(cfg, channel), {})
     deductions = round(p["commission"] + p["commission_vat"] + p["service_fee"] + p["cargo_fee"], 2)
     net = round(p["revenue"] - deductions, 2)
+    try:
+        inv_total = round(float(invoice.get("grand_total") or p["revenue"] or 0), 2)
+    except (TypeError, ValueError):
+        inv_total = round(float(p["revenue"] or 0), 2)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     now = datetime.now(timezone.utc).isoformat()
-    tx = {"_id": str(uuid.uuid4()), "company_id": order["company_id"], "account_id": acc["_id"], "account_name": acc.get("account_name"), "type": "inflow", "category": "Pazaryeri Hakedişi",
-          "amount": net, "currency": acc.get("currency", "TRY"), "description": f"{channel.title()} {order.get('order_number')} hakediş (brüt {p['revenue']:,.2f} − kesinti {deductions:,.2f})", "contact_id": None,
-          "contact_name": contact.get("name"), "related_invoice_id": invoice["_id"], "order_id": order["_id"], "channel": channel, "source": "marketplace_settlement", "is_simulated": False, "date": today, "created_at": now}
+    cust_id = (contact or {}).get("_id") or order.get("contact_id") or invoice.get("contact_id")
+    cust_name = (contact or {}).get("name") or order.get("customer_name") or invoice.get("contact_name")
+    tx = {
+        "_id": str(uuid.uuid4()),
+        "company_id": order["company_id"],
+        "account_id": acc["_id"],
+        "account_name": acc.get("account_name"),
+        "type": "inflow",
+        "category": "Pazaryeri Hakedişi",
+        "amount": net,
+        "currency": acc.get("currency", "TRY"),
+        "description": (
+            f"{channel.title()} {order.get('order_number')} hakediş "
+            f"(brüt {p['revenue']:,.2f} − kesinti {deductions:,.2f})"
+        ),
+        "contact_id": cust_id,
+        "contact_name": cust_name,
+        "related_invoice_id": invoice["_id"],
+        "order_id": order["_id"],
+        "channel": channel,
+        "source": "marketplace_settlement",
+        "is_simulated": False,
+        "date": today,
+        "created_at": now,
+    }
     await db.bank_transactions.insert_one(tx)
     await db.bank_accounts.update_one({"_id": acc["_id"]}, {"$inc": {"current_balance": net}})
+    # Net tahsilat → müşteri carisi (fatura alacağının net kısmı)
+    if cust_id and abs(net) > 0.005:
+        await db.contacts.update_one({"_id": cust_id}, {"$inc": {"balance": -net}})
+    # Kesinti kadar ek mahsup (bankaya gelmez; fatura alacağı tamamen kapanır)
+    mahsup_id = None
+    residual = round(inv_total - net, 2)
+    if cust_id and residual > 0.005:
+        mahsup = {
+            "_id": str(uuid.uuid4()),
+            "company_id": order["company_id"],
+            "account_id": None,
+            "account_name": acc.get("account_name") or "Pazaryeri Mahsup",
+            "type": "inflow",
+            "category": "Pazaryeri Mahsup",
+            "amount": residual,
+            "currency": "TRY",
+            "description": (
+                f"{channel.title()} {order.get('order_number')} kesinti mahsup "
+                f"{residual:,.2f} ₺ (cari ödeme)"
+            ),
+            "contact_id": cust_id,
+            "contact_name": cust_name,
+            "related_invoice_id": invoice["_id"],
+            "order_id": order["_id"],
+            "channel": channel,
+            "source": "marketplace_settlement",
+            "is_simulated": False,
+            "date": today,
+            "created_at": now,
+        }
+        await db.bank_transactions.insert_one(mahsup)
+        await db.contacts.update_one({"_id": cust_id}, {"$inc": {"balance": -residual}})
+        mahsup_id = mahsup["_id"]
+    # Fatura ödendi
+    await db.invoices.update_one(
+        {"_id": invoice["_id"]},
+        {"$set": {"payment_status": "paid", "paid_amount": inv_total}},
+    )
     exp = None
     mp = await _ensure_marketplace_contact(order["company_id"], channel) if deductions > 0 else None
     if deductions > 0:
@@ -12653,8 +12741,32 @@ async def _post_marketplace_settlement(order: dict, invoice: dict, contact: dict
             }
             await db.bank_transactions.insert_one(kesinti_tx)
             await db.contacts.update_one({"_id": mp["_id"]}, {"$inc": {"balance": deductions}})
-    await db.orders.update_one({"_id": order["_id"]}, {"$set": {"settlement": {"account_id": acc["_id"], "account_name": acc.get("account_name"), "gross": p["revenue"], "deductions": deductions, "net": net, "tx_id": tx["_id"], "expense_id": exp["_id"] if exp else None, "marketplace_contact_id": mp["_id"] if mp else None, "date": today}}})
-    return {"account_name": acc.get("account_name"), "gross": p["revenue"], "deductions": deductions, "net": net, "marketplace_contact_id": mp["_id"] if mp else None}
+    await db.orders.update_one(
+        {"_id": order["_id"]},
+        {"$set": {
+            "settlement": {
+                "account_id": acc["_id"],
+                "account_name": acc.get("account_name"),
+                "gross": p["revenue"],
+                "deductions": deductions,
+                "net": net,
+                "tx_id": tx["_id"],
+                "mahsup_tx_id": mahsup_id,
+                "expense_id": exp["_id"] if exp else None,
+                "marketplace_contact_id": mp["_id"] if mp else None,
+                "customer_contact_id": cust_id,
+                "date": today,
+            }
+        }},
+    )
+    return {
+        "account_name": acc.get("account_name"),
+        "gross": p["revenue"],
+        "deductions": deductions,
+        "net": net,
+        "marketplace_contact_id": mp["_id"] if mp else None,
+        "customer_contact_id": cust_id,
+    }
 
 
 async def _reverse_marketplace_settlement(order: dict) -> Optional[dict]:
@@ -12669,7 +12781,7 @@ async def _reverse_marketplace_settlement(order: dict) -> Optional[dict]:
     settlement = order.get("settlement") or {}
     txs = await db.bank_transactions.find({"order_id": oid}).to_list(100)
     by_id = {t["_id"]: t for t in txs if is_marketplace_settlement_tx(t)}
-    for extra_id in (settlement.get("tx_id"),):
+    for extra_id in (settlement.get("tx_id"), settlement.get("mahsup_tx_id")):
         if extra_id and extra_id not in by_id:
             extra = await db.bank_transactions.find_one({"_id": extra_id})
             if extra and is_marketplace_settlement_tx(extra):
@@ -14632,6 +14744,7 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
         "gib_tracking_id": f"EAR-{uuid.uuid4().hex[:8].upper()}",
         "payment_status": "paid",
         "paid_amount": inv_totals["grand_total"],
+        "effects_applied": True,
         "notes": f"Sipariş No: {order.get('order_number')} üzerinden otomatik faturaya dönüştürüldü.",
         "source_channel": order.get("channel", "b2b"),
         "order_id": order_id,
@@ -14646,6 +14759,10 @@ async def convert_order_to_invoice(order_id: str, req: Dict[str, Any] = None):
         await db.invoices.replace_one({"_id": inv_id}, new_invoice)
     else:
         await db.invoices.insert_one(new_invoice)
+
+    # Cari alacak + stok: hakediş ödemesinden önce yazılır (net/mahsup bakiyeyi sıfırlar).
+    if not (draft_inv and draft_inv.get("effects_applied")):
+        await _apply_invoice_effects(new_invoice)
 
     await db.orders.update_one(
         {"_id": order_id},
