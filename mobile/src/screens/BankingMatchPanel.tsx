@@ -10,13 +10,13 @@ import { Badge, Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, 
 import { colors } from "../theme";
 import type { Contact, Invoice } from "../types";
 import {
-  MATCH_MODES,
   canSubmitMatch,
   connStatusTone,
   connStatusTr,
   contactSelectGroups,
   emptyMatchDraft,
   invoiceSelectGroups,
+  matchModesForTx,
   matchPayload,
   matchResultLabel,
   matchTargets,
@@ -387,7 +387,7 @@ export function BankingMatchPanel({
           <View>
             {active.suggested_contact_name ? <Muted>Öneri: {active.suggested_contact_name}</Muted> : null}
             <Row style={{ flexWrap: "wrap" }}>
-              {MATCH_MODES.map((m) => (
+              {matchModesForTx(active).map((m) => (
                 <Chip
                   key={m.key}
                   label={m.label}
@@ -397,14 +397,14 @@ export function BankingMatchPanel({
                 />
               ))}
             </Row>
-            {draft.mode === "contact" || draft.mode === "invoice" ? (
+            {draft.mode === "contact" || draft.mode === "invoice" || draft.mode === "expense" ? (
               <GroupedSelect
-                label="Cari"
+                label={draft.mode === "expense" ? "Cari (ops.)" : "Cari"}
                 testID={`match-contact-select-${idOf(active)}`}
                 value={draft.contact_id}
                 onChange={(v) => setDraft({ ...draft, contact_id: v, invoice_id: "" })}
                 groups={contactSelectGroups(contacts, active.suggested_contact_id)}
-                emptyLabel={draft.mode === "contact" ? "Cari seçin (boş = sadece onayla)" : "Cari seçin"}
+                emptyLabel={draft.mode === "expense" ? "Cari yok" : draft.mode === "contact" ? "Cari seçin (boş = sadece onayla)" : "Cari seçin"}
               />
             ) : null}
             {draft.mode === "invoice" ? (
@@ -428,11 +428,11 @@ export function BankingMatchPanel({
               />
             ) : null}
             <Field
-              label={draft.mode === "category" ? "Kategori (zorunlu)" : "Kategori (ops.)"}
-              testID={`match-category-${idOf(active)}`}
+              label={draft.mode === "expense" ? "Masraf kategorisi (zorunlu)" : draft.mode === "category" ? "Kategori (zorunlu)" : "Kategori (ops.)"}
+              testID={draft.mode === "expense" ? `match-expense-cat-${idOf(active)}` : `match-category-${idOf(active)}`}
               value={draft.category}
               onChangeText={(v) => setDraft({ ...draft, category: v })}
-              placeholder={draft.mode === "category" ? "Kategori" : "Kategori (ops.)"}
+              placeholder={draft.mode === "expense" ? "Örn. Yakıt, Kira" : draft.mode === "category" ? "Kategori" : "Kategori (ops.)"}
             />
             <Chip
               label={draft.learn ? "Öğren: açık" : "Öğren: kapalı"}

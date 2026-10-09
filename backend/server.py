@@ -9927,13 +9927,18 @@ async def _optional_actor(request: Optional[Request] = None):
         return None
 
 
-async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None) -> dict:
+async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None, as_expense: bool = False) -> dict:
     from bank_auto_match import match_actor_fields
     update = {"match_status": "matched", "matched_via": via, "matched_at": datetime.now(timezone.utc).isoformat(), **match_actor_fields(actor)}
     if category:
         update["category"] = category
     amount = tx.get("amount", 0)
     is_inflow = tx.get("type") == "inflow"
+    if as_expense:
+        if is_inflow:
+            raise HTTPException(status_code=400, detail="Masraf eşleştirmesi yalnızca çıkış (ödeme) hareketlerinde yapılabilir.")
+        if invoice_id or target_account_id:
+            raise HTTPException(status_code=400, detail="Masraf eşleştirmesinde fatura veya virman hedefi seçilemez.")
     if invoice_id:
         inv = await db.invoices.find_one({"_id": invoice_id})
         if not inv:
@@ -9953,6 +9958,25 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
         contact_name = contact.get("name")
         update["contact_id"] = contact_id
         update["contact_name"] = contact_name
+    if as_expense:
+        cat = (category or "").strip() or "Diğer"
+        exp = await expenses.record_card_spend(
+            tx["company_id"],
+            date=tx.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            category=cat,
+            description=(tx.get("description") or "Banka masrafı")[:200],
+            amount=amount,
+            account_id=tx.get("account_id"),
+            account_name=tx.get("account_name"),
+            contact_id=contact_id,
+            contact_name=contact_name,
+            bank_tx_id=tx.get("_id"),
+            source="bank_match",
+        )
+        if exp:
+            update["expense_id"] = exp.get("id")
+            update["category"] = f"Masraf: {cat}"
+            category = cat
     target_name = None
     if target_account_id:
         if target_account_id == tx.get("account_id"):
@@ -10013,9 +10037,15 @@ async def _unmatch(tx: dict) -> dict:
             if counter:
                 await db.bank_accounts.update_one({"_id": counter["account_id"]}, {"$inc": {"current_balance": -amount if counter.get("type") == "inflow" else amount}})
                 await db.bank_transactions.delete_one({"_id": counter["_id"]})
+    # Eşleştirmeden oluşan masrafı kaldır (banka bakiyesine tekrar dokunma)
+    eid = tx.get("expense_id")
+    if eid:
+        exp = await db.expenses.find_one({"_id": eid})
+        if exp and (exp.get("source") == "bank_match" or exp.get("bank_transaction_id") == tx.get("_id")):
+            await db.expenses.delete_one({"_id": eid})
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {
         "$set": {"match_status": "unmatched", "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme"},
-        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": ""}})
+        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": ""}})
     return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
 
 async def _prior_match_from_history(company_id: str, description: str, skip_id: Optional[str] = None):
@@ -10193,7 +10223,16 @@ async def match_bank_transaction(request: Request, tx_id: str, req: Dict[str, An
     if tx.get("match_status") == "matched":
         raise HTTPException(status_code=400, detail="Bu hareket zaten eşleştirilmiş.")
     actor = await _optional_actor(request)
-    return await _apply_match(tx, req.get("contact_id") or None, req.get("invoice_id") or None, req.get("category") or None, learn=bool(req.get("learn", True)), target_account_id=req.get("target_account_id") or None, actor=actor)
+    return await _apply_match(
+        tx,
+        req.get("contact_id") or None,
+        req.get("invoice_id") or None,
+        req.get("category") or None,
+        learn=bool(req.get("learn", True)),
+        target_account_id=req.get("target_account_id") or None,
+        actor=actor,
+        as_expense=bool(req.get("as_expense")),
+    )
 
 @api_router.post("/banking/transactions/{tx_id}/unmatch")
 async def unmatch_bank_transaction(tx_id: str):

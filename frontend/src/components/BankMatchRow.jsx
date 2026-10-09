@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Loader2, Sparkles } from "lucide-react";
@@ -9,17 +9,32 @@ import { SearchSelect } from "./SearchSelect";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const sel = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
-const MODES = [["contact", "Cari"], ["invoice", "Cari + Fatura"], ["transfer", "Kasa / Hesap (Virman)"], ["category", "Sadece Kategori"]];
+const MODES_BASE = [
+  ["contact", "Cari"],
+  ["invoice", "Cari + Fatura"],
+  ["transfer", "Kasa / Hesap (Virman)"],
+  ["category", "Sadece Kategori"],
+];
+const MODE_EXPENSE = ["expense", "Masraf"];
 
 export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDone }) => {
+  const isIn = tx.type === "inflow";
+  const modes = useMemo(() => (isIn ? MODES_BASE : [...MODES_BASE, MODE_EXPENSE]), [isIn]);
   const [mode, setMode] = useState(tx.suggested_contact_id ? "contact" : "contact");
   const [contactId, setContactId] = useState(tx.suggested_contact_id || "");
   const [invoiceId, setInvoiceId] = useState("");
   const [targetId, setTargetId] = useState(tx.suggested_target_account_id || "");
   const [category, setCategory] = useState("");
+  const [expenseCats, setExpenseCats] = useState([]);
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
-  const isIn = tx.type === "inflow";
+
+  useEffect(() => {
+    if (mode !== "expense" || !companyId) return;
+    axios.get(`${API_URL}/expenses/categories`, { params: { company_id: companyId } })
+      .then((r) => setExpenseCats((r.data || []).map((c) => c.name || c).filter(Boolean)))
+      .catch(() => setExpenseCats([]));
+  }, [mode, companyId]);
 
   const openInvoices = useMemo(() => (invoices || [])
     .filter((i) => i.contact_id === contactId && i.payment_status !== "paid" && i.status !== "draft" && i.invoice_type === (isIn ? "sales" : "purchase"))
@@ -34,13 +49,26 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
     const hit = (contacts || []).find((c) => (c.id || c._id) === contactId);
     return hit ? contactLabel(hit) : (tx.suggested_contact_name || "");
   })();
-  const canSubmit = mode === "category" ? !!category.trim() : mode === "transfer" ? !!targetId : mode === "invoice" ? !!invoiceId : true;
+  const canSubmit = mode === "category" || mode === "expense"
+    ? !!category.trim()
+    : mode === "transfer" ? !!targetId
+    : mode === "invoice" ? !!invoiceId
+    : true;
   const submit = async () => {
     setBusy(true);
     try {
-      const body = { learn, category: category || null, contact_id: mode === "contact" || mode === "invoice" ? contactId || null : null, invoice_id: mode === "invoice" ? invoiceId : null, target_account_id: mode === "transfer" ? targetId : null };
+      const body = {
+        learn,
+        category: category || null,
+        contact_id: mode === "contact" || mode === "invoice" || mode === "expense" ? contactId || null : null,
+        invoice_id: mode === "invoice" ? invoiceId : null,
+        target_account_id: mode === "transfer" ? targetId : null,
+        as_expense: mode === "expense",
+      };
       await axios.post(`${API_URL}/banking/transactions/${tx.id}/match`, body);
-      toast.success(learn ? "Eşleştirildi ve kural olarak öğrenildi." : "Eşleştirildi.");
+      toast.success(mode === "expense"
+        ? (learn ? "Masraf kaydedildi ve kural olarak öğrenildi." : "Masraf kaydedildi.")
+        : (learn ? "Eşleştirildi ve kural olarak öğrenildi." : "Eşleştirildi."));
       onDone?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Eşleştirilemedi."); } finally { setBusy(false); }
   };
@@ -53,8 +81,8 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
       <td className={`px-4 py-2 text-right font-bold whitespace-nowrap ${isIn ? "text-emerald-600" : "text-rose-600"}`}>{isIn ? "+" : "-"}{fmt(tx.amount)} ₺</td>
       <td className="px-4 py-2">
         <div className="flex flex-wrap gap-1.5 items-center">
-          <select value={mode} onChange={(e) => setMode(e.target.value)} className={sel} data-testid={`match-mode-${tx.id}`}>{MODES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-          {(mode === "contact" || mode === "invoice") && (
+          <select value={mode} onChange={(e) => setMode(e.target.value)} className={sel} data-testid={`match-mode-${tx.id}`}>{modes.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+          {(mode === "contact" || mode === "invoice" || mode === "expense") && (
             <SearchSelect
               value={contactId}
               onChange={(id) => { setContactId(id || ""); setInvoiceId(""); }}
@@ -62,9 +90,9 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
               getLabel={contactLabel}
               getSub={(c) => c.tax_number_or_id || c.phone || ""}
               valueLabel={selectedContactName}
-              placeholder={mode === "contact" ? "Cari seçin (boş = onayla)" : "Cari ara…"}
+              placeholder={mode === "expense" ? "Cari (ops.)" : mode === "contact" ? "Cari seçin (boş = onayla)" : "Cari ara…"}
               searchPlaceholder="Cari adı ara…"
-              clearable={mode === "contact"}
+              clearable={mode === "contact" || mode === "expense"}
               className="w-44"
               testId={`match-contact-select-${tx.id}`}
             />
@@ -96,7 +124,19 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
               className="w-56"
             />
           )}
-          <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder={mode === "category" ? "Kategori (zorunlu)" : "Kategori (ops.)"} className={`${sel} w-36`} data-testid={`match-category-${tx.id}`} />
+          {mode === "expense" ? (
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className={`${sel} w-40`}
+              data-testid={`match-expense-cat-${tx.id}`}
+            >
+              <option value="">Masraf kategorisi…</option>
+              {expenseCats.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          ) : (
+            <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder={mode === "category" ? "Kategori (zorunlu)" : "Kategori (ops.)"} className={`${sel} w-36`} data-testid={`match-category-${tx.id}`} />
+          )}
           <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" title="Bu açıklama tekrar gelirse aynı işlemi otomatik yap"><input type="checkbox" checked={learn} onChange={(e) => setLearn(e.target.checked)} data-testid={`match-learn-${tx.id}`} /> Öğren</label>
         </div>
       </td>

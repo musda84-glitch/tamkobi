@@ -262,5 +262,6 @@ def test_insert_bank_masraf_uses_bank_statement_source():
 def test_expense_from_statement_helper():
     assert expenses._from_statement({"source": "bank_statement"}) is True
     assert expenses._from_statement({"source": "card_statement"}) is True
+    assert expenses._from_statement({"source": "bank_match"}) is True
     assert expenses._from_statement({"source": "manual"}) is False
     assert expenses._from_statement({}) is False
