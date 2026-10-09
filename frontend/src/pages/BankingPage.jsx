@@ -467,14 +467,12 @@ export default function BankingPage() {
             <div className="pt-3 border-t border-amber-200/60">
               {(() => {
                 const n = Number(partnerSummary.total_balance) || 0;
-                const label = n > 0 ? "Cebindeki para" : n < 0 ? "Eksi yazı" : "Cebindeki para";
-                const hint = n > 0 ? "Ortaklara yazılan / çekilebilir tutar" : n < 0 ? "Ortaklar fazla çekmiş" : "Giriş ve çıkış denk";
+                const label = n > 0 ? "Alacaklı" : n < 0 ? "Borçlu" : "Denk";
                 const cls = n > 0 ? "text-amber-800" : n < 0 ? "text-rose-700" : "text-slate-900";
                 return (
                   <>
                     <div className="text-[10px] text-slate-400 uppercase font-semibold">{label}</div>
                     <div className={`text-xl font-bold tracking-tight ${cls}`}>{formatTrAmount(Math.abs(n))} ₺</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">{hint}</div>
                   </>
                 );
               })()}

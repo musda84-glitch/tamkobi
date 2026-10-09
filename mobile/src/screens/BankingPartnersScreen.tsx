@@ -222,7 +222,7 @@ export function BankingPartnersPanel({
         <StatRows
           testID="partners-summary"
           items={[
-            { key: "balance", label: "Cebindeki para", value: fmtMoney(summary.total_balance) },
+            { key: "balance", label: Number(summary.total_balance) > 0 ? "Alacaklı" : Number(summary.total_balance) < 0 ? "Borçlu" : "Denk", value: fmtMoney(Math.abs(Number(summary.total_balance) || 0)) },
             { key: "capital", label: "Giriş", value: fmtMoney(summary.total_capital_in) },
             { key: "withdrawn", label: "Çıkış", value: fmtMoney(summary.total_withdrawn) },
           ]}
