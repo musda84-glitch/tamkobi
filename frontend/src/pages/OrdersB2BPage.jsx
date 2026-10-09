@@ -625,27 +625,38 @@ export default function OrdersB2BPage() {
   const [b2bCustomer, setB2bCustomer] = useState("");
 
   // Yalnızca yerel DB listesi — pazaryeri sync-now YOK (nav tık / F5 / mount).
+  // Siparişler önce boyansın; ürün/cari kataloğu tabloyu bloklamasın.
+  const loadCatalog = useCallback(async (cid) => {
+    try {
+      const [prodRes, cntRes] = await Promise.all([
+        axios.get(`${API_URL}/products?company_id=${cid}&lite=1`),
+        axios.get(`${API_URL}/contacts?company_id=${cid}&type=customer&lite=1`),
+      ]);
+      setProducts(Array.isArray(prodRes.data) ? prodRes.data : []);
+      setAllProducts(Array.isArray(prodRes.data) ? prodRes.data : []);
+      const cnt = Array.isArray(cntRes.data) ? cntRes.data : [];
+      setContacts(cnt);
+      if (cnt.length > 0) setB2bCustomer((prev) => prev || cnt[0].id || cnt[0]._id);
+    } catch {
+      /* katalog isteğe bağlı — üret/eşle sonra gelir */
+    }
+  }, []);
+
   const loadData = useCallback(async ({ silent = false } = {}) => {
     const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
     try {
       if (!silent) setLoading(true);
-      // lite=1: liste için kimlik/görsel alanları — çift products isteği yok
-      const [ordRes, prodRes, cntRes] = await Promise.all([
-        axios.get(`${API_URL}/orders?company_id=${cid}`),
-        axios.get(`${API_URL}/products?company_id=${cid}&lite=1`),
-        axios.get(`${API_URL}/contacts?company_id=${cid}&type=customer&lite=1`),
-      ]);
-      setOrders(ordRes.data);
-      setProducts(prodRes.data);
-      setAllProducts(prodRes.data);
-      setContacts(cntRes.data);
-      if (cntRes.data.length > 0) setB2bCustomer(cntRes.data[0].id || cntRes.data[0]._id);
+      // Aktif B2B sepet varsayılan API’de yok (include_active_cart=0)
+      const ordRes = await axios.get(`${API_URL}/orders?company_id=${cid}`);
+      setOrders(Array.isArray(ordRes.data) ? ordRes.data : []);
+      if (!silent) setLoading(false);
+      // Ürün + cari: tablo boyandıktan sonra (Üretim / e-belge menüsü)
+      void loadCatalog(cid);
     } catch (err) {
       toast.error("Sipariş verileri yüklenemedi.");
-    } finally {
       if (!silent) setLoading(false);
     }
-  }, [activeCompany]);
+  }, [activeCompany, loadCatalog]);
   useEffect(() => { loadData(); }, [loadData]);
 
   /**

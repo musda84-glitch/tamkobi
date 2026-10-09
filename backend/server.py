@@ -14231,11 +14231,36 @@ async def list_cargo_shipments(company_id: Optional[str] = "comp_nexus_main_01")
     return clean_docs(shipments)
 
 # ----------------- SİPARİŞLER & B2B PORTALI -----------------
+def _orders_list_active_cart_nor() -> Dict[str, Any]:
+    """Panel listesinde B2B aktif sepet satırlarını Mongo tarafında ele."""
+    return {
+        "$nor": [
+            {"order_status": "active_cart"},
+            {"is_active_cart": True},
+            {"source": "b2b_active_cart"},
+        ]
+    }
+
+
 @api_router.get("/orders")
-async def list_orders(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
-    query = {"company_id": company_id}
+async def list_orders(
+    company_id: Optional[str] = "comp_nexus_main_01",
+    status: Optional[str] = None,
+    include_active_cart: bool = False,
+):
+    """Sipariş listesi.
+
+    Varsayılan: B2B *aktif sepet* satırları hariç (portal taslakları listeyi şişirir).
+    `include_active_cart=1` ile eski davranış. Bekleyen sepet (held_cart) gelir.
+    """
+    query: Dict[str, Any] = {"company_id": company_id}
     if status and status != "all":
         query["order_status"] = status
+        # Açık status=active_cart istenirse include bayrağına bakmadan getir
+        if status != "active_cart" and not include_active_cart:
+            query.update(_orders_list_active_cart_nor())
+    elif not include_active_cart:
+        query.update(_orders_list_active_cart_nor())
     orders = await db.orders.find(query).sort("order_date", -1).to_list(500)
     docs = clean_docs(orders)
     deduped = dedupe_orders_by_marketplace_key(docs)
@@ -14244,12 +14269,16 @@ async def list_orders(company_id: Optional[str] = "comp_nexus_main_01", status: 
         drop_ids = [str(o.get("id") or o.get("_id") or "") for o in docs if str(o.get("id") or o.get("_id") or "") not in keep_ids]
         drop_ids = [i for i in drop_ids if i]
         if drop_ids:
-            await db.orders.delete_many({"_id": {"$in": drop_ids}})
+            # Liste yanıtını bloklamadan arka planda temizle
+            try:
+                asyncio.create_task(db.orders.delete_many({"_id": {"$in": drop_ids}}))
+            except RuntimeError:
+                await db.orders.delete_many({"_id": {"$in": drop_ids}})
             logger.warning("list_orders removed %s duplicate order row(s) for company %s", len(drop_ids), company_id)
     docs = deduped
     for o in docs:
         _decorate_b2b_held_order(o)
-    docs = await _enrich_orders_production_flags(docs)
+    docs = await _enrich_orders_production_flags(docs, company_id=company_id)
     docs = await _enrich_orders_invoice_ebelge(docs)
     return _sort_b2b_cart_orders(docs)
 
@@ -14280,15 +14309,23 @@ async def _enrich_orders_invoice_ebelge(docs: List[Dict[str, Any]]) -> List[Dict
     return enrich_orders_with_invoices(docs, by_id)
 
 
-async def _enrich_orders_production_flags(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def _enrich_orders_production_flags(
+    docs: List[Dict[str, Any]],
+    company_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Liste: üretime gönderilmiş siparişlerde has_production_order=True (buton rengi)."""
     if not docs:
         return docs
+    # Aktif/bekleyen sepet — üretim bayrağı gereksiz
     need = [
         o for o in docs
-        if not (o.get("sent_to_production_at") or o.get("production_recipe_id") or o.get("production_order_id"))
+        if not (o.get("is_active_cart") or o.get("is_held_cart") or o.get("order_status") in ("active_cart", "held_cart"))
+        and not (o.get("sent_to_production_at") or o.get("production_recipe_id") or o.get("production_order_id"))
     ]
     for o in docs:
+        if o.get("is_active_cart") or o.get("is_held_cart") or o.get("order_status") in ("active_cart", "held_cart"):
+            o["has_production_order"] = False
+            continue
         if o.get("sent_to_production_at") or o.get("production_recipe_id") or o.get("production_order_id"):
             o["has_production_order"] = True
     if not need:
@@ -14305,8 +14342,12 @@ async def _enrich_orders_production_flags(docs: List[Dict[str, Any]]) -> List[Di
         for o in need:
             o["has_production_order"] = False
         return docs
+    cid = str(company_id or next((o.get("company_id") for o in need if o.get("company_id")), "") or "").strip()
+    recipe_q: Dict[str, Any] = {"$or": or_q, "is_active": {"$ne": False}}
+    if cid:
+        recipe_q["company_id"] = cid
     recipes = await db.recipes.find(
-        {"$or": or_q, "is_active": {"$ne": False}},
+        recipe_q,
         {"sales_order_id": 1, "job_file_name": 1, "_id": 1},
     ).to_list(len(oids) + len(nums) + 50)
     by_sid: Dict[str, Any] = {}
