@@ -7630,7 +7630,14 @@ async def send_invoice_to_gib(invoice_id: str, req: Dict[str, Any] = None):
         if not _is_dispatch_doc(inv):
             await _apply_invoice_effects(inv)
             await db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
-    return await e_invoice.issue_invoice(invoice_id, e_type=req.get("e_type"), scenario=req.get("scenario"))
+    return await e_invoice.issue_invoice(
+        invoice_id,
+        e_type=req.get("e_type"),
+        scenario=req.get("scenario"),
+        stamp_now=bool(req.get("stamp_now")),
+        issue_date=req.get("issue_date"),
+        issue_time=req.get("issue_time"),
+    )
 
 
 
@@ -11589,7 +11596,7 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
     count = await db.invoices.count_documents({"company_id": order.get("company_id")}) + 1
     invoice_number = format_sales_invoice_number(count, year)
     e_type = "e_invoice" if contact.get("is_e_invoice_user") else "e_archive"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(ZoneInfo("Europe/Istanbul"))
     subtotal = float(inv_totals.get("subtotal") or 0)
     vat_total = float(inv_totals.get("vat_total") or 0)
     discount_total = float(inv_totals.get("discount_total") or 0)
@@ -11624,6 +11631,7 @@ async def _create_draft_invoice_for_order(order: dict, source: str = "approve") 
         "customer_phone": order.get("customer_phone") or contact.get("phone") or None,
         "e_type": e_type,
         "issue_date": now.strftime("%Y-%m-%d"),
+        "issue_time": now.strftime("%H:%M:%S"),
         "due_date": (now + timedelta(days=term_days)).strftime("%Y-%m-%d"),
         "items": inv_items,
         "subtotal": subtotal,

@@ -503,6 +503,12 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       const body = {};
       if (eType && eType !== "auto") body.e_type = eType;
       if (opts.scenario === "TEMEL" || opts.scenario === "TICARI") body.scenario = opts.scenario;
+      if (opts.stampNow) {
+        body.stamp_now = true;
+        const stamp = opts.issueStamp || nowIssueDateTime();
+        if (stamp.issue_date) body.issue_date = stamp.issue_date;
+        if (stamp.issue_time) body.issue_time = stamp.issue_time;
+      }
       const r = await axios.post(`${API_URL}/invoices/${inv.id}/send-to-gib`, body);
       toast.success(r.data.message || "E-Fatura GİB'e gönderildi.");
       // Onay modalı send içinde zaten GİB poll eder; ekstra refresh süreyi uzatır.
@@ -1089,8 +1095,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 }
               }
               const patch = {};
-              if (stampNow) {
-                Object.assign(patch, nowIssueDateTime());
+              const issueStamp = stampNow ? nowIssueDateTime() : null;
+              if (issueStamp) {
+                Object.assign(patch, issueStamp);
               }
               if (withholding) {
                 patch.withholding_rate = Number(withholding.withholding_rate || 0);
@@ -1109,11 +1116,13 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 try {
                   await axios.put(`${API_URL}/invoices/${invId}`, patch);
                 } catch (err) {
-                  toast.error(err.response?.data?.detail || "İade / muafiyet / tevkifat kaydedilemedi.");
-                  throw err;
+                  if (!issueStamp || withholding || exemption || returnRef) {
+                    toast.error(err.response?.data?.detail || "İade / muafiyet / tevkifat kaydedilemedi.");
+                    throw err;
+                  }
                 }
               }
-              await sendToGib(inv, eType, { scenario });
+              await sendToGib(inv, eType, { scenario, stampNow: !!issueStamp, issueStamp: issueStamp || undefined });
             }}
           />
         )}

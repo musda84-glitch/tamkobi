@@ -937,16 +937,30 @@ export default function OrdersB2BPage() {
         });
         invoiceId = draft.data?.invoice_id;
       }
+      const issueStamp = opts.stampNow ? (opts.issueStamp || nowIssueDateTime()) : null;
+      if (issueStamp && invoiceId) {
+        try {
+          await axios.put(`${API_URL}/invoices/${invoiceId}`, issueStamp);
+        } catch {
+          /* send body stamp_now ile uygulanır */
+        }
+      }
       const scenario = resolved === "e_invoice"
         ? (opts.scenario === "TEMEL" ? "TEMEL" : "TICARI")
         : undefined;
-      const res = await axios.post(`${API_URL}/e-invoice/create`, {
+      const createBody = {
         invoice_id: invoiceId || undefined,
         order_id: ord.id || ord._id,
         company_id: companyId,
         e_type: resolved,
         scenario,
-      });
+      };
+      if (issueStamp) {
+        createBody.stamp_now = true;
+        createBody.issue_date = issueStamp.issue_date;
+        createBody.issue_time = issueStamp.issue_time;
+      }
+      const res = await axios.post(`${API_URL}/e-invoice/create`, createBody);
       if (!opts.silentToast) toast.success(res.data.message || `${label} GİB'e iletildi.`);
       if (!opts.skipReload) loadData();
       return res.data;
@@ -1343,14 +1357,13 @@ export default function OrdersB2BPage() {
                 /* gönderim yine denenecek */
               }
             }
-            if (stampNow && ord.invoice_id) {
-              try {
-                await axios.put(`${API_URL}/invoices/${ord.invoice_id}`, nowIssueDateTime());
-              } catch {
-                /* gönderim yine denenecek */
-              }
-            }
-            await handleEBelgeInvoice(ord, eType, { scenario, skipConfirm: true });
+            const issueStamp = stampNow ? nowIssueDateTime() : null;
+            await handleEBelgeInvoice(ord, eType, {
+              scenario,
+              skipConfirm: true,
+              stampNow: !!issueStamp,
+              issueStamp: issueStamp || undefined,
+            });
           }}
         />
       )}

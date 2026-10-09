@@ -126,7 +126,15 @@ def build_ubl(invoice: dict, company: dict, contact: Optional[dict], ettn: Optio
     invoice_type_code = "IADE" if ubl_export.is_return_invoice(invoice) else "SATIS"
     issue = (invoice.get("issue_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
     # İşNet/GİB Schematron: IssueTime beklenir (örnek UBL’lerde var)
-    issue_time = (invoice.get("issue_time") or datetime.now(timezone.utc).strftime("%H:%M:%S"))[:8]
+    issue_time = (invoice.get("issue_time") or "").strip()
+    if not issue_time:
+        try:
+            from zoneinfo import ZoneInfo
+
+            issue_time = datetime.now(ZoneInfo("Europe/Istanbul")).strftime("%H:%M:%S")
+        except Exception:
+            issue_time = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    issue_time = issue_time[:8]
     if len(issue_time) == 5:
         issue_time = f"{issue_time}:00"
     currency = invoice.get("currency") or "TRY"

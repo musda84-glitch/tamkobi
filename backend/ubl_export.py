@@ -4,6 +4,14 @@ import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
+
+_TR_TZ = ZoneInfo("Europe/Istanbul")
+
+
+def default_issue_time() -> str:
+    """GİB IssueTime — boşsa Europe/Istanbul saati (UTC değil)."""
+    return datetime.now(_TR_TZ).strftime("%H:%M:%S")
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -579,7 +587,7 @@ def build_invoice_ubl(
     _cbc(root, "IssueDate", issue_date)
     issue_time = (inv.get("issue_time") or "").strip()
     if not issue_time:
-        issue_time = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        issue_time = default_issue_time()
     _cbc(root, "IssueTime", issue_time[:8] if len(issue_time) >= 8 else issue_time)
     _cbc(root, "InvoiceTypeCode", type_code)
     notes = (inv.get("notes") or "").strip()
@@ -848,7 +856,7 @@ def build_despatch_ubl(
     issue_date = _date(inv.get("issue_date"))
     issue_time = (inv.get("issue_time") or "").strip()
     if not issue_time:
-        issue_time = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        issue_time = default_issue_time()
     transport = _despatch_transport(inv)
     if send_ready and not transport["plate"]:
         raise ValueError(
