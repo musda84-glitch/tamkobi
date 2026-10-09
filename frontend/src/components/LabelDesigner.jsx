@@ -17,10 +17,13 @@ import { resolveLabelTemplate } from "../utils/resolveLabelTemplate";
 import {
   PRINTER_PRESETS,
   applyPrinterPreset,
+  ethernetPrinterConfigError,
+  isBridgeUrlPrinterRawPort,
   loadEthernetPrinter,
   printLabelsEthernet,
   probeEthernetPrinter,
   saveEthernetPrinter,
+  suggestedBridgeUrl,
 } from "../utils/ethernetPrinter";
 
 const PX = 3.78; // 1 mm ≈ 3.78 px @96dpi
@@ -450,9 +453,23 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
           {ethOpen && (
             <div className="space-y-2 pt-1 border-t border-slate-200">
               <p className="text-[10px] text-slate-500 leading-snug">
-                Xprinter XP-490B gibi Ethernet etiket yazıcılarına tarayıcı diyaloğu olmadan TSPL gönderir.
-                Mobilde yazıcıyla aynı Wi‑Fi’deyseniz <b>Yerel köprü</b> kullanın; ofis sunucusu yazıcıyla aynı ağdaysa <b>API</b> yeterli.
+                XP-490B Ethernet etiketi: <b>Yazıcı IP</b> = yazıcının IP’si (örn. 192.168.1.117), port <b>9100</b>.
+                Önce <b>API sunucusu → yazıcı</b> deneyin (TamKobi sunucusu aynı LAN’daysa).
+                Mobil / bulut sunucu için <b>Yerel köprü</b>: PC’de <code className="bg-slate-200 px-1 rounded">python3 scripts/ethernet_print_bridge.py</code> → Köprü URL <b>http://PC-IP:19100</b> (yazıcı IP’si değil).
               </p>
+              {eth.mode === "bridge" && (isBridgeUrlPrinterRawPort(eth) || ethernetPrinterConfigError(eth)) && (
+                <div className="text-[10px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-snug" data-testid="ethernet-bridge-warn">
+                  {ethernetPrinterConfigError(eth) || "Köprü URL yazıcı :9100 olamaz."}
+                  <button
+                    type="button"
+                    className="ml-1 underline font-semibold"
+                    data-testid="ethernet-bridge-fix"
+                    onClick={() => patchEth({ bridgeUrl: suggestedBridgeUrl(eth.host) })}
+                  >
+                    {suggestedBridgeUrl(eth.host)} yap
+                  </button>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <label className="block space-y-1">
                   <span className="font-semibold text-slate-700">Model şablonu</span>
@@ -484,7 +501,7 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
                   <input
                     value={eth.host}
                     onChange={(e) => patchEth({ host: e.target.value })}
-                    placeholder="192.168.1.100"
+                    placeholder="192.168.1.117"
                     className="w-full border rounded-lg p-2 font-mono bg-white"
                     data-testid="ethernet-printer-host"
                   />
@@ -505,22 +522,29 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
                   <span className="font-semibold text-slate-700">Gönderim</span>
                   <select
                     value={eth.mode}
-                    onChange={(e) => patchEth({ mode: e.target.value })}
+                    onChange={(e) => {
+                      const mode = e.target.value;
+                      if (mode === "bridge" && isBridgeUrlPrinterRawPort({ ...eth, mode })) {
+                        patchEth({ mode, bridgeUrl: suggestedBridgeUrl(eth.host) });
+                      } else {
+                        patchEth({ mode });
+                      }
+                    }}
                     className="w-full border rounded-lg p-2 bg-white"
                     data-testid="ethernet-printer-mode"
                   >
-                    <option value="api">API sunucusu → yazıcı</option>
-                    <option value="bridge">Yerel köprü (mobil / LAN)</option>
+                    <option value="api">API sunucusu → yazıcı (LAN sunucu)</option>
+                    <option value="bridge">Yerel köprü PC:19100 (mobil / bulut)</option>
                   </select>
                 </label>
                 {eth.mode === "bridge" && (
                   <label className="block space-y-1">
-                    <span className="font-semibold text-slate-700">Köprü URL</span>
+                    <span className="font-semibold text-slate-700">Köprü URL (PC, port 19100)</span>
                     <input
                       value={eth.bridgeUrl}
                       onChange={(e) => patchEth({ bridgeUrl: e.target.value })}
                       placeholder="http://192.168.1.50:19100"
-                      className="w-full border rounded-lg p-2 font-mono bg-white"
+                      className={`w-full border rounded-lg p-2 font-mono bg-white ${isBridgeUrlPrinterRawPort(eth) ? "border-amber-400" : ""}`}
                       data-testid="ethernet-printer-bridge"
                     />
                   </label>

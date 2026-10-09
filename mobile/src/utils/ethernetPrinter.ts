@@ -42,18 +42,65 @@ export function defaultEthernetPrinter(): EthernetPrinterSettings {
   };
 }
 
+/** Köprü URL yanlışlıkla yazıcı :9100 mü? */
+export function isBridgeUrlPrinterRawPort(settings: Partial<EthernetPrinterSettings>): boolean {
+  const host = String(settings?.host || "").trim();
+  const bridge = String(settings?.bridgeUrl || "").trim();
+  if (!host || !bridge) return false;
+  try {
+    const u = new URL(bridge.includes("://") ? bridge : `http://${bridge}`);
+    const bPort = Number(u.port || (u.protocol === "https:" ? 443 : 80));
+    const pPort = Number(settings?.port || 9100);
+    return u.hostname === host && (bPort === pPort || bPort === 9100);
+  } catch {
+    return false;
+  }
+}
+
+export function suggestedBridgeUrl(): string {
+  return "http://127.0.0.1:19100";
+}
+
+export function ethernetPrinterConfigError(settings: Partial<EthernetPrinterSettings>): string | null {
+  const cfg = { ...defaultEthernetPrinter(), ...settings };
+  if (!cfg.host) return "Yazıcı IP adresi girin (örn. 192.168.1.117).";
+  if (cfg.mode !== "bridge") return null;
+  if (!cfg.bridgeUrl) {
+    return "Köprü URL gerekli. PC'de python3 scripts/ethernet_print_bridge.py → http://PC-IP:19100";
+  }
+  if (isBridgeUrlPrinterRawPort(cfg)) {
+    return (
+      `Köprü URL yazıcı adresi olamaz (${cfg.bridgeUrl}). `
+      + `XP-490B :9100 ham TSPL dinler. PC'de köprü çalıştırıp http://PC-IP:19100 yazın; yazıcı IP = ${cfg.host} kalsın.`
+    );
+  }
+  try {
+    const u = new URL(cfg.bridgeUrl.includes("://") ? cfg.bridgeUrl : `http://${cfg.bridgeUrl}`);
+    const port = Number(u.port || 80);
+    if (port === 9100 || port === 9101) return "Köprü portu 9100 olamaz. Varsayılan 19100.";
+  } catch {
+    return "Köprü URL geçersiz. Örnek: http://192.168.1.50:19100";
+  }
+  return null;
+}
+
 export async function loadEthernetPrinter(): Promise<EthernetPrinterSettings> {
   try {
     const raw = await AsyncStorage.getItem(ETHERNET_PRINTER_KEY);
     if (!raw) return defaultEthernetPrinter();
-    return { ...defaultEthernetPrinter(), ...JSON.parse(raw) };
+    const merged = { ...defaultEthernetPrinter(), ...JSON.parse(raw) };
+    if (merged.mode === "bridge" && isBridgeUrlPrinterRawPort(merged)) {
+      return saveEthernetPrinter({ ...merged, bridgeUrl: suggestedBridgeUrl() });
+    }
+    return merged;
   } catch {
     return defaultEthernetPrinter();
   }
 }
 
 export async function saveEthernetPrinter(settings: Partial<EthernetPrinterSettings>): Promise<EthernetPrinterSettings> {
-  const prev = await loadEthernetPrinter();
+  const raw = await AsyncStorage.getItem(ETHERNET_PRINTER_KEY).catch(() => null);
+  const prev = raw ? { ...defaultEthernetPrinter(), ...JSON.parse(raw) } : defaultEthernetPrinter();
   const next: EthernetPrinterSettings = {
     ...prev,
     ...settings,
@@ -64,6 +111,9 @@ export async function saveEthernetPrinter(settings: Partial<EthernetPrinterSetti
     host: String(settings.host ?? prev.host ?? "").trim(),
     bridgeUrl: String(settings.bridgeUrl ?? prev.bridgeUrl ?? "").trim().replace(/\/$/, ""),
   };
+  if (next.mode === "bridge" && isBridgeUrlPrinterRawPort(next)) {
+    next.bridgeUrl = suggestedBridgeUrl();
+  }
   await AsyncStorage.setItem(ETHERNET_PRINTER_KEY, JSON.stringify(next));
   return next;
 }
@@ -202,13 +252,22 @@ export async function probeEthernetPrinter(
   settings: EthernetPrinterSettings,
   client?: ApiClient | null,
 ): Promise<{ ok?: boolean; host?: string; port?: number }> {
-  if (!settings.host) throw new Error("Yazıcı IP adresi girin.");
+  const cfgErr = ethernetPrinterConfigError(settings);
+  if (cfgErr) throw new Error(cfgErr);
   if (settings.mode === "bridge") {
-    return bridgePost(settings.bridgeUrl, "/probe", { host: settings.host, port: settings.port }) as Promise<{
-      ok?: boolean;
-      host?: string;
-      port?: number;
-    }>;
+    try {
+      return await bridgePost(settings.bridgeUrl, "/probe", { host: settings.host, port: settings.port }) as {
+        ok?: boolean;
+        host?: string;
+        port?: number;
+      };
+    } catch (err) {
+      throw new Error(
+        `${err instanceof Error ? err.message : "Köprü hatası"}. `
+        + `PC'de python3 scripts/ethernet_print_bridge.py çalıştırın; URL http://PC-IP:19100 `
+        + `(yazıcı ${settings.host}:9100 değil).`,
+      );
+    }
   }
   if (!client) throw new Error("API istemcisi yok.");
   return post(client, "/network-printers/probe", { host: settings.host, port: settings.port });
@@ -219,7 +278,8 @@ export async function sendEthernetRaw(
   settings: EthernetPrinterSettings,
   client?: ApiClient | null,
 ): Promise<{ ok?: boolean; bytes?: number }> {
-  if (!settings.host) throw new Error("Yazıcı IP adresi girin.");
+  const cfgErr = ethernetPrinterConfigError(settings);
+  if (cfgErr) throw new Error(cfgErr);
   if (!payload?.trim()) throw new Error("Boş yazdırma verisi.");
   if (settings.mode === "bridge") {
     return bridgePost(settings.bridgeUrl, "/send", {

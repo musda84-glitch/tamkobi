@@ -2,6 +2,8 @@ import {
   buildTsplLabel,
   defaultEthernetPrinter,
   escapeTsplText,
+  ethernetPrinterConfigError,
+  isBridgeUrlPrinterRawPort,
   mmToDots,
   sanitizeBarcodeData,
 } from "./ethernetPrinter";
@@ -28,5 +30,16 @@ describe("ethernetPrinter (mobile)", () => {
   it("default prefers bridge on mobile", () => {
     expect(defaultEthernetPrinter().mode).toBe("bridge");
     expect(defaultEthernetPrinter().model).toBe("XP-490B");
+  });
+
+  it("rejects bridge URL equal to printer :9100", () => {
+    const bad = {
+      host: "192.168.1.117",
+      port: 9100,
+      mode: "bridge" as const,
+      bridgeUrl: "http://192.168.1.117:9100",
+    };
+    expect(isBridgeUrlPrinterRawPort(bad)).toBe(true);
+    expect(ethernetPrinterConfigError(bad)).toMatch(/Köprü URL yazıcı/);
   });
 });
