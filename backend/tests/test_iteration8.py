@@ -104,9 +104,14 @@ class TestWorkOrderFlow:
         po = next(x for x in get("/production/orders").json() if x["id"] == STATE["order_id"])
         assert po["status"] == "in_production"
 
-    def test_07_start_waiting_step_rejected(self):
+    def test_07_start_waiting_step_allowed(self):
+        """Önceki adım bitmeden sıradaki (waiting) adım araya girilerek başlatılabilir."""
         r = post(f"/production/work-orders/{STATE['wo2']}/start", {"operator_name": "Veli"})
-        assert r.status_code == 400, r.text
+        assert r.status_code == 200, r.text
+        w2 = next(x for x in get("/production/work-orders", params={"order_id": STATE["order_id"]}).json() if x["id"] == STATE["wo2"])
+        assert w2["status"] == "in_progress"
+        assert w2["operator_name"] == "Veli"
+        assert w2.get("started_at")
 
     def test_08_pause_and_resume(self):
         r = post(f"/production/work-orders/{STATE['wo1']}/pause", {"reason": "Mola"})
@@ -129,7 +134,7 @@ class TestWorkOrderFlow:
         w2 = next(x for x in get("/production/work-orders", params={"order_id": STATE["order_id"]}).json() if x["id"] == STATE["wo2"])
         assert w2["assigned_name"] == "Ayşe" and w2["assigned_to"] == "emp_x"
 
-    def test_10_finish_wo1_activates_wo2(self):
+    def test_10_finish_wo1_keeps_intervened_wo2(self):
         # snapshot stock before
         prods = get("/products").json()
         STATE["stock_before"] = {p["id"]: p.get("stock_quantity") for p in prods}
@@ -146,14 +151,17 @@ class TestWorkOrderFlow:
         w1 = next(x for x in wos if x["id"] == STATE["wo1"])
         w2 = next(x for x in wos if x["id"] == STATE["wo2"])
         assert w1["status"] == "done" and w1["produced_qty"] == 2 and w1["finished_at"]
-        assert w2["status"] == "ready"
+        # wo2 test_07'de araya girilerek başlatıldı — finish onu ready'e düşürmez
+        assert w2["status"] == "in_progress"
 
     def test_11_finish_done_wo_rejected(self):
         r = post(f"/production/work-orders/{STATE['wo1']}/finish", {"produced_qty": 1})
         assert r.status_code == 400, r.text
 
     def test_12_finish_last_step_completes_order_and_moves_stock(self):
-        assert post(f"/production/work-orders/{STATE['wo2']}/start", {"operator_name": "Ayşe"}).status_code == 200
+        w2 = next(x for x in get("/production/work-orders", params={"order_id": STATE["order_id"]}).json() if x["id"] == STATE["wo2"])
+        if w2["status"] != "in_progress":
+            assert post(f"/production/work-orders/{STATE['wo2']}/start", {"operator_name": "Ayşe"}).status_code == 200
         r = post(f"/production/work-orders/{STATE['wo2']}/finish", {"produced_qty": 2, "scrap_qty": 0, "operator_name": "Ayşe"})
         assert r.status_code == 200, r.text
         body = r.json()

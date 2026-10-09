@@ -58,7 +58,10 @@ export function workOrderFinishPlan(w) {
 /** Atölye kartı aksiyonları — durum → hangi butonlar. */
 export function shopFloorCardActions(status, pauseAllowed = true) {
   const s = String(status || "").trim().toLowerCase();
-  if (s === "ready") return { start: true, pause: false, pauseEnabled: false, resume: false, finish: false };
+  // waiting: önceki adım bitmeden araya girilebilir
+  if (s === "ready" || s === "waiting") {
+    return { start: true, pause: false, pauseEnabled: false, resume: false, finish: false };
+  }
   if (s === "in_progress" || s === "running" || s === "active") {
     return { start: false, pause: true, pauseEnabled: !!pauseAllowed, resume: false, finish: true };
   }
@@ -84,7 +87,7 @@ export function shopFloorCardBorder(status) {
     return "border-amber-400 shadow-lg shadow-amber-100";
   }
   if (s === "paused" || s === "pause") return "border-orange-300";
-  if (s === "ready") return "border-blue-200";
+  if (s === "ready" || s === "waiting") return "border-blue-200";
   return "border-slate-200";
 }
 
