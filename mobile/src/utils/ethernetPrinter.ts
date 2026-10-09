@@ -42,19 +42,37 @@ export function defaultEthernetPrinter(): EthernetPrinterSettings {
   };
 }
 
-/** Köprü URL yanlışlıkla yazıcı :9100 mü? */
-export function isBridgeUrlPrinterRawPort(settings: Partial<EthernetPrinterSettings>): boolean {
-  const host = String(settings?.host || "").trim();
+/** Yazıcı konfig etiketindeki Serial Port baud — Ethernet raw port değil. */
+export const SERIAL_BAUD_PORTS = new Set([9600, 19200, 38400, 57600, 115200]);
+export const ETHERNET_RAW_PORT = 9100;
+
+export function normalizeEthernetPort(port: number | string | undefined): number {
+  const p = Number(port);
+  if (!Number.isFinite(p) || p <= 0) return ETHERNET_RAW_PORT;
+  if (SERIAL_BAUD_PORTS.has(p)) return ETHERNET_RAW_PORT;
+  return Math.max(1, Math.min(65535, p));
+}
+
+export function isSerialBaudPort(port: number | string | undefined): boolean {
+  return SERIAL_BAUD_PORTS.has(Number(port));
+}
+
+/** Köprü hostname yazıcı IP ile aynı mı? (yazıcıda HTTP köprü yok; :19100 olsa bile yanlış) */
+export function isBridgeUrlOnPrinterHost(settings: Partial<EthernetPrinterSettings>): boolean {
+  const host = String(settings?.host || "").trim().toLowerCase();
   const bridge = String(settings?.bridgeUrl || "").trim();
   if (!host || !bridge) return false;
   try {
     const u = new URL(bridge.includes("://") ? bridge : `http://${bridge}`);
-    const bPort = Number(u.port || (u.protocol === "https:" ? 443 : 80));
-    const pPort = Number(settings?.port || 9100);
-    return u.hostname === host && (bPort === pPort || bPort === 9100);
+    return u.hostname.toLowerCase() === host;
   } catch {
     return false;
   }
+}
+
+/** @deprecated isBridgeUrlOnPrinterHost kullanın */
+export function isBridgeUrlPrinterRawPort(settings: Partial<EthernetPrinterSettings>): boolean {
+  return isBridgeUrlOnPrinterHost(settings);
 }
 
 export function suggestedBridgeUrl(): string {
@@ -64,14 +82,21 @@ export function suggestedBridgeUrl(): string {
 export function ethernetPrinterConfigError(settings: Partial<EthernetPrinterSettings>): string | null {
   const cfg = { ...defaultEthernetPrinter(), ...settings };
   if (!cfg.host) return "Yazıcı IP adresi girin (örn. 192.168.1.117).";
+  if (isSerialBaudPort(cfg.port)) {
+    return (
+      `Port ${cfg.port} seri baud hızıdır (yazıcı konfig etiketi), Ethernet ham port değil. `
+      + `XP-490B Ethernet yazdırma için port 9100 kullanın.`
+    );
+  }
   if (cfg.mode !== "bridge") return null;
   if (!cfg.bridgeUrl) {
     return "Köprü URL gerekli. PC'de python3 scripts/ethernet_print_bridge.py → http://PC-IP:19100";
   }
-  if (isBridgeUrlPrinterRawPort(cfg)) {
+  if (isBridgeUrlOnPrinterHost(cfg)) {
     return (
-      `Köprü URL yazıcı adresi olamaz (${cfg.bridgeUrl}). `
-      + `XP-490B :9100 ham TSPL dinler. PC'de köprü çalıştırıp http://PC-IP:19100 yazın; yazıcı IP = ${cfg.host} kalsın.`
+      `Köprü URL yazıcı IP'si olamaz (${cfg.bridgeUrl}). `
+      + `Yazıcıda HTTP köprü çalışmaz — PC'de python3 scripts/ethernet_print_bridge.py açıp `
+      + `http://PC-IP:19100 yazın. Yazıcı IP alanına ${cfg.host} kalsın, port 9100.`
     );
   }
   try {
@@ -89,9 +114,16 @@ export async function loadEthernetPrinter(): Promise<EthernetPrinterSettings> {
     const raw = await AsyncStorage.getItem(ETHERNET_PRINTER_KEY);
     if (!raw) return defaultEthernetPrinter();
     const merged = { ...defaultEthernetPrinter(), ...JSON.parse(raw) };
-    if (merged.mode === "bridge" && isBridgeUrlPrinterRawPort(merged)) {
-      return saveEthernetPrinter({ ...merged, bridgeUrl: suggestedBridgeUrl() });
+    let dirty = false;
+    if (isSerialBaudPort(merged.port)) {
+      merged.port = ETHERNET_RAW_PORT;
+      dirty = true;
     }
+    if (merged.mode === "bridge" && isBridgeUrlOnPrinterHost(merged)) {
+      merged.bridgeUrl = suggestedBridgeUrl();
+      dirty = true;
+    }
+    if (dirty) return saveEthernetPrinter(merged);
     return merged;
   } catch {
     return defaultEthernetPrinter();
@@ -104,14 +136,14 @@ export async function saveEthernetPrinter(settings: Partial<EthernetPrinterSetti
   const next: EthernetPrinterSettings = {
     ...prev,
     ...settings,
-    port: Math.max(1, Math.min(65535, Number(settings.port ?? prev.port) || 9100)),
+    port: normalizeEthernetPort(settings.port ?? prev.port),
     dpi: Number(settings.dpi ?? prev.dpi) === 300 ? 300 : 203,
     protocol: (settings.protocol ?? prev.protocol) === "escpos" ? "escpos" : "tspl",
     mode: (settings.mode ?? prev.mode) === "api" ? "api" : "bridge",
     host: String(settings.host ?? prev.host ?? "").trim(),
     bridgeUrl: String(settings.bridgeUrl ?? prev.bridgeUrl ?? "").trim().replace(/\/$/, ""),
   };
-  if (next.mode === "bridge" && isBridgeUrlPrinterRawPort(next)) {
+  if (next.mode === "bridge" && isBridgeUrlOnPrinterHost(next)) {
     next.bridgeUrl = suggestedBridgeUrl();
   }
   await AsyncStorage.setItem(ETHERNET_PRINTER_KEY, JSON.stringify(next));

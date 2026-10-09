@@ -83,8 +83,20 @@ def is_allowed_printer_host(host: str) -> tuple[bool, str]:
     return True, str(ip)
 
 
+# Yazıcı konfig etiketindeki Serial Port baud — Ethernet raw port değil
+_SERIAL_BAUD_PORTS = frozenset({9600, 19200, 38400, 57600, 115200})
+
+
 def validate_port(port: int) -> int:
     p = int(port or DEFAULT_PORT)
+    if p in _SERIAL_BAUD_PORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Port {p} seri baud hızıdır (yazıcı konfig etiketi), Ethernet ham port değil. "
+                "XP-490B Ethernet yazdırma için 9100 kullanın (9100–9109 raw, 515, 631)."
+            ),
+        )
     if p not in ALLOWED_PORTS:
         raise HTTPException(
             status_code=400,
