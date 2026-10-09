@@ -22,13 +22,20 @@ def test_approve_invoice_marks_order_invoiced_and_applies_effects():
     db = MagicMock()
     db.invoices.find_one = AsyncMock(side_effect=[inv, {**inv, "status": "approved", "effects_applied": True}])
     db.invoices.update_one = AsyncMock()
+    db.orders.find_one = AsyncMock(return_value={"_id": "ord_1", "channel": "b2b", "order_number": "O1"})
     db.orders.update_one = AsyncMock()
+    db.contacts.find_one = AsyncMock(return_value={"_id": "c1", "name": "Cari"})
 
     async def run():
-        with patch.object(server, "db", db), patch.object(server, "_apply_invoice_effects", AsyncMock()) as apply:
+        with patch.object(server, "db", db), patch.object(
+            server, "_apply_invoice_effects", AsyncMock()
+        ) as apply, patch.object(
+            server, "_post_marketplace_settlement", AsyncMock(return_value=None)
+        ) as settle:
             out = await server.approve_invoice("inv_1")
             assert out["status"] == "success"
             apply.assert_awaited_once()
+            settle.assert_awaited_once()
             db.orders.update_one.assert_awaited()
             args, kwargs = db.orders.update_one.await_args
             assert args[0] == {"_id": "ord_1"}
