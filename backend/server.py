@@ -15998,16 +15998,19 @@ async def assign_work_order(wo_id: str, req: Dict[str, Any]):
 async def start_work_order(wo_id: str, req: Dict[str, Any] = None):
     req = req or {}
     w = await _wo(wo_id)
-    if w["status"] not in ("ready", "paused"):
-        raise HTTPException(status_code=400, detail="Bu adım başlatılamaz (önceki adım bitmemiş veya adım kapanmış).")
+    # ready / waiting / paused — waiting: önceki adım bitmeden araya girilebilir
+    if w["status"] not in ("ready", "waiting", "paused"):
+        raise HTTPException(status_code=400, detail="Bu adım başlatılamaz (adım kapanmış veya zaten devam ediyor).")
     who = req.get("operator_name") or w.get("assigned_name")
     upd: Dict[str, Any] = {"status": "in_progress", "operator_name": who}
-    if w["status"] == "ready":
+    if w["status"] in ("ready", "waiting"):
         upd["started_at"] = datetime.now(timezone.utc).isoformat()
+        log_action = "start"
     else:
         upd["paused_seconds"] = w.get("paused_seconds", 0) + (datetime.now(timezone.utc) - datetime.fromisoformat(w["paused_at"])).total_seconds()
         upd["paused_at"] = None
-    await db.work_orders.update_one({"_id": wo_id}, {"$set": upd, "$push": {"logs": _log(w, "start" if w["status"] == "ready" else "resume", who)}})
+        log_action = "resume"
+    await db.work_orders.update_one({"_id": wo_id}, {"$set": upd, "$push": {"logs": _log(w, log_action, who)}})
     await db.production_orders.update_one({"_id": w["order_id"], "status": "planned"}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
     return {"status": "success", "message": f"{w['step_name']} başlatıldı."}
 
@@ -16193,14 +16196,18 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
         msg_bits.append(f"Hammadde stoktan {mat_consume:g} {finish_unit} düşüldü.")
     result: Dict[str, Any] = {"status": "success", "message": " ".join(msg_bits)}
     if nxt:
-        nxt_patch: Dict[str, Any] = {"status": "ready"}
-        if over and not is_material_step:
-            nxt_patch["planned_quantity"] = produced + scrap
-        elif under and not is_material_step:
+        nxt_status = str(nxt.get("status") or "")
+        nxt_patch: Dict[str, Any] = {}
+        # Araya girilmiş / zaten açık adımı ready'e düşürme
+        if nxt_status == "waiting":
+            nxt_patch["status"] = "ready"
+        if (over or under) and not is_material_step and nxt_status not in ("done",):
             # Sonraki adımlar da fiili mamul miktarına hizalansın
             nxt_patch["planned_quantity"] = produced + scrap
-        await db.work_orders.update_one({"_id": nxt["_id"]}, {"$set": nxt_patch})
-        result["message"] += f" Sıradaki adım: {nxt['step_name']} ({nxt['station']})."
+        if nxt_patch:
+            await db.work_orders.update_one({"_id": nxt["_id"]}, {"$set": nxt_patch})
+        if nxt_patch.get("status") == "ready":
+            result["message"] += f" Sıradaki adım: {nxt['step_name']} ({nxt['station']})."
     else:
         o = await db.production_orders.find_one({"_id": w["order_id"]})
         if o and o.get("status") == "in_production":

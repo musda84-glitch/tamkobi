@@ -389,7 +389,9 @@ export default function ShopFloorPage() {
             <CheckCircle2 className="w-5 h-5" /> Bitir
           </button>
         )}
-        {w.status === "waiting" && <div className="col-span-2 text-center text-xs text-slate-400 py-2">Önceki adım tamamlanınca açılır</div>}
+        {w.status === "waiting" && actions.start && (
+          <div className="col-span-2 text-center text-[11px] text-slate-400 -mt-1">Önceki adım bitmeden de başlatılabilir</div>
+        )}
         {w.status === "done" && <div className="col-span-2 text-center text-xs text-emerald-700 py-2 font-semibold">{w.produced_qty} üretildi{w.scrap_qty ? `, ${w.scrap_qty} fire` : ""} • {w.operator_name}</div>}
       </div>
     </div>); };
@@ -479,7 +481,7 @@ export default function ShopFloorPage() {
       <div><h2 className="text-sm font-bold text-slate-700 mb-2">Açık İş Emirleri ({active.length})</h2>
         {active.length === 0 && <div className="bg-white border border-dashed rounded-2xl p-10 text-center text-sm text-slate-400" data-testid="shopfloor-empty">Bekleyen iş emri yok. Üretim &amp; Reçete sayfasından "Üretim Emri Ver" ile oluşturun.</div>}
         {renderWoGrid(active.filter((w) => !mine.includes(w)))}</div>
-      {waiting.length > 0 && <div><h2 className="text-sm font-bold text-slate-500 mb-2">Sıradaki Adımlar ({waiting.length})</h2>{renderWoGrid(waiting, "opacity-70")}</div>}
+      {waiting.length > 0 && <div><h2 className="text-sm font-bold text-slate-500 mb-2">Sıradaki Adımlar ({waiting.length})</h2>{renderWoGrid(waiting)}</div>}
       {done.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <button

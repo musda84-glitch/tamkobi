@@ -168,8 +168,11 @@ function WoCard({
         ].filter(Boolean).join(" · ")}
       </Muted>
       {w.notes ? <Muted>{w.notes}</Muted> : null}
-      {w.status === "ready" ? (
-        <PrimaryButton title="Başla" onPress={onStart} disabled={!operator || busy} loading={busy} color={colors.primary} testID={`wo-start-${key}`} />
+      {w.status === "ready" || w.status === "waiting" ? (
+        <>
+          <PrimaryButton title="Başla" onPress={onStart} disabled={!operator || busy} loading={busy} color={colors.primary} testID={`wo-start-${key}`} />
+          {w.status === "waiting" ? <Muted>Önceki adım bitmeden de başlatılabilir</Muted> : null}
+        </>
       ) : null}
       {w.status === "in_progress" || w.status === "paused" ? (
         <Row>
@@ -191,7 +194,6 @@ function WoCard({
           </View>
         </Row>
       ) : null}
-      {w.status === "waiting" ? <Muted>Önceki adım tamamlanınca açılır</Muted> : null}
       {w.status === "done" ? (
         <Muted>
           {w.produced_qty != null ? `${w.produced_qty} üretildi` : "Tamamlandı"}

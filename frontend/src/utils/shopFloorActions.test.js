@@ -73,6 +73,13 @@ describe("shopFloorCardActions", () => {
     });
   });
 
+  test("waiting allows start (araya gir)", () => {
+    expect(shopFloorCardActions("waiting")).toEqual({
+      start: true, pause: false, pauseEnabled: false, resume: false, finish: false,
+    });
+    expect(shopFloorCardBorder("waiting")).toMatch(/blue/);
+  });
+
   test("in_progress shows Duraklat + Bitir", () => {
     expect(shopFloorCardActions("in_progress")).toEqual({
       start: false, pause: true, pauseEnabled: true, resume: false, finish: true,
