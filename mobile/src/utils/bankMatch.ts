@@ -7,7 +7,13 @@ export const MATCH_MODES = [
   { key: "invoice", label: "Cari + Fatura" },
   { key: "transfer", label: "Kasa / Hesap (Virman)" },
   { key: "category", label: "Sadece Kategori" },
+  { key: "expense", label: "Masraf" },
 ] as const;
+
+/** Tüm eşleşme türleri (Masraf dahil). Girişte backend masrafı reddeder. */
+export function matchModesForTx(_tx?: { type?: string } | null) {
+  return MATCH_MODES;
+}
 
 export type MatchMode = (typeof MATCH_MODES)[number]["key"];
 
@@ -99,7 +105,7 @@ export function matchTargets(accounts: BankAccount[], tx: BankMatchTx): BankAcco
 }
 
 export function canSubmitMatch(d: MatchDraft): boolean {
-  if (d.mode === "category") return !!d.category.trim();
+  if (d.mode === "category" || d.mode === "expense") return !!d.category.trim();
   if (d.mode === "transfer") return !!d.target_account_id;
   if (d.mode === "invoice") return !!d.invoice_id;
   return true;
@@ -109,9 +115,10 @@ export function matchPayload(d: MatchDraft) {
   return {
     learn: !!d.learn,
     category: d.category.trim() || null,
-    contact_id: d.mode === "contact" || d.mode === "invoice" ? d.contact_id || null : null,
+    contact_id: d.mode === "contact" || d.mode === "invoice" || d.mode === "expense" ? d.contact_id || null : null,
     invoice_id: d.mode === "invoice" ? d.invoice_id || null : null,
     target_account_id: d.mode === "transfer" ? d.target_account_id || null : null,
+    as_expense: d.mode === "expense",
   };
 }
 

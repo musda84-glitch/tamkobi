@@ -172,7 +172,8 @@ async def _post_payment(exp: dict, account_id: Optional[str], pay_date: str, par
     return acc.get("account_name")
 
 
-_STATEMENT_SOURCES = ("card_statement", "bank_statement")
+# Banka bakiyesi zaten yansımış kaynaklar — ödeme / ters ödeme banka satırı yazmaz.
+_STATEMENT_SOURCES = ("card_statement", "bank_statement", "bank_match")
 
 
 def _from_statement(exp: dict) -> bool:
@@ -215,12 +216,15 @@ async def record_card_spend(
     contact = await _db.contacts.find_one({"_id": contact_id}) if contact_id else None
     cat = (category or "Diğer").strip() or "Diğer"
     src = source or "card_statement"
-    note = (
-        "Hesap ekstresinden aktarıldı. KDV oranı ekstreden tespit edilmedi; gerekirse düzenleyin."
-        if src == "bank_statement"
-        else "Kredi kartı ekstresinden aktarıldı. KDV oranı ekstreden tespit edilmedi; gerekirse düzenleyin."
-    )
-    default_desc = "Hesap harcaması" if src == "bank_statement" else "Kart harcaması"
+    if src == "bank_match":
+        note = "Banka hareketi eşleştirmesinden masraf olarak kaydedildi."
+        default_desc = "Banka masrafı"
+    elif src == "bank_statement":
+        note = "Hesap ekstresinden aktarıldı. KDV oranı ekstreden tespit edilmedi; gerekirse düzenleyin."
+        default_desc = "Hesap harcaması"
+    else:
+        note = "Kredi kartı ekstresinden aktarıldı. KDV oranı ekstreden tespit edilmedi; gerekirse düzenleyin."
+        default_desc = "Kart harcaması"
     doc = {
         "_id": str(uuid.uuid4()),
         "company_id": company_id,

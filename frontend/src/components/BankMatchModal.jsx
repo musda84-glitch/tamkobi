@@ -15,17 +15,20 @@ const MODES = [
   ["invoice", "Cari + Fatura"],
   ["transfer", "Kasa / Hesap (Virman)"],
   ["category", "Sadece Kategori"],
+  ["expense", "Masraf"],
 ];
 
 /** Banka hareketi eşleştirme / düzeltme modalı — hareketler listesi ve entegrasyon paneli ortak. */
 export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, onClose, onDone }) {
   const txId = tx?.id || tx?._id;
   const isIn = tx?.type === "inflow";
+  const modes = MODES;
   const [mode, setMode] = useState("contact");
   const [contactId, setContactId] = useState(tx?.suggested_contact_id || tx?.contact_id || "");
   const [invoiceId, setInvoiceId] = useState("");
   const [targetId, setTargetId] = useState(tx?.suggested_target_account_id || "");
   const [category, setCategory] = useState(tx?.category || "");
+  const [expenseCats, setExpenseCats] = useState([]);
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
   const [invoices, setInvoices] = useState([]);
@@ -35,13 +38,24 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
     axios.get(`${API_URL}/invoices?company_id=${companyId}&type=all`).then((r) => setInvoices(r.data || [])).catch(() => setInvoices([]));
   }, [companyId]);
 
+  useEffect(() => {
+    if (mode !== "expense" || !companyId) return;
+    axios.get(`${API_URL}/expenses/categories`, { params: { company_id: companyId } })
+      .then((r) => setExpenseCats((r.data || []).map((c) => c.name || c).filter(Boolean)))
+      .catch(() => setExpenseCats([]));
+  }, [mode, companyId]);
+
   const openInvoices = useMemo(() => invoices
     .filter((i) => i.contact_id === contactId && i.payment_status !== "paid" && i.status !== "draft" && i.invoice_type === (isIn ? "sales" : "purchase"))
     .sort((a, b) => Math.abs((a.grand_total - a.paid_amount) - (tx?.amount || 0)) - Math.abs((b.grand_total - b.paid_amount) - (tx?.amount || 0))),
   [invoices, contactId, isIn, tx?.amount]);
 
   const targets = accounts.filter((a) => (a.id || a._id) !== tx?.account_id && !a.is_integrated);
-  const canSubmit = mode === "category" ? !!category.trim() : mode === "transfer" ? !!targetId : mode === "invoice" ? !!invoiceId : true;
+  const canSubmit = mode === "category" || mode === "expense"
+    ? !!category.trim()
+    : mode === "transfer" ? !!targetId
+    : mode === "invoice" ? !!invoiceId
+    : true;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -51,12 +65,15 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
       const body = {
         learn,
         category: category || null,
-        contact_id: mode === "contact" || mode === "invoice" ? contactId || null : null,
+        contact_id: mode === "contact" || mode === "invoice" || mode === "expense" ? contactId || null : null,
         invoice_id: mode === "invoice" ? invoiceId : null,
         target_account_id: mode === "transfer" ? targetId : null,
+        as_expense: mode === "expense",
       };
       await axios.post(`${API_URL}/banking/transactions/${txId}/match`, body);
-      toast.success(learn ? "Eşleştirildi ve kural olarak öğrenildi." : "Eşleştirildi.");
+      toast.success(mode === "expense"
+        ? (learn ? "Masraf kaydedildi ve kural olarak öğrenildi." : "Masraf kaydedildi.")
+        : (learn ? "Eşleştirildi ve kural olarak öğrenildi." : "Eşleştirildi."));
       onDone?.();
       onClose?.();
     } catch (err) {
@@ -92,20 +109,20 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
         <div>
           <label className="block font-semibold mb-1">Eşleşme türü</label>
           <select value={mode} onChange={(e) => setMode(e.target.value)} className={sel} data-testid={`tx-match-mode-${txId}`}>
-            {MODES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            {modes.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </div>
 
-        {(mode === "contact" || mode === "invoice") && (
+        {(mode === "contact" || mode === "invoice" || mode === "expense") && (
           <div>
-            <label className="block font-semibold mb-1">Cari</label>
+            <label className="block font-semibold mb-1">Cari {mode === "expense" ? "(ops.)" : ""}</label>
             <select
               value={contactId}
               onChange={(e) => { setContactId(e.target.value); setInvoiceId(""); }}
               className={sel}
               data-testid={`tx-match-contact-${txId}`}
             >
-              <option value="">{mode === "contact" ? "Cari seçin (boş = sadece onayla)" : "Cari seçin"}</option>
+              <option value="">{mode === "expense" ? "Cari yok" : mode === "contact" ? "Cari seçin (boş = sadece onayla)" : "Cari seçin"}</option>
               {contacts.map((c) => {
                 const id = c.id || c._id;
                 return <option key={id} value={id}>{c.name}</option>;
@@ -145,8 +162,17 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
         )}
 
         <div>
-          <label className="block font-semibold mb-1">Kategori {mode === "category" ? "(zorunlu)" : "(ops.)"}</label>
-          <input value={category} onChange={(e) => setCategory(e.target.value)} className={sel} data-testid={`tx-match-category-${txId}`} />
+          <label className="block font-semibold mb-1">
+            {mode === "expense" ? "Masraf kategorisi (zorunlu)" : `Kategori ${mode === "category" ? "(zorunlu)" : "(ops.)"}`}
+          </label>
+          {mode === "expense" ? (
+            <select value={category} onChange={(e) => setCategory(e.target.value)} className={sel} data-testid={`tx-match-expense-cat-${txId}`}>
+              <option value="">Kategori seçin…</option>
+              {expenseCats.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          ) : (
+            <input value={category} onChange={(e) => setCategory(e.target.value)} className={sel} data-testid={`tx-match-category-${txId}`} />
+          )}
         </div>
 
         <label className="flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer">

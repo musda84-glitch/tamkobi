@@ -78,6 +78,8 @@ describe("match draft / payload", () => {
     expect(canSubmitMatch({ ...d, mode: "transfer" })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "category", category: "  " })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "category", category: "Kira" })).toBe(true);
+    expect(canSubmitMatch({ ...d, mode: "expense" })).toBe(false);
+    expect(canSubmitMatch({ ...d, mode: "expense", category: "Yakıt" })).toBe(true);
   });
 
   it("keeps partner cash in the virman target list", () => {
@@ -109,13 +111,19 @@ describe("match draft / payload", () => {
       contact_id: "c1",
       invoice_id: null,
       target_account_id: null,
+      as_expense: false,
     });
     const invoice = matchPayload({ ...base, mode: "invoice", contact_id: "c1", invoice_id: "inv1" });
     expect(invoice.invoice_id).toBe("inv1");
     expect(invoice.contact_id).toBe("c1");
+    expect(invoice.as_expense).toBe(false);
     const transfer = matchPayload({ ...base, mode: "transfer", contact_id: "c1", target_account_id: "acc2" });
     expect(transfer.contact_id).toBeNull();
     expect(transfer.target_account_id).toBe("acc2");
+    const expense = matchPayload({ ...base, mode: "expense", contact_id: "c1", category: "Yakıt" });
+    expect(expense.as_expense).toBe(true);
+    expect(expense.category).toBe("Yakıt");
+    expect(expense.contact_id).toBe("c1");
   });
 });
 
