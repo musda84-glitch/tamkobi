@@ -54,12 +54,22 @@ export function partnerTxLabel(tx?: {
   source?: string;
   is_paid?: boolean;
   contact_id?: string;
+  related_bank_tx_id?: string;
+  bank_tx_type?: string;
 } | null): string {
   if (!tx) return "";
   const t = tx.type || "";
   if (tx.expense_id || tx.source === "expense") return "Çıkış";
   if (tx.contact_id && t === "withdrawal") return "Giriş";
   if (tx.contact_id && t === "capital_in") return "Çıkış";
+  if (tx.source === "bank_match" || tx.related_bank_tx_id) {
+    const bankType = String(tx.bank_tx_type || "").toLowerCase();
+    if (bankType === "outflow" || bankType === "debit") return "Çıkış";
+    if (bankType === "inflow" || bankType === "credit") return "Giriş";
+    // Eski kayıt: tip kasa yönünün tersi → tersle
+    if (t === "capital_in" || t === "credit" || t === "salary") return "Çıkış";
+    return "Giriş";
+  }
   if (t === "withdrawal" || t === "debit") return "Çıkış";
   if (t === "profit_share" && tx.is_paid) return "Çıkış";
   return "Giriş";

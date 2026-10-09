@@ -40,6 +40,7 @@ def test_apply_partner_match_inflow_is_capital_in():
     assert args[4] == "capital_in"
     assert kwargs["extra"]["related_bank_tx_id"] == "tx1"
     assert kwargs["extra"]["source"] == "bank_match"
+    assert kwargs["extra"]["bank_tx_type"] == "inflow"
 
 
 def test_apply_partner_match_outflow_is_withdrawal():
@@ -47,6 +48,7 @@ def test_apply_partner_match_outflow_is_withdrawal():
     with patch("bank_match_target.partner_pay.move", AsyncMock(return_value="Ali")) as move:
         _run(apply_partner_match(object(), tx, "p9", 80, False))
     assert move.await_args.args[4] == "withdrawal"
+    assert move.await_args.kwargs["extra"]["bank_tx_type"] == "outflow"
 
 
 def test_reverse_partner_match_looks_up_bank_tx():

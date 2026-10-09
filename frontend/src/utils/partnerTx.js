@@ -23,6 +23,7 @@ export function isPartnerExpenseTx(tx) {
  * - Masraf (ortak ödedi) → Çıkış (harcama)
  * - Cari tahsilat → ortak → Giriş (tahsilat)
  * - Cari ödeme ← ortak → Çıkış
+ * - Banka eşleşmesi → bağlı banka hareketinin yönü (outflow=Çıkış)
  * - Virman / para çek → Çıkış; sermaye / maaş → Giriş
  */
 export function partnerTxIsCashInflow(tx) {
@@ -30,6 +31,15 @@ export function partnerTxIsCashInflow(tx) {
   if (isPartnerExpenseTx(tx)) return false;
   if (tx.contact_id && tx.type === "withdrawal") return true;
   if (tx.contact_id && tx.type === "capital_in") return false;
+  // Banka eşleşmesi: kasa yönü = bağlı banka hareketi (Vadesiz çıkışı → Çıkış)
+  if (tx.source === "bank_match" || tx.related_bank_tx_id) {
+    const bankType = String(tx.bank_tx_type || "").toLowerCase();
+    if (bankType === "outflow" || bankType === "debit") return false;
+    if (bankType === "inflow" || bankType === "credit") return true;
+    // bank_tx_type yoksa: eski eşlemede tip ters yazılmış olabilir
+    // (banka çıkışı capital_in görünüyordu) → etiketi tersle
+    return !partnerTxIncreasesBalance(tx.type, tx);
+  }
   return partnerTxIncreasesBalance(tx.type, tx);
 }
 
