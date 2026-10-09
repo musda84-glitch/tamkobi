@@ -17,6 +17,11 @@ describe("bankMatchLabel", () => {
       suggested_contact_name: "Trendyol",
     })).toBe("Gelen · Trendyol");
     expect(txDescriptionLabel({
+      description: "Banka Hareketi",
+      type: "outflow",
+      external_id: "KT-99",
+    })).toBe("Giden · ref KT-99");
+    expect(txDescriptionLabel({
       description: "Havale · Mustafa Bal",
       contact_name: "Mustafa Bal",
     })).toBe("Havale · Mustafa Bal");

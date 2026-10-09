@@ -1848,6 +1848,57 @@ def _tx_counterparty(row: dict) -> str:
     return ""
 
 
+_SKIP_NARRATIVE_KEYS = frozenset({
+    "transactionid", "id", "iban", "currency", "currencycode", "fxcode", "parabirimi",
+    "amount", "tutar", "transactionamount", "creditamount", "debitamount", "balance",
+    "bakiye", "date", "transactiondate", "bookingdate", "valuedate", "islemtarihi",
+    "accountingdate", "dekonttarihi", "tarih", "direction", "type", "transactiontype",
+    "borcalacak", "status", "ticketstatus", "state", "suffix", "seqnum", "itemcount",
+    "businesskey", "fisno", "dekontno", "referansno", "refno", "referencenumber",
+    "transactionreference", "bookingid",
+})
+
+
+def _looks_like_narrative(text: str) -> bool:
+    t = (text or "").strip()
+    if len(t) < 4:
+        return False
+    if _norm_key(t) in ("bankahareketi", "null", "none", "true", "false"):
+        return False
+    if re.fullmatch(r"[\d\s.,+\-]+", t):
+        return False
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}([tT ].*)?", t):
+        return False
+    if re.fullmatch(r"TR\d{24}", t.replace(" ", ""), flags=re.I):
+        return False
+    # En az bir harf (TR banka açıklamaları)
+    if not re.search(r"[A-Za-zÇĞİÖŞÜçğıöşü]", t):
+        return False
+    return True
+
+
+def _tx_narrative_scan(row: dict, depth: int = 0) -> str:
+    """Bilinmeyen alan adlarında kalan açıklama metnini yakala (Kuveyt dışı bankalar)."""
+    if not isinstance(row, dict) or depth > 3:
+        return ""
+    best = ""
+    for k, v in row.items():
+        nk = _norm_key(k)
+        if nk in _SKIP_NARRATIVE_KEYS:
+            continue
+        if isinstance(v, dict):
+            nested = _tx_narrative_scan(v, depth + 1)
+            if len(nested) > len(best):
+                best = nested
+            continue
+        if isinstance(v, list):
+            continue
+        t = _textish(v)
+        if _looks_like_narrative(t) and len(t) > len(best):
+            best = t
+    return best
+
+
 def _tx_description(row: dict, *, counterparty: str = "", direction: str = "", external_id: str = "") -> str:
     parts: List[str] = []
     for key in _DESC_KEYS:
@@ -1864,6 +1915,10 @@ def _tx_description(row: dict, *, counterparty: str = "", direction: str = "", e
                         break
             if parts:
                 break
+    if not parts:
+        scanned = _tx_narrative_scan(row)
+        if scanned and _norm_key(scanned) != _norm_key(counterparty or ""):
+            parts.append(scanned)
     desc = " · ".join(parts[:2]).strip()
     if desc:
         if counterparty and _norm_key(counterparty) not in _norm_key(desc):

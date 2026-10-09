@@ -73,3 +73,21 @@ def test_normalize_nested_detail_description():
     })
     assert "Fatura ödemesi" in rows[0]["description"]
     assert rows[0]["counterparty"] == "TEDAŞ"
+
+
+def test_normalize_scans_unknown_narrative_field():
+    """Kuveyt dışı bankalar farklı alan adı kullanınca metin yine yakalanmalı."""
+    rows = bp._normalize_tx_rows({
+        "transactions": [
+            {
+                "transactionId": "U1",
+                "amount": 500,
+                "direction": "debit",
+                "transactionDate": "2026-10-09",
+                "islemDetayi": "MUSTAFA BAL EFT ODAMESI",
+            },
+        ],
+    })
+    assert "MUSTAFA BAL" in rows[0]["description"]
+    assert rows[0]["description"] != "Banka Hareketi"
+    assert "Giden ödeme" not in rows[0]["description"] or "MUSTAFA" in rows[0]["description"]

@@ -6,7 +6,7 @@ function _clean(s) {
   return String(s || "").trim();
 }
 
-/** Liste hücresi: gerçek açıklama / karşı taraf; jenerik "Banka Hareketi" gizlenir. */
+/** Liste hücresi: bankadan gelen açıklama / karşı taraf; jenerik "Banka Hareketi" gizlenir. */
 export function txDescriptionLabel(tx) {
   const desc = _clean(tx?.description);
   const cp = _clean(tx?.counterparty);
@@ -19,7 +19,9 @@ export function txDescriptionLabel(tx) {
   if (!parts.length) {
     const tip = tx?.type === "inflow" ? "Gelen" : tx?.type === "outflow" ? "Giden" : "Hareket";
     const who = _clean(tx?.suggested_contact_name) || _clean(tx?.contact_name);
-    parts.push(who ? `${tip} · ${who}` : tip);
+    if (who) parts.push(`${tip} · ${who}`);
+    else if (_clean(tx?.external_id)) parts.push(`${tip} · ref ${tx.external_id}`);
+    else parts.push(tip);
   } else {
     const who = _clean(tx?.contact_name);
     if (who && !parts.some((p) => p.toLocaleLowerCase("tr").includes(who.toLocaleLowerCase("tr")))) {
