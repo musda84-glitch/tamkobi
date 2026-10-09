@@ -9785,14 +9785,19 @@ async def sync_bank_connection(conn_id: str, request: Request, days: int = 7):
     for t in result["transactions"]:
         exists = await db.bank_transactions.find_one({"account_id": acc["_id"], "external_id": t["external_id"]})
         if exists:
-            # Eski kayıtta açıklama boş/jenerikse bankadan gelen metinle doldur
+            # Eski "Banka Hareketi" vb. kayıtları bankadan gelen açıklama/karşı tarafla doldur
             patch: Dict[str, Any] = {}
             fresh_desc = (t.get("description") or "").strip()
             fresh_cp = (t.get("counterparty") or "").strip()
-            if fresh_desc and _generic_bank_desc(exists.get("description")) and not _generic_bank_desc(fresh_desc):
-                patch["description"] = fresh_desc
-            if fresh_cp and not (exists.get("counterparty") or "").strip():
+            old_desc = (exists.get("description") or "").strip()
+            old_cp = (exists.get("counterparty") or "").strip()
+            if fresh_cp and fresh_cp != old_cp:
                 patch["counterparty"] = fresh_cp
+            if fresh_desc and (
+                _generic_bank_desc(old_desc)
+                or (fresh_cp and fresh_cp not in old_desc and _generic_bank_desc(old_desc.replace(old_cp, "").strip(" ·")))
+            ) and (not _generic_bank_desc(fresh_desc) or (fresh_cp and fresh_cp in fresh_desc)):
+                patch["description"] = fresh_desc
             if patch:
                 await db.bank_transactions.update_one({"_id": exists["_id"]}, {"$set": patch})
             skipped += 1

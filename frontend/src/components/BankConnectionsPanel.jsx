@@ -7,7 +7,7 @@ import { API_URL } from "../context/AuthContext";
 import { BankMatchRow } from "./BankMatchRow";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { formatTrAmount } from "../utils/money";
-import { matchActorName, matchActorTitle } from "../utils/bankMatchLabel";
+import { matchActorName, matchActorTitle, txDescriptionLabel } from "../utils/bankMatchLabel";
 import { downloadTextFile, generateJsencryptKeyPair } from "../utils/jsencryptKuveyt";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 
@@ -584,7 +584,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 {matched.map((t) => (
                   <tr key={t.id} data-testid={`matched-tx-${t.id}`}>
                     <td className="px-4 py-1.5 font-mono text-slate-500">{t.date}</td>
-                    <td className="px-4 py-1.5">{t.description}</td>
+                    <td className="px-4 py-1.5 font-medium text-slate-800" data-testid={`matched-desc-${t.id}`}>{txDescriptionLabel(t)}</td>
                     <td className="px-4 py-1.5 font-semibold text-slate-800">{t.contact_name || t.target_account_name || t.category}{t.related_invoice_number ? <span className="text-slate-400 font-normal"> · {t.related_invoice_number}</span> : ""}{t.target_account_name ? <span className="text-indigo-600 font-normal"> (virman)</span> : ""}</td>
                     <td className="px-4 py-1.5"><span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${t.matched_via === "auto" ? "bg-violet-100 text-violet-700" : t.matched_via === "rule" ? "bg-indigo-100 text-indigo-700" : t.matched_via === "suggestion" ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-600"}`}>{t.matched_via === "auto" ? "OTOMATİK" : t.matched_via === "rule" ? "KURAL" : t.matched_via === "suggestion" ? "ÖNERİ" : "MANUEL"}</span></td>
                     <td className="px-4 py-1.5 text-slate-700" title={matchActorTitle(t)} data-testid={`matched-by-${t.id}`}>{matchActorName(t) || "—"}</td>
