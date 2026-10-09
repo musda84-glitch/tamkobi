@@ -47,9 +47,18 @@ export const DEFAULT_RADIAL_SLOTS = [
 
 const TONES = ["slate", "emerald", "sky", "amber", "indigo", "teal", "orange", "violet"];
 
-/** True when right-click target is empty panel surface (not a control). */
+/** Kullanıcı metin seçtiyse (kopyala vb.) tarayıcı sağ tık menüsü kalsın. */
+export function hasTextSelection() {
+  if (typeof window === "undefined" || typeof window.getSelection !== "function") return false;
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount < 1) return false;
+  return String(sel.toString() || "").trim().length > 0;
+}
+
+/** True when right-click target is empty panel surface (not a control / not a text selection). */
 export function isRadialBlankTarget(target) {
   if (!(target instanceof Element)) return false;
+  if (hasTextSelection()) return false;
   if (target.closest("[data-testid='radial-quick-menu']")) return false;
   if (target.closest("[data-testid='radial-quick-menu-controls']")) return false;
   if (target.closest(INTERACTIVE_SEL)) return false;
