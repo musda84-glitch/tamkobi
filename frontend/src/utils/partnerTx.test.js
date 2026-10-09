@@ -85,6 +85,33 @@ describe("partnerTx", () => {
     expect(partnerBalanceMeta(776059.78).display).toBeCloseTo(-776059.78, 2);
   });
 
+  it("Ali-shaped: cash Giriş/Çıkış + unrepaired expense withdrawal → card -776059.78", () => {
+    // Tip kovası (onarım öncesi): +909959.78 / −212300 → kart −697659.78
+    // Kasa yönü: Giriş 173100, Çıkış −949159.78; masraf withdrawal → alacak (+)
+    const shaped = [
+      { type: "credit", amount: 909959.78 },
+      { type: "withdrawal", amount: 39200, expense_id: "exp", source: "expense" },
+      {
+        type: "withdrawal",
+        amount: 173100,
+        source: "bank_match",
+        bank_tx_type: "outflow",
+      },
+    ];
+    expect(partnerTxIsCashInflow(shaped[0])).toBe(false);
+    expect(partnerTxIsCashInflow(shaped[1])).toBe(false);
+    expect(partnerTxIsCashInflow(shaped[2])).toBe(true);
+    expect(partnerTxBalanceDelta(shaped[1])).toBe(39200);
+    const br = partnerLedgerBreakdown(shaped, 697659.78);
+    expect(br.girisDisplay).toBeCloseTo(173100, 2);
+    expect(br.cikisDisplay).toBeCloseTo(-949159.78, 2);
+    expect(br.netDisplay).toBeCloseTo(-776059.78, 2);
+    expect(br.ledger).toBeCloseTo(776059.78, 2);
+    expect(br.cardDisplay).toBeCloseTo(-776059.78, 2);
+    expect(br.netMatchesCard).toBe(true);
+    expect(br.drift).toBe(true); // kayıtlı hâlâ onarılmamış
+  });
+
   it("shows only Alacaklı or Borçlu; Alacaklı display is negative", () => {
     const credit = partnerBalanceMeta(1200);
     expect(credit.label).toBe("Alacaklı");
@@ -138,14 +165,12 @@ describe("partnerTx", () => {
     expect(br.drift).toBe(false);
     expect(br.buckets.salary).toBe(150000);
     expect(br.buckets.profit_paid).toBe(9000);
-    expect(br.inflow).toBeCloseTo(500000 + 150000 + 50000 + 20000, 2);
-    // Peşin kâr payı kart bakiyesine yazılmaz — Çıkış'a dahil değil
-    expect(br.outflow).toBeCloseTo(31810.22, 2);
-    // Kart işareti: Giriş eksi, Çıkış artı → net = Alacaklı display
-    expect(br.girisDisplay).toBeCloseTo(-(500000 + 150000 + 50000 + 20000), 2);
-    expect(br.cikisDisplay).toBeCloseTo(31810.22, 2);
-    expect(br.netDisplay).toBeCloseTo(partnerBalanceMeta(ledger).display, 2);
-    expect(br.netDisplay).toBeCloseTo(-ledger, 2);
+    // Kasa yönü: Giriş artı, Çıkış eksi
+    expect(br.girisDisplay).toBeCloseTo(500000 + 150000 + 20000, 2);
+    expect(br.cikisDisplay).toBeCloseTo(-(50000 + 31810.22 + 9000), 2);
+    expect(br.cardDisplay).toBeCloseTo(-ledger, 2);
+    // Düz sermaye ağırlıklı kitapta kasa neti ≠ kart (bilinçli)
+    expect(br.netMatchesCard).toBe(false);
     expect(partnerLedgerBreakdown(txs, ledger + 1).drift).toBe(true);
   });
 

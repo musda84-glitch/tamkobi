@@ -61,9 +61,16 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
 
   const selectedPartner = useMemo(() => partners.find((p) => p.id === selectedPartnerId) || null, [partners, selectedPartnerId]);
   const visibleTxs = useMemo(() => filterPartnerTxs(txs, selectedPartnerId), [txs, selectedPartnerId]);
+  const partnerLedgers = useMemo(() => {
+    const map = {};
+    for (const p of partners) {
+      map[p.id] = partnerLedgerBreakdown(filterPartnerTxs(txs, p.id), p.balance);
+    }
+    return map;
+  }, [partners, txs]);
   const selectedLedger = useMemo(
-    () => (selectedPartner ? partnerLedgerBreakdown(visibleTxs, selectedPartner.balance) : null),
-    [selectedPartner, visibleTxs],
+    () => (selectedPartner ? partnerLedgers[selectedPartner.id] || null : null),
+    [selectedPartner, partnerLedgers],
   );
 
   useEffect(() => {
@@ -377,7 +384,9 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               </div>
             </div>
             {(() => {
-              const bm = partnerBalanceMeta(p.balance);
+              const br = partnerLedgers[p.id];
+              // Hareketlerden hesaplanan cebi (masraf withdrawal onarımı dahil); yoksa kayıtlı bakiye
+              const bm = partnerBalanceMeta(br && br.count > 0 ? br.ledger : p.balance);
               return (
             <div className="pt-2 border-t border-slate-100 flex items-end justify-between" data-testid={`partner-balance-${p.id}`}>
               <div className="min-w-0">
@@ -401,10 +410,17 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 {partnerSalaryCardText(p, fmt)}
               </span>
             </button>
+            {(() => {
+              const br = partnerLedgers[p.id];
+              const g = br ? br.girisDisplay : 0;
+              const c = br ? br.cikisDisplay : 0;
+              return (
             <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-500">
-              <div>Giriş: <b className="text-rose-700">−{fmt(p.total_capital_in)}</b></div>
-              <div>Çıkış: <b className="text-emerald-700">+{fmt(p.total_withdrawn)}</b></div>
+              <div>Giriş: <b className={g < 0 ? "text-rose-700" : "text-emerald-700"} data-testid={`partner-card-giris-${p.id}`}>{fmt(g)}</b></div>
+              <div>Çıkış: <b className={c < 0 ? "text-rose-700" : "text-emerald-700"} data-testid={`partner-card-cikis-${p.id}`}>{c > 0 ? `+${fmt(c)}` : fmt(c)}</b></div>
             </div>
+              );
+            })()}
           </div>
           );
         })}
@@ -435,20 +451,22 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           >
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <div className="font-bold text-slate-800">Bakiye kontrolü</div>
-              <div className={selectedLedger.drift ? "text-rose-700 font-semibold" : "text-emerald-700 font-semibold"} data-testid="partner-ledger-match">
+              <div className={selectedLedger.drift || !selectedLedger.netMatchesCard ? "text-rose-700 font-semibold" : "text-emerald-700 font-semibold"} data-testid="partner-ledger-match">
                 {selectedLedger.drift
-                  ? `Sapma: kart ${fmt(partnerBalanceMeta(selectedLedger.stored).display)} ₺ ≠ hareket ${fmt(selectedLedger.netDisplay)} ₺`
-                  : `Kart = Giriş + Çıkış (${fmt(selectedLedger.netDisplay)} ₺ · ${selectedLedger.count} kayıt)`}
+                  ? `Sapma: kayıtlı ${fmt(partnerBalanceMeta(selectedLedger.stored).display)} ₺ ≠ hareket ${fmt(selectedLedger.cardDisplay)} ₺`
+                  : selectedLedger.netMatchesCard
+                    ? `Kart = Giriş + Çıkış (${fmt(selectedLedger.netDisplay)} ₺ · ${selectedLedger.count} kayıt)`
+                    : `Kart ${fmt(selectedLedger.cardDisplay)} ₺ · Giriş+Çıkış ${fmt(selectedLedger.netDisplay)} ₺ (${selectedLedger.count} kayıt)`}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2" data-testid="partner-ledger-buckets">
               <div className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
                 <div className="text-[10px] uppercase text-slate-400 font-semibold">Giriş</div>
-                <div className="font-bold text-rose-700" data-testid="partner-ledger-inflow">{fmt(selectedLedger.girisDisplay)} ₺</div>
+                <div className={`font-bold ${selectedLedger.girisDisplay < 0 ? "text-rose-700" : "text-emerald-700"}`} data-testid="partner-ledger-inflow">{fmt(selectedLedger.girisDisplay)} ₺</div>
               </div>
               <div className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
                 <div className="text-[10px] uppercase text-slate-400 font-semibold">Çıkış</div>
-                <div className="font-bold text-emerald-700" data-testid="partner-ledger-outflow">+{fmt(selectedLedger.cikisDisplay)} ₺</div>
+                <div className={`font-bold ${selectedLedger.cikisDisplay < 0 ? "text-rose-700" : "text-emerald-700"}`} data-testid="partner-ledger-outflow">{selectedLedger.cikisDisplay > 0 ? `+${fmt(selectedLedger.cikisDisplay)}` : fmt(selectedLedger.cikisDisplay)} ₺</div>
               </div>
             </div>
           </div>

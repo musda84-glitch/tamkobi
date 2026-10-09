@@ -190,13 +190,19 @@ def balance_inc(tx_type: str, amount: float) -> Dict[str, float]:
 
 
 def tx_balance_delta(tx: Dict[str, Any]) -> float:
-    """Tek hareketin ortak bakiyesine etkisi (tahakkuk kâr payı +, peşin ödenen 0)."""
+    """Tek hareketin ortak bakiyesine etkisi (tahakkuk kâr payı +, peşin ödenen 0).
+
+    Masraf ödemesi tip withdrawal kalsa bile alacak (+); sync onarımı öncesi de doğru.
+    """
     try:
         amount = float(tx.get("amount") or 0)
     except (TypeError, ValueError):
         return 0.0
     t = tx.get("type")
-    if t in ("capital_in", "credit", "salary"):
+    # Masraf / expense kaynağı — eski withdrawal yazılmış olsa bile alacak
+    if tx.get("expense_id") or tx.get("source") == "expense" or t == "credit":
+        return amount
+    if t in ("capital_in", "salary"):
         return amount
     if t in ("withdrawal", "debit"):
         return -amount
