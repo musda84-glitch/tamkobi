@@ -226,3 +226,129 @@ def test_cargo_create_shipment_allowed_with_orders_edit():
         allowed2 = perms2.get("/orders", "none") == "edit"
     assert allowed2 is False
     _ = PermissionAndAuditMiddleware  # import sanity
+
+
+def test_opt_flag_json_false():
+    import cargo_providers as cp
+
+    assert cp.opt_flag({}, "accept_offer", True) is True
+    assert cp.opt_flag({"accept_offer": False}, "accept_offer", True) is False
+    assert cp.opt_flag({"accept_offer": "false"}, "accept_offer", True) is False
+    assert cp.opt_flag({"quote_only": True}, "quote_only", False) is True
+
+
+def test_geliver_collect_offers_merges_list_cheapest_fastest():
+    import cargo_providers as cp
+
+    offers, cheapest, pct = cp.geliver_collect_offers({
+        "offers": {
+            "percentageCompleted": 90,
+            "cheapest": {"id": "off_cheap", "providerServiceCode": "MNG_STANDART", "totalAmount": "32.50", "providerCode": "MNG"},
+            "fastest": {"id": "off_fast", "providerServiceCode": "YK_NEXTDAY", "totalAmount": "48.00", "providerCode": "YURTICI"},
+            "list": [
+                {"id": "off_cheap", "providerServiceCode": "MNG_STANDART", "totalAmount": "32.50", "providerCode": "MNG"},
+                {"id": "off_fast", "providerServiceCode": "YK_NEXTDAY", "totalAmount": "48.00", "providerCode": "YURTICI"},
+                {"id": "off_mid", "providerServiceCode": "SURAT_STANDART", "totalAmount": "39.00", "providerCode": "SURAT"},
+            ],
+        }
+    })
+    ids = [o["id"] for o in offers]
+    assert ids == ["off_cheap", "off_mid", "off_fast"]
+    assert cheapest["id"] == "off_cheap"
+    assert pct == 90
+    cheap_row = next(o for o in offers if o["id"] == "off_cheap")
+    fast_row = next(o for o in offers if o["id"] == "off_fast")
+    assert cheap_row["is_cheapest"] is True
+    assert fast_row["is_fastest"] is True
+    assert cheap_row["service"] == "MNG_STANDART"
+
+
+def test_geliver_quote_only_skips_transactions():
+    import cargo_providers as cp
+
+    calls = []
+
+    async def fake_geliver(method, path, token, **kwargs):
+        calls.append((method, path, kwargs.get("json")))
+        if method == "POST" and path == "/shipments":
+            return {
+                "id": "shp_q",
+                "offers": {
+                    "percentageCompleted": 100,
+                    "cheapest": {"id": "off_a", "providerServiceCode": "MNG_STANDART", "totalAmount": "20"},
+                    "fastest": {"id": "off_b", "providerServiceCode": "YK_NEXTDAY", "totalAmount": "35"},
+                    "list": [
+                        {"id": "off_a", "providerServiceCode": "MNG_STANDART", "totalAmount": "20"},
+                        {"id": "off_b", "providerServiceCode": "YK_NEXTDAY", "totalAmount": "35"},
+                    ],
+                },
+            }
+        raise AssertionError(f"unexpected {method} {path}")
+
+    cfg = {"api_key": "t", "sender_address_id": "a1", "test_mode": True}
+    order = {
+        "customer_name": "A",
+        "customer_phone": "05321112233",
+        "shipping_address": "Adr",
+        "city": "İstanbul",
+        "items": [],
+    }
+    with patch.object(cp, "_geliver", side_effect=fake_geliver):
+        result = asyncio.run(cp.geliver_create_shipment(cfg, order, {"accept_offer": False}))
+    assert result["accepted"] is False
+    assert result["geliver_id"] == "shp_q"
+    assert [o["id"] for o in result["offers"]] == ["off_a", "off_b"]
+    assert not any(p == "/transactions" for _, p, _ in calls)
+
+
+def test_geliver_accept_offer_posts_selected_id():
+    import cargo_providers as cp
+
+    calls = []
+
+    async def fake_geliver(method, path, token, **kwargs):
+        calls.append((method, path, kwargs.get("json")))
+        if method == "POST" and path == "/transactions":
+            assert kwargs.get("json") == {"offerID": "off_b"}
+            return {
+                "id": "tx_sel",
+                "shipment": {
+                    "id": "shp_q",
+                    "trackingNumber": "YK999",
+                    "barcode": "BC9",
+                    "labelURL": "https://label/9.pdf",
+                },
+                "offer": {"id": "off_b", "providerServiceCode": "YK_NEXTDAY", "totalAmount": "35"},
+            }
+        raise AssertionError(f"unexpected {method} {path}")
+
+    with patch.object(cp, "_geliver", side_effect=fake_geliver):
+        result = asyncio.run(cp.geliver_accept_offer({"api_key": "t"}, "off_b", "shp_q"))
+    assert result["accepted"] is True
+    assert result["tracking_number"] == "YK999"
+    assert result["geliver_id"] == "shp_q"
+    assert any(m == "POST" and p == "/transactions" for m, p, _ in calls)
+
+
+def test_geliver_refresh_quotes_get_only():
+    import cargo_providers as cp
+
+    calls = []
+
+    async def fake_geliver(method, path, token, **kwargs):
+        calls.append((method, path))
+        assert method == "GET" and path == "/shipments/shp_q"
+        return {
+            "id": "shp_q",
+            "offers": {
+                "percentageCompleted": 100,
+                "cheapest": {"id": "off_a", "totalAmount": "20", "providerServiceCode": "MNG_STANDART"},
+                "list": [{"id": "off_a", "totalAmount": "20", "providerServiceCode": "MNG_STANDART"}],
+            },
+        }
+
+    with patch.object(cp, "_geliver", side_effect=fake_geliver):
+        result = asyncio.run(cp.geliver_refresh_quotes({"api_key": "t"}, "shp_q"))
+    assert result["accepted"] is False
+    assert len(result["offers"]) == 1
+    assert result["offers"][0]["id"] == "off_a"
