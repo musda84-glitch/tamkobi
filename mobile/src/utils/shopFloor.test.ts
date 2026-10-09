@@ -66,6 +66,13 @@ describe("operatorStationLock", () => {
     expect(operatorStationLock(rows, "Veli", "HOLZHER")).toBeNull();
     expect(operatorStationLock([rows[1]], "Ali", "PVC")).toBeNull();
   });
+
+  it("needs unfiltered in_progress scope when station filter hides other stations", () => {
+    const filtered = rows.filter((r) => r.station === "HOLZHER");
+    expect(operatorStationLock(filtered, "Ali", "HOLZHER")).toBeNull();
+    const lockScope = rows.filter((r) => r.status === "in_progress");
+    expect(operatorStationLock(lockScope, "Ali", "HOLZHER")?.id).toBe("a");
+  });
 });
 
 describe("partitionWorkOrders", () => {

@@ -114,12 +114,16 @@ def test_list_work_orders_applies_active_filter():
             to_list=AsyncMock(return_value=[{"_id": "po1", "status": "in_production"}])
         )
     )
+    fake_db.companies.find_one = AsyncMock(return_value={})
+    fake_db.work_order_trash_requests.find = MagicMock(
+        return_value=MagicMock(to_list=AsyncMock(return_value=[]))
+    )
 
     async def run():
         with patch.object(server, "db", fake_db), \
              patch.object(server, "clean_docs", side_effect=lambda xs: [{**x, "id": x.get("_id") or x.get("id")} for x in xs]), \
              patch.object(server, "_enrich_work_orders_job_fields", AsyncMock(side_effect=lambda rows: rows)):
-            return await server.list_work_orders(company_id="c1")
+            return await server.list_work_orders(response=MagicMock(), company_id="c1")
 
     out = asyncio.run(run())
     assert len(out) == 1

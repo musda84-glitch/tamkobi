@@ -91,6 +91,15 @@ describe("operatorStationLock", () => {
   test("paused does not lock", () => {
     expect(operatorStationLock([rows[1]], "Ali", "PVC BANTLAMA")).toBeNull();
   });
+
+  test("station-filtered list alone would miss cross-station lock — need full in_progress scope", () => {
+    const filteredToHolzher = rows.filter((r) => r.station === "HOLZHER");
+    // Tablet yalnızca HOLZHER görürse Ali'nin PVC işi listede yok → yanlışlıkla serbest
+    expect(operatorStationLock(filteredToHolzher, "Ali", "HOLZHER")).toBeNull();
+    // Tüm istasyonlardan in_progress gelince kilit doğru
+    const lockScope = rows.filter((r) => r.status === "in_progress");
+    expect(operatorStationLock(lockScope, "Ali", "HOLZHER")?.id).toBe("a");
+  });
 });
 
 describe("shopFloorCardActions", () => {

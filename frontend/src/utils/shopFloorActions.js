@@ -63,6 +63,7 @@ export function shopFloorStationKey(station) {
 /**
  * Operatörün bitirilmemiş (in_progress) işi başka istasyondaysa engel satırı.
  * paused/done serbest; aynı istasyon serbest; başka personelin işi engellemez.
+ * `wos` istasyon filtresiz olmalı (tablet kiosk’ta ayrı in_progress listesi verin).
  */
 export function operatorStationLock(wos, operatorName, targetStation, excludeId = null) {
   const who = String(operatorName || "").trim();

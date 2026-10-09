@@ -1,6 +1,6 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
-import { Alert, Image, Modal, Pressable, Switch, Text, View } from "react-native";
+import { Alert, AppState, Image, Modal, Pressable, Switch, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -220,6 +220,8 @@ function WoCard({
 export function AtolyeScreen() {
   const { client, companyId, user, baseUrl } = useAuth();
   const [wos, setWos] = useState<WorkOrder[]>([]);
+  /** İstasyon filtresinden bağımsız in_progress — operatör kilit UI */
+  const [lockWos, setLockWos] = useState<WorkOrder[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [stations, setStations] = useState<string[]>([]);
   const [operator, setOperator] = useState("");
@@ -265,18 +267,26 @@ export function AtolyeScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [w, e, s, parks, me, settings] = await Promise.all([
+      const [w, lockRows, e, s, parks, me, settings] = await Promise.all([
         get<WorkOrder[]>(client, "/production/work-orders", {
           company_id: companyId,
           station: station || undefined,
         }).catch(() => []),
+        station
+          ? get<WorkOrder[]>(client, "/production/work-orders", {
+              company_id: companyId,
+              status: "in_progress",
+            }).catch(() => [])
+          : Promise.resolve(null),
         get<Employee[]>(client, "/personnel/employees", { company_id: companyId }).catch(() => []),
         get<string[]>(client, "/production/work-orders/stations", { company_id: companyId }).catch(() => []),
         get<{ parks?: unknown[] }>(client, `/companies/${companyId}/work-parks`).catch(() => ({ parks: [] })),
         get<{ employee?: Employee; tasks?: AssignedDuty[] }>(client, "/personnel/me").catch(() => null),
         get<{ group_same_station?: boolean }>(client, "/production/work-orders/shopfloor-settings", { company_id: companyId }).catch(() => null),
       ]);
-      setWos(Array.isArray(w) ? w : []);
+      const list = Array.isArray(w) ? w : [];
+      setWos(list);
+      setLockWos(station ? (Array.isArray(lockRows) ? lockRows : []) : list);
       setEmployees(shopFloorOperators(mergeSelfEmployee(Array.isArray(e) ? e : [], me?.employee)));
       setStations(stationNamesFromParks(parks?.parks, Array.isArray(s) ? s : []));
       setDuties(Array.isArray(me?.tasks) ? me.tasks : []);
@@ -292,8 +302,14 @@ export function AtolyeScreen() {
   useFocusEffect(
     useCallback(() => {
       load();
-      const t = setInterval(load, 15000);
-      return () => clearInterval(t);
+      const t = setInterval(load, 5000);
+      const sub = AppState.addEventListener("change", (state) => {
+        if (state === "active") load();
+      });
+      return () => {
+        clearInterval(t);
+        sub.remove();
+      };
     }, [load])
   );
   useFocusEffect(
@@ -361,8 +377,13 @@ export function AtolyeScreen() {
       setError("Önce operatör (personel) seçin.");
       return;
     }
+    const wid = idOf(w);
+    if (!wid) {
+      setError("İş emri kimliği bulunamadı.");
+      return;
+    }
     if (action === "start") {
-      const blocker = operatorStationLock(wos, operator, w.station, idOf(w));
+      const blocker = operatorStationLock(lockWos, operator, w.station, wid);
       if (blocker) {
         setError(operatorStationLockMessage(blocker, operator));
         return;
@@ -371,13 +392,34 @@ export function AtolyeScreen() {
     const key = woCardKey(w);
     setBusyId(key);
     try {
-      const r = await post<{ message?: string }>(client, `/production/work-orders/${idOf(w)}/${action}`, {
+      const r = await post<{ message?: string; work_order?: WorkOrder }>(client, `/production/work-orders/${wid}/${action}`, {
         operator_name: operator,
         ...(body || {}),
       });
       setNotice(r.message || "İşlem tamamlandı.");
       setError(null);
       setFinishing(null);
+      // Web tablete hemen yansısın diye yerel durumu anında güncelle
+      if (r.work_order && idOf(r.work_order)) {
+        const uid = idOf(r.work_order);
+        const updated = r.work_order;
+        setWos((prev) => {
+          const hit = prev.some((x) => idOf(x) === uid);
+          if (hit) return prev.map((x) => (idOf(x) === uid ? { ...x, ...updated } : x));
+          return prev;
+        });
+        setLockWos((prev) => {
+          if (String(updated.status || "") === "in_progress") {
+            const hit = prev.some((x) => idOf(x) === uid);
+            if (hit) return prev.map((x) => (idOf(x) === uid ? { ...x, ...updated } : x));
+            return [...prev, updated];
+          }
+          return prev.filter((x) => idOf(x) !== uid);
+        });
+      } else if (action === "finish") {
+        setWos((prev) => prev.map((x) => (idOf(x) === wid ? { ...x, status: "done" } : x)));
+        setLockWos((prev) => prev.filter((x) => idOf(x) !== wid));
+      }
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "İşlem başarısız."));
@@ -680,7 +722,7 @@ export function AtolyeScreen() {
               baseUrl={baseUrl}
               pauseAllowed={!!pausePolicy?.allowed}
               pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
-              stationLockMsg={operatorStationLockMessage(operatorStationLock(wos, operator, w.station, idOf(w)), operator)}
+              stationLockMsg={operatorStationLockMessage(operatorStationLock(lockWos, operator, w.station, idOf(w)), operator)}
               onStart={() => act(w, "start")}
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}
@@ -702,7 +744,7 @@ export function AtolyeScreen() {
           baseUrl={baseUrl}
           pauseAllowed={!!pausePolicy?.allowed}
           pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
-          stationLockMsg={operatorStationLockMessage(operatorStationLock(wos, operator, w.station, idOf(w)), operator)}
+          stationLockMsg={operatorStationLockMessage(operatorStationLock(lockWos, operator, w.station, idOf(w)), operator)}
           onStart={() => act(w, "start")}
           onPause={() => act(w, "pause")}
           onFinish={() => openFinish(w)}
@@ -720,7 +762,7 @@ export function AtolyeScreen() {
               operator={operator}
               busy={busyId === woCardKey(w)}
               baseUrl={baseUrl}
-              stationLockMsg={operatorStationLockMessage(operatorStationLock(wos, operator, w.station, idOf(w)), operator)}
+              stationLockMsg={operatorStationLockMessage(operatorStationLock(lockWos, operator, w.station, idOf(w)), operator)}
               onStart={() => act(w, "start")}
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}

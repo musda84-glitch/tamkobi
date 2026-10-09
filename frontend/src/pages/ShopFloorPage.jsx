@@ -13,6 +13,9 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
 import { formatTrQty } from "../utils/money";
+import { useLivePoll } from "../hooks/useLivePoll";
+
+const woId = (w) => String(w?.id || w?._id || "");
 
 const STATUS = { waiting: ["Bekliyor", "bg-slate-100 text-slate-500"], ready: ["Hazır", "bg-blue-50 text-blue-700"], in_progress: ["Devam Ediyor", "bg-amber-50 text-amber-700"], paused: ["Duraklatıldı", "bg-orange-50 text-orange-700"], done: ["Tamamlandı", "bg-emerald-50 text-emerald-700"] };
 
@@ -20,6 +23,8 @@ export default function ShopFloorPage() {
   const { activeCompany } = useAuth();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [wos, setWos] = useState([]);
+  /** İstasyon filtresinden bağımsız in_progress listesi — operatör kilit kontrolü için */
+  const [lockWos, setLockWos] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [stations, setStations] = useState([]);
   const [operator, setOperator] = useState("");
@@ -62,19 +67,31 @@ export default function ShopFloorPage() {
 
   const load = useCallback(async () => {
     try {
-      const [w, e, s, parks, me] = await Promise.all([
-        axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}`).catch(() => ({ data: [] })),
+      const bust = `_=${Date.now()}`;
+      const headers = { "Cache-Control": "no-cache", Pragma: "no-cache" };
+      const [w, lockRows, e, s, parks, me] = await Promise.all([
+        axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}&${bust}`, {
+          headers,
+        }).catch(() => ({ data: [] })),
+        // Tablet istasyona kilitliyken başka istasyondaki in_progress'i de gör (UI kilidi)
+        station
+          ? axios.get(`${API_URL}/production/work-orders?company_id=${companyId}&status=in_progress&${bust}`, { headers }).catch(() => ({ data: [] }))
+          : Promise.resolve(null),
         axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/production/work-orders/stations?company_id=${companyId}`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/companies/${companyId}/work-parks`).catch(() => ({ data: { parks: [] } })),
         axios.get(`${API_URL}/personnel/me`, { withCredentials: true }).catch(() => ({ data: { tasks: [] } })),
       ]);
-      setWos(w.data || []); setEmployees(shopFloorOperators(e.data || []));
+      const list = Array.isArray(w.data) ? w.data : [];
+      setWos(list);
+      setLockWos(station ? (Array.isArray(lockRows?.data) ? lockRows.data : []) : list);
+      setEmployees(shopFloorOperators(e.data || []));
       setStations(stationNamesFromParks(parks.data?.parks, Array.isArray(s.data) ? s.data : []));
       setDuties(Array.isArray(me.data?.tasks) ? me.data.tasks : []);
     } catch { /* keep last */ }
   }, [companyId, station]);
-  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
+  // Mobil bitişin tablete yansıması: 5 sn poll + sekme/focus'ta anında yenile
+  useLivePoll(load, { intervalMs: 5000 });
   useEffect(() => {
     loadPausePolicy(operator);
     if (!operator) return undefined;
@@ -116,15 +133,36 @@ export default function ShopFloorPage() {
 
   const act = async (w, action, body) => {
     if (!operator) { toast.error("Önce operatör (personel) seçin."); return; }
+    const id = woId(w);
+    if (!id) { toast.error("İş emri kimliği bulunamadı."); return; }
     if (action === "start") {
-      const blocker = operatorStationLock(wos, operator, w.station, w.id || w._id);
+      const blocker = operatorStationLock(lockWos, operator, w.station, id);
       if (blocker) {
         toast.error(operatorStationLockMessage(blocker, operator));
         return;
       }
     }
-    try { const r = await axios.post(`${API_URL}/production/work-orders/${w.id}/${action}`, { operator_name: operator, ...(body || {}) }); toast.success(r.data.message); setFinishing(null); load(); }
-    catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); }
+    try {
+      const r = await axios.post(`${API_URL}/production/work-orders/${id}/${action}`, { operator_name: operator, ...(body || {}) });
+      toast.success(r.data.message);
+      setFinishing(null);
+      // Anında yansıt (mobil/diğer sekme ile yarışmadan önce)
+      const updated = r.data?.work_order;
+      if (updated && woId(updated)) {
+        const uid = woId(updated);
+        const patch = (prev) => {
+          const hit = prev.some((x) => woId(x) === uid);
+          if (hit) return prev.map((x) => (woId(x) === uid ? { ...x, ...updated } : x));
+          return String(updated.status || "") === "in_progress" ? [...prev, updated] : prev;
+        };
+        setWos(patch);
+        setLockWos((prev) => {
+          if (String(updated.status || "") === "in_progress") return patch(prev);
+          return prev.filter((x) => woId(x) !== uid);
+        });
+      }
+      load();
+    } catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); }
   };
   const openFinish = (w) => {
     const plan = workOrderFinishPlan(w);
@@ -238,7 +276,7 @@ export default function ShopFloorPage() {
     setTrashReqBusy(true);
     setTrashReqErr("");
     try {
-      const r = await axios.post(`${API_URL}/production/work-orders/${trashTarget.id}/trash-request`, {
+      const r = await axios.post(`${API_URL}/production/work-orders/${woId(trashTarget)}/trash-request`, {
         company_id: companyId,
         operator_name: operator,
       });
@@ -259,7 +297,7 @@ export default function ShopFloorPage() {
     const [l, c] = STATUS[w.status] || STATUS.waiting;
     const actions = shopFloorCardActions(w.status, pauseAllowed);
     const stationLock = (actions.start || actions.resume)
-      ? operatorStationLock(wos, operator, w.station, w.id || w._id)
+      ? operatorStationLock(lockWos, operator, w.station, w.id || w._id)
       : null;
     const stationLockMsg = stationLock ? operatorStationLockMessage(stationLock, operator) : "";
     const pauseTitle = actions.pauseEnabled

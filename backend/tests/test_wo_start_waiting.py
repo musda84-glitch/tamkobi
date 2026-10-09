@@ -15,7 +15,6 @@ def test_start_work_order_allows_waiting():
         "paused_seconds": 0,
     }
     fake_db = MagicMock()
-    fake_db.work_orders.update_one = AsyncMock()
     fake_db.production_orders.update_one = AsyncMock()
     captured = {}
 
@@ -25,6 +24,9 @@ def test_start_work_order_allows_waiting():
         return MagicMock()
 
     fake_db.work_orders.update_one = AsyncMock(side_effect=update_one)
+    fake_db.work_orders.find_one = AsyncMock(return_value={
+        **wo, "status": "in_progress", "operator_name": "Ali", "started_at": "2026-10-09T12:00:00+00:00",
+    })
 
     async def run():
         with patch.object(server, "db", fake_db), \
@@ -37,6 +39,7 @@ def test_start_work_order_allows_waiting():
     assert captured["upd"]["$set"]["status"] == "in_progress"
     assert captured["upd"]["$set"]["operator_name"] == "Ali"
     assert captured["upd"]["$set"].get("started_at")
+    assert r["work_order"]["status"] == "in_progress"
 
 
 def test_start_work_order_rejects_done():

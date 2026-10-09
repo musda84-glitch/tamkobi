@@ -82,17 +82,21 @@ def test_start_allowed_for_other_operator_while_busy():
         async def to_list(self, n):
             return []  # Veli'nin in_progress işi yok
 
+    started = {**wo, "status": "in_progress", "operator_name": "Veli", "started_at": "2026-01-01T00:00:00+00:00"}
     fake_db = MagicMock()
     fake_db.work_orders.find = MagicMock(return_value=FakeCursor())
+    fake_db.work_orders.find_one = AsyncMock(return_value=started)
     fake_db.work_orders.update_one = AsyncMock()
     fake_db.production_orders.update_one = AsyncMock()
 
     async def run():
         with patch.object(server, "db", fake_db), \
              patch.object(server, "_wo", AsyncMock(return_value=dict(wo))), \
-             patch.object(server, "_log", lambda *a, **k: {"action": "start"}):
+             patch.object(server, "_log", lambda *a, **k: {"action": "start"}), \
+             patch.object(server, "clean_doc", lambda d: d):
             return await server.start_work_order("wo_new", {"operator_name": "Veli"})
 
     r = asyncio.run(run())
     assert r["status"] == "success"
+    assert r.get("work_order", {}).get("status") == "in_progress"
     fake_db.work_orders.update_one.assert_awaited()
