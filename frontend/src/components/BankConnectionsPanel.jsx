@@ -529,7 +529,9 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             </div>
             {c.status === "error" && c.last_error && (
               <p className="text-[10px] text-slate-500 leading-snug" data-testid={`conn-error-scope-hint-${c.id}`}>
-                HATA yalnızca <b>bu bağlantının</b> son test/senkron denemesidir. Alttaki eşleştirme listesi tüm banka hesaplarından gelir (ör. Enpara); Kuveyt çekemese bile diğer bankaların hareketleri görünür.
+                HATA = <b>bu bağlantının</b> son test/senkronu (şimdi bankaya ulaşılamıyor). 
+                «Çekilen» = bu bağlantının eklediği yeni satırlar. 
+                «Bekleyen» = bağlı hesaptaki eski eşleşmemiş hareketler — daha önce çekilmişse veya bağlantı yenilenmişse HATA olsa da listede kalır.
               </p>
             )}
             {c.last_error && <ConnErrorBox connection={c} onEdit={() => openEdit(c)} />}
@@ -561,7 +563,7 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               {unmatchedTotal > unmatchedShown ? ` · ${unmatchedShown} gösteriliyor` : ""}
             </span>
             <p className="text-[10px] text-slate-400 mt-0.5" data-testid="unmatched-scope-hint">
-              Tüm banka bağlantıları (Kuveyt, Enpara…) — karttaki HATA yalnızca o bağlantının son denemesidir.
+              Şirketteki tüm banka hesaplarından eşleşmemiş hareketler. Karttaki HATA o anki bağlantı testidir; listedeki satırlar veritabanında saklıdır (bağlantı hata verse de silinmez).
             </p>
           </div>
           <div className="flex items-center gap-2">
