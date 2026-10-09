@@ -1,20 +1,30 @@
-import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxBalanceDelta, partnerTxIncreasesBalance, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
+import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxBalanceDelta, partnerTxIncreasesBalance, partnerTxIsCashInflow, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
 
 describe("partnerTx", () => {
-  it("labels all partner txs as Giriş or Çıkış only", () => {
+  it("labels txs by cash direction (masraf=Çıkış, tahsilat=Giriş)", () => {
     expect(PARTNER_TX_LABEL.debit).toBe("Çıkış");
     expect(PARTNER_TX_LABEL.credit).toBe("Giriş");
-    expect(partnerTxLabel({ type: "credit", expense_id: "e1" })).toBe("Giriş");
-    expect(partnerTxLabel({ type: "credit", source: "expense" })).toBe("Giriş");
+    // Masraf: ortak bakiyesi artar ama kasa yönü Çıkış
+    expect(partnerTxLabel({ type: "credit", expense_id: "e1" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "credit", source: "expense" })).toBe("Çıkış");
     expect(partnerTxIncreasesBalance("credit")).toBe(true);
+    // Cari tahsilat → ortak: bakiye azalır ama işlem Giriş
+    expect(partnerTxLabel({ type: "withdrawal", contact_id: "c1", description: "Ferhat: Cari tahsilat" })).toBe("Giriş");
+    // Virman / düz para çek: Çıkış
     expect(partnerTxLabel({ type: "withdrawal" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "withdrawal", description: "Virman → ortak" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "capital_in" })).toBe("Giriş");
+    expect(partnerTxLabel({ type: "capital_in", contact_id: "c1" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "salary" })).toBe("Giriş");
     expect(partnerTxLabel({ type: "debit" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "profit_share", is_paid: false })).toBe("Giriş");
     expect(partnerTxLabel({ type: "profit_share", is_paid: true })).toBe("Çıkış");
     expect(isPartnerExpenseTx({ expense_id: "e1" })).toBe(true);
     expect(isPartnerExpenseTx({ type: "credit" })).toBe(false);
+    expect(partnerTxIsCashInflow({ type: "credit", expense_id: "e1" })).toBe(false);
+    expect(partnerTxIsCashInflow({ type: "withdrawal", contact_id: "c1" })).toBe(true);
+    expect(partnerTxSign("credit", { type: "credit", expense_id: "e1" })).toBe("-");
+    expect(partnerTxSign("withdrawal", { type: "withdrawal", contact_id: "c1" })).toBe("+");
   });
 
   it("shows only Alacaklı or Borçlu (no pocket/hint copy)", () => {

@@ -1,7 +1,8 @@
 /** Ortak hareket etiketleri ve işaretleri.
- * Bakiye = ortağın cebindeki para (şirkette duran, çekilebilir tutar).
- *   Giriş → cebine girer (sermaye, alacak, maaş, masraf ödemesi…)
- *   Çıkış → cebinden çıkar (para çekimi, borç fişi…)
+ * Bakiye = ortağın cebindeki para (yazma).
+ * İşlem sütunu Giriş/Çıkış = kasa / işlem yönü:
+ *   tahsilat → Giriş, masraf / virman çıkışı → Çıkış
+ * (ortak bakiyesi artışı ile aynı olmayabilir).
  */
 
 export const PARTNER_TX_LABEL = {
@@ -13,15 +14,29 @@ export const PARTNER_TX_LABEL = {
   salary: "Giriş",
 };
 
-/** İşlem sütunu: yalnızca Giriş / Çıkış (cebindeki paraya göre). */
-export function partnerTxLabel(tx) {
-  if (!tx) return "";
-  if (partnerTxIncreasesBalance(tx.type, tx)) return "Giriş";
-  return "Çıkış";
-}
-
 export function isPartnerExpenseTx(tx) {
   return Boolean(tx?.expense_id || tx?.source === "expense");
+}
+
+/**
+ * İşlem sütunu yönü (kasa bakışı):
+ * - Masraf (ortak ödedi) → Çıkış (harcama)
+ * - Cari tahsilat → ortak → Giriş (tahsilat)
+ * - Cari ödeme ← ortak → Çıkış
+ * - Virman / para çek → Çıkış; sermaye / maaş → Giriş
+ */
+export function partnerTxIsCashInflow(tx) {
+  if (!tx) return false;
+  if (isPartnerExpenseTx(tx)) return false;
+  if (tx.contact_id && tx.type === "withdrawal") return true;
+  if (tx.contact_id && tx.type === "capital_in") return false;
+  return partnerTxIncreasesBalance(tx.type, tx);
+}
+
+/** İşlem sütunu: yalnızca Giriş / Çıkış (kasa yönü). */
+export function partnerTxLabel(tx) {
+  if (!tx) return "";
+  return partnerTxIsCashInflow(tx) ? "Giriş" : "Çıkış";
 }
 
 /**
@@ -77,6 +92,10 @@ export function partnerTxIncreasesBalance(type, tx) {
 }
 
 export function partnerTxSign(type, tx) {
+  // Tablo işareti kasa yönüyle aynı (Giriş +, Çıkış −)
+  if (tx && typeof tx === "object") {
+    return partnerTxIsCashInflow({ ...tx, type: type || tx.type }) ? "+" : "-";
+  }
   return partnerTxIncreasesBalance(type, tx) ? "+" : "-";
 }
 
