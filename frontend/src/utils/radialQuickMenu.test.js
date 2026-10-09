@@ -1,4 +1,5 @@
 import {
+  hasTextSelection,
   isRadialBlankTarget,
   normalizeRadialSlots,
   DEFAULT_RADIAL_SLOTS,
@@ -25,6 +26,21 @@ describe("isRadialBlankTarget", () => {
     expect(isRadialBlankTarget(document.getElementById("a"))).toBe(false);
     expect(isRadialBlankTarget(document.getElementById("i"))).toBe(false);
     expect(isRadialBlankTarget(document.getElementById("rb"))).toBe(false);
+  });
+
+  test("blocks when user has selected text (copy / native context menu)", () => {
+    document.body.innerHTML = `<main data-testid="surface"><div id="ord">B2B-2026-0073</div></main>`;
+    const el = document.getElementById("ord");
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    expect(hasTextSelection()).toBe(true);
+    expect(isRadialBlankTarget(el)).toBe(false);
+    sel.removeAllRanges();
+    expect(hasTextSelection()).toBe(false);
+    expect(isRadialBlankTarget(el)).toBe(true);
   });
 });
 
