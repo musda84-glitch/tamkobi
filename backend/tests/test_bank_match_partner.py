@@ -19,11 +19,12 @@ def test_parse_and_store_partner_target():
     assert parse_match_target("partner:p1") == ("partner", "p1")
     assert parse_match_target("acc-9") == ("account", "acc-9")
     assert stored_match_target("partner", "p1") == "partner:p1"
-    assert partner_tx_type_for_bank_match(True) == "capital_in"
-    assert partner_tx_type_for_bank_match(False) == "withdrawal"
+    # Banka çıkışı → ortak cebine Giriş; banka girişi → ortak Çıkış
+    assert partner_tx_type_for_bank_match(True) == "withdrawal"
+    assert partner_tx_type_for_bank_match(False) == "capital_in"
 
 
-def test_apply_partner_match_inflow_is_capital_in():
+def test_apply_partner_match_inflow_is_withdrawal():
     tx = {
         "_id": "tx1",
         "company_id": "comp",
@@ -37,17 +38,17 @@ def test_apply_partner_match_inflow_is_capital_in():
     args, kwargs = move.await_args
     assert args[2] == "p1"
     assert args[3] == 250.0
-    assert args[4] == "capital_in"
+    assert args[4] == "withdrawal"
     assert kwargs["extra"]["related_bank_tx_id"] == "tx1"
     assert kwargs["extra"]["source"] == "bank_match"
     assert kwargs["extra"]["bank_tx_type"] == "inflow"
 
 
-def test_apply_partner_match_outflow_is_withdrawal():
-    tx = {"_id": "tx2", "company_id": "comp", "account_name": "Kasa", "description": "çekiş"}
+def test_apply_partner_match_outflow_is_capital_in():
+    tx = {"_id": "tx2", "company_id": "comp", "account_name": "Vadesiz TL", "description": "Ali Bal"}
     with patch("bank_match_target.partner_pay.move", AsyncMock(return_value="Ali")) as move:
         _run(apply_partner_match(object(), tx, "p9", 80, False))
-    assert move.await_args.args[4] == "withdrawal"
+    assert move.await_args.args[4] == "capital_in"
     assert move.await_args.kwargs["extra"]["bank_tx_type"] == "outflow"
 
 

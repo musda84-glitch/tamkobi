@@ -321,6 +321,17 @@ describe("finance drafts", () => {
     expect(partnerTxLabel({ type: "capital_in" })).toBe("Giriş");
     expect(partnerTxLabel({ type: "credit", expense_id: "e1" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "withdrawal", contact_id: "c1" })).toBe("Giriş");
+    // Banka çıkışı → ortak cebine Giriş (ekstrenin tersi)
+    expect(partnerTxLabel({
+      type: "capital_in",
+      source: "bank_match",
+      bank_tx_type: "outflow",
+    })).toBe("Giriş");
+    expect(partnerTxLabel({
+      type: "withdrawal",
+      source: "bank_match",
+      bank_tx_type: "inflow",
+    })).toBe("Çıkış");
     expect(partnerMovementNotice({ id: "p5", type: "withdrawal", amount: 40, expense_id: "e1" }).detail).toMatch(/Çıkış/);
   });
 

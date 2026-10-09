@@ -16,12 +16,15 @@ def stored_match_target(kind: str, eid: str) -> str:
 
 
 def partner_tx_type_for_bank_match(is_inflow: bool) -> str:
-    """Banka girişi → ortak sermaye (capital_in); banka çıkışı → ortak çekiş (withdrawal)."""
-    return "capital_in" if is_inflow else "withdrawal"
+    """Banka↔ortak karşı hareket (kasa virmanı gibi ters işaret):
+    banka çıkışı → ortak cebine Giriş (capital_in);
+    banka girişi → ortak cebinden Çıkış (withdrawal).
+    """
+    return "withdrawal" if is_inflow else "capital_in"
 
 
 async def apply_partner_match(db, tx: dict, partner_id: str, amount, is_inflow: bool) -> str:
-    """Banka hareketi bakiyede; ortak hesabı nakit-siz sermaye / çekiş ile güncelle."""
+    """Banka hareketi bakiyede; ortak cebi karşı giriş/çıkış ile güncelle (işaret ters)."""
     desc = f"{tx.get('account_name') or 'Hesap'}: {tx.get('description') or 'Banka eşleşmesi'}"
     bank_tx_type = "inflow" if is_inflow else "outflow"
     return await partner_pay.move(

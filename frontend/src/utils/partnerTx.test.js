@@ -28,25 +28,41 @@ describe("partnerTx", () => {
     expect(partnerTxIsCashInflow({ type: "withdrawal", contact_id: "c1" })).toBe(true);
     expect(partnerTxSign("credit", { type: "credit", expense_id: "e1" })).toBe("-");
     expect(partnerTxSign("withdrawal", { type: "withdrawal", contact_id: "c1" })).toBe("+");
-    // Banka eşleşmesi: Vadesiz çıkışı → Çıkış (bank_tx_type)
+    // Banka eşleşmesi: Vadesiz çıkışı → ortak cebine Giriş (ekstrenin tersi)
     expect(partnerTxLabel({
       type: "capital_in",
       source: "bank_match",
       bank_tx_type: "outflow",
       description: "Vadesiz TL Hesabı: Banka Hareketi",
-    })).toBe("Çıkış");
+    })).toBe("Giriş");
+    expect(partnerTxIsCashInflow({
+      type: "capital_in",
+      source: "bank_match",
+      bank_tx_type: "outflow",
+    })).toBe(true);
+    expect(partnerTxSign("capital_in", {
+      type: "capital_in",
+      source: "bank_match",
+      bank_tx_type: "outflow",
+    })).toBe("+");
+    // Eski yanlış tip (withdrawal + outflow) bile bank_tx_type ile Giriş olmalı
+    expect(partnerTxLabel({
+      type: "withdrawal",
+      source: "bank_match",
+      bank_tx_type: "outflow",
+    })).toBe("Giriş");
     expect(partnerTxLabel({
       type: "withdrawal",
       source: "bank_match",
       bank_tx_type: "inflow",
-    })).toBe("Giriş");
-    // Eski bank_match (bank_tx_type yok): tip ters görünüyordu → etiketi tersle
+    })).toBe("Çıkış");
+    // bank_tx_type yoksa tip geçerli (yeni: outflow→capital_in = Giriş)
     expect(partnerTxLabel({
       type: "capital_in",
       source: "bank_match",
       related_bank_tx_id: "btx1",
       description: "Vadesiz TL Hesabı: Banka Hareketi",
-    })).toBe("Çıkış");
+    })).toBe("Giriş");
   });
 
   it("shows only Alacaklı or Borçlu; Alacaklı display is negative", () => {
