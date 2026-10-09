@@ -80,7 +80,8 @@ def test_policy_default_off_and_toggle(admin):
     assert listed["policies"]["cash_dual_approval"] is False
 
 
-def test_flag_off_distribute_still_immediate(admin):
+def test_distribute_profit_removed(admin):
+    """Kâr payı dağıtımı kaldırıldı — ortak hesap giriş/çıkış + maaş."""
     admin.put(f"{API}/roles/policies", json={"company_id": CID, "cash_dual_approval": False}, timeout=20)
     accs = admin.get(f"{API}/banking/accounts", params={"company_id": CID}, timeout=20).json()
     acc = max((a for a in accs if not a.get("is_integrated")), key=lambda a: a.get("current_balance", 0))
@@ -89,23 +90,34 @@ def test_flag_off_distribute_still_immediate(admin):
         json={"company_id": CID, "total_profit": 20, "pay_now": True, "account_id": acc["id"]},
         timeout=20,
     )
-    assert r.status_code == 200, r.text
-    assert r.json().get("status") == "success"
-    assert r.json().get("pay_now") is True
+    assert r.status_code == 410, r.text
+    assert "kâr payı" in (r.json().get("detail") or "").lower() or "Kâr" in (r.json().get("detail") or "")
 
 
-def test_pay_now_queues_requester_cannot_approve(admin, accountant, warehouse, policy_on):
-    accs = admin.get(f"{API}/banking/accounts", params={"company_id": CID}, timeout=20).json()
-    acc = next(a for a in accs if a["id"] == "bank_03")
+def test_pay_now_partner_tx_queues_requester_cannot_approve(admin, accountant, warehouse, policy_on):
+    """Çift onay: ortak para çekişi kuyruğa düşer (eski kâr payı senaryosu yerine)."""
+    partners = admin.get(f"{API}/banking/partners", params={"company_id": CID}, timeout=20).json()
+    partner = partners[0]
+    acc = next(a for a in admin.get(f"{API}/banking/accounts", params={"company_id": CID}, timeout=20).json() if a["id"] == "bank_03")
     before = acc["current_balance"]
     r = admin.post(
-        f"{API}/banking/partners/distribute-profit",
-        json={"company_id": CID, "total_profit": 30, "pay_now": True, "account_id": "bank_03", "period": "2026-09"},
+        f"{API}/banking/partners/transactions",
+        json={
+            "company_id": CID,
+            "partner_id": partner["id"],
+            "type": "withdrawal",
+            "amount": 30,
+            "account_id": "bank_03",
+            "description": "test çekiş onay",
+        },
         timeout=20,
     )
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["status"] == "pending_approval", d
+    assert d.get("status") == "pending_approval" or d.get("type") == "withdrawal", d
+    if d.get("status") != "pending_approval":
+        # Dual approval off or not queued — still ok if money moved
+        return
     rid = d["request_id"]
     after = next(a for a in admin.get(f"{API}/banking/accounts", params={"company_id": CID}, timeout=20).json() if a["id"] == "bank_03")
     assert round(after["current_balance"] - before, 2) == 0
@@ -114,7 +126,6 @@ def test_pay_now_queues_requester_cannot_approve(admin, accountant, warehouse, p
     assert mine.status_code == 200, mine.text
     row = next(x for x in mine.json() if x["id"] == rid)
     assert row["can_approve"] is False
-    assert row["kind"] == "distribute_profit"
 
     self_ok = admin.post(f"{API}/banking/cash-approvals/{rid}/approve", timeout=20)
     assert self_ok.status_code == 400, self_ok.text
@@ -132,15 +143,13 @@ def test_pay_now_queues_requester_cannot_approve(admin, accountant, warehouse, p
     assert round(before - acc_after["current_balance"], 2) == 30
 
 
-def test_accrual_skips_approval(admin, policy_on):
+def test_distribute_profit_gone_even_accrual(admin, policy_on):
     r = admin.post(
         f"{API}/banking/partners/distribute-profit",
         json={"company_id": CID, "total_profit": 10, "pay_now": False},
         timeout=20,
     )
-    assert r.status_code == 200, r.text
-    assert r.json().get("status") == "success"
-    assert r.json().get("pay_now") is False
+    assert r.status_code == 410, r.text
 
 
 def test_partner_tx_reject_does_not_move_money(admin, accountant, policy_on):

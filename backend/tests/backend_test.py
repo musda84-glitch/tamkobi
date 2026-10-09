@@ -192,28 +192,13 @@ class TestPartners:
                    json={"partner_id": partner["id"], "type": "bogus", "amount": 10, "account_id": "bank_03"}, timeout=30)
         assert r.status_code == 400
 
-    def test_distribute_profit_accrual(self, s):
-        before = {p["id"]: p["balance"] for p in s.get(f"{BASE}/banking/partners", timeout=30).json()}
+    def test_distribute_profit_removed(self, s):
         r = s.post(f"{BASE}/banking/partners/distribute-profit",
                    json={"company_id": COMPANY, "total_profit": 10000, "pay_now": False}, timeout=30)
-        assert r.status_code == 200, r.text[:300]
-        d = r.json()
-        amounts = sorted(x["amount"] for x in d["distribution"])
-        assert amounts == [4000.0, 6000.0], amounts
-        after = {p["id"]: p["balance"] for p in s.get(f"{BASE}/banking/partners", timeout=30).json()}
-        for pid, bal in before.items():
-            assert round(after[pid] - bal, 2) in (4000.0, 6000.0)
-
-    def test_distribute_profit_pay_now(self, s):
-        accs = s.get(f"{BASE}/banking/accounts", timeout=30).json()
-        acc = max(accs, key=lambda a: a.get("current_balance", 0))
-        r = s.post(f"{BASE}/banking/partners/distribute-profit",
-                   json={"company_id": COMPANY, "total_profit": 10000, "pay_now": True, "account_id": acc["id"]}, timeout=30)
-        assert r.status_code == 200, r.text[:300]
-        d = r.json()
-        assert d["pay_now"] is True and len(d["distribution"]) >= 2
-        acc_after = next(a for a in s.get(f"{BASE}/banking/accounts", timeout=30).json() if a["id"] == acc["id"])
-        assert round(acc["current_balance"] - acc_after["current_balance"], 2) == 10000
+        assert r.status_code == 410, r.text[:300]
+        r2 = s.post(f"{BASE}/banking/partners/distribute-profit",
+                    json={"company_id": COMPANY, "total_profit": 10000, "pay_now": True, "account_id": "bank_03"}, timeout=30)
+        assert r2.status_code == 410, r2.text[:300]
 
     def test_delete_partner_with_balance_400(self, s):
         partner = next(p for p in s.get(f"{BASE}/banking/partners", timeout=30).json() if abs(p["balance"]) > 0.01)
