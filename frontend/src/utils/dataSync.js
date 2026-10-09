@@ -188,3 +188,15 @@ export async function dropCached(collection, companyId) {
     });
   } catch { /* ignore */ }
 }
+
+/** Sipariş paneli için arka plan önbellek ısıtma (idle / nav). Sunucu yükünü azaltır. */
+export async function warmupPanelCache(companyId, collections = ["orders", "products", "contacts"]) {
+  const cid = String(companyId || "").trim();
+  if (!cid) return;
+  const names = Array.isArray(collections) && collections.length
+    ? collections
+    : ["orders", "products", "contacts"];
+  await Promise.all(
+    names.map((name) => cachedList(name, cid).catch(() => null)),
+  );
+}

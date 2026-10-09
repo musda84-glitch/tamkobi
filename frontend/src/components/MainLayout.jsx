@@ -20,6 +20,7 @@ import { DataExportIconButton } from "./DataExportPanel";
 import { SupportContactBar } from "./SupportContactBar";
 import { PanelBoundary } from "./saas/PanelBoundary";
 import { useNavCounts } from "../hooks/useNavCounts";
+import { warmupPanelCache } from "../utils/dataSync";
 
 import {
   LayoutDashboard,
@@ -172,6 +173,32 @@ export default function MainLayout({ children, onOpenQuickAction }) {
     .map((m) => ({ ...m, icon: ICONS[m.path] || Package }))
     .filter((m) => !mesaimLocked || m.path === "/mesai");
   const navCounts = useNavCounts(activeCompany?.id || activeCompany?._id);
+  const companyId = activeCompany?.id || activeCompany?._id;
+
+  // Idle’da sipariş/ürün/cari IndexedDB önbelleğini ısıt — panel açılışı hızlı, sunucu yükü düşük.
+  useEffect(() => {
+    if (!authenticated || loading || !companyId) return undefined;
+    if (typeof window === "undefined") return undefined;
+    let cancelled = false;
+    const run = () => {
+      if (cancelled) return;
+      void warmupPanelCache(companyId);
+    };
+    let handle;
+    if (typeof window.requestIdleCallback === "function") {
+      handle = window.requestIdleCallback(run, { timeout: 4000 });
+      return () => {
+        cancelled = true;
+        if (typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(handle);
+      };
+    }
+    handle = window.setTimeout(run, 1200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [authenticated, loading, companyId]);
+
   const exitImpersonation = async () => {
     try {
       const r = await axios.post(`${API_URL}/auth/impersonate/exit`, {});

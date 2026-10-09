@@ -8,10 +8,11 @@ export const DATA_CHANGED_EVENT = "tamkobi:data-changed";
 export const SCOPE_COLLECTIONS = {
   cash: ["bank_transactions", "contacts"],
   contacts: ["contacts"],
-  invoices: ["invoices", "contacts"],
+  invoices: ["invoices", "contacts", "orders"],
+  orders: ["orders"],
   expenses: ["contacts"],
   stock: ["products"],
-  all: ["bank_transactions", "contacts", "invoices", "products"],
+  all: ["bank_transactions", "contacts", "invoices", "products", "orders"],
 };
 
 /**
