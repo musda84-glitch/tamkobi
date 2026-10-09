@@ -49,12 +49,13 @@ describe("partnerTx", () => {
     })).toBe("Çıkış");
   });
 
-  it("shows only Alacaklı or Borçlu (no pocket/hint copy)", () => {
+  it("shows only Alacaklı or Borçlu; Alacaklı display is negative", () => {
     const credit = partnerBalanceMeta(1200);
     expect(credit.label).toBe("Alacaklı");
     expect(credit.badge).toBe("Alacaklı");
     expect(credit.hint).toBe("");
     expect(credit.side).toBe("credit");
+    expect(credit.display).toBe(-1200);
 
     const debit = partnerBalanceMeta(-705389.78);
     expect(debit.badge).toBe("Borçlu");
@@ -62,9 +63,11 @@ describe("partnerTx", () => {
     expect(debit.hint).toBe("");
     expect(debit.side).toBe("debit");
     expect(debit.abs).toBeCloseTo(705389.78);
+    expect(debit.display).toBeCloseTo(705389.78);
 
     expect(partnerBalanceMeta(0).badge).toBe("Denk");
     expect(partnerBalanceMeta(0).hint).toBe("");
+    expect(partnerBalanceMeta(0).display).toBe(0);
   });
   it("treats credit like capital_in for balance", () => {
     expect(partnerTxIncreasesBalance("credit")).toBe(true);

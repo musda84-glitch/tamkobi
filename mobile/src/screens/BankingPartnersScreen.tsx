@@ -96,7 +96,9 @@ function PartnerCard({
             <Muted>{[partner.email, partner.phone, `%${partner.share_percent || 0}`].filter(Boolean).join(" · ")}</Muted>
           </View>
         </View>
-        <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }}>{fmtMoney(partner.balance)}</Text>
+        <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }}>
+          {fmtMoney(Number(partner.balance) > 0 ? -Math.abs(Number(partner.balance)) : Math.abs(Number(partner.balance) || 0))}
+        </Text>
         <Muted>Giriş {fmtMoney(partner.total_capital_in)} · çıkış {fmtMoney(partner.total_withdrawn)}</Muted>
       </Pressable>
       {canExp ? (
@@ -222,7 +224,7 @@ export function BankingPartnersPanel({
         <StatRows
           testID="partners-summary"
           items={[
-            { key: "balance", label: Number(summary.total_balance) > 0 ? "Alacaklı" : Number(summary.total_balance) < 0 ? "Borçlu" : "Denk", value: fmtMoney(Math.abs(Number(summary.total_balance) || 0)) },
+            { key: "balance", label: Number(summary.total_balance) > 0 ? "Alacaklı" : Number(summary.total_balance) < 0 ? "Borçlu" : "Denk", value: fmtMoney(Number(summary.total_balance) > 0 ? -Math.abs(Number(summary.total_balance)) : Math.abs(Number(summary.total_balance) || 0)) },
             { key: "capital", label: "Giriş", value: fmtMoney(summary.total_capital_in) },
             { key: "withdrawn", label: "Çıkış", value: fmtMoney(summary.total_withdrawn) },
           ]}
