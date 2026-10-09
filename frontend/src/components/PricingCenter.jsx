@@ -47,7 +47,7 @@ export const PricingCenter = ({ companyId }) => {
           <label className="flex items-center gap-1 pb-2"><input type="checkbox" checked={rule.include_cargo} onChange={(e) => setR("include_cargo", e.target.checked)} /> Kargo bedeli dahil</label>
           <button onClick={() => compute(rule)} disabled={busy === "compute"} className="px-3 py-2 border border-slate-200 bg-white rounded-lg font-semibold flex items-center gap-1" data-testid="rule-recalc">{busy === "compute" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Calculator className="w-3.5 h-3.5" />} Hesapla</button>
           <button onClick={saveRule} disabled={busy === "save"} className="px-3 py-2 bg-slate-900 text-white rounded-lg font-semibold flex items-center gap-1" data-testid="rule-save"><Save className="w-3.5 h-3.5" /> Kuralı Kaydet</button>
-          {data && <span className="text-[10px] text-slate-500 pb-2 ml-auto">Komisyon %{data.fees.commission_rate} (+%{data.fees.commission_vat_rate} KDV) · hizmet {fmt(data.fees.service_fee)} ₺ · kargo {fmt(data.fees.cargo_fee)} ₺ — Kârlılık sekmesinden değiştirilebilir</span>}
+          {data && <span className="text-[10px] text-slate-500 pb-2 ml-auto" data-testid="pricing-fees-summary">Şu anki komisyon %{data.fees.commission_rate} (+%{data.fees.commission_vat_rate} KDV) · hizmet {fmt(data.fees.service_fee)} ₺ · kargo {fmt(data.fees.cargo_fee)} ₺ — Kârlılık sekmesinden değiştirilebilir</span>}
         </div>)}
       {data && (<>
         <div className="flex flex-wrap items-center gap-2">
@@ -57,18 +57,36 @@ export const PricingCenter = ({ companyId }) => {
           {data.push_supported ? <button onClick={push} disabled={!sel.length || busy === "push"} className="ml-auto px-4 py-2 bg-amber-500 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50" data-testid="pricing-push"><Upload className="w-3.5 h-3.5" /> Seçili {sel.length} Fiyatı Gönder</button> : <span className="ml-auto text-slate-400">Bu kanal salt-okunur (XML) — fiyatlar yalnızca öneri</span>}
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
-          <table className="w-full text-left"><thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-3 py-2 w-8"><input type="checkbox" checked={rows.length > 0 && sel.length === rows.filter((r) => r.suggested).length} onChange={(e) => setSel(e.target.checked ? rows.filter((r) => r.suggested).map((r) => r.barcode) : [])} /></th><th className="px-3 py-2">Ürün</th><th className="px-3 py-2 text-right">Maliyet</th><th className="px-3 py-2 text-right">Mevcut Fiyat</th><th className="px-3 py-2 text-right">Mevcut Net Kâr<span className="block normal-case text-slate-400 font-medium">komisyon %{data?.fees?.commission_rate ?? "—"}</span></th><th className="px-3 py-2 text-right">Önerilen</th><th className="px-3 py-2 text-right">Fark</th><th className="px-3 py-2 text-right">Yeni Net Kâr</th></tr></thead>
-            <tbody className="divide-y divide-slate-100">{rows.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-slate-400">Eşleşmiş ürün yok — Ürünler & Fiyat sekmesinden stok kartlarını eşleştirin.</td></tr>}{rows.map((r) => (
+          <table className="w-full text-left"><thead className="bg-slate-50 text-[10px] uppercase text-slate-500"><tr><th className="px-3 py-2 w-8"><input type="checkbox" checked={rows.length > 0 && sel.length === rows.filter((r) => r.suggested).length} onChange={(e) => setSel(e.target.checked ? rows.filter((r) => r.suggested).map((r) => r.barcode) : [])} /></th><th className="px-3 py-2">Ürün</th><th className="px-3 py-2 text-right">Maliyet</th><th className="px-3 py-2 text-right">Pazaryeri Fiyatı<span className="block normal-case text-slate-400 font-medium">canlı kanal fiyatı</span></th><th className="px-3 py-2 text-right">Mevcut Net Kâr<span className="block normal-case text-slate-400 font-medium">komisyon %{data?.fees?.commission_rate ?? "—"}</span></th><th className="px-3 py-2 text-right">Önerilen</th><th className="px-3 py-2 text-right">Fark</th><th className="px-3 py-2 text-right">Yeni Net Kâr</th></tr></thead>
+            <tbody className="divide-y divide-slate-100">{rows.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-slate-400">Eşleşmiş ürün yok — Ürünler & Fiyat sekmesinden stok kartlarını eşleştirin.</td></tr>}{rows.map((r) => {
+              const mpPrice = r.marketplace_price ?? r.sale_price;
+              const commRate = r.commission_rate ?? data.fees?.commission_rate;
+              return (
               <tr key={r.barcode} className={!r.suggested ? "opacity-50" : ""} data-testid={`pricing-row-${r.barcode}`}>
                 <td className="px-3 py-1.5"><input type="checkbox" disabled={!r.suggested} checked={sel.includes(r.barcode)} onChange={() => setSel(sel.includes(r.barcode) ? sel.filter((x) => x !== r.barcode) : [...sel, r.barcode])} data-testid={`pricing-select-${r.barcode}`} /></td>
                 <td className="px-3 py-1.5"><div className="flex items-center gap-2">{r.image && <img src={r.image} alt="" className="w-8 h-8 rounded object-cover border" />}<div><div className="font-semibold text-slate-900 line-clamp-1 max-w-xs">{r.title}</div><div className="text-[10px] text-slate-400">{r.product_sku} · {r.barcode}</div></div></div></td>
                 <td className="px-3 py-1.5 text-right">{r.cost ? `${fmt(r.cost)} ₺` : <span className="text-amber-600">{r.reason}</span>}</td>
-                <td className="px-3 py-1.5 text-right font-semibold">{fmt(r.sale_price)} ₺</td>
-                <td className={`px-3 py-1.5 text-right ${r.current_net < 0 ? "text-rose-600 font-bold" : ""}`} data-testid={`pricing-current-net-${r.barcode}`}>{r.cost ? <><div>{fmt(r.current_net)} ₺</div><div className="text-[9px] text-slate-500 font-semibold">komisyon %{data.fees.commission_rate}</div></> : "—"}</td>
+                <td className="px-3 py-1.5 text-right font-semibold" data-testid={`pricing-mp-price-${r.barcode}`}>
+                  <div>{fmt(mpPrice)} ₺</div>
+                  {r.local_price != null && Math.abs(Number(r.local_price) - Number(mpPrice || 0)) >= 0.01 ? (
+                    <div className="text-[9px] text-slate-500 font-semibold normal-case">stok kartı {fmt(r.local_price)} ₺</div>
+                  ) : null}
+                </td>
+                <td className={`px-3 py-1.5 text-right ${r.current_net < 0 ? "text-rose-600 font-bold" : ""}`} data-testid={`pricing-current-net-${r.barcode}`}>{r.cost ? (
+                  <>
+                    <div>{fmt(r.current_net)} ₺</div>
+                    <div className="text-[9px] text-slate-500 font-semibold normal-case" data-testid={`pricing-net-meta-${r.barcode}`}>
+                      pazaryeri {fmt(mpPrice)} ₺ · komisyon %{commRate ?? "—"}
+                      {r.effective_commission_rate != null ? ` (KDV'li %${r.effective_commission_rate})` : ""}
+                    </div>
+                  </>
+                ) : "—"}</td>
                 <td className="px-3 py-1.5 text-right font-bold text-emerald-700">{r.suggested ? `${fmt(r.suggested)} ₺` : "—"}</td>
                 <td className={`px-3 py-1.5 text-right ${r.diff > 0 ? "text-emerald-700" : r.diff < 0 ? "text-rose-600" : ""}`}>{r.suggested ? `${r.diff > 0 ? "+" : ""}${fmt(r.diff)} (${r.diff_pct > 0 ? "+" : ""}${r.diff_pct}%)` : "—"}</td>
                 <td className="px-3 py-1.5 text-right">{r.suggested ? `${fmt(r.net_profit)} ₺ (%${r.margin_pct})` : "—"}</td>
-              </tr>))}</tbody></table>
+              </tr>
+              );
+            })}</tbody></table>
         </div>
       </>)}
     </div>
