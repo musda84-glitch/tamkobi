@@ -55,7 +55,7 @@ export function partnerTxLabel(tx) {
  * Ortak bakiyesi = cebindeki para (yazma):
  *   artı → Alacaklı (ortağa yazılan / çekilebilir)
  *   eksi → Borçlu (fazla çekmiş)
- * Kartta yalnızca Alacaklı / Borçlu gösterilir (ek etiket/hint yok).
+ * Kartta yalnızca Alacaklı / Borçlu; Alacaklı tutar kasa eksi (−) gösterilir.
  */
 export function partnerBalanceMeta(balance) {
   const n = Number(balance);
@@ -64,6 +64,8 @@ export function partnerBalanceMeta(balance) {
     return {
       amount,
       abs: amount,
+      /** Kasa görünümü: Alacaklı → eksi tutar */
+      display: -amount,
       label: "Alacaklı",
       badge: "Alacaklı",
       hint: "",
@@ -76,6 +78,7 @@ export function partnerBalanceMeta(balance) {
     return {
       amount,
       abs: Math.abs(amount),
+      display: Math.abs(amount),
       label: "Borçlu",
       badge: "Borçlu",
       hint: "",
@@ -87,6 +90,7 @@ export function partnerBalanceMeta(balance) {
   return {
     amount: 0,
     abs: 0,
+    display: 0,
     label: "Denk",
     badge: "Denk",
     hint: "",
