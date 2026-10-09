@@ -11,6 +11,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse, Response
@@ -20,6 +21,9 @@ import n11faturam
 import isnet
 import isnet_portal
 import ubl_export
+from invoice_edit_lock import invoice_gib_locked
+
+_TR_TZ = ZoneInfo("Europe/Istanbul")
 
 logger = logging.getLogger("tamkobi.e_invoice")
 router = APIRouter(prefix="/api")
@@ -44,6 +48,53 @@ def init(db, deps: Optional[dict] = None):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def istanbul_now() -> datetime:
+    return datetime.now(_TR_TZ)
+
+
+def normalize_issue_time(value: Any) -> str:
+    t = str(value or "").strip()
+    if len(t) == 5 and t[2] == ":":
+        t = f"{t}:00"
+    return t[:8] if t else ""
+
+
+async def apply_issue_stamp(
+    invoice_id: str,
+    inv: Dict[str, Any],
+    *,
+    stamp_now: bool = False,
+    issue_date: Optional[str] = None,
+    issue_time: Optional[str] = None,
+) -> Dict[str, Any]:
+    """GİB kesiminden hemen önce IssueDate/IssueTime yaz (istemci «şimdi» damgası).
+
+    stamp_now=True iken istemci tarih/saat vermezse Europe/Istanbul «şimdi» kullanılır.
+    """
+    patch: Dict[str, Any] = {}
+    d = str(issue_date or "").strip()[:10] if issue_date is not None else ""
+    t = normalize_issue_time(issue_time) if issue_time is not None else ""
+    if stamp_now:
+        n = istanbul_now()
+        patch["issue_date"] = d if re.match(r"^\d{4}-\d{2}-\d{2}$", d) else n.strftime("%Y-%m-%d")
+        patch["issue_time"] = t or n.strftime("%H:%M:%S")
+    else:
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+            patch["issue_date"] = d
+        if issue_time is not None:
+            patch["issue_time"] = t
+    if not patch:
+        return inv
+    if invoice_gib_locked(inv):
+        raise HTTPException(
+            status_code=400,
+            detail="GİB'e iletilmiş faturada tarih/saat değiştirilemez.",
+        )
+    await _db.invoices.update_one({"_id": invoice_id}, {"$set": patch})
+    refreshed = await _db.invoices.find_one({"_id": invoice_id})
+    return {**(refreshed or inv or {}), **patch}
 
 
 def digits(value: Any) -> str:
@@ -269,6 +320,9 @@ class InvoiceCreateRequest(BaseModel):
     company_id: Optional[str] = None
     scenario: str = "TICARI"
     e_type: Optional[str] = None
+    stamp_now: Optional[bool] = None
+    issue_date: Optional[str] = None
+    issue_time: Optional[str] = None
 
 
 def scenario_short(gib_scenario: Optional[str]) -> str:
@@ -449,7 +503,15 @@ async def build_and_store_xml(invoice: dict, company: dict, contact: Optional[di
     return xml
 
 
-async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenario: Optional[str] = None) -> Dict[str, Any]:
+async def issue_invoice(
+    invoice_id: str,
+    *,
+    e_type: Optional[str] = None,
+    scenario: Optional[str] = None,
+    stamp_now: bool = False,
+    issue_date: Optional[str] = None,
+    issue_time: Optional[str] = None,
+) -> Dict[str, Any]:
     inv = await _db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
@@ -457,6 +519,14 @@ async def issue_invoice(invoice_id: str, *, e_type: Optional[str] = None, scenar
         raise HTTPException(status_code=400, detail="Gelen e-fatura kesilmez; Onayla/Reddet kullanın.")
     if inv.get("invoice_type") == "purchase" and (e_type or inv.get("e_type")) == "e_invoice":
         raise HTTPException(status_code=400, detail="Alış e-faturası GİB'den gelir; kesim yalnızca satış belgelerinde yapılır.")
+
+    inv = await apply_issue_stamp(
+        invoice_id,
+        inv,
+        stamp_now=bool(stamp_now),
+        issue_date=issue_date,
+        issue_time=issue_time,
+    )
 
     contact = await _db.contacts.find_one({"_id": inv.get("contact_id")}) if inv.get("contact_id") else None
     requested = e_type if e_type is not None else inv.get("e_type")
@@ -867,7 +937,14 @@ async def create_from_order(order_id: str, req: Dict[str, Any]) -> Dict[str, Any
     if apply_effects and inv and inv.get("status") == "draft" and not inv.get("effects_applied"):
         await apply_effects(inv)
         await _db.invoices.update_one({"_id": inv_id}, {"$set": {"effects_applied": True}})
-    result = await issue_invoice(inv_id, e_type=req.get("e_type"), scenario=req.get("scenario"))
+    result = await issue_invoice(
+        inv_id,
+        e_type=req.get("e_type"),
+        scenario=req.get("scenario"),
+        stamp_now=bool(req.get("stamp_now")),
+        issue_date=req.get("issue_date"),
+        issue_time=req.get("issue_time"),
+    )
     return await finalize_create_result(result, inv_id, order_id=order_id, company_id=company_id or order.get("company_id"))
 
 
@@ -934,6 +1011,9 @@ async def api_create_einvoice(payload: InvoiceCreateRequest):
         "company_id": company_id,
         "scenario": payload.scenario,
         "e_type": payload.e_type,
+        "stamp_now": bool(payload.stamp_now),
+        "issue_date": payload.issue_date,
+        "issue_time": payload.issue_time,
     }
     apply_effects = _deps.get("apply_effects")
     try:
@@ -946,7 +1026,14 @@ async def api_create_einvoice(payload: InvoiceCreateRequest):
                 await _db.invoices.update_one({"_id": invoice_id}, {"$set": {"effects_applied": True}})
         if order_id and not invoice_id:
             return await create_from_order(order_id, req)
-        result = await issue_invoice(invoice_id, e_type=payload.e_type, scenario=payload.scenario)
+        result = await issue_invoice(
+            invoice_id,
+            e_type=payload.e_type,
+            scenario=payload.scenario,
+            stamp_now=bool(payload.stamp_now),
+            issue_date=payload.issue_date,
+            issue_time=payload.issue_time,
+        )
         return await finalize_create_result(result, invoice_id, order_id=order_id or None, company_id=company_id or None)
     except HTTPException:
         raise

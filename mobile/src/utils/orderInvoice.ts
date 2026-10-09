@@ -55,8 +55,11 @@ export function eBelgeCreateBody(opts: {
   companyId: string;
   eType: "e_invoice" | "e_archive";
   scenario?: "TEMEL" | "TICARI";
+  stampNow?: boolean;
+  issueDate?: string;
+  issueTime?: string;
 }) {
-  return {
+  const body: Record<string, unknown> = {
     invoice_id: opts.invoiceId || undefined,
     order_id: opts.orderId,
     company_id: opts.companyId,
@@ -65,6 +68,12 @@ export function eBelgeCreateBody(opts: {
       ? (opts.scenario || "TICARI")
       : undefined,
   };
+  if (opts.stampNow) {
+    body.stamp_now = true;
+    if (opts.issueDate) body.issue_date = opts.issueDate;
+    if (opts.issueTime) body.issue_time = opts.issueTime;
+  }
+  return body;
 }
 
 export function faturalaActionLabel(o: OrderInvoiceFlags | null | undefined): string {

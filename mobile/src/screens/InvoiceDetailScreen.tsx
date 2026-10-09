@@ -208,6 +208,12 @@ export function InvoiceDetailScreen() {
       }
       const body: Record<string, unknown> = { e_type: payload.eType };
       if (payload.scenario) body.scenario = payload.scenario;
+      if (payload.stampNow) {
+        const stamp = nowIssueDateTime();
+        body.stamp_now = true;
+        body.issue_date = stamp.issue_date;
+        body.issue_time = stamp.issue_time;
+      }
       await post(client, `/invoices/${id}/send-to-gib`, body);
       setError(null);
       setMessage(`${label} olarak kesildi.`);

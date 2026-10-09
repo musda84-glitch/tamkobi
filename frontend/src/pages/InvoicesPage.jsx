@@ -734,6 +734,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
       const body = {};
       if (eType && eType !== "auto") body.e_type = eType;
       if (opts.scenario === "TEMEL" || opts.scenario === "TICARI") body.scenario = opts.scenario;
+      if (opts.stampNow) {
+        body.stamp_now = true;
+        const stamp = opts.issueStamp || nowIssueDateTime();
+        if (stamp.issue_date) body.issue_date = stamp.issue_date;
+        if (stamp.issue_time) body.issue_time = stamp.issue_time;
+      }
       const res = await axios.post(`${API_URL}/invoices/${invId}/send-to-gib`, body);
       if (!opts.silentToast) toast.success(res.data.message);
       // Portal/GİB fatura no + durumu gecikebilir — hemen bir kez daha çek.
@@ -1675,8 +1681,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   } catch { /* gönderim yine denenecek */ }
                 }
                 const patch = {};
-                if (stampNow && docs.length === 1) {
-                  Object.assign(patch, nowIssueDateTime());
+                const issueStamp = stampNow && docs.length === 1 ? nowIssueDateTime() : null;
+                if (issueStamp) {
+                  Object.assign(patch, issueStamp);
                 }
                 if (withholding) {
                   patch.withholding_rate = Number(withholding.withholding_rate || 0);
@@ -1692,12 +1699,19 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
                   if (returnRef.notes) patch.notes = returnRef.notes;
                 }
                 if (Object.keys(patch).length) {
-                  await axios.put(`${API_URL}/invoices/${invId}`, patch);
+                  try {
+                    await axios.put(`${API_URL}/invoices/${invId}`, patch);
+                  } catch (putErr) {
+                    // Tarih send-to-gib gövdesinde de uygulanır; diğer alanlar zorunluysa dur.
+                    if (!issueStamp || withholding || exemption || returnRef) throw putErr;
+                  }
                 }
                 ctx?.setStep?.("send", "active", docs.length > 1 ? `${inv.invoice_number || invId}` : "");
                 ctx?.setItem?.(invId, { status: "running", detail: "GİB’e gönderiliyor…" });
                 const sent = await handleSendToGib(invId, eType, {
                   scenario,
+                  stampNow: !!issueStamp,
+                  issueStamp: issueStamp || undefined,
                   silentToast: true,
                   skipReload: true,
                   skipRefresh: true,

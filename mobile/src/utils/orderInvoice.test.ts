@@ -40,6 +40,27 @@ describe("orderInvoice draft / post / e-belge", () => {
     });
     expect(eBelgeCreateBody({ orderId: "o1", companyId: "c1", eType: "e_invoice" }).scenario).toBe("TICARI");
     expect(eBelgeCreateBody({ orderId: "o1", companyId: "c1", eType: "e_invoice", scenario: "TEMEL" }).scenario).toBe("TEMEL");
+    expect(
+      eBelgeCreateBody({
+        orderId: "o1",
+        invoiceId: "i1",
+        companyId: "c1",
+        eType: "e_invoice",
+        scenario: "TEMEL",
+        stampNow: true,
+        issueDate: "2026-10-09",
+        issueTime: "22:56:00",
+      }),
+    ).toEqual({
+      invoice_id: "i1",
+      order_id: "o1",
+      company_id: "c1",
+      e_type: "e_invoice",
+      scenario: "TEMEL",
+      stamp_now: true,
+      issue_date: "2026-10-09",
+      issue_time: "22:56:00",
+    });
   });
 
   it("badge label/tone for draft vs posted", () => {

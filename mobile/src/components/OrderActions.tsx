@@ -442,11 +442,12 @@ export function OrderActions({
         );
         invoiceId = draft.invoice_id;
       }
-      if (payload.stampNow && invoiceId) {
+      const issueStamp = payload.stampNow ? nowIssueDateTime() : null;
+      if (issueStamp && invoiceId) {
         try {
-          await put(client, `/invoices/${invoiceId}`, nowIssueDateTime());
+          await put(client, `/invoices/${invoiceId}`, issueStamp);
         } catch {
-          /* gönderim yine denenecek */
+          /* create body stamp_now ile uygulanır */
         }
       }
       const r = await post<{ message?: string }>(
@@ -458,6 +459,9 @@ export function OrderActions({
           companyId: companyId || activeCompany?.id || "",
           eType: resolved,
           scenario: payload.scenario,
+          stampNow: !!issueStamp,
+          issueDate: issueStamp?.issue_date,
+          issueTime: issueStamp?.issue_time,
         }),
       );
       onMessage?.(r.message || `${label} GİB'e iletildi.`);
