@@ -429,11 +429,20 @@ async def delete_expense(expense_id: str):
     exp = await _db.expenses.find_one({"_id": expense_id})
     if not exp:
         raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
+    had_partner = bool(await _db.partner_transactions.find_one({"expense_id": expense_id}))
     if exp.get("payment_status") == "paid":
-        await _reverse_payment(exp)
+        await _reverse_payment(exp)  # ortak / kasa karşılığını siler, bakiyeleri geri alır
     import trash
-    await trash.soft_delete("expenses", exp, "expense", f"{exp.get('expense_number')} · {exp.get('description') or exp.get('category')}", note=f"{float(exp.get('total') or 0):,.2f} ₺ · {exp.get('payment_status')}")
-    return {"status": "success", "message": "Masraf çöp kutusuna taşındı" + (", kasa/banka hareketi geri alındı." if exp.get("payment_status") == "paid" else ".")}
+    note = f"{float(exp.get('total') or 0):,.2f} ₺ · {exp.get('payment_status')}"
+    if had_partner:
+        note += " · bağlı ortak hareketi silindi"
+    await trash.soft_delete("expenses", exp, "expense", f"{exp.get('expense_number')} · {exp.get('description') or exp.get('category')}", note=note)
+    msg = "Masraf çöp kutusuna taşındı"
+    if exp.get("payment_status") == "paid":
+        msg += ", kasa/banka hareketi geri alındı"
+        if had_partner:
+            msg += "; bağlı ortak hareketi de silindi"
+    return {"status": "success", "message": msg + "."}
 
 
 @router.post("/expenses/run-recurring")

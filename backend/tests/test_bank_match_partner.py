@@ -4,10 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from bank_match_target import (
     apply_partner_match,
+    clear_bank_match_for_partner_tx,
     clear_bank_match_status,
     parse_match_target,
     partner_tx_type_for_bank_match,
     repair_legacy_bank_match_directions,
+    resolve_bank_tx_id_for_partner_tx,
     reverse_partner_match,
     stored_match_target,
 )
@@ -88,11 +90,14 @@ class _FakeColl:
         return _FakeCursor(rows)
 
     async def find_one(self, q):
-        _id = (q or {}).get("_id")
-        return next((d for d in self.docs if d.get("_id") == _id), None)
+        q = q or {}
+        for d in self.docs:
+            if all(d.get(k) == v for k, v in q.items()):
+                return d
+        return None
 
     async def update_one(self, q, upd):
-        doc = next((d for d in self.docs if d.get("_id") == (q or {}).get("_id")), None)
+        doc = await self.find_one(q)
         if not doc:
             return
         if "$set" in upd:
@@ -123,6 +128,47 @@ def test_clear_bank_match_status_unmatches_without_touching_partner():
     assert "target_account_id" not in btxs.docs[0]
     assert btxs.docs[0]["category"] == "Banka Giden Ödeme"
     assert _run(clear_bank_match_status(db, "btx1")) is False  # zaten unmatched
+
+
+def test_clear_bank_match_for_partner_tx_by_related_id():
+    btxs = _FakeColl([
+        {
+            "_id": "btx-rel",
+            "type": "outflow",
+            "amount": 80000,
+            "match_status": "matched",
+            "target_account_id": "partner:ali",
+            "category": "Hesaplar Arası Virman",
+        }
+    ])
+    db = MagicMock()
+    db.bank_transactions = btxs
+    ptx = {"_id": "pt1", "partner_id": "ali", "amount": 80000, "related_bank_tx_id": "btx-rel", "source": "bank_match"}
+    assert _run(resolve_bank_tx_id_for_partner_tx(db, ptx)) == "btx-rel"
+    assert _run(clear_bank_match_for_partner_tx(db, ptx)) is True
+    assert btxs.docs[0]["match_status"] == "unmatched"
+
+
+def test_clear_bank_match_for_partner_tx_fallback_without_related_id():
+    """related_bank_tx_id yoksa hedef ortak + tutar ile eşleşme bulunur."""
+    btxs = _FakeColl([
+        {
+            "_id": "btx-fb",
+            "type": "outflow",
+            "amount": 5000.0,
+            "date": "2026-03-01",
+            "match_status": "matched",
+            "target_account_id": "partner:p9",
+            "category": "Hesaplar Arası Virman",
+        }
+    ])
+    db = MagicMock()
+    db.bank_transactions = btxs
+    ptx = {"_id": "pt9", "partner_id": "p9", "amount": 5000.0, "date": "2026-03-01", "source": "bank_match"}
+    assert _run(resolve_bank_tx_id_for_partner_tx(db, ptx)) == "btx-fb"
+    assert _run(clear_bank_match_for_partner_tx(db, ptx)) is True
+    assert btxs.docs[0]["match_status"] == "unmatched"
+    assert "target_account_id" not in btxs.docs[0]
 
 
 def test_repair_pr1089_bank_outflow_capital_in_to_withdrawal():

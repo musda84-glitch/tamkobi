@@ -32,6 +32,12 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
     try { await axios.put(`${API_URL}/banking/partners/transactions/${edit.id}`, { amount: Number(edit.amount), date: edit.date, description: edit.description, account_id: edit.account_id }); toast.success("Hareket güncellendi; bakiyeler yeniden hesaplandı."); setEdit(null); onChanged?.(); }
     catch (err) { toast.error(err.response?.data?.detail || "Güncellenemedi."); } finally { setBusy(false); }
   };
+  const delTitle = (t) => {
+    if (isPartnerExpenseTx(t)) return "Sil (bağlı masraf da silinir)";
+    if (t.related_bank_tx_id || t.source === "bank_match") return "Sil (banka eşleşmesi iptal edilir)";
+    if (t.contact_id) return "Sil (cari karşılığı geri alınır)";
+    return "Sil (bakiyeler ve bağlı hareketler geri alınır)";
+  };
   const del = async (t) => {
     const linked = isPartnerExpenseTx(t);
     const bankMatch = Boolean(t.related_bank_tx_id || t.source === "bank_match");
@@ -40,7 +46,9 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
       ? " Bağlı masraf da silinir; ortak bakiyesi geri alınır."
       : bankMatch
         ? " Ortak bakiyesi geri alınır; banka eşleşmesi iptal edilir (hareket tekrar bekleyenlere düşer)."
-        : ` Ortak${isPartnerLedgerType(t.type) ? "" : " ve hesap"} bakiyeleri geri alınır.`;
+        : t.contact_id
+          ? " Ortak ve cari bakiyeleri geri alınır."
+          : ` Ortak${isPartnerLedgerType(t.type) ? "" : " ve hesap"} bakiyeleri geri alınır; bağlı kasa/banka satırı da silinir.`;
     if (!window.confirm(base + bal)) return;
     try { const r = await axios.delete(`${API_URL}/banking/partners/transactions/${t.id}`); toast.success(r.data.message); onChanged?.(); }
     catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }
@@ -78,7 +86,7 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
             <td className={`px-4 py-2 text-right font-bold ${partnerTxIsCashInflow(t) ? "text-emerald-600" : "text-rose-600"}`}>{partnerTxSign(t.type, t)}{fmt(t.amount)} ₺</td>
             <td className="px-4 py-2 text-right whitespace-nowrap">
               {t.type !== "profit_share" && !isPartnerExpenseTx(t) && <button onClick={() => setEdit({ id: t.id, date: t.date, amount: t.amount, description: t.description, account_id: t.account_id })} className="p-1.5 rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50" title="Düzenle" data-testid={`partner-tx-edit-${t.id}`}><Pencil className="w-3.5 h-3.5" /></button>}
-              <button onClick={() => del(t)} className="p-1.5 rounded-md text-slate-500 hover:text-rose-600 hover:bg-rose-50" title={isPartnerExpenseTx(t) ? "Sil (bağlı masraf da silinir)" : "Sil (bakiyeler geri alınır)"} data-testid={`partner-tx-del-${t.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+              <button onClick={() => del(t)} className="p-1.5 rounded-md text-slate-500 hover:text-rose-600 hover:bg-rose-50" title={delTitle(t)} data-testid={`partner-tx-del-${t.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
             </td>
           </tr>
         ))}

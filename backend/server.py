@@ -9300,21 +9300,24 @@ async def delete_partner_transaction(tx_id: str):
     if not tx:
         raise HTTPException(status_code=404, detail="Hareket bulunamadı.")
     related = await _linked_expense_related(tx)
+    # Banka eşleşmesini önce iptal et (partner reverse sonrası orphan match kalmasın)
+    from bank_match_target import clear_bank_match_for_partner_tx
+    bank_unmatched = await clear_bank_match_for_partner_tx(db, tx)
     await _reverse_partner_tx(tx)
     label = partner_pay.tx_display_label(tx)
+    note_bits = [tx.get("date") or ""]
+    if related:
+        note_bits.append("bağlı masraf")
+    if bank_unmatched:
+        note_bits.append("banka eşleşmesi iptal")
     await trash.soft_delete(
         "partner_transactions",
         tx,
         "partner_transaction",
         f"{tx.get('partner_name')} · {label} · {float(tx.get('amount') or 0):,.2f} ₺",
         related=related,
-        note=(tx.get("date") or "") + (" · bağlı masraf" if related else ""),
+        note=" · ".join(b for b in note_bits if b),
     )
-    bank_unmatched = False
-    bank_tx_id = tx.get("related_bank_tx_id")
-    if bank_tx_id:
-        from bank_match_target import clear_bank_match_status
-        bank_unmatched = await clear_bank_match_status(db, bank_tx_id)
     msg = "Hareket çöp kutusuna taşındı; ortak"
     if tx.get("contact_id"):
         msg += ", cari"
