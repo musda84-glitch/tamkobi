@@ -44,10 +44,10 @@ export const PARTNER_TX_TR: Record<string, string> = {
   profit_share: "Giriş",
   credit: "Çıkış",
   debit: "Çıkış",
-  salary: "Giriş",
+  salary: "Çıkış",
 };
 
-/** Ortak işlem: Giriş/Çıkış = kasa yönü (masraf/alacak fişi=Çıkış, cari tahsilat=Giriş). */
+/** Ortak işlem: Giriş/Çıkış = kasa yönü (masraf/alacak/maaş=Çıkış, cari tahsilat=Giriş). */
 export function partnerTxLabel(tx?: {
   type?: string;
   expense_id?: string;
@@ -60,7 +60,7 @@ export function partnerTxLabel(tx?: {
   if (!tx) return "";
   const t = tx.type || "";
   if (tx.expense_id || tx.source === "expense") return "Çıkış";
-  if (t === "credit") return "Çıkış";
+  if (t === "credit" || t === "salary") return "Çıkış";
   if (tx.contact_id && t === "withdrawal") return "Giriş";
   if (tx.contact_id && t === "capital_in") return "Çıkış";
   if (tx.source === "bank_match" || tx.related_bank_tx_id) {

@@ -9,7 +9,7 @@ export const PARTNER_TX_LABEL = {
   profit_share: "Giriş",
   credit: "Çıkış",
   debit: "Çıkış",
-  salary: "Giriş",
+  salary: "Çıkış",
 };
 
 export function isPartnerExpenseTx(tx) {
@@ -18,18 +18,18 @@ export function isPartnerExpenseTx(tx) {
 
 /**
  * İşlem sütunu yönü (kasa / ortak cebi bakışı) — bakiye etkisinden ayrı olabilir:
- * - Masraf / alacak fişi → Çıkış (kasadan / şirket eksi); bakiye artar
+ * - Masraf / alacak fişi / maaş → Çıkış (şirket eksi); bakiye artar
  * - Cari tahsilat → ortak → Giriş (tahsilat); bakiye azalır
  * - Cari ödeme ← ortak → Çıkış
  * - Banka eşleşmesi: Vadesiz çıkışı → ortak cebine Giriş (etiket);
  *   bakiye tipi withdrawal (Alacaklı ↓) — #1089 capital_in terslemesi geri alındı
- * - Virman / para çek → Çıkış; sermaye / maaş → Giriş
+ * - Virman / para çek → Çıkış; sermaye → Giriş
  */
 export function partnerTxIsCashInflow(tx) {
   if (!tx) return false;
   if (isPartnerExpenseTx(tx)) return false;
-  // Ortak Alacak Fişi: kasa/şirket yönü çıkış (eksi tutar)
-  if (tx.type === "credit") return false;
+  // Ortak Alacak Fişi / aylık maaş: kasa/şirket yönü çıkış (eksi tutar)
+  if (tx.type === "credit" || tx.type === "salary") return false;
   if (tx.contact_id && tx.type === "withdrawal") return true;
   if (tx.contact_id && tx.type === "capital_in") return false;
   // Banka eşleşmesi: etiket = bankanın karşı tarafı; bakiye tipi banka yönüyle aynı

@@ -134,16 +134,29 @@ def test_accrue_uses_entitlement_date():
     assert tx["salary_date"] == "2026-10-05"
 
 
-def test_monthly_repeat_catchup_skips_not_due():
+def test_monthly_repeat_does_not_backfill_past_months():
+    """Her ay tekrarla: Ocak→bugün aralığı açılmaz; yalnız as_of ayı (vadesi geldiyse)."""
     db = FakeDb()
-    db.partners.docs.append(_salaried(salary_start_date="2026-08-05", salary_day=5, salary_recurring=True))
-    r = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-10-03"))
-    assert r["posted_count"] == 2
-    assert {t["salary_period"] for t in db.partner_transactions.docs} == {"2026-08", "2026-09"}
-    assert {t["date"] for t in db.partner_transactions.docs} == {"2026-08-05", "2026-09-05"}
+    db.partners.docs.append(_salaried(salary_start_date="2026-01-11", salary_day=11, salary_recurring=True))
+    r = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-10-09"))
+    # 9 Ekim < 11 Ekim → Ekim henüz değil; geçmiş aylar da yazılmaz
+    assert r["posted_count"] == 0
+    assert db.partner_transactions.docs == []
     r2 = asyncio.run(partner_pay.accrue_monthly_salaries(db, "comp1", as_of="2026-10-20"))
     assert r2["posted_count"] == 1
-    assert {t["salary_period"] for t in db.partner_transactions.docs} == {"2026-08", "2026-09", "2026-10"}
+    assert db.partner_transactions.docs[0]["salary_period"] == "2026-10"
+    assert db.partner_transactions.docs[0]["date"] == "2026-10-11"
+
+
+def test_monthly_repeat_catchup_opt_in():
+    db = FakeDb()
+    db.partners.docs.append(_salaried(salary_start_date="2026-08-05", salary_day=5, salary_recurring=True))
+    slots = partner_pay.salary_slots(
+        db.partners.docs[0],
+        partner_pay.parse_iso_date("2026-10-03"),
+        catch_up=True,
+    )
+    assert {p for p, _ in slots} == {"2026-08", "2026-09"}
 
 
 def test_non_recurring_posts_only_start_month():

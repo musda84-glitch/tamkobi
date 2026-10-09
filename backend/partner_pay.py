@@ -108,8 +108,14 @@ def salary_slots(
     *,
     explicit_period: Optional[str] = None,
     force_start: bool = False,
+    catch_up: bool = False,
 ) -> List[Tuple[str, dt_date]]:
-    """Dönem + hak ediş tarihi. Tekrar kapalıysa yalnızca başlangıç ayı."""
+    """Dönem + hak ediş tarihi.
+
+    Tekrar kapalıysa yalnızca başlangıç ayı.
+    Tekrar açıksa varsayılan: yalnızca as_of ayı (geriye dönük catch-up yok).
+    catch_up=True eski davranış: start→as_of arası vadesi gelen tüm aylar.
+    """
     day = salary_day_of(partner)
     start = parse_iso_date(partner.get("salary_start_date"))
     recurring = partner.get("salary_recurring") is not False
@@ -127,10 +133,20 @@ def salary_slots(
         return [(per, due_for(per))]
 
     end_p = period_of(as_of)
-    start_p = period_of(start) if start else end_p
-    last_p = end_p if recurring else start_p
     slots: List[Tuple[str, dt_date]] = []
-    for per in periods_inclusive(start_p, last_p):
+    if not recurring:
+        start_p = period_of(start) if start else end_p
+        period_range = periods_inclusive(start_p, start_p)
+    elif catch_up:
+        start_p = period_of(start) if start else end_p
+        period_range = periods_inclusive(start_p, end_p)
+    elif start and period_of(start) > end_p:
+        # Başlangıç gelecekte — yalnız force_start ile yazılır
+        period_range = []
+    else:
+        # Her ay tekrarla: yalnız içinde bulunulan ay (geriye dönük catch-up yok)
+        period_range = [end_p]
+    for per in period_range:
         due = due_for(per)
         if due > as_of and not (force_start and start and per == period_of(start)):
             continue
@@ -407,8 +423,8 @@ async def accrue_monthly_salaries(
 ) -> Dict[str, Any]:
     """Aylık maaşı hak ediş tarihinde ortak alacağına yazar. Aynı dönem ikinci kez yazılmaz.
 
-    period verilirse yalnızca o ay. Aksi halde salary_start_date'den bugüne vadesi gelen aylar
-    (tekrar açıksa) yazılır. force_start, henüz gelmemiş ilk hak ediş ayını da kaydeder.
+    period verilirse yalnızca o ay. Aksi halde (tekrar açıksa) yalnız as_of ayı yazılır —
+    geriye dönük catch-up yok. force_start, henüz gelmemiş ilk hak ediş ayını da kaydeder.
     """
     today = parse_iso_date(as_of) or datetime.now(timezone.utc).date()
     explicit = normalize_period(period) if period else None
