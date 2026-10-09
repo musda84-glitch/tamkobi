@@ -33,12 +33,15 @@ export function productListImageUrl(product) {
   );
 }
 
-/** Sipariş satırı + stok kartı birleşik liste görseli (küçük önizleme öncelikli). */
+/** Sipariş satırı + stok kartı birleşik liste görseli.
+ * Pazaryeri/entegrasyon satır görseli (image_url) stok kartından önce gelir —
+ * Gelen Siparişler ÜRÜNLER sütunu Ürünler & Fiyat listesiyle aynı kaynağı kullanır.
+ */
 export function orderLineListImageUrl(item, product) {
   return (
     mediaRef(item?.thumbnail_url)
-    || mediaRef(product?.thumbnail_url)
     || mediaRef(item?.image_url)
+    || mediaRef(product?.thumbnail_url)
     || mediaRef(product?.image_url)
     || (Array.isArray(product?.images) && mediaRef(product.images[0]))
     || ""

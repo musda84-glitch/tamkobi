@@ -32,8 +32,8 @@ describe("productImages", () => {
     expect(productListImageUrl({})).toBe("");
   });
 
-  test("orderLineListImageUrl prefers thumbs over full line image", () => {
-    expect(orderLineListImageUrl({ image_url: "/line.jpg" }, { thumbnail_url: "/t.webp" })).toBe("/t.webp");
+  test("orderLineListImageUrl prefers line media over stock card", () => {
+    expect(orderLineListImageUrl({ image_url: "/line.jpg" }, { thumbnail_url: "/t.webp" })).toBe("/line.jpg");
     expect(orderLineListImageUrl({ thumbnail_url: "/line-t.webp", image_url: "/line.jpg" }, { thumbnail_url: "/t.webp" })).toBe("/line-t.webp");
     expect(orderLineListImageUrl({}, { thumbnail_url: "/t.webp", image_url: "/full.jpg" })).toBe("/t.webp");
     expect(orderLineListImageUrl({}, { image_url: "/full.jpg" })).toBe("/full.jpg");
