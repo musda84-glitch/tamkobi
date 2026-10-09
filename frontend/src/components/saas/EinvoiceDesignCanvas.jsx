@@ -14,6 +14,8 @@ import {
   SAMPLE_INVOICE,
   SPAN_CLASS,
   unitLabel,
+  previewIban,
+  previewNotes,
   SPAN_OPTIONS,
   QR_SIZE_OPTIONS,
   LOGO_SIZE_OPTIONS,
@@ -183,7 +185,9 @@ const LineColsBar = ({ layout, onPatchCols, drag, onDragStart, onDragOver, onDro
   />
 );
 
-const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
+const stopDrag = (e) => e.stopPropagation();
+
+const PreviewBlock = ({ id, layout, onPatch, onPatchCols, onPatchMeta, onPatchHeader, onPatchTotals, onQrSize, onLogoSize, drag, onDragStart, onDragOver, onDrop, onDragEnd }) => {
   const s = SAMPLE_INVOICE;
   if (id === "header") {
     const logoSize = Number(layout.logoSize) || 72;
@@ -261,9 +265,9 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
   if (id === "ettn") {
     const ettnFs = blockFontSize(layout, "ettn");
     return (
-      <div data-testid="einvoice-design-ettn" style={{ color: layout.text }}>
-        <div className="font-normal">ETTN</div>
-        <div className="break-all leading-tight" style={{ fontSize: `${ettnFs}px`, color: layout.primary }}>{s.ettn}</div>
+      <div data-testid="einvoice-design-ettn" className="flex items-baseline gap-2 flex-wrap" style={{ color: layout.text }}>
+        <span className="font-bold whitespace-nowrap" style={{ color: layout.muted, fontSize: "0.85em", letterSpacing: "0.04em" }}>ETTN</span>
+        <span className="break-all leading-tight" style={{ fontSize: `${ettnFs}px`, color: layout.primary }}>{s.ettn}</span>
       </div>
     );
   }
@@ -376,18 +380,55 @@ const PreviewBlock = ({ id, layout, onPatchCols, onPatchMeta, onPatchHeader, onP
     );
   }
   if (id === "notes") {
+    const notes = previewNotes(layout, s);
     return (
       <div className="pt-2" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted }}>
         <div className="font-bold uppercase mb-0.5" style={{ fontSize: "0.85em" }}>Notlar</div>
-        {s.notes.map((n) => <div key={n}>{n}</div>)}
+        {notes.map((n) => <div key={n}>{n}</div>)}
+        <textarea
+          value={layout.noteText || ""}
+          onChange={(e) => onPatch({ noteText: e.target.value })}
+          onMouseDown={stopDrag}
+          draggable={false}
+          rows={2}
+          placeholder="Her e-belgede basılacak dipnot…"
+          className="mt-1.5 w-full bg-white border border-slate-200 rounded-lg p-1.5 text-[11px] text-slate-800"
+          data-testid="einvoice-design-note-text"
+        />
+        <p className="text-[9px] text-slate-500 mt-1" data-testid="einvoice-design-note-hint">
+          Satış faturasındaki «Fatura notu» da basılır. Buraya yazılan metin her belgede eklenir.
+        </p>
       </div>
     );
   }
   if (id === "iban") {
+    const pay = previewIban(layout, s);
     return (
       <div className="pt-2" style={{ borderTop: `1px dashed ${layout.muted}55`, color: layout.muted }}>
         <div className="font-bold uppercase mb-0.5" style={{ fontSize: "0.85em" }}>IBAN / ödeme</div>
-        <div className="font-mono">{s.iban}</div>
+        <div className="font-mono">{pay.iban}</div>
+        {pay.name ? <div>{pay.name}</div> : null}
+        <input
+          value={layout.ibanText || ""}
+          onChange={(e) => onPatch({ ibanText: e.target.value })}
+          onMouseDown={stopDrag}
+          draggable={false}
+          placeholder="TR… şablon IBAN"
+          className="mt-1.5 w-full bg-white border border-slate-200 rounded-lg p-1.5 font-mono text-[11px] text-slate-800"
+          data-testid="einvoice-design-iban-text"
+        />
+        <input
+          value={layout.ibanName || ""}
+          onChange={(e) => onPatch({ ibanName: e.target.value })}
+          onMouseDown={stopDrag}
+          draggable={false}
+          placeholder="Banka adı (isteğe bağlı)"
+          className="mt-1 w-full bg-white border border-slate-200 rounded-lg p-1.5 text-[11px] text-slate-800"
+          data-testid="einvoice-design-iban-name"
+        />
+        <p className="text-[9px] text-slate-500 mt-1" data-testid="einvoice-design-iban-hint">
+          Boş bırakılırsa şirket kartındaki IBAN (Ayarlar → Şirket) basılır.
+        </p>
       </div>
     );
   }
@@ -751,6 +792,7 @@ export const EinvoiceDesignCanvas = ({ layout, onChange, kind, xsltHtml = "", pr
                   <PreviewBlock
                     id={b.id}
                     layout={L}
+                    onPatch={patch}
                     onPatchCols={patchCols}
                     onPatchMeta={patchMeta}
                     onPatchHeader={patchHeader}

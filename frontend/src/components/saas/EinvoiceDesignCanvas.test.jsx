@@ -89,6 +89,28 @@ test("renders preview blocks and can hide then restore from palette", async () =
   });
   expect(last.blocks.find((b) => b.id === "iban").hidden).toBe(false);
   expect(host.querySelector('[data-testid="einvoice-design-block-iban"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-note-text"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-iban-text"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-notes"]')?.textContent).toContain("İşbu belge elektronik olarak düzenlenmiştir.");
+  expect(host.querySelector('[data-testid="einvoice-design-note-hint"]')?.textContent).toMatch(/Fatura notu/);
+  expect(host.querySelector('[data-testid="einvoice-design-iban-hint"]')?.textContent).toMatch(/Şirket/);
+
+  const note = host.querySelector('[data-testid="einvoice-design-note-text"]');
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+    setter.call(note, "Teslimat kapıda.");
+    note.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(last.noteText).toBe("Teslimat kapıda.");
+  expect(host.querySelector('[data-testid="einvoice-design-block-notes"]')?.textContent).toContain("Teslimat kapıda.");
+
+  const iban = host.querySelector('[data-testid="einvoice-design-iban-text"]');
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(iban, "TR330006100519786457841326");
+    iban.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(last.ibanText).toBe("TR330006100519786457841326");
 });
 
 test("shows uploaded XSLT in the preview iframe", async () => {
@@ -275,9 +297,11 @@ test("ETTN is a separate palette block, not a fatura bilgileri field", async () 
   });
   const box = host.querySelector('[data-testid="einvoice-design-ettn"]');
   expect(box).not.toBeNull();
+  expect(box?.className).toMatch(/flex/);
   expect(box?.textContent).toContain("ETTN");
   expect(box?.textContent).toContain("550e8400-e29b-41d4-a716-446655440000");
   expect(box?.querySelector(".break-all")?.style.fontSize).toBe("18px");
+  expect(box?.querySelector(".break-all")?.previousElementSibling?.textContent).toBe("ETTN");
   expect(host.querySelector('[data-testid="einvoice-design-ettn-font-sizes"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-ettn"]').className).toContain("col-span-12");
   expect(host.querySelector('[data-testid="einvoice-design-block-meta"]')?.textContent).not.toContain("550e8400");

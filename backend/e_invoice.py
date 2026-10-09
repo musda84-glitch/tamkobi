@@ -434,6 +434,8 @@ async def build_and_store_xml(invoice: dict, company: dict, contact: Optional[di
         "address": company.get("address"),
         "email": company.get("email"),
         "phone": company.get("phone"),
+        "iban": company.get("iban"),
+        "bank_name": company.get("bank_name"),
     }
     buyer = ubl_export._buyer_from(inv, contact)
     xslt = None

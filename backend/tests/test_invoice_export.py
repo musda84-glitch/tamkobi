@@ -91,6 +91,29 @@ class TestUblBuilder:
         assert "EARSIVFATURA" in xml
         assert ubl_export.is_outgoing_edoc({**inv, "e_type": "paper"}) is False
 
+    def test_payment_means_from_company_iban(self):
+        import ubl_export
+        inv = {
+            "_id": str(uuid.uuid4()),
+            "invoice_number": "NX-IBAN-1",
+            "invoice_type": "sales",
+            "e_type": "e_invoice",
+            "issue_date": "2026-10-09",
+            "items": [{"name": "A", "quantity": 1, "unit": "Adet", "unit_price": 10, "vat_rate": 20, "total": 10}],
+            "subtotal": 10, "vat_total": 2, "grand_total": 12,
+        }
+        seller = {
+            "name": "Satıcı Ltd.", "tax_number": "1234567801",
+            "iban": "TR33 0006 1005 1978 6457 8413 26", "bank_name": "İş Bankası",
+        }
+        xml = ubl_export.build_invoice_ubl(inv, seller, {"name": "Alıcı"}).decode()
+        assert "PayeeFinancialAccount" in xml
+        assert "TR330006100519786457841326" in xml
+        assert "İş Bankası" in xml
+        assert "<cbc:PaymentMeansCode>42</cbc:PaymentMeansCode>" in xml
+        bare = ubl_export.build_invoice_ubl(inv, {"name": "S"}, {"name": "A"}).decode()
+        assert "PayeeFinancialAccount" not in bare
+
 
 class TestInvoiceXmlApi:
     def test_e_archive_xml(self, client):
