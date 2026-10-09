@@ -253,17 +253,37 @@ class TrendyolClient:
         return out
 
     async def claims(self, days: int = 14) -> List[dict]:
+        """İade paketleri — Trendyol claimItemStatus ile filtre ister; durumları tek tek çek."""
         end = int(datetime.now(timezone.utc).timestamp() * 1000)
         start_all = end - max(1, int(days)) * 86400000
+        # Docs: Created / WaitingInAction / Accepted / Cancelled / Rejected / Unresolved / InAnalysis
+        statuses = (
+            "Created", "WaitingInAction", "Accepted", "Cancelled",
+            "Rejected", "Unresolved", "InAnalysis",
+        )
         seen, out = set(), []
-        cur_end = end
-        while cur_end > start_all:
-            cur_start = max(start_all, cur_end - TY_WINDOW_MS + 1)
-            for c in await self._paged(f"/integration/order/sellers/{self.seller_id}/claims", cur_start, cur_end, 200, max_pages=20):
-                if c.get("id") not in seen:
-                    seen.add(c.get("id"))
-                    out.append(c)
-            cur_end = cur_start - 1
+        path = f"/integration/order/sellers/{self.seller_id}/claims"
+        for st in statuses:
+            cur_end = end
+            while cur_end > start_all:
+                cur_start = max(start_all, cur_end - TY_WINDOW_MS + 1)
+                try:
+                    chunk = await self._paged(
+                        path, cur_start, cur_end, 200,
+                        extra={"claimItemStatus": st},
+                        max_pages=20,
+                    )
+                except HTTPException as e:
+                    # Tek durum 4xx ise diğerlerini dene
+                    if 400 <= int(getattr(e, "status_code", 0) or 0) < 500:
+                        break
+                    raise
+                for c in chunk:
+                    cid = c.get("id")
+                    if cid not in seen:
+                        seen.add(cid)
+                        out.append(c)
+                cur_end = cur_start - 1
         return out
 
     async def questions(self, status: str = "WAITING_FOR_ANSWER") -> List[dict]:

@@ -13477,6 +13477,55 @@ async def list_marketplace_claims(company_id: Optional[str] = "comp_nexus_main_0
     docs = clean_docs(await db.marketplace_claims.find(q).sort("claim_date", -1).to_list(500))
     return await _enrich_marketplace_claims(docs)
 
+
+@api_router.post("/marketplace/claims/sync")
+async def sync_marketplace_claims(req: Dict[str, Any] = None):
+    """Yalnızca iade taleplerini Trendyol'dan çek (sipariş senkronundan bağımsız)."""
+    req = req or {}
+    company_id = req.get("company_id") or "comp_nexus_main_01"
+    days = max(1, min(45, int(req.get("days") or 14)))
+    channels = await db.integration_configs.find({
+        "company_id": company_id,
+        "channel": "trendyol",
+        "is_active": True,
+    }).to_list(20)
+    total_claims = 0
+    new_claims = 0
+    warnings: List[str] = []
+    synced = 0
+    for cfg in channels:
+        if not marketplace_providers.has_live_credentials(cfg):
+            continue
+        client = marketplace_providers.TrendyolClient(cfg)
+        try:
+            raw = await client.claims(days=min(days, 14))
+        except HTTPException as e:
+            warnings.append(f"{cfg.get('channel_name') or 'Trendyol'}: {e.detail}")
+            continue
+        except Exception as e:
+            warnings.append(f"{cfg.get('channel_name') or 'Trendyol'}: {type(e).__name__}")
+            continue
+        finally:
+            await client.close()
+        mapped = [marketplace_providers.map_trendyol_claim(c, company_id, "trendyol") for c in raw]
+        n_new = await _upsert_by_external(db.marketplace_claims, company_id, mapped) if mapped else 0
+        total_claims += len(raw)
+        new_claims += n_new
+        synced += 1
+    if not synced and not warnings:
+        raise HTTPException(status_code=400, detail="Canlı Trendyol kanalı yok — E-Ticaret Entegrasyon’dan API bilgilerini kaydedin.")
+    msg = f"{total_claims} iade talebi çekildi ({new_claims} yeni)."
+    if warnings:
+        msg += " · " + "; ".join(warnings[:2])
+    return {
+        "status": "success",
+        "claims": total_claims,
+        "new_claims": new_claims,
+        "channels": synced,
+        "warnings": warnings,
+        "message": msg,
+    }
+
 @api_router.post("/marketplace/claims/{claim_id}/approve")
 async def approve_marketplace_claim(claim_id: str, req: Dict[str, Any] = None):
     c = await db.marketplace_claims.find_one({"_id": claim_id})

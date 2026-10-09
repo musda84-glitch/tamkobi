@@ -1381,7 +1381,7 @@ export default function OrdersB2BPage() {
         </div>
         </div>
       </div>
-      {activeTab === "claims" && <ClaimsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
+      {activeTab === "claims" && <ClaimsPanel companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"} />}
       {activeTab === "cancelled" && <CancelledPanel orders={orders} />}
       {activeTab === "profit" && <ProfitabilityPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}
       {activeTab === "questions" && <QuestionsPanel companyId={activeCompany?.id || "comp_nexus_main_01"} />}

@@ -21,8 +21,21 @@ const dt = (s) => (s ? new Date(s).toLocaleString("tr-TR", { dateStyle: "short",
 export const ClaimsPanel = ({ companyId }) => {
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(null);
+  const [syncing, setSyncing] = useState(false);
   const load = useCallback(() => axios.get(`${API_URL}/marketplace/claims?company_id=${companyId}`).then((r) => setRows(r.data)).catch(() => toast.error("İadeler yüklenemedi.")), [companyId]);
   useEffect(() => { load(); }, [load]);
+  const syncClaims = async () => {
+    setSyncing(true);
+    try {
+      const r = await axios.post(`${API_URL}/marketplace/claims/sync`, { company_id: companyId, days: 14 }, { timeout: 120000 });
+      toast.success(r.data.message || "İadeler çekildi.");
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "İadeler çekilemedi.");
+    } finally {
+      setSyncing(false);
+    }
+  };
   const approve = async (c, restock) => {
     if (!window.confirm(`${c.order_number} iadesi onaylansın mı?${restock ? " Ürün stoğa geri eklenecek." : ""}`)) return;
     setBusy(`${c.id}:approve`);
@@ -67,10 +80,29 @@ export const ClaimsPanel = ({ companyId }) => {
               {waiting} kargo ulaştı
             </span>
           )}
-          <span>Senkronize Et ile çekilir · WaitingInAction = depoya ulaştı</span>
+          <span className="hidden sm:inline">Kargo Ulaştı → Onay / Red / Gider Pusulası</span>
+          <button
+            type="button"
+            onClick={syncClaims}
+            disabled={syncing}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            data-testid="claims-sync-btn"
+            title="Trendyol iade taleplerini çek"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} />
+            İadeleri Çek
+          </button>
         </div>
       </div>
-      {rows.length === 0 && <div className="p-10 text-center text-xs text-slate-400" data-testid="claims-empty">İade talebi yok.</div>}
+      {rows.length === 0 && (
+        <div className="p-10 text-center text-xs text-slate-400 space-y-2" data-testid="claims-empty">
+          <div>İade talebi yok.</div>
+          <p className="text-slate-500 max-w-md mx-auto">
+            Trendyol’dan çekmek için <b className="text-slate-700">İadeleri Çek</b> kullanın.
+            Depoya ulaşan iadelerde durum <b className="text-sky-800">Kargo Ulaştı</b> olur; Onayla / Reddet ve bağlı fatura varsa <b className="text-rose-700">Gider Pusulası Düzenle</b> çıkar.
+          </p>
+        </div>
+      )}
       <div className="divide-y divide-slate-100 text-xs">
         {rows.map((c) => {
           const arrived = claimCargoArrived(c);
