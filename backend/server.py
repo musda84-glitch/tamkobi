@@ -12794,9 +12794,11 @@ async def _marketplace_auto_sync_loop(interval_s: int = 600):
     """Canlı kimlik bilgisi olan pazaryeri kanallarını 10 dakikada bir otomatik senkronize eder.
 
     «Siparişleri otomatik çek» (auto_sync_orders) kapalıysa kanal atlanır.
+    İlk tur da 10 dk sonra — açılışta / Siparişler tıklanınca anında çekim yapılmaz
+    (manuel Yenile veya bu döngü).
     """
     import asyncio as _a
-    await _a.sleep(20)
+    await _a.sleep(interval_s)
     while True:
         try:
             for cfg in await db.integration_configs.find({"is_active": True, "channel": "trendyol"}).to_list(50):

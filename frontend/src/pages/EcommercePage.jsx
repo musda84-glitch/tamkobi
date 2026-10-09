@@ -153,7 +153,7 @@ export default function EcommercePage() {
       <div className="bg-indigo-50/80 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3 text-xs text-indigo-950">
         <Zap className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
         <div>
-          <span className="font-bold">Otomatik API Bağlantısı:</span> «Siparişleri otomatik çek» açıkken kanallar 10 dakikada bir senkronize edilir; liste yükü için sık çekim yapılmaz. E-Arşiv/E-Fatura ve stok eşitleme kanal ayarlarınıza göre çalışır.
+          <span className="font-bold">Otomatik API Bağlantısı:</span> «Siparişleri otomatik çek» açıkken kanallar 10 dakikada bir senkronize edilir. Siparişler menüsüne tıklamak veya sayfayı yenilemek çekim başlatmaz — yalnızca Yenile butonu veya bu zamanlayıcı.
         </div>
       </div>
 
