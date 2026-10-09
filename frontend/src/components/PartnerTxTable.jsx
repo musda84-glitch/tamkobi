@@ -34,10 +34,13 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
   };
   const del = async (t) => {
     const linked = isPartnerExpenseTx(t);
+    const bankMatch = Boolean(t.related_bank_tx_id || t.source === "bank_match");
     const base = `${partnerTxLabel(t)} (${fmt(t.amount)} ₺) silinsin mi?`;
     const bal = linked
       ? " Bağlı masraf da silinir; ortak bakiyesi geri alınır."
-      : ` Ortak${isPartnerLedgerType(t.type) ? "" : " ve hesap"} bakiyeleri geri alınır.`;
+      : bankMatch
+        ? " Ortak bakiyesi geri alınır; banka eşleşmesi iptal edilir (hareket tekrar bekleyenlere düşer)."
+        : ` Ortak${isPartnerLedgerType(t.type) ? "" : " ve hesap"} bakiyeleri geri alınır.`;
     if (!window.confirm(base + bal)) return;
     try { const r = await axios.delete(`${API_URL}/banking/partners/transactions/${t.id}`); toast.success(r.data.message); onChanged?.(); }
     catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); }

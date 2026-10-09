@@ -139,7 +139,13 @@ describe("partnerTx", () => {
     expect(br.buckets.salary).toBe(150000);
     expect(br.buckets.profit_paid).toBe(9000);
     expect(br.inflow).toBeCloseTo(500000 + 150000 + 50000 + 20000, 2);
-    expect(br.outflow).toBeCloseTo(31810.22 + 9000, 2);
+    // Peşin kâr payı kart bakiyesine yazılmaz — Çıkış'a dahil değil
+    expect(br.outflow).toBeCloseTo(31810.22, 2);
+    // Kart işareti: Giriş eksi, Çıkış artı → net = Alacaklı display
+    expect(br.girisDisplay).toBeCloseTo(-(500000 + 150000 + 50000 + 20000), 2);
+    expect(br.cikisDisplay).toBeCloseTo(31810.22, 2);
+    expect(br.netDisplay).toBeCloseTo(partnerBalanceMeta(ledger).display, 2);
+    expect(br.netDisplay).toBeCloseTo(-ledger, 2);
     expect(partnerLedgerBreakdown(txs, ledger + 1).drift).toBe(true);
   });
 

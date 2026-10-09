@@ -158,13 +158,18 @@ export function partnerLedgerBreakdown(txs, storedBalance) {
   ledger = Math.round(ledger * 100) / 100;
   const stored = Number(storedBalance);
   const storedN = Number.isFinite(stored) ? Math.round(stored * 100) / 100 : 0;
-  // Cebindeki para algoritması: Giriş yazıları − Çıkış yazıları
+  // Kart bakiyesine yazılan: artıran (Giriş) / azaltan (Çıkış).
+  // Peşin kâr payı yalnızca kasadan çıkar; ortak kartına dokunmaz → Çıkış'a dahil değil.
   const inflow = Math.round((
     buckets.capital_in + buckets.credit + buckets.salary + buckets.profit_accrual
   ) * 100) / 100;
   const outflow = Math.round((
-    buckets.withdrawal + buckets.debit + buckets.profit_paid
+    buckets.withdrawal + buckets.debit
   ) * 100) / 100;
+  // Kart işareti: Giriş → eksi (−), Çıkış → artı (+); net = kart display
+  const girisDisplay = Math.round(-inflow * 100) / 100;
+  const cikisDisplay = Math.round(outflow * 100) / 100;
+  const netDisplay = Math.round((girisDisplay + cikisDisplay) * 100) / 100;
   return {
     count: rows.length,
     ledger,
@@ -173,6 +178,9 @@ export function partnerLedgerBreakdown(txs, storedBalance) {
     buckets,
     inflow,
     outflow,
+    girisDisplay,
+    cikisDisplay,
+    netDisplay,
   };
 }
 

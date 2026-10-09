@@ -9310,6 +9310,11 @@ async def delete_partner_transaction(tx_id: str):
         related=related,
         note=(tx.get("date") or "") + (" · bağlı masraf" if related else ""),
     )
+    bank_unmatched = False
+    bank_tx_id = tx.get("related_bank_tx_id")
+    if bank_tx_id:
+        from bank_match_target import clear_bank_match_status
+        bank_unmatched = await clear_bank_match_status(db, bank_tx_id)
     msg = "Hareket çöp kutusuna taşındı; ortak"
     if tx.get("contact_id"):
         msg += ", cari"
@@ -9318,7 +9323,9 @@ async def delete_partner_transaction(tx_id: str):
     msg += " bakiyeleri geri alındı."
     if related:
         msg = "Hareket ve bağlı masraf çöp kutusuna taşındı; ortak bakiyesi geri alındı."
-    return {"status": "success", "message": msg}
+    if bank_unmatched:
+        msg += " Banka eşleşmesi iptal edildi; hareket tekrar eşleştirme bekliyor."
+    return {"status": "success", "message": msg, "bank_unmatched": bank_unmatched}
 
 async def _execute_partner_tx(req: Dict[str, Any]):
     partner = await db.partners.find_one({"_id": req.get("partner_id")})

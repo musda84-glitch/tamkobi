@@ -107,3 +107,39 @@ async def reverse_partner_match(db, tx: dict) -> bool:
     if ok:
         return True
     return await partner_pay.reverse_one(db, {"related_bank_tx_id": tx["_id"]})
+
+
+async def clear_bank_match_status(db, bank_tx_id: Optional[str]) -> bool:
+    """Ortak/cari tarafı silinince banka satırını eşleşmemiş yap (bakiyeye dokunma).
+
+    Partner tx zaten `_reverse_partner_tx` ile geri alındı; burada yalnızca
+    match_status / hedef alanları temizlenir — `_unmatch` gibi tekrar reverse yok.
+    """
+    if not bank_tx_id:
+        return False
+    tx = await db.bank_transactions.find_one({"_id": bank_tx_id})
+    if not tx or tx.get("match_status") != "matched":
+        return False
+    is_inflow = tx.get("type") == "inflow"
+    await db.bank_transactions.update_one(
+        {"_id": bank_tx_id},
+        {
+            "$set": {
+                "match_status": "unmatched",
+                "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme",
+            },
+            "$unset": {
+                "contact_id": "",
+                "contact_name": "",
+                "related_invoice_id": "",
+                "related_invoice_number": "",
+                "target_account_id": "",
+                "target_account_name": "",
+                "matched_via": "",
+                "matched_at": "",
+                "matched_by_id": "",
+                "matched_by_name": "",
+            },
+        },
+    )
+    return True

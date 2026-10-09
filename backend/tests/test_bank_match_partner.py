@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from bank_match_target import (
     apply_partner_match,
+    clear_bank_match_status,
     parse_match_target,
     partner_tx_type_for_bank_match,
     repair_legacy_bank_match_directions,
@@ -92,8 +93,36 @@ class _FakeColl:
 
     async def update_one(self, q, upd):
         doc = next((d for d in self.docs if d.get("_id") == (q or {}).get("_id")), None)
-        if doc and "$set" in upd:
+        if not doc:
+            return
+        if "$set" in upd:
             doc.update(upd["$set"])
+        for k in (upd.get("$unset") or {}):
+            doc.pop(k, None)
+
+
+def test_clear_bank_match_status_unmatches_without_touching_partner():
+    """Ortak hareketi silinince banka satırı tekrar unmatched olur."""
+    btxs = _FakeColl([
+        {
+            "_id": "btx1",
+            "type": "outflow",
+            "amount": 80000,
+            "match_status": "matched",
+            "target_account_id": "partner:ali",
+            "target_account_name": "Ali BAL (Ortak)",
+            "matched_via": "manual",
+            "category": "Hesaplar Arası Virman",
+        }
+    ])
+    db = MagicMock()
+    db.bank_transactions = btxs
+    ok = _run(clear_bank_match_status(db, "btx1"))
+    assert ok is True
+    assert btxs.docs[0]["match_status"] == "unmatched"
+    assert "target_account_id" not in btxs.docs[0]
+    assert btxs.docs[0]["category"] == "Banka Giden Ödeme"
+    assert _run(clear_bank_match_status(db, "btx1")) is False  # zaten unmatched
 
 
 def test_repair_pr1089_bank_outflow_capital_in_to_withdrawal():
