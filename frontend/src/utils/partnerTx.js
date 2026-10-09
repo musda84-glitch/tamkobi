@@ -100,6 +100,8 @@ export function partnerBalanceMeta(balance) {
 }
 /** Artı: ortak alacağı artar (para koy / alacak fişi / maaş / tahakkuk kâr payı). */
 export function partnerTxIncreasesBalance(type, tx) {
+  // Eski masraf satırı withdrawal yazılmış olsa bile alacak (bakiye artar)
+  if (tx && isPartnerExpenseTx(tx)) return true;
   if (type === "capital_in" || type === "credit" || type === "salary") return true;
   // Tahakkuk kâr payı bakiyeyi artırır; peşin ödeme yalnızca kasadan çıkar.
   if (type === "profit_share") return !(tx && tx.is_paid);
@@ -119,6 +121,8 @@ export function partnerTxBalanceDelta(tx) {
   if (!tx) return 0;
   const amt = Number(tx.amount);
   if (!Number.isFinite(amt)) return 0;
+  // Masraf (expense) — tip withdrawal kalsa bile alacak (+)
+  if (isPartnerExpenseTx(tx) || tx.type === "credit") return amt;
   if (partnerTxIncreasesBalance(tx.type, tx)) return amt;
   if (tx.type === "withdrawal" || tx.type === "debit") return -amt;
   return 0;
@@ -126,7 +130,7 @@ export function partnerTxBalanceDelta(tx) {
 
 /**
  * Seçili ortağın hareketlerinden bakiye mutabakatı.
- * Kart bakiyesi ile hareket toplamı sapıyorsa drift=true.
+ * Kart bakiyesi (ledger) tip etkisinden; Giriş/Çıkış kutuları işlem sütunu (kasa yönü).
  */
 export function partnerLedgerBreakdown(txs, storedBalance) {
   const rows = Array.isArray(txs) ? txs : [];
@@ -141,11 +145,14 @@ export function partnerLedgerBreakdown(txs, storedBalance) {
     other: 0,
   };
   let ledger = 0;
+  let cashIn = 0;
+  let cashOut = 0;
   for (const tx of rows) {
     const amt = Number(tx.amount);
     const n = Number.isFinite(amt) ? amt : 0;
-    const delta = partnerTxBalanceDelta(tx);
-    ledger += delta;
+    ledger += partnerTxBalanceDelta(tx);
+    if (partnerTxIsCashInflow(tx)) cashIn += n;
+    else cashOut += n;
     if (tx.type === "capital_in") buckets.capital_in += n;
     else if (tx.type === "withdrawal") buckets.withdrawal += n;
     else if (tx.type === "credit") buckets.credit += n;
@@ -158,29 +165,30 @@ export function partnerLedgerBreakdown(txs, storedBalance) {
   ledger = Math.round(ledger * 100) / 100;
   const stored = Number(storedBalance);
   const storedN = Number.isFinite(stored) ? Math.round(stored * 100) / 100 : 0;
-  // Kart bakiyesine yazılan: artıran (Giriş) / azaltan (Çıkış).
-  // Peşin kâr payı yalnızca kasadan çıkar; ortak kartına dokunmaz → Çıkış'a dahil değil.
-  const inflow = Math.round((
-    buckets.capital_in + buckets.credit + buckets.salary + buckets.profit_accrual
-  ) * 100) / 100;
-  const outflow = Math.round((
-    buckets.withdrawal + buckets.debit
-  ) * 100) / 100;
-  // Kart işareti: Giriş → eksi (−), Çıkış → artı (+); net = kart display
-  const girisDisplay = Math.round(-inflow * 100) / 100;
-  const cikisDisplay = Math.round(outflow * 100) / 100;
+  cashIn = Math.round(cashIn * 100) / 100;
+  cashOut = Math.round(cashOut * 100) / 100;
+  // İşlem sütunu: Giriş artı, Çıkış eksi → toplam çoğu ortakta kart display ile aynı
+  const girisDisplay = cashIn;
+  const cikisDisplay = Math.round(-cashOut * 100) / 100;
   const netDisplay = Math.round((girisDisplay + cikisDisplay) * 100) / 100;
+  const cardDisplay = partnerBalanceMeta(ledger).display;
   return {
     count: rows.length,
     ledger,
     stored: storedN,
     drift: Math.abs(ledger - storedN) > 0.005,
     buckets,
-    inflow,
-    outflow,
+    /** @deprecated tip kovası; UI kasa yönünü kullanır */
+    inflow: cashIn,
+    outflow: cashOut,
+    cashIn,
+    cashOut,
     girisDisplay,
     cikisDisplay,
     netDisplay,
+    cardDisplay,
+    /** Giriş+Çıkış kart display ile örtüşüyor mu */
+    netMatchesCard: Math.abs(netDisplay - cardDisplay) <= 0.005,
   };
 }
 
