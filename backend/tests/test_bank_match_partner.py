@@ -1,11 +1,12 @@
 """Banka eşleşmesi: Para nereden geldi / nereye gitti → Ortaklar Hesabı."""
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from bank_match_target import (
     apply_partner_match,
     parse_match_target,
     partner_tx_type_for_bank_match,
+    repair_legacy_bank_match_directions,
     reverse_partner_match,
     stored_match_target,
 )
@@ -58,3 +59,68 @@ def test_reverse_partner_match_looks_up_bank_tx():
     assert ok is True
     assert rev.await_args_list[0].args[1] == {"related_bank_tx_id": "tx3", "source": "bank_match"}
     assert rev.await_args_list[1].args[1] == {"related_bank_tx_id": "tx3"}
+
+
+class _FakeCursor:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def to_list(self, n):
+        return list(self.rows[:n])
+
+
+class _FakeColl:
+    def __init__(self, docs):
+        self.docs = docs
+
+    def find(self, q=None):
+        # Test: sorguyu yok say, tüm dokümanları döndür (repair Python'da tip filtreler)
+        rows = self.docs
+        if isinstance(q, dict) and "partner_id" in q:
+            rows = [d for d in rows if d.get("partner_id") == q["partner_id"]]
+        elif isinstance(q, dict) and "$and" in q:
+            pid = next((c.get("partner_id") for c in q["$and"] if isinstance(c, dict) and "partner_id" in c), None)
+            if pid:
+                rows = [d for d in rows if d.get("partner_id") == pid]
+        return _FakeCursor(rows)
+
+    async def find_one(self, q):
+        _id = (q or {}).get("_id")
+        return next((d for d in self.docs if d.get("_id") == _id), None)
+
+    async def update_one(self, q, upd):
+        doc = next((d for d in self.docs if d.get("_id") == (q or {}).get("_id")), None)
+        if doc and "$set" in upd:
+            doc.update(upd["$set"])
+
+
+def test_repair_legacy_bank_outflow_withdrawal_to_capital_in():
+    """Ali Bal: banka çıkışı eski tip withdrawal → capital_in (ortak Giriş)."""
+    ptxs = _FakeColl([
+        {
+            "_id": "pt1",
+            "partner_id": "ali",
+            "type": "withdrawal",
+            "amount": 80000,
+            "source": "bank_match",
+            "bank_tx_type": "outflow",
+            "related_bank_tx_id": "btx1",
+            "description": "Vadesiz TL Hesabı: ALİ BAL",
+        },
+        {
+            "_id": "pt2",
+            "partner_id": "ali",
+            "type": "capital_in",
+            "amount": 1000,
+            "source": "bank_match",
+            "bank_tx_type": "outflow",
+        },
+    ])
+    db = MagicMock()
+    db.partner_transactions = ptxs
+    db.bank_transactions = _FakeColl([])
+    n = _run(repair_legacy_bank_match_directions(db, "ali"))
+    assert n == 1
+    assert ptxs.docs[0]["type"] == "capital_in"
+    assert ptxs.docs[1]["type"] == "capital_in"
+    assert "legacy_bank_match_repaired_at" in ptxs.docs[0]

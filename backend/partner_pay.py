@@ -282,10 +282,14 @@ async def repair_legacy_expense_withdrawals(db, partner_id: Optional[str] = None
 
 async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, Any]]:
     """Kayıtlı bakiyeyi hareketlerden yeniden hesapla; kaymayı onar."""
+    # Lazy: bank_match_target → partner_pay döngüsünü kırma
+    from bank_match_target import repair_legacy_bank_match_directions
+
     partner = await db.partners.find_one({"_id": partner_id})
     if not partner:
         return None
     expense_rows_repaired = await repair_legacy_expense_withdrawals(db, partner_id)
+    bank_match_rows_repaired = await repair_legacy_bank_match_directions(db, partner_id)
     txs = await db.partner_transactions.find({"partner_id": partner_id}).to_list(20000)
     live = ledger_totals(txs)
     prev = {
@@ -294,7 +298,11 @@ async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, An
         "total_withdrawn": float(partner.get("total_withdrawn") or 0),
         "total_profit_share": float(partner.get("total_profit_share") or 0),
     }
-    repaired = expense_rows_repaired > 0 or any(abs(live[k] - prev[k]) > 0.005 for k in live)
+    repaired = (
+        expense_rows_repaired > 0
+        or bank_match_rows_repaired > 0
+        or any(abs(live[k] - prev[k]) > 0.005 for k in live)
+    )
     if repaired:
         await db.partners.update_one(
             {"_id": partner_id},
@@ -305,6 +313,7 @@ async def sync_partner_from_ledger(db, partner_id: str) -> Optional[Dict[str, An
         "previous": prev,
         "repaired": repaired,
         "expense_rows_repaired": expense_rows_repaired,
+        "bank_match_rows_repaired": bank_match_rows_repaired,
     }
 
 
