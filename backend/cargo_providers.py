@@ -370,13 +370,154 @@ async def geliver_test(config: dict) -> Dict[str, Any]:
     return {"ok": True, "message": msg, "addresses": addresses, "balance": balance, "test_mode": bool(config.get("test_mode", True))}
 
 
-async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict] = None) -> Dict[str, Any]:
-    """Create shipment → wait for offers.cheapest → POST /transactions {offerID}.
+def opt_flag(opts: Optional[dict], key: str, default: bool = False) -> bool:
+    """JSON-safe bool: missing → default; false / 'false' / 0 stay false."""
+    opts = opts or {}
+    if key not in opts:
+        return default
+    v = opts[key]
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return default
+    if isinstance(v, (int, float)):
+        return bool(v)
+    s = str(v).strip().lower()
+    if s in {"1", "true", "yes", "on"}:
+        return True
+    if s in {"0", "false", "no", "off", ""}:
+        return False
+    return default
 
-    Fixes vs previous implementation (matched to geliver-python SDK):
-    - accept offer: POST /transactions (not /transactions/accept-offer)
-    - recipient requires cityName + zip (+ phone)
-    - order.totalAmountCurrency = TRY (not TL); amounts as strings
+
+def _offer_amount_num(offer: Optional[dict]) -> Optional[float]:
+    if not isinstance(offer, dict):
+        return None
+    raw = offer.get("totalAmount") or offer.get("amount") or offer.get("totalAmountLocal")
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def geliver_serialize_offer(
+    offer: dict,
+    *,
+    cheapest_id: Optional[str] = None,
+    fastest_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """UI-facing quote row. Purchase happens only via POST /transactions {offerID}."""
+    oid = str(offer.get("id") or "")
+    amount_num = _offer_amount_num(offer)
+    service = str(offer.get("providerServiceCode") or offer.get("providerCode") or "").strip()
+    return {
+        "id": oid,
+        "provider": str(offer.get("providerCode") or "").strip(),
+        "service": service,
+        "provider_account": str(offer.get("providerAccountName") or "").strip(),
+        "amount": offer.get("totalAmount") or offer.get("amount"),
+        "amount_num": amount_num,
+        "currency": str(offer.get("currency") or "TRY"),
+        "eta": str(
+            offer.get("averageEstimatedTimeHumanReadible")
+            or offer.get("estimatedArrivalTime")
+            or offer.get("durationTerms")
+            or ""
+        ).strip(),
+        "min_hours": offer.get("minEstimatedTime"),
+        "max_hours": offer.get("maxEstimatedTime"),
+        "rating": offer.get("rating"),
+        "is_cheapest": bool(oid and oid == cheapest_id),
+        "is_fastest": bool(oid and oid == fastest_id),
+        "is_own_agreement": bool(offer.get("isProviderAccountOffer")),
+    }
+
+
+def geliver_collect_offers(shipment: Any) -> tuple[List[dict], Optional[dict], float]:
+    """OfferList from GET/POST /shipments: list + cheapest + fastest, no purchase."""
+    if not isinstance(shipment, dict):
+        return [], None, 0.0
+    offers_obj = shipment.get("offers") if isinstance(shipment.get("offers"), dict) else {}
+    cheapest = offers_obj.get("cheapest") if isinstance(offers_obj.get("cheapest"), dict) else None
+    fastest = offers_obj.get("fastest") if isinstance(offers_obj.get("fastest"), dict) else None
+    raw_list = offers_obj.get("list") if isinstance(offers_obj.get("list"), list) else []
+    by_id: Dict[str, dict] = {}
+    for row in raw_list:
+        if isinstance(row, dict) and row.get("id"):
+            by_id[str(row["id"])] = row
+    if isinstance(cheapest, dict) and cheapest.get("id"):
+        by_id.setdefault(str(cheapest["id"]), cheapest)
+    if isinstance(fastest, dict) and fastest.get("id"):
+        by_id.setdefault(str(fastest["id"]), fastest)
+    cheapest_id = str(cheapest["id"]) if isinstance(cheapest, dict) and cheapest.get("id") else None
+    fastest_id = str(fastest["id"]) if isinstance(fastest, dict) and fastest.get("id") else None
+    serialized = [
+        geliver_serialize_offer(row, cheapest_id=cheapest_id, fastest_id=fastest_id)
+        for row in by_id.values()
+    ]
+    serialized.sort(key=lambda x: (x.get("amount_num") is None, x.get("amount_num") if x.get("amount_num") is not None else 0))
+    try:
+        pct = float(offers_obj.get("percentageCompleted") or 0)
+    except (TypeError, ValueError):
+        pct = 0.0
+    return serialized, cheapest if isinstance(cheapest, dict) and cheapest.get("id") else None, pct
+
+
+async def geliver_refresh_quotes(config: dict, geliver_id: str) -> Dict[str, Any]:
+    """Re-read a quote-only shipment (GET /shipments/{id}) — does not accept."""
+    token = geliver_token(config)
+    sid = str(geliver_id or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="Geliver gönderi kimliği yok.")
+    shipment = await _geliver("GET", f"/shipments/{sid}", token)
+    offers, cheapest, pct = geliver_collect_offers(shipment)
+    return {
+        "geliver_id": sid,
+        "offers": offers,
+        "offer": cheapest,
+        "percentage_completed": pct,
+        "test": (shipment or {}).get("test") if isinstance(shipment, dict) else None,
+        "raw": shipment,
+        "accepted": False,
+        "tracking_number": (shipment or {}).get("trackingNumber") if isinstance(shipment, dict) else None,
+        "barcode": (shipment or {}).get("barcode") if isinstance(shipment, dict) else None,
+        "label_url": ((shipment or {}).get("labelURL") or (shipment or {}).get("labelUrl")) if isinstance(shipment, dict) else None,
+        "tracking_url": ((shipment or {}).get("trackingUrl") or (shipment or {}).get("trackingURL")) if isinstance(shipment, dict) else None,
+    }
+
+
+async def geliver_accept_offer(config: dict, offer_id: str, geliver_id: Optional[str] = None) -> Dict[str, Any]:
+    """Purchase one quote: POST /transactions {offerID} (official SDK accept_offer)."""
+    token = geliver_token(config)
+    oid = str(offer_id or "").strip()
+    if not oid:
+        raise HTTPException(status_code=400, detail="Kargo teklifi seçilmedi.")
+    tx = await _geliver("POST", "/transactions", token, json={"offerID": oid})
+    sh = (tx.get("shipment") if isinstance(tx, dict) else None) or {}
+    offer = (tx.get("offer") if isinstance(tx, dict) else None) or {}
+    sid = sh.get("id") or geliver_id
+    return {
+        "geliver_id": sid,
+        "accepted": True,
+        "transaction": tx,
+        "offer": offer if isinstance(offer, dict) else None,
+        "offers": [],
+        "raw": sh or tx,
+        "tracking_number": sh.get("trackingNumber"),
+        "barcode": sh.get("barcode"),
+        "label_url": sh.get("labelURL") or sh.get("labelUrl"),
+        "tracking_url": sh.get("trackingUrl") or sh.get("trackingURL"),
+        "provider": (offer or {}).get("providerServiceCode") or (offer or {}).get("providerCode") or "",
+        "price": (offer or {}).get("totalAmount") or (offer or {}).get("amount"),
+        "test": sh.get("test") if isinstance(sh, dict) else None,
+    }
+
+
+async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict] = None) -> Dict[str, Any]:
+    """Create shipment → wait for offers. With accept_offer (default True) buy cheapest.
+
+    Quote-only: accept_offer=False returns offers.list/cheapest/fastest without POST /transactions.
+    Accept: POST /transactions {offerID} (not /transactions/accept-offer).
     """
     opts = opts or {}
     token = geliver_token(config)
@@ -459,35 +600,43 @@ async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict
 
     shipment = await _geliver("POST", "/shipments", token, json=payload)
     sid = shipment.get("id") if isinstance(shipment, dict) else None
+    accept_offer = opt_flag(opts, "accept_offer", True)
+    chosen_id = str(opts.get("offer_id") or opts.get("offerID") or "").strip()
 
-    def _pick_offer(sh: Any) -> tuple[Optional[dict], float]:
-        if not isinstance(sh, dict):
-            return None, 0.0
-        offers = sh.get("offers") if isinstance(sh.get("offers"), dict) else {}
-        cheapest = offers.get("cheapest") if offers else None
-        pct = float(offers.get("percentageCompleted") or 0) if offers else 0.0
-        if isinstance(cheapest, dict) and cheapest.get("id"):
-            return cheapest, pct
-        return None, pct
-
-    offer, pct_done = _pick_offer(shipment)
-    # Wait until offers are ready (SDK polls percentageCompleted); short timeout for UX.
-    for _ in range(10):
-        if (offer and offer.get("id") and pct_done >= 80) or not sid:
+    offers_list, cheapest, pct_done = geliver_collect_offers(shipment)
+    # Wait until quotes are ready (SDK polls percentageCompleted). Quote-only waits longer
+    # so offers.list can fill; auto-accept can stop once cheapest exists.
+    wait_rounds = 14 if not accept_offer else 10
+    for _ in range(wait_rounds):
+        if not sid:
             break
-        if offer and offer.get("id") and pct_done >= 50:
-            # Cheapest already present — enough to accept for most accounts
+        if accept_offer and cheapest and cheapest.get("id") and pct_done >= 50:
+            break
+        if not accept_offer and offers_list and (pct_done >= 80 or len(offers_list) >= 2):
+            break
+        if pct_done >= 100:
             break
         await asyncio.sleep(1.0)
         shipment = await _geliver("GET", f"/shipments/{sid}", token)
-        offer, pct_done = _pick_offer(shipment)
+        offers_list, cheapest, pct_done = geliver_collect_offers(shipment)
+
+    offer = None
+    if chosen_id:
+        offer = next((o for o in offers_list if o.get("id") == chosen_id), None)
+        # Prefer raw dict for accept payload id; serialized rows still have id.
+        if offer:
+            offer = {"id": chosen_id, **{k: v for k, v in (offer.items() if isinstance(offer, dict) else [])}}
+    if not offer:
+        offer = cheapest
 
     result: Dict[str, Any] = {
         "geliver_id": sid,
         "package": pkg,
         "test": test_mode,
         "raw": shipment,
-        "offer": offer,
+        "offer": cheapest,
+        "offers": offers_list,
+        "percentage_completed": pct_done,
         "accepted": False,
         "tracking_number": (shipment or {}).get("trackingNumber") if isinstance(shipment, dict) else None,
         "barcode": (shipment or {}).get("barcode") if isinstance(shipment, dict) else None,
@@ -495,7 +644,7 @@ async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict
         "tracking_url": ((shipment or {}).get("trackingUrl") or (shipment or {}).get("trackingURL")) if isinstance(shipment, dict) else None,
     }
 
-    if offer and offer.get("id") and opts.get("accept_offer", True):
+    if offer and offer.get("id") and accept_offer:
         # Official SDK: client.accept_offer(id) → POST /transactions {"offerID": id}
         try:
             tx = await _geliver("POST", "/transactions", token, json={"offerID": offer["id"]})
@@ -519,10 +668,10 @@ async def geliver_create_shipment(config: dict, order: dict, opts: Optional[dict
             "barcode": sh.get("barcode") or result.get("barcode"),
             "label_url": sh.get("labelURL") or sh.get("labelUrl") or result.get("label_url"),
             "tracking_url": sh.get("trackingUrl") or sh.get("trackingURL") or result.get("tracking_url"),
-            "provider": offer.get("providerServiceCode") or offer.get("providerCode") or "",
-            "price": offer.get("totalAmount") or offer.get("amount"),
+            "provider": offer.get("service") or offer.get("providerServiceCode") or offer.get("providerCode") or "",
+            "price": offer.get("amount") or offer.get("totalAmount") or offer.get("amount_num"),
         })
-    elif opts.get("accept_offer", True) and sid and not (offer and offer.get("id")):
+    elif accept_offer and sid and not (offer and offer.get("id")):
         raise HTTPException(
             status_code=502,
             detail=(

@@ -14165,6 +14165,11 @@ async def create_cargo_shipment(req: Dict[str, Any]):
     cat = next((c for c in CARGO_CATALOG if c["carrier_code"] == carrier_code), {})
     live = bool(cfg) and carrier_code == "geliver" and cargo_providers.has_live_credentials(cfg)
     extra: Dict[str, Any] = {}
+    quote_only = cargo_providers.opt_flag(req, "quote_only", False) or req.get("accept_offer") is False
+    offer_id = str(req.get("offer_id") or req.get("offerID") or "").strip()
+    geliver_sid = str(req.get("geliver_id") or req.get("provider_shipment_id") or "").strip()
+    if quote_only and not live:
+        raise HTTPException(status_code=400, detail="Teklif listesi yalnızca bağlı Geliver (Kargo Pazaryeri) için alınır.")
     if live:
         src = {**(order or {}), "customer_name": customer_name, "shipping_address": address, "city": city,
                "customer_phone": req.get("customer_phone") or (order or {}).get("customer_phone"),
@@ -14173,7 +14178,31 @@ async def create_cargo_shipment(req: Dict[str, Any]):
                "order_number": (order or {}).get("order_number") or req.get("order_number", ""),
                "total_amount": (order or {}).get("total_amount") or req.get("total_amount", 0),
                "items": (order or {}).get("items", [])}
-        g = await cargo_providers.geliver_create_shipment(cfg, src, req)
+        if quote_only:
+            if geliver_sid:
+                g = await cargo_providers.geliver_refresh_quotes(cfg, geliver_sid)
+            else:
+                g = await cargo_providers.geliver_create_shipment(cfg, src, {**req, "accept_offer": False})
+            offers = g.get("offers") or []
+            pct = g.get("percentage_completed") or 0
+            if offers:
+                msg = f"{len(offers)} kargo teklifi hazır" + (" (TEST modu)" if g.get("test") else "") + " — satın almadan önce firma seçin."
+            else:
+                msg = "Teklifler henüz hazır değil. Birkaç saniye bekleyip yenileyin."
+            return {
+                "quote_only": True,
+                "geliver_id": g.get("geliver_id"),
+                "offers": offers,
+                "percentage_completed": pct,
+                "test_mode": g.get("test"),
+                "cheapest_id": next((o.get("id") for o in offers if o.get("is_cheapest")), None),
+                "fastest_id": next((o.get("id") for o in offers if o.get("is_fastest")), None),
+                "message": msg,
+            }
+        if offer_id:
+            g = await cargo_providers.geliver_accept_offer(cfg, offer_id, geliver_sid or None)
+        else:
+            g = await cargo_providers.geliver_create_shipment(cfg, src, req)
         tracking_num = g.get("tracking_number") or f"GLV-{(g.get('geliver_id') or uuid.uuid4().hex)[:10].upper()}"
         barcode = g.get("barcode") or tracking_num
         extra = {
