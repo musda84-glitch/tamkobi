@@ -126,7 +126,8 @@ test("Kuveyt ReadTimeout shows host checklist instead of bare error", async () =
   const hint = host.querySelector(`[data-testid="conn-error-scope-hint-${CONN.id}"]`);
   expect(hint).not.toBeNull();
   expect(hint.textContent).toMatch(/bu bağlantının/i);
-  expect(host.querySelector('[data-testid="unmatched-scope-hint"]')?.textContent).toMatch(/Tüm banka/i);
+  expect(hint.textContent).toMatch(/Bekleyen/i);
+  expect(host.querySelector('[data-testid="unmatched-scope-hint"]')?.textContent).toMatch(/veritabanında/i);
   expect(host.querySelector(`[data-testid="conn-synced-count-${CONN.id}"]`)?.textContent).toBe("0");
   expect(host.querySelector(`[data-testid="conn-unmatched-count-${CONN.id}"]`)?.textContent).toBe("1");
 });
