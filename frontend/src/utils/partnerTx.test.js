@@ -21,6 +21,10 @@ describe("partnerTx", () => {
     expect(partnerTxLabel({ type: "profit_share", is_paid: true })).toBe("Çıkış");
     expect(isPartnerExpenseTx({ expense_id: "e1" })).toBe(true);
     expect(isPartnerExpenseTx({ type: "credit" })).toBe(false);
+    expect(partnerTxIsCashInflow({ type: "credit", expense_id: "e1" })).toBe(false);
+    expect(partnerTxIsCashInflow({ type: "withdrawal", contact_id: "c1" })).toBe(true);
+    expect(partnerTxSign("credit", { type: "credit", expense_id: "e1" })).toBe("-");
+    expect(partnerTxSign("withdrawal", { type: "withdrawal", contact_id: "c1" })).toBe("+");
   });
 
   it("shows only Alacaklı or Borçlu (no pocket/hint copy)", () => {
