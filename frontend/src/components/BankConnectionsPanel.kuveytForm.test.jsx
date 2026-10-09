@@ -95,6 +95,8 @@ test("Kuveyt ReadTimeout shows host checklist instead of bare error", async () =
   const timedOut = {
     ...CONN,
     mode: "sandbox",
+    status: "error",
+    synced_count: 0,
     last_error:
       "Bağlantı kurulamadı: Kuveyt Türk gateway zaman aşımı (ReadTimeout). " +
       "Denenen uçlar: https://prep-gateway.kuveytturk.com.tr/v1/fx/rates. " +
@@ -104,7 +106,14 @@ test("Kuveyt ReadTimeout shows host checklist instead of bare error", async () =
     const u = String(url);
     if (u.includes("/banking/providers")) return Promise.resolve({ data: PROVIDERS });
     if (u.includes("/banking/connections")) return Promise.resolve({ data: [timedOut] });
-    if (u.includes("/banking/transactions/unmatched")) return Promise.resolve({ data: [] });
+    if (u.includes("/banking/transactions/unmatched")) {
+      return Promise.resolve({
+        data: [
+          { id: "tx1", account_id: "a1", description: "Enpara hareket", amount: 10, type: "inflow", date: "2026-10-08" },
+          { id: "tx2", account_id: "other", description: "Başka hesap", amount: 5, type: "outflow", date: "2026-10-08" },
+        ],
+      });
+    }
     if (u.includes("/banking/match-rules")) return Promise.resolve({ data: [] });
     return Promise.resolve({ data: [] });
   });
@@ -114,6 +123,12 @@ test("Kuveyt ReadTimeout shows host checklist instead of bare error", async () =
   expect(box.textContent).toMatch(/zaman aşımı/i);
   expect(box.textContent).toContain("prep-gateway.kuveytturk.com.tr");
   expect(host.querySelector('[data-testid="conn-last-error"]')).toBeNull();
+  const hint = host.querySelector(`[data-testid="conn-error-scope-hint-${CONN.id}"]`);
+  expect(hint).not.toBeNull();
+  expect(hint.textContent).toMatch(/bu bağlantının/i);
+  expect(host.querySelector('[data-testid="unmatched-scope-hint"]')?.textContent).toMatch(/Tüm banka/i);
+  expect(host.querySelector(`[data-testid="conn-synced-count-${CONN.id}"]`)?.textContent).toBe("0");
+  expect(host.querySelector(`[data-testid="conn-unmatched-count-${CONN.id}"]`)?.textContent).toBe("1");
 });
 
 test("Kuveyt edit modal keeps only needed fields and shows live hosts", async () => {

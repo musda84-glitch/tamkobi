@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Plug, RefreshCw, Plus, X, Trash2, CheckCircle2, AlertCircle, FlaskConical, Link2, Loader2, Wand2, Settings2, Zap, Undo2, Pencil } from "lucide-react";
@@ -327,6 +327,16 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
     resetKey: unmatched.length,
   });
 
+  const unmatchedByAccount = useMemo(() => {
+    const map = {};
+    for (const t of unmatched || []) {
+      const aid = t.account_id || t.accountId;
+      if (!aid) continue;
+      map[aid] = (map[aid] || 0) + 1;
+    }
+    return map;
+  }, [unmatched]);
+
   const provider = providers.find((p) => p.code === form.provider);
 
   const save = async (e) => {
@@ -505,11 +515,23 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
                 <span className="text-[10px] font-mono text-slate-400 uppercase">{c.mode}</span>
               </div>
             </div>
-            <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-4">
-              <span>Son senk: <b className="text-slate-700">{c.last_synced_at ? new Date(c.last_synced_at).toLocaleString("tr-TR") : "—"}</b></span>
-              <span>Çekilen: <b className="text-slate-700">{c.synced_count}</b></span>
+            <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-4 gap-y-0.5">
+              <span title="Bu bağlantıda son başarılı senkron zamanı">
+                Son başarılı senk: <b className="text-slate-700">{c.last_synced_at ? new Date(c.last_synced_at).toLocaleString("tr-TR") : "—"}</b>
+              </span>
+              <span title="Bu bağlantının ömür boyu eklediği yeni hareket sayısı (şirket geneli liste değil)">
+                Bu bağlantıda çekilen: <b className="text-slate-700" data-testid={`conn-synced-count-${c.id}`}>{c.synced_count ?? 0}</b>
+              </span>
+              <span title="Bu hesaba bağlı eşleştirme bekleyen hareket">
+                Bu hesapta bekleyen: <b className="text-slate-700" data-testid={`conn-unmatched-count-${c.id}`}>{unmatchedByAccount[c.linked_account_id] || 0}</b>
+              </span>
               {credentialsOnFile(c) ? <span>Kimlik bilgisi <b>sunucuda kayıtlı</b></span> : <span className="text-amber-600 font-semibold">Anahtar girilmedi</span>}
             </div>
+            {c.status === "error" && c.last_error && (
+              <p className="text-[10px] text-slate-500 leading-snug" data-testid={`conn-error-scope-hint-${c.id}`}>
+                HATA yalnızca <b>bu bağlantının</b> son test/senkron denemesidir. Alttaki eşleştirme listesi tüm banka hesaplarından gelir (ör. Enpara); Kuveyt çekemese bile diğer bankaların hareketleri görünür.
+              </p>
+            )}
             {c.last_error && <ConnErrorBox connection={c} onEdit={() => openEdit(c)} />}
             <button type="button" onClick={() => toggleAutoSync(c)} className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left transition ${c.auto_sync !== false ? "bg-sky-50 border-sky-300" : "bg-slate-50 border-slate-200"}`} data-testid={`auto-sync-toggle-${c.id}`} aria-pressed={c.auto_sync !== false}>
               <span className="flex items-center gap-2 text-[11px]"><RefreshCw className={`w-3.5 h-3.5 ${c.auto_sync !== false ? "text-sky-600" : "text-slate-400"}`} /><span><b className={c.auto_sync !== false ? "text-sky-800" : "text-slate-700"}>Arka plan senkron</b> <span className="text-slate-500">— kimlik bilgisi varsa her 2 dakikada otomatik çekilir</span></span></span>
@@ -538,6 +560,9 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
               {unmatchedTotal} hareket
               {unmatchedTotal > unmatchedShown ? ` · ${unmatchedShown} gösteriliyor` : ""}
             </span>
+            <p className="text-[10px] text-slate-400 mt-0.5" data-testid="unmatched-scope-hint">
+              Tüm banka bağlantıları (Kuveyt, Enpara…) — karttaki HATA yalnızca o bağlantının son denemesidir.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => autoMatch(true)} disabled={!!busy || !unmatched.length} className="flex items-center gap-1 px-3 py-1.5 bg-violet-600 text-white rounded-lg text-[11px] font-semibold hover:bg-violet-700 disabled:opacity-50" title="Öğrenilen kurallar, önceki eşleşmeler ve cari adı karşılığıyla otomatik işle" data-testid="auto-match-btn">
