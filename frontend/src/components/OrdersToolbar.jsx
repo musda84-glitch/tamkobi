@@ -1,6 +1,6 @@
 
 import React from "react";
-import { Search, ArrowUpDown, X, ChevronDown, FileStack } from "lucide-react";
+import { Search, ArrowUpDown, X, ChevronDown, FileStack, RefreshCw } from "lucide-react";
 import { channelTr } from "../utils/labels";
 import { ExportButtons } from "./ExportButtons";
 import { OrdersBulkMenu } from "./OrdersBulkMenu";
@@ -39,6 +39,7 @@ export {
 const ORD_COLS = [{ key: "order_number", label: "Sipariş No" }, { label: "Tarih", value: (r) => fmtDate(r.order_date) }, { label: "Kanal", value: (r) => channelTr(r.channel || "b2b") }, { key: "customer_name", label: "Müşteri" }, { key: "customer_phone", label: "Telefon" }, { label: "Ürünler", value: (r) => (r.items || []).map((i) => `${i.quantity}x ${i.product_name}`).join(", ") }, { label: "Tutar (KDV dahil)", num: true, value: (r) => orderGross(r) }, { key: "order_status", label: "Durum" }, { key: "invoice_number", label: "Fatura" }, { key: "cargo_tracking_number", label: "Kargo Takip" }];
 const STATUS = ORDER_STATUS_OPTIONS;
 const SORT = [["date_desc", "Tarih (yeni)"], ["date_asc", "Tarih (eski)"], ["amount_desc", "Tutar (yüksek)"], ["amount_asc", "Tutar (düşük)"], ["customer", "Müşteri (A→Z)"], ["number", "Sipariş No"]];
+export const ORDER_PAGE_SIZES = [50, 100, 200, 500, 1000];
 
 const DocStatusFilter = ({ value, onChange }) => {
   const selected = Array.isArray(value) ? value : [...ORDER_DOC_STATUS_ALL];
@@ -102,7 +103,21 @@ const DocStatusFilter = ({ value, onChange }) => {
   );
 };
 
-export const OrdersToolbar = ({ f, setF, orders, count, total, rows = [], selectedCount = 0, bulkBusy = false, onBulkAction }) => {
+export const OrdersToolbar = ({
+  f,
+  setF,
+  orders,
+  count,
+  total,
+  rows = [],
+  selectedCount = 0,
+  bulkBusy = false,
+  onBulkAction,
+  pageSize = 50,
+  onPageSizeChange,
+  onRefresh,
+  refreshBusy = false,
+}) => {
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const channels = [...new Set(orders.map((o) => o.channel || "b2b"))];
   const sel = "bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:ring-2 focus:ring-emerald-500 outline-none";
@@ -136,6 +151,32 @@ export const OrdersToolbar = ({ f, setF, orders, count, total, rows = [], select
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <input type="date" value={f.from} onChange={(e) => set("from", e.target.value)} className={sel} data-testid="ord-from" /><span className="text-slate-400">–</span><input type="date" value={f.to} onChange={(e) => set("to", e.target.value)} className={sel} data-testid="ord-to" />
         {active > 0 && <button onClick={() => setF({ ...ORDER_FILTER_DEFAULTS, docStatus: [...ORDER_DOC_STATUS_ALL], sort: f.sort })} className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100" data-testid="ord-filters-clear">Filtreleri temizle ({active})</button>}
+        <label className="inline-flex items-center gap-1.5 text-slate-600">
+          <span className="font-semibold text-slate-500">Sayfa</span>
+          <select
+            value={pageSize}
+            onChange={(e) => onPageSizeChange?.(Number(e.target.value))}
+            className={sel}
+            data-testid="ord-page-size"
+          >
+            {ORDER_PAGE_SIZES.map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </label>
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshBusy}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            data-testid="ord-refresh-btn"
+            title="Listeyi yenile"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshBusy ? "animate-spin" : ""}`} />
+            Yenile
+          </button>
+        )}
         <div className="ml-auto flex items-center gap-3 text-slate-500">
           {onBulkAction && <OrdersBulkMenu selectedCount={selectedCount} busy={bulkBusy} onAction={onBulkAction} />}
           <ExportButtons rows={rows} columns={ORD_COLS} filename="siparisler" title="Sipariş Listesi" />

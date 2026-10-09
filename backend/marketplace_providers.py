@@ -343,7 +343,10 @@ def map_trendyol_order(pkg: dict, company_id: str, channel: str) -> dict:
             "order_status": TY_STATUS.get(ty_status, "pending"), "marketplace_status": ty_status, "cargo_carrier": TY_CARRIER.get(pkg.get("cargoProviderName"), (pkg.get("cargoProviderName") or "").split(" ")[0].lower() or None),
             "cargo_carrier_name": pkg.get("cargoProviderName"), "cargo_tracking_number": str(pkg.get("cargoTrackingNumber") or "") or None, "cargo_tracking_url": pkg.get("cargoTrackingLink"),
             "cargo_barcode": pkg.get("cargoSenderNumber") or str(pkg.get("cargoTrackingNumber") or "") or None, "estimated_delivery": _ms(pkg.get("estimatedDeliveryEndDate")),
-            "order_date": _ms(pkg.get("orderDate")) or datetime.now(timezone.utc).isoformat(), "marketplace_updated_at": _ms(pkg.get("lastModifiedDate")), "is_invoiced": ty_status in ("Invoiced", "Shipped", "Delivered"),
+            "order_date": _ms(pkg.get("orderDate")) or datetime.now(timezone.utc).isoformat(), "marketplace_updated_at": _ms(pkg.get("lastModifiedDate")),
+            # Trendyol paket durumu (Invoiced/Shipped/Delivered) yerel cari faturalaşma değildir.
+            # True yazılırsa taslak fatura açılmaz ve listede yanlış yeşil «Faturalaştı» görünür.
+            "is_invoiced": False,
             "source": "marketplace_sync", "raw_status": ty_status}
 
 

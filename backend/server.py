@@ -12082,7 +12082,11 @@ async def list_ecommerce_integrations(company_id: Optional[str] = "comp_nexus_ma
 
 @api_router.put("/integrations/ecommerce/{channel_id}")
 async def update_ecommerce_integration(channel_id: str, data: Dict[str, Any]):
-    await db.integration_configs.update_one({"_id": channel_id}, {"$set": data})
+    payload = dict(data or {})
+    # UI «Siparişleri otomatik çek» → auto_sync_orders; arka plan döngüsü her ikisini de okur.
+    if "auto_sync_orders" in payload:
+        payload["auto_sync"] = bool(payload.get("auto_sync_orders"))
+    await db.integration_configs.update_one({"_id": channel_id}, {"$set": payload})
     res = await db.integration_configs.find_one({"_id": channel_id})
     return clean_doc(res)
 
@@ -12125,8 +12129,12 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
             payload = merge_keep_fields(existing, d)
             payload = marketplace_providers.normalize_marketplace_order_prices(payload)
             await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
-            if not existing.get("contact_id"):
-                await _ensure_order_contact({**existing, **payload})
+            merged = {**existing, **payload}
+            if not merged.get("contact_id"):
+                await _ensure_order_contact(merged)
+            # Eski sync is_invoiced=True yazdığı için taslak hiç açılmamış olabilir — iyileştir.
+            if not merged.get("invoice_id") and not merged.get("is_invoiced"):
+                await _attach_draft_invoice_on_intake(merged, source="marketplace")
             updated += 1
             continue
         d["_id"] = f"ord_mp_{uuid.uuid4().hex[:8]}"
@@ -12783,13 +12791,19 @@ async def sync_ecommerce_channel(channel_id: str, days: Optional[int] = None):
     return {"status": "success", "live": False, "days": sync_days, **res, "message": f"[SİMÜLE] {config.get('channel_name')} için API bilgisi eksik; {res['inserted']} örnek sipariş oluşturuldu. Gerçek siparişler için API Key/Secret ve Satıcı ID girin."}
 
 async def _marketplace_auto_sync_loop(interval_s: int = 600):
-    """Canlı kimlik bilgisi olan pazaryeri kanallarını 10 dakikada bir otomatik senkronize eder."""
+    """Canlı kimlik bilgisi olan pazaryeri kanallarını 10 dakikada bir otomatik senkronize eder.
+
+    «Siparişleri otomatik çek» (auto_sync_orders) kapalıysa kanal atlanır.
+    """
     import asyncio as _a
     await _a.sleep(20)
     while True:
         try:
             for cfg in await db.integration_configs.find({"is_active": True, "channel": "trendyol"}).to_list(50):
-                if marketplace_providers.has_live_credentials(cfg) and cfg.get("auto_sync", True):
+                auto_on = cfg.get("auto_sync_orders")
+                if auto_on is None:
+                    auto_on = cfg.get("auto_sync", True)
+                if marketplace_providers.has_live_credentials(cfg) and auto_on:
                     try:
                         await sync_ecommerce_channel(cfg["_id"], days=3)
                     except HTTPException:

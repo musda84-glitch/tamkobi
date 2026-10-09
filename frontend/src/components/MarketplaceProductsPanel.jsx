@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { RefreshCw, Upload, Link2, Loader2, Search, PackagePlus, AlertTriangle, Sparkles } from "lucide-react";
+import { RefreshCw, Upload, Link2, Loader2, Search, PackagePlus, AlertTriangle } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
 import { SearchSelect } from "./SearchSelect";
@@ -20,7 +20,7 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
   const [d, setD] = useState(null);
   const [channel, setChannel] = useState("trendyol");
   const [busy, setBusy] = useState(false);
-  const [aiBusy, setAiBusy] = useState(false);
+  const [suggestBusy, setSuggestBusy] = useState(false);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
   const [sel, setSel] = useState([]);
@@ -98,48 +98,20 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
     catch (e) { toast.error(e.response?.data?.detail || "Stok kartı oluşturulamadı."); }
   };
 
-  const applyAiSuggestions = async ({ useAi = true } = {}) => {
+  const applyLocalSuggestions = () => {
     if (!unmatchedRows.length) {
       toast.info("Eşleşmeyen ürün yok.");
       return;
     }
-    setAiBusy(true);
+    setSuggestBusy(true);
     try {
-      // Anında yerel skorla doldur
       const local = fillMarketplaceMatchSuggestions(unmatchedRows, products, { minScore: 0.55 });
       setMatchSel((cur) => ({ ...cur, ...local }));
-      let apiFilled = 0;
-      try {
-        const r = await axios.post(`${API_URL}/marketplace/product-match-suggest`, {
-          company_id: companyId,
-          use_ai: useAi,
-          min_score: 0.45,
-          limit: 3,
-          rows: unmatchedRows.map((row) => ({
-            barcode: row.barcode,
-            title: row.title,
-            stock_code: row.stock_code,
-            sku: row.stock_code,
-          })),
-        });
-        const next = {};
-        Object.entries(r.data?.suggestions || {}).forEach(([bc, list]) => {
-          const top = (list || [])[0];
-          if (top?.product_id && Number(top.score) >= 0.55) {
-            next[bc] = top.product_id;
-            apiFilled += 1;
-          }
-        });
-        if (apiFilled) setMatchSel((cur) => ({ ...cur, ...next }));
-        const mode = r.data?.mode === "ai" ? "AI" : "akıllı";
-        toast.success(`${Math.max(Object.keys(local).length, apiFilled)} ürün için ${mode} eşleşme önerisi dolduruldu — kontrol edip Eşle’ye basın.`);
-      } catch {
-        const n = Object.keys(local).length;
-        if (n) toast.success(`${n} ürün için akıllı öneri dolduruldu — kontrol edip Eşle’ye basın.`);
-        else toast.error("Uygun öneri bulunamadı. Arama ile stok kartı seçin.");
-      }
+      const n = Object.keys(local).length;
+      if (n) toast.success(`${n} ürün için eşleşme önerisi dolduruldu — kontrol edip Eşle’ye basın.`);
+      else toast.error("Uygun öneri bulunamadı. Arama ile stok kartı seçin.");
     } finally {
-      setAiBusy(false);
+      setSuggestBusy(false);
     }
   };
 
@@ -195,14 +167,14 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
         <span className="text-slate-400">{rows.length} ürün</span>
         <button
           type="button"
-          onClick={() => applyAiSuggestions({ useAi: true })}
-          disabled={aiBusy || !unmatchedRows.length}
-          className="px-3 py-1.5 bg-violet-600 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
-          title="Barkod/SKU/ad benzerliği + AI ile stok kartı önerilerini doldur"
-          data-testid="mp-ai-suggest-btn"
+          onClick={applyLocalSuggestions}
+          disabled={suggestBusy || !unmatchedRows.length}
+          className="px-3 py-1.5 bg-slate-800 text-white rounded-lg font-semibold flex items-center gap-1 disabled:opacity-50"
+          title="Barkod/SKU/ad benzerliği ile stok kartı önerilerini doldur"
+          data-testid="mp-suggest-btn"
         >
-          {aiBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-          AI eşleşme öner
+          {suggestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+          Eşleşme öner
           {unmatchedRows.length ? ` (${unmatchedRows.length})` : ""}
         </button>
         <div className="flex items-center gap-1 border-l pl-2"><input type="number" min="0" value={bulkQty} onChange={(e) => setBulkQty(e.target.value)} placeholder="Toplu stok" className="w-24 bg-white border border-slate-200 rounded-lg p-1.5" data-testid="mp-bulk-qty" /><button onClick={applyBulkQty} className="px-2 py-1.5 border border-slate-200 bg-white rounded-lg font-semibold" data-testid="mp-bulk-apply">Tümüne Uygula</button></div>
@@ -246,11 +218,10 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
                           const pid = top.product.id || top.product._id;
                           setMatchSel((cur) => ({ ...cur, [r.barcode]: pid }));
                         }}
-                        className="inline-flex items-center gap-1 max-w-full px-1.5 py-0.5 rounded-md bg-violet-50 border border-violet-200 text-[10px] font-semibold text-violet-800 hover:bg-violet-100"
+                        className="inline-flex items-center gap-1 max-w-full px-1.5 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-100"
                         title={`${top.product.name} — tıkla seç`}
-                        data-testid={`mp-ai-chip-${r.barcode}`}
+                        data-testid={`mp-suggest-chip-${r.barcode}`}
                       >
-                        <Sparkles className="w-3 h-3 shrink-0" />
                         <span className="truncate">{matchSuggestionLabel(top.score)}: {top.product.name}</span>
                       </button>
                     ) : null}
@@ -272,11 +243,11 @@ export const MarketplaceProductsPanel = ({ companyId }) => {
                         <button
                           type="button"
                           onClick={() => match(r, top.product.id || top.product._id)}
-                          className="px-2 py-1 bg-violet-600 text-white rounded-lg font-semibold shrink-0"
-                          title="AI önerisini doğrudan eşle"
-                          data-testid={`mp-ai-match-btn-${r.barcode}`}
+                          className="px-2 py-1 bg-emerald-600 text-white rounded-lg font-semibold shrink-0"
+                          title="Öneriyi doğrudan eşle"
+                          data-testid={`mp-suggest-match-btn-${r.barcode}`}
                         >
-                          AI Eşle
+                          Öneri Eşle
                         </button>
                       ) : null}
                       <button onClick={() => createCard(r)} className="px-2 py-1 bg-emerald-600 text-white rounded-lg font-semibold flex items-center gap-1 shrink-0" title={`${ch.name} bilgileriyle stok kartı oluştur`} data-testid={`mp-create-btn-${r.barcode}`}><PackagePlus className="w-3 h-3" /> Kart Aç</button>
