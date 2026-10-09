@@ -19,6 +19,8 @@ import {
   formatQty,
   groupWorkOrdersByStation,
   mergeSelfEmployee,
+  operatorStationLock,
+  operatorStationLockMessage,
   partitionWorkOrders,
   readyCount,
   roundNeededQty,
@@ -44,6 +46,7 @@ function WoCard({
   baseUrl,
   pauseAllowed,
   pauseHint,
+  stationLockMsg,
   onStart,
   onPause,
   onFinish,
@@ -55,6 +58,7 @@ function WoCard({
   baseUrl: string;
   pauseAllowed?: boolean;
   pauseHint?: string;
+  stationLockMsg?: string;
   onStart: () => void;
   onPause: () => void;
   onFinish: () => void;
@@ -65,6 +69,7 @@ function WoCard({
   const borderWide = w.status === "in_progress" || w.status === "paused";
   const who = w.operator_name || w.assigned_name;
   const imgs = (w.images || []).map((u) => resolveMediaUrl(baseUrl, u)).filter(Boolean).slice(0, 8);
+  const startLocked = !!stationLockMsg;
   return (
     <Card testID={`wo-card-${key}`} style={{ borderColor: border, borderWidth: borderWide ? 2 : 1 }}>
       <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -170,8 +175,9 @@ function WoCard({
       {w.notes ? <Muted>{w.notes}</Muted> : null}
       {w.status === "ready" || w.status === "waiting" ? (
         <>
-          <PrimaryButton title="Başla" onPress={onStart} disabled={!operator || busy} loading={busy} color={colors.primary} testID={`wo-start-${key}`} />
-          {w.status === "waiting" ? <Muted>Önceki adım bitmeden de başlatılabilir</Muted> : null}
+          <PrimaryButton title="Başla" onPress={onStart} disabled={!operator || busy || startLocked} loading={busy} color={colors.primary} testID={`wo-start-${key}`} />
+          {startLocked ? <Muted>{stationLockMsg}</Muted> : null}
+          {w.status === "waiting" && !startLocked ? <Muted>Önceki adım bitmeden de başlatılabilir</Muted> : null}
         </>
       ) : null}
       {w.status === "in_progress" || w.status === "paused" ? (
@@ -180,11 +186,17 @@ function WoCard({
             <PrimaryButton
               title={w.status === "paused" ? "Devam" : "Duraklat"}
               onPress={w.status === "paused" ? onStart : onPause}
-              disabled={!operator || busy || (w.status === "in_progress" && pauseAllowed === false)}
+              disabled={
+                !operator
+                || busy
+                || (w.status === "paused" && startLocked)
+                || (w.status === "in_progress" && pauseAllowed === false)
+              }
               loading={busy}
               color={w.status === "paused" ? colors.primary : "#EA580C"}
               testID={w.status === "paused" ? `wo-resume-${key}` : `wo-pause-${key}`}
             />
+            {w.status === "paused" && startLocked ? <Muted>{stationLockMsg}</Muted> : null}
             {w.status === "in_progress" && pauseAllowed === false && pauseHint ? (
               <Muted>{pauseHint}</Muted>
             ) : null}
@@ -208,6 +220,8 @@ function WoCard({
 export function AtolyeScreen() {
   const { client, companyId, user, baseUrl } = useAuth();
   const [wos, setWos] = useState<WorkOrder[]>([]);
+  /** İstasyon filtresinden bağımsız in_progress — operatör kilit UI */
+  const [lockWos, setLockWos] = useState<WorkOrder[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [stations, setStations] = useState<string[]>([]);
   const [operator, setOperator] = useState("");
@@ -253,18 +267,26 @@ export function AtolyeScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [w, e, s, parks, me, settings] = await Promise.all([
+      const [w, lockRows, e, s, parks, me, settings] = await Promise.all([
         get<WorkOrder[]>(client, "/production/work-orders", {
           company_id: companyId,
           station: station || undefined,
         }).catch(() => []),
+        station
+          ? get<WorkOrder[]>(client, "/production/work-orders", {
+              company_id: companyId,
+              status: "in_progress",
+            }).catch(() => [])
+          : Promise.resolve(null),
         get<Employee[]>(client, "/personnel/employees", { company_id: companyId }).catch(() => []),
         get<string[]>(client, "/production/work-orders/stations", { company_id: companyId }).catch(() => []),
         get<{ parks?: unknown[] }>(client, `/companies/${companyId}/work-parks`).catch(() => ({ parks: [] })),
         get<{ employee?: Employee; tasks?: AssignedDuty[] }>(client, "/personnel/me").catch(() => null),
         get<{ group_same_station?: boolean }>(client, "/production/work-orders/shopfloor-settings", { company_id: companyId }).catch(() => null),
       ]);
-      setWos(Array.isArray(w) ? w : []);
+      const list = Array.isArray(w) ? w : [];
+      setWos(list);
+      setLockWos(station ? (Array.isArray(lockRows) ? lockRows : []) : list);
       setEmployees(shopFloorOperators(mergeSelfEmployee(Array.isArray(e) ? e : [], me?.employee)));
       setStations(stationNamesFromParks(parks?.parks, Array.isArray(s) ? s : []));
       setDuties(Array.isArray(me?.tasks) ? me.tasks : []);
@@ -360,6 +382,13 @@ export function AtolyeScreen() {
       setError("İş emri kimliği bulunamadı.");
       return;
     }
+    if (action === "start") {
+      const blocker = operatorStationLock(lockWos, operator, w.station, wid);
+      if (blocker) {
+        setError(operatorStationLockMessage(blocker, operator));
+        return;
+      }
+    }
     const key = woCardKey(w);
     setBusyId(key);
     try {
@@ -373,9 +402,23 @@ export function AtolyeScreen() {
       // Web tablete hemen yansısın diye yerel durumu anında güncelle
       if (r.work_order && idOf(r.work_order)) {
         const uid = idOf(r.work_order);
-        setWos((prev) => prev.map((x) => (idOf(x) === uid ? { ...x, ...r.work_order } : x)));
+        const updated = r.work_order;
+        setWos((prev) => {
+          const hit = prev.some((x) => idOf(x) === uid);
+          if (hit) return prev.map((x) => (idOf(x) === uid ? { ...x, ...updated } : x));
+          return prev;
+        });
+        setLockWos((prev) => {
+          if (String(updated.status || "") === "in_progress") {
+            const hit = prev.some((x) => idOf(x) === uid);
+            if (hit) return prev.map((x) => (idOf(x) === uid ? { ...x, ...updated } : x));
+            return [...prev, updated];
+          }
+          return prev.filter((x) => idOf(x) !== uid);
+        });
       } else if (action === "finish") {
         setWos((prev) => prev.map((x) => (idOf(x) === wid ? { ...x, status: "done" } : x)));
+        setLockWos((prev) => prev.filter((x) => idOf(x) !== wid));
       }
       await load();
     } catch (err) {
@@ -679,6 +722,7 @@ export function AtolyeScreen() {
               baseUrl={baseUrl}
               pauseAllowed={!!pausePolicy?.allowed}
               pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
+              stationLockMsg={operatorStationLockMessage(operatorStationLock(lockWos, operator, w.station, idOf(w)), operator)}
               onStart={() => act(w, "start")}
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}
@@ -700,6 +744,7 @@ export function AtolyeScreen() {
           baseUrl={baseUrl}
           pauseAllowed={!!pausePolicy?.allowed}
           pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
+          stationLockMsg={operatorStationLockMessage(operatorStationLock(lockWos, operator, w.station, idOf(w)), operator)}
           onStart={() => act(w, "start")}
           onPause={() => act(w, "pause")}
           onFinish={() => openFinish(w)}
@@ -715,11 +760,12 @@ export function AtolyeScreen() {
               key={woCardKey(w)}
               w={w}
               operator={operator}
-              busy={false}
+              busy={busyId === woCardKey(w)}
               baseUrl={baseUrl}
-              onStart={() => {}}
-              onPause={() => {}}
-              onFinish={() => {}}
+              stationLockMsg={operatorStationLockMessage(operatorStationLock(lockWos, operator, w.station, idOf(w)), operator)}
+              onStart={() => act(w, "start")}
+              onPause={() => act(w, "pause")}
+              onFinish={() => openFinish(w)}
               onTrash={() => openTrashRequest(w)}
             />
           ))}

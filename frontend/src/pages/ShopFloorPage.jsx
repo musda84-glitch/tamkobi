@@ -8,7 +8,7 @@ import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { openAssignedDuties } from "../utils/assignedDuty";
-import { shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, workOrderFinishPlan } from "../utils/shopFloorActions";
+import { operatorStationLock, operatorStationLockMessage, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, workOrderFinishPlan } from "../utils/shopFloorActions";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
@@ -23,6 +23,8 @@ export default function ShopFloorPage() {
   const { activeCompany } = useAuth();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
   const [wos, setWos] = useState([]);
+  /** İstasyon filtresinden bağımsız in_progress listesi — operatör kilit kontrolü için */
+  const [lockWos, setLockWos] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [stations, setStations] = useState([]);
   const [operator, setOperator] = useState("");
@@ -66,16 +68,23 @@ export default function ShopFloorPage() {
   const load = useCallback(async () => {
     try {
       const bust = `_=${Date.now()}`;
-      const [w, e, s, parks, me] = await Promise.all([
+      const headers = { "Cache-Control": "no-cache", Pragma: "no-cache" };
+      const [w, lockRows, e, s, parks, me] = await Promise.all([
         axios.get(`${API_URL}/production/work-orders?company_id=${companyId}${station ? `&station=${encodeURIComponent(station)}` : ""}&${bust}`, {
-          headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+          headers,
         }).catch(() => ({ data: [] })),
+        // Tablet istasyona kilitliyken başka istasyondaki in_progress'i de gör (UI kilidi)
+        station
+          ? axios.get(`${API_URL}/production/work-orders?company_id=${companyId}&status=in_progress&${bust}`, { headers }).catch(() => ({ data: [] }))
+          : Promise.resolve(null),
         axios.get(`${API_URL}/personnel/employees?company_id=${companyId}`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/production/work-orders/stations?company_id=${companyId}`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/companies/${companyId}/work-parks`).catch(() => ({ data: { parks: [] } })),
         axios.get(`${API_URL}/personnel/me`, { withCredentials: true }).catch(() => ({ data: { tasks: [] } })),
       ]);
-      setWos(Array.isArray(w.data) ? w.data : []);
+      const list = Array.isArray(w.data) ? w.data : [];
+      setWos(list);
+      setLockWos(station ? (Array.isArray(lockRows?.data) ? lockRows.data : []) : list);
       setEmployees(shopFloorOperators(e.data || []));
       setStations(stationNamesFromParks(parks.data?.parks, Array.isArray(s.data) ? s.data : []));
       setDuties(Array.isArray(me.data?.tasks) ? me.data.tasks : []);
@@ -126,6 +135,13 @@ export default function ShopFloorPage() {
     if (!operator) { toast.error("Önce operatör (personel) seçin."); return; }
     const id = woId(w);
     if (!id) { toast.error("İş emri kimliği bulunamadı."); return; }
+    if (action === "start") {
+      const blocker = operatorStationLock(lockWos, operator, w.station, id);
+      if (blocker) {
+        toast.error(operatorStationLockMessage(blocker, operator));
+        return;
+      }
+    }
     try {
       const r = await axios.post(`${API_URL}/production/work-orders/${id}/${action}`, { operator_name: operator, ...(body || {}) });
       toast.success(r.data.message);
@@ -133,11 +149,16 @@ export default function ShopFloorPage() {
       // Anında yansıt (mobil/diğer sekme ile yarışmadan önce)
       const updated = r.data?.work_order;
       if (updated && woId(updated)) {
-        setWos((prev) => {
-          const uid = woId(updated);
+        const uid = woId(updated);
+        const patch = (prev) => {
           const hit = prev.some((x) => woId(x) === uid);
-          if (!hit) return prev;
-          return prev.map((x) => (woId(x) === uid ? { ...x, ...updated } : x));
+          if (hit) return prev.map((x) => (woId(x) === uid ? { ...x, ...updated } : x));
+          return String(updated.status || "") === "in_progress" ? [...prev, updated] : prev;
+        };
+        setWos(patch);
+        setLockWos((prev) => {
+          if (String(updated.status || "") === "in_progress") return patch(prev);
+          return prev.filter((x) => woId(x) !== uid);
         });
       }
       load();
@@ -275,6 +296,10 @@ export default function ShopFloorPage() {
   const Card = ({ w }) => {
     const [l, c] = STATUS[w.status] || STATUS.waiting;
     const actions = shopFloorCardActions(w.status, pauseAllowed);
+    const stationLock = (actions.start || actions.resume)
+      ? operatorStationLock(lockWos, operator, w.station, w.id || w._id)
+      : null;
+    const stationLockMsg = stationLock ? operatorStationLockMessage(stationLock, operator) : "";
     const pauseTitle = actions.pauseEnabled
       ? `Duraklat (${shopFloorPausePhaseLabel(pausePolicy?.phase)})`
       : (pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz");
@@ -388,7 +413,13 @@ export default function ShopFloorPage() {
       {w.notes && <div className="text-xs bg-slate-50 rounded-lg p-2 text-slate-600">{w.notes}</div>}
       <div className="grid grid-cols-2 gap-2">
         {actions.start && (
-          <button onClick={() => act(w, "start")} className="col-span-2 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-base" data-testid={`wo-start-${w.order_code}-${w.step_no}`}>
+          <button
+            onClick={() => !stationLock && act(w, "start")}
+            disabled={!!stationLock}
+            title={stationLockMsg || undefined}
+            className={`col-span-2 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-base ${stationLock ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+            data-testid={`wo-start-${w.order_code}-${w.step_no}`}
+          >
             <Play className="w-5 h-5" /> Başla
           </button>
         )}
@@ -404,7 +435,13 @@ export default function ShopFloorPage() {
           </button>
         )}
         {actions.resume && (
-          <button onClick={() => act(w, "start")} className="flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold" data-testid={`wo-resume-${w.order_code}-${w.step_no}`}>
+          <button
+            onClick={() => !stationLock && act(w, "start")}
+            disabled={!!stationLock}
+            title={stationLockMsg || undefined}
+            className={`flex items-center justify-center gap-2 py-3 rounded-xl font-bold ${stationLock ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+            data-testid={`wo-resume-${w.order_code}-${w.step_no}`}
+          >
             <Play className="w-5 h-5" /> Devam
           </button>
         )}
@@ -413,7 +450,12 @@ export default function ShopFloorPage() {
             <CheckCircle2 className="w-5 h-5" /> Bitir
           </button>
         )}
-        {w.status === "waiting" && actions.start && (
+        {stationLockMsg ? (
+          <div className="col-span-2 text-center text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5" data-testid={`wo-station-lock-${w.order_code}-${w.step_no}`}>
+            {stationLockMsg}
+          </div>
+        ) : null}
+        {w.status === "waiting" && actions.start && !stationLock && (
           <div className="col-span-2 text-center text-[11px] text-slate-400 -mt-1">Önceki adım bitmeden de başlatılabilir</div>
         )}
         {w.status === "done" && <div className="col-span-2 text-center text-xs text-emerald-700 py-2 font-semibold">{w.produced_qty} üretildi{w.scrap_qty ? `, ${w.scrap_qty} fire` : ""} • {w.operator_name}</div>}

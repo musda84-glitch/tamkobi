@@ -64,6 +64,41 @@ export function isOpenStatus(status?: string | null): boolean {
   return status !== "done" && status !== "waiting";
 }
 
+export function shopFloorStationKey(station?: string | null): string {
+  return String(station || "").trim().toLocaleLowerCase("tr");
+}
+
+/** Operatörün in_progress işi başka istasyondaysa engel; paused serbest, başka personel engellemez. */
+export function operatorStationLock(
+  wos: WorkOrder[] | null | undefined,
+  operatorName?: string | null,
+  targetStation?: string | null,
+  excludeId?: string | null,
+): WorkOrder | null {
+  const who = String(operatorName || "").trim();
+  if (!who) return null;
+  const target = shopFloorStationKey(targetStation);
+  const ex = String(excludeId || "").trim();
+  for (const w of wos || []) {
+    if (String(w?.status || "") !== "in_progress") continue;
+    if (String(w?.operator_name || "").trim() !== who) continue;
+    const id = idOf(w);
+    if (ex && id === ex) continue;
+    if (shopFloorStationKey(w?.station) !== target) return w;
+  }
+  return null;
+}
+
+export function operatorStationLockMessage(blocker: WorkOrder | null | undefined, operatorName?: string | null): string {
+  if (!blocker) return "";
+  const who = String(operatorName || blocker.operator_name || "Operatör").trim() || "Operatör";
+  const st = String(blocker.station || "başka istasyon").trim() || "başka istasyon";
+  const code = String(blocker.order_code || "").trim();
+  const step = blocker.step_no;
+  const where = code && step != null ? `${code} · adım ${step}` : (code || "açık iş");
+  return `${who} şu an «${st}» istasyonunda devam eden işi var (${where}). Bitirin veya duraklatın; başka istasyonda işlem açılamaz. Başka personel bu işi alabilir.`;
+}
+
 export function isMine(w: WorkOrder, operator?: string | null): boolean {
   if (!operator) return false;
   return w.operator_name === operator || w.assigned_name === operator;

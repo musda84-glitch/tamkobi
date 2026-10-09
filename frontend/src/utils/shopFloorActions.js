@@ -55,6 +55,41 @@ export function workOrderFinishPlan(w) {
   };
 }
 
+/** İstasyon karşılaştırması (TR). */
+export function shopFloorStationKey(station) {
+  return String(station || "").trim().toLocaleLowerCase("tr");
+}
+
+/**
+ * Operatörün bitirilmemiş (in_progress) işi başka istasyondaysa engel satırı.
+ * paused/done serbest; aynı istasyon serbest; başka personelin işi engellemez.
+ * `wos` istasyon filtresiz olmalı (tablet kiosk’ta ayrı in_progress listesi verin).
+ */
+export function operatorStationLock(wos, operatorName, targetStation, excludeId = null) {
+  const who = String(operatorName || "").trim();
+  if (!who) return null;
+  const target = shopFloorStationKey(targetStation);
+  const ex = String(excludeId || "").trim();
+  for (const w of wos || []) {
+    if (String(w?.status || "") !== "in_progress") continue;
+    if (String(w?.operator_name || "").trim() !== who) continue;
+    const id = String(w?.id || w?._id || "").trim();
+    if (ex && id === ex) continue;
+    if (shopFloorStationKey(w?.station) !== target) return w;
+  }
+  return null;
+}
+
+export function operatorStationLockMessage(blocker, operatorName) {
+  if (!blocker) return "";
+  const who = String(operatorName || blocker.operator_name || "Operatör").trim() || "Operatör";
+  const st = String(blocker.station || "başka istasyon").trim() || "başka istasyon";
+  const code = String(blocker.order_code || "").trim();
+  const step = blocker.step_no;
+  const where = code && step != null ? `${code} · adım ${step}` : (code || "açık iş");
+  return `${who} şu an «${st}» istasyonunda devam eden işi var (${where}). Bitirin veya duraklatın; başka istasyonda işlem açılamaz. Başka personel bu işi alabilir.`;
+}
+
 /** Atölye kartı aksiyonları — durum → hangi butonlar. */
 export function shopFloorCardActions(status, pauseAllowed = true) {
   const s = String(status || "").trim().toLowerCase();
