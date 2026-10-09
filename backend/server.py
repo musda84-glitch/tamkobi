@@ -26,6 +26,7 @@ import employee_data_reset
 from employee_sgk import norm_iban as _norm_iban, sgk_iban_update_error
 import b2b_production
 from order_edit import order_edit_block_reason
+import order_mp_item_media as omp_media
 from order_dedupe import (
     dedupe_orders_by_marketplace_key,
     duplicate_ids_to_drop,
@@ -12174,6 +12175,8 @@ async def _collapse_marketplace_order_dupes(company_id: str, channel: str, order
 
 async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
     inserted = updated = 0
+    channels = omp_media.marketplace_channels_from_orders(docs or [])
+    mp_media_idx = await omp_media.load_marketplace_cache_media_index(db, company_id, channels) if channels else {}
     for d in docs:
         channel = d.get("channel")
         order_number = d.get("order_number")
@@ -12181,6 +12184,8 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
             continue
         key = {"company_id": company_id, "channel": channel, "order_number": order_number}
         d = marketplace_providers.normalize_marketplace_order_prices(d)
+        if mp_media_idx:
+            d = omp_media.apply_marketplace_item_media(d, mp_media_idx)
         d["updated_at"] = datetime.now(timezone.utc).isoformat()
         existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
         if existing:
@@ -14271,6 +14276,14 @@ def _orders_list_active_cart_nor() -> Dict[str, Any]:
     }
 
 
+async def _enrich_orders_marketplace_item_media(
+    docs: List[Dict[str, Any]],
+    company_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Liste: pazaryeri sipariş kalemlerine cache'ten görsel + başlık (Ürünler & Fiyat ile aynı)."""
+    return await omp_media.enrich_orders_marketplace_item_media(db, docs, company_id=company_id)
+
+
 @api_router.get("/orders")
 async def list_orders(
     company_id: Optional[str] = "comp_nexus_main_01",
@@ -14307,6 +14320,7 @@ async def list_orders(
     docs = deduped
     for o in docs:
         _decorate_b2b_held_order(o)
+    docs = await _enrich_orders_marketplace_item_media(docs, company_id=company_id)
     docs = await _enrich_orders_production_flags(docs, company_id=company_id)
     docs = await _enrich_orders_invoice_ebelge(docs)
     return _sort_b2b_cart_orders(docs)
