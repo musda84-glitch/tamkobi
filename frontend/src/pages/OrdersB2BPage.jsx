@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import axios from "axios";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
@@ -230,7 +230,10 @@ export default function OrdersB2BPage() {
   const [selected, setSelected] = useState([]);
   const [bulkLabels, setBulkLabels] = useState(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  /** Yalnızca Yenile / menü yenile — sayfa açılışı veya F5 bunu true yapmaz. */
+  const [mpSyncing, setMpSyncing] = useState(false);
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const syncMarketplaceOrdersRef = useRef(async () => {});
   const toggleSel = (id) => setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
   const selectedOrders = () => orders.filter((o) => {
     const id = orderRowId(o);
@@ -364,26 +367,8 @@ export default function OrdersB2BPage() {
   };
   const bulk = async (action) => {
     if (action === "refresh") {
-      // Yenile ile aynı: pazaryeri çekimi (nav/sayfa açılışı tetiklemez)
-      setBulkBusy(true);
-      try {
-        const r = await axios.get(`${API_URL}/integrations/ecommerce?company_id=${companyId}`);
-        const channels = Array.isArray(r.data) ? r.data : [];
-        let synced = 0;
-        for (const c of channels) {
-          try {
-            await axios.post(`${API_URL}/integrations/ecommerce/${c.id || c._id}/sync-now`, null, { timeout: 120000 });
-            synced += 1;
-          } catch { /* kanal kapalıysa devam */ }
-        }
-        await loadData();
-        toast.success(synced ? `${synced} kanal senkronlandı, siparişler güncellendi.` : "Sipariş listesi yenilendi.");
-      } catch {
-        await loadData();
-        toast.success("Sipariş listesi yenilendi.");
-      } finally {
-        setBulkBusy(false);
-      }
+      // Menü «Yenile» = pazaryeri sync (nav / F5 / mount tetiklemez)
+      await syncMarketplaceOrdersRef.current();
       return;
     }
     const list = selectedOrders();
@@ -639,11 +624,11 @@ export default function OrdersB2BPage() {
   const [cart, setCart] = useState({});
   const [b2bCustomer, setB2bCustomer] = useState("");
 
-  // Yalnızca yerel DB listesi — pazaryeri sync-now YOK (nav tık / F5).
-  const loadData = useCallback(async () => {
+  // Yalnızca yerel DB listesi — pazaryeri sync-now YOK (nav tık / F5 / mount).
+  const loadData = useCallback(async ({ silent = false } = {}) => {
     const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       // lite=1: liste için kimlik/görsel alanları — çift products isteği yok
       const [ordRes, prodRes, cntRes] = await Promise.all([
         axios.get(`${API_URL}/orders?company_id=${cid}`),
@@ -658,14 +643,18 @@ export default function OrdersB2BPage() {
     } catch (err) {
       toast.error("Sipariş verileri yüklenemedi.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeCompany]);
   useEffect(() => { loadData(); }, [loadData]);
 
-  /** Yenile: pazaryerinden sipariş çek + listeyi güncelle (otomatik 10 dk döngü ile aynı iş). */
-  const refreshOrders = useCallback(async () => {
-    setBulkBusy(true);
+  /**
+   * Pazaryerinden sipariş çek — SADECE Yenile butonu / toplu menü Yenile.
+   * Nav tıklama, F5, mount, loadData bunu ÇAĞIRMAZ.
+   * Arka plan: sunucu 10 dk döngüsü (_marketplace_auto_sync_loop).
+   */
+  const syncMarketplaceOrders = useCallback(async () => {
+    setMpSyncing(true);
     try {
       const r = await axios.get(`${API_URL}/integrations/ecommerce?company_id=${companyId}`);
       const channels = Array.isArray(r.data) ? r.data : [];
@@ -676,15 +665,17 @@ export default function OrdersB2BPage() {
           synced += 1;
         } catch { /* kanal kapalıysa devam */ }
       }
-      await loadData();
+      await loadData({ silent: true });
       toast.success(synced ? `${synced} kanal senkronlandı, siparişler güncellendi.` : "Sipariş listesi yenilendi.");
     } catch {
-      await loadData();
+      await loadData({ silent: true });
       toast.success("Sipariş listesi yenilendi.");
     } finally {
-      setBulkBusy(false);
+      setMpSyncing(false);
     }
   }, [companyId, loadData]);
+  syncMarketplaceOrdersRef.current = syncMarketplaceOrders;
+  const refreshOrders = syncMarketplaceOrders;
 
   const [expandedItems, setExpandedItems] = useState(null);
   const [produceFromOrder, setProduceFromOrder] = useState(null);
@@ -1477,7 +1468,7 @@ export default function OrdersB2BPage() {
           pageSize={pageSize}
           onPageSizeChange={setPageSizePersist}
           onRefresh={refreshOrders}
-          refreshBusy={loading || bulkBusy}
+          refreshBusy={mpSyncing}
         />
 
         {/* Mobil: sade kart + aynı Diğer işlemler menüsü */}
