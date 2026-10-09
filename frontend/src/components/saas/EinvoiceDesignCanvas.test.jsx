@@ -64,6 +64,8 @@ test("renders preview blocks and can hide then restore from palette", async () =
   expect(host.querySelector('[data-testid="einvoice-design-block-customer"]')?.textContent).toContain("Alıcı Ticaret Ltd. Şti.");
   expect(host.querySelector('[data-testid="einvoice-design-block-parties"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-block-lines"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="einvoice-design-block-lines"]')?.textContent).toContain("Adet");
+  expect(host.querySelector('[data-testid="einvoice-design-block-lines"]')?.textContent).not.toContain("C62");
   expect(host.querySelector('[data-testid="einvoice-design-palette-iban"]')).toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-meta-order_no"]')).not.toBeNull();
   expect(host.querySelector('[data-testid="einvoice-design-palette-total-exemption"]')).not.toBeNull();
@@ -200,7 +202,13 @@ test("adds stock, vat and GIB QR fields from palette", async () => {
   await act(async () => {
     host.querySelector('[data-testid="einvoice-design-col-show-net_price"]').click();
   });
+  await act(async () => {
+    host.querySelector('[data-testid="einvoice-design-col-show-unit"]').click();
+  });
   const lines = host.querySelector('[data-testid="einvoice-design-block-lines"]')?.textContent || "";
+  expect(lines).toContain("Birim");
+  expect(lines).toContain("Adet");
+  expect(lines).not.toContain("C62");
   expect(lines).toContain("Stok kodu");
   expect(lines).toContain("YZL-001");
   expect(lines).toContain("Barkod");

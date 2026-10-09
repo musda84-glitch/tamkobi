@@ -13,6 +13,7 @@ import {
   GIB_SEAL_JPEG_DATA_URL,
   SAMPLE_INVOICE,
   SPAN_CLASS,
+  unitLabel,
   SPAN_OPTIONS,
   QR_SIZE_OPTIONS,
   LOGO_SIZE_OPTIONS,
@@ -120,7 +121,11 @@ const PartyCard = ({ title, p, kCls, vCls }) => (
 );
 
 const lineCell = (ln, colId) => {
-  if (colId === "qty" && !ln._showUnit) return `${ln.qty}${ln.unit ? ` ${ln.unit}` : ""}`;
+  if (colId === "unit") return unitLabel(ln.unit);
+  if (colId === "qty" && !ln._showUnit) {
+    const u = unitLabel(ln.unit);
+    return `${ln.qty}${u ? ` ${u}` : ""}`;
+  }
   return ln[colId] ?? "";
 };
 
