@@ -11,6 +11,8 @@ import {
   moveVisible,
   normalizeLayout,
   packBlockRows,
+  previewIban,
+  previewNotes,
   sampleMetaValue,
   setBlockFont,
   setBlockFontSize,
@@ -349,21 +351,44 @@ test("legacy visible meta ETTN becomes its own block", () => {
 test("layoutToXslt writes ETTN as its own block", () => {
   const hidden = layoutToXslt(defaultLayout("e_invoice"));
   expect(hidden).not.toContain('class="inv-ettn"');
-  expect(hidden).not.toContain('<div class="inv-ettn-v">');
+  expect(hidden).not.toContain('<span class="inv-ettn-v">');
   const shown = layoutToXslt(normalizeLayout({
     blocks: [{ id: "ettn" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
   }));
   expect(shown).toContain("class=\"inv-ettn\"");
-  expect(shown).toContain('<div class="inv-ettn-v">');
-  expect(shown).toContain("ETTN");
+  expect(shown).toContain('<span class="inv-ettn-k">ETTN</span>');
+  expect(shown).toContain('<span class="inv-ettn-v">');
   expect(shown).toContain("/n1:Invoice/cbc:UUID");
   expect(shown).toContain("width=\"100%\"");
+  expect(shown).toMatch(/display:flex/);
   expect(shown).toMatch(/inv-ettn-v \{[^}]*font-size:18px/);
   const sized = layoutToXslt(normalizeLayout({
     ettnFontSize: 12,
     blocks: [{ id: "ettn" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
   }));
   expect(sized).toMatch(/inv-ettn-v \{[^}]*font-size:12px/);
+});
+
+test("layout stores footer note and IBAN for preview and XSLT", () => {
+  const empty = defaultLayout("e_invoice");
+  expect(empty.noteText).toBe("");
+  expect(empty.ibanText).toBe("");
+  expect(previewNotes(empty)).toEqual(["İşbu belge elektronik olarak düzenlenmiştir."]);
+  expect(previewIban(empty).iban).toContain("TR12");
+
+  const L = normalizeLayout({
+    noteText: "Teslimat kapıda yapılır.",
+    ibanText: "TR33 0006 1005 1978 6457 8413 26",
+    ibanName: "İş Bankası",
+    blocks: [{ id: "notes" }, { id: "iban" }, { id: "header", hidden: true }, { id: "meta", hidden: true }, { id: "lines", hidden: true }, { id: "totals", hidden: true }],
+  });
+  expect(previewNotes(L)).toEqual(["Teslimat kapıda yapılır."]);
+  expect(previewIban(L)).toEqual({ iban: "TR33 0006 1005 1978 6457 8413 26", name: "İş Bankası" });
+  const xslt = layoutToXslt(L);
+  expect(xslt).toContain("Teslimat kapıda yapılır.");
+  expect(xslt).toContain("TR33 0006 1005 1978 6457 8413 26");
+  expect(xslt).toContain("İş Bankası");
+  expect(xslt).not.toContain("PayeeFinancialAccount/cbc:ID");
 });
 
 test("layoutToXslt embeds both GIB seals independently", () => {

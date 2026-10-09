@@ -413,6 +413,9 @@ export function defaultLayout(kind = "e_invoice") {
     logoSize: 72,
     qrSize: 96,
     ettnFontSize: 18,
+    noteText: "",
+    ibanText: "",
+    ibanName: "",
     blocks: defaultBlocks(),
     lineCols: idList(LINE_COL_IDS, LINE_COL_HIDDEN_BY_DEFAULT),
     metaFields: idList(META_FIELD_IDS, META_FIELD_HIDDEN_BY_DEFAULT),
@@ -460,6 +463,9 @@ export function normalizeLayout(raw, kind) {
   out.qrSize = asQrSize(raw.qrSize, base.qrSize);
   out.ettnFontSize = asEttnFontSize(raw.ettnFontSize, base.ettnFontSize);
   if (typeof raw.companyTitle === "string") out.companyTitle = raw.companyTitle.slice(0, 120);
+  out.noteText = asNoteText(raw.noteText);
+  out.ibanText = asIbanText(raw.ibanText);
+  out.ibanName = asIbanName(raw.ibanName);
   out.blocks = normalizeBlocks(raw.blocks, out.kind, { ettnFontSize: raw.ettnFontSize });
   // ETTN punto artık blokta; layout.ettnFontSize senkron tut (eski okuyucular).
   const ettnBlk = out.blocks.find((b) => b.id === "ettn");
@@ -625,6 +631,35 @@ export const SAMPLE_INVOICE = {
   iban: "TR12 ACCT-000009 0000 01",
 };
 
+const NOTE_TEXT_MAX = 500;
+const IBAN_TEXT_MAX = 42;
+const IBAN_NAME_MAX = 80;
+
+function asNoteText(value) {
+  return String(value ?? "").slice(0, NOTE_TEXT_MAX);
+}
+
+function asIbanText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, IBAN_TEXT_MAX);
+}
+
+function asIbanName(value) {
+  return String(value ?? "").trim().slice(0, IBAN_NAME_MAX);
+}
+
+/** Önizleme notu: tasarıma yazılan dipnot, yoksa örnek metin. */
+export function previewNotes(layout, sample = SAMPLE_INVOICE) {
+  const t = String(layout?.noteText || "").trim();
+  return t ? [t] : (sample.notes || []);
+}
+
+/** Önizleme IBAN: tasarıma yazılan şablon, yoksa örnek IBAN. */
+export function previewIban(layout, sample = SAMPLE_INVOICE) {
+  const iban = String(layout?.ibanText || "").trim();
+  const name = String(layout?.ibanName || "").trim();
+  return { iban: iban || sample.iban || "", name };
+}
+
 /** Önizleme / örnek: meta alanının gösterilecek değeri. */
 export function sampleMetaValue(fid, sample = SAMPLE_INVOICE) {
   const s = sample || SAMPLE_INVOICE;
@@ -679,6 +714,38 @@ function xsltUnitLabel(attrPath = "cbc:InvoicedQuantity/@unitCode") {
     .map(([code, label]) => `<xsl:when test="${attrPath}='${xmlEscape(code)}'"><xsl:text>${xmlEscape(label)}</xsl:text></xsl:when>`)
     .join("");
   return `<xsl:choose>${when}<xsl:otherwise><xsl:value-of select="${attrPath}"/></xsl:otherwise></xsl:choose>`;
+}
+
+function xsltNotesBlock(L) {
+  const extra = String(L.noteText || "").trim();
+  const staticNote = extra ? `<div>${xmlEscape(extra)}</div>` : "";
+  return `
+      <div class="inv-notes">
+        <div class="inv-k">Notlar</div>
+        ${staticNote}
+        <xsl:for-each select="/n1:Invoice/cbc:Note">
+          <div><xsl:value-of select="."/></div>
+        </xsl:for-each>
+      </div>`;
+}
+
+function xsltIbanBlock(L) {
+  const iban = String(L.ibanText || "").trim();
+  const name = String(L.ibanName || "").trim();
+  if (iban) {
+    return `
+      <div class="inv-iban">
+        <div class="inv-k">IBAN / ödeme</div>
+        <div>${xmlEscape(iban)}</div>
+        ${name ? `<div>${xmlEscape(name)}</div>` : ""}
+      </div>`;
+  }
+  return `
+      <div class="inv-iban">
+        <div class="inv-k">IBAN / ödeme</div>
+        <div><xsl:value-of select="/n1:Invoice/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID"/></div>
+        <div><xsl:value-of select="/n1:Invoice/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:Name"/></div>
+      </div>`;
 }
 
 const LINE_COL_XSLT = {
@@ -843,24 +910,13 @@ function xsltBlocks(L) {
     meta: xsltMetaTable(L),
     ettn: `
       <div class="inv-ettn">
-        <div>ETTN</div>
-        <div class="inv-ettn-v"><xsl:value-of select="/n1:Invoice/cbc:UUID"/></div>
+        <span class="inv-ettn-k">ETTN</span>
+        <span class="inv-ettn-v"><xsl:value-of select="/n1:Invoice/cbc:UUID"/></span>
       </div>`,
     lines: xsltLineTable(L),
     totals: xsltTotalsTable(L),
-    notes: `
-      <div class="inv-notes">
-        <div class="inv-k">Notlar</div>
-        <xsl:for-each select="/n1:Invoice/cbc:Note">
-          <div><xsl:value-of select="."/></div>
-        </xsl:for-each>
-      </div>`,
-    iban: `
-      <div class="inv-iban">
-        <div class="inv-k">IBAN / ödeme</div>
-        <div><xsl:value-of select="/n1:Invoice/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID"/></div>
-        <div><xsl:value-of select="/n1:Invoice/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:Name"/></div>
-      </div>`,
+    notes: xsltNotesBlock(L),
+    iban: xsltIbanBlock(L),
     balance: `
       <div class="inv-balance">
         <div>
@@ -973,8 +1029,9 @@ export function layoutToXslt(layout, kind) {
           .inv-meta td { font-weight:inherit; font-size:${fs}px; color:${L.text}; padding:1px 8px 1px 0; vertical-align:top; }
           .inv-meta-k { white-space:nowrap; }
           .inv-meta-v { word-break:break-word; }
-          .inv-ettn { word-break:break-all; }
-          .inv-ettn-v { color:${L.primary}; margin-top:2px; }
+          .inv-ettn { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; word-break:break-all; }
+          .inv-ettn-k { font-weight:700; color:${L.muted}; white-space:nowrap; letter-spacing:.04em; }
+          .inv-ettn-v { color:${L.primary}; margin:0; }
           .inv-lines { border-collapse:collapse; }
           .inv-lines th { background:${L.primary}; color:#fff; font-size:${k}px; }
           .inv-lines td { border-bottom:1px solid ${L.muted}22; font-size:${fs}px; }

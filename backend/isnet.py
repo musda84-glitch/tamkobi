@@ -1837,6 +1837,8 @@ def build_ubl(
         "district": (company or {}).get("district"),
         "phone": (company or {}).get("phone"),
         "email": (company or {}).get("email"),
+        "iban": (company or {}).get("iban"),
+        "bank_name": (company or {}).get("bank_name"),
     }
     buyer = ubl_export._buyer_from(inv, contact)
     xml_bytes = ubl_export.build_invoice_ubl(inv, seller, buyer, send_ready=True, xslt=xslt)

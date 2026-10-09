@@ -327,6 +327,25 @@ def _cac(parent, tag: str):
     return ET.SubElement(parent, _q(CAC, tag))
 
 
+def _iban_alnum(value: Any) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isalnum()).upper()
+
+
+def _add_payment_means(root, seller: Dict[str, Any], inv: Dict[str, Any], currency: str) -> None:
+    """Şirket / fatura IBAN varsa PayeeFinancialAccount (tasarım IBAN bloğu)."""
+    iban = _iban_alnum(inv.get("iban") or seller.get("iban"))
+    if len(iban) < 15:
+        return
+    name = str(seller.get("bank_name") or inv.get("bank_name") or "").strip()
+    pm = _cac(root, "PaymentMeans")
+    _cbc(pm, "PaymentMeansCode", "42")
+    acc = _cac(pm, "PayeeFinancialAccount")
+    _cbc(acc, "ID", iban)
+    if name:
+        _cbc(acc, "Name", name[:120])
+    _cbc(acc, "CurrencyCode", (currency or "TRY")[:3])
+
+
 def _tax_category_kdv(
     parent,
     *,
@@ -671,6 +690,7 @@ def build_invoice_ubl(
 
     _party("AccountingSupplierParty", seller_party, root, send_ready=send_ready)
     _party("AccountingCustomerParty", buyer_party, root, send_ready=send_ready)
+    _add_payment_means(root, seller, inv, currency)
 
     tax_total = _cac(root, "TaxTotal")
     _cbc(tax_total, "TaxAmount", _amt(vat_total), currencyID=currency)
