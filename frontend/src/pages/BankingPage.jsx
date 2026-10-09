@@ -461,14 +461,14 @@ export default function BankingPage() {
               </div>
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">{partnerSummary.partner_count} Ortak</h3>
-                <div className="text-xs text-slate-500">Sermaye: {partnerSummary.total_capital_in.toLocaleString('tr-TR')} ₺ • Çekilen: {partnerSummary.total_withdrawn.toLocaleString('tr-TR')} ₺</div>
+                <div className="text-xs text-slate-500">Giriş: {partnerSummary.total_capital_in.toLocaleString('tr-TR')} ₺ • Çıkış: {partnerSummary.total_withdrawn.toLocaleString('tr-TR')} ₺</div>
               </div>
             </div>
             <div className="pt-3 border-t border-amber-200/60">
               {(() => {
                 const n = Number(partnerSummary.total_balance) || 0;
-                const label = n > 0 ? "Net ortak alacağı" : n < 0 ? "Net ortak borcu" : "Net ortak bakiyesi";
-                const hint = n > 0 ? "Şirket ortaklara borçlu" : n < 0 ? "Ortaklar şirkete / kasaya borçlu" : "Borç / alacak yok";
+                const label = n > 0 ? "Cebindeki para" : n < 0 ? "Eksi yazı" : "Cebindeki para";
+                const hint = n > 0 ? "Ortaklara yazılan / çekilebilir tutar" : n < 0 ? "Ortaklar fazla çekmiş" : "Giriş ve çıkış denk";
                 const cls = n > 0 ? "text-amber-800" : n < 0 ? "text-rose-700" : "text-slate-900";
                 return (
                   <>

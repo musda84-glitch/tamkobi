@@ -17,17 +17,17 @@ describe("partnerTx", () => {
     expect(isPartnerExpenseTx({ type: "credit" })).toBe(false);
   });
 
-  it("frames balance as money in the partner pocket", () => {
+  it("frames balance as money written to the partner pocket", () => {
     const credit = partnerBalanceMeta(1200);
     expect(credit.label).toMatch(/cebindeki/i);
-    expect(credit.badge).toMatch(/çekilebilir/i);
-    expect(credit.hint).toMatch(/cebinde/i);
+    expect(credit.badge).toMatch(/yazılı/i);
+    expect(credit.hint).toMatch(/yazılan|cebine/i);
     expect(credit.side).toBe("credit");
 
     const debit = partnerBalanceMeta(-705389.78);
     expect(debit.badge).toMatch(/borçlu/i);
     expect(debit.label).toMatch(/eksi/i);
-    expect(debit.hint).toMatch(/fazla çek/i);
+    expect(debit.hint).toMatch(/fazla çek|eksi yazı/i);
     expect(debit.side).toBe("debit");
     expect(debit.abs).toBeCloseTo(705389.78);
 
@@ -66,6 +66,8 @@ describe("partnerTx", () => {
     expect(br.drift).toBe(false);
     expect(br.buckets.salary).toBe(150000);
     expect(br.buckets.profit_paid).toBe(9000);
+    expect(br.inflow).toBeCloseTo(500000 + 150000 + 50000 + 20000, 2);
+    expect(br.outflow).toBeCloseTo(31810.22 + 9000, 2);
     expect(partnerLedgerBreakdown(txs, ledger + 1).drift).toBe(true);
   });
 
@@ -99,10 +101,10 @@ describe("partnerTx", () => {
 
   it("tells the user a future hak ediş date posts later", () => {
     expect(partnerSalarySaveMessage({ posted_count: 0, scheduled_date: "2026-11-01" }, "2026-11-01")).toBe(
-      "Kaydedildi. 01.11.2026 tarihinde alacağa yazılacak.",
+      "Kaydedildi. 01.11.2026 tarihinde cebine yazılacak.",
     );
     expect(partnerSalarySaveMessage({ posted_count: 1, message: "1 maaş kaydı ortak alacağına yazıldı." })).toBe(
-      "1 maaş kaydı ortak alacağına yazıldı.",
+      "1 maaş kaydı cebine yazıldı.",
     );
   });
 });

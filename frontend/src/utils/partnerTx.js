@@ -25,9 +25,9 @@ export function isPartnerExpenseTx(tx) {
 }
 
 /**
- * Ortak bakiyesi = cebindeki para:
- *   artı → şirkette ortağın cebinde duran / çekebilir tutar
- *   eksi → ortak şirketten fazla çekmiş (şirkete borçlu)
+ * Ortak bakiyesi = cebindeki para (yazma):
+ *   artı → ortağa yazılan / kendi cebindeki çekilebilir tutar
+ *   eksi → ortak fazla çekmiş (eksi yazı — şirkete borçlu)
  */
 export function partnerBalanceMeta(balance) {
   const n = Number(balance);
@@ -37,8 +37,8 @@ export function partnerBalanceMeta(balance) {
       amount,
       abs: amount,
       label: "Cebindeki para",
-      badge: "Çekilebilir",
-      hint: "Şirkette ortağın cebinde duran tutar",
+      badge: "Yazılı",
+      hint: "Ortağa yazılan tutar — kendi cebindeki para",
       amountCls: "text-amber-700",
       badgeCls: "bg-amber-100 text-amber-800 border-amber-200",
       side: "credit",
@@ -48,9 +48,9 @@ export function partnerBalanceMeta(balance) {
     return {
       amount,
       abs: Math.abs(amount),
-      label: "Eksi bakiye",
+      label: "Eksi yazı",
       badge: "Borçlu",
-      hint: "Ortak şirketten fazla çekmiş — şirkete borçlu",
+      hint: "Ortak fazla çekmiş — eksi yazı (şirkete borçlu)",
       amountCls: "text-rose-700",
       badgeCls: "bg-rose-100 text-rose-800 border-rose-200",
       side: "debit",
@@ -61,7 +61,7 @@ export function partnerBalanceMeta(balance) {
     abs: 0,
     label: "Cebindeki para",
     badge: "Denk",
-    hint: "Giriş ve çıkış denk",
+    hint: "Giriş ve çıkış denk — yazı yok",
     amountCls: "text-slate-800",
     badgeCls: "bg-slate-100 text-slate-600 border-slate-200",
     side: "zero",
@@ -123,12 +123,21 @@ export function partnerLedgerBreakdown(txs, storedBalance) {
   ledger = Math.round(ledger * 100) / 100;
   const stored = Number(storedBalance);
   const storedN = Number.isFinite(stored) ? Math.round(stored * 100) / 100 : 0;
+  // Cebindeki para algoritması: Giriş yazıları − Çıkış yazıları
+  const inflow = Math.round((
+    buckets.capital_in + buckets.credit + buckets.salary + buckets.profit_accrual
+  ) * 100) / 100;
+  const outflow = Math.round((
+    buckets.withdrawal + buckets.debit + buckets.profit_paid
+  ) * 100) / 100;
   return {
     count: rows.length,
     ledger,
     stored: storedN,
     drift: Math.abs(ledger - storedN) > 0.005,
     buckets,
+    inflow,
+    outflow,
   };
 }
 
@@ -160,16 +169,19 @@ export function todayIsoDate() {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/** Kaydet sonrası: vadesi gelmemişse tarihi söyle, gelmişse alacağa yazıldı. */
+/** Kaydet sonrası: vadesi gelmemişse tarihi söyle, gelmişse cebine yazıldı. */
 export function partnerSalarySaveMessage(accrual, startDate) {
-  if (Number(accrual?.posted_count) > 0) return accrual.message || "Aylık maaş alacağa yazıldı.";
+  if (Number(accrual?.posted_count) > 0) {
+    const raw = accrual.message || "Aylık maaş cebine yazıldı.";
+    return String(raw).replace(/ortak alacağına/gi, "cebine").replace(/alacağa/gi, "cebine");
+  }
   const due = accrual?.scheduled_date
     || (accrual?.skipped || []).find((s) => s.reason === "not_due")?.due_date
     || (!accrual ? startDate : "");
   if (due) {
     const [y, m, d] = String(due).slice(0, 10).split("-");
     const label = d && m && y ? `${d}.${m}.${y}` : due;
-    return `Kaydedildi. ${label} tarihinde alacağa yazılacak.`;
+    return `Kaydedildi. ${label} tarihinde cebine yazılacak.`;
   }
   return accrual?.message || "Aylık maaş kaydedildi.";
 }

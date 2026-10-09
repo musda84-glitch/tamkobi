@@ -12,10 +12,8 @@ const fmt = (n) => formatTrAmount((n || 0));
 const COLS = [["date", "Tarih"], ["partner_name", "Ortak"], ["type", "İşlem"], ["account_name", "Hesap / Açıklama"], ["amount", "Tutar", "text-right"]];
 const inputCls = "bg-white border border-slate-200 rounded-md p-1 text-xs";
 const typeBadge = (t) => {
-  if (isPartnerExpenseTx(t)) return "bg-amber-50 text-amber-800";
-  if (t.type === "capital_in" || t.type === "credit" || t.type === "salary") return "bg-emerald-50 text-emerald-700";
-  if (t.type === "withdrawal" || t.type === "debit") return "bg-rose-50 text-rose-700";
-  return "bg-indigo-50 text-indigo-700";
+  if (partnerTxIncreasesBalance(t.type, t)) return "bg-emerald-50 text-emerald-700";
+  return "bg-rose-50 text-rose-700";
 };
 
 export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
