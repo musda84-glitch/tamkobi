@@ -1,6 +1,6 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
-import { Alert, Image, Modal, Pressable, Switch, Text, View } from "react-native";
+import { Alert, AppState, Image, Modal, Pressable, Switch, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
@@ -280,8 +280,14 @@ export function AtolyeScreen() {
   useFocusEffect(
     useCallback(() => {
       load();
-      const t = setInterval(load, 15000);
-      return () => clearInterval(t);
+      const t = setInterval(load, 5000);
+      const sub = AppState.addEventListener("change", (state) => {
+        if (state === "active") load();
+      });
+      return () => {
+        clearInterval(t);
+        sub.remove();
+      };
     }, [load])
   );
   useFocusEffect(
@@ -349,16 +355,28 @@ export function AtolyeScreen() {
       setError("Önce operatör (personel) seçin.");
       return;
     }
+    const wid = idOf(w);
+    if (!wid) {
+      setError("İş emri kimliği bulunamadı.");
+      return;
+    }
     const key = woCardKey(w);
     setBusyId(key);
     try {
-      const r = await post<{ message?: string }>(client, `/production/work-orders/${idOf(w)}/${action}`, {
+      const r = await post<{ message?: string; work_order?: WorkOrder }>(client, `/production/work-orders/${wid}/${action}`, {
         operator_name: operator,
         ...(body || {}),
       });
       setNotice(r.message || "İşlem tamamlandı.");
       setError(null);
       setFinishing(null);
+      // Web tablete hemen yansısın diye yerel durumu anında güncelle
+      if (r.work_order && idOf(r.work_order)) {
+        const uid = idOf(r.work_order);
+        setWos((prev) => prev.map((x) => (idOf(x) === uid ? { ...x, ...r.work_order } : x)));
+      } else if (action === "finish") {
+        setWos((prev) => prev.map((x) => (idOf(x) === wid ? { ...x, status: "done" } : x)));
+      }
       await load();
     } catch (err) {
       setError(apiErrorMessage(err, "İşlem başarısız."));

@@ -15816,7 +15816,16 @@ async def _enrich_work_orders_job_fields(rows: list) -> list:
     return rows
 
 @api_router.get("/production/work-orders")
-async def list_work_orders(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None, station: Optional[str] = None, assigned_to: Optional[str] = None, order_id: Optional[str] = None):
+async def list_work_orders(
+    response: Response,
+    company_id: Optional[str] = "comp_nexus_main_01",
+    status: Optional[str] = None,
+    station: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    order_id: Optional[str] = None,
+):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
     q: Dict[str, Any] = {"company_id": company_id}
     if status:
         q["status"] = {"$in": status.split(",")}
@@ -15846,9 +15855,21 @@ async def list_work_orders(company_id: Optional[str] = "comp_nexus_main_01", sta
         wid = str(r.get("id") or r.get("_id") or "")
         r["trash_request_pending"] = wid in pending_trash
         if r.get("started_at") and r["status"] in ("in_progress", "paused"):
-            r["elapsed_min"] = round(((datetime.fromisoformat(r["started_at"]) if r["status"] == "in_progress" else datetime.fromisoformat(r.get("paused_at") or r["started_at"])) - datetime.fromisoformat(r["started_at"])).total_seconds() / 60 - r.get("paused_seconds", 0) / 60, 1)
-            if r["status"] == "in_progress":
-                r["elapsed_min"] = round((now - datetime.fromisoformat(r["started_at"])).total_seconds() / 60 - r.get("paused_seconds", 0) / 60, 1)
+            try:
+                started = datetime.fromisoformat(str(r["started_at"]).replace("Z", "+00:00"))
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                paused_sec = float(r.get("paused_seconds") or 0)
+                if r["status"] == "in_progress":
+                    r["elapsed_min"] = round((now - started).total_seconds() / 60 - paused_sec / 60, 1)
+                else:
+                    paused_at = r.get("paused_at") or r["started_at"]
+                    pend = datetime.fromisoformat(str(paused_at).replace("Z", "+00:00"))
+                    if pend.tzinfo is None:
+                        pend = pend.replace(tzinfo=timezone.utc)
+                    r["elapsed_min"] = round((pend - started).total_seconds() / 60 - paused_sec / 60, 1)
+            except Exception:
+                r["elapsed_min"] = None
     return rows
 
 @api_router.get("/production/work-orders/stations")
@@ -16012,7 +16033,11 @@ async def start_work_order(wo_id: str, req: Dict[str, Any] = None):
         log_action = "resume"
     await db.work_orders.update_one({"_id": wo_id}, {"$set": upd, "$push": {"logs": _log(w, log_action, who)}})
     await db.production_orders.update_one({"_id": w["order_id"], "status": "planned"}, {"$set": {"status": "in_production", "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d")}})
-    return {"status": "success", "message": f"{w['step_name']} başlatıldı."}
+    refreshed = await db.work_orders.find_one({"_id": wo_id})
+    out: Dict[str, Any] = {"status": "success", "message": f"{w['step_name']} başlatıldı."}
+    if refreshed:
+        out["work_order"] = clean_doc(refreshed)
+    return out
 
 async def _shopfloor_pause_policy(company_id: str, operator_name: Optional[str] = None) -> Dict[str, Any]:
     """Operatör adına göre mesai/mola/OT Duraklat politikası."""
@@ -16067,6 +16092,14 @@ async def pause_work_order(wo_id: str, req: Dict[str, Any] = None):
 async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
     req = req or {}
     w = await _wo(wo_id)
+    # Mobil/web yarışı: zaten bitmişse 200 + güncel satır (idempotent)
+    if w.get("status") == "done":
+        return {
+            "status": "success",
+            "message": f"{w.get('step_name') or 'Adım'} zaten tamamlanmış.",
+            "work_order": clean_doc(dict(w)),
+            "already_done": True,
+        }
     if w["status"] not in ("in_progress", "paused"):
         raise HTTPException(status_code=400, detail="Sadece başlatılmış adım bitirilebilir.")
     # DB satırında materials yok; reçeteden kalem ihtiyacını yükle (16 Metre vb.).
@@ -16231,6 +16264,9 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None):
                 result["order_completed"] = r["finished"]
             except HTTPException as e:
                 result["message"] += f" (Stok işlenemedi: {e.detail})"
+    updated = await db.work_orders.find_one({"_id": wo_id})
+    if updated:
+        result["work_order"] = clean_doc(updated)
     return result
 
 
