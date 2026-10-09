@@ -28,41 +28,61 @@ describe("partnerTx", () => {
     expect(partnerTxIsCashInflow({ type: "withdrawal", contact_id: "c1" })).toBe(true);
     expect(partnerTxSign("credit", { type: "credit", expense_id: "e1" })).toBe("-");
     expect(partnerTxSign("withdrawal", { type: "withdrawal", contact_id: "c1" })).toBe("+");
-    // Banka eşleşmesi: Vadesiz çıkışı → ortak cebine Giriş (ekstrenin tersi)
+    // Banka eşleşmesi: etiket Giriş (cebine), bakiye tipi withdrawal (Alacaklı ↓)
     expect(partnerTxLabel({
-      type: "capital_in",
+      type: "withdrawal",
       source: "bank_match",
       bank_tx_type: "outflow",
       description: "Vadesiz TL Hesabı: Banka Hareketi",
     })).toBe("Giriş");
     expect(partnerTxIsCashInflow({
-      type: "capital_in",
+      type: "withdrawal",
       source: "bank_match",
       bank_tx_type: "outflow",
     })).toBe(true);
-    expect(partnerTxSign("capital_in", {
-      type: "capital_in",
+    expect(partnerTxSign("withdrawal", {
+      type: "withdrawal",
       source: "bank_match",
       bank_tx_type: "outflow",
     })).toBe("+");
-    // Eski yanlış tip (withdrawal + outflow) bile bank_tx_type ile Giriş olmalı
+    // #1089 artık yanlış capital_in olsa bile bank_tx_type ile Giriş etiketi
     expect(partnerTxLabel({
-      type: "withdrawal",
+      type: "capital_in",
       source: "bank_match",
       bank_tx_type: "outflow",
     })).toBe("Giriş");
     expect(partnerTxLabel({
-      type: "withdrawal",
+      type: "capital_in",
       source: "bank_match",
       bank_tx_type: "inflow",
     })).toBe("Çıkış");
-    // bank_tx_type yoksa tip geçerli (yeni: outflow→capital_in = Giriş)
+    // bank_tx_type yoksa tip geçerli (outflow→withdrawal → Çıkış)
     expect(partnerTxLabel({
-      type: "capital_in",
+      type: "withdrawal",
       source: "bank_match",
       related_bank_tx_id: "btx1",
       description: "Vadesiz TL Hesabı: Banka Hareketi",
-    })).toBe("Giriş");
+    })).toBe("Çıkış");
+  });
+
+  it("bank outflow match reduces Alacaklı (856059.78 - 80000 = 776059.78)", () => {
+    const txs = [
+      { type: "capital_in", amount: 816859.78 },
+      { type: "credit", amount: 39200, expense_id: "e1", source: "expense" },
+      {
+        type: "withdrawal",
+        amount: 80000,
+        source: "bank_match",
+        bank_tx_type: "outflow",
+      },
+    ];
+    expect(partnerTxBalanceDelta(txs[2])).toBe(-80000);
+    const br = partnerLedgerBreakdown(txs, 776059.78);
+    expect(br.ledger).toBeCloseTo(776059.78, 2);
+    expect(br.drift).toBe(false);
+    // Etiket Giriş olsa da bakiye eksi
+    expect(partnerTxLabel(txs[2])).toBe("Giriş");
+    expect(partnerBalanceMeta(776059.78).display).toBeCloseTo(-776059.78, 2);
   });
 
   it("shows only Alacaklı or Borçlu; Alacaklı display is negative", () => {

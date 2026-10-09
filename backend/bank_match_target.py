@@ -17,11 +17,13 @@ def stored_match_target(kind: str, eid: str) -> str:
 
 
 def partner_tx_type_for_bank_match(is_inflow: bool) -> str:
-    """Banka↔ortak karşı hareket (kasa virmanı gibi ters işaret):
-    banka çıkışı → ortak cebine Giriş (capital_in);
-    banka girişi → ortak cebinden Çıkış (withdrawal).
+    """Bakiye etkisi (artı = şirket ortağa borçlu / Alacaklı):
+    banka girişi → ortak sermaye (capital_in, Alacaklı ↑);
+    banka çıkışı → ortak çekiş (withdrawal, Alacaklı ↓).
+
+    İşlem sütunu Giriş/Çıkış etiketi bundan ayrı olabilir (UI: banka çıkışı → Giriş).
     """
-    return "withdrawal" if is_inflow else "capital_in"
+    return "capital_in" if is_inflow else "withdrawal"
 
 
 def _norm_bank_tx_type(raw: Any) -> str:
@@ -34,9 +36,11 @@ def _norm_bank_tx_type(raw: Any) -> str:
 
 
 async def repair_legacy_bank_match_directions(db, partner_id: Optional[str] = None) -> int:
-    """Eski banka eşleşmesi: banka çıkışı yanlışlıkla withdrawal yazılmışsa capital_in yap.
+    """#1089 tersine çevirmesi: banka çıkışı capital_in yazılmışsa withdrawal yap.
 
-    Eski kural banka yönüyle aynı yazıyordu; doğrusu karşı hareket (Vadesiz çıkışı → ortak Giriş).
+    Eski (doğru) kural banka yönüyle aynı yazıyordu. #1089 outflow→capital_in yaptı;
+    Alacaklı şişti. Doğrusu: outflow→withdrawal, inflow→capital_in.
+    Tip düzeltilince sync_partner_from_ledger bakiyeyi hareketlerden yeniden kurar.
     """
     q: Dict[str, Any] = {
         "$or": [
@@ -67,6 +71,9 @@ async def repair_legacy_bank_match_directions(db, partner_id: Optional[str] = No
         if tx.get("type") != want:
             patch["type"] = want
             patch["legacy_bank_match_repaired_at"] = now
+            # #1089 yanlış onarımını işaretle (tekrar ters çevrilmesin diye tip zaten want)
+            if tx.get("type") == "capital_in" and want == "withdrawal":
+                patch["legacy_bank_match_outflow_credit_undone_at"] = now
         if not patch:
             continue
         await db.partner_transactions.update_one({"_id": tx["_id"]}, {"$set": patch})
@@ -76,7 +83,7 @@ async def repair_legacy_bank_match_directions(db, partner_id: Optional[str] = No
 
 
 async def apply_partner_match(db, tx: dict, partner_id: str, amount, is_inflow: bool) -> str:
-    """Banka hareketi bakiyede; ortak cebi karşı giriş/çıkış ile güncelle (işaret ters)."""
+    """Banka hareketi bakiyede; ortak hesabı nakit-siz sermaye / çekiş ile güncelle."""
     desc = f"{tx.get('account_name') or 'Hesap'}: {tx.get('description') or 'Banka eşleşmesi'}"
     bank_tx_type = "inflow" if is_inflow else "outflow"
     return await partner_pay.move(

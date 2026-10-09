@@ -65,10 +65,10 @@ export function partnerTxLabel(tx?: {
   if (tx.contact_id && t === "capital_in") return "Çıkış";
   if (tx.source === "bank_match" || tx.related_bank_tx_id) {
     const bankType = String(tx.bank_tx_type || "").toLowerCase();
-    // Ortak cebi = banka ekstresinin karşı tarafı (Vadesiz çıkışı → Giriş)
+    // Etiket: bankanın karşı tarafı (Vadesiz çıkışı → Giriş); bakiye tipi withdrawal
     if (bankType === "outflow" || bankType === "debit") return "Giriş";
     if (bankType === "inflow" || bankType === "credit") return "Çıkış";
-    // bank_tx_type yoksa tip geçerli (yeni: outflow→capital_in)
+    // bank_tx_type yoksa tip geçerli (outflow→withdrawal)
   }
   if (t === "withdrawal" || t === "debit") return "Çıkış";
   if (t === "profit_share" && tx.is_paid) return "Çıkış";
