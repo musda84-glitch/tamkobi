@@ -26,8 +26,9 @@ export function isPartnerExpenseTx(tx) {
 
 /**
  * Ortak bakiyesi = cebindeki para (yazma):
- *   artı → ortağa yazılan / kendi cebindeki çekilebilir tutar
- *   eksi → ortak fazla çekmiş (eksi yazı — şirkete borçlu)
+ *   artı → Alacaklı (ortağa yazılan / çekilebilir)
+ *   eksi → Borçlu (fazla çekmiş)
+ * Kartta yalnızca Alacaklı / Borçlu gösterilir (ek etiket/hint yok).
  */
 export function partnerBalanceMeta(balance) {
   const n = Number(balance);
@@ -36,9 +37,9 @@ export function partnerBalanceMeta(balance) {
     return {
       amount,
       abs: amount,
-      label: "Cebindeki para",
-      badge: "Yazılı",
-      hint: "Ortağa yazılan tutar — kendi cebindeki para",
+      label: "Alacaklı",
+      badge: "Alacaklı",
+      hint: "",
       amountCls: "text-amber-700",
       badgeCls: "bg-amber-100 text-amber-800 border-amber-200",
       side: "credit",
@@ -48,9 +49,9 @@ export function partnerBalanceMeta(balance) {
     return {
       amount,
       abs: Math.abs(amount),
-      label: "Eksi yazı",
+      label: "Borçlu",
       badge: "Borçlu",
-      hint: "Ortak fazla çekmiş — eksi yazı (şirkete borçlu)",
+      hint: "",
       amountCls: "text-rose-700",
       badgeCls: "bg-rose-100 text-rose-800 border-rose-200",
       side: "debit",
@@ -59,9 +60,9 @@ export function partnerBalanceMeta(balance) {
   return {
     amount: 0,
     abs: 0,
-    label: "Cebindeki para",
+    label: "Denk",
     badge: "Denk",
-    hint: "Giriş ve çıkış denk — yazı yok",
+    hint: "",
     amountCls: "text-slate-800",
     badgeCls: "bg-slate-100 text-slate-600 border-slate-200",
     side: "zero",

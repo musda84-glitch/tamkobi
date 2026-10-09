@@ -17,21 +17,22 @@ describe("partnerTx", () => {
     expect(isPartnerExpenseTx({ type: "credit" })).toBe(false);
   });
 
-  it("frames balance as money written to the partner pocket", () => {
+  it("shows only Alacaklı or Borçlu (no pocket/hint copy)", () => {
     const credit = partnerBalanceMeta(1200);
-    expect(credit.label).toMatch(/cebindeki/i);
-    expect(credit.badge).toMatch(/yazılı/i);
-    expect(credit.hint).toMatch(/yazılan|cebine/i);
+    expect(credit.label).toBe("Alacaklı");
+    expect(credit.badge).toBe("Alacaklı");
+    expect(credit.hint).toBe("");
     expect(credit.side).toBe("credit");
 
     const debit = partnerBalanceMeta(-705389.78);
-    expect(debit.badge).toMatch(/borçlu/i);
-    expect(debit.label).toMatch(/eksi/i);
-    expect(debit.hint).toMatch(/fazla çek|eksi yazı/i);
+    expect(debit.badge).toBe("Borçlu");
+    expect(debit.label).toBe("Borçlu");
+    expect(debit.hint).toBe("");
     expect(debit.side).toBe("debit");
     expect(debit.abs).toBeCloseTo(705389.78);
 
-    expect(partnerBalanceMeta(0).badge).toMatch(/denk/i);
+    expect(partnerBalanceMeta(0).badge).toBe("Denk");
+    expect(partnerBalanceMeta(0).hint).toBe("");
   });
   it("treats credit like capital_in for balance", () => {
     expect(partnerTxIncreasesBalance("credit")).toBe(true);
