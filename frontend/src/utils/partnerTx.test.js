@@ -25,6 +25,25 @@ describe("partnerTx", () => {
     expect(partnerTxIsCashInflow({ type: "withdrawal", contact_id: "c1" })).toBe(true);
     expect(partnerTxSign("credit", { type: "credit", expense_id: "e1" })).toBe("-");
     expect(partnerTxSign("withdrawal", { type: "withdrawal", contact_id: "c1" })).toBe("+");
+    // Banka eşleşmesi: Vadesiz çıkışı → Çıkış (bank_tx_type)
+    expect(partnerTxLabel({
+      type: "capital_in",
+      source: "bank_match",
+      bank_tx_type: "outflow",
+      description: "Vadesiz TL Hesabı: Banka Hareketi",
+    })).toBe("Çıkış");
+    expect(partnerTxLabel({
+      type: "withdrawal",
+      source: "bank_match",
+      bank_tx_type: "inflow",
+    })).toBe("Giriş");
+    // Eski bank_match (bank_tx_type yok): tip ters görünüyordu → etiketi tersle
+    expect(partnerTxLabel({
+      type: "capital_in",
+      source: "bank_match",
+      related_bank_tx_id: "btx1",
+      description: "Vadesiz TL Hesabı: Banka Hareketi",
+    })).toBe("Çıkış");
   });
 
   it("shows only Alacaklı or Borçlu (no pocket/hint copy)", () => {

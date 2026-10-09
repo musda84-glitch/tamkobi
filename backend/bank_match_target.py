@@ -16,12 +16,14 @@ def stored_match_target(kind: str, eid: str) -> str:
 
 
 def partner_tx_type_for_bank_match(is_inflow: bool) -> str:
+    """Banka girişi → ortak sermaye (capital_in); banka çıkışı → ortak çekiş (withdrawal)."""
     return "capital_in" if is_inflow else "withdrawal"
 
 
 async def apply_partner_match(db, tx: dict, partner_id: str, amount, is_inflow: bool) -> str:
     """Banka hareketi bakiyede; ortak hesabı nakit-siz sermaye / çekiş ile güncelle."""
     desc = f"{tx.get('account_name') or 'Hesap'}: {tx.get('description') or 'Banka eşleşmesi'}"
+    bank_tx_type = "inflow" if is_inflow else "outflow"
     return await partner_pay.move(
         db,
         tx["company_id"],
@@ -30,7 +32,11 @@ async def apply_partner_match(db, tx: dict, partner_id: str, amount, is_inflow: 
         partner_tx_type_for_bank_match(is_inflow),
         desc,
         date=tx.get("date"),
-        extra={"related_bank_tx_id": tx.get("_id"), "source": "bank_match"},
+        extra={
+            "related_bank_tx_id": tx.get("_id"),
+            "source": "bank_match",
+            "bank_tx_type": bank_tx_type,
+        },
     )
 
 
