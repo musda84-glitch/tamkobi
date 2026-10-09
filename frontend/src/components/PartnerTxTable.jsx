@@ -6,13 +6,13 @@ import { toast } from "sonner";
 import { ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2, X, Check } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
-import { isPartnerExpenseTx, isPartnerLedgerType, partnerTxLabel, partnerTxIncreasesBalance, partnerTxSign } from "../utils/partnerTx";
+import { isPartnerExpenseTx, isPartnerLedgerType, partnerTxLabel, partnerTxIsCashInflow, partnerTxSign } from "../utils/partnerTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const COLS = [["date", "Tarih"], ["partner_name", "Ortak"], ["type", "İşlem"], ["account_name", "Hesap / Açıklama"], ["amount", "Tutar", "text-right"]];
 const inputCls = "bg-white border border-slate-200 rounded-md p-1 text-xs";
 const typeBadge = (t) => {
-  if (partnerTxIncreasesBalance(t.type, t)) return "bg-emerald-50 text-emerald-700";
+  if (partnerTxIsCashInflow(t)) return "bg-emerald-50 text-emerald-700";
   return "bg-rose-50 text-rose-700";
 };
 
@@ -72,7 +72,7 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
             <td className="px-4 py-2 font-semibold text-slate-900">{t.partner_name}</td>
             <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md font-semibold ${typeBadge(t)}`}>{partnerTxLabel(t)}</span></td>
             <td className="px-4 py-2 text-slate-600">{t.account_name ? <span className="font-semibold text-slate-700">{t.account_name} • </span> : ""}{t.description}</td>
-            <td className={`px-4 py-2 text-right font-bold ${partnerTxIncreasesBalance(t.type, t) ? "text-emerald-600" : "text-rose-600"}`}>{partnerTxSign(t.type, t)}{fmt(t.amount)} ₺</td>
+            <td className={`px-4 py-2 text-right font-bold ${partnerTxIsCashInflow(t) ? "text-emerald-600" : "text-rose-600"}`}>{partnerTxSign(t.type, t)}{fmt(t.amount)} ₺</td>
             <td className="px-4 py-2 text-right whitespace-nowrap">
               {t.type !== "profit_share" && !isPartnerExpenseTx(t) && <button onClick={() => setEdit({ id: t.id, date: t.date, amount: t.amount, description: t.description, account_id: t.account_id })} className="p-1.5 rounded-md text-slate-500 hover:text-indigo-600 hover:bg-indigo-50" title="Düzenle" data-testid={`partner-tx-edit-${t.id}`}><Pencil className="w-3.5 h-3.5" /></button>}
               <button onClick={() => del(t)} className="p-1.5 rounded-md text-slate-500 hover:text-rose-600 hover:bg-rose-50" title={isPartnerExpenseTx(t) ? "Sil (bağlı masraf da silinir)" : "Sil (bakiyeler geri alınır)"} data-testid={`partner-tx-del-${t.id}`}><Trash2 className="w-3.5 h-3.5" /></button>

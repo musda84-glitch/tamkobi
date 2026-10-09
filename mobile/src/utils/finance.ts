@@ -47,10 +47,19 @@ export const PARTNER_TX_TR: Record<string, string> = {
   salary: "Giriş",
 };
 
-/** Ortak cebi: işlem yalnızca Giriş / Çıkış. */
-export function partnerTxLabel(tx?: { type?: string; expense_id?: string; source?: string; is_paid?: boolean } | null): string {
+/** Ortak işlem: Giriş/Çıkış = kasa yönü (masraf=Çıkış, cari tahsilat=Giriş). */
+export function partnerTxLabel(tx?: {
+  type?: string;
+  expense_id?: string;
+  source?: string;
+  is_paid?: boolean;
+  contact_id?: string;
+} | null): string {
   if (!tx) return "";
   const t = tx.type || "";
+  if (tx.expense_id || tx.source === "expense") return "Çıkış";
+  if (tx.contact_id && t === "withdrawal") return "Giriş";
+  if (tx.contact_id && t === "capital_in") return "Çıkış";
   if (t === "withdrawal" || t === "debit") return "Çıkış";
   if (t === "profit_share" && tx.is_paid) return "Çıkış";
   return "Giriş";

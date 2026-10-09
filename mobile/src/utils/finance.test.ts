@@ -319,7 +319,8 @@ describe("finance drafts", () => {
     expect(partnerMovementNotice({ id: "p2", type: "withdrawal", amount: 5 }).signed).toBe(-5);
     expect(partnerTxLabel({ type: "withdrawal", expense_id: "e1" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "capital_in" })).toBe("Giriş");
-    expect(partnerTxLabel({ type: "credit", expense_id: "e1" })).toBe("Giriş");
+    expect(partnerTxLabel({ type: "credit", expense_id: "e1" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "withdrawal", contact_id: "c1" })).toBe("Giriş");
     expect(partnerMovementNotice({ id: "p5", type: "withdrawal", amount: 40, expense_id: "e1" }).detail).toMatch(/Çıkış/);
   });
 
