@@ -52,6 +52,7 @@ from line_totals import (
     invoice_document_totals,
     order_document_totals,
     order_items_to_invoice_items,
+    invoice_items_to_order_items,
     INVOICE_ITEM_FIELDS,
     ORDER_ITEM_FIELDS,
     pick_fields,
@@ -7385,7 +7386,15 @@ async def update_invoice(invoice_id: str, req: Dict[str, Any]):
         allowed.update(stamp)
         allowed["local_total"] = fx.local_of(merged.get("grand_total") or inv.get("grand_total") or 0, stamp["fx_rate"])
     await db.invoices.update_one({"_id": invoice_id}, {"$set": allowed})
-    return clean_doc(await db.invoices.find_one({"_id": invoice_id}))
+    updated = await db.invoices.find_one({"_id": invoice_id})
+    if updated and updated.get("status") == "draft" and "items" in allowed:
+        try:
+            await _sync_draft_order_items(updated, allowed.get("items") or updated.get("items") or [])
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Taslak fatura→sipariş senkronu başarısız: %s", invoice_id
+            )
+    return clean_doc(updated)
 
 def _invoice_delete_block_reason(inv: dict) -> Optional[str]:
     """None = silinebilir. Taslak, kağıt ve GİB'e gitmemiş irsaliye silinebilir; GİB e-belgeleri silinemez."""
@@ -11678,6 +11687,38 @@ async def _sync_draft_invoice_items(order: dict, items: list) -> None:
         "vat_total": totals["vat_total"],
         "discount_total": totals["discount_total"],
         "grand_total": totals["grand_total"],
+    }})
+
+
+async def _sync_draft_order_items(invoice: dict, items: list) -> None:
+    """Taslak fatura kalemleri değişince bağlı siparişi güncelle."""
+    if not invoice or invoice.get("status") != "draft" or not items:
+        return
+    order_id = invoice.get("order_id") or invoice.get("source_order_id")
+    if not order_id:
+        return
+    order = await db.orders.find_one({"_id": order_id})
+    if not order or order.get("is_invoiced"):
+        return
+    # Sipariş başka faturaya bağlıysa dokunma
+    linked = order.get("invoice_id")
+    if linked and linked != invoice.get("_id") and linked != invoice.get("id"):
+        return
+    ord_rows = invoice_items_to_order_items(items)
+    await _fill_stock_codes(invoice.get("company_id") or order.get("company_id"), ord_rows)
+    ord_items = [it.model_dump() for it in _order_item_models(ord_rows)]
+    subtotal, vat_total, discount_total, grand_total = order_document_totals(ord_items)
+    await db.orders.update_one({"_id": order["_id"]}, {"$set": {
+        "items": ord_items,
+        "subtotal": subtotal,
+        "vat_total": vat_total,
+        "discount_total": discount_total,
+        "grand_total": grand_total,
+        "total_amount": grand_total if vat_total else subtotal,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "invoice_id": invoice.get("_id") or invoice.get("id") or order.get("invoice_id"),
+        "invoice_number": invoice.get("invoice_number") or order.get("invoice_number"),
+        "is_invoiced": False,
     }})
 
 

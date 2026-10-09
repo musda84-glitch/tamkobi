@@ -188,7 +188,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       const r = await axios.put(`${API_URL}/orders/${editOrder.id}`, payload);
       toast.success(r.data.message || "Sipariş güncellendi.");
       setEditOrder(null);
-      await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["orders"] });
+      await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["orders", "invoices"] });
       load();
     } catch (err) { toast.error(err.response?.data?.detail || "Sipariş güncellenemedi."); }
   };
@@ -481,6 +481,7 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       await axios.put(`${API_URL}/invoices/${editInv.id}`, payload);
       toast.success("Fatura güncellendi.");
       setEditInv(null);
+      await notifyDataChanged({ companyId: data?.contact?.company_id, scopes: ["orders", "invoices"] });
       load();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Güncellenemedi.");
