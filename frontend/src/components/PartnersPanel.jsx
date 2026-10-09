@@ -246,14 +246,6 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     } catch (err) { toast.error(err.response?.data?.detail || "Ortak güncellenemedi."); }
   };
 
-  const accrueSalaryNow = async () => {
-    try {
-      const r = await axios.post(`${API_URL}/banking/partners/accrue-salary`, { company_id: companyId });
-      toast.success(r.data?.message || "Aylık maaşlar yazıldı.");
-      load();
-    } catch (err) { toast.error(err.response?.data?.detail || "Maaş yazılamadı."); }
-  };
-
   const saveTx = async (e) => {
     e.preventDefault();
     try {
@@ -309,13 +301,11 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           <div className="p-2 rounded-xl bg-amber-50 text-amber-600"><Users className="w-5 h-5" /></div>
           <div>
             <h2 className="text-base font-bold text-slate-900">Ortaklar Hesabı</h2>
-            <p className="text-xs text-slate-500">Bakiye = ortağın cebindeki para; hareketler Giriş / Çıkış</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={openTxModal} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-tx-btn"><ArrowDownRight className="w-4 h-4" /> Para Giriş / Çıkış</button>
           <button onClick={openVirmanModal} className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-virman-btn"><ArrowLeftRight className="w-4 h-4" /> Virman</button>
-          <button onClick={accrueSalaryNow} className="flex items-center gap-1.5 bg-white hover:bg-amber-50 text-amber-800 border border-amber-200 px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-accrue-salary-btn"><Banknote className="w-4 h-4" /> Aylık maaşı yaz</button>
           <button onClick={() => { setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "", salary_start_date: todayIsoDate(), salary_recurring: true }); setModal("add"); }} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-partner-btn"><Plus className="w-4 h-4" /> Ortak Ekle</button>
         </div>
       </div>
@@ -462,9 +452,6 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 </div>
               ))}
             </div>
-            <p className="text-[11px] text-slate-500 leading-snug">
-              Cebindeki para (yazma) = Giriş − Çıkış.
-            </p>
           </div>
         )}
         <PartnerTxTable txs={visibleTxs} accounts={liveAccounts} companyId={companyId} onChanged={() => { load(); bumpCash(); }} />

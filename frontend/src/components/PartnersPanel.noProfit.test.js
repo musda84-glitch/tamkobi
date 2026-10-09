@@ -10,7 +10,7 @@ test("PartnersPanel has no kâr payı dağıt UI", () => {
   expect(src).not.toMatch(/Kâr Payı Dağıt/);
   expect(src).not.toMatch(/distribute-profit-modal/);
   expect(src).not.toMatch(/Dağıtılan Kâr/);
-  expect(src).toMatch(/partner-accrue-salary-btn/);
+  expect(src).not.toMatch(/partner-accrue-salary-btn/);
   expect(src).toMatch(/partner-tx-btn/);
   expect(src).toMatch(/Aylık maaş/);
 });
