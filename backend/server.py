@@ -13437,12 +13437,45 @@ async def suggest_marketplace_product_matches(req: Dict[str, Any]):
     count = sum(1 for v in suggestions.values() if v)
     return {"suggestions": suggestions, "mode": mode, "count": count}
 
+async def _enrich_marketplace_claims(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Liste: bağlı sipariş/fatura + gider pusulası / aksiyon bayrakları."""
+    if not docs:
+        return docs
+    for c in docs:
+        st = c.get("status") or ""
+        cargo_arrived = bool(c.get("cargo_arrived")) or st == "WaitingInAction"
+        c["cargo_arrived"] = cargo_arrived
+        c["can_approve"] = cargo_arrived and st not in ("Accepted", "Rejected", "Cancelled")
+        c["can_reject"] = cargo_arrived and st not in ("Accepted", "Rejected", "Cancelled")
+        linked = await _order_for_marketplace_claim(c)
+        inv_id = (linked or {}).get("invoice_id")
+        c["order_id"] = (linked or {}).get("_id") or (linked or {}).get("id")
+        c["invoice_id"] = inv_id
+        c["invoice_number"] = (linked or {}).get("invoice_number")
+        c["order_is_invoiced"] = bool((linked or {}).get("is_invoiced"))
+        c["expense_slip_id"] = c.get("expense_slip_id") or (linked or {}).get("expense_slip_id")
+        c["expense_slip_number"] = c.get("expense_slip_number") or (linked or {}).get("expense_slip_number")
+        can_slip = False
+        if inv_id and not c.get("expense_slip_id"):
+            inv = await db.invoices.find_one({"_id": inv_id}, {"status": 1, "e_type": 1, "invoice_type": 1, "expense_slip_id": 1, "expense_slip_number": 1})
+            if inv:
+                if inv.get("expense_slip_id"):
+                    c["expense_slip_id"] = inv["expense_slip_id"]
+                    c["expense_slip_number"] = inv.get("expense_slip_number")
+                elif not _expense_slip_block_reason(inv):
+                    # Kargosu ulaşmış veya kabul edilmiş iade → gider pusulası
+                    can_slip = cargo_arrived or st == "Accepted"
+        c["can_expense_slip"] = bool(can_slip)
+    return docs
+
+
 @api_router.get("/marketplace/claims")
 async def list_marketplace_claims(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):
     q: Dict[str, Any] = {"company_id": company_id}
     if status:
         q["status"] = status
-    return clean_docs(await db.marketplace_claims.find(q).sort("claim_date", -1).to_list(500))
+    docs = clean_docs(await db.marketplace_claims.find(q).sort("claim_date", -1).to_list(500))
+    return await _enrich_marketplace_claims(docs)
 
 @api_router.post("/marketplace/claims/{claim_id}/approve")
 async def approve_marketplace_claim(claim_id: str, req: Dict[str, Any] = None):
@@ -13457,11 +13490,12 @@ async def approve_marketplace_claim(claim_id: str, req: Dict[str, Any] = None):
             await client.approve_claim(c["external_id"], line_ids)
         finally:
             await client.close()
-    await db.marketplace_claims.update_one({"_id": claim_id}, {"$set": {"status": "Accepted", "decided_at": datetime.now(timezone.utc).isoformat(), "decision_note": (req or {}).get("note", "")}})
+    await db.marketplace_claims.update_one({"_id": claim_id}, {"$set": {"status": "Accepted", "decided_at": datetime.now(timezone.utc).isoformat(), "decision_note": (req or {}).get("note", ""), "cargo_arrived": True}})
     if (req or {}).get("restock"):
         for it in c.get("items", []):
             if it.get("barcode"):
-                await db.products.update_one({"company_id": c["company_id"], "barcode": it["barcode"]}, {"$inc": {"stock_quantity": 1}})
+                qty = max(1, int(it.get("quantity") or 1))
+                await db.products.update_one({"company_id": c["company_id"], "barcode": it["barcode"]}, {"$inc": {"stock_quantity": qty}})
     # İade onayında siparişe bağlı pazaryeri hakediş hareketlerini sil.
     linked = await _order_for_marketplace_claim(c)
     settlement_rev = await _reverse_marketplace_settlement(linked) if linked else None
@@ -13469,6 +13503,65 @@ async def approve_marketplace_claim(claim_id: str, req: Dict[str, Any] = None):
     if settlement_rev:
         out["settlement_reversed"] = settlement_rev
     return out
+
+
+@api_router.post("/marketplace/claims/{claim_id}/reject")
+async def reject_marketplace_claim(claim_id: str, req: Dict[str, Any] = None):
+    """Depoya ulaşmış (WaitingInAction) iadeyi Trendyol'a sorun bildir / red."""
+    c = await db.marketplace_claims.find_one({"_id": claim_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="İade talebi bulunamadı.")
+    if c.get("status") in ("Accepted", "Rejected", "Cancelled"):
+        raise HTTPException(status_code=400, detail="Bu iade talebi zaten sonuçlanmış.")
+    cfg = await db.integration_configs.find_one({"company_id": c["company_id"], "channel": c["channel"]})
+    line_ids = (req or {}).get("claim_item_ids") or [i["claim_item_id"] for i in c.get("items", []) if i.get("claim_item_id")]
+    note = ((req or {}).get("note") or "İade paketi kabul edilmedi.").strip()[:500]
+    reason_id = int((req or {}).get("reason_id") or 1651)
+    if c["channel"] == "trendyol" and cfg and marketplace_providers.has_live_credentials(cfg) and c.get("external_id"):
+        client = marketplace_providers.TrendyolClient(cfg)
+        try:
+            await client.reject_claim(c["external_id"], line_ids, reason_id=reason_id, description=note)
+        finally:
+            await client.close()
+    await db.marketplace_claims.update_one(
+        {"_id": claim_id},
+        {"$set": {
+            "status": "Rejected",
+            "decided_at": datetime.now(timezone.utc).isoformat(),
+            "decision_note": note,
+            "reject_reason_id": reason_id,
+        }},
+    )
+    return clean_doc(await db.marketplace_claims.find_one({"_id": claim_id}))
+
+
+@api_router.post("/marketplace/claims/{claim_id}/expense-slip")
+async def expense_slip_for_marketplace_claim(claim_id: str):
+    """Kargosu ulaşmış / kabul edilmiş iade için bağlı satış faturasından gider pusulası."""
+    c = await db.marketplace_claims.find_one({"_id": claim_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="İade talebi bulunamadı.")
+    st = c.get("status") or ""
+    cargo_arrived = bool(c.get("cargo_arrived")) or st in ("WaitingInAction", "Accepted")
+    if not cargo_arrived:
+        raise HTTPException(status_code=400, detail="Gider pusulası için iade kargosunun depoya ulaşması gerekir (WaitingInAction).")
+    if c.get("expense_slip_id"):
+        existing = await db.invoices.find_one({"_id": c["expense_slip_id"]})
+        if existing and existing.get("status") != "cancelled":
+            return {"status": "exists", "invoice": clean_doc(existing), "message": f"Gider pusulası zaten var: {existing.get('invoice_number')}"}
+    linked = await _order_for_marketplace_claim(c)
+    inv_id = (linked or {}).get("invoice_id")
+    if not inv_id:
+        raise HTTPException(status_code=400, detail="Bu iadeye bağlı fatura bulunamadı. Önce sipariş faturasını kesin.")
+    result = await create_expense_slip_from_invoice(inv_id)
+    slip = (result or {}).get("invoice") or {}
+    slip_id = slip.get("id") or slip.get("_id")
+    if slip_id:
+        await db.marketplace_claims.update_one(
+            {"_id": claim_id},
+            {"$set": {"expense_slip_id": slip_id, "expense_slip_number": slip.get("invoice_number")}},
+        )
+    return result
 
 @api_router.get("/marketplace/questions")
 async def list_marketplace_questions(company_id: Optional[str] = "comp_nexus_main_01", status: Optional[str] = None):

@@ -276,6 +276,25 @@ class TrendyolClient:
     async def approve_claim(self, claim_id: str, line_ids: List[str]) -> Any:
         return await self._call("PUT", f"/integration/order/sellers/{self.seller_id}/claims/{claim_id}/items/approve", json={"claimLineItemIdList": line_ids, "params": {}})
 
+    async def reject_claim(
+        self,
+        claim_id: str,
+        line_ids: List[str],
+        reason_id: int = 1651,
+        description: str = "İade paketi kabul edilmedi.",
+    ) -> Any:
+        """WaitingInAction iadeleri için sorun bildir / red (dosyasız sebep 1651)."""
+        ids = ",".join(str(x) for x in line_ids if x)
+        return await self._call(
+            "POST",
+            f"/integration/order/sellers/{self.seller_id}/claims/{claim_id}/issue",
+            params={
+                "claimIssueReasonId": int(reason_id),
+                "claimItemIdList": ids,
+                "description": (description or "")[:500],
+            },
+        )
+
     async def set_package_status(self, package_id: str, status: str, lines: List[dict], invoice_number: Optional[str] = None) -> Any:
         body: Dict[str, Any] = {"status": status, "lines": lines, "params": {}}
         if invoice_number:
@@ -350,16 +369,67 @@ def map_trendyol_order(pkg: dict, company_id: str, channel: str) -> dict:
             "source": "marketplace_sync", "raw_status": ty_status}
 
 
+# Trendyol claimItemStatus → satıcı aksiyonu
+# WaitingInAction = iade kargosu depoya ulaştı (onay/red + gider pusulası)
+TY_CLAIM_ACTIONABLE = frozenset({"WaitingInAction"})
+TY_CLAIM_STATUS_ORDER = (
+    "WaitingInAction", "Created", "InAnalysis", "Unresolved",
+    "Accepted", "Rejected", "Cancelled",
+)
+
+
+def _claim_status_priority(name: str) -> int:
+    try:
+        return TY_CLAIM_STATUS_ORDER.index(name)
+    except ValueError:
+        return 99
+
+
 def map_trendyol_claim(c: dict, company_id: str, channel: str) -> dict:
     items = c.get("items") or []
     flat = []
     for it in items:
         for ci in it.get("claimItems") or []:
-            flat.append({"claim_item_id": ci.get("id"), "order_line_id": ci.get("orderLineItemId"), "status": (ci.get("claimItemStatus") or {}).get("name"), "reason": (ci.get("customerClaimItemReason") or {}).get("name"),
-                         "note": ci.get("customerNote"), "product_name": (it.get("orderLine") or {}).get("productName"), "barcode": (it.get("orderLine") or {}).get("barcode"), "price": (it.get("orderLine") or {}).get("price")})
-    return {"company_id": company_id, "channel": channel, "external_id": str(c.get("id")), "order_number": str(c.get("orderNumber")), "customer_name": f"{c.get('customerFirstName', '')} {c.get('customerLastName', '')}".strip(),
-            "claim_date": _ms(c.get("claimDate")), "cargo_tracking_number": str(c.get("cargoTrackingNumber") or "") or None, "cargo_provider": c.get("cargoProviderName"), "items": flat,
-            "status": (flat[0]["status"] if flat else "Created"), "total": round(sum(float(x.get("price") or 0) for x in flat), 2), "kind": "return", "source": "marketplace_sync"}
+            st = (ci.get("claimItemStatus") or {})
+            st_name = st.get("name") or "Created"
+            flat.append({
+                "claim_item_id": ci.get("id"),
+                "order_line_id": ci.get("orderLineItemId"),
+                "status": st_name,
+                "status_id": st.get("id"),
+                "reason": (ci.get("customerClaimItemReason") or {}).get("name"),
+                "note": ci.get("customerNote"),
+                "product_name": (it.get("orderLine") or {}).get("productName"),
+                "barcode": (it.get("orderLine") or {}).get("barcode"),
+                "sku": (it.get("orderLine") or {}).get("merchantSku") or (it.get("orderLine") or {}).get("sku"),
+                "price": (it.get("orderLine") or {}).get("price"),
+                "quantity": int((it.get("orderLine") or {}).get("quantity") or 1),
+            })
+    # Paket durumu: aksiyon bekleyen kalem varsa WaitingInAction öne alınır
+    status = "Created"
+    if flat:
+        status = sorted((x.get("status") or "Created" for x in flat), key=_claim_status_priority)[0]
+    cargo_arrived = status == "WaitingInAction" or any((x.get("status") == "WaitingInAction") for x in flat)
+    return {
+        "company_id": company_id,
+        "channel": channel,
+        "external_id": str(c.get("id")),
+        "order_number": str(c.get("orderNumber") or ""),
+        "customer_name": f"{c.get('customerFirstName', '')} {c.get('customerLastName', '')}".strip(),
+        "claim_date": _ms(c.get("claimDate")),
+        "last_modified": _ms(c.get("lastModifiedDate")),
+        "cargo_tracking_number": str(c.get("cargoTrackingNumber") or "") or None,
+        "cargo_provider": c.get("cargoProviderName"),
+        "items": flat,
+        "status": status,
+        "cargo_arrived": cargo_arrived,
+        "can_approve": cargo_arrived,
+        "can_reject": cargo_arrived,
+        "total": round(sum(float(x.get("price") or 0) * max(1, int(x.get("quantity") or 1)) for x in flat), 2),
+        "kind": "return",
+        "source": "marketplace_sync",
+        "raw_claim_id": c.get("id"),
+    }
 
 
 def map_trendyol_question(q: dict, company_id: str, channel: str) -> dict:
