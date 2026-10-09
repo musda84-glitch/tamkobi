@@ -26,6 +26,14 @@ import {
   type ProductDraft,
 } from "../utils/productDraft";
 import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi, unitSelectGroups } from "../utils/stockUnits";
+import {
+  PRINTER_PRESETS,
+  loadEthernetPrinter,
+  printLabelEthernet,
+  probeEthernetPrinter,
+  saveEthernetPrinter,
+  type EthernetPrinterSettings,
+} from "../utils/ethernetPrinter";
 
 function Chip({
   label,
@@ -114,6 +122,8 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   const [loading, setLoading] = useState(!isNew);
   const [scan, setScan] = useState(false);
   const [savedUnits, setSavedUnits] = useState<string[] | null>(null);
+  const [eth, setEth] = useState<EthernetPrinterSettings | null>(null);
+  const [ethBusy, setEthBusy] = useState(false);
 
   const set = <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) => {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -135,6 +145,10 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   }, [canEdit, client, productId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    loadEthernetPrinter().then(setEth).catch(() => setEth(null));
+  }, []);
 
   useEffect(() => {
     if (!companyId) return undefined;
@@ -348,6 +362,132 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
         <Flag label="Stok takibi" value={draft.track_stock} onChange={(v) => set("track_stock", v)} testID="stock-track" />
         <Flag label="Aktif" value={draft.is_active} onChange={(v) => set("is_active", v)} testID="stock-active" />
       </Row>
+
+      {!isNew && eth ? (
+        <Card testID="ethernet-printer-card">
+          <Muted>Ethernet / IP etiket yazıcı (Xprinter XP-490B vb.)</Muted>
+          <GroupedSelect
+            label="Model"
+            testID="eth-preset"
+            value={eth.presetId}
+            onChange={(v) => {
+              const p = PRINTER_PRESETS.find((x) => x.id === v) || PRINTER_PRESETS[0];
+              void saveEthernetPrinter({
+                ...eth,
+                presetId: p.id,
+                brand: p.brand,
+                model: p.model,
+                port: p.port,
+                protocol: p.protocol,
+                dpi: p.dpi,
+              }).then(setEth);
+            }}
+            groups={[{ label: "Yazıcılar", options: PRINTER_PRESETS.map((p) => ({ value: p.id, label: `${p.brand} ${p.model}` })) }]}
+          />
+          <Field
+            label="Yazıcı IP"
+            testID="eth-host"
+            value={eth.host}
+            onChangeText={(v) => {
+              setEth({ ...eth, host: v });
+              void saveEthernetPrinter({ ...eth, host: v, enabled: !!v.trim() });
+            }}
+            placeholder="192.168.1.100"
+            autoCapitalize="none"
+            keyboardType="numbers-and-punctuation"
+          />
+          <Field
+            label="Port"
+            testID="eth-port"
+            value={String(eth.port)}
+            onChangeText={(v) => {
+              const port = Number(v) || 9100;
+              setEth({ ...eth, port });
+              void saveEthernetPrinter({ ...eth, port });
+            }}
+            keyboardType="number-pad"
+          />
+          <GroupedSelect
+            label="Gönderim"
+            testID="eth-mode"
+            value={eth.mode}
+            onChange={(v) => {
+              const mode = v === "api" ? "api" : "bridge";
+              void saveEthernetPrinter({ ...eth, mode }).then(setEth);
+            }}
+            groups={[{
+              label: "Mod",
+              options: [
+                { value: "bridge", label: "Yerel köprü (mobil / Wi‑Fi)" },
+                { value: "api", label: "API sunucusu → yazıcı" },
+              ],
+            }]}
+          />
+          {eth.mode === "bridge" ? (
+            <Field
+              label="Köprü URL"
+              testID="eth-bridge"
+              value={eth.bridgeUrl}
+              onChangeText={(v) => {
+                setEth({ ...eth, bridgeUrl: v });
+                void saveEthernetPrinter({ ...eth, bridgeUrl: v });
+              }}
+              placeholder="http://192.168.1.50:19100"
+              autoCapitalize="none"
+            />
+          ) : null}
+          <PrimaryButton
+            title={ethBusy ? "…" : "Bağlantı testi"}
+            testID="eth-probe"
+            color={colors.secondary}
+            disabled={ethBusy || !eth.host}
+            onPress={async () => {
+              setEthBusy(true);
+              try {
+                const r = await probeEthernetPrinter(eth, client);
+                setMessage(`Yazıcı OK: ${r.host || eth.host}:${r.port || eth.port}`);
+                setError(null);
+              } catch (err) {
+                setError(apiErrorMessage(err, "Yazıcıya ulaşılamadı."));
+              } finally {
+                setEthBusy(false);
+              }
+            }}
+          />
+          <PrimaryButton
+            title={ethBusy ? "Gönderiliyor…" : "Ethernet etiket yazdır"}
+            testID="eth-print"
+            color={colors.indigo}
+            disabled={ethBusy || !eth.host || !(draft.barcode || draft.sku)}
+            loading={ethBusy}
+            onPress={async () => {
+              setEthBusy(true);
+              try {
+                const cfg = await saveEthernetPrinter({ ...eth, enabled: true });
+                setEth(cfg);
+                await printLabelEthernet({
+                  product: {
+                    name: draft.name,
+                    sku: draft.sku,
+                    barcode: draft.barcode,
+                    sale_price: Number(draft.sale_price) || null,
+                  },
+                  tpl: { width_mm: 100, height_mm: 30 },
+                  copies: 1,
+                  client,
+                  settings: cfg,
+                });
+                setMessage(`Ethernet yazıcıya gönderildi (${cfg.host}:${cfg.port})`);
+                setError(null);
+              } catch (err) {
+                setError(apiErrorMessage(err, "Ethernet yazdırma başarısız."));
+              } finally {
+                setEthBusy(false);
+              }
+            }}
+          />
+        </Card>
+      ) : null}
 
       {canEdit ? (
         <PrimaryButton
