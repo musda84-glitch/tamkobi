@@ -1,19 +1,23 @@
-/** Ortak hareket etiketleri ve işaretleri. */
+/** Ortak hareket etiketleri ve işaretleri.
+ * Bakiye = ortağın cebindeki para (şirkette duran, çekilebilir tutar).
+ *   Giriş → cebine girer (sermaye, alacak, maaş, masraf ödemesi…)
+ *   Çıkış → cebinden çıkar (para çekimi, borç fişi…)
+ */
 
 export const PARTNER_TX_LABEL = {
-  capital_in: "Sermaye Girişi",
-  withdrawal: "Para Çekişi",
-  profit_share: "Kâr Payı",
-  credit: "Alacak Fişi",
-  debit: "Borç Fişi",
-  salary: "Aylık Maaş",
+  capital_in: "Giriş",
+  withdrawal: "Çıkış",
+  profit_share: "Giriş",
+  credit: "Giriş",
+  debit: "Çıkış",
+  salary: "Giriş",
 };
 
-/** Şirket masrafını ortak ödedi → ortak alacak (credit); etiket Masraf Ödemesi. */
+/** İşlem sütunu: yalnızca Giriş / Çıkış (cebindeki paraya göre). */
 export function partnerTxLabel(tx) {
   if (!tx) return "";
-  if (tx.expense_id || tx.source === "expense") return "Masraf Ödemesi";
-  return PARTNER_TX_LABEL[tx.type] || tx.type || "";
+  if (partnerTxIncreasesBalance(tx.type, tx)) return "Giriş";
+  return "Çıkış";
 }
 
 export function isPartnerExpenseTx(tx) {
@@ -21,9 +25,9 @@ export function isPartnerExpenseTx(tx) {
 }
 
 /**
- * Ortak bakiyesi (şirket defteri):
- *   artı → şirket ortağa borçlu (ortak alacaklı / kasa borçlu)
- *   eksi → ortak şirkete borçlu (şirket alacaklı / kasa alacaklı)
+ * Ortak bakiyesi = cebindeki para:
+ *   artı → şirkette ortağın cebinde duran / çekebilir tutar
+ *   eksi → ortak şirketten fazla çekmiş (şirkete borçlu)
  */
 export function partnerBalanceMeta(balance) {
   const n = Number(balance);
@@ -32,9 +36,9 @@ export function partnerBalanceMeta(balance) {
     return {
       amount,
       abs: amount,
-      label: "Ortak alacağı",
-      badge: "Ortak alacaklı",
-      hint: "Şirket (kasa) bu ortağa borçlu",
+      label: "Cebindeki para",
+      badge: "Çekilebilir",
+      hint: "Şirkette ortağın cebinde duran tutar",
       amountCls: "text-amber-700",
       badgeCls: "bg-amber-100 text-amber-800 border-amber-200",
       side: "credit",
@@ -44,9 +48,9 @@ export function partnerBalanceMeta(balance) {
     return {
       amount,
       abs: Math.abs(amount),
-      label: "Ortak borcu",
-      badge: "Ortak borçlu",
-      hint: "Ortak şirkete / kasaya borçlu — kasa alacaklı",
+      label: "Eksi bakiye",
+      badge: "Borçlu",
+      hint: "Ortak şirketten fazla çekmiş — şirkete borçlu",
       amountCls: "text-rose-700",
       badgeCls: "bg-rose-100 text-rose-800 border-rose-200",
       side: "debit",
@@ -55,15 +59,14 @@ export function partnerBalanceMeta(balance) {
   return {
     amount: 0,
     abs: 0,
-    label: "Ortak bakiyesi",
+    label: "Cebindeki para",
     badge: "Denk",
-    hint: "Borç / alacak yok",
+    hint: "Giriş ve çıkış denk",
     amountCls: "text-slate-800",
     badgeCls: "bg-slate-100 text-slate-600 border-slate-200",
     side: "zero",
   };
 }
-
 /** Artı: ortak alacağı artar (para koy / alacak fişi / maaş / tahakkuk kâr payı). */
 export function partnerTxIncreasesBalance(type, tx) {
   if (type === "capital_in" || type === "credit" || type === "salary") return true;

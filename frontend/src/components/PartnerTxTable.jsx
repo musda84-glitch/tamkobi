@@ -72,7 +72,7 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
           <tr key={t.id} className="hover:bg-slate-50/70 group" data-testid={`partner-tx-row-${t.id}`}>
             <td className="px-4 py-2 font-mono text-slate-500">{t.date}</td>
             <td className="px-4 py-2 font-semibold text-slate-900">{t.partner_name}</td>
-            <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md font-semibold ${typeBadge(t)}`}>{partnerTxLabel(t)}{t.type === "profit_share" && !t.is_paid ? " (Tahakkuk)" : ""}</span></td>
+            <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md font-semibold ${typeBadge(t)}`}>{partnerTxLabel(t)}</span></td>
             <td className="px-4 py-2 text-slate-600">{t.account_name ? <span className="font-semibold text-slate-700">{t.account_name} • </span> : ""}{t.description}</td>
             <td className={`px-4 py-2 text-right font-bold ${partnerTxIncreasesBalance(t.type, t) ? "text-emerald-600" : "text-rose-600"}`}>{partnerTxSign(t.type, t)}{fmt(t.amount)} ₺</td>
             <td className="px-4 py-2 text-right whitespace-nowrap">

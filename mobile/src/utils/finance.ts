@@ -39,21 +39,22 @@ export const TX_TYPE_TR: Record<string, string> = {
 };
 
 export const PARTNER_TX_TR: Record<string, string> = {
-  capital_in: "Sermaye Girişi",
-  withdrawal: "Para Çekişi",
-  profit_share: "Kâr Payı",
-  credit: "Alacak Fişi",
-  debit: "Borç Fişi",
-  salary: "Aylık Maaş",
+  capital_in: "Giriş",
+  withdrawal: "Çıkış",
+  profit_share: "Giriş",
+  credit: "Giriş",
+  debit: "Çıkış",
+  salary: "Giriş",
 };
 
-/** Ortak kasasından masraf ödemesi — bakiye withdrawal, etiket Masraf Ödemesi. */
-export function partnerTxLabel(tx?: { type?: string; expense_id?: string; source?: string } | null): string {
+/** Ortak cebi: işlem yalnızca Giriş / Çıkış. */
+export function partnerTxLabel(tx?: { type?: string; expense_id?: string; source?: string; is_paid?: boolean } | null): string {
   if (!tx) return "";
-  if (tx.expense_id || tx.source === "expense") return "Masraf Ödemesi";
-  return PARTNER_TX_TR[tx.type || ""] || tx.type || "";
+  const t = tx.type || "";
+  if (t === "withdrawal" || t === "debit") return "Çıkış";
+  if (t === "profit_share" && tx.is_paid) return "Çıkış";
+  return "Giriş";
 }
-
 export type BankAccount = {
   id?: string;
   _id?: string;

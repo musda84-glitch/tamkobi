@@ -1,37 +1,38 @@
 import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxBalanceDelta, partnerTxIncreasesBalance, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
 
 describe("partnerTx", () => {
-  it("labels debit and credit slips", () => {
-    expect(PARTNER_TX_LABEL.debit).toMatch(/borç/i);
-    expect(PARTNER_TX_LABEL.credit).toMatch(/alacak/i);
-  });
-
-  it("labels partner-paid company expense as Masraf Ödemesi (credit / alacak)", () => {
-    expect(partnerTxLabel({ type: "credit", expense_id: "e1" })).toBe("Masraf Ödemesi");
-    expect(partnerTxLabel({ type: "credit", source: "expense" })).toBe("Masraf Ödemesi");
+  it("labels all partner txs as Giriş or Çıkış only", () => {
+    expect(PARTNER_TX_LABEL.debit).toBe("Çıkış");
+    expect(PARTNER_TX_LABEL.credit).toBe("Giriş");
+    expect(partnerTxLabel({ type: "credit", expense_id: "e1" })).toBe("Giriş");
+    expect(partnerTxLabel({ type: "credit", source: "expense" })).toBe("Giriş");
     expect(partnerTxIncreasesBalance("credit")).toBe(true);
-    expect(partnerTxLabel({ type: "withdrawal" })).toBe("Para Çekişi");
-    expect(partnerTxLabel({ type: "capital_in" })).toBe("Sermaye Girişi");
+    expect(partnerTxLabel({ type: "withdrawal" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "capital_in" })).toBe("Giriş");
+    expect(partnerTxLabel({ type: "salary" })).toBe("Giriş");
+    expect(partnerTxLabel({ type: "debit" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "profit_share", is_paid: false })).toBe("Giriş");
+    expect(partnerTxLabel({ type: "profit_share", is_paid: true })).toBe("Çıkış");
     expect(isPartnerExpenseTx({ expense_id: "e1" })).toBe(true);
     expect(isPartnerExpenseTx({ type: "credit" })).toBe(false);
   });
 
-  it("explains partner balance sign for company vs partner", () => {
+  it("frames balance as money in the partner pocket", () => {
     const credit = partnerBalanceMeta(1200);
-    expect(credit.badge).toMatch(/alacaklı/i);
-    expect(credit.hint).toMatch(/şirket/i);
+    expect(credit.label).toMatch(/cebindeki/i);
+    expect(credit.badge).toMatch(/çekilebilir/i);
+    expect(credit.hint).toMatch(/cebinde/i);
     expect(credit.side).toBe("credit");
 
     const debit = partnerBalanceMeta(-705389.78);
     expect(debit.badge).toMatch(/borçlu/i);
-    expect(debit.label).toMatch(/borcu/i);
-    expect(debit.hint).toMatch(/kasa alacaklı/i);
+    expect(debit.label).toMatch(/eksi/i);
+    expect(debit.hint).toMatch(/fazla çek/i);
     expect(debit.side).toBe("debit");
     expect(debit.abs).toBeCloseTo(705389.78);
 
     expect(partnerBalanceMeta(0).badge).toMatch(/denk/i);
   });
-
   it("treats credit like capital_in for balance", () => {
     expect(partnerTxIncreasesBalance("credit")).toBe(true);
     expect(partnerTxIncreasesBalance("capital_in")).toBe(true);
@@ -77,12 +78,11 @@ describe("partnerTx", () => {
     expect(isPartnerCashType("salary")).toBe(false);
   });
 
-  it("treats monthly salary like a receivable credit", () => {
-    expect(PARTNER_TX_LABEL.salary).toMatch(/maaş/i);
+  it("treats monthly salary like pocket inflow (Giriş)", () => {
+    expect(PARTNER_TX_LABEL.salary).toBe("Giriş");
     expect(partnerTxIncreasesBalance("salary")).toBe(true);
     expect(partnerTxSign("salary")).toBe("+");
   });
-
   it("prompts to set salary on the partner card when amount is empty", () => {
     expect(partnerSalaryActionLabel(0)).toBe("Belirle");
     expect(partnerSalaryActionLabel("")).toBe("Belirle");
