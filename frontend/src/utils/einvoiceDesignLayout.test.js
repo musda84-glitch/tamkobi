@@ -16,8 +16,19 @@ import {
   setBlockFontSize,
   setBlockHidden,
   setBlockSpan,
+  unitLabel,
   xmlEscape,
 } from "./einvoiceDesignLayout";
+
+test("unitLabel maps UNECE codes to Turkish stock units", () => {
+  expect(unitLabel("C62")).toBe("Adet");
+  expect(unitLabel("niu")).toBe("Adet");
+  expect(unitLabel("Adet")).toBe("Adet");
+  expect(unitLabel("KGM")).toBe("Kg");
+  expect(unitLabel("LTR")).toBe("Lt");
+  expect(unitLabel("")).toBe("");
+  expect(unitLabel("XYZ")).toBe("XYZ");
+});
 
 test("default layout shows core blocks and hides extra fields", () => {
   const L = defaultLayout("e_invoice");
@@ -171,6 +182,9 @@ test("layoutToXslt writes stylesheet, colors and skips hidden blocks", () => {
   expect(xslt).not.toContain("GİB karekod");
   expect(xslt).not.toContain("Stok kodu");
   expect(xslt).not.toContain('class="inv-gib-seal"');
+  expect(xslt).toContain("@unitCode='C62'");
+  expect(xslt).toContain("<xsl:text>Adet</xsl:text>");
+  expect(xslt).not.toMatch(/<td><xsl:value-of select="cbc:InvoicedQuantity\/@unitCode"\/><\/td>/);
   expect(xslt).not.toContain("E-Fatura Logo");
   expect(xslt).not.toContain("E-Arşiv Logo");
 });
@@ -199,6 +213,18 @@ test("layoutToXslt includes added line columns and extra blocks", () => {
   expect(xslt).toContain("DocumentType='QR'");
   expect(xslt).toContain("width:160px;height:160px");
   expect(xslt).not.toMatch(/inv-k">GİB karekod/);
+});
+
+test("layoutToXslt maps C62 unitCode to Adet in the Birim column", () => {
+  const xslt = layoutToXslt(normalizeLayout({
+    blocks: [{ id: "lines" }],
+    lineCols: [{ id: "name" }, { id: "qty" }, { id: "unit" }, { id: "total" }],
+  }));
+  expect(xslt).toContain(">Birim<");
+  expect(xslt).toContain("@unitCode='C62'");
+  expect(xslt).toContain("<xsl:text>Adet</xsl:text>");
+  expect(xslt).not.toMatch(/<td><xsl:value-of select="cbc:InvoicedQuantity\/@unitCode"\/><\/td>/);
+  expect(xslt).not.toMatch(/cbc:InvoicedQuantity"\/><xsl:if test="cbc:InvoicedQuantity\/@unitCode/);
 });
 
 test("layoutToXslt packs half-width blocks and emits invoice/order numbers in meta", () => {

@@ -119,6 +119,53 @@ export const LINE_COL_LABELS = {
   total: "Tutar",
 };
 
+/** UBL `unitCode` (UNECE Rec. 20) → ekranda görünen Türkçe birim. TamKobi Adet'i C62 yazar. */
+export const UNIT_CODE_LABELS = {
+  C62: "Adet",
+  NIU: "Adet",
+  EA: "Adet",
+  KGM: "Kg",
+  KG: "Kg",
+  GRM: "Gr",
+  MGM: "Mg",
+  LTR: "Lt",
+  L: "Lt",
+  MLT: "Ml",
+  CLT: "Cl",
+  MTR: "Mt",
+  M: "Mt",
+  MMT: "Mm",
+  CMT: "Cm",
+  KTM: "Km",
+  MTK: "M2",
+  MTQ: "M3",
+  CMK: "cm²",
+  CMQ: "cm³",
+  MMQ: "mm³",
+  TNE: "Ton",
+  PK: "Paket",
+  PA: "Paket",
+  CT: "Koli",
+  BX: "Kutu",
+  BG: "Torba",
+  SA: "Çuval",
+  RO: "Rulo",
+  SET: "Takım",
+  PR: "Çift",
+  DZN: "Düzine",
+  HUR: "Saat",
+  DAY: "Gün",
+  MON: "Ay",
+  ANN: "Yıl",
+  KWH: "kWh",
+};
+
+export function unitLabel(code) {
+  const raw = String(code ?? "").trim();
+  if (!raw) return "";
+  return UNIT_CODE_LABELS[raw] || UNIT_CODE_LABELS[raw.toUpperCase()] || raw;
+}
+
 const LINE_COL_HIDDEN_BY_DEFAULT = {
   sku: true,
   barcode: true,
@@ -627,6 +674,13 @@ function xsltYmdDash(path) {
   return `<xsl:value-of select="concat(substring(${path},9,2),' - ',substring(${path},6,2),' - ',substring(${path},1,4))"/>`;
 }
 
+function xsltUnitLabel(attrPath = "cbc:InvoicedQuantity/@unitCode") {
+  const when = Object.entries(UNIT_CODE_LABELS)
+    .map(([code, label]) => `<xsl:when test="${attrPath}='${xmlEscape(code)}'"><xsl:text>${xmlEscape(label)}</xsl:text></xsl:when>`)
+    .join("");
+  return `<xsl:choose>${when}<xsl:otherwise><xsl:value-of select="${attrPath}"/></xsl:otherwise></xsl:choose>`;
+}
+
 const LINE_COL_XSLT = {
   no: { align: "left", td: `<td><xsl:value-of select="cbc:ID"/></td>` },
   sku: { align: "left", td: `<td><xsl:value-of select="cac:Item/cac:SellersItemIdentification/cbc:ID"/></td>` },
@@ -636,7 +690,7 @@ const LINE_COL_XSLT = {
     td: `<td><xsl:value-of select="cac:Item/cac:StandardItemIdentification/cbc:ID"/><xsl:if test="not(cac:Item/cac:StandardItemIdentification/cbc:ID)"><xsl:value-of select="cac:Item/cac:AdditionalItemIdentification/cbc:ID"/></xsl:if></td>`,
   },
   qty: { align: "right", td: `<td align="right"><xsl:value-of select="cbc:InvoicedQuantity"/></td>` },
-  unit: { align: "left", td: `<td><xsl:value-of select="cbc:InvoicedQuantity/@unitCode"/></td>` },
+  unit: { align: "left", td: `<td>${xsltUnitLabel()}</td>` },
   net_price: { align: "right", td: `<td align="right">${xsltMoney("cbc:LineExtensionAmount")}</td>` },
   price: { align: "right", td: `<td align="right">${xsltMoney("cac:Price/cbc:PriceAmount")}</td>` },
   discount: {
@@ -650,8 +704,14 @@ const LINE_COL_XSLT = {
 function xsltLineTable(L) {
   const cols = visibleLineCols(L);
   if (!cols.length) return "";
+  const unitOn = cols.some((c) => c.id === "unit");
   const th = cols.map((c) => `<th align="${LINE_COL_XSLT[c.id]?.align || "left"}">${xmlEscape(LINE_COL_LABELS[c.id] || c.id)}</th>`).join("");
-  const td = cols.map((c) => LINE_COL_XSLT[c.id]?.td || `<td/>`).join("");
+  const td = cols.map((c) => {
+    if (c.id === "qty" && !unitOn) {
+      return `<td align="right"><xsl:value-of select="cbc:InvoicedQuantity"/><xsl:if test="cbc:InvoicedQuantity/@unitCode!=''"><xsl:text> </xsl:text>${xsltUnitLabel()}</xsl:if></td>`;
+    }
+    return LINE_COL_XSLT[c.id]?.td || `<td/>`;
+  }).join("");
   return `
       <table class="inv-lines" width="100%" cellpadding="6" cellspacing="0">
         <thead><tr>${th}</tr></thead>
