@@ -62,6 +62,9 @@ import { OrderProduceRecipeModal } from "../components/OrderProduceRecipeModal";
 import { OrderLineStockModal } from "../components/OrderLineStockModal";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { cachedList, contactTypeFilter, dropCached } from "../utils/dataSync";
+import { orderPanelFilter, prepareOrdersForPanel } from "../utils/orderFilters";
+import { useDataRefresh } from "../utils/dataRefresh";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -624,19 +627,30 @@ export default function OrdersB2BPage() {
   const [cart, setCart] = useState({});
   const [b2bCustomer, setB2bCustomer] = useState("");
 
-  // Yalnızca yerel DB listesi — pazaryeri sync-now YOK (nav tık / F5 / mount).
-  // Siparişler önce boyansın; ürün/cari kataloğu tabloyu bloklamasın.
+  // IndexedDB + artımlı /api/sync — pazaryeri sync-now YOK (nav tık / F5 / mount).
+  // Önce önbellekten boya; ürün/cari kataloğu tabloyu bloklamasın.
+  const paintOrders = useCallback((rows) => {
+    setOrders(prepareOrdersForPanel(rows));
+  }, []);
+
   const loadCatalog = useCallback(async (cid) => {
     try {
-      const [prodRes, cntRes] = await Promise.all([
-        axios.get(`${API_URL}/products?company_id=${cid}&lite=1`),
-        axios.get(`${API_URL}/contacts?company_id=${cid}&type=customer&lite=1`),
+      const [prodRows, cntRows] = await Promise.all([
+        cachedList("products", cid, {
+          onCached: (rows) => {
+            setProducts(rows);
+            setAllProducts(rows);
+          },
+        }),
+        cachedList("contacts", cid, {
+          filter: contactTypeFilter("customer"),
+          onCached: setContacts,
+        }),
       ]);
-      setProducts(Array.isArray(prodRes.data) ? prodRes.data : []);
-      setAllProducts(Array.isArray(prodRes.data) ? prodRes.data : []);
-      const cnt = Array.isArray(cntRes.data) ? cntRes.data : [];
-      setContacts(cnt);
-      if (cnt.length > 0) setB2bCustomer((prev) => prev || cnt[0].id || cnt[0]._id);
+      setProducts(prodRows);
+      setAllProducts(prodRows);
+      setContacts(cntRows);
+      if (cntRows.length > 0) setB2bCustomer((prev) => prev || cntRows[0].id || cntRows[0]._id);
     } catch {
       /* katalog isteğe bağlı — üret/eşle sonra gelir */
     }
@@ -646,9 +660,15 @@ export default function OrdersB2BPage() {
     const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
     try {
       if (!silent) setLoading(true);
-      // Aktif B2B sepet varsayılan API’de yok (include_active_cart=0)
-      const ordRes = await axios.get(`${API_URL}/orders?company_id=${cid}`);
-      setOrders(Array.isArray(ordRes.data) ? ordRes.data : []);
+      // Aktif B2B sepet varsayılan listede yok (orderPanelFilter)
+      const rows = await cachedList("orders", cid, {
+        filter: orderPanelFilter,
+        onCached: (cached) => {
+          paintOrders(cached);
+          if (!silent) setLoading(false);
+        },
+      });
+      paintOrders(rows);
       if (!silent) setLoading(false);
       // Ürün + cari: tablo boyandıktan sonra (Üretim / e-belge menüsü)
       void loadCatalog(cid);
@@ -656,8 +676,10 @@ export default function OrdersB2BPage() {
       toast.error("Sipariş verileri yüklenemedi.");
       if (!silent) setLoading(false);
     }
-  }, [activeCompany, loadCatalog]);
+  }, [activeCompany, loadCatalog, paintOrders]);
   useEffect(() => { loadData(); }, [loadData]);
+  const refreshOrdersSilent = useCallback(() => loadData({ silent: true }), [loadData]);
+  useDataRefresh(refreshOrdersSilent, { companyId, scopes: ["orders", "invoices"] });
 
   /**
    * Pazaryerinden sipariş çek — SADECE Yenile butonu / toplu menü Yenile.
@@ -676,9 +698,12 @@ export default function OrdersB2BPage() {
           synced += 1;
         } catch { /* kanal kapalıysa devam */ }
       }
+      // Pazaryeri sync sonrası sipariş cache’ini düşür — taze delta çekilsin
+      await dropCached("orders", companyId);
       await loadData({ silent: true });
       toast.success(synced ? `${synced} kanal senkronlandı, siparişler güncellendi.` : "Sipariş listesi yenilendi.");
     } catch {
+      await dropCached("orders", companyId);
       await loadData({ silent: true });
       toast.success("Sipariş listesi yenilendi.");
     } finally {

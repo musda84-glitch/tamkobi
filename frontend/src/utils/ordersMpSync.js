@@ -1,7 +1,7 @@
 /**
  * Siparişler sayfası pazaryeri çekim kuralları (dokümantasyon + test).
  *
- * - Nav / F5 / mount → yalnızca yerel GET /orders (sync-now YOK)
+ * - Nav / F5 / mount → IndexedDB + GET /api/sync (artımlı; sync-now YOK)
  * - Toolbar «Yenile» / toplu menü Yenile → sync-now
  * - Sunucu → 10 dk arka plan döngüsü
  */

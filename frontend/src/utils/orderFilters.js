@@ -4,6 +4,59 @@ import { orderGross } from "./orderMoney";
 import { orderHasEInvoiceIssued } from "./orderMoreMenu";
 import { ORDER_DOC_STATUS_ALL, orderMatchesDocStatus } from "./orderDocStatus";
 
+/** GET /orders varsayılanı: B2B aktif sepet satırları listede yok. */
+export function isActiveCartOrder(o) {
+  if (!o) return false;
+  return o.order_status === "active_cart" || o.is_active_cart === true || o.source === "b2b_active_cart";
+}
+
+/** IndexedDB / sync → panel: aktif sepet hariç. */
+export const orderPanelFilter = (o) => !isActiveCartOrder(o);
+
+/** Portal / panel: bekleyen sepet satırlarını işaretle (sunucu _decorate_b2b_held_order ile aynı). */
+export function decorateB2bHeldOrder(o) {
+  if (!o) return o;
+  const row = { ...o };
+  if (isActiveCartOrder(row)) {
+    row.is_active_cart = true;
+    row.is_held_cart = false;
+    row.view_only = true;
+    row.held_label = row.held_label || "Aktif sepet";
+    row.order_status = "active_cart";
+    return row;
+  }
+  if (row.order_status === "held_cart" || row.is_held_cart || row.source === "b2b_held_cart") {
+    const seq = Number(row.held_seq) || 1;
+    row.is_held_cart = true;
+    row.is_active_cart = false;
+    row.view_only = true;
+    row.held_seq = seq;
+    row.held_label = row.held_label || `Bekleyen sepet #${seq}`;
+    row.order_status = "held_cart";
+  }
+  return row;
+}
+
+/** Aktif sepet → bekleyen sepet → diğer siparişler. */
+export function sortB2bCartOrders(docs) {
+  const list = Array.isArray(docs) ? docs : [];
+  const active = [];
+  const held = [];
+  const rest = [];
+  for (const o of list) {
+    if (o?.is_active_cart || o?.order_status === "active_cart") active.push(o);
+    else if (o?.is_held_cart || o?.order_status === "held_cart") held.push(o);
+    else rest.push(o);
+  }
+  return active.concat(held, rest);
+}
+
+/** Sync/cache satırlarını panel listesine hazırla. */
+export function prepareOrdersForPanel(rows) {
+  const decorated = (Array.isArray(rows) ? rows : []).filter(orderPanelFilter).map(decorateB2bHeldOrder);
+  return sortB2bCartOrders(decorated);
+}
+
 export const ORDER_FILTER_DEFAULTS = {
   q: "",
   status: "all",
