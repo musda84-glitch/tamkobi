@@ -97,7 +97,7 @@ function PartnerCard({
           </View>
         </View>
         <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }}>{fmtMoney(partner.balance)}</Text>
-        <Muted>Giriş {fmtMoney(partner.total_capital_in)} · çekiş {fmtMoney(partner.total_withdrawn)}</Muted>
+        <Muted>Giriş {fmtMoney(partner.total_capital_in)} · çıkış {fmtMoney(partner.total_withdrawn)}</Muted>
       </Pressable>
       {canExp ? (
         <PrimaryButton
@@ -222,9 +222,9 @@ export function BankingPartnersPanel({
         <StatRows
           testID="partners-summary"
           items={[
-            { key: "balance", label: "Ortak alacağı", value: fmtMoney(summary.total_balance) },
+            { key: "balance", label: "Cebindeki para", value: fmtMoney(summary.total_balance) },
             { key: "capital", label: "Giriş", value: fmtMoney(summary.total_capital_in) },
-            { key: "withdrawn", label: "Çekiş", value: fmtMoney(summary.total_withdrawn) },
+            { key: "withdrawn", label: "Çıkış", value: fmtMoney(summary.total_withdrawn) },
           ]}
         />
       ) : null}

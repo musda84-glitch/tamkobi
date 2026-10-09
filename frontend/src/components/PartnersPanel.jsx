@@ -309,7 +309,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           <div className="p-2 rounded-xl bg-amber-50 text-amber-600"><Users className="w-5 h-5" /></div>
           <div>
             <h2 className="text-base font-bold text-slate-900">Ortaklar Hesabı</h2>
-            <p className="text-xs text-slate-500">Ortak hesabı kasa gibi giriş/çıkış; borç-alacak fişi ve aylık maaş (131/331)</p>
+            <p className="text-xs text-slate-500">Bakiye = ortağın cebindeki para; hareketler Giriş / Çıkış</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -325,9 +325,9 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           {(() => {
             const net = partnerBalanceMeta(summary.total_balance);
             return [
-              ["net", net.label === "Ortak bakiyesi" ? "Net ortak bakiyesi" : `Net ${net.label.toLowerCase()}`, net.abs, net.amountCls, net.hint],
+              ["net", net.side === "zero" ? "Net cebindeki para" : `Net ${net.label.toLowerCase()}`, net.abs, net.amountCls, net.hint],
               ["capital", "Toplam Giriş", summary.total_capital_in, "text-emerald-700", ""],
-              ["withdrawn", "Toplam Çekiş", summary.total_withdrawn, "text-rose-700", ""],
+              ["withdrawn", "Toplam Çıkış", summary.total_withdrawn, "text-rose-700", ""],
             ].map(([id, l, v, c, hint]) => (
             <div key={id} className="bg-white border border-slate-200 rounded-xl p-3" data-testid={`partner-summary-${id}`} title={hint || undefined}>
               <div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div>
@@ -418,7 +418,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             </button>
             <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-500">
               <div>Giriş: <b className="text-emerald-700">{fmt(p.total_capital_in)}</b></div>
-              <div>Çekiş: <b className="text-rose-700">{fmt(p.total_withdrawn)}</b></div>
+              <div>Çıkış: <b className="text-rose-700">{fmt(p.total_withdrawn)}</b></div>
             </div>
           </div>
           );
@@ -459,7 +459,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2" data-testid="partner-ledger-buckets">
               {[
                 ["Giriş", selectedLedger.buckets.capital_in, "text-emerald-700"],
-                ["Çekiş", selectedLedger.buckets.withdrawal, "text-rose-700"],
+                ["Çıkış", selectedLedger.buckets.withdrawal, "text-rose-700"],
                 ["Alacak / masraf", selectedLedger.buckets.credit, "text-amber-800"],
                 ["Borç fişi", selectedLedger.buckets.debit, "text-rose-700"],
                 ["Maaş", selectedLedger.buckets.salary, "text-amber-800"],
@@ -471,7 +471,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               ))}
             </div>
             <p className="text-[11px] text-slate-500 leading-snug">
-              Formül: giriş + alacak + maaş − çekiş − borç fişi (kasa hesabı gibi).
+              Cebindeki para = giriş + alacak + maaş − çıkış − borç fişi.
             </p>
           </div>
         )}
