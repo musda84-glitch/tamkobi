@@ -21,8 +21,10 @@ import {
   Zap,
 } from "lucide-react";
 import { INVOICE_PRINT_SHARE_HINT } from "./invoicePrintShare";
+import { isWarehouseShipped } from "./warehouseShip";
 
 const PANEL_CHANNELS = new Set(["b2b", "manual", "saha", ""]);
+const CARGO_LABEL_IDS = new Set(["cargo_mini", "cargo_10x10"]);
 
 /** Pazaryeri / e-ticaret entegrasyon siparişi mi? */
 export function isIntegrationOrder(ord) {
@@ -33,6 +35,23 @@ export function isIntegrationOrder(ord) {
 /** Panel (B2B / manuel / saha) siparişi. */
 export function isPanelOrder(ord) {
   return !isIntegrationOrder(ord);
+}
+
+/** Kargo gönderimi yapılmış mı? (takip no / sevkiyat / depo sevk) */
+export function orderHasCargoDispatch(ord) {
+  if (!ord) return false;
+  if (ord.cargo_tracking_number || ord.cargo_barcode || ord.cargo_shipment_id || ord.cargo_label_url) return true;
+  return isWarehouseShipped(ord);
+}
+
+/**
+ * B2B/panel: kargo yoksa mini kargo etiket menülerini çıkar.
+ * Pazaryeri siparişlerinde etiket satırları kalır.
+ */
+export function filterPanelCargoLabelItems(ord, items) {
+  const rows = Array.isArray(items) ? items : [];
+  if (!isPanelOrder(ord) || orderHasCargoDispatch(ord)) return rows;
+  return rows.filter((r) => !CARGO_LABEL_IDS.has(r?.id));
 }
 
 /**
@@ -160,7 +179,7 @@ export function integrationEInvoiceMoreItems() {
 
 /** B2B / panel / manuel taslak (henüz faturalanmamış) sipariş menüsü. */
 export function panelDraftMoreItems(ord) {
-  return [
+  return filterPanelCargoLabelItems(ord, [
     item("faturalastir", "Faturalaştır", FileText, { color: "text-emerald-600" }),
     item(
       "dispatch",
@@ -172,14 +191,14 @@ export function panelDraftMoreItems(ord) {
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
     item("invoice_date", "Fatura Tarihi Değiştir", History, { color: "text-amber-600" }),
     item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
-  ];
+  ]);
 }
 
 /** B2B / panel — GİB e-fatura / e-arşiv kesilmiş işlem menüsü (onay sonrası). */
 export function panelEInvoiceMoreItems(ord) {
   const kind = orderEBelgeKindLabel(ord); // E-Fatura | E-Arşiv | E-Belge
   const doc = kind === "E-Belge" ? "E-Fatura" : kind;
-  return [
+  return filterPanelCargoLabelItems(ord, [
     item("mini_10x15", `Mini ${doc} Yazdır (10X15cm)`, FileText, { color: "text-sky-600" }),
     item("mini_8x20", `Mini ${doc} Yazdır (8X20cm)`, FileText, { color: "text-sky-600" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
@@ -192,20 +211,20 @@ export function panelEInvoiceMoreItems(ord) {
     item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
     item("xml", `${doc} XML'i İndir`, Code2, { color: "text-sky-500" }),
     item("efatura_pdf", `${doc} PDF İndir`, Download, { color: "text-indigo-600", testId: "efatura-pdf" }),
-  ];
+  ]);
 }
 
 /**
  * B2B / panel faturalaştıktan sonra (henüz GİB e-belgesi yok).
  * «E-Fatura Oluştur» → Elektronik Fatura Onayı modalı (Temel/Ticari).
  */
-export function panelInvoicedMoreItems() {
-  return [
+export function panelInvoicedMoreItems(ord) {
+  return filterPanelCargoLabelItems(ord, [
     item("efatura_olustur", "E-Fatura Oluştur", Zap, { color: "text-rose-500", testId: "efatura-olustur" }),
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
     item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
-  ];
+  ]);
 }
 
 /** Varsayılan menü (entegrasyon taslak vb.). Taslak siparişte e-Fatura/e-Arşiv kesimi yok. */
@@ -262,9 +281,9 @@ export function orderMoreMenuItems(ord, opts = {}) {
   }
   if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems(ord);
-  else if (kind === "panel_invoiced") {
+  else   if (kind === "panel_invoiced") {
     // Faturalaştı: E-Fatura Oluştur + kargo (Excel/PDF yok — referans menü)
-    return { kind, items: panelInvoicedMoreItems() };
+    return { kind, items: panelInvoicedMoreItems(ord) };
   } else items = defaultMoreItems(ord, opts);
   const allowDelete = opts.canDelete !== false;
   if (allowDelete && canDeleteFromMoreMenu(ord)) items = [...items, orderDeleteMoreItem()];

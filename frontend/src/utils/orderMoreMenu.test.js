@@ -92,6 +92,7 @@ describe("orderMoreMenu", () => {
   });
 
   it("integration invoiced without GİB shows Faturalaştı menu (E-Fatura Oluştur)", () => {
+    // Pazaryeri → panel_invoiced; kargo etiketi pazaryerinde kalır (B2B filtresi değil)
     const ord = { channel: "trendyol", is_invoiced: true, e_type: "e_archive", order_number: "908188687" };
     expect(orderMoreMenuKind(ord)).toBe("panel_invoiced");
     expect(orderInvoiceBadge(ord)?.label).toBe("Faturalaştı");
@@ -120,15 +121,13 @@ describe("orderMoreMenu", () => {
     expect(items.find((i) => i.id === "earsiv_send")?.hint).toBe(INVOICE_PRINT_SHARE_HINT);
   });
 
-  it("panel draft (B2B/manual) shows Faturalaştır / İrsaliye / Kargola menu", () => {
+  it("panel draft (B2B/manual) hides mini cargo labels until shipment", () => {
     const ord = { channel: "b2b", is_invoiced: false, order_number: "B2B-1" };
     expect(orderMoreMenuKind(ord)).toBe("panel_draft");
     const { items } = orderMoreMenuItems(ord);
     expect(items.map((i) => i.label)).toEqual([
       "Faturalaştır",
       "İrsaliye olarak kaydet",
-      "Mini Kargo Etiketi Yazdır",
-      "Mini Kargo Etiketi Yazdır 10X10",
       "Fatura Tarihi Değiştir",
       "Kargola",
       "Siparişi Sil",
@@ -137,20 +136,30 @@ describe("orderMoreMenu", () => {
     ]);
   });
 
+  it("panel draft shows mini cargo labels after cargo dispatch", () => {
+    const ord = {
+      channel: "b2b",
+      is_invoiced: false,
+      order_number: "B2B-1",
+      cargo_tracking_number: "YK123",
+    };
+    const labels = orderMoreMenuItems(ord).items.map((i) => i.label);
+    expect(labels).toContain("Mini Kargo Etiketi Yazdır");
+    expect(labels).toContain("Mini Kargo Etiketi Yazdır 10X10");
+  });
+
   it("manual panel draft uses same short menu", () => {
     const ord = { channel: "manual", is_invoiced: false, order_number: "ORD-1" };
     expect(orderMoreMenuKind(ord)).toBe("panel_draft");
     expect(orderMoreMenuItems(ord).items.map((i) => i.id)).toContain("faturalastir");
   });
 
-  it("panel invoiced (cari) shows E-Fatura Oluştur + kargo menüsü", () => {
+  it("panel invoiced (cari) hides mini cargo until shipment", () => {
     const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", order_number: "B2B-2" };
     expect(orderMoreMenuKind(ord)).toBe("panel_invoiced");
     const { items } = orderMoreMenuItems(ord);
     expect(items.map((i) => i.label)).toEqual([
       "E-Fatura Oluştur",
-      "Mini Kargo Etiketi Yazdır",
-      "Mini Kargo Etiketi Yazdır 10X10",
       "Kargola",
     ]);
     expect(items[0].id).toBe("efatura_olustur");
@@ -174,14 +183,12 @@ describe("orderMoreMenu", () => {
     }).items.map((i) => i.label)[0]).toBe("E-Fatura Oluştur");
   });
 
-  it("B2B + GİB e-belge uses panel e-invoice ops menu (E-Arşiv etiketleri)", () => {
+  it("B2B + GİB e-belge hides mini cargo labels before shipment", () => {
     const ord = { channel: "b2b", is_invoiced: true, e_type: "e_archive", einvoice_state: "sent", order_number: "B2B-2026-0009" };
     expect(orderMoreMenuKind(ord)).toBe("panel_einvoice");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
       "Mini E-Arşiv Yazdır (10X15cm)",
       "Mini E-Arşiv Yazdır (8X20cm)",
-      "Mini Kargo Etiketi Yazdır",
-      "Mini Kargo Etiketi Yazdır 10X10",
       "E-Arşiv Yazdır & Gönder",
       "Kargola",
       "E-Arşiv XML'i İndir",
@@ -194,8 +201,15 @@ describe("orderMoreMenu", () => {
     expect(share.title).toBe(INVOICE_PRINT_SHARE_HINT);
   });
 
-  it("B2B + GİB e-fatura uses E-Fatura labeled ops menu", () => {
-    const ord = { channel: "b2b", is_invoiced: true, e_type: "e_invoice", einvoice_state: "sent", order_number: "B2B-2026-0025" };
+  it("B2B + GİB e-fatura shows mini cargo labels after shipment", () => {
+    const ord = {
+      channel: "b2b",
+      is_invoiced: true,
+      e_type: "e_invoice",
+      einvoice_state: "sent",
+      order_number: "B2B-2026-0025",
+      cargo_tracking_number: "GLV-1",
+    };
     expect(orderMoreMenuKind(ord)).toBe("panel_einvoice");
     expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
       "Mini E-Fatura Yazdır (10X15cm)",
