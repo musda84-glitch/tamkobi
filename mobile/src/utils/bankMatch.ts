@@ -10,9 +10,8 @@ export const MATCH_MODES = [
   { key: "expense", label: "Masraf" },
 ] as const;
 
-/** Giriş hareketlerinde Masraf seçeneği gösterilmez. */
-export function matchModesForTx(tx?: { type?: string } | null) {
-  if (tx?.type === "inflow") return MATCH_MODES.filter((m) => m.key !== "expense");
+/** Tüm eşleşme türleri (Masraf dahil). Girişte backend masrafı reddeder. */
+export function matchModesForTx(_tx?: { type?: string } | null) {
   return MATCH_MODES;
 }
 

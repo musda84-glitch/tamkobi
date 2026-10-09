@@ -9,17 +9,17 @@ import { SearchSelect } from "./SearchSelect";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const sel = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
-const MODES_BASE = [
+const MODES = [
   ["contact", "Cari"],
   ["invoice", "Cari + Fatura"],
   ["transfer", "Kasa / Hesap (Virman)"],
   ["category", "Sadece Kategori"],
+  ["expense", "Masraf"],
 ];
-const MODE_EXPENSE = ["expense", "Masraf"];
 
 export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDone }) => {
   const isIn = tx.type === "inflow";
-  const modes = useMemo(() => (isIn ? MODES_BASE : [...MODES_BASE, MODE_EXPENSE]), [isIn]);
+  const modes = MODES;
   const [mode, setMode] = useState(tx.suggested_contact_id ? "contact" : "contact");
   const [contactId, setContactId] = useState(tx.suggested_contact_id || "");
   const [invoiceId, setInvoiceId] = useState("");

@@ -10,19 +10,19 @@ import { backdropDismissProps } from "../utils/modalBackdrop";
 
 const fmt = (n) => formatTrAmount(n || 0);
 const sel = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
-const MODES_BASE = [
+const MODES = [
   ["contact", "Cari"],
   ["invoice", "Cari + Fatura"],
   ["transfer", "Kasa / Hesap (Virman)"],
   ["category", "Sadece Kategori"],
+  ["expense", "Masraf"],
 ];
-const MODE_EXPENSE = ["expense", "Masraf"];
 
 /** Banka hareketi eşleştirme / düzeltme modalı — hareketler listesi ve entegrasyon paneli ortak. */
 export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, onClose, onDone }) {
   const txId = tx?.id || tx?._id;
   const isIn = tx?.type === "inflow";
-  const modes = useMemo(() => (isIn ? MODES_BASE : [...MODES_BASE, MODE_EXPENSE]), [isIn]);
+  const modes = MODES;
   const [mode, setMode] = useState("contact");
   const [contactId, setContactId] = useState(tx?.suggested_contact_id || tx?.contact_id || "");
   const [invoiceId, setInvoiceId] = useState("");
