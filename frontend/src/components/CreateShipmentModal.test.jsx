@@ -70,6 +70,27 @@ const renderModal = async () => {
   return root;
 };
 
+test("Geliver bağlı kartında bakiye görünür", async () => {
+  axios.get.mockImplementation(async (url) => {
+    if (String(url).includes("/integrations/cargo")) {
+      return {
+        data: [
+          { carrier_code: "geliver", carrier_name: "Geliver (Kargo Pazaryeri)", status: "connected", is_active: true },
+        ],
+      };
+    }
+    if (String(url).includes("/cargo/geliver-balance")) {
+      return { data: { ok: true, balance: 1234.5, currency: "TRY" } };
+    }
+    return { data: {} };
+  });
+  await renderModal();
+  const chip = host.querySelector("[data-testid='ship-geliver-balance']");
+  expect(chip).not.toBeNull();
+  expect(chip.textContent).toMatch(/Bakiye/);
+  expect(chip.textContent.replace(/\s/g, "")).toMatch(/1[.,]234[.,]50/);
+});
+
 test("Geliver seçilince satın almasız teklif modülü görünür", async () => {
   await renderModal();
   expect(host.querySelector("[data-testid='ship-carrier-geliver']")).not.toBeNull();

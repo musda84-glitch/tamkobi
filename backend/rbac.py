@@ -490,6 +490,7 @@ def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], me
     if module == "/cargo" and (
         path.startswith("/api/cargo/create-shipment")
         or path.startswith("/api/cargo/auto-ship")
+        or path.startswith("/api/cargo/geliver-balance")
     ):
         return need == "edit" and level_allows(perms.get("/orders", "none"), "edit")
     # Atölye ekranı (PIN + iş emri başlat/duraklat/bitir): modülü görebilen kullanıcı işletebilsin.

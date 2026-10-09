@@ -352,3 +352,34 @@ def test_geliver_refresh_quotes_get_only():
     assert result["accepted"] is False
     assert len(result["offers"]) == 1
     assert result["offers"][0]["id"] == "off_a"
+
+
+def test_parse_geliver_balance():
+    import cargo_providers as cp
+
+    assert cp.parse_geliver_balance({"balance": 100}) == 100.0
+    assert cp.parse_geliver_balance({"amount": "12,5"}) == 12.5
+    assert cp.parse_geliver_balance({"data": {"totalBalance": "1.234,50"}}) == 1234.5
+    assert cp.parse_geliver_balance(None) is None
+    assert cp.parse_geliver_balance({}) is None
+
+
+def test_geliver_fetch_balance_returns_none_on_403():
+    import cargo_providers as cp
+
+    async def fake_geliver(method, path, token, **kwargs):
+        assert path == "/prices/balance"
+        raise HTTPException(status_code=403, detail="yetkiniz yok")
+
+    with patch.object(cp, "_geliver", side_effect=fake_geliver):
+        assert asyncio.run(cp.geliver_fetch_balance({"api_key": "t"})) is None
+
+
+def test_geliver_fetch_balance_ok():
+    import cargo_providers as cp
+
+    async def fake_geliver(method, path, token, **kwargs):
+        return {"balance": 42.5}
+
+    with patch.object(cp, "_geliver", side_effect=fake_geliver):
+        assert asyncio.run(cp.geliver_fetch_balance({"api_key": "t"})) == 42.5
