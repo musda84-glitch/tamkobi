@@ -28,6 +28,7 @@ import { listImageUrl } from "../utils/imageUrl";
 import { orderLineListImageUrl } from "../utils/productImages";
 import { Printer, Tag, RotateCcw, FileText as FileIcon, Trash2, UserPlus, Package as PackageIcon, MoreVertical, Factory } from "lucide-react";
 import { printThermalLabels } from "../utils/thermalLabels";
+import { printCargoLabelsPreferIntegrator } from "../utils/cargoLabelPrint";
 import { printMiniInvoices, printMiniInvoicesFromIntegrator } from "../utils/miniInvoicePrint";
 import { ClaimsPanel, CancelledPanel, QuestionsPanel } from "../components/MarketplacePanels";
 import { ProfitabilityPanel } from "../components/ProfitabilityPanel";
@@ -368,6 +369,22 @@ export default function OrdersB2BPage() {
     if (!hit.length) { toast.error(`Seçili siparişlerde ${title} gönderisi yok.`); return; }
     if (printThermalLabels(hit, activeCompany)) toast.success(`${hit.length} ${title} etiketi yazdırmaya gönderildi.`);
   };
+  /** Kamyon ikonu / mini etiket: entegrasyon etiketi tercih. */
+  const printOrderCargoLabel = async (ord, size = "100x150") => {
+    const r = await printCargoLabelsPreferIntegrator([ord], activeCompany, {
+      apiUrl: API_URL,
+      axiosClient: axios,
+      size,
+    });
+    if (r.ok || r.thermal) {
+      axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id || ord._id].filter(Boolean) })
+        .then(() => loadData())
+        .catch(() => {});
+      toast.success(r.message || "Kargo etiketi yazdırmaya gönderildi.");
+    } else {
+      toast.error(r.message || "Etiket yazdırılamadı.");
+    }
+  };
   const bulk = async (action) => {
     if (action === "refresh") {
       // Menü «Yenile» = pazaryeri sync (nav / F5 / mount tetiklemez)
@@ -386,18 +403,20 @@ export default function OrdersB2BPage() {
       return;
     }
     if (action === "labels" || action === "cargo_label" || action === "cargo_label_alt") { setBulkLabels(list); return; }
-    if (action === "thermal" || action === "cargo_mini") {
-      if (printThermalLabels(list, activeCompany, { size: "100x150" })) {
+    if (action === "thermal" || action === "cargo_mini" || action === "cargo_10x10") {
+      const size = action === "cargo_10x10" ? "100x100" : "100x150";
+      // Entegrasyon siparişleri → pazaryeri/kargo sağlayıcı etiketi; yoksa yerel termal
+      const r = await printCargoLabelsPreferIntegrator(list, activeCompany, {
+        apiUrl: API_URL,
+        axiosClient: axios,
+        size,
+      });
+      if (r.ok || r.thermal) {
         axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: list.map((o) => orderRowId(o)).filter(Boolean) }).catch(() => {});
-        toast.success(`${list.length} ${action === "cargo_mini" ? "mini kargo etiketi" : "termal etiket"} yazdırmaya gönderildi.`);
+        toast.success(r.message || `${list.length} etiket yazdırmaya gönderildi.`);
       } else {
-        toast.error("Etiket yazdırılamadı (açılır pencere engellenmiş olabilir).");
+        toast.error(r.message || "Etiket yazdırılamadı (açılır pencere engellenmiş olabilir).");
       }
-      return;
-    }
-    if (action === "cargo_10x10") {
-      if (printThermalLabels(list, activeCompany, { size: "100x100" })) toast.success(`${list.length} etiket (10×10) yazdırmaya gönderildi.`);
-      else toast.error("Etiket yazdırılamadı (açılır pencere engellenmiş olabilir).");
       return;
     }
     if (action === "hepsijet") { carrierLabels(list, "hepsijet", "HepsiJet"); return; }
@@ -1111,15 +1130,19 @@ export default function OrdersB2BPage() {
       else toast.success("Mini fatura fişi yazdırmaya gönderildi.");
       return;
     }
-    if (actionId === "cargo_mini") {
-      if (printThermalLabels([ord], activeCompany, { size: "100x150" })) {
-        axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id || ord._id] }).catch(() => {});
-        toast.success("Mini kargo etiketi yazdırmaya gönderildi.");
+    if (actionId === "cargo_mini" || actionId === "cargo_10x10") {
+      const size = actionId === "cargo_10x10" ? "100x100" : "100x150";
+      const r = await printCargoLabelsPreferIntegrator([ord], activeCompany, {
+        apiUrl: API_URL,
+        axiosClient: axios,
+        size,
+      });
+      if (r.ok || r.thermal) {
+        axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id || ord._id].filter(Boolean) }).catch(() => {});
+        toast.success(r.message || (actionId === "cargo_10x10" ? "Etiket (10×10) yazdırmaya gönderildi." : "Mini kargo etiketi yazdırmaya gönderildi."));
+      } else {
+        toast.error(r.message || "Etiket yazdırılamadı.");
       }
-      return;
-    }
-    if (actionId === "cargo_10x10") {
-      if (printThermalLabels([ord], activeCompany, { size: "100x100" })) toast.success("Etiket (10×10) yazdırmaya gönderildi.");
       return;
     }
     if (actionId === "xml") {
@@ -1607,7 +1630,7 @@ export default function OrdersB2BPage() {
                       ) : showCargoLabel ? (
                         <button
                           type="button"
-                          onClick={() => { if (printThermalLabels([ord], activeCompany)) axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id] }).then(() => loadData()).catch(() => {}); }}
+                          onClick={() => printOrderCargoLabel(ord)}
                           className={ord.label_printed_at
                             ? "p-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg shadow-sm ring-1 ring-sky-700/30"
                             : "p-1.5 text-indigo-700 hover:bg-indigo-50 border border-dashed border-indigo-200 rounded-lg"}
@@ -1976,7 +1999,7 @@ export default function OrdersB2BPage() {
                         ) : showCargoLabel ? (
                           <button
                             type="button"
-                            onClick={() => { if (printThermalLabels([ord], activeCompany)) axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id] }).then(() => loadData()).catch(() => {}); }}
+                            onClick={() => printOrderCargoLabel(ord)}
                             className={ord.label_printed_at
                               ? "p-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg shadow-sm ring-1 ring-sky-700/30"
                               : "p-1.5 text-indigo-700 hover:bg-indigo-50 border border-dashed border-indigo-200 rounded-lg"}
