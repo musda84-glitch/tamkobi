@@ -9,7 +9,7 @@ export const PARTNER_TX_LABEL = {
   capital_in: "Giriş",
   withdrawal: "Çıkış",
   profit_share: "Giriş",
-  credit: "Giriş",
+  credit: "Çıkış",
   debit: "Çıkış",
   salary: "Giriş",
 };
@@ -20,7 +20,7 @@ export function isPartnerExpenseTx(tx) {
 
 /**
  * İşlem sütunu yönü (kasa bakışı):
- * - Masraf (ortak ödedi) → Çıkış (harcama)
+ * - Masraf / alacak fişi → Çıkış (kasadan / şirket eksi)
  * - Cari tahsilat → ortak → Giriş (tahsilat)
  * - Cari ödeme ← ortak → Çıkış
  * - Banka eşleşmesi → bağlı banka hareketinin yönü (outflow=Çıkış)
@@ -29,6 +29,8 @@ export function isPartnerExpenseTx(tx) {
 export function partnerTxIsCashInflow(tx) {
   if (!tx) return false;
   if (isPartnerExpenseTx(tx)) return false;
+  // Ortak Alacak Fişi: kasa/şirket yönü çıkış (eksi tutar)
+  if (tx.type === "credit") return false;
   if (tx.contact_id && tx.type === "withdrawal") return true;
   if (tx.contact_id && tx.type === "capital_in") return false;
   // Banka eşleşmesi: kasa yönü = bağlı banka hareketi (Vadesiz çıkışı → Çıkış)

@@ -42,12 +42,12 @@ export const PARTNER_TX_TR: Record<string, string> = {
   capital_in: "Giriş",
   withdrawal: "Çıkış",
   profit_share: "Giriş",
-  credit: "Giriş",
+  credit: "Çıkış",
   debit: "Çıkış",
   salary: "Giriş",
 };
 
-/** Ortak işlem: Giriş/Çıkış = kasa yönü (masraf=Çıkış, cari tahsilat=Giriş). */
+/** Ortak işlem: Giriş/Çıkış = kasa yönü (masraf/alacak fişi=Çıkış, cari tahsilat=Giriş). */
 export function partnerTxLabel(tx?: {
   type?: string;
   expense_id?: string;
@@ -60,6 +60,7 @@ export function partnerTxLabel(tx?: {
   if (!tx) return "";
   const t = tx.type || "";
   if (tx.expense_id || tx.source === "expense") return "Çıkış";
+  if (t === "credit") return "Çıkış";
   if (tx.contact_id && t === "withdrawal") return "Giriş";
   if (tx.contact_id && t === "capital_in") return "Çıkış";
   if (tx.source === "bank_match" || tx.related_bank_tx_id) {
@@ -67,7 +68,7 @@ export function partnerTxLabel(tx?: {
     if (bankType === "outflow" || bankType === "debit") return "Çıkış";
     if (bankType === "inflow" || bankType === "credit") return "Giriş";
     // Eski kayıt: tip kasa yönünün tersi → tersle
-    if (t === "capital_in" || t === "credit" || t === "salary") return "Çıkış";
+    if (t === "capital_in" || t === "salary") return "Çıkış";
     return "Giriş";
   }
   if (t === "withdrawal" || t === "debit") return "Çıkış";

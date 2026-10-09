@@ -3,10 +3,13 @@ import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBala
 describe("partnerTx", () => {
   it("labels txs by cash direction (masraf=Çıkış, tahsilat=Giriş)", () => {
     expect(PARTNER_TX_LABEL.debit).toBe("Çıkış");
-    expect(PARTNER_TX_LABEL.credit).toBe("Giriş");
-    // Masraf: ortak bakiyesi artar ama kasa yönü Çıkış
+    expect(PARTNER_TX_LABEL.credit).toBe("Çıkış");
+    // Masraf / alacak fişi: ortak bakiyesi artar ama kasa yönü Çıkış (−)
     expect(partnerTxLabel({ type: "credit", expense_id: "e1" })).toBe("Çıkış");
     expect(partnerTxLabel({ type: "credit", source: "expense" })).toBe("Çıkış");
+    expect(partnerTxLabel({ type: "credit", description: "Ortak Alacak Fişi" })).toBe("Çıkış");
+    expect(partnerTxIsCashInflow({ type: "credit" })).toBe(false);
+    expect(partnerTxSign("credit", { type: "credit" })).toBe("-");
     expect(partnerTxIncreasesBalance("credit")).toBe(true);
     // Cari tahsilat → ortak: bakiye azalır ama işlem Giriş
     expect(partnerTxLabel({ type: "withdrawal", contact_id: "c1", description: "Ferhat: Cari tahsilat" })).toBe("Giriş");
