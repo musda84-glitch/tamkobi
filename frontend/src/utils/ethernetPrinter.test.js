@@ -8,9 +8,12 @@ import {
   defaultEthernetPrinter,
   escapeTsplText,
   ethernetPrinterConfigError,
+  isBridgeUrlOnPrinterHost,
   isBridgeUrlPrinterRawPort,
+  isSerialBaudPort,
   loadEthernetPrinter,
   mmToDots,
+  normalizeEthernetPort,
   sanitizeBarcodeData,
   saveEthernetPrinter,
   suggestedBridgeUrl,
@@ -87,10 +90,38 @@ describe("ethernetPrinter", () => {
       bridgeUrl: "http://192.168.1.117:9100",
     };
     expect(isBridgeUrlPrinterRawPort(bad)).toBe(true);
+    expect(isBridgeUrlOnPrinterHost(bad)).toBe(true);
     expect(ethernetPrinterConfigError(bad)).toMatch(/Köprü URL yazıcı/);
     const fixed = saveEthernetPrinter(bad);
     expect(fixed.bridgeUrl).toBe(suggestedBridgeUrl("192.168.1.117"));
     expect(fixed.bridgeUrl).toContain(":19100");
-    expect(isBridgeUrlPrinterRawPort(fixed)).toBe(false);
+    expect(isBridgeUrlOnPrinterHost(fixed)).toBe(false);
+  });
+
+  test("serial baud 9600 normalizes to Ethernet 9100", () => {
+    expect(isSerialBaudPort(9600)).toBe(true);
+    expect(normalizeEthernetPort(9600)).toBe(9100);
+    expect(ethernetPrinterConfigError({ host: "192.168.1.117", port: 9600, mode: "api" })).toMatch(/9600|seri baud|9100/i);
+    const fixed = saveEthernetPrinter({ host: "192.168.1.117", port: 9600, mode: "api" });
+    expect(fixed.port).toBe(9100);
+    localStorage.setItem(
+      "tamkobi_ethernet_printer",
+      JSON.stringify({ host: "192.168.1.117", port: 9600, mode: "api" }),
+    );
+    expect(loadEthernetPrinter().port).toBe(9100);
+  });
+
+  test("bridge URL on printer host with :19100 is still wrong", () => {
+    const bad = {
+      host: "192.168.1.117",
+      port: 9100,
+      mode: "bridge",
+      bridgeUrl: "http://192.168.1.117:19100",
+    };
+    expect(isBridgeUrlOnPrinterHost(bad)).toBe(true);
+    expect(ethernetPrinterConfigError(bad)).toMatch(/Köprü URL yazıcı/);
+    const fixed = saveEthernetPrinter(bad);
+    expect(fixed.bridgeUrl).toBe("http://127.0.0.1:19100");
+    expect(isBridgeUrlOnPrinterHost(fixed)).toBe(false);
   });
 });

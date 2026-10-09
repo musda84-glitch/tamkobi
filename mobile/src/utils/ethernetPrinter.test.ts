@@ -3,8 +3,11 @@ import {
   defaultEthernetPrinter,
   escapeTsplText,
   ethernetPrinterConfigError,
+  isBridgeUrlOnPrinterHost,
   isBridgeUrlPrinterRawPort,
+  isSerialBaudPort,
   mmToDots,
+  normalizeEthernetPort,
   sanitizeBarcodeData,
 } from "./ethernetPrinter";
 
@@ -32,14 +35,27 @@ describe("ethernetPrinter (mobile)", () => {
     expect(defaultEthernetPrinter().model).toBe("XP-490B");
   });
 
-  it("rejects bridge URL equal to printer :9100", () => {
-    const bad = {
+  it("rejects bridge URL equal to printer host (any port)", () => {
+    const bad9100 = {
       host: "192.168.1.117",
       port: 9100,
       mode: "bridge" as const,
       bridgeUrl: "http://192.168.1.117:9100",
     };
-    expect(isBridgeUrlPrinterRawPort(bad)).toBe(true);
-    expect(ethernetPrinterConfigError(bad)).toMatch(/Köprü URL yazıcı/);
+    const bad19100 = {
+      host: "192.168.1.117",
+      port: 9100,
+      mode: "bridge" as const,
+      bridgeUrl: "http://192.168.1.117:19100",
+    };
+    expect(isBridgeUrlPrinterRawPort(bad9100)).toBe(true);
+    expect(isBridgeUrlOnPrinterHost(bad19100)).toBe(true);
+    expect(ethernetPrinterConfigError(bad19100)).toMatch(/Köprü URL yazıcı/);
+  });
+
+  it("serial baud 9600 normalizes to 9100", () => {
+    expect(isSerialBaudPort(9600)).toBe(true);
+    expect(normalizeEthernetPort(9600)).toBe(9100);
+    expect(ethernetPrinterConfigError({ host: "192.168.1.117", port: 9600, mode: "api" })).toMatch(/9100|seri baud/i);
   });
 });

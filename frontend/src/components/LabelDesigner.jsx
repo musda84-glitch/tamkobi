@@ -18,7 +18,8 @@ import {
   PRINTER_PRESETS,
   applyPrinterPreset,
   ethernetPrinterConfigError,
-  isBridgeUrlPrinterRawPort,
+  isBridgeUrlOnPrinterHost,
+  isSerialBaudPort,
   loadEthernetPrinter,
   printLabelsEthernet,
   probeEthernetPrinter,
@@ -329,7 +330,16 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
   };
 
   const patchEth = (patch) => {
-    setEth((prev) => saveEthernetPrinter({ ...prev, ...patch }));
+    setEth((prev) => {
+      const next = { ...prev, ...patch };
+      if (isSerialBaudPort(next.port) && Number(patch.port) === Number(next.port)) {
+        toast.message("Port 9600 seri baud’dur; Ethernet için 9100’e çevrildi.");
+      }
+      if (next.mode === "bridge" && isBridgeUrlOnPrinterHost(next)) {
+        toast.message("Köprü URL yazıcı IP olamaz; PC köprüsü (127.0.0.1:19100) ayarlandı.");
+      }
+      return saveEthernetPrinter(next);
+    });
   };
 
   const onProbeEth = async () => {
@@ -453,21 +463,25 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
           {ethOpen && (
             <div className="space-y-2 pt-1 border-t border-slate-200">
               <p className="text-[10px] text-slate-500 leading-snug">
-                XP-490B Ethernet etiketi: <b>Yazıcı IP</b> = yazıcının IP’si (örn. 192.168.1.117), port <b>9100</b>.
+                XP-490B Ethernet etiketi: <b>Yazıcı IP</b> = yazıcının IP’si (örn. 192.168.1.117), port <b>9100</b>
+                {" "}(etiketteki <b>9600</b> seri baud’dur, Ethernet portu değil).
                 Önce <b>API sunucusu → yazıcı</b> deneyin (TamKobi sunucusu aynı LAN’daysa).
-                Mobil / bulut sunucu için <b>Yerel köprü</b>: PC’de <code className="bg-slate-200 px-1 rounded">python3 scripts/ethernet_print_bridge.py</code> → Köprü URL <b>http://PC-IP:19100</b> (yazıcı IP’si değil).
+                Mobil / bulut sunucu için <b>Yerel köprü</b>: PC’de <code className="bg-slate-200 px-1 rounded">python3 scripts/ethernet_print_bridge.py</code>
+                {" "}→ Köprü URL <b>http://PC-IP:19100</b> (yazıcı IP’si değil; 192.168.1.117:19100 yanlış).
               </p>
-              {eth.mode === "bridge" && (isBridgeUrlPrinterRawPort(eth) || ethernetPrinterConfigError(eth)) && (
+              {ethernetPrinterConfigError(eth) && (
                 <div className="text-[10px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-snug" data-testid="ethernet-bridge-warn">
-                  {ethernetPrinterConfigError(eth) || "Köprü URL yazıcı :9100 olamaz."}
-                  <button
-                    type="button"
-                    className="ml-1 underline font-semibold"
-                    data-testid="ethernet-bridge-fix"
-                    onClick={() => patchEth({ bridgeUrl: suggestedBridgeUrl(eth.host) })}
-                  >
-                    {suggestedBridgeUrl(eth.host)} yap
-                  </button>
+                  {ethernetPrinterConfigError(eth)}
+                  {eth.mode === "bridge" && (
+                    <button
+                      type="button"
+                      className="ml-1 underline font-semibold"
+                      data-testid="ethernet-bridge-fix"
+                      onClick={() => patchEth({ bridgeUrl: suggestedBridgeUrl(eth.host) })}
+                    >
+                      {suggestedBridgeUrl(eth.host)} yap
+                    </button>
+                  )}
                 </div>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -524,7 +538,7 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
                     value={eth.mode}
                     onChange={(e) => {
                       const mode = e.target.value;
-                      if (mode === "bridge" && isBridgeUrlPrinterRawPort({ ...eth, mode })) {
+                      if (mode === "bridge" && isBridgeUrlOnPrinterHost({ ...eth, mode })) {
                         patchEth({ mode, bridgeUrl: suggestedBridgeUrl(eth.host) });
                       } else {
                         patchEth({ mode });
@@ -544,7 +558,7 @@ export const LabelQuickPrint = ({ companyId, product, company, onClose, onOpenDe
                       value={eth.bridgeUrl}
                       onChange={(e) => patchEth({ bridgeUrl: e.target.value })}
                       placeholder="http://192.168.1.50:19100"
-                      className={`w-full border rounded-lg p-2 font-mono bg-white ${isBridgeUrlPrinterRawPort(eth) ? "border-amber-400" : ""}`}
+                      className={`w-full border rounded-lg p-2 font-mono bg-white ${isBridgeUrlOnPrinterHost(eth) ? "border-amber-400" : ""}`}
                       data-testid="ethernet-printer-bridge"
                     />
                   </label>

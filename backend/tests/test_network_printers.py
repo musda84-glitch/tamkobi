@@ -31,3 +31,10 @@ def test_validate_port():
     assert validate_port(9100) == 9100
     with pytest.raises(HTTPException):
         validate_port(22)
+
+
+def test_validate_port_serial_baud_message():
+    with pytest.raises(HTTPException) as ei:
+        validate_port(9600)
+    assert "seri baud" in ei.value.detail.lower() or "9100" in ei.value.detail
+    assert "9600" in ei.value.detail
