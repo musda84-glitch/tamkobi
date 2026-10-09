@@ -402,8 +402,8 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               </span>
             </button>
             <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-500">
-              <div>Giriş: <b className="text-emerald-700">{fmt(p.total_capital_in)}</b></div>
-              <div>Çıkış: <b className="text-rose-700">{fmt(p.total_withdrawn)}</b></div>
+              <div>Giriş: <b className="text-rose-700">−{fmt(p.total_capital_in)}</b></div>
+              <div>Çıkış: <b className="text-emerald-700">+{fmt(p.total_withdrawn)}</b></div>
             </div>
           </div>
           );
@@ -437,20 +437,19 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               <div className="font-bold text-slate-800">Bakiye kontrolü</div>
               <div className={selectedLedger.drift ? "text-rose-700 font-semibold" : "text-emerald-700 font-semibold"} data-testid="partner-ledger-match">
                 {selectedLedger.drift
-                  ? `Sapma: kart ${fmt(selectedLedger.stored)} ₺ ≠ hareket ${fmt(selectedLedger.ledger)} ₺`
-                  : `Kart = hareket toplamı (${fmt(selectedLedger.ledger)} ₺ · ${selectedLedger.count} kayıt)`}
+                  ? `Sapma: kart ${fmt(partnerBalanceMeta(selectedLedger.stored).display)} ₺ ≠ hareket ${fmt(selectedLedger.netDisplay)} ₺`
+                  : `Kart = Giriş + Çıkış (${fmt(selectedLedger.netDisplay)} ₺ · ${selectedLedger.count} kayıt)`}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2" data-testid="partner-ledger-buckets">
-              {[
-                ["Giriş", selectedLedger.inflow, "text-emerald-700"],
-                ["Çıkış", selectedLedger.outflow, "text-rose-700"],
-              ].map(([label, val, cls]) => (
-                <div key={label} className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
-                  <div className="text-[10px] uppercase text-slate-400 font-semibold">{label}</div>
-                  <div className={`font-bold ${cls}`}>{fmt(val)} ₺</div>
-                </div>
-              ))}
+              <div className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
+                <div className="text-[10px] uppercase text-slate-400 font-semibold">Giriş</div>
+                <div className="font-bold text-rose-700" data-testid="partner-ledger-inflow">{fmt(selectedLedger.girisDisplay)} ₺</div>
+              </div>
+              <div className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
+                <div className="text-[10px] uppercase text-slate-400 font-semibold">Çıkış</div>
+                <div className="font-bold text-emerald-700" data-testid="partner-ledger-outflow">+{fmt(selectedLedger.cikisDisplay)} ₺</div>
+              </div>
             </div>
           </div>
         )}

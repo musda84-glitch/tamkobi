@@ -103,7 +103,89 @@ async def apply_partner_match(db, tx: dict, partner_id: str, amount, is_inflow: 
 
 
 async def reverse_partner_match(db, tx: dict) -> bool:
+    """Banka eşleşme iptalinde ortak hareketini sil (bakiye geri alınır)."""
     ok = await partner_pay.reverse_one(db, {"related_bank_tx_id": tx["_id"], "source": "bank_match"})
     if ok:
         return True
     return await partner_pay.reverse_one(db, {"related_bank_tx_id": tx["_id"]})
+
+
+async def clear_bank_match_status(db, bank_tx_id: Optional[str]) -> bool:
+    """Ortak/cari tarafı silinince banka satırını eşleşmemiş yap (bakiyeye dokunma).
+
+    Partner tx zaten `_reverse_partner_tx` ile geri alındı; burada yalnızca
+    match_status / hedef alanları temizlenir — `_unmatch` gibi tekrar reverse yok.
+    """
+    if not bank_tx_id:
+        return False
+    tx = await db.bank_transactions.find_one({"_id": bank_tx_id})
+    if not tx or tx.get("match_status") != "matched":
+        return False
+    is_inflow = tx.get("type") == "inflow"
+    await db.bank_transactions.update_one(
+        {"_id": bank_tx_id},
+        {
+            "$set": {
+                "match_status": "unmatched",
+                "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme",
+            },
+            "$unset": {
+                "contact_id": "",
+                "contact_name": "",
+                "related_invoice_id": "",
+                "related_invoice_number": "",
+                "target_account_id": "",
+                "target_account_name": "",
+                "matched_via": "",
+                "matched_at": "",
+                "matched_by_id": "",
+                "matched_by_name": "",
+            },
+        },
+    )
+    return True
+
+
+async def resolve_bank_tx_id_for_partner_tx(db, partner_tx: dict) -> Optional[str]:
+    """Ortak hareketinden bağlı banka eşleşme satırının id'sini bul."""
+    if not partner_tx:
+        return None
+    bank_tx_id = partner_tx.get("related_bank_tx_id")
+    if bank_tx_id:
+        return str(bank_tx_id)
+    partner_id = partner_tx.get("partner_id")
+    if not partner_id:
+        return None
+    try:
+        amount = float(partner_tx.get("amount") or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    q: Dict[str, Any] = {
+        "match_status": "matched",
+        "target_account_id": stored_match_target("partner", partner_id),
+    }
+    if amount:
+        q["amount"] = amount
+    if partner_tx.get("date"):
+        q["date"] = partner_tx["date"]
+    btx = await db.bank_transactions.find_one(q)
+    if btx:
+        return btx.get("_id")
+    # Son çare: tutar+hedef (tarih farklı yazılmış olabilir)
+    if amount:
+        btx = await db.bank_transactions.find_one({
+            "match_status": "matched",
+            "target_account_id": stored_match_target("partner", partner_id),
+            "amount": amount,
+        })
+        if btx:
+            return btx.get("_id")
+    return None
+
+
+async def clear_bank_match_for_partner_tx(db, partner_tx: dict) -> bool:
+    """Ortak hareketi silinirken banka eşleşmesini iptal et (satır bekleyenlere düşer)."""
+    bank_tx_id = await resolve_bank_tx_id_for_partner_tx(db, partner_tx)
+    if not bank_tx_id:
+        return False
+    return await clear_bank_match_status(db, bank_tx_id)
