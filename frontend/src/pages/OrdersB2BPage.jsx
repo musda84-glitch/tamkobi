@@ -364,21 +364,26 @@ export default function OrdersB2BPage() {
   };
   const bulk = async (action) => {
     if (action === "refresh") {
+      // Yenile ile aynı: pazaryeri çekimi (nav/sayfa açılışı tetiklemez)
       setBulkBusy(true);
       try {
         const r = await axios.get(`${API_URL}/integrations/ecommerce?company_id=${companyId}`);
         const channels = Array.isArray(r.data) ? r.data : [];
         let synced = 0;
         for (const c of channels) {
-          try { await axios.post(`${API_URL}/integrations/ecommerce/${c.id || c._id}/sync-now`, null, { timeout: 120000 }); synced++; }
-          catch { /* kanal kapalıysa liste yine yenilenir */ }
+          try {
+            await axios.post(`${API_URL}/integrations/ecommerce/${c.id || c._id}/sync-now`, null, { timeout: 120000 });
+            synced += 1;
+          } catch { /* kanal kapalıysa devam */ }
         }
         await loadData();
         toast.success(synced ? `${synced} kanal senkronlandı, siparişler güncellendi.` : "Sipariş listesi yenilendi.");
       } catch {
         await loadData();
         toast.success("Sipariş listesi yenilendi.");
-      } finally { setBulkBusy(false); }
+      } finally {
+        setBulkBusy(false);
+      }
       return;
     }
     const list = selectedOrders();
@@ -634,6 +639,7 @@ export default function OrdersB2BPage() {
   const [cart, setCart] = useState({});
   const [b2bCustomer, setB2bCustomer] = useState("");
 
+  // Yalnızca yerel DB listesi — pazaryeri sync-now YOK (nav tık / F5).
   const loadData = useCallback(async () => {
     const cid = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
     try {
@@ -656,6 +662,29 @@ export default function OrdersB2BPage() {
     }
   }, [activeCompany]);
   useEffect(() => { loadData(); }, [loadData]);
+
+  /** Yenile: pazaryerinden sipariş çek + listeyi güncelle (otomatik 10 dk döngü ile aynı iş). */
+  const refreshOrders = useCallback(async () => {
+    setBulkBusy(true);
+    try {
+      const r = await axios.get(`${API_URL}/integrations/ecommerce?company_id=${companyId}`);
+      const channels = Array.isArray(r.data) ? r.data : [];
+      let synced = 0;
+      for (const c of channels) {
+        try {
+          await axios.post(`${API_URL}/integrations/ecommerce/${c.id || c._id}/sync-now`, null, { timeout: 120000 });
+          synced += 1;
+        } catch { /* kanal kapalıysa devam */ }
+      }
+      await loadData();
+      toast.success(synced ? `${synced} kanal senkronlandı, siparişler güncellendi.` : "Sipariş listesi yenilendi.");
+    } catch {
+      await loadData();
+      toast.success("Sipariş listesi yenilendi.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [companyId, loadData]);
 
   const [expandedItems, setExpandedItems] = useState(null);
   const [produceFromOrder, setProduceFromOrder] = useState(null);
@@ -1447,8 +1476,8 @@ export default function OrdersB2BPage() {
           onBulkAction={bulk}
           pageSize={pageSize}
           onPageSizeChange={setPageSizePersist}
-          onRefresh={loadData}
-          refreshBusy={loading}
+          onRefresh={refreshOrders}
+          refreshBusy={loading || bulkBusy}
         />
 
         {/* Mobil: sade kart + aynı Diğer işlemler menüsü */}

@@ -171,7 +171,7 @@ export const OrdersToolbar = ({
             disabled={refreshBusy}
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             data-testid="ord-refresh-btn"
-            title="Listeyi yenile"
+            title="Pazaryerinden siparişleri çek ve listeyi yenile (sayfa açılışı çekmez)"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshBusy ? "animate-spin" : ""}`} />
             Yenile
