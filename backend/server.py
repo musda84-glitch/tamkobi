@@ -14069,6 +14069,24 @@ async def list_cargo_integrations(company_id: Optional[str] = "comp_nexus_main_0
     configs = await db.cargo_configs.find({"company_id": company_id}).to_list(100)
     return [cargo_providers.mask_config(c) for c in clean_docs(configs)]
 
+
+@api_router.get("/cargo/geliver-balance")
+async def cargo_geliver_balance(company_id: Optional[str] = "comp_nexus_main_01"):
+    """Sipariş Kargola modalı: bağlı Geliver bakiyesi (Geliver /prices/balance)."""
+    cfg = await db.cargo_configs.find_one({
+        "company_id": company_id,
+        "carrier_code": "geliver",
+        "status": "connected",
+        "is_active": {"$ne": False},
+    })
+    if not cfg or not cargo_providers.has_live_credentials(cfg):
+        return {"ok": False, "balance": None, "currency": "TRY"}
+    try:
+        bal = await cargo_providers.geliver_fetch_balance(cfg)
+    except HTTPException:
+        return {"ok": False, "balance": None, "currency": "TRY"}
+    return {"ok": bal is not None, "balance": bal, "currency": "TRY"}
+
 @api_router.put("/integrations/cargo/{carrier_id}")
 async def update_cargo_integration(carrier_id: str, data: Dict[str, Any]):
     allowed = {k: v for k, v in data.items() if k in {"api_key", "api_secret", "api_password", "api_username", "customer_number", "sender_address_id", "test_mode", "is_active", "status", "auto_create_barcode", "default_weight", "default_length", "default_width", "default_height", "default_desi", "default_package_count"}}

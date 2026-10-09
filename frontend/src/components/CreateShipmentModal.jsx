@@ -30,12 +30,25 @@ export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
   const [quotes, setQuotes] = useState(null);
   const [selectedOfferId, setSelectedOfferId] = useState("");
   const [quotedPkgKey, setQuotedPkgKey] = useState("");
+  const [geliverBalance, setGeliverBalance] = useState(null);
 
   useEffect(() => {
     axios.get(`${API_URL}/integrations/cargo?company_id=${companyId}`).then((r) => {
       const list = (r.data || []).slice().sort((a, b) => Number(b.status === "connected" && b.is_active) - Number(a.status === "connected" && a.is_active));
       setCarriers(list);
       setCarrier((cur) => cur || (list.find((c) => c.status === "connected" && c.is_active) || list[0])?.carrier_code || "");
+      const glv = list.find((c) => c.carrier_code === "geliver" && c.status === "connected" && c.is_active !== false);
+      if (!glv) { setGeliverBalance(null); return; }
+      axios.get(`${API_URL}/cargo/geliver-balance`, { params: { company_id: companyId } })
+        .then((br) => {
+          if (br.data?.ok === false || br.data?.balance == null || br.data?.balance === "") {
+            setGeliverBalance(null);
+            return;
+          }
+          const n = Number(br.data.balance);
+          setGeliverBalance(Number.isFinite(n) ? n : null);
+        })
+        .catch(() => setGeliverBalance(null));
     }).catch(() => setCarriers([]));
   }, [companyId]);
 
@@ -207,6 +220,11 @@ export const CreateShipmentModal = ({ order, companyId, onClose, onDone }) => {
                   <button key={c.carrier_code} type="button" onClick={() => pickCarrier(c.carrier_code)} className={`text-left border-2 rounded-xl p-2.5 transition ${carrier === c.carrier_code ? "border-indigo-600 bg-indigo-50" : "border-slate-200 hover:border-slate-400"}`} data-testid={`ship-carrier-${c.carrier_code}`}>
                     <div className="flex items-center gap-1.5"><Truck className="w-3.5 h-3.5 text-slate-500" /><span className="font-bold text-slate-900 truncate">{c.carrier_name}</span></div>
                     <div className={`mt-1 inline-flex items-center gap-1 text-[10px] font-semibold ${ok ? "text-emerald-700" : "text-slate-400"}`}><Plug className="w-3 h-3" /> {ok ? "Bağlı" : "Bağlı değil (simüle)"}</div>
+                    {c.carrier_code === "geliver" && ok && geliverBalance != null ? (
+                      <div className="mt-1 text-[10px] font-bold text-indigo-800" data-testid="ship-geliver-balance">
+                        Bakiye: {geliverBalance.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺
+                      </div>
+                    ) : null}
                   </button>
                 );
               })}

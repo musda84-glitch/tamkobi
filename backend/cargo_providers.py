@@ -319,6 +319,51 @@ def _geliver_address_items(data: Any) -> List[dict]:
     return [a for a in (items or []) if isinstance(a, dict) and a.get("id")]
 
 
+def parse_geliver_balance(payload: Any) -> Optional[float]:
+    """GET /prices/balance gövdesinden sayısal bakiye (yoksa None)."""
+    if payload is None or payload == "":
+        return None
+    if isinstance(payload, bool):
+        return None
+    if isinstance(payload, (int, float)):
+        return float(payload)
+    if isinstance(payload, str):
+        s = payload.strip().replace("₺", "").replace("TRY", "").replace(" ", "")
+        if not s:
+            return None
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif s.count(",") == 1:
+            s = s.replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    if not isinstance(payload, dict):
+        return None
+    nested = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    for key in ("balance", "amount", "totalBalance", "availableBalance", "credit"):
+        val = payload.get(key)
+        if val is None:
+            val = nested.get(key)
+        if val is None or isinstance(val, dict):
+            continue
+        parsed = parse_geliver_balance(val)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+async def geliver_fetch_balance(config: dict, token: Optional[str] = None) -> Optional[float]:
+    """Canlı Geliver bakiyesi. Uç yoksa / yetkisizse None (bağlantıyı bozmaz)."""
+    tok = token or geliver_token(config)
+    try:
+        bal = await _geliver("GET", "/prices/balance", tok)
+    except HTTPException:
+        return None
+    return parse_geliver_balance(bal)
+
+
 async def geliver_test(config: dict) -> Dict[str, Any]:
     token = geliver_token(config)
     # Unfiltered list first (original working path). Some accounts 403 on isRecipientAddress filter.
@@ -352,16 +397,7 @@ async def geliver_test(config: dict) -> Dict[str, Any]:
         }
         for a in (senders or items)
     ]
-    balance = None
-    try:
-        bal = await _geliver("GET", "/prices/balance", token)
-        if isinstance(bal, dict):
-            balance = bal.get("balance") or bal.get("amount") or bal.get("totalBalance") or bal
-        else:
-            balance = bal
-    except HTTPException:
-        # Balance endpoint may be unavailable for some accounts; connection still OK.
-        pass
+    balance = await geliver_fetch_balance(config, token=token)
     msg = f"Geliver bağlantısı doğrulandı. {len(addresses)} adres bulundu."
     if balance is not None:
         msg += f" Bakiye: {balance}"
