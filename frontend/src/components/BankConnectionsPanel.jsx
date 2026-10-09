@@ -9,6 +9,11 @@ import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { formatTrAmount } from "../utils/money";
 import { matchActorName, matchActorTitle } from "../utils/bankMatchLabel";
 import { downloadTextFile, generateJsencryptKeyPair } from "../utils/jsencryptKuveyt";
+import { useInfiniteRows } from "../hooks/useInfiniteRows";
+
+/** İlk ekranda DOM'u hafif tut — her satırda eşleştirme kontrolleri var. */
+const UNMATCHED_PAGE_INITIAL = 25;
+const UNMATCHED_PAGE_STEP = 25;
 
 const LINKABLE_ACCOUNT_TYPES = new Set(["bank", "pos", "okc_pos"]);
 const PROVIDER_BANK_HINTS = {
@@ -281,19 +286,46 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
 
   const load = useCallback(async () => {
     try {
-      const [p, c, u, r, inv, m, sug] = await Promise.all([
+      const [p, c, u, r, m, sug] = await Promise.all([
         axios.get(`${API_URL}/banking/providers`),
         axios.get(`${API_URL}/banking/connections?company_id=${companyId}`),
         axios.get(`${API_URL}/banking/transactions/unmatched?company_id=${companyId}`),
         axios.get(`${API_URL}/banking/match-rules?company_id=${companyId}`),
-        axios.get(`${API_URL}/invoices?company_id=${companyId}&type=all`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/banking/transactions/matched?company_id=${companyId}&limit=50`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/banking/match-rule-suggestions?company_id=${companyId}`).catch(() => ({ data: [] })),
       ]);
-      setProviders(p.data); setConnections(c.data); setUnmatched(u.data); setRules(r.data); setInvoices(inv.data); setMatched(m.data); setSuggestions(sug.data);
+      const unmatchedList = Array.isArray(u.data) ? u.data : [];
+      setProviders(p.data);
+      setConnections(c.data);
+      setUnmatched(unmatchedList);
+      setRules(r.data);
+      setMatched(m.data);
+      setSuggestions(sug.data);
+      // Faturalar yalnızca eşleştirme için; büyük listede ilk boyayı bloklamasın.
+      if (unmatchedList.length === 0) {
+        setInvoices([]);
+      } else {
+        setTimeout(() => {
+          axios.get(`${API_URL}/invoices?company_id=${companyId}&type=all`)
+            .then((inv) => setInvoices(Array.isArray(inv.data) ? inv.data : []))
+            .catch(() => setInvoices([]));
+        }, 0);
+      }
     } catch { toast.error("Banka bağlantıları yüklenemedi."); }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
+
+  const {
+    visible: visibleUnmatched,
+    hasMore: unmatchedHasMore,
+    sentinelRef: unmatchedSentinelRef,
+    shown: unmatchedShown,
+    total: unmatchedTotal,
+  } = useInfiniteRows(unmatched, {
+    initial: UNMATCHED_PAGE_INITIAL,
+    step: UNMATCHED_PAGE_STEP,
+    resetKey: unmatched.length,
+  });
 
   const provider = providers.find((p) => p.code === form.provider);
 
@@ -502,7 +534,10 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
         <div className="px-5 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <span className="text-sm font-bold text-slate-900">Eşleştirme Bekleyen Banka Hareketleri</span>
-            <span className="ml-2 text-xs text-slate-400">{unmatched.length} hareket</span>
+            <span className="ml-2 text-xs text-slate-400" data-testid="unmatched-count">
+              {unmatchedTotal} hareket
+              {unmatchedTotal > unmatchedShown ? ` · ${unmatchedShown} gösteriliyor` : ""}
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => autoMatch(true)} disabled={!!busy || !unmatched.length} className="flex items-center gap-1 px-3 py-1.5 bg-violet-600 text-white rounded-lg text-[11px] font-semibold hover:bg-violet-700 disabled:opacity-50" title="Öğrenilen kurallar, önceki eşleşmeler ve cari adı karşılığıyla otomatik işle" data-testid="auto-match-btn">
@@ -572,9 +607,26 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
             <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold">
               <tr><th className="px-4 py-2">Tarih</th><th className="px-4 py-2">Hesap</th><th className="px-4 py-2">Açıklama</th><th className="px-4 py-2 text-right">Tutar</th><th className="px-4 py-2">Eşleştirme (Cari / Fatura / Kasa / Kategori)</th><th className="px-4 py-2"></th></tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-slate-100" data-testid="unmatched-tx-tbody">
               {unmatched.length === 0 && <tr><td colSpan={6} className="px-4 py-5 text-center text-slate-400">Eşleştirme bekleyen hareket yok.</td></tr>}
-              {unmatched.map((t) => <BankMatchRow key={t.id} tx={t} contacts={contacts} accounts={accounts} invoices={invoices} companyId={companyId} onDone={() => { load(); onSynced?.(); }} />)}
+              {visibleUnmatched.map((t) => (
+                <BankMatchRow
+                  key={t.id}
+                  tx={t}
+                  contacts={contacts}
+                  accounts={accounts}
+                  invoices={invoices}
+                  companyId={companyId}
+                  onDone={() => { load(); onSynced?.(); }}
+                />
+              ))}
+              {unmatchedHasMore && (
+                <tr data-testid="unmatched-load-more">
+                  <td colSpan={6} className="px-4 py-3 text-center text-[11px] text-slate-500" ref={unmatchedSentinelRef}>
+                    Daha fazla hareket yükleniyor… ({unmatchedShown} / {unmatchedTotal})
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

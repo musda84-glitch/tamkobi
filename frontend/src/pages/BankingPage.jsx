@@ -99,6 +99,7 @@ export default function BankingPage() {
   const { activeCompany, addonOn } = useAuth();
   const [searchParams] = useSearchParams();
   const companyId = activeCompany?.id || activeCompany?._id || "comp_nexus_main_01";
+  const contactVirmanId = searchParams.get("contact_id") || "";
   const [tab, setTab] = useState(searchParams.get("tab") || "accounts");
   const [contacts, setContacts] = useState([]);
   const [partnerSummary, setPartnerSummary] = useState(null);
@@ -161,7 +162,6 @@ export default function BankingPage() {
       setPartnerSummary(psRes.data);
       // Virman: entegre olmayan tüm hesaplar (kasa/banka/POS/kredi kartı). Cari URL'den gelirse kaynak olur.
       const manual = accRes.data.filter((a) => !a.is_integrated);
-      const contactVirmanId = searchParams.get("contact_id");
       if (contactVirmanId) {
         const firstAcc = manual[0] ? (manual[0].id || manual[0]._id) : "";
         setVirmanForm((prev) => ({
@@ -183,7 +183,7 @@ export default function BankingPage() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [companyId, searchParams]);
+  }, [companyId, contactVirmanId]);
   useEffect(() => { loadBankingData(); }, [loadBankingData]);
   const refreshCashSilent = useCallback(() => {
     setCashTick((n) => n + 1);

@@ -10,11 +10,14 @@ jest.mock("axios", () => {
     post: jest.fn(() => Promise.resolve({ data: {} })),
     put: jest.fn(() => Promise.resolve({ data: {} })),
     delete: jest.fn(() => Promise.resolve({ data: {} })),
+    defaults: { withCredentials: false },
+    interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
   };
   return { __esModule: true, default: impl, ...impl };
 });
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }));
 jest.mock("../context/AuthContext", () => ({ API_URL: "/api" }));
+jest.mock("../utils/imageUrl", () => ({ resolveImageUrl: (u) => u || "" }));
 jest.mock("../utils/jsencryptKuveyt", () => ({
   generateJsencryptKeyPair: jest.fn(async () => ({
     privateKey: "PRIV",

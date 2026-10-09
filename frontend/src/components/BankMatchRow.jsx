@@ -5,6 +5,7 @@ import { Loader2, Sparkles } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount } from "../utils/money";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
+import { SearchSelect } from "./SearchSelect";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const sel = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
@@ -20,10 +21,19 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
   const [busy, setBusy] = useState(false);
   const isIn = tx.type === "inflow";
 
-  const openInvoices = useMemo(() => invoices
+  const openInvoices = useMemo(() => (invoices || [])
     .filter((i) => i.contact_id === contactId && i.payment_status !== "paid" && i.status !== "draft" && i.invoice_type === (isIn ? "sales" : "purchase"))
     .sort((a, b) => Math.abs((a.grand_total - a.paid_amount) - tx.amount) - Math.abs((b.grand_total - b.paid_amount) - tx.amount)), [invoices, contactId, isIn, tx.amount]);
-  const targets = accounts.filter((a) => (a.id || a._id) !== tx.account_id && !a.is_integrated);
+  const targets = useMemo(
+    () => (accounts || []).filter((a) => (a.id || a._id) !== tx.account_id && !a.is_integrated),
+    [accounts, tx.account_id],
+  );
+  const contactLabel = (c) => (tx.suggested_contact_id === (c.id || c._id) ? `${c.name} ★` : (c.name || "—"));
+  const selectedContactName = (() => {
+    if (!contactId) return "";
+    const hit = (contacts || []).find((c) => (c.id || c._id) === contactId);
+    return hit ? contactLabel(hit) : (tx.suggested_contact_name || "");
+  })();
   const canSubmit = mode === "category" ? !!category.trim() : mode === "transfer" ? !!targetId : mode === "invoice" ? !!invoiceId : true;
   const submit = async () => {
     setBusy(true);
@@ -45,16 +55,32 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
         <div className="flex flex-wrap gap-1.5 items-center">
           <select value={mode} onChange={(e) => setMode(e.target.value)} className={sel} data-testid={`match-mode-${tx.id}`}>{MODES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
           {(mode === "contact" || mode === "invoice") && (
-            <select value={contactId} onChange={(e) => { setContactId(e.target.value); setInvoiceId(""); }} className={`${sel} w-44`} data-testid={`match-contact-select-${tx.id}`}>
-              <option value="">{mode === "contact" ? "Cari seçin (boş = sadece onayla)" : "Cari seçin"}</option>
-              {contacts.map((c) => <option key={c.id} value={c.id}>{tx.suggested_contact_id === c.id ? `${c.name} ★` : c.name}</option>)}
-            </select>
+            <SearchSelect
+              value={contactId}
+              onChange={(id) => { setContactId(id || ""); setInvoiceId(""); }}
+              options={contacts || []}
+              getLabel={contactLabel}
+              getSub={(c) => c.tax_number_or_id || c.phone || ""}
+              valueLabel={selectedContactName}
+              placeholder={mode === "contact" ? "Cari seçin (boş = onayla)" : "Cari ara…"}
+              searchPlaceholder="Cari adı ara…"
+              clearable={mode === "contact"}
+              className="w-44"
+              testId={`match-contact-select-${tx.id}`}
+            />
           )}
           {mode === "invoice" && (
-            <select value={invoiceId} onChange={(e) => setInvoiceId(e.target.value)} className={`${sel} w-52`} disabled={!contactId} data-testid={`match-invoice-select-${tx.id}`}>
-              <option value="">{contactId ? (openInvoices.length ? "Açık fatura seçin" : "Açık fatura yok") : "Önce cari seçin"}</option>
-              {openInvoices.map((i) => <option key={i.id} value={i.id}>{`${i.invoice_number} · kalan ${fmt(i.grand_total - (i.paid_amount || 0))} ₺`}</option>)}
-            </select>
+            <SearchSelect
+              value={invoiceId}
+              onChange={(id) => setInvoiceId(id || "")}
+              options={openInvoices}
+              getLabel={(i) => `${i.invoice_number} · kalan ${fmt(i.grand_total - (i.paid_amount || 0))} ₺`}
+              placeholder={!contactId ? "Önce cari seçin" : (openInvoices.length ? "Açık fatura seçin" : "Açık fatura yok")}
+              searchPlaceholder="Fatura no ara…"
+              clearable
+              className="w-52"
+              testId={`match-invoice-select-${tx.id}`}
+            />
           )}
           {mode === "transfer" && (
             <PaymentTargetSelect
@@ -68,7 +94,8 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
               collectableOnly={isIn}
               emptyLabel={isIn ? "Para nereden geldi?" : "Para nereye gitti?"}
               className="w-56"
-            />          )}
+            />
+          )}
           <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder={mode === "category" ? "Kategori (zorunlu)" : "Kategori (ops.)"} className={`${sel} w-36`} data-testid={`match-category-${tx.id}`} />
           <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" title="Bu açıklama tekrar gelirse aynı işlemi otomatik yap"><input type="checkbox" checked={learn} onChange={(e) => setLearn(e.target.checked)} data-testid={`match-learn-${tx.id}`} /> Öğren</label>
         </div>
