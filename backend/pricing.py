@@ -81,18 +81,53 @@ async def compute_prices(req: Dict[str, Any]):
     fees = _deps["channel_fees"](cfg, channel)
     mp = await _deps["marketplace_products"](company_id=company_id, channel=channel, refresh=False)
     rows = []
+    commission_rate = float(fees.get("commission_rate") or 0)
+    commission_vat_rate = float(fees.get("commission_vat_rate") or 0)
+    eff_comm = commission_rate / 100 * (1 + commission_vat_rate / 100)
+    fixed_fees = float(fees.get("service_fee") or 0) + float(fees.get("cargo_fee") or 0)
     for r in mp["rows"]:
         if not r.get("product_id"):
             continue
         cost = float(r.get("purchase_price") or 0)
-        if cost <= 0:
-            rows.append({**{k: r.get(k) for k in ("barcode", "title", "product_name", "product_sku", "sale_price", "quantity", "image")}, "cost": 0, "suggested": None, "reason": "Alış fiyatı yok"}); continue
-        s = suggest_price(cost, fees, rule)
         cur = float(r.get("sale_price") or 0)
-        rows.append({**{k: r.get(k) for k in ("barcode", "title", "product_name", "product_sku", "sale_price", "quantity", "image")}, "cost": cost, "suggested": s["price"], "list_price": s["list_price"], "net_profit": s["net_profit"], "margin_pct": s["margin_pct"],
-                     "diff": round(s["price"] - cur, 2), "diff_pct": round((s["price"] - cur) / cur * 100, 1) if cur else None, "current_net": round(cur * (1 - float(fees.get("commission_rate") or 0) / 100 * (1 + float(fees.get("commission_vat_rate") or 0) / 100)) - float(fees.get("service_fee") or 0) - float(fees.get("cargo_fee") or 0) - cost, 2)})
+        local_price = r.get("local_price")
+        local_price = float(local_price) if local_price not in (None, "") else None
+        base = {
+            k: r.get(k) for k in ("barcode", "title", "product_name", "product_sku", "sale_price", "quantity", "image")
+        }
+        base.update({
+            "marketplace_price": cur,
+            "local_price": local_price,
+            "commission_rate": commission_rate,
+            "commission_vat_rate": commission_vat_rate,
+            "effective_commission_rate": round(commission_rate * (1 + commission_vat_rate / 100), 2),
+        })
+        if cost <= 0:
+            rows.append({**base, "cost": 0, "suggested": None, "reason": "Alış fiyatı yok", "current_net": None})
+            continue
+        s = suggest_price(cost, fees, rule)
+        rows.append({
+            **base,
+            "cost": cost,
+            "suggested": s["price"],
+            "list_price": s["list_price"],
+            "net_profit": s["net_profit"],
+            "margin_pct": s["margin_pct"],
+            "diff": round(s["price"] - cur, 2),
+            "diff_pct": round((s["price"] - cur) / cur * 100, 1) if cur else None,
+            "current_net": round(cur * (1 - eff_comm) - fixed_fees - cost, 2),
+        })
     rows.sort(key=lambda x: -(abs(x.get("diff") or 0)))
-    return {"channel": channel, "rule": rule, "fees": fees, "push_supported": mp.get("push_supported", channel == "trendyol"), "rows": rows, "count": len(rows), "priced": sum(1 for x in rows if x.get("suggested")), "no_cost": sum(1 for x in rows if not x.get("suggested"))}
+    return {
+        "channel": channel,
+        "rule": rule,
+        "fees": fees,
+        "push_supported": mp.get("push_supported", channel == "trendyol"),
+        "rows": rows,
+        "count": len(rows),
+        "priced": sum(1 for x in rows if x.get("suggested")),
+        "no_cost": sum(1 for x in rows if not x.get("suggested")),
+    }
 
 
 # ---------------- Sabah Özeti ----------------
