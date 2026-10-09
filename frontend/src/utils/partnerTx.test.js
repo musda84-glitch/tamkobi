@@ -85,12 +85,12 @@ describe("partnerTx", () => {
     expect(partnerBalanceMeta(776059.78).display).toBeCloseTo(-776059.78, 2);
   });
 
-  it("Ali-shaped: cash Giriş/Çıkış + unrepaired expense withdrawal → card -776059.78", () => {
-    // Tip kovası (onarım öncesi): +909959.78 / −212300 → kart −697659.78
-    // Kasa yönü: Giriş 173100, Çıkış −949159.78; masraf withdrawal → alacak (+)
+  it("Ali-shaped: card = Giriş+Çıkış (−776059.78) even when tip kovası sapmalı", () => {
+    // Tip kovası (etiketsiz masraf): +909959.78 − 39200 − 173100 = 697659.78 → eski kart −697659.78
+    // Kasa: Giriş 173100 + Çıkış −949159.78 = −776059.78 → kart bu olmalı
     const shaped = [
       { type: "credit", amount: 909959.78 },
-      { type: "withdrawal", amount: 39200, expense_id: "exp", source: "expense" },
+      { type: "withdrawal", amount: 39200 }, // etiket yok — tip kovası yanlış, kasa Çıkış
       {
         type: "withdrawal",
         amount: 173100,
@@ -101,15 +101,17 @@ describe("partnerTx", () => {
     expect(partnerTxIsCashInflow(shaped[0])).toBe(false);
     expect(partnerTxIsCashInflow(shaped[1])).toBe(false);
     expect(partnerTxIsCashInflow(shaped[2])).toBe(true);
-    expect(partnerTxBalanceDelta(shaped[1])).toBe(39200);
+    expect(partnerTxBalanceDelta(shaped[1])).toBe(-39200);
     const br = partnerLedgerBreakdown(shaped, 697659.78);
     expect(br.girisDisplay).toBeCloseTo(173100, 2);
     expect(br.cikisDisplay).toBeCloseTo(-949159.78, 2);
     expect(br.netDisplay).toBeCloseTo(-776059.78, 2);
-    expect(br.ledger).toBeCloseTo(776059.78, 2);
+    expect(br.ledger).toBeCloseTo(697659.78, 2);
     expect(br.cardDisplay).toBeCloseTo(-776059.78, 2);
+    expect(br.cardPocket).toBeCloseTo(776059.78, 2);
     expect(br.netMatchesCard).toBe(true);
-    expect(br.drift).toBe(true); // kayıtlı hâlâ onarılmamış
+    expect(partnerBalanceMeta(br.cardPocket).badge).toBe("Alacaklı");
+    expect(br.drift).toBe(false); // tip kovası = kayıtlı (ikisi de eski)
   });
 
   it("shows only Alacaklı or Borçlu; Alacaklı display is negative", () => {
@@ -165,12 +167,11 @@ describe("partnerTx", () => {
     expect(br.drift).toBe(false);
     expect(br.buckets.salary).toBe(150000);
     expect(br.buckets.profit_paid).toBe(9000);
-    // Kasa yönü: Giriş artı, Çıkış eksi
+    // Kart = Giriş + Çıkış (kasa neti)
     expect(br.girisDisplay).toBeCloseTo(500000 + 150000 + 20000, 2);
     expect(br.cikisDisplay).toBeCloseTo(-(50000 + 31810.22 + 9000), 2);
-    expect(br.cardDisplay).toBeCloseTo(-ledger, 2);
-    // Düz sermaye ağırlıklı kitapta kasa neti ≠ kart (bilinçli)
-    expect(br.netMatchesCard).toBe(false);
+    expect(br.cardDisplay).toBeCloseTo(br.netDisplay, 2);
+    expect(br.netMatchesCard).toBe(true);
     expect(partnerLedgerBreakdown(txs, ledger + 1).drift).toBe(true);
   });
 

@@ -1,8 +1,6 @@
 /** Ortak hareket etiketleri ve işaretleri.
- * Bakiye = ortağın cebindeki para (yazma).
- * İşlem sütunu Giriş/Çıkış = kasa / işlem yönü:
- *   tahsilat → Giriş, masraf / virman çıkışı → Çıkış
- * (ortak bakiyesi artışı ile aynı olmayabilir).
+ * Kart tutarı = Giriş + Çıkış (işlem sütunu kasa neti).
+ * Tip kovası (ledger) sapma kontrolü için; kart her zaman kasa netini gösterir.
  */
 
 export const PARTNER_TX_LABEL = {
@@ -130,7 +128,7 @@ export function partnerTxBalanceDelta(tx) {
 
 /**
  * Seçili ortağın hareketlerinden bakiye mutabakatı.
- * Kart bakiyesi (ledger) tip etkisinden; Giriş/Çıkış kutuları işlem sütunu (kasa yönü).
+ * Kart tutarı = Giriş + Çıkış (kasa neti). Tip kovası (ledger) yalnızca sapma kontrolü.
  */
 export function partnerLedgerBreakdown(txs, storedBalance) {
   const rows = Array.isArray(txs) ? txs : [];
@@ -167,11 +165,13 @@ export function partnerLedgerBreakdown(txs, storedBalance) {
   const storedN = Number.isFinite(stored) ? Math.round(stored * 100) / 100 : 0;
   cashIn = Math.round(cashIn * 100) / 100;
   cashOut = Math.round(cashOut * 100) / 100;
-  // İşlem sütunu: Giriş artı, Çıkış eksi → toplam çoğu ortakta kart display ile aynı
+  // Kart = işlem sonucu: Giriş(+) + Çıkış(−)
   const girisDisplay = cashIn;
   const cikisDisplay = Math.round(-cashOut * 100) / 100;
   const netDisplay = Math.round((girisDisplay + cikisDisplay) * 100) / 100;
-  const cardDisplay = partnerBalanceMeta(ledger).display;
+  const cardDisplay = netDisplay;
+  /** Alacaklı/Borçlu rozeti: kasa netinin tersi (eksi net → Alacaklı) */
+  const cardPocket = Math.round(-netDisplay * 100) / 100;
   return {
     count: rows.length,
     ledger,
@@ -187,8 +187,9 @@ export function partnerLedgerBreakdown(txs, storedBalance) {
     cikisDisplay,
     netDisplay,
     cardDisplay,
-    /** Giriş+Çıkış kart display ile örtüşüyor mu */
-    netMatchesCard: Math.abs(netDisplay - cardDisplay) <= 0.005,
+    cardPocket,
+    /** Kart her zaman Giriş+Çıkış */
+    netMatchesCard: true,
   };
 }
 

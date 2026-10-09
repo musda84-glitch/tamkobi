@@ -320,9 +320,25 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
           {(() => {
-            const net = partnerBalanceMeta(summary.total_balance);
+            // Net = tüm ortakların kart tutarı (Giriş+Çıkış); hareket yoksa kayıtlı bakiye
+            let cashNet = 0;
+            let usedCash = false;
+            for (const p of partners) {
+              const br = partnerLedgers[p.id];
+              if (br && br.count > 0) {
+                cashNet += br.cardDisplay;
+                usedCash = true;
+              } else {
+                cashNet += partnerBalanceMeta(p.balance).display;
+              }
+            }
+            cashNet = Math.round(cashNet * 100) / 100;
+            const net = usedCash
+              ? partnerBalanceMeta(-cashNet)
+              : partnerBalanceMeta(summary.total_balance);
+            const netAmount = usedCash ? cashNet : net.display;
             return [
-              ["net", net.side === "zero" ? "Net bakiye" : `Net ${net.label}`, net.display, net.amountCls],
+              ["net", net.side === "zero" ? "Net bakiye" : `Net ${net.label}`, netAmount, net.amountCls],
               ["capital", "Toplam Giriş", summary.total_capital_in, "text-emerald-700"],
               ["withdrawn", "Toplam Çıkış", summary.total_withdrawn, "text-rose-700"],
             ].map(([id, l, v, c]) => (
@@ -385,13 +401,16 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
             </div>
             {(() => {
               const br = partnerLedgers[p.id];
-              // Hareketlerden hesaplanan cebi (masraf withdrawal onarımı dahil); yoksa kayıtlı bakiye
-              const bm = partnerBalanceMeta(br && br.count > 0 ? br.ledger : p.balance);
+              // Kart = Giriş + Çıkış; rozet kasa netinden (eksi → Alacaklı)
+              const bm = br && br.count > 0
+                ? partnerBalanceMeta(br.cardPocket)
+                : partnerBalanceMeta(p.balance);
+              const amount = br && br.count > 0 ? br.cardDisplay : bm.display;
               return (
             <div className="pt-2 border-t border-slate-100 flex items-end justify-between" data-testid={`partner-balance-${p.id}`}>
               <div className="min-w-0">
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${bm.badgeCls}`} data-testid={`partner-balance-badge-${p.id}`}>{bm.badge}</span>
-                <div className={`text-lg font-bold ${bm.amountCls}`} data-testid={`partner-balance-amount-${p.id}`}>{fmt(bm.display)} ₺</div>
+                <div className={`text-lg font-bold ${bm.amountCls}`} data-testid={`partner-balance-amount-${p.id}`}>{fmt(amount)} ₺</div>
               </div>
               <button onClick={(e) => { e.stopPropagation(); removePartner(p.id); }} className="p-1.5 text-slate-300 hover:text-rose-600 shrink-0" title="Sil" data-testid={`delete-partner-${p.name}`}><Trash2 className="w-4 h-4" /></button>
             </div>
