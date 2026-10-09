@@ -232,3 +232,23 @@ def order_items_to_invoice_items(items: Iterable[Mapping[str, Any]]) -> List[Dic
             row["name"] = d["name"]
         out.append(row)
     return out
+
+
+def invoice_items_to_order_items(items: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Taslak fatura kalemlerini sipariş kalemlerine çevir (ters yön senkron)."""
+    out: List[Dict[str, Any]] = []
+    for itm in items or []:
+        d = dict(itm)
+        d["product_name"] = d.get("product_name") or d.get("name") or "Kalem"
+        d["name"] = d.get("name") or d["product_name"]
+        d.setdefault("unit", "Adet")
+        includes = bool(d.get("price_includes_vat"))
+        has_incl = d.get("unit_price_incl") not in (None, "")
+        mode = "incl" if includes and not has_incl else "excl"
+        enrich_line(d, price_mode=mode, default_vat=20.0)
+        d["discount_rate"] = d.get("discount_rate") if d.get("discount_rate") not in (None, "") else (d.get("discount_percent") or 0)
+        row = pick_fields(d, ORDER_ITEM_FIELDS)
+        if "product_name" not in row:
+            row["product_name"] = d["product_name"]
+        out.append(row)
+    return out

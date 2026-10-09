@@ -106,6 +106,21 @@ def test_order_items_to_invoice_keeps_line_vat_and_discount():
     assert t["grand_total"] == 436.0
 
 
+def test_invoice_items_to_order_roundtrip_totals():
+    from line_totals import invoice_items_to_order_items, order_document_totals, order_items_to_invoice_items
+    inv = order_items_to_invoice_items([
+        {"product_name": "Profil", "quantity": 10, "unit_price": 1000, "vat_rate": 20, "sku": "DL120"},
+    ])
+    ord_rows = invoice_items_to_order_items(inv)
+    assert ord_rows[0]["product_name"] == "Profil"
+    assert ord_rows[0]["sku"] == "DL120"
+    assert abs(ord_rows[0]["unit_price"] - 1000) < 0.05
+    sub, vat, _disc, grand = order_document_totals(ord_rows)
+    assert sub == 10000.0
+    assert vat == 2000.0
+    assert grand == 12000.0
+
+
 def test_order_items_to_invoice_gross_b2b_line():
     from line_totals import order_items_to_invoice_items
     rows = order_items_to_invoice_items([
