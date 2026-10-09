@@ -9424,21 +9424,11 @@ async def _execute_distribute_profit(req: Dict[str, Any]):
 
 @api_router.post("/banking/partners/distribute-profit")
 async def distribute_profit(req: Dict[str, Any], request: Request):
-    company_id = req.get("company_id", "comp_nexus_main_01")
-    pay_now = bool(req.get("pay_now", False))
-    if float(req.get("total_profit") or 0) <= 0:
-        raise HTTPException(status_code=400, detail="Dağıtılacak kâr sıfırdan büyük olmalıdır.")
-    user = await get_current_user(request)
-    if pay_now:
-        pending = await cash_approval.maybe_queue(
-            db, company_id=company_id, kind="distribute_profit", payload=req,
-            account_ids=[req.get("account_id")],
-            summary=f"Kâr payı dağıtımı {float(req.get('total_profit') or 0):,.2f} ₺ (hemen öde)",
-            user=user,
-        )
-        if pending:
-            return pending
-    return await _execute_distribute_profit(req)
+    """Kâr payı dağıtımı kaldırıldı — ortak hesap kasa gibi giriş/çıkış + maaş."""
+    raise HTTPException(
+        status_code=410,
+        detail="Kâr payı dağıtımı kaldırıldı. Ortak hesabında Para Giriş / Çıkış ve aylık maaş kullanın.",
+    )
 
 
 @api_router.post("/banking/partners/accrue-salary")

@@ -97,7 +97,7 @@ function PartnerCard({
           </View>
         </View>
         <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }}>{fmtMoney(partner.balance)}</Text>
-        <Muted>Giriş {fmtMoney(partner.total_capital_in)} · çekiş {fmtMoney(partner.total_withdrawn)} · kâr {fmtMoney(partner.total_profit_share)}</Muted>
+        <Muted>Giriş {fmtMoney(partner.total_capital_in)} · çekiş {fmtMoney(partner.total_withdrawn)}</Muted>
       </Pressable>
       {canExp ? (
         <PrimaryButton
@@ -215,7 +215,7 @@ export function BankingPartnersPanel({
 
   return (
     <View testID="partners-panel" style={{ gap: 16 }}>
-      <Muted>Ortak bakiyesi ve hareketler. Ortak ekleme, para koy/çek ve kâr payı web panelinden yapılır.</Muted>
+      <Muted>Ortak bakiyesi ve hareketler (giriş/çıkış). Ortak ekleme ve maaş web panelinden yapılır.</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
       {summary ? (
@@ -223,9 +223,8 @@ export function BankingPartnersPanel({
           testID="partners-summary"
           items={[
             { key: "balance", label: "Ortak alacağı", value: fmtMoney(summary.total_balance) },
-            { key: "capital", label: "Sermaye girişi", value: fmtMoney(summary.total_capital_in) },
-            { key: "withdrawn", label: "Çekilen", value: fmtMoney(summary.total_withdrawn) },
-            { key: "profit", label: "Dağıtılan kâr", value: fmtMoney(summary.total_profit_share) },
+            { key: "capital", label: "Giriş", value: fmtMoney(summary.total_capital_in) },
+            { key: "withdrawn", label: "Çekiş", value: fmtMoney(summary.total_withdrawn) },
           ]}
         />
       ) : null}

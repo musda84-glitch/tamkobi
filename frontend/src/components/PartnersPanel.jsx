@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { toast } from "sonner";
-import { Camera, Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, PieChart, X, Trash2, Pencil, Banknote } from "lucide-react";
+import { Camera, Users, Plus, ArrowDownRight, ArrowUpRight, ArrowLeftRight, X, Trash2, Pencil, Banknote } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { VirmanPartySelect } from "./VirmanPartySelect";
@@ -52,12 +52,11 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   const [summary, setSummary] = useState(null);
   const [txs, setTxs] = useState([]);
   const [selectedPartnerId, setSelectedPartnerId] = useState(null);
-  const [modal, setModal] = useState(null); // add | tx | profit | virman
+  const [modal, setModal] = useState(null); // add | tx | salary | edit | virman
   const [liveAccounts, setLiveAccounts] = useState(() => accounts || []);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [partnerForm, setPartnerForm] = useState({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "", salary_start_date: "", salary_recurring: true });
   const [txForm, setTxForm] = useState({ partner_id: "", type: "capital_in", amount: "", account_id: "", description: "" });
-  const [profitForm, setProfitForm] = useState({ total_profit: "", pay_now: true, account_id: "", period: new Date().toISOString().slice(0, 7) });
   const [virmanForm, setVirmanForm] = useState({ source_account_id: "", target_account_id: "", amount: "", description: "Hesaplar arası transfer (Virman)", via_customer_card: false });
 
   const selectedPartner = useMemo(() => partners.find((p) => p.id === selectedPartnerId) || null, [partners, selectedPartnerId]);
@@ -117,13 +116,6 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     const cash = list.filter((a) => !isCard(a));
     setTxForm({ partner_id: selectedPartnerId || partners[0]?.id || "", type: "capital_in", amount: "", account_id: accId(cash[0]) || accId(list[0]) || "", description: "" });
     setModal("tx");
-  };
-
-  const openProfitModal = async () => {
-    const list = await refreshAccounts();
-    const cash = list.filter((a) => !isCard(a));
-    setProfitForm({ total_profit: "", pay_now: true, account_id: accId(cash[0]) || accId(list[0]) || "", period: new Date().toISOString().slice(0, 7) });
-    setModal("profit");
   };
 
   const openVirmanModal = async () => {
@@ -285,14 +277,6 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
     } catch (err) { toast.error(err.response?.data?.detail || "İşlem kaydedilemedi."); }
   };
 
-  const distribute = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await axios.post(`${API_URL}/banking/partners/distribute-profit`, { company_id: companyId, ...profitForm, total_profit: Number(profitForm.total_profit), account_id: profitForm.account_id || firstAcc });
-      toast.success(res.data.message); setModal(null); load(); await bumpCash();
-    } catch (err) { toast.error(err.response?.data?.detail || "Kâr dağıtımı yapılamadı."); }
-  };
-
   const removePartner = async (id) => {
     try { await axios.delete(`${API_URL}/banking/partners/${id}`); toast.success("Ortak silindi."); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "Ortak silinemedi."); }
@@ -325,27 +309,25 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
           <div className="p-2 rounded-xl bg-amber-50 text-amber-600"><Users className="w-5 h-5" /></div>
           <div>
             <h2 className="text-base font-bold text-slate-900">Ortaklar Hesabı</h2>
-            <p className="text-xs text-slate-500">Ortak bazlı para giriş/çıkış, borç-alacak fişi, aylık maaş ve kâr payı dağıtımı (131/331)</p>
+            <p className="text-xs text-slate-500">Ortak hesabı kasa gibi giriş/çıkış; borç-alacak fişi ve aylık maaş (131/331)</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={openTxModal} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-tx-btn"><ArrowDownRight className="w-4 h-4" /> Para Giriş / Çıkış</button>
           <button onClick={openVirmanModal} className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-virman-btn"><ArrowLeftRight className="w-4 h-4" /> Virman</button>
           <button onClick={accrueSalaryNow} className="flex items-center gap-1.5 bg-white hover:bg-amber-50 text-amber-800 border border-amber-200 px-3 py-2 rounded-xl text-xs font-semibold" data-testid="partner-accrue-salary-btn"><Banknote className="w-4 h-4" /> Aylık maaşı yaz</button>
-          <button onClick={openProfitModal} className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="distribute-profit-btn"><PieChart className="w-4 h-4" /> Kâr Payı Dağıt</button>
           <button onClick={() => { setPartnerForm({ name: "", share_percent: "", phone: "", email: "", monthly_salary: "", salary_start_date: todayIsoDate(), salary_recurring: true }); setModal("add"); }} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-semibold" data-testid="add-partner-btn"><Plus className="w-4 h-4" /> Ortak Ekle</button>
         </div>
       </div>
 
       {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
           {(() => {
             const net = partnerBalanceMeta(summary.total_balance);
             return [
               ["net", net.label === "Ortak bakiyesi" ? "Net ortak bakiyesi" : `Net ${net.label.toLowerCase()}`, net.abs, net.amountCls, net.hint],
-              ["capital", "Toplam Sermaye Girişi", summary.total_capital_in, "text-emerald-700", ""],
-              ["withdrawn", "Toplam Çekilen", summary.total_withdrawn, "text-rose-700", ""],
-              ["profit", "Dağıtılan Kâr", summary.total_profit_share, "text-indigo-700", ""],
+              ["capital", "Toplam Giriş", summary.total_capital_in, "text-emerald-700", ""],
+              ["withdrawn", "Toplam Çekiş", summary.total_withdrawn, "text-rose-700", ""],
             ].map(([id, l, v, c, hint]) => (
             <div key={id} className="bg-white border border-slate-200 rounded-xl p-3" data-testid={`partner-summary-${id}`} title={hint || undefined}>
               <div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div>
@@ -434,10 +416,9 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                 {partnerSalaryCardText(p, fmt)}
               </span>
             </button>
-            <div className="grid grid-cols-3 gap-1 text-[10px] text-slate-500">
+            <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-500">
               <div>Giriş: <b className="text-emerald-700">{fmt(p.total_capital_in)}</b></div>
               <div>Çekiş: <b className="text-rose-700">{fmt(p.total_withdrawn)}</b></div>
-              <div>Kâr: <b className="text-indigo-700">{fmt(p.total_profit_share)}</b></div>
             </div>
           </div>
           );
@@ -475,14 +456,13 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
                   : `Kart = hareket toplamı (${fmt(selectedLedger.ledger)} ₺ · ${selectedLedger.count} kayıt)`}
               </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2" data-testid="partner-ledger-buckets">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2" data-testid="partner-ledger-buckets">
               {[
-                ["Sermaye", selectedLedger.buckets.capital_in, "text-emerald-700"],
+                ["Giriş", selectedLedger.buckets.capital_in, "text-emerald-700"],
                 ["Çekiş", selectedLedger.buckets.withdrawal, "text-rose-700"],
                 ["Alacak / masraf", selectedLedger.buckets.credit, "text-amber-800"],
                 ["Borç fişi", selectedLedger.buckets.debit, "text-rose-700"],
                 ["Maaş", selectedLedger.buckets.salary, "text-amber-800"],
-                ["Kâr (tahakkuk)", selectedLedger.buckets.profit_accrual, "text-indigo-700"],
               ].map(([label, val, cls]) => (
                 <div key={label} className="rounded-lg border border-slate-200/80 bg-white px-2 py-1.5">
                   <div className="text-[10px] uppercase text-slate-400 font-semibold">{label}</div>
@@ -491,8 +471,7 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
               ))}
             </div>
             <p className="text-[11px] text-slate-500 leading-snug">
-              Formül: sermaye + alacak + maaş + tahakkuk kâr − çekiş − borç fişi. Peşin ödenen kâr payı bakiyeyi değiştirmez.
-              {selectedLedger.buckets.profit_paid > 0 ? ` Peşin kâr ödemesi: ${fmt(selectedLedger.buckets.profit_paid)} ₺.` : ""}
+              Formül: giriş + alacak + maaş − çekiş − borç fişi (kasa hesabı gibi).
             </p>
           </div>
         )}
@@ -634,22 +613,6 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
         </Modal>
       )}
 
-      {modal === "profit" && (
-        <Modal title="Kâr Payı Dağıtımı" onClose={() => setModal(null)} testId="distribute-profit-modal">
-          <form onSubmit={distribute} className="space-y-3 text-xs">
-            <div className="grid grid-cols-2 gap-2">
-              <div><label className="block font-semibold mb-1">Dönem</label><input type="month" className={inputCls} value={profitForm.period} onChange={(e) => setProfitForm({ ...profitForm, period: e.target.value })} /></div>
-              <div><label className="block font-semibold mb-1">Dağıtılacak Kâr (₺)</label><input type="number" step="0.01" className={`${inputCls} font-bold`} value={profitForm.total_profit} onChange={(e) => setProfitForm({ ...profitForm, total_profit: e.target.value })} required data-testid="profit-amount-input" /></div>
-            </div>
-            <div className="bg-slate-50 rounded-lg p-3 space-y-1">
-              {partners.map((p) => <div key={p.id} className="flex justify-between"><span>{p.name} (%{p.share_percent})</span><b>{fmt(Number(profitForm.total_profit || 0) * p.share_percent / (summary?.total_share_percent || 100))} ₺</b></div>)}
-            </div>
-            <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={profitForm.pay_now} onChange={(e) => setProfitForm({ ...profitForm, pay_now: e.target.checked })} data-testid="profit-pay-now-checkbox" /><span className="font-semibold">Hemen öde (kasadan/bankadan çık) — kapalıysa ortak alacağı olarak tahakkuk eder</span></label>
-            {profitForm.pay_now && <div><label className="block font-semibold mb-1">Kaynak Hesap</label><PaymentTargetSelect companyId={companyId} accounts={liveAccounts} value={profitForm.account_id} onChange={(v) => setProfitForm({ ...profitForm, account_id: v })} testId="profit-account-select" includePartners={false} disabled={accountsLoading} emptyLabel={accountsLoading ? "Hesaplar yükleniyor…" : undefined} className={inputCls} /></div>}
-            <div className="flex justify-end gap-2 pt-2 border-t"><button type="button" onClick={() => setModal(null)} className="px-3 py-1.5 border rounded-lg">İptal</button><button type="submit" className="px-4 py-1.5 bg-amber-500 text-white rounded-lg font-semibold" data-testid="confirm-distribute-btn">Dağıt</button></div>
-          </form>
-        </Modal>
-      )}
     </div>
   );
 };
