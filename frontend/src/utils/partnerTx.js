@@ -19,11 +19,12 @@ export function isPartnerExpenseTx(tx) {
 }
 
 /**
- * İşlem sütunu yönü (ortak cebi / kasa bakışı):
- * - Masraf / alacak fişi → Çıkış (kasadan / şirket eksi)
- * - Cari tahsilat → ortak → Giriş (tahsilat)
+ * İşlem sütunu yönü (kasa / ortak cebi bakışı) — bakiye etkisinden ayrı olabilir:
+ * - Masraf / alacak fişi → Çıkış (kasadan / şirket eksi); bakiye artar
+ * - Cari tahsilat → ortak → Giriş (tahsilat); bakiye azalır
  * - Cari ödeme ← ortak → Çıkış
- * - Banka eşleşmesi → banka ekstresinin tersi (Vadesiz çıkışı → ortak Giriş)
+ * - Banka eşleşmesi: Vadesiz çıkışı → ortak cebine Giriş (etiket);
+ *   bakiye tipi withdrawal (Alacaklı ↓) — #1089 capital_in terslemesi geri alındı
  * - Virman / para çek → Çıkış; sermaye / maaş → Giriş
  */
 export function partnerTxIsCashInflow(tx) {
@@ -33,12 +34,12 @@ export function partnerTxIsCashInflow(tx) {
   if (tx.type === "credit") return false;
   if (tx.contact_id && tx.type === "withdrawal") return true;
   if (tx.contact_id && tx.type === "capital_in") return false;
-  // Banka eşleşmesi: ortak cebi = banka hareketinin karşı tarafı (çıkış → Giriş)
+  // Banka eşleşmesi: etiket = bankanın karşı tarafı; bakiye tipi banka yönüyle aynı
   if (tx.source === "bank_match" || tx.related_bank_tx_id) {
     const bankType = String(tx.bank_tx_type || "").toLowerCase();
-    if (bankType === "outflow" || bankType === "debit") return true;
-    if (bankType === "inflow" || bankType === "credit") return false;
-    // bank_tx_type yoksa: kayıt tipine güven (yeni eşlemede outflow→capital_in)
+    if (bankType === "outflow" || bankType === "debit") return true; // Giriş
+    if (bankType === "inflow" || bankType === "credit") return false; // Çıkış
+    // bank_tx_type yoksa tip geçerli (outflow→withdrawal → Çıkış; etiket için bank_tx_type şart)
   }
   return partnerTxIncreasesBalance(tx.type, tx);
 }
