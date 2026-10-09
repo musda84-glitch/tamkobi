@@ -1770,17 +1770,112 @@ def _simulate_transactions(conn: dict, since: datetime) -> List[Dict[str, Any]]:
     return txs
 
 
+_TR_KEY_MAP = str.maketrans({
+    "ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u",
+    "Ç": "c", "Ğ": "g", "İ": "i", "I": "i", "Ö": "o", "Ş": "s", "Ü": "u",
+})
+
+
+def _norm_key(name: Any) -> str:
+    """Case/underscore/Turkish-insensitive key fold (Açıklama → aciklama)."""
+    s = str(name or "").translate(_TR_KEY_MAP)
+    # Türkçe İ.lower() bazen i + combining dot üretir
+    s = s.replace("\u0307", "").casefold()
+    return re.sub(r"[^a-z0-9]+", "", s)
+
+
 def _ci_get(raw: Any, *names: str) -> Any:
-    """Case-insensitive dict get; skips empty values."""
+    """Case-insensitive dict get; skips empty values. Turkish letters folded."""
     if not isinstance(raw, dict):
         return None
-    wanted = [n.lower().replace("_", "") for n in names]
-    by_norm = {str(k).lower().replace("_", ""): v for k, v in raw.items()}
+    wanted = [_norm_key(n) for n in names]
+    by_norm = {_norm_key(k): v for k, v in raw.items()}
     for n in wanted:
+        if not n:
+            continue
         v = by_norm.get(n)
         if v is not None and v != "":
             return v
     return None
+
+
+def _textish(val: Any) -> str:
+    """Flatten string-ish bank fields; ignore pure numbers / empty."""
+    if val is None:
+        return ""
+    if isinstance(val, (int, float)):
+        return ""
+    if isinstance(val, dict):
+        for k in (
+            "name", "text", "value", "description", "explanation", "aciklama",
+            "title", "unvan", "fullName",
+        ):
+            t = _textish(_ci_get(val, k) if isinstance(val, dict) else None)
+            if t:
+                return t
+        return ""
+    s = str(val).strip()
+    if not s or s.lower() in ("null", "none", "-", "n/a"):
+        return ""
+    return s[:300]
+
+
+_DESC_KEYS = (
+    "description", "explanation", "narrative", "aciklama", "Aciklama", "Açıklama",
+    "islemAciklama", "islemAciklamasi", "hareketAciklama", "hareketAciklamasi",
+    "accountTransactionExplanation", "transactionExplanation", "transactionDescription",
+    "trxDescription", "detail", "details", "memo", "remittanceInformation",
+    "unstructured", "paymentDetail", "islemOzeti", "ozet",
+)
+_CP_KEYS = (
+    "counterpartyName", "senderName", "receiverName", "counterparty", "counterParty",
+    "karsiHesapAdi", "karsiTaraf", "karsiHesapUnvan", "gonderenAdi", "aliciAdi",
+    "gonderenUnvan", "aliciUnvan", "debtorName", "creditorName", "oppositeName",
+    "oppositeAccountName", "ibanHolder", "customerName", "unvan", "title",
+)
+
+
+def _tx_counterparty(row: dict) -> str:
+    direct = _textish(_ci_get(row, *_CP_KEYS))
+    if direct:
+        return direct
+    # Tek seviye iç içe (transactionDetail.senderName vb.)
+    for v in row.values():
+        if isinstance(v, dict):
+            nested = _textish(_ci_get(v, *_CP_KEYS))
+            if nested:
+                return nested
+    return ""
+
+
+def _tx_description(row: dict, *, counterparty: str = "", direction: str = "", external_id: str = "") -> str:
+    parts: List[str] = []
+    for key in _DESC_KEYS:
+        t = _textish(_ci_get(row, key))
+        if t and t not in parts and _norm_key(t) != _norm_key("Banka Hareketi"):
+            parts.append(t)
+    if not parts:
+        for v in row.values():
+            if isinstance(v, dict):
+                for key in _DESC_KEYS:
+                    t = _textish(_ci_get(v, key))
+                    if t and t not in parts and _norm_key(t) != _norm_key("Banka Hareketi"):
+                        parts.append(t)
+                        break
+            if parts:
+                break
+    desc = " · ".join(parts[:2]).strip()
+    if desc:
+        if counterparty and _norm_key(counterparty) not in _norm_key(desc):
+            return f"{desc} · {counterparty}"[:300]
+        return desc[:300]
+    if counterparty:
+        tip = "Gelen" if direction == "credit" else "Giden"
+        return f"{tip} · {counterparty}"[:300]
+    if external_id:
+        tip = "Gelen havale/EFT" if direction == "credit" else "Giden ödeme"
+        return f"{tip} · ref {external_id}"[:300]
+    return "Gelen havale/EFT" if direction == "credit" else "Giden ödeme"
 
 
 def _parse_amount(val: Any) -> float:
@@ -1835,8 +1930,8 @@ _TX_LIST_KEYS = (
 
 
 def _row_tx_score(row: dict) -> int:
-    keys = {str(k).lower().replace("_", "") for k in row}
-    return sum(1 for h in _TX_HINT_KEYS if h in keys)
+    keys = {_norm_key(k) for k in row}
+    return sum(1 for h in _TX_HINT_KEYS if _norm_key(h) in keys)
 
 
 def _dig_list(raw: Any, keys: tuple = _TX_LIST_KEYS) -> Optional[list]:
@@ -1954,31 +2049,25 @@ def _normalize_tx_rows(raw: Any) -> List[Dict[str, Any]]:
                 "accountingDate", "dekontTarihi",
             )
         )
+        external_id = str(
+            _ci_get(
+                r, "transactionId", "id", "transactionReference", "businessKey",
+                "referenceNo", "bookingId",
+                "fisNo", "dekontNo", "referansNo", "refNo", "referenceNumber",
+                "seqNum",
+            )
+            or hashlib.sha256(str(r).encode()).hexdigest()[:16]
+        )
+        counterparty = _tx_counterparty(r)
         txs.append({
-            "external_id": str(
-                _ci_get(
-                    r, "transactionId", "id", "transactionReference", "businessKey",
-                    "referenceNo", "bookingId",
-                    "fisNo", "dekontNo", "referansNo", "refNo", "referenceNumber",
-                    "seqNum",
-                )
-                or hashlib.sha256(str(r).encode()).hexdigest()[:16]
-            ),
+            "external_id": external_id,
             "date": date,
             "amount": amount,
             "direction": direction,
-            "description": (
-                _ci_get(
-                    r, "description", "explanation", "narrative", "aciklama",
-                    "Aciklama", "islemAciklama", "accountTransactionExplanation",
-                ) or "Banka Hareketi"
+            "description": _tx_description(
+                r, counterparty=counterparty, direction=direction, external_id=external_id,
             ),
-            "counterparty": (
-                _ci_get(
-                    r, "counterpartyName", "senderName", "counterparty",
-                    "karsiHesapAdi", "gonderenAdi", "aliciAdi",
-                ) or ""
-            ),
+            "counterparty": counterparty,
             "currency": _ci_get(r, "currency", "currencyCode", "fxCode", "paraBirimi") or "TRY",
             "is_simulated": False,
         })

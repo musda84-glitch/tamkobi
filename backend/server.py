@@ -9774,11 +9774,27 @@ async def sync_bank_connection(conn_id: str, request: Request, days: int = 7):
         await db.bank_connections.update_one({"_id": conn_id}, {"$set": {"status": "error", "last_error": msg}})
         raise HTTPException(status_code=502, detail=msg)
 
+    def _generic_bank_desc(s: Optional[str]) -> bool:
+        t = (s or "").strip().casefold()
+        return (not t) or t in {
+            "banka hareketi", "gelen havale/eft", "giden ödeme", "giden odeme", "gelen", "giden",
+        }
+
     inserted, skipped, balance_delta = 0, 0, 0.0
     new_txs = []
     for t in result["transactions"]:
         exists = await db.bank_transactions.find_one({"account_id": acc["_id"], "external_id": t["external_id"]})
         if exists:
+            # Eski kayıtta açıklama boş/jenerikse bankadan gelen metinle doldur
+            patch: Dict[str, Any] = {}
+            fresh_desc = (t.get("description") or "").strip()
+            fresh_cp = (t.get("counterparty") or "").strip()
+            if fresh_desc and _generic_bank_desc(exists.get("description")) and not _generic_bank_desc(fresh_desc):
+                patch["description"] = fresh_desc
+            if fresh_cp and not (exists.get("counterparty") or "").strip():
+                patch["counterparty"] = fresh_cp
+            if patch:
+                await db.bank_transactions.update_one({"_id": exists["_id"]}, {"$set": patch})
             skipped += 1
             continue
         suggestion = await _suggest_contact(doc["company_id"], t.get("counterparty", ""), t.get("description", ""))
@@ -9789,7 +9805,9 @@ async def sync_bank_connection(conn_id: str, request: Request, days: int = 7):
             type="inflow" if is_credit else "outflow",
             category="Banka Gelen Havale/EFT" if is_credit else "Banka Giden Ödeme",
             amount=t["amount"], currency=t.get("currency", "TRY"),
-            description=t["description"], external_id=t["external_id"], source="bank_sync",
+            description=t["description"],
+            counterparty=(t.get("counterparty") or None) or None,
+            external_id=t["external_id"], source="bank_sync",
             is_simulated=t.get("is_simulated", False), match_status="unmatched",
             suggested_contact_id=suggestion["_id"] if suggestion else None,
             suggested_contact_name=suggestion.get("name") if suggestion else None,

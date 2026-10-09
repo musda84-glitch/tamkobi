@@ -340,6 +340,7 @@ class BankTransaction(BaseDocument):
     amount: float
     currency: str = "TRY"
     description: str
+    counterparty: Optional[str] = None  # bankadan gelen karşı taraf (gönderen/alıcı)
     contact_id: Optional[str] = None
     contact_name: Optional[str] = None
     # Müşteri kartı ile tedarikçi ödemesinde kart sahibi cari (geri alma için)
