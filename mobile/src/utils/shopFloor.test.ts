@@ -8,6 +8,8 @@ import {
   isOpenStatus,
   mergeSelfEmployee,
   openWorkOrderCount,
+  operatorStationLock,
+  operatorStationLockMessage,
   partitionWorkOrders,
   readyCount,
   runningCount,
@@ -41,6 +43,28 @@ describe("woStatusTr / tone", () => {
     expect(woStatusTone("in_progress")).toBe("amber");
     expect(woStatusTone("paused")).toBe("amber");
     expect(woStatusTone("waiting")).toBe("slate");
+  });
+});
+
+describe("operatorStationLock", () => {
+  const rows: WorkOrder[] = [
+    wo({ id: "a", status: "in_progress", operator_name: "Ali", station: "PVC", order_code: "URT-1", step_no: 3 }),
+    wo({ id: "b", status: "paused", operator_name: "Ali", station: "HOLZHER" }),
+    wo({ id: "c", status: "in_progress", operator_name: "Veli", station: "HOLZHER" }),
+  ];
+
+  it("blocks same operator at another station while in_progress", () => {
+    const b = operatorStationLock(rows, "Ali", "HOLZHER");
+    expect(b?.id).toBe("a");
+    expect(operatorStationLockMessage(b, "Ali")).toMatch(/PVC/);
+    expect(operatorStationLockMessage(b, "Ali")).toMatch(/Başka personel/);
+  });
+
+  it("allows same station, other operators, and paused", () => {
+    expect(operatorStationLock(rows, "Ali", "PVC")).toBeNull();
+    expect(operatorStationLock([rows[0]], "Veli", "HOLZHER")).toBeNull();
+    expect(operatorStationLock(rows, "Veli", "HOLZHER")).toBeNull();
+    expect(operatorStationLock([rows[1]], "Ali", "PVC")).toBeNull();
   });
 });
 

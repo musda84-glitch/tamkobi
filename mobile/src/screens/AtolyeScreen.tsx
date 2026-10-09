@@ -19,6 +19,8 @@ import {
   formatQty,
   groupWorkOrdersByStation,
   mergeSelfEmployee,
+  operatorStationLock,
+  operatorStationLockMessage,
   partitionWorkOrders,
   readyCount,
   roundNeededQty,
@@ -44,6 +46,7 @@ function WoCard({
   baseUrl,
   pauseAllowed,
   pauseHint,
+  stationLockMsg,
   onStart,
   onPause,
   onFinish,
@@ -55,6 +58,7 @@ function WoCard({
   baseUrl: string;
   pauseAllowed?: boolean;
   pauseHint?: string;
+  stationLockMsg?: string;
   onStart: () => void;
   onPause: () => void;
   onFinish: () => void;
@@ -65,6 +69,7 @@ function WoCard({
   const borderWide = w.status === "in_progress" || w.status === "paused";
   const who = w.operator_name || w.assigned_name;
   const imgs = (w.images || []).map((u) => resolveMediaUrl(baseUrl, u)).filter(Boolean).slice(0, 8);
+  const startLocked = !!stationLockMsg;
   return (
     <Card testID={`wo-card-${key}`} style={{ borderColor: border, borderWidth: borderWide ? 2 : 1 }}>
       <Row style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -170,8 +175,9 @@ function WoCard({
       {w.notes ? <Muted>{w.notes}</Muted> : null}
       {w.status === "ready" || w.status === "waiting" ? (
         <>
-          <PrimaryButton title="Başla" onPress={onStart} disabled={!operator || busy} loading={busy} color={colors.primary} testID={`wo-start-${key}`} />
-          {w.status === "waiting" ? <Muted>Önceki adım bitmeden de başlatılabilir</Muted> : null}
+          <PrimaryButton title="Başla" onPress={onStart} disabled={!operator || busy || startLocked} loading={busy} color={colors.primary} testID={`wo-start-${key}`} />
+          {startLocked ? <Muted>{stationLockMsg}</Muted> : null}
+          {w.status === "waiting" && !startLocked ? <Muted>Önceki adım bitmeden de başlatılabilir</Muted> : null}
         </>
       ) : null}
       {w.status === "in_progress" || w.status === "paused" ? (
@@ -180,11 +186,17 @@ function WoCard({
             <PrimaryButton
               title={w.status === "paused" ? "Devam" : "Duraklat"}
               onPress={w.status === "paused" ? onStart : onPause}
-              disabled={!operator || busy || (w.status === "in_progress" && pauseAllowed === false)}
+              disabled={
+                !operator
+                || busy
+                || (w.status === "paused" && startLocked)
+                || (w.status === "in_progress" && pauseAllowed === false)
+              }
               loading={busy}
               color={w.status === "paused" ? colors.primary : "#EA580C"}
               testID={w.status === "paused" ? `wo-resume-${key}` : `wo-pause-${key}`}
             />
+            {w.status === "paused" && startLocked ? <Muted>{stationLockMsg}</Muted> : null}
             {w.status === "in_progress" && pauseAllowed === false && pauseHint ? (
               <Muted>{pauseHint}</Muted>
             ) : null}
@@ -348,6 +360,13 @@ export function AtolyeScreen() {
     if (!operator) {
       setError("Önce operatör (personel) seçin.");
       return;
+    }
+    if (action === "start") {
+      const blocker = operatorStationLock(wos, operator, w.station, idOf(w));
+      if (blocker) {
+        setError(operatorStationLockMessage(blocker, operator));
+        return;
+      }
     }
     const key = woCardKey(w);
     setBusyId(key);
@@ -661,6 +680,7 @@ export function AtolyeScreen() {
               baseUrl={baseUrl}
               pauseAllowed={!!pausePolicy?.allowed}
               pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
+              stationLockMsg={operatorStationLockMessage(operatorStationLock(wos, operator, w.station, idOf(w)), operator)}
               onStart={() => act(w, "start")}
               onPause={() => act(w, "pause")}
               onFinish={() => openFinish(w)}
@@ -682,6 +702,7 @@ export function AtolyeScreen() {
           baseUrl={baseUrl}
           pauseAllowed={!!pausePolicy?.allowed}
           pauseHint={pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz"}
+          stationLockMsg={operatorStationLockMessage(operatorStationLock(wos, operator, w.station, idOf(w)), operator)}
           onStart={() => act(w, "start")}
           onPause={() => act(w, "pause")}
           onFinish={() => openFinish(w)}
@@ -697,11 +718,12 @@ export function AtolyeScreen() {
               key={woCardKey(w)}
               w={w}
               operator={operator}
-              busy={false}
+              busy={busyId === woCardKey(w)}
               baseUrl={baseUrl}
-              onStart={() => {}}
-              onPause={() => {}}
-              onFinish={() => {}}
+              stationLockMsg={operatorStationLockMessage(operatorStationLock(wos, operator, w.station, idOf(w)), operator)}
+              onStart={() => act(w, "start")}
+              onPause={() => act(w, "pause")}
+              onFinish={() => openFinish(w)}
               onTrash={() => openTrashRequest(w)}
             />
           ))}

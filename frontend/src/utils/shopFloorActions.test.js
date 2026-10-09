@@ -1,4 +1,4 @@
-import { employeeHasSystemUser, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, workOrderFinishPlan } from "./shopFloorActions";
+import { employeeHasSystemUser, operatorStationLock, operatorStationLockMessage, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, workOrderFinishPlan } from "./shopFloorActions";
 
 describe("workOrderFinishPlan", () => {
   test("uses material needed for material-linked step", () => {
@@ -63,6 +63,33 @@ describe("workOrderFinishPlan", () => {
         materials: [],
       }),
     ).toEqual({ qty: 3, unit: "Adet", isMaterial: true, materialName: null });
+  });
+});
+
+describe("operatorStationLock", () => {
+  const rows = [
+    { id: "a", status: "in_progress", operator_name: "Ali", station: "PVC BANTLAMA", order_code: "URT-1", step_no: 3 },
+    { id: "b", status: "paused", operator_name: "Ali", station: "HOLZHER", order_code: "URT-2", step_no: 1 },
+    { id: "c", status: "in_progress", operator_name: "Veli", station: "HOLZHER", order_code: "URT-3", step_no: 2 },
+  ];
+
+  test("blocks same operator at a different station while in_progress", () => {
+    const b = operatorStationLock(rows, "Ali", "HOLZHER");
+    expect(b?.id).toBe("a");
+    expect(operatorStationLockMessage(b, "Ali")).toMatch(/PVC BANTLAMA/);
+    expect(operatorStationLockMessage(b, "Ali")).toMatch(/Başka personel/);
+  });
+
+  test("allows same station and other operators", () => {
+    expect(operatorStationLock(rows, "Ali", "PVC BANTLAMA")).toBeNull();
+    // Ali'nin PVC işi Veli'yi engellemez
+    expect(operatorStationLock([rows[0]], "Veli", "HOLZHER")).toBeNull();
+    expect(operatorStationLock(rows, "Veli", "HOLZHER")).toBeNull();
+    expect(operatorStationLock(rows, "Ali", "HOLZHER", "a")).toBeNull();
+  });
+
+  test("paused does not lock", () => {
+    expect(operatorStationLock([rows[1]], "Ali", "PVC BANTLAMA")).toBeNull();
   });
 });
 

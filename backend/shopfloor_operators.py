@@ -1,4 +1,50 @@
-"""Atölye operatör listesi: yalnız sistem kullanıcısı açılmış personel."""
+"""Atölye operatör listesi: yalnız sistem kullanıcısı açılmış personel.
+
+Ayrıca: başlatan personel bitirmeden/duraklatmadan başka istasyonda iş açamaz;
+başka personel serbestçe çalışabilir.
+"""
+
+
+def station_key(station) -> str:
+    return str(station or "").strip().casefold()
+
+
+def operator_active_station_blocker(rows, operator_name, target_station, exclude_wo_id=None):
+    """Operatörün *in_progress* işi farklı istasyondaysa engelleyen satırı döndür.
+
+    - Yalnızca status=in_progress kilitler (paused/done serbest bırakır).
+    - Aynı istasyonda ikinci işe izin verilir.
+    - Başka personelin işi bu operatörü engellemez.
+    """
+    who = str(operator_name or "").strip()
+    if not who:
+        return None
+    target = station_key(target_station)
+    ex = str(exclude_wo_id or "").strip()
+    for w in rows or []:
+        if str(w.get("status") or "") != "in_progress":
+            continue
+        if str(w.get("operator_name") or "").strip() != who:
+            continue
+        wid = str(w.get("_id") or w.get("id") or "").strip()
+        if ex and wid == ex:
+            continue
+        if station_key(w.get("station")) != target:
+            return w
+    return None
+
+
+def operator_station_lock_detail(blocker, operator_name=None) -> str:
+    who = str(operator_name or (blocker or {}).get("operator_name") or "Operatör").strip() or "Operatör"
+    st = str((blocker or {}).get("station") or "başka istasyon").strip() or "başka istasyon"
+    code = str((blocker or {}).get("order_code") or "").strip()
+    step = (blocker or {}).get("step_no")
+    where = f"{code} · adım {step}" if code and step is not None else (code or "açık iş")
+    return (
+        f"{who} şu an «{st}» istasyonunda devam eden işi var ({where}). "
+        "Bitirin veya duraklatın; başka istasyonda işlem açılamaz. "
+        "Başka personel bu işi alabilir."
+    )
 
 
 def linked_system_user_keys(users):

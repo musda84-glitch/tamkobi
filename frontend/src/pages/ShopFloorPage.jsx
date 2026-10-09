@@ -8,7 +8,7 @@ import { stationNamesFromParks } from "../utils/workParks";
 import { AssignedDutyCard } from "../components/AssignedDutyCard";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
 import { openAssignedDuties } from "../utils/assignedDuty";
-import { shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, workOrderFinishPlan } from "../utils/shopFloorActions";
+import { operatorStationLock, operatorStationLockMessage, shopFloorCardActions, shopFloorCardBorder, shopFloorOperators, shopFloorPausePhaseLabel, workOrderFinishPlan } from "../utils/shopFloorActions";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { groupWorkOrdersByStation, shopFloorStationSections } from "../utils/recipeStationOrder";
 import { ProductionAiAdvisor } from "../components/ProductionAiAdvisor";
@@ -116,6 +116,13 @@ export default function ShopFloorPage() {
 
   const act = async (w, action, body) => {
     if (!operator) { toast.error("Önce operatör (personel) seçin."); return; }
+    if (action === "start") {
+      const blocker = operatorStationLock(wos, operator, w.station, w.id || w._id);
+      if (blocker) {
+        toast.error(operatorStationLockMessage(blocker, operator));
+        return;
+      }
+    }
     try { const r = await axios.post(`${API_URL}/production/work-orders/${w.id}/${action}`, { operator_name: operator, ...(body || {}) }); toast.success(r.data.message); setFinishing(null); load(); }
     catch (err) { toast.error(err.response?.data?.detail || "İşlem başarısız."); }
   };
@@ -251,6 +258,10 @@ export default function ShopFloorPage() {
   const Card = ({ w }) => {
     const [l, c] = STATUS[w.status] || STATUS.waiting;
     const actions = shopFloorCardActions(w.status, pauseAllowed);
+    const stationLock = (actions.start || actions.resume)
+      ? operatorStationLock(wos, operator, w.station, w.id || w._id)
+      : null;
+    const stationLockMsg = stationLock ? operatorStationLockMessage(stationLock, operator) : "";
     const pauseTitle = actions.pauseEnabled
       ? `Duraklat (${shopFloorPausePhaseLabel(pausePolicy?.phase)})`
       : (pausePolicy?.reason || "Mesai / mola / fazla mesai dışında duraklatılamaz");
@@ -364,7 +375,13 @@ export default function ShopFloorPage() {
       {w.notes && <div className="text-xs bg-slate-50 rounded-lg p-2 text-slate-600">{w.notes}</div>}
       <div className="grid grid-cols-2 gap-2">
         {actions.start && (
-          <button onClick={() => act(w, "start")} className="col-span-2 flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-base" data-testid={`wo-start-${w.order_code}-${w.step_no}`}>
+          <button
+            onClick={() => !stationLock && act(w, "start")}
+            disabled={!!stationLock}
+            title={stationLockMsg || undefined}
+            className={`col-span-2 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-base ${stationLock ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+            data-testid={`wo-start-${w.order_code}-${w.step_no}`}
+          >
             <Play className="w-5 h-5" /> Başla
           </button>
         )}
@@ -380,7 +397,13 @@ export default function ShopFloorPage() {
           </button>
         )}
         {actions.resume && (
-          <button onClick={() => act(w, "start")} className="flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold" data-testid={`wo-resume-${w.order_code}-${w.step_no}`}>
+          <button
+            onClick={() => !stationLock && act(w, "start")}
+            disabled={!!stationLock}
+            title={stationLockMsg || undefined}
+            className={`flex items-center justify-center gap-2 py-3 rounded-xl font-bold ${stationLock ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+            data-testid={`wo-resume-${w.order_code}-${w.step_no}`}
+          >
             <Play className="w-5 h-5" /> Devam
           </button>
         )}
@@ -389,7 +412,12 @@ export default function ShopFloorPage() {
             <CheckCircle2 className="w-5 h-5" /> Bitir
           </button>
         )}
-        {w.status === "waiting" && actions.start && (
+        {stationLockMsg ? (
+          <div className="col-span-2 text-center text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5" data-testid={`wo-station-lock-${w.order_code}-${w.step_no}`}>
+            {stationLockMsg}
+          </div>
+        ) : null}
+        {w.status === "waiting" && actions.start && !stationLock && (
           <div className="col-span-2 text-center text-[11px] text-slate-400 -mt-1">Önceki adım bitmeden de başlatılabilir</div>
         )}
         {w.status === "done" && <div className="col-span-2 text-center text-xs text-emerald-700 py-2 font-semibold">{w.produced_qty} üretildi{w.scrap_qty ? `, ${w.scrap_qty} fire` : ""} • {w.operator_name}</div>}

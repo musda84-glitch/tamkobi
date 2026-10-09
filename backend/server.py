@@ -16001,7 +16001,23 @@ async def start_work_order(wo_id: str, req: Dict[str, Any] = None):
     # ready / waiting / paused — waiting: önceki adım bitmeden araya girilebilir
     if w["status"] not in ("ready", "waiting", "paused"):
         raise HTTPException(status_code=400, detail="Bu adım başlatılamaz (adım kapanmış veya zaten devam ediyor).")
-    who = req.get("operator_name") or w.get("assigned_name")
+    who = str(req.get("operator_name") or w.get("assigned_name") or "").strip()
+    if not who:
+        raise HTTPException(status_code=400, detail="Operatör seçin.")
+    # Başlatan personel bitirmeden/duraklatmadan başka istasyonda iş açamaz; başka personel serbest.
+    import shopfloor_operators as sfo
+    active = await db.work_orders.find(
+        {
+            "company_id": w.get("company_id"),
+            "operator_name": who,
+            "status": "in_progress",
+            "_id": {"$ne": wo_id},
+        },
+        {"station": 1, "order_code": 1, "step_no": 1, "operator_name": 1, "status": 1},
+    ).to_list(50)
+    blocker = sfo.operator_active_station_blocker(active, who, w.get("station"), exclude_wo_id=wo_id)
+    if blocker:
+        raise HTTPException(status_code=400, detail=sfo.operator_station_lock_detail(blocker, who))
     upd: Dict[str, Any] = {"status": "in_progress", "operator_name": who}
     if w["status"] in ("ready", "waiting"):
         upd["started_at"] = datetime.now(timezone.utc).isoformat()
