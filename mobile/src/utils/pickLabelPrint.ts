@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import { get } from "../api/client";
 import type { ApiClient } from "../api/client";
+import { tryPrintLabelEthernet } from "./ethernetPrinter";
 import { embedLabelHtmlImages } from "./labelMedia";
 import { htmlToPdfFile, printHtmlNative } from "./nativePrint";
 import { safePrintFilename } from "./orderPrint";
@@ -98,6 +99,30 @@ export async function printPickProductLabels(
     for (let i = 0; i < copies; i += 1) jobs.push({ tpl, product });
   }
   if (!jobs.length) return { count: 0, ok: false };
+
+  // Ethernet / IP yazıcı yapılandırıldıysa tarayıcı diyaloğu olmadan TSPL gönder
+  try {
+    let ethOk = 0;
+    for (const job of jobs) {
+      const sent = await tryPrintLabelEthernet({
+        product: {
+          name: job.product.name,
+          sku: job.product.sku,
+          barcode: job.product.barcode,
+          sale_price: Number(job.product.sale_price) || null,
+        },
+        companyName: companyObj?.name || undefined,
+        tpl: job.tpl,
+        copies: 1,
+        client: opts?.client,
+      });
+      if (sent) ethOk += 1;
+      else break;
+    }
+    if (ethOk === jobs.length) return { count: jobs.length, ok: true };
+  } catch {
+    /* sistem yazıcısına düş */
+  }
 
   // Aynı boyutta grupla (termal @page tek boyut)
   const bySize = new Map<string, typeof jobs>();
