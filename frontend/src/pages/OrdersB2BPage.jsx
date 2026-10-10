@@ -464,8 +464,20 @@ export default function OrdersB2BPage() {
         }
         return;
       }
-      if (action === "xml") { await downloadInvoiceXml(list); return; }
-      if (action === "efatura_pdf") { await downloadInvoicePdf(list); return; }
+      if (action === "xml" || action === "efatura_pdf") {
+        const issued = list.filter((o) => o.invoice_id && orderHasEInvoiceIssued(o));
+        if (!issued.length) {
+          toast.error(
+            action === "xml"
+              ? "XML indirmek için GİB'e kesilmiş e-fatura seçin."
+              : "PDF indirmek için GİB'e kesilmiş e-fatura seçin.",
+          );
+          return;
+        }
+        if (action === "xml") await downloadInvoiceXml(issued);
+        else await downloadInvoicePdf(issued);
+        return;
+      }
       if (action === "delete") {
         const deletable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
         if (!deletable.length) { toast.error("Faturalanmış siparişler silinemez."); return; }
@@ -1245,68 +1257,81 @@ export default function OrdersB2BPage() {
     }
   };
 
-  /** Tek sipariş için yazdır / XML / link aksiyonları. */
+  /** Tek sipariş «Diğer işlemler» → yazdır / XML / link (toplu ile aynı GİB kuralları). */
   const runBulkForOrder = async (actionId, ord) => {
-    if (actionId === "mini_10x15" || actionId === "mini_8x20") {
-      const size = actionId === "mini_8x20" ? "8x20" : "10x15";
-      if (ord.invoice_id) {
-        const r = await printMiniInvoicesFromIntegrator([ord], { apiUrl: API_URL, axiosClient: axios });
-        if (r.ok) toast.success("Entegratör e-belge PDF yazdırmaya açıldı.");
-        else toast.error(r.message || "Entegratör PDF yazdırılamadı.");
+    try {
+      if (actionId === "mini_10x15" || actionId === "mini_8x20") {
+        const size = actionId === "mini_8x20" ? "8x20" : "10x15";
+        if (ord.invoice_id && orderHasEInvoiceIssued(ord)) {
+          const r = await printMiniInvoicesFromIntegrator([ord], { apiUrl: API_URL, axiosClient: axios });
+          if (r.ok) toast.success("Entegratör e-belge PDF yazdırmaya açıldı.");
+          else toast.error(r.message || "Entegratör PDF yazdırılamadı.");
+          return;
+        }
+        if (ord.invoice_id) {
+          if (!printMiniInvoices([ord], activeCompany, size)) toast.error("Yazdırılacak fatura yok veya pencere engellendi.");
+          else toast.success("Mini fatura fişi yazdırmaya gönderildi.");
+          return;
+        }
+        toast.error("Bu siparişte yazdırılacak fatura yok.");
         return;
       }
-      if (!printMiniInvoices([ord], activeCompany, size)) toast.error("Yazdırılacak fatura yok veya pencere engellendi.");
-      else toast.success("Mini fatura fişi yazdırmaya gönderildi.");
-      return;
-    }
-    if (actionId === "cargo_mini" || actionId === "cargo_10x10") {
-      const size = actionId === "cargo_10x10" ? "100x100" : "100x150";
-      const r = await printCargoLabelsPreferIntegrator([ord], activeCompany, {
-        apiUrl: API_URL,
-        axiosClient: axios,
-        size,
-      });
-      if (r.ok || r.thermal) {
-        axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id || ord._id].filter(Boolean) }).catch(() => {});
-        toast.success(r.message || (actionId === "cargo_10x10" ? "Etiket (10×10) yazdırmaya gönderildi." : "Mini kargo etiketi yazdırmaya gönderildi."));
-      } else {
-        toast.error(r.message || "Etiket yazdırılamadı.");
-      }
-      return;
-    }
-    if (actionId === "xml") {
-      await downloadInvoiceXml([ord]);
-      return;
-    }
-    if (actionId === "efatura_pdf") {
-      await downloadInvoicePdf([ord]);
-      return;
-    }
-    if (actionId === "invoice_link") {
-      if (!ord.invoice_id || !ord.customer_email) {
-        toast.error("Fatura ve müşteri e-postası gerekli.");
+      if (actionId === "cargo_mini" || actionId === "cargo_10x10") {
+        const size = actionId === "cargo_10x10" ? "100x100" : "100x150";
+        const r = await printCargoLabelsPreferIntegrator([ord], activeCompany, {
+          apiUrl: API_URL,
+          axiosClient: axios,
+          size,
+        });
+        if (r.ok || r.thermal) {
+          axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: [ord.id || ord._id].filter(Boolean) }).catch(() => {});
+          toast.success(r.message || (actionId === "cargo_10x10" ? "Etiket (10×10) yazdırmaya gönderildi." : "Mini kargo etiketi yazdırmaya gönderildi."));
+        } else {
+          toast.error(r.message || "Etiket yazdırılamadı.");
+        }
         return;
       }
-      try {
-        const fd = new FormData();
-        const link = `${window.location.origin}/api/invoices/${ord.invoice_id}/pdf`;
-        fd.append("company_id", companyId);
-        fd.append("to", ord.customer_email);
-        fd.append("subject", `Faturanız ${ord.invoice_number || ord.order_number}`);
-        fd.append("body", `Sayın ${ord.customer_name || ""},\n\n${ord.invoice_number || ord.order_number} numaralı faturanız: ${link}`);
-        fd.append("context", "invoice");
-        fd.append("ref_id", ord.invoice_id);
-        fd.append("contact_id", ord.contact_id || "");
-        fd.append("contact_name", ord.customer_name || "");
-        await axios.post(`${API_URL}/comm/mail/send`, fd);
-        toast.success("Fatura linki gönderildi.");
-      } catch {
-        toast.error("Fatura linki gönderilemedi.");
+      if (actionId === "xml" || actionId === "efatura_pdf") {
+        if (!ord.invoice_id || !orderHasEInvoiceIssued(ord)) {
+          toast.error(
+            actionId === "xml"
+              ? "XML indirmek için önce GİB'e e-fatura kesin."
+              : "PDF indirmek için önce GİB'e e-fatura kesin.",
+          );
+          return;
+        }
+        if (actionId === "xml") await downloadInvoiceXml([ord]);
+        else await downloadInvoicePdf([ord]);
+        return;
       }
-      return;
-    }
-    if (actionId === "refresh_status") {
-      await bulk("refresh");
+      if (actionId === "invoice_link") {
+        if (!ord.invoice_id || !ord.customer_email) {
+          toast.error("Fatura ve müşteri e-postası gerekli.");
+          return;
+        }
+        try {
+          const fd = new FormData();
+          const link = `${window.location.origin}/api/invoices/${ord.invoice_id}/pdf`;
+          fd.append("company_id", companyId);
+          fd.append("to", ord.customer_email);
+          fd.append("subject", `Faturanız ${ord.invoice_number || ord.order_number}`);
+          fd.append("body", `Sayın ${ord.customer_name || ""},\n\n${ord.invoice_number || ord.order_number} numaralı faturanız: ${link}`);
+          fd.append("context", "invoice");
+          fd.append("ref_id", ord.invoice_id);
+          fd.append("contact_id", ord.contact_id || "");
+          fd.append("contact_name", ord.customer_name || "");
+          await axios.post(`${API_URL}/comm/mail/send`, fd);
+          toast.success("Fatura linki gönderildi.");
+        } catch {
+          toast.error("Fatura linki gönderilemedi.");
+        }
+        return;
+      }
+      if (actionId === "refresh_status") {
+        await bulk("refresh");
+      }
+    } catch (err) {
+      toast.error(bulkApiErrorDetail(err) || "İşlem başarısız.");
     }
   };
 
