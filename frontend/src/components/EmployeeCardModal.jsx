@@ -13,7 +13,7 @@ import { EmployeeYevmiyeModal } from "./EmployeeYevmiyeModal";
 import { EmployeeMovesModal } from "./EmployeeMovesModal";
 import { EmployeePuantajPanel } from "./EmployeePuantajPanel";
 import { empStatusLabel, formatTrDate, performanceTone, remainingTone, parseAnnualLeaveDays, annualLeaveDaysError, annualLeaveDaysPayload } from "../utils/employeeCardSummary";
-import { employeePayButtonLabel, employeePresenceChip, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, empDataResetConfirm, empDataResetPath } from "../utils/personnelCard";
+import { bonusPaidDate, employeePayButtonLabel, employeePresenceChip, payMoveCanDelete, payMoveDeleteConfirm, payMoveDeletePath, empDataResetConfirm, empDataResetPath } from "../utils/personnelCard";
 import { roleCodeFromPosition } from "../utils/employeePosition";
 import { formatTrAmount } from "../utils/money";
 import { isDailyWage, monthlyLoad, payrollWageLine, periodWage } from "../utils/personnelWage";
@@ -533,12 +533,51 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
             {tab === "docs" && <Docs card={card} companyId={companyId} reload={reload} />}
             {tab === "salary" && (
               <div className="space-y-5" data-testid="emp-pay-moves">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 flex flex-wrap items-baseline gap-x-3 gap-y-1" data-testid="emp-pay-balance-strip">
+                  <span className="text-[10px] uppercase font-semibold text-slate-400">Kalan alacak</span>
+                  <span className={`text-sm font-extrabold ${TONE[remainingTone(remaining)]}`} data-testid="emp-pay-remaining">{fmt(remaining)} ₺</span>
+                  {Number(card.balance?.advances) > 0 ? (
+                    <span className="text-[11px] font-bold text-amber-800" data-testid="emp-pay-advances">
+                      · Açık avans −{fmt(card.balance.advances)} ₺
+                      <span className="font-medium text-slate-500"> (hakedişte mahsup)</span>
+                    </span>
+                  ) : null}
+                </div>
                 <table className="w-full" data-testid="emp-salary-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Dönem</th><th className="text-right">Brüt</th><th className="text-right">Net</th><th className="text-right">Prim</th><th className="text-right">Durum</th></tr></thead>
                   <tbody className="divide-y">{card.payrolls.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Bordro kaydı yok.</td></tr>}{card.payrolls.map((p) => <tr key={p.id} data-testid={`emp-salary-row-${p.id}`}><td className="py-1.5 font-semibold">{p.period}{isDailyWage(p) ? <div className="text-[10px] font-medium text-amber-700">{payrollWageLine(p)}</div> : null}</td><td className="text-right">{fmt(p.gross_salary)} ₺</td><td className="text-right font-bold">{fmt(p.net_salary)} ₺</td><td className="text-right">{fmt(p.bonus)} ₺</td><td className="text-right"><div className="flex items-center justify-end gap-1.5"><Badge s={p.status} />{payMoveCanDelete({ id: p.id, kind: "payroll", status: p.status }) ? <button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-salary-del-${p.id}`} onClick={() => deletePayroll(p)}>sil</button> : null}</div></td></tr>)}</tbody></table>
                 <div>
                   <div className="text-[10px] uppercase font-semibold text-slate-400 mb-1">Avans / prim / masraf</div>
-                  <table className="w-full" data-testid="emp-bonus-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Tür</th><th className="text-left">Dönem</th><th className="text-left">Hesap</th><th className="text-right">Tutar</th><th className="text-right">Durum</th></tr></thead>
-                    <tbody className="divide-y">{!(card.bonuses || []).length && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Avans veya prim yok.</td></tr>}{(card.bonuses || []).map((b) => <tr key={b.id}><td className="py-1.5 font-semibold">{b.type_label || b.type}{b.type === "yevmiye" && b.worked_days ? <div className="text-[10px] font-medium text-amber-700">{b.worked_days} gün{b.daily_wage ? ` × ${fmt(b.daily_wage)} ₺` : ""}</div> : null}</td><td>{b.period || "—"}</td><td className="text-slate-500">{b.account_name || b.note || "—"}</td><td className="text-right font-bold">{fmt(b.amount)} ₺</td><td className="text-right"><Badge s={b.status} date={b.paid_at || b.date || b.created_at} />{b.type === "yevmiye" && b.status !== "paid" ? <div className="flex justify-end gap-2 mt-0.5"><button type="button" className="text-[10px] text-indigo-700 font-semibold" onClick={() => setYevmiyeOpen({ editId: b.id, haveDays: 0, initialDays: String(b.worked_days || ""), initialWage: String(b.daily_wage || e.daily_wage || ""), initialNote: b.note || "" })}>düzenle</button><button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-yevmiye-row-del-${b.id}`} onClick={async () => { if (!window.confirm("Bu yevmiye kaydı silinsin mi?")) return; try { await axios.delete(`${API_URL}/personnel/bonuses/${b.id}`); toast.success("Yevmiye kaydı silindi."); afterMoney(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }}>sil</button></div> : null}</td></tr>)}</tbody></table>
+                  <table className="w-full" data-testid="emp-bonus-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Tür</th><th className="text-left">Dönem</th><th className="text-left">Hesap</th><th className="text-right">Tutar</th><th className="text-right">Ödeme</th><th className="text-right">Durum</th></tr></thead>
+                    <tbody className="divide-y">
+                      {!(card.bonuses || []).length && <tr><td colSpan={6} className="py-4 text-center text-slate-400">Avans veya prim yok.</td></tr>}
+                      {(card.bonuses || []).map((b) => {
+                        const paidOn = bonusPaidDate(b);
+                        return (
+                          <tr key={b.id} data-testid={`emp-bonus-row-${b.id}`}>
+                            <td className="py-1.5 font-semibold">
+                              {b.type_label || b.type}
+                              {b.type === "yevmiye" && b.worked_days ? (
+                                <div className="text-[10px] font-medium text-amber-700">{b.worked_days} gün{b.daily_wage ? ` × ${fmt(b.daily_wage)} ₺` : ""}</div>
+                              ) : null}
+                            </td>
+                            <td>{b.period || "—"}</td>
+                            <td className="text-slate-500">{b.account_name || b.note || "—"}</td>
+                            <td className="text-right font-bold">{fmt(b.amount)} ₺</td>
+                            <td className="text-right text-slate-600 font-medium whitespace-nowrap" data-testid={`emp-bonus-paid-on-${b.id}`}>{paidOn ? formatTrDate(paidOn) : "—"}</td>
+                            <td className="text-right">
+                              <Badge s={b.status} date={paidOn} />
+                              {b.type === "yevmiye" && b.status !== "paid" ? (
+                                <div className="flex justify-end gap-2 mt-0.5">
+                                  <button type="button" className="text-[10px] text-indigo-700 font-semibold" onClick={() => setYevmiyeOpen({ editId: b.id, haveDays: 0, initialDays: String(b.worked_days || ""), initialWage: String(b.daily_wage || e.daily_wage || ""), initialNote: b.note || "" })}>düzenle</button>
+                                  <button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-yevmiye-row-del-${b.id}`} onClick={async () => { if (!window.confirm("Bu yevmiye kaydı silinsin mi?")) return; try { await axios.delete(`${API_URL}/personnel/bonuses/${b.id}`); toast.success("Yevmiye kaydı silindi."); afterMoney(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }}>sil</button>
+                                </div>
+                              ) : null}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}

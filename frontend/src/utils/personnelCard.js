@@ -222,6 +222,12 @@ function bonusTypeTr(type, fallback) {
   return BONUS_TYPE_TR[String(type || "")] || fallback || "Ödeme";
 }
 
+/** Ödenen avans/prim satırının ödeme tarihi (paid_at → date → created_at). */
+export function bonusPaidDate(b) {
+  if (!b || String(b.status || "") !== "paid") return "";
+  return String(b.paid_at || b.date || b.created_at || "").trim();
+}
+
 function bonusStatusTr(status, paidDate) {
   const key = String(status || "");
   if (key === "paid") return paidDate ? `Ödendi (${formatTrDate(paidDate)})` : "Ödendi";
@@ -260,7 +266,7 @@ export function employeePayMoves(card) {
   }
   for (const b of card?.bonuses || []) {
     const days = yevmiyeDaysFromBonus(b);
-    const paidDate = b.paid_at || b.date || (b.status === "paid" ? b.created_at : "");
+    const paidDate = bonusPaidDate(b);
     rows.push({
       id: idOf(b) || `bonus-${b.created_at || b.period || ""}`,
       kind: "bonus",

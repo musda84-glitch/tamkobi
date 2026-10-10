@@ -1,4 +1,5 @@
 import {
+  bonusPaidDate,
   employeeCompGroups,
   employeeCompRowCaption,
   employeeCompRows,
@@ -112,6 +113,13 @@ describe("personnelCard", () => {
       today: { check_in: "09:00" },
       schedule: { start: "09:00", end: "18:00" },
     })).toMatchObject({ check_in: "09:00", scheduled_end: "18:00" });
+  });
+
+  test("bonusPaidDate prefers paid_at then date then created_at", () => {
+    expect(bonusPaidDate({ status: "paid", paid_at: "2026-10-10", date: "2026-10-09", created_at: "2026-10-08T12:00:00Z" })).toBe("2026-10-10");
+    expect(bonusPaidDate({ status: "paid", date: "2026-10-09", created_at: "2026-10-08T12:00:00Z" })).toBe("2026-10-09");
+    expect(bonusPaidDate({ status: "paid", created_at: "2026-10-08T12:00:00Z" })).toBe("2026-10-08T12:00:00Z");
+    expect(bonusPaidDate({ status: "pending", date: "2026-10-09" })).toBe("");
   });
 
   test("builds pay and location move lines like mobile", () => {

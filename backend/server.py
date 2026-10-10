@@ -17967,7 +17967,8 @@ async def my_personnel_self(month: Optional[str] = None, user: dict = Depends(ge
     bonus_public = [{
         "id": b.get("id") or b.get("_id"), "type": b.get("type"), "amount": b.get("amount"),
         "status": b.get("status"), "period": b.get("period"), "note": b.get("note") or b.get("description"),
-        "source": b.get("source"), "created_at": b.get("created_at"), "paid_at": b.get("paid_at"),
+        "source": b.get("source"), "date": b.get("date"), "created_at": b.get("created_at"), "paid_at": b.get("paid_at"),
+        "account_name": b.get("account_name"),
     } for b in bonuses]
 
     return {
