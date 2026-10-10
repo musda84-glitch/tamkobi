@@ -734,7 +734,7 @@ export default function PersonnelPage() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1.5 min-w-0 flex-1 max-w-xl" data-testid={`employee-card-mid-${empKey}`}>
+              <div className="flex flex-row flex-wrap items-center gap-1.5 min-w-0 flex-1 max-w-2xl" data-testid={`employee-card-mid-${empKey}`}>
             <EmployeeRequestChips
               items={empReqs}
               compact
@@ -753,11 +753,11 @@ export default function PersonnelPage() {
               onViewDispute={() => setTab("attendance")}
             />
 
-            <div className="flex flex-wrap items-center gap-1.5" data-testid={`employee-card-actions-${empKey}`}>
+            <div className="flex flex-wrap items-center gap-1.5 h-10" data-testid={`employee-card-actions-${empKey}`}>
               <button
                 type="button"
                 onClick={() => setMovesEmp(emp)}
-                className="flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200"
+                className="inline-flex h-10 items-center justify-center gap-1 px-2.5 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200"
                 data-testid={`emp-card-moves-btn-${empKey}`}
               >
                 <Receipt className="w-3.5 h-3.5" /> Hareketler
@@ -765,17 +765,17 @@ export default function PersonnelPage() {
               <button
                 type="button"
                 onClick={() => openSettleFor(emp)}
-                className="flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"
+                className="inline-flex h-10 items-center justify-center gap-1 px-2.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"
                 title="Maaş, mesai, prim, yemek, yol, masraf ve avans"
                 data-testid={`employee-pay-btn-${emp.tc_kimlik || empKey}`}
               >
                 <Banknote className="w-3.5 h-3.5" /> {employeePayButtonLabel(emp)}
               </button>
-              <span className="flex flex-wrap gap-1.5" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
+              <span className="flex flex-wrap items-center gap-1.5 h-10" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
                 <button
                   type="button"
                   onClick={() => setTaskEmp(emp)}
-                  className="flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
+                  className="inline-flex h-10 items-center justify-center gap-1 px-2.5 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
                   data-testid={`employee-task-btn-${emp.tc_kimlik || empKey}`}
                 >
                   <ClipboardList className="w-3.5 h-3.5" /> Görev
@@ -783,7 +783,7 @@ export default function PersonnelPage() {
                 <button
                   type="button"
                   onClick={() => openOvertimeFor(emp)}
-                  className="flex items-center justify-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
+                  className="inline-flex h-10 items-center justify-center gap-1 px-2.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
                   data-testid={`employee-overtime-btn-${emp.tc_kimlik || empKey}`}
                 >
                   <Timer className="w-3.5 h-3.5" /> F. Mesai
@@ -792,7 +792,7 @@ export default function PersonnelPage() {
               <button
                 type="button"
                 onClick={() => setCardEmp(emp)}
-                className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold"
+                className="inline-flex h-10 items-center justify-center px-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold"
                 data-testid={`employee-card-btn-${emp.tc_kimlik}`}
               >
                 Personel Kartı
@@ -800,37 +800,38 @@ export default function PersonnelPage() {
             </div>
               </div>
 
-              <div className="flex flex-row flex-wrap items-start justify-end gap-1.5 shrink-0" data-testid={`employee-card-right-${empKey}`}>
+              <div className="flex flex-row flex-wrap items-center justify-end gap-1.5 shrink-0" data-testid={`employee-card-right-${empKey}`}>
               {(() => {
                 const punch = todayAttendanceParts(attToday[empKey]);
                 const otCap = assignedOvertimeCellCaption(attToday[empKey]);
                 const otOn = otCap !== "--:--";
+                const punchOpen = punchConfirm?.id === empKey && punchConfirm.action === "check_in";
                 return (
                   <div
-                    className="w-[148px] max-w-full rounded-lg border p-0.5 bg-slate-50 border-slate-200"
+                    className={`w-[148px] max-w-full rounded-lg border p-0.5 bg-slate-50 border-slate-200 ${punchOpen ? "h-auto" : "h-10"}`}
                     data-testid={`employee-card-loc-${empKey}`}
                   >
-                    <div className="grid grid-cols-2 gap-0.5">
+                    <div className={`grid grid-cols-2 gap-0.5 ${punchOpen ? "" : "h-full"}`}>
                       <div
-                        className={`min-w-0 rounded-md px-1.5 py-0.5 text-left bg-white ${otOn ? "text-indigo-700" : "text-slate-400"}`}
+                        className={`min-w-0 h-full rounded-md px-1.5 py-0.5 text-left bg-white flex flex-col justify-center ${otOn ? "text-indigo-700" : "text-slate-400"}`}
                         data-testid={`employee-card-assigned-ot-${empKey}`}
                         title={otOn ? `Atanan fazla mesai ${otCap}` : "Atanan fazla mesai yok"}
                       >
-                        <div className={`text-[9px] font-bold uppercase tracking-wide ${otOn ? "text-indigo-600" : "text-slate-400"}`}>Mesai</div>
+                        <div className={`text-[9px] font-bold uppercase tracking-wide leading-none ${otOn ? "text-indigo-600" : "text-slate-400"}`}>Mesai</div>
                         <div className={`text-[12px] font-black leading-tight ${otOn ? "text-indigo-800" : "text-slate-400"}`}>
                           {otCap}
                         </div>
                       </div>
-                      <div className="min-w-0" data-testid={`employee-card-today-${empKey}`}>
+                      <div className="min-w-0 h-full" data-testid={`employee-card-today-${empKey}`}>
                       <button
                         type="button"
                         onClick={() => setPunchConfirm({ id: empKey, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", attToday[empKey]) })}
                         disabled={punchBusyId === empKey}
-                        className={`w-full min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "bg-emerald-100" : "bg-white"}`}
+                        className={`w-full h-full min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 flex flex-col justify-center ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "bg-emerald-100" : "bg-white"}`}
                         data-testid={`employee-card-today-in-${empKey}`}
                         title="Unutulan giriş kaydı"
                       >
-                        <div className="text-[9px] font-bold uppercase tracking-wide text-emerald-700">Giriş</div>
+                        <div className="text-[9px] font-bold uppercase tracking-wide leading-none text-emerald-700">Giriş</div>
                         <div className="text-[12px] font-black text-emerald-800 leading-tight">
                           {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
                         </div>
@@ -876,7 +877,7 @@ export default function PersonnelPage() {
                   </div>
                 );
               })()}
-              <div className="flex items-center flex-wrap justify-end gap-1 shrink-0">
+              <div className="flex items-center flex-wrap justify-end gap-1 shrink-0 h-10">
                 {empReqs.length > 0 && (
                   <span className="relative mr-0.5" title={`${empReqs.length} bekleyen talep`}>
                     <Bell className="w-3.5 h-3.5 text-amber-600" />
@@ -888,7 +889,7 @@ export default function PersonnelPage() {
                 <button
                   type="button"
                   onClick={() => openEditEmployee(emp)}
-                  className="p-1.5 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                  className="inline-flex h-10 w-10 items-center justify-center border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-800"
                   title="Düzenle"
                   data-testid={`employee-edit-${emp.tc_kimlik || emp.id || emp._id}`}
                 >
@@ -898,7 +899,7 @@ export default function PersonnelPage() {
                 <button
                   type="button"
                   onClick={() => handleDeleteEmployee(emp)}
-                  className="p-1.5 border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50"
+                  className="inline-flex h-10 w-10 items-center justify-center border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50"
                   title="Sil"
                   data-testid={`employee-delete-${emp.tc_kimlik || emp.id || emp._id}`}
                 >

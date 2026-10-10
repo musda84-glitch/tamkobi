@@ -51,7 +51,15 @@ jest.mock("../components/PersonnelRequestsInbox", () => {
   const React = require("react");
   return {
     EmployeeRequestChips: ({ items, testId, compact }) =>
-      React.createElement("div", { "data-testid": testId, "data-compact": compact ? "1" : "0" }, `Talepler (${(items || []).length}) Talep yok`),
+      React.createElement(
+        "div",
+        {
+          "data-testid": testId,
+          "data-compact": compact ? "1" : "0",
+          className: compact ? "h-10 w-fit max-w-[16rem] shrink-0 rounded-lg border border-amber-200 bg-amber-50" : "",
+        },
+        `Talepler (${(items || []).length}) Talep yok`,
+      ),
     PersonnelRequestsInbox: () => null,
   };
 });
@@ -121,21 +129,33 @@ test("identity column stacks requests, actions and remaining receivable", async 
   expect(host.querySelector('[data-testid="employee-receivable-14479874352"]')?.textContent).toMatch(/Kalan alacak/);
   const mid = host.querySelector('[data-testid="employee-card-mid-emp_1"]');
   expect(mid).not.toBeNull();
+  expect(mid.className).toMatch(/flex-row/);
+  expect(mid.className).toMatch(/items-center/);
   expect(mid.className).toMatch(/flex-1/);
-  expect(mid.className).toMatch(/max-w-xl/);
-  expect(mid.querySelector('[data-testid="employee-card-requests-14479874352"]')?.textContent).toContain("Talepler");
-  expect(mid.querySelector('[data-testid="employee-card-actions-emp_1"]')?.textContent).toMatch(/Hareketler/);
-  expect(mid.querySelector('[data-testid="employee-card-actions-emp_1"]')?.textContent).toMatch(/Personel Kartı/);
+  expect(mid.className).toMatch(/max-w-2xl/);
+  const requestBox = mid.querySelector('[data-testid="employee-card-requests-14479874352"]');
+  const actions = mid.querySelector('[data-testid="employee-card-actions-emp_1"]');
+  expect(requestBox?.textContent).toContain("Talepler");
+  expect(requestBox?.className).toMatch(/\bh-10\b/);
+  expect(actions?.textContent).toMatch(/Hareketler/);
+  expect(actions?.textContent).toMatch(/Personel Kartı/);
+  expect(actions?.className).toMatch(/\bh-10\b/);
   expect(mid.contains(host.querySelector('[data-testid="employee-receivable-14479874352"]'))).toBe(false);
   const right = host.querySelector('[data-testid="employee-card-right-emp_1"]');
   expect(right).not.toBeNull();
   expect(right.className).toMatch(/flex-row/);
+  expect(right.className).toMatch(/items-center/);
   const loc = host.querySelector('[data-testid="employee-card-loc-emp_1"]');
   expect(loc).not.toBeNull();
   expect(loc.className).toMatch(/w-\[148px\]/);
+  expect(loc.className).toMatch(/\bh-10\b/);
   expect(right.contains(loc)).toBe(true);
-  expect(right.contains(host.querySelector('[data-testid="employee-edit-14479874352"]'))).toBe(true);
-  expect(right.contains(host.querySelector('[data-testid="employee-delete-14479874352"]'))).toBe(true);
+  const editBtn = host.querySelector('[data-testid="employee-edit-14479874352"]');
+  const delBtn = host.querySelector('[data-testid="employee-delete-14479874352"]');
+  expect(right.contains(editBtn)).toBe(true);
+  expect(right.contains(delBtn)).toBe(true);
+  expect(editBtn.className).toMatch(/\bh-10\b/);
+  expect(delBtn.className).toMatch(/\bh-10\b/);
   expect(card.className).toMatch(/contain-intrinsic-size:auto_120px/);
   expect(host.querySelector('[data-testid="employee-cards-grid"]')?.className).toContain("grid-cols-1");
   expect(host.querySelector('[data-testid="employee-cards-grid"]')?.className).not.toMatch(/xl:grid-cols-2/);

@@ -50,12 +50,12 @@ export function EmployeeRequestChips({
     ? `${firstMeta.label} · ${first.title || "Talep"}${rows.length > 1 ? ` · +${rows.length - 1}` : ""}`
     : "Talep yok";
   return (
-    <div className={`rounded-lg border border-amber-200 bg-amber-50 ${compact ? "px-1.5 py-1 space-y-1 w-fit max-w-[14rem] self-start" : "px-2 py-1.5 space-y-1.5"}`} data-testid={testId}>
+    <div className={`rounded-lg border border-amber-200 bg-amber-50 ${compact ? "h-10 px-2 py-0 flex flex-col justify-center w-fit max-w-[16rem] shrink-0" : "px-2 py-1.5 space-y-1.5"} ${compact && open ? "h-auto py-1.5 space-y-1" : ""}`} data-testid={testId}>
       <button
         type="button"
         onClick={() => setOpen((cur) => !cur)}
         aria-label={requestsDetailsToggleLabel(open)}
-        className={`flex items-center gap-1.5 min-h-7 ${compact ? "w-auto max-w-full" : "w-full"}`}
+        className={`flex items-center gap-1.5 ${compact ? "h-full w-auto max-w-full min-h-0" : "min-h-7 w-full"}`}
         data-testid={`${testId}-toggle`}
       >
         <Bell className="w-3 h-3 text-amber-800 shrink-0" />
