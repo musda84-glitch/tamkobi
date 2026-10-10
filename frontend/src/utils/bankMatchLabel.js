@@ -47,17 +47,20 @@ export function matchTargetLabel(tx) {
 }
 
 export function matchActorName(tx) {
-  return String(tx?.matched_by_name || "").trim();
+  return sanitizeActorLabel(tx?.matched_by_name);
 }
 
 const SITE_BRAND_ACTOR = /^(tamkobi(\.com)?|nexus(\.com)?)$/i;
 const BARE_DOMAIN_ACTOR = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|app|dev|co|tr|com\.tr)$/i;
+/** Platform CRM / destek e-postası şirket kullanıcısı gibi gösterilmesin. */
+const PLATFORM_ACTOR_EMAIL = /^(?:tamkobi(?:[.+_-][^@]*)?@|[^@]+@tamkobi\.com(?:\.tr)?$)/i;
 
-/** Marka / site adı (tamkobi.com) kullanıcı gibi gösterilmesin. */
+/** Marka / site / platform e-postası kullanıcı gibi gösterilmesin. */
 export function sanitizeActorLabel(name) {
   const s = String(name || "").trim();
   if (!s) return "";
   if (SITE_BRAND_ACTOR.test(s) || BARE_DOMAIN_ACTOR.test(s)) return "";
+  if (PLATFORM_ACTOR_EMAIL.test(s)) return "";
   return s;
 }
 

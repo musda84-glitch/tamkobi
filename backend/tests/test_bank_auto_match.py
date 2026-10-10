@@ -35,5 +35,12 @@ def test_match_actor_fields_user_and_system():
         "matched_by_id": "u1",
         "matched_by_name": "Ayşe Yılmaz",
     }
-    assert match_actor_fields({"_id": "u2", "email": "admin@nexus.com"})["matched_by_name"] == "admin@nexus.com"
+    assert match_actor_fields({"_id": "u2", "email": "admin@firma.com"})["matched_by_name"] == "admin@firma.com"
     assert match_actor_fields({})["matched_by_name"] == "Kullanıcı"
+    # Platform CRM e-postası eşleştiren olarak yazılmaz
+    assert match_actor_fields({
+        "id": "p1",
+        "name": "TamKobi",
+        "email": "tamkobi.crm@gmail.com",
+        "is_super_admin": True,
+    }) == {"matched_by_id": None, "matched_by_name": "Sistem"}
