@@ -8,6 +8,7 @@ import {
   orderMoreMenuItems,
   orderMoreMenuKind,
   integrationEInvoiceMoreItems,
+  integrationDraftMoreItems,
   panelDraftMoreItems,
   panelEInvoiceMoreItems,
   isYmd,
@@ -144,23 +145,33 @@ describe("orderMoreMenu web variants", () => {
     const labels = orderMoreMenuItems(ord).items.map((i) => i.label);
     expect(labels.slice(0, -2)).toEqual(integrationEInvoiceMoreItems().map((i) => i.label));
     expect(labels).toContain("Kargola");
-    expect(labels).toContain("Pazaryeri Kargo Firmasını Değiştir");
+    expect(labels).toContain("Depo Bilgisi Güncelle");
+    expect(labels).toContain("Paketli Siparişin Kargo Firmasını Değiştir");
     expect(labels).toContain("E-Fatura PDF İndir");
     expect(labels).toContain("Siparişi Excel İndir");
   });
 
-  it("default uninvoiced marketplace menu has no E-Fatura / E-Arşiv kes", () => {
-    const ord = { channel: "trendyol", is_invoiced: false };
-    expect(orderMoreMenuKind(ord)).toBe("default");
-    const labels = orderMoreMenuItems(ord, {
-      eBelgeItems: [{ eType: "e_archive", label: "E-Arşiv kes (GİB)", testIdSuffix: "earsiv" }],
-    }).items.map((i) => i.label);
-    expect(labels).not.toContain("E-Arşiv kes (GİB)");
-    expect(labels).not.toContain("E-Fatura kes (GİB)");
-    expect(labels).toContain("Siparişi Düzenle");
-    expect(labels).toContain("İade Al");
-    expect(labels).toContain("Siparişi Sil");
-    expect(labels).toContain("Siparişi Excel İndir");
+  it("uninvoiced marketplace uses reference fulfillment menu", () => {
+    const ord = { channel: "trendyol", is_invoiced: false, order_number: "11693105570" };
+    expect(orderMoreMenuKind(ord)).toBe("integration_draft");
+    const labels = orderMoreMenuItems(ord).items.map((i) => i.label);
+    expect(labels).toEqual(integrationDraftMoreItems().map((i) => i.label));
+    expect(labels).toEqual([
+      "Siparişin Güncel Durumunu Getir",
+      "Faturalaştır",
+      "Mini Kargo Etiketi Yazdır",
+      "Mini Kargo Etiketi Yazdır 10X10",
+      "Fatura Tarihi Değiştir",
+      "Kargo Takip Kodu Bildir",
+      "Dijital Kod Bildir",
+      "Depo Bilgisi Güncelle",
+      "Kargola",
+      "Paketli Siparişin Kargo Firmasını Değiştir",
+    ]);
+    expect(labels).not.toContain("Siparişi Düzenle");
+    expect(labels).not.toContain("Siparişi Excel İndir");
+    expect(labels).not.toContain("Siparişi Sil");
+    expect(mobilePrimaryAction(ord)).toEqual({ id: "faturalastir", label: "Faturalaştır" });
   });
 
   it("panel draft ids match web", () => {

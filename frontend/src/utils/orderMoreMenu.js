@@ -19,6 +19,8 @@ import {
   Stamp,
   Package,
   Zap,
+  ArrowLeftRight,
+  Upload,
 } from "lucide-react";
 import { INVOICE_PRINT_SHARE_HINT } from "./invoicePrintShare";
 import { isWarehouseShipped } from "./warehouseShip";
@@ -129,7 +131,7 @@ export function orderInvoiceBadge(ord) {
   return null;
 }
 
-/** Menü kimliği: panel_einvoice | integration_einvoice | panel_draft | panel_invoiced | held_cart | default */
+/** Menü kimliği: panel_einvoice | integration_einvoice | integration_draft | panel_draft | panel_invoiced | held_cart | default */
 export function orderMoreMenuKind(ord) {
   if (ord?.is_held_cart || ord?.order_status === "held_cart" || ord?.is_active_cart || ord?.order_status === "active_cart") return "held_cart";
   if (isPanelOrder(ord) && orderHasEInvoiceIssued(ord)) return "panel_einvoice";
@@ -137,6 +139,8 @@ export function orderMoreMenuKind(ord) {
   // Cariye faturalaştı, henüz GİB e-belgesi yok → yeşil Faturalaştı / E-Fatura Oluştur
   // (panel + pazaryeri; e_type tek başına kırmızı rozet üretmez)
   if (ord?.is_invoiced) return "panel_invoiced";
+  // Pazaryeri henüz faturalaşmamış → referans fulfillment menüsü
+  if (isIntegrationOrder(ord)) return "integration_draft";
   if (isPanelOrder(ord) && !ord?.is_invoiced) return "panel_draft";
   return "default";
 }
@@ -154,6 +158,25 @@ const item = (id, label, icon, opts = {}) => ({
   hidden: !!opts.hidden,
 });
 
+/**
+ * Pazaryeri siparişi (henüz faturalaşmamış) — referans fulfillment menüsü.
+ * Excel/PDF / düzenle / irsaliye satırları yok.
+ */
+export function integrationDraftMoreItems() {
+  return [
+    item("refresh_status", "Siparişin Güncel Durumunu Getir", RefreshCw, { color: "text-emerald-600" }),
+    item("faturalastir", "Faturalaştır", FileText, { color: "text-emerald-600" }),
+    item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
+    item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
+    item("invoice_date", "Fatura Tarihi Değiştir", History, { color: "text-amber-600" }),
+    item("cargo_track_notify", "Kargo Takip Kodu Bildir", History, { color: "text-sky-500" }),
+    item("digital_code_notify", "Dijital Kod Bildir", Upload, { color: "text-rose-600" }),
+    item("warehouse_update", "Depo Bilgisi Güncelle", ArrowLeftRight, { color: "text-emerald-600" }),
+    item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
+    item("cargo_change", "Paketli Siparişin Kargo Firmasını Değiştir", Truck, { color: "text-sky-500" }),
+  ];
+}
+
 /** Entegrasyondan gelen + e-faturası kesilmiş sipariş menüsü. */
 export function integrationEInvoiceMoreItems() {
   return [
@@ -168,9 +191,10 @@ export function integrationEInvoiceMoreItems() {
       title: INVOICE_PRINT_SHARE_HINT,
     }),
     item("cargo_track_notify", "Kargo Takip Kodu Bildir", History, { color: "text-sky-500" }),
-    item("digital_code_notify", "Dijital Kod Bildir", Download, { color: "text-rose-600" }),
+    item("digital_code_notify", "Dijital Kod Bildir", Upload, { color: "text-rose-600" }),
+    item("warehouse_update", "Depo Bilgisi Güncelle", ArrowLeftRight, { color: "text-emerald-600" }),
     item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
-    item("cargo_change", "Pazaryeri Kargo Firmasını Değiştir", Truck, { color: "text-sky-500" }),
+    item("cargo_change", "Paketli Siparişin Kargo Firmasını Değiştir", Truck, { color: "text-sky-500" }),
     item("invoice_link", "Fatura Linki Gönder", Link2, { color: "text-rose-500" }),
     item("xml", "E-Fatura XML'i İndir", Code2, { color: "text-sky-500" }),
     item("efatura_pdf", "E-Fatura PDF İndir", Download, { color: "text-indigo-600", testId: "efatura-pdf" }),
@@ -279,9 +303,13 @@ export function orderMoreMenuItems(ord, opts = {}) {
     // E-belge onayı sonrası: yazdır / kargo / XML (Excel/PDF yok — referans menü)
     return { kind, items: panelEInvoiceMoreItems(ord) };
   }
+  if (kind === "integration_draft") {
+    // Pazaryeri fulfillment menüsü (Excel/PDF / sil yok — referans ekran)
+    return { kind, items: integrationDraftMoreItems() };
+  }
   if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems(ord);
-  else   if (kind === "panel_invoiced") {
+  else if (kind === "panel_invoiced") {
     // Faturalaştı: E-Fatura Oluştur + kargo (Excel/PDF yok — referans menü)
     return { kind, items: panelInvoicedMoreItems(ord) };
   } else items = defaultMoreItems(ord, opts);
