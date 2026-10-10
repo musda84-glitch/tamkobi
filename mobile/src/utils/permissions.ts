@@ -105,6 +105,13 @@ export function canOpenStockCard(user: SessionUser): boolean {
   return can(user, "/stock", "edit");
 }
 
+/** AI Üretim & Reçete: yalnızca yönetici (admin/müdür); personel kaydı bağlı girişte gizli. */
+export function showProductionAiAdvisor(user: SessionUser): boolean {
+  if (hasSelfPersonnelRecord(user)) return false;
+  const role = String(user?.role || "").toLowerCase();
+  return role === "admin" || role === "manager";
+}
+
 /** Sevk: Siparişi aç — özellik + Siparişler modül yetkisi. */
 export function canSevkOpenOrder(user: SessionUser): boolean {
   return feature(user, "sevk_open_order") && can(user, "/orders");

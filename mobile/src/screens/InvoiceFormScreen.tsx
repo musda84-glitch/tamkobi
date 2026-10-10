@@ -457,7 +457,7 @@ export function InvoiceFormScreen({ invoiceId }: { invoiceId?: string }) {
 
   return (
     <Screen onRefresh={isNew ? loadLookups : loadInvoice} refreshing={loading}>
-      <H1>{isNew ? "Yeni Fatura Düzenle" : `Taslak Düzenle${draft.contact_name ? ` · ${draft.contact_name}` : ""}`}</H1>
+      <H1>{isNew ? "Yeni Fatura Düzenle" : `${draft.status === "draft" ? "Taslak Düzenle" : "Fatura Düzenle"}${draft.contact_name ? ` · ${draft.contact_name}` : ""}`}</H1>
       <Muted>E-Fatura & E-Arşiv standartlarına uygun. Cari ve kalem zorunlu.</Muted>
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}

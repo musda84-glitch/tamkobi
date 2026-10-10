@@ -20,6 +20,7 @@ import { computeLine, hydrateLine, VAT_OPTIONS } from "../utils/documentLines";
 import {
   canCancelInvoice,
   canDeleteInvoice,
+  canEditInvoice,
   canEditInvoiceItems,
   E_TYPES,
   invoiceDetailTotals,
@@ -303,22 +304,32 @@ export function InvoiceDetailScreen() {
       <Muted>{inv.contact_name} · {fmtDate(inv.issue_date)}</Muted>
       <ErrorBanner message={error} />
       {message ? <Text style={{ color: colors.primaryHover, fontWeight: "700" }}>{message}</Text> : null}
-      <PrimaryButton
-        title={shouldUseIntegratorPdf("invoice", inv) ? `${integratorPdfKindLabel(inv)} yazdır` : "Yazdır"}
-        testID="inv-print"
-        color={colors.slate800}
-        loading={busy}
-        onPress={() => run(async () => {
-          await printInvoiceForm(inv, activeCompany, client);
-          setMessage(
-            shouldUseIntegratorPdf("invoice", inv)
-              ? `${integratorPdfKindLabel(inv)} PDF yazdırmaya / paylaşıma gönderildi.`
-              : inv.invoice_type === "dispatch"
-                ? "İrsaliye yazdırmaya gönderildi."
-                : "Fatura yazdırmaya gönderildi.",
-          );
-        }, "Yazdırılamadı.")}
-      />
+      <Row style={{ flexWrap: "wrap", gap: 8 }}>
+        <PrimaryButton
+          title={shouldUseIntegratorPdf("invoice", inv) ? `${integratorPdfKindLabel(inv)} yazdır` : "Yazdır"}
+          testID="inv-print"
+          color={colors.slate800}
+          loading={busy}
+          onPress={() => run(async () => {
+            await printInvoiceForm(inv, activeCompany, client);
+            setMessage(
+              shouldUseIntegratorPdf("invoice", inv)
+                ? `${integratorPdfKindLabel(inv)} PDF yazdırmaya / paylaşıma gönderildi.`
+                : inv.invoice_type === "dispatch"
+                  ? "İrsaliye yazdırmaya gönderildi."
+                  : "Fatura yazdırmaya gönderildi.",
+            );
+          }, "Yazdırılamadı.")}
+        />
+        {canEdit && canEditInvoice(inv) ? (
+          <PrimaryButton
+            title={draft ? "Taslağı düzenle" : "Düzenle"}
+            testID="inv-edit"
+            color={colors.primary}
+            onPress={() => go("InvoiceEdit", { id })}
+          />
+        ) : null}
+      </Row>
       <Card>
         <Row style={{ flexWrap: "wrap" }}>
           <Badge label={invoiceTypeTr(inv.invoice_type)} tone="indigo" />
@@ -414,9 +425,6 @@ export function InvoiceDetailScreen() {
         )}
       </Card>
 
-      {canEdit && draft ? (
-        <PrimaryButton title="Taslağı düzenle" onPress={() => go("InvoiceEdit", { id })} color={colors.primary} testID="inv-edit" />
-      ) : null}
       {canEdit && draft ? (
         <PrimaryButton
           title="Onayla (cariye işle)"

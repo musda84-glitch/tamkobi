@@ -3,7 +3,9 @@ import {
   canCancelInvoice,
   canDeleteInvoice,
   invoiceRowDangerAction,
+  canEditInvoice,
   canEditInvoiceItems,
+  looksLikeOfficialGibInvoiceNumber,
   createInvoiceButtonLabel,
   invoiceDetailTotals,
   invoiceDipPayload,
@@ -136,9 +138,15 @@ describe("invoiceDraft", () => {
     expect(invoiceListSubtitle({ invoice_type: "sales" })).toMatch(/^Fatura · Satış/);
   });
 
-  it("allows item edits only on drafts and maps lines for PUT", () => {
+  it("allows document edit when not GIB-issued and item edits only on drafts", () => {
     expect(canEditInvoiceItems({ status: "draft" })).toBe(true);
     expect(canEditInvoiceItems({ status: "approved" })).toBe(false);
+    expect(canEditInvoice({ status: "draft", invoice_type: "sales", e_type: "paper" })).toBe(true);
+    expect(canEditInvoice({ status: "approved", invoice_type: "sales", e_type: "paper" })).toBe(true);
+    expect(canEditInvoice({ status: "approved", invoice_type: "sales", e_type: "e_archive", invoice_number: "POS2026100900038" })).toBe(false);
+    expect(looksLikeOfficialGibInvoiceNumber("POS2026100900038")).toBe(true);
+    expect(canEditInvoice({ status: "cancelled", invoice_type: "sales" })).toBe(false);
+    expect(canEditInvoice({ status: "approved", invoice_type: "dispatch" })).toBe(false);
     const body = invoiceItemsPayload([
       { product_id: "p1", name: "Raf", product_name: "Raf", sku: "", quantity: 2, unit: "Adet", unit_price: 10, unit_price_incl: 12, vat_rate: 20, discount_rate: 0, total: 20, total_incl: 24, vat_amount: 4, is_service: false },
     ]);

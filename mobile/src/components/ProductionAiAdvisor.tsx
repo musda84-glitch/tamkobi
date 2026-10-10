@@ -3,6 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import { get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { colors } from "../theme";
+import { showProductionAiAdvisor } from "../utils/permissions";
 import { Card, Field, Muted, PrimaryButton, Row } from "./kit";
 
 const QUICK = [
@@ -22,7 +23,7 @@ type Metrics = {
 
 /** Şirket ai.production eklentisi + production_ai özellik bayrağı açıkken (web ProductionAiAdvisor). */
 export function ProductionAiAdvisor({ companyId, compact = true }: { companyId: string; compact?: boolean }) {
-  const { client, addonOn, feature } = useAuth();
+  const { client, user, addonOn, feature } = useAuth();
   const [open, setOpen] = useState(!compact);
   const [busy, setBusy] = useState(false);
   const [advice, setAdvice] = useState("");
@@ -30,7 +31,7 @@ export function ProductionAiAdvisor({ companyId, compact = true }: { companyId: 
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  if (!addonOn("ai.production") || !feature("production_ai")) return null;
+  if (!showProductionAiAdvisor(user) || !addonOn("ai.production") || !feature("production_ai")) return null;
 
   const run = async (message?: string) => {
     const text = String(message || q || "").trim();

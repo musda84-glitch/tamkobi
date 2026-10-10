@@ -35,6 +35,7 @@ import {
   partnerTxLabel,
   partnerBalanceMeta,
   partnerSummaryCardMeta,
+  partnerCardCashFlow,
   partnerCardTone,
   partnerInitials,
   filterPartnerTxs,
@@ -367,5 +368,22 @@ describe("finance drafts", () => {
     expect(card.fromCash).toBe(true);
     expect(card.display).toBe(-800);
     expect(card.badge).toBe("Alacaklı");
+  });
+
+  it("partner card cash flow uses tx kasa yönü like web ledger", () => {
+    const partner = { balance: 100, total_capital_in: 10, total_withdrawn: 20 };
+    const fallback = partnerCardCashFlow(partner, [], "p1");
+    expect(fallback.fromTx).toBe(false);
+    expect(fallback.giris).toBe(10);
+    expect(fallback.cikis).toBe(-20);
+    const flow = partnerCardCashFlow(partner, [
+      { id: "1", partner_id: "p1", type: "capital_in", amount: 267570 },
+      { id: "2", partner_id: "p1", type: "withdrawal", amount: 1512300 },
+      { id: "3", partner_id: "other", type: "capital_in", amount: 999 },
+    ], "p1");
+    expect(flow.fromTx).toBe(true);
+    expect(flow.giris).toBe(267570);
+    expect(flow.cikis).toBe(-1512300);
+    expect(flow.display).toBe(267570 - 1512300);
   });
 });

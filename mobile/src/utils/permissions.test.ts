@@ -1,4 +1,4 @@
-import { can, canOpenStockCard, canSevkDraftInvoice, canSevkOpenOrder, feature, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showSelfPersonnelTabs, visibleModules } from "./permissions";
+import { can, canOpenStockCard, canSevkDraftInvoice, canSevkOpenOrder, feature, hasSelfPersonnelRecord, isMoreLinkVisible, moduleOn, showFinanceSubstituteTabs, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile, showProductionAiAdvisor, showSelfPersonnelTabs, visibleModules } from "./permissions";
 
 describe("permissions", () => {
   it("admins see everything", () => {
@@ -197,5 +197,13 @@ describe("permissions", () => {
     expect(showHomeRefreshTile({ role: "sales", employee_id: null })).toBe(false);
     expect(showHomeRefreshTile({ role: "admin", employee_id: "emp_1" })).toBe(true);
     expect(showHomeRefreshTile({ role: "personel", employee_id: "e2" })).toBe(true);
+  });
+
+  it("hides production AI advisor from personnel logins", () => {
+    expect(showProductionAiAdvisor({ role: "admin" })).toBe(true);
+    expect(showProductionAiAdvisor({ role: "manager" })).toBe(true);
+    expect(showProductionAiAdvisor({ role: "admin", employee_id: "e1" })).toBe(false);
+    expect(showProductionAiAdvisor({ role: "personel", employee_id: "e2" })).toBe(false);
+    expect(showProductionAiAdvisor({ role: "warehouse" })).toBe(false);
   });
 });
