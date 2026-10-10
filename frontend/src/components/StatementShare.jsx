@@ -9,11 +9,23 @@ import { QuickMessageModal } from "./QuickMessageModal";
 import { downloadStatementPdf, fetchStatementShare, statementPdfFile } from "../utils/statementShare";
 import { fmtDate, fmtMoney } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { contactPaymentDocLabel, isContactLedgerPay } from "../utils/contactPayMenu";
 
 export const buildStatementRows = (data, { includeCheques = false } = {}) => {
   const rows = [];
   (data.invoices || []).filter((i) => i.status !== "cancelled").forEach((i) => rows.push({ date: i.issue_date, doc: `${i.invoice_number} • ${i.invoice_type === "sales" ? "Satış Faturası" : "Alış Faturası"}`, debit: i.invoice_type === "sales" ? i.grand_total : 0, credit: i.invoice_type === "sales" ? 0 : i.grand_total, kind: "invoice" }));
-  (data.payments || []).filter((p) => p.type !== "transfer").forEach((p) => rows.push({ date: p.date, doc: `${p.type === "inflow" ? "Tahsilat" : "Ödeme"} • ${p.account_name}${p.description ? " • " + p.description : ""}`, debit: p.type === "inflow" ? 0 : p.amount, credit: p.type === "inflow" ? p.amount : 0, kind: "payment" }));
+  (data.payments || []).filter((p) => p.type !== "transfer").forEach((p) => {
+    const doc = isContactLedgerPay(p)
+      ? contactPaymentDocLabel(p)
+      : `${contactPaymentDocLabel(p)}${p.description ? ` • ${p.description}` : ""}`;
+    rows.push({
+      date: p.date,
+      doc,
+      debit: p.type === "inflow" ? 0 : p.amount,
+      credit: p.type === "inflow" ? p.amount : 0,
+      kind: isContactLedgerPay(p) ? "ledger" : "payment",
+    });
+  });
   if (includeCheques) {
     (data.cheques || []).forEach((ch) => {
       const kind = ch.instrument === "promissory" ? "Senet" : "Çek";
