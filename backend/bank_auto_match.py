@@ -40,11 +40,12 @@ def contact_matches_text(contact_name: str, counterparty: str = "", description:
 
 
 def match_actor_fields(user: Optional[Dict[str, Any]] = None) -> Dict[str, Optional[str]]:
-    """Eşleştirmeyi yapan kullanıcı (yoksa Sistem)."""
+    """Eşleştirmeyi yapan kullanıcı (yoksa Sistem). Marka/domain adı kullanılmaz."""
     if user is None:
         return {"matched_by_id": None, "matched_by_name": "Sistem"}
+    import bank_tx
     uid = user.get("id") or user.get("_id")
-    name = (user.get("name") or user.get("email") or "").strip() or "Kullanıcı"
+    name = bank_tx.display_actor_name(user) or "Kullanıcı"
     return {"matched_by_id": str(uid) if uid else None, "matched_by_name": name}
 
 

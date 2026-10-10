@@ -23,6 +23,15 @@ def test_actor_fields_from_user():
     assert bank_tx.actor_fields({})["created_by_name"] == "Kullanıcı"
 
 
+def test_actor_fields_rejects_site_brand_name():
+    assert bank_tx.actor_fields({"id": "u1", "name": "tamkobi.com", "email": "ali@firma.com"})[
+        "created_by_name"
+    ] == "ali@firma.com"
+    assert bank_tx.actor_fields({"id": "u1", "name": "TamKobi"})["created_by_name"] == "Kullanıcı"
+    assert bank_tx._looks_like_site_brand("example.org") is True
+    assert bank_tx._looks_like_site_brand("Ayşe Yılmaz") is False
+
+
 def test_stamp_uses_context_actor():
     tok = bank_tx.set_current_actor({"id": "u9", "name": "Mehmet"})
     try:
@@ -40,6 +49,17 @@ def test_stamp_keeps_existing_name():
         doc = {"created_by_name": "Ayşe", "amount": 1}
         bank_tx.stamp(doc)
         assert doc["created_by_name"] == "Ayşe"
+    finally:
+        bank_tx.reset_current_actor(tok)
+
+
+def test_stamp_replaces_brand_created_by():
+    tok = bank_tx.set_current_actor({"id": "u3", "name": "Mehmet", "email": "m@x.com"})
+    try:
+        doc = {"created_by_name": "tamkobi.com", "amount": 1}
+        bank_tx.stamp(doc)
+        assert doc["created_by_name"] == "Mehmet"
+        assert doc["created_by_id"] == "u3"
     finally:
         bank_tx.reset_current_actor(tok)
 

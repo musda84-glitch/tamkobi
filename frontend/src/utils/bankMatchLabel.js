@@ -41,11 +41,22 @@ export function matchActorName(tx) {
   return String(tx?.matched_by_name || "").trim();
 }
 
+const SITE_BRAND_ACTOR = /^(tamkobi(\.com)?|nexus(\.com)?)$/i;
+const BARE_DOMAIN_ACTOR = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|net|org|io|app|dev|co|tr|com\.tr)$/i;
+
+/** Marka / site adı (tamkobi.com) kullanıcı gibi gösterilmesin. */
+export function sanitizeActorLabel(name) {
+  const s = String(name || "").trim();
+  if (!s) return "";
+  if (SITE_BRAND_ACTOR.test(s) || BARE_DOMAIN_ACTOR.test(s)) return "";
+  return s;
+}
+
 /** Hareketi oluşturan / eşleştiren yönetici — listede gösterilir. */
 export function txCreatedByLabel(tx) {
-  const created = String(tx?.created_by_name || "").trim();
+  const created = sanitizeActorLabel(tx?.created_by_name);
   if (created) return created;
-  const matched = matchActorName(tx);
+  const matched = sanitizeActorLabel(matchActorName(tx));
   if (matched) return matched;
   if (tx?.source === "bank_sync") return tx?.is_simulated ? "Simüle" : "Banka";
   if (tx?.source === "ledger") return "Sistem";

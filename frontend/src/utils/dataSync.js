@@ -108,11 +108,13 @@ async function writeCache(collection, companyId, state) {
 
 export function mergeDelta(items, changed, deleted, replace) {
   const next = replace ? {} : { ...items };
+  // Tombstone önce: aynı id hem silinmiş hem geri gelmişse (çöp geri alma)
+  // changed kazanır — aksi halde hareket listede kaybolur, bakiye kalır.
+  for (const id of deleted || []) delete next[id];
   for (const d of changed || []) {
     const id = d.id || d._id;
     if (id) next[id] = d;
   }
-  for (const id of deleted || []) delete next[id];
   return next;
 }
 

@@ -54,6 +54,19 @@ test("mergeDelta patches product flags by id", () => {
   expect(next.a.track_stock).toBe(false);
 });
 
+test("mergeDelta restore wins over tombstone for same id", () => {
+  const items = {};
+  const restored = { id: "tx1", amount: 260, description: "Geri alındı" };
+  const next = mergeDelta(items, [restored], ["tx1"], false);
+  expect(next.tx1).toEqual(restored);
+});
+
+test("mergeDelta still removes when only tombstone", () => {
+  const items = { tx1: { id: "tx1", amount: 10 } };
+  const next = mergeDelta(items, [], ["tx1"], false);
+  expect(next.tx1).toBeUndefined();
+});
+
 test("productFilter b2bOnly respects show_in_b2b", () => {
   const f = productFilter({ b2bOnly: true });
   expect(f({ show_in_b2b: true, is_active: true, type: "product", sale_price: 10 })).toBe(true);

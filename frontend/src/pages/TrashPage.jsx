@@ -7,7 +7,21 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
 import { formatTrAmount } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { notifyDataChanged } from "../utils/dataRefresh";
 
+/** Çöp geri alma / silme sonrası hangi IndexedDB koleksiyonları düşürülsün. */
+export function trashNotifyScopes(entityType) {
+  const t = String(entityType || "");
+  if (["bank_transaction", "bank_account", "partner", "partner_transaction", "cheque", "loan"].includes(t)) {
+    return ["cash"];
+  }
+  if (t === "expense") return ["cash", "expenses"];
+  if (t === "contact") return ["contacts", "cash"];
+  if (t === "invoice") return ["invoices", "cash", "contacts"];
+  if (["order", "purchase_order"].includes(t)) return ["orders"];
+  if (t === "product" || t === "recipe") return ["stock"];
+  return ["all"];
+}
 
 const fmtDate = (s) => (s ? new Date(s).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
 const fmtVal = (v) => (typeof v === "number" ? formatTrAmount(v) : Array.isArray(v) ? `${v.length} kalem` : String(v));
@@ -186,20 +200,43 @@ export default function TrashPage() {
 
   const restore = async (it) => {
     setBusy(it.id);
-    try { const r = await axios.post(`${API_URL}/trash/${it.id}/restore`); toast.success(r.data.message); load(); }
-    catch (err) { toast.error(err.response?.data?.detail || "Geri getirilemedi."); } finally { setBusy(null); }
+    try {
+      const r = await axios.post(`${API_URL}/trash/${it.id}/restore`);
+      toast.success(r.data.message);
+      await notifyDataChanged({ companyId, scopes: trashNotifyScopes(r.data.entity_type || it.entity_type) });
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Geri getirilemedi.");
+    } finally {
+      setBusy(null);
+    }
   };
   const purge = async (it) => {
     if (!window.confirm(`"${it.label}" kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`)) return;
     setBusy(it.id);
-    try { await axios.delete(`${API_URL}/trash/${it.id}`); toast.success("Kalıcı olarak silindi."); load(); }
-    catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } finally { setBusy(null); }
+    try {
+      await axios.delete(`${API_URL}/trash/${it.id}`);
+      toast.success("Kalıcı olarak silindi.");
+      await notifyDataChanged({ companyId, scopes: trashNotifyScopes(it.entity_type) });
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Silinemedi.");
+    } finally {
+      setBusy(null);
+    }
   };
   const empty = async () => {
     const label = type ? data?.types?.find((t) => t.key === type)?.label : "tüm";
     if (!window.confirm(`Çöp kutusundaki ${label} kayıtlar (${type ? data?.types?.find((t) => t.key === type)?.count : data?.total}) kalıcı olarak silinsin mi?`)) return;
-    try { const r = await axios.post(`${API_URL}/trash/empty`, { company_id: companyId, entity_type: type || undefined }); toast.success(r.data.message); setType(""); load(); }
-    catch (err) { toast.error(err.response?.data?.detail || "Boşaltılamadı."); }
+    try {
+      const r = await axios.post(`${API_URL}/trash/empty`, { company_id: companyId, entity_type: type || undefined });
+      toast.success(r.data.message);
+      await notifyDataChanged({ companyId, scopes: type ? trashNotifyScopes(type) : ["all"] });
+      setType("");
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Boşaltılamadı.");
+    }
   };
 
   const onSection = (next) => {
