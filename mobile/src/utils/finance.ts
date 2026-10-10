@@ -353,6 +353,50 @@ export function filterPartnerTxs(txs: PartnerTx[] | null | undefined, partnerId?
   return list.filter((tx) => String(tx.partner_id || "") === partnerId);
 }
 
+/**
+ * Ortak kartı Giriş/Çıkış = web partnerLedgerBreakdown kasa yönü.
+ * Hareket yoksa API capital_in / withdrawn alanına düşer.
+ */
+export function partnerCardCashFlow(
+  partner: Pick<Partner, "balance" | "total_capital_in" | "total_withdrawn"> | null | undefined,
+  txs: PartnerTx[] | null | undefined,
+  partnerId?: string | null,
+): {
+  giris: number;
+  cikis: number;
+  badge: string;
+  display: number;
+  fromTx: boolean;
+} {
+  const mine = filterPartnerTxs(txs, partnerId);
+  if (mine.length) {
+    let cashIn = 0;
+    let cashOut = 0;
+    for (const tx of mine) {
+      const amt = Number(tx.amount);
+      const n = Number.isFinite(amt) ? amt : 0;
+      if (partnerTxLabel(tx) === "Giriş") cashIn += n;
+      else cashOut += n;
+    }
+    cashIn = Math.round(cashIn * 100) / 100;
+    cashOut = Math.round(cashOut * 100) / 100;
+    const giris = cashIn;
+    const cikis = Math.round(-cashOut * 100) / 100;
+    const net = Math.round((giris + cikis) * 100) / 100;
+    const pocket = Math.round(-net * 100) / 100;
+    const bm = partnerBalanceMeta(pocket);
+    return { giris, cikis, badge: bm.badge, display: net, fromTx: true };
+  }
+  const bm = partnerBalanceMeta(partner?.balance);
+  return {
+    giris: Number(partner?.total_capital_in) || 0,
+    cikis: -(Number(partner?.total_withdrawn) || 0),
+    badge: bm.badge,
+    display: bm.display,
+    fromTx: false,
+  };
+}
+
 export function filterPartners<T extends { name?: string; phone?: string; email?: string }>(
   partners: T[] | null | undefined,
   q: string,

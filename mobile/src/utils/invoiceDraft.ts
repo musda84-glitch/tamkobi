@@ -394,6 +394,34 @@ export function canEditInvoiceItems(inv?: Invoice | null): boolean {
   return String(inv?.status || "") === "draft";
 }
 
+/** Resmi GİB fatura no: 3 alfanümerik + 13 rakam (ör. ABC2026000000001). */
+export function looksLikeOfficialGibInvoiceNumber(no?: string | null): boolean {
+  const s = String(no || "").trim().toUpperCase();
+  return /^[A-Z0-9]{3}\d{13}$/.test(s);
+}
+
+/** GİB'e iletilmemiş satış/alış belgesi düzenlenir (web InvoiceContextMenu ile aynı). */
+export function canEditInvoice(inv?: Invoice | null): boolean {
+  if (!inv) return false;
+  if (inv.status === "cancelled") return false;
+  if (isIncomingPurchaseInvoice(inv)) return false;
+  if (inv.invoice_type === "dispatch") return false;
+  if (isGibIssued(inv)) return false;
+  const gibNo = String(inv.gib_invoice_id || "").trim();
+  const invNo = String(inv.invoice_number || "").trim();
+  if (gibNo && gibNo !== invNo) return false;
+  const eType = String(inv.e_type || "");
+  if (["e_invoice", "e_archive", "e_export"].includes(eType) && gibNo) return false;
+  if (
+    inv.status !== "draft"
+    && ["e_invoice", "e_archive", "e_export"].includes(eType)
+    && looksLikeOfficialGibInvoiceNumber(invNo)
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function invoiceItemsPayload(items: InvoiceLine[]) {
   return {
     items: items.map((it) => {

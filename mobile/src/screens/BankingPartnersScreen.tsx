@@ -14,7 +14,7 @@ import {
   expenseCategoryGroups,
   expensePayload,
   filterPartnerTxs,
-  partnerBalanceMeta,
+  partnerCardCashFlow,
   partnerCardTone,
   partnerSummaryCardMeta,
   partnerTxLabel,
@@ -99,13 +99,15 @@ function PartnerCard({
           </View>
         </View>
         {(() => {
-          const bal = partnerBalanceMeta(partner.balance);
+          const flow = partnerCardCashFlow(partner, txs, pid);
           return (
             <>
               <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }} testID={`partner-balance-${pid}`}>
-                {fmtMoney(bal.display)}
+                {fmtMoney(flow.display)}
               </Text>
-              <Muted>{bal.badge} · giriş {fmtMoney(partner.total_capital_in)} · çıkış {fmtMoney(partner.total_withdrawn)}</Muted>
+              <Muted testID={`partner-flow-${pid}`}>
+                {flow.badge} · giriş {fmtMoney(flow.giris)} · çıkış {fmtMoney(Math.abs(flow.cikis))}
+              </Muted>
             </>
           );
         })()}

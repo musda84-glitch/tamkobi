@@ -125,7 +125,10 @@ export type Invoice = {
   currency?: string;
   notes?: string;
   gib_status?: string;
+  gib_status_code?: string;
   gib_tracking_id?: string;
+  gib_uuid?: string;
+  gib_invoice_id?: string;
   einvoice_state?: string;
   withholding_rate?: number;
   withholding_code?: string;
