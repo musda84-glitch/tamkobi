@@ -95,8 +95,13 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
   useDataRefresh(load, { companyId, scopes: ["cash"] });
 
   const bumpCash = useCallback(async () => {
+    // Parent (BankingPage) hesap grubu bakiyelerini de yenilesin.
+    if (typeof onCashChanged === "function") {
+      await onCashChanged();
+      return;
+    }
     await notifyDataChanged({ companyId, scopes: ["cash"] });
-  }, [companyId]);
+  }, [companyId, onCashChanged]);
 
   const refreshAccounts = useCallback(async () => {
     setAccountsLoading(true);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { useSearchParams } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
@@ -149,6 +149,7 @@ export default function BankingPage() {
     via_customer_card: false,
   });
 
+  const silentReloadRef = useRef(null);
   const loadBankingData = useCallback(async ({ silent = false } = {}) => {
     try {
       if (!silent) setLoading(true);
@@ -189,7 +190,11 @@ export default function BankingPage() {
   useEffect(() => { loadBankingData(); }, [loadBankingData]);
   const refreshCashSilent = useCallback(() => {
     setCashTick((n) => n + 1);
-    return loadBankingData({ silent: true });
+    if (silentReloadRef.current) return silentReloadRef.current;
+    silentReloadRef.current = Promise.resolve(loadBankingData({ silent: true })).finally(() => {
+      silentReloadRef.current = null;
+    });
+    return silentReloadRef.current;
   }, [loadBankingData]);
   useDataRefresh(refreshCashSilent, { companyId, scopes: ["cash"] });
   const bumpCashData = useCallback(async (matchedTx) => {
@@ -208,9 +213,10 @@ export default function BankingPage() {
         return found ? next : [{ ...matchedTx, id: mid }, ...rows];
       });
     }
-    setCashTick((n) => n + 1);
+    // Cache düşür + diğer ekranlara sinyal; ardından hesap grubu bakiyelerini (accounts + ortak özeti) bekleyerek yenile.
     await notifyDataChanged({ companyId, scopes: ["cash"] });
-  }, [companyId]);
+    await refreshCashSilent();
+  }, [companyId, refreshCashSilent]);
 
   const handleSaveAccount = async (e) => {
     e.preventDefault();
