@@ -2,6 +2,8 @@ import {
   CONTACT_PAY_MENU_ITEMS,
   CONTACT_PAY_MENU_SECTIONS,
   buildContactPayForm,
+  contactPayCashTypePatch,
+  contactPayLedgerSlipPatch,
   contactPaymentDocLabel,
   contactPayModalMeta,
   isContactBalanceFixPay,
@@ -93,8 +95,32 @@ test("contactPayModalMeta locks fields per menu item", () => {
   expect(contactPayModalMeta({ menuId: "ledger_slips" })).toMatchObject({
     title: "Borç-Alacak Fişi",
     showSlipToggle: true,
+    hybridLedger: true,
+  });
+  expect(contactPayModalMeta({ menuId: "ledger_slips", method: "cash" })).toMatchObject({
+    title: "Tahsilat / Ödeme",
+    showSlipToggle: true,
+    showTypeToggle: true,
   });
   expect(contactPayModalMeta({})).toMatchObject({ showMethodTabs: true });
+});
+
+test("ledger_slips Tahsilat/Ödeme switches to cash with account target", () => {
+  const accounts = [
+    { id: "cash1", type: "cash_box", account_name: "Kasa" },
+    { id: "bank1", type: "bank", account_name: "Banka" },
+    { id: "pos1", type: "pos", account_name: "POS" },
+  ];
+  const form = { menuId: "ledger_slips", method: "ledger", type: "inflow", slip: "debit", account_id: "" };
+  const cashIn = contactPayCashTypePatch(form, "inflow", accounts);
+  expect(cashIn).toMatchObject({ method: "cash", type: "inflow", description: "Cari tahsilat" });
+  expect(["cash1", "bank1", "pos1"]).toContain(cashIn.account_id);
+
+  const cashOut = contactPayCashTypePatch({ ...form, ...cashIn }, "outflow", accounts);
+  expect(cashOut).toMatchObject({ method: "cash", type: "outflow", description: "Cari ödeme" });
+
+  const back = contactPayLedgerSlipPatch({ ...form, ...cashOut }, "credit");
+  expect(back).toMatchObject({ method: "ledger", slip: "credit", description: "Alacak fişi" });
 });
 
 test("ledger / bakiye düzeltme payments label as borç or alacak not tahsilat", () => {

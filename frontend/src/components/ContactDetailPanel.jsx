@@ -22,14 +22,15 @@ import { nowIssueDateTime } from "../utils/invoiceIssueNow";
 import { useEscape } from "../utils/useEscape";
 import { SortableHeader, useSortableColumns, useSortedRows } from "./SortableColumns";
 import { InstallmentPlanModal, InstallmentRows } from "./InstallmentPlanModal";
-import { collectableAccounts, PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
+import { PaymentTargetSelect, splitPaymentTarget } from "./PaymentTargetSelect";
 import { ContactPayMenu } from "./ContactPayMenu";
 import { ContactStatementMenu } from "./ContactStatementMenu";
 import { StatementShareBar, StatementPrint, buildStatementRows } from "./StatementShare";
 import { shareStatementLink } from "../utils/statementShare";
 import {
   buildContactPayForm,
-  contactLedgerSlipDescription,
+  contactPayCashTypePatch,
+  contactPayLedgerSlipPatch,
   contactPaymentDocLabel,
   contactPayModalMeta,
   isContactBalanceFixPay,
@@ -1195,8 +1196,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
               </div>
               {meta.showTypeToggle && (
                 <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => { const pool = collectableAccounts(accounts); setPayForm({ ...payForm, type: "inflow", account_id: pool.some((a) => a.id === payForm.account_id) ? payForm.account_id : (pool[0]?.id || ""), description: payForm.method === "cheque" ? "Alınan çek" : payForm.method === "promissory" ? "Alınan senet" : payForm.preferPos ? "Temassız tahsilat" : "Cari tahsilat" }); }} className={`p-2 rounded-lg border font-semibold ${payForm.type === "inflow" ? "bg-emerald-600 text-white border-emerald-600" : ""}`} data-testid="collect-type-in">Tahsilat (Müşteriden)</button>
-                  <button type="button" onClick={() => setPayForm({ ...payForm, type: "outflow", description: payForm.method === "cheque" ? "Verilen çek" : payForm.method === "promissory" ? "Verilen senet" : payForm.preferPos ? "Temassız ödeme" : "Cari ödeme" })} className={`p-2 rounded-lg border font-semibold ${payForm.type === "outflow" ? "bg-rose-600 text-white border-rose-600" : ""}`} data-testid="collect-type-out">Ödeme (Cariye)</button>
+                  <button type="button" onClick={() => setPayForm({ ...payForm, ...contactPayCashTypePatch(payForm, "inflow", accounts) })} className={`p-2 rounded-lg border font-semibold ${payForm.method !== "ledger" && payForm.type === "inflow" ? "bg-emerald-600 text-white border-emerald-600" : ""}`} data-testid="collect-type-in">Tahsilat (Müşteriden)</button>
+                  <button type="button" onClick={() => setPayForm({ ...payForm, ...contactPayCashTypePatch(payForm, "outflow", accounts) })} className={`p-2 rounded-lg border font-semibold ${payForm.method !== "ledger" && payForm.type === "outflow" ? "bg-rose-600 text-white border-rose-600" : ""}`} data-testid="collect-type-out">Ödeme (Cariye)</button>
                 </div>
               )}
               {!meta.showTypeToggle && payForm.method !== "ledger" && (
@@ -1211,20 +1212,19 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                   ))}
                 </div>
               )}
+              {meta.showSlipToggle && (
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setPayForm({ ...payForm, ...contactPayLedgerSlipPatch(payForm, "debit") })} className={`p-2 rounded-lg border font-semibold ${payForm.method === "ledger" && payForm.slip !== "credit" ? "bg-rose-50 border-rose-300 text-rose-800" : ""}`} data-testid="collect-slip-debit">Borç fişi</button>
+                  <button type="button" onClick={() => setPayForm({ ...payForm, ...contactPayLedgerSlipPatch(payForm, "credit") })} className={`p-2 rounded-lg border font-semibold ${payForm.method === "ledger" && payForm.slip === "credit" ? "bg-emerald-50 border-emerald-300 text-emerald-800" : ""}`} data-testid="collect-slip-credit">Alacak fişi</button>
+                </div>
+              )}
+              {payForm.method === "ledger" && !meta.showSlipToggle && (
+                <div className={`rounded-lg border px-3 py-2 font-semibold ${payForm.slip === "credit" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-rose-50 border-rose-200 text-rose-800"}`} data-testid="collect-slip-locked">
+                  {payForm.slip === "credit" ? "Alacak fişi (bakiye düzeltme)" : "Borç fişi (bakiye düzeltme)"}
+                </div>
+              )}
               {payForm.method === "ledger" ? (
-                <>
-                  {meta.showSlipToggle ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <button type="button" onClick={() => setPayForm({ ...payForm, slip: "debit", description: contactLedgerSlipDescription("debit", { balanceFix: !!payForm.balanceFix }) })} className={`p-2 rounded-lg border font-semibold ${payForm.slip !== "credit" ? "bg-rose-50 border-rose-300 text-rose-800" : ""}`} data-testid="collect-slip-debit">Borç fişi</button>
-                      <button type="button" onClick={() => setPayForm({ ...payForm, slip: "credit", description: contactLedgerSlipDescription("credit", { balanceFix: !!payForm.balanceFix }) })} className={`p-2 rounded-lg border font-semibold ${payForm.slip === "credit" ? "bg-emerald-50 border-emerald-300 text-emerald-800" : ""}`} data-testid="collect-slip-credit">Alacak fişi</button>
-                    </div>
-                  ) : (
-                    <div className={`rounded-lg border px-3 py-2 font-semibold ${payForm.slip === "credit" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-rose-50 border-rose-200 text-rose-800"}`} data-testid="collect-slip-locked">
-                      {payForm.slip === "credit" ? "Alacak fişi (bakiye düzeltme)" : "Borç fişi (bakiye düzeltme)"}
-                    </div>
-                  )}
-                  <p className="text-[10px] text-slate-500" data-testid="collect-ledger-hint">{payForm.balanceFix ? "Cari bakiye düzeltme: tutar otomatik dolduruldu; borç veya alacak fişi seçin. Kasa/banka bakiyesi değişmez." : "Borç fişi cari borcunu artırır, alacak fişi düşürür. Kasa ve banka bakiyesi değişmez."}</p>
-                </>
+                <p className="text-[10px] text-slate-500" data-testid="collect-ledger-hint">{payForm.balanceFix ? "Cari bakiye düzeltme: tutar otomatik dolduruldu; borç veya alacak fişi seçin. Kasa/banka bakiyesi değişmez." : "Borç fişi cari borcunu artırır, alacak fişi düşürür. Kasa ve banka bakiyesi değişmez. Tahsilat/Ödeme için üstteki butonlarla kasa, banka veya POS seçin."}</p>
               ) : payForm.method === "cheque" || payForm.method === "promissory" ? (
                 <div className="space-y-2">
                   <p className="text-[10px] text-slate-500">{payForm.type === "inflow" ? "Alınan" : "Verilen"} {payForm.method === "promissory" ? "senet" : "çek"} bu cariye işlenir; tahsil/ödeme vadesinde Çek ve Senetler sekmesinden yapılır.</p>
@@ -1238,7 +1238,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 <>
                   <div><label className="block font-semibold mb-1">{payForm.preferPos ? "POS / Temassız hesap" : payForm.type === "inflow" ? "Kasa / Banka / POS / Ortak" : "Kasa / Banka / Kart / Ortak"}</label><PaymentTargetSelect companyId={c.company_id} accounts={accounts} value={payForm.account_id} onChange={(v) => setPayForm({ ...payForm, account_id: v })} testId="collect-account-select" collectableOnly={payForm.type === "inflow"} /></div>
                   {payForm.preferPos && <p className="text-[10px] text-amber-700">Temassız tahsilat için POS / OKC hesabı seçilir.</p>}
-                  {payForm.type === "inflow" && !payForm.preferPos && <p className="text-[10px] text-slate-400">Tahsilatta kredi kartı seçilemez; ortaklar hesabı kullanılabilir.</p>}
+                  {payForm.type === "inflow" && !payForm.preferPos && <p className="text-[10px] text-slate-400" data-testid="collect-account-hint">Tahsilatta kasa, banka, POS veya ortaklar hesabı seçilir; kredi kartı kapalıdır.</p>}
+                  {payForm.type === "outflow" && <p className="text-[10px] text-slate-400" data-testid="collect-account-hint-out">Ödemede kasa, banka, POS, kredi kartı veya ortaklar hesabı seçilir.</p>}
                 </>
               )}
               <div className="space-y-1.5">

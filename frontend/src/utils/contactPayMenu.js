@@ -68,16 +68,57 @@ export function contactPayModalMeta(formOrOpts = {}) {
   };
   const method = formOrOpts.method || methodFromMenu[menuId] || "cash";
   const locked = !!menuId;
+  // Borç-Alacak menüsü: Tahsilat/Ödeme → kasa hedefi; fiş → ledger
+  const hybridLedger = menuId === "ledger_slips";
+  let title = MENU_TITLES[menuId] || (method === "ledger" ? "Borç-Alacak Fişi" : "Tahsilat / Ödeme");
+  if (hybridLedger && method === "cash") title = "Tahsilat / Ödeme";
   return {
     menuId,
-    title: MENU_TITLES[menuId] || (method === "ledger" ? "Borç-Alacak Fişi" : "Tahsilat / Ödeme"),
+    title,
     lockMethod: locked,
     lockType: menuId === "promissory_in" || menuId === "promissory_out" || menuId === "balance_fix" || menuId === "contactless",
     lockSlip: false,
-    showTypeToggle: !locked || (menuId === "cash" || menuId === "cheque" || menuId === "ledger_slips"),
+    showTypeToggle: !locked || (menuId === "cash" || menuId === "cheque" || hybridLedger),
     showMethodTabs: !locked,
-    // Bakiye düzelt + borç-alacak fişleri: borç / alacak seçimi
-    showSlipToggle: method === "ledger",
+    // Bakiye düzelt + borç-alacak: fiş seçimi; hybrid menüde cash'e geçince geri dönmek için de açık
+    showSlipToggle: method === "ledger" || hybridLedger || menuId === "balance_fix",
+    hybridLedger,
+  };
+}
+
+/** Tahsilat/Ödeme → nakit yöntemi + hesap seçimi (ledger_slips hibrit menü). */
+export function contactPayCashTypePatch(form, type, accounts = []) {
+  const isCheque = form.method === "cheque" || form.menuId === "cheque";
+  const isPromissory = form.method === "promissory"
+    || form.menuId === "promissory_in"
+    || form.menuId === "promissory_out";
+  if (isCheque) {
+    return { type, description: type === "inflow" ? "Alınan çek" : "Verilen çek" };
+  }
+  if (isPromissory) {
+    return { type, description: type === "inflow" ? "Alınan senet" : "Verilen senet" };
+  }
+  const pool = type === "inflow" ? collectableOnly(accounts) : (accounts || []);
+  const keep = pool.some((a) => (a.id || a._id) === form.account_id);
+  const account_id = keep ? form.account_id : (pool[0]?.id || pool[0]?._id || "");
+  const preferPos = !!form.preferPos;
+  return {
+    type,
+    method: "cash",
+    account_id,
+    description: preferPos
+      ? (type === "inflow" ? "Temassız tahsilat" : "Temassız ödeme")
+      : (type === "inflow" ? "Cari tahsilat" : "Cari ödeme"),
+  };
+}
+
+/** Borç/Alacak fişi → ledger (kasa hedefi kapanır). */
+export function contactPayLedgerSlipPatch(form, slip) {
+  const balanceFix = !!(form?.balanceFix || form?.menuId === "balance_fix");
+  return {
+    method: "ledger",
+    slip,
+    description: contactLedgerSlipDescription(slip, { balanceFix }),
   };
 }
 
