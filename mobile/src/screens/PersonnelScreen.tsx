@@ -1567,8 +1567,32 @@ export function PersonnelScreen() {
                         <Text style={{ fontWeight: "800", color: due < 0 ? colors.warning : due > 0 ? colors.danger : colors.primaryHover }}>{fmtMoney(due)}</Text>
                         {bal?.advances ? <Text style={{ fontWeight: "800", color: "#B45309" }}>{` · Avans ${fmtMoney(bal.advances)}`}</Text> : null}
                       </Text>
+                      {emp.workplace?.kind === "task" ? (
+                        <Text testID={`emp-workplace-strip-${eid}`} style={{ fontSize: 10, fontWeight: "700", color: "#4338CA" }} numberOfLines={1}>
+                          Görev · {workplaceShort(emp.workplace)}
+                        </Text>
+                      ) : null}
                     </View>
                   </View>
+
+                  {(() => {
+                    const pendingCount = requestsForEmployee(pendingReqs, eid).length;
+                    if (!pendingCount) return null;
+                    return (
+                      <Pressable
+                        testID={`emp-card-requests-strip-${eid}`}
+                        onPress={() => {
+                          setCardOpen((cur) => ({ ...cur, [eid]: true }));
+                          setRequestsOpen((cur) => ({ ...cur, [eid]: true }));
+                        }}
+                        style={{ flexDirection: "row", alignItems: "center", gap: 6, minHeight: 32, paddingHorizontal: 8, borderRadius: 8, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A" }}
+                      >
+                        <Ionicons name="notifications" size={14} color="#B45309" />
+                        <Text style={{ flex: 1, fontSize: 11, fontWeight: "700", color: "#92400E" }}>Talepler ({pendingCount})</Text>
+                        <Ionicons name="chevron-forward" size={14} color="#92400E" />
+                      </Pressable>
+                    );
+                  })()}
 
                   {(() => {
                     const today = (attendance?.summary || []).find((s) => s.employee_id === eid)?.today || null;
