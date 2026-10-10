@@ -14,7 +14,9 @@ import {
   unreadCount,
   visibleNotifications,
   notificationCanDelete,
+  notificationClearableCount,
   notificationDeletePath,
+  NOTIFICATIONS_CLEAR_PATH,
 } from "./notifications";
 
 const at = (iso: string) => ({ created_at: iso });
@@ -50,6 +52,15 @@ describe("notificationCanDelete", () => {
     expect(notificationCanDelete({ is_read: true })).toBe(false);
     expect(notificationDeletePath({ id: "n1", is_read: true })).toBe("/notifications/n1");
     expect(notificationDeletePath({ id: "n1", is_read: false })).toBeNull();
+  });
+});
+
+describe("notificationClearableCount", () => {
+  it("counts rows that have an id for clear-all", () => {
+    expect(NOTIFICATIONS_CLEAR_PATH).toBe("/notifications/clear");
+    expect(notificationClearableCount([{ id: "a" }, { _id: "b" }, { title: "x" }])).toBe(2);
+    expect(notificationClearableCount([])).toBe(0);
+    expect(notificationClearableCount(undefined)).toBe(0);
   });
 });
 

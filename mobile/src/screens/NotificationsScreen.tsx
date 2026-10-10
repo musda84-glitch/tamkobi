@@ -1,15 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useState } from "react";
+import { Pressable, Text, View } from "react-native";
 import { del, get, post } from "../api/client";
 import { apiErrorMessage, useAuth } from "../auth/AuthContext";
 import { useBadges } from "../auth/BadgeContext";
 import { Empty, ErrorBanner, ListRow, Screen } from "../components/kit";
 import { SwipeRevealRow } from "../components/SwipeRevealRow";
 import { goHref } from "../nav";
+import { colors } from "../theme";
 import type { Notification } from "../types";
+import { requestConfirm } from "../utils/confirmDialog";
 import { fmtDate, idOf } from "../utils/money";
 import {
+  NOTIFICATIONS_CLEAR_PATH,
   notificationCanDelete,
+  notificationClearableCount,
   notificationDeletePath,
   notificationLook,
   notificationRoute,
@@ -25,6 +30,7 @@ export function NotificationsScreen() {
   const [rows, setRows] = useState<Notification[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [openRow, setOpenRow] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -65,9 +71,55 @@ export function NotificationsScreen() {
     }
   };
 
+  const clearAll = async () => {
+    if (!companyId || !notificationClearableCount(rows) || clearing) return;
+    const ok = await requestConfirm(
+      "Tümünü sil",
+      "Listedeki tüm bildirimler silinecek. Bu işlem geri alınamaz.",
+      "Tümünü sil",
+    );
+    if (!ok) return;
+    setClearing(true);
+    const prev = rows;
+    setRows([]);
+    setOpenRow(null);
+    try {
+      await post(client, NOTIFICATIONS_CLEAR_PATH, {}, { company_id: companyId });
+      setError(null);
+      refreshBadges();
+    } catch (err) {
+      setRows(prev);
+      setError(apiErrorMessage(err, "Bildirimler silinemedi."));
+    } finally {
+      setClearing(false);
+    }
+  };
+
   return (
     <Screen onRefresh={load}>
       <ErrorBanner message={error} />
+      {rows.length ? (
+        <View style={{ flexDirection: "row", justifyContent: "flex-end", marginBottom: 4 }}>
+          <Pressable
+            testID="notifications-clear-all"
+            onPress={() => { void clearAll(); }}
+            disabled={clearing}
+            style={({ pressed }) => ({
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: colors.danger,
+              backgroundColor: "#fff",
+              opacity: clearing ? 0.5 : pressed ? 0.7 : 1,
+            })}
+          >
+            <Text style={{ color: colors.danger, fontSize: 11, fontWeight: "800" }}>
+              {clearing ? "Siliniyor…" : "Tümünü sil"}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
       {!rows.length ? <Empty icon="notifications-outline" title="Bildirim yok" /> : rows.map((n) => {
         const look = notificationLook(n);
         const key = idOf(n) || n.created_at || notificationTitle(n);

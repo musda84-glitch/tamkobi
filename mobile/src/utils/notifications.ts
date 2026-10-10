@@ -85,6 +85,13 @@ export function notificationDeletePath(n?: Notification | null): string | null {
   return `/notifications/${id}`;
 }
 
+/** Ana ekran / liste «Tümünü sil» — kullanıcının gördüğü tüm kayıtlar. */
+export const NOTIFICATIONS_CLEAR_PATH = "/notifications/clear";
+
+export function notificationClearableCount(rows: Notification[] | null | undefined): number {
+  return (rows || []).filter((n) => !!(n.id || n._id)).length;
+}
+
 export function matchesTileType(type: string | undefined, prefixes: string[]): boolean {
   const t = String(type || "");
   return prefixes.some((p) => t === p || t.startsWith(`${p}_`) || t.startsWith(p));
