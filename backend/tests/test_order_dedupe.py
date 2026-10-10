@@ -4,6 +4,7 @@ from order_dedupe import (
     duplicate_ids_to_drop,
     marketplace_order_key,
     merge_keep_fields,
+    merge_order_items,
     order_keep_score,
     pick_canonical_order,
 )
@@ -51,3 +52,79 @@ def test_merge_clears_marketplace_false_invoiced_without_invoice():
     assert m["is_invoiced"] is False
     assert m["contact_id"] == "c1"
     assert m["marketplace_status"] == "Delivered"
+
+
+def test_merge_order_items_preserves_matched_product_and_image():
+    """Sync Trendyol kalemini yeniden yazınca manuel eşleşme + görsel kaybolmasın."""
+    existing = [{
+        "line_id": "L1",
+        "barcode": "869111",
+        "sku": "NK-1",
+        "product_name": "Namaz Kıble Ibadet Mihrab",
+        "quantity": 1,
+        "unit_price": 100,
+        "product_id": "prod_local_01",
+        "matched_product_name": "Mihrab Dekor",
+        "image_url": "https://cdn.example/mihrab.jpg",
+    }]
+    incoming = [{
+        "line_id": "L1",
+        "barcode": "869111",
+        "sku": "NK-1",
+        "product_name": "Namaz Kıble Ibadet Mihrab Köşesi",
+        "quantity": 1,
+        "unit_price": 120,
+        "total": 120,
+    }]
+    out = merge_order_items(existing, incoming)
+    assert out[0]["product_id"] == "prod_local_01"
+    assert out[0]["matched_product_name"] == "Mihrab Dekor"
+    assert out[0]["image_url"] == "https://cdn.example/mihrab.jpg"
+    assert out[0]["product_name"] == "Namaz Kıble Ibadet Mihrab Köşesi"
+    assert out[0]["unit_price"] == 120
+
+
+def test_merge_order_items_keeps_local_id_over_shopphp_store_id():
+    """ShopPHP sync urunID yazsa bile eşleşmiş stok kartı id'si kalsın."""
+    existing = [{
+        "sku": "STK-9",
+        "product_name": "Kitap Standı",
+        "product_id": "prod_tamkobi",
+        "matched_product_name": "Kitap Okuma Standı",
+        "quantity": 1,
+    }]
+    incoming = [{
+        "sku": "STK-9",
+        "product_name": "Kitap Standı",
+        "product_id": "998877",  # mağaza urunID
+        "quantity": 1,
+        "unit_price": 50,
+    }]
+    out = merge_order_items(existing, incoming)
+    assert out[0]["product_id"] == "prod_tamkobi"
+    assert out[0]["matched_product_name"] == "Kitap Okuma Standı"
+
+
+def test_merge_keep_fields_preserves_item_matches():
+    existing = {
+        "invoice_id": "inv1",
+        "contact_id": "c1",
+        "items": [{
+            "barcode": "BC1",
+            "product_name": "Eski",
+            "product_id": "p1",
+            "matched_product_name": "Stok Adı",
+            "image_url": "/old.jpg",
+            "quantity": 2,
+        }],
+    }
+    incoming = {
+        "marketplace_status": "Picking",
+        "items": [{"barcode": "BC1", "product_name": "Yeni TY Ad", "quantity": 2, "unit_price": 10}],
+    }
+    m = merge_keep_fields(existing, incoming)
+    assert m["invoice_id"] == "inv1"
+    assert m["items"][0]["product_id"] == "p1"
+    assert m["items"][0]["matched_product_name"] == "Stok Adı"
+    assert m["items"][0]["image_url"] == "/old.jpg"
+    assert m["items"][0]["product_name"] == "Yeni TY Ad"

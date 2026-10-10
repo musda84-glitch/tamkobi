@@ -1,4 +1,10 @@
-from marketplace_match import score_row_product, suggest_for_rows, suggest_matches
+from marketplace_match import (
+    apply_exact_stock_matches,
+    build_product_match_index,
+    score_row_product,
+    suggest_for_rows,
+    suggest_matches,
+)
 
 
 def test_exact_barcode_scores_one():
@@ -24,3 +30,43 @@ def test_suggest_for_rows_keyed_by_barcode():
     out = suggest_for_rows(rows, products, min_score=0.4)
     assert "bc1" in out
     assert out["bc1"][0]["product_id"] == "p-adl"
+
+
+def test_apply_exact_stock_matches_heals_lost_match_by_alias():
+    products = [{
+        "_id": "prod_mihrab",
+        "name": "Mihrab Dekor",
+        "sku": "MDF-1",
+        "barcode": "869999",
+        "marketplace_aliases": ["869111", "namaz kıble ibadet mihrab"],
+        "thumbnail_url": "/t-mihrab.webp",
+    }]
+    idx = build_product_match_index(products)
+    items = [{
+        "barcode": "869111",
+        "product_name": "Namaz Kıble Ibadet Mihrab",
+        "quantity": 1,
+    }]
+    out = apply_exact_stock_matches(items, idx)
+    assert out is not items
+    assert out[0]["product_id"] == "prod_mihrab"
+    assert out[0]["matched_product_name"] == "Mihrab Dekor"
+    assert out[0]["image_url"] == "/t-mihrab.webp"
+
+
+def test_apply_exact_stock_matches_skips_already_matched():
+    idx = build_product_match_index([{
+        "_id": "other",
+        "name": "Other",
+        "barcode": "869111",
+        "marketplace_aliases": [],
+    }])
+    items = [{
+        "barcode": "869111",
+        "product_id": "kept",
+        "matched_product_name": "Kept Name",
+        "quantity": 1,
+    }]
+    out = apply_exact_stock_matches(items, idx)
+    assert out is items
+    assert out[0]["product_id"] == "kept"

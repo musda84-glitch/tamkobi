@@ -12373,10 +12373,42 @@ async def _collapse_marketplace_order_dupes(company_id: str, channel: str, order
     return keep
 
 
+async def _load_marketplace_stock_match_index(company_id: str) -> dict:
+    """Sync sırasında düşmüş eşleşmeleri barkod/sku/alias ile geri bağlamak için indeks."""
+    import marketplace_match as mpm
+
+    products = await db.products.find(
+        {"company_id": company_id},
+        {
+            "name": 1,
+            "sku": 1,
+            "barcode": 1,
+            "marketplace_aliases": 1,
+            "image_url": 1,
+            "thumbnail_url": 1,
+            "variants.barcode": 1,
+        },
+    ).to_list(10000)
+    return mpm.build_product_match_index(products)
+
+
+def _apply_stock_matches_to_order(order: dict, match_idx: dict) -> dict:
+    if not order or not match_idx:
+        return order
+    import marketplace_match as mpm
+
+    items = order.get("items") or []
+    new_items = mpm.apply_exact_stock_matches(items, match_idx)
+    if new_items is items:
+        return order
+    return {**order, "items": new_items}
+
+
 async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
     inserted = updated = 0
     channels = omp_media.marketplace_channels_from_orders(docs or [])
     mp_media_idx = await omp_media.load_marketplace_cache_media_index(db, company_id, channels) if channels else {}
+    match_idx = await _load_marketplace_stock_match_index(company_id) if docs else {}
     for d in docs:
         channel = d.get("channel")
         order_number = d.get("order_number")
@@ -12386,10 +12418,12 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
         d = marketplace_providers.normalize_marketplace_order_prices(d)
         if mp_media_idx:
             d = omp_media.apply_marketplace_item_media(d, mp_media_idx)
+        d = _apply_stock_matches_to_order(d, match_idx)
         d["updated_at"] = datetime.now(timezone.utc).isoformat()
         existing = await _collapse_marketplace_order_dupes(company_id, channel, order_number)
         if existing:
             payload = merge_keep_fields(existing, d)
+            payload = _apply_stock_matches_to_order(payload, match_idx)
             payload = marketplace_providers.normalize_marketplace_order_prices(payload)
             await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
             merged = {**existing, **payload}
@@ -12422,6 +12456,7 @@ async def _upsert_marketplace_orders(company_id: str, docs: list) -> dict:
                 existing = await db.orders.find_one(key)
             if existing:
                 payload = merge_keep_fields(existing, d)
+                payload = _apply_stock_matches_to_order(payload, match_idx)
                 payload = marketplace_providers.normalize_marketplace_order_prices(payload)
                 await db.orders.update_one({"_id": existing["_id"]}, {"$set": payload})
                 if not existing.get("contact_id"):
@@ -14590,6 +14625,69 @@ async def _enrich_orders_marketplace_item_media(
     return await omp_media.enrich_orders_marketplace_item_media(db, docs, company_id=company_id)
 
 
+async def _enrich_orders_stock_matches(
+    docs: List[Dict[str, Any]],
+    company_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Liste: sync ile düşmüş stok eşleşmesini barkod/sku/alias ile geri bağla (yanıt + hafif yazma)."""
+    if not docs:
+        return docs
+    cid = str(
+        company_id
+        or next((o.get("company_id") for o in docs if isinstance(o, dict) and o.get("company_id")), "")
+        or ""
+    ).strip()
+    if not cid:
+        return docs
+    need = False
+    for o in docs:
+        ch = str((o or {}).get("channel") or "").strip().lower()
+        if ch in ("", "b2b", "manual", "saha"):
+            continue
+        for it in (o or {}).get("items") or []:
+            if isinstance(it, dict) and not (
+                str(it.get("matched_product_name") or "").strip()
+                and str(it.get("product_id") or "").strip()
+            ):
+                need = True
+                break
+        if need:
+            break
+    if not need:
+        return docs
+    match_idx = await _load_marketplace_stock_match_index(cid)
+    if not match_idx:
+        return docs
+    writes = []
+    for i, o in enumerate(docs):
+        ch = str((o or {}).get("channel") or "").strip().lower()
+        if ch in ("", "b2b", "manual", "saha"):
+            continue
+        enriched = _apply_stock_matches_to_order(o, match_idx)
+        if enriched is o:
+            continue
+        docs[i] = enriched
+        oid = enriched.get("id") or enriched.get("_id")
+        if oid:
+            writes.append((str(oid), enriched.get("items")))
+    if writes:
+        async def _persist():
+            for oid, items in writes:
+                try:
+                    await db.orders.update_one(
+                        {"_id": oid},
+                        {"$set": {"items": items, "updated_at": datetime.now(timezone.utc).isoformat()}},
+                    )
+                except Exception:
+                    logging.getLogger(__name__).exception("order stock match persist failed: %s", oid)
+
+        try:
+            asyncio.create_task(_persist())
+        except RuntimeError:
+            await _persist()
+    return docs
+
+
 @api_router.get("/orders")
 async def list_orders(
     company_id: Optional[str] = "comp_nexus_main_01",
@@ -14627,6 +14725,7 @@ async def list_orders(
     for o in docs:
         _decorate_b2b_held_order(o)
     docs = await _enrich_orders_marketplace_item_media(docs, company_id=company_id)
+    docs = await _enrich_orders_stock_matches(docs, company_id=company_id)
     docs = await _enrich_orders_production_flags(docs, company_id=company_id)
     docs = await _enrich_orders_invoice_ebelge(docs)
     return _sort_b2b_cart_orders(docs)

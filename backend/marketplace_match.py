@@ -87,3 +87,76 @@ def suggest_for_rows(
             continue
         out[bc] = suggest_matches(row, products, limit=limit, min_score=min_score)
     return out
+
+
+def build_product_match_index(products: List[dict]) -> Dict[str, dict]:
+    """barkod / sku / marketplace_aliases (lower) → stok kartı."""
+    idx: Dict[str, dict] = {}
+    for p in products or []:
+        if not isinstance(p, dict):
+            continue
+        keys = [p.get("barcode"), p.get("sku"), *(p.get("marketplace_aliases") or [])]
+        for v in p.get("variants") or []:
+            if isinstance(v, dict) and v.get("barcode"):
+                keys.append(v.get("barcode"))
+        for key in keys:
+            k = str(key or "").strip().lower()
+            if k:
+                idx.setdefault(k, p)
+    return idx
+
+
+def apply_exact_stock_matches(
+    items: Optional[List[Any]],
+    product_index: Dict[str, dict],
+) -> List[Any]:
+    """Eşleşmesi düşmüş / hiç bağlanmamış kalemlere barkod-sku-alias ile stok kartı yaz.
+
+    Sadece kesin anahtar (score≈1 / alias) kullanır; ad benzerliği ile otomatik
+    bağlanmaz. Görsel yoksa stok kartı thumbnail/image doldurulur.
+    Değişiklik yoksa orijinal listeyi döner.
+    """
+    if not items or not product_index:
+        return items if items is not None else []
+    out: List[Any] = []
+    changed = False
+    for it in items:
+        if not isinstance(it, dict):
+            out.append(it)
+            continue
+        # Zaten manuel eşleşmiş (matched_product_name damgası) → dokunma.
+        if str(it.get("matched_product_name") or "").strip() and str(it.get("product_id") or "").strip():
+            out.append(it)
+            continue
+        hit = None
+        for key in (
+            it.get("barcode"),
+            it.get("sku"),
+            it.get("product_name"),
+            it.get("name"),
+        ):
+            k = str(key or "").strip().lower()
+            if k and k in product_index:
+                hit = product_index[k]
+                break
+        if not hit:
+            out.append(it)
+            continue
+        row = dict(it)
+        pid = hit.get("_id") or hit.get("id")
+        if pid and str(row.get("product_id") or "") != str(pid):
+            row["product_id"] = pid
+            changed = True
+        if hit.get("name") and str(row.get("matched_product_name") or "") != str(hit["name"]):
+            row["matched_product_name"] = hit["name"]
+            changed = True
+        if not str(row.get("image_url") or "").strip():
+            img = (
+                str(hit.get("thumbnail_url") or "").strip()
+                or str(hit.get("image_url") or "").strip()
+            )
+            if img:
+                row["image_url"] = img
+                changed = True
+        out.append(row)
+    return out if changed else items
