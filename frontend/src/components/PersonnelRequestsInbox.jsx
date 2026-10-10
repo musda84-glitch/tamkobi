@@ -50,7 +50,7 @@ export function EmployeeRequestChips({
     ? `${firstMeta.label} · ${first.title || "Talep"}${rows.length > 1 ? ` · +${rows.length - 1}` : ""}`
     : "Talep yok";
   return (
-    <div className={`rounded-lg border border-amber-200 bg-amber-50 ${compact ? "h-10 px-2 py-0 flex flex-col justify-center w-fit max-w-[16rem] shrink-0" : "px-2 py-1.5 space-y-1.5"} ${compact && open ? "h-auto py-1.5 space-y-1" : ""}`} data-testid={testId}>
+    <div className={`rounded-lg border border-amber-200 bg-amber-50 ${compact ? "h-9 px-2 py-0 flex flex-col justify-center w-fit max-w-[16rem] shrink-0" : "px-2 py-1.5 space-y-1.5"} ${compact && open ? "h-auto py-1.5 space-y-1" : ""}`} data-testid={testId}>
       <button
         type="button"
         onClick={() => setOpen((cur) => !cur)}
