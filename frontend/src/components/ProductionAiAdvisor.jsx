@@ -3,6 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Bot, Loader2, Sparkles, Send, ChevronDown, ChevronUp } from "lucide-react";
 import { API_URL, useAuth } from "../context/AuthContext";
+import { showProductionAiAdvisor } from "../utils/selfPersonnelNav";
 
 const QUICK = [
   "Güncel üretim ve reçete durumunu yönetici için özetle.",
@@ -14,14 +15,14 @@ const QUICK = [
  * Şirket bazlı ai.production eklentisi açıkken Üretim & Atölye’de yönetici AI yorumu.
  */
 export function ProductionAiAdvisor({ companyId, compact = false }) {
-  const { addonOn, feature } = useAuth();
+  const { addonOn, feature, user } = useAuth();
   const [open, setOpen] = useState(!compact);
   const [busy, setBusy] = useState(false);
   const [advice, setAdvice] = useState("");
   const [metrics, setMetrics] = useState(null);
   const [q, setQ] = useState("");
 
-  if (!addonOn("ai.production") || !feature("production_ai")) return null;
+  if (!showProductionAiAdvisor(user) || !addonOn("ai.production") || !feature("production_ai")) return null;
 
   const run = async (message) => {
     const text = (message || q || "").trim();

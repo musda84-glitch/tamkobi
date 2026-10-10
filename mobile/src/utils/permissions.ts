@@ -61,11 +61,20 @@ export function can(user: SessionUser, path: string, level: "view" | "edit" | "d
   return levelAllows(value, level);
 }
 
-/** Rol özellik bayrağı (Özellik Yetkileri). Anahtar yoksa veya admin ise açık. */
+/** Rol özellik bayrağı (Özellik Yetkileri). Anahtar yoksa backend feature_default ile uyumlu. */
 export function feature(user: SessionUser, key: string): boolean {
   if (!user || user.role === "admin") return true;
-  if (!user.features) return true;
-  return user.features[key] !== false;
+  if (user.features && Object.prototype.hasOwnProperty.call(user.features, key)) {
+    return user.features[key] !== false;
+  }
+  const role = String(user.role || "").trim().toLowerCase();
+  // backend/rbac.feature_default — personel/üretimde AI panel ve destek şeridi varsayılan kapalı
+  if ((key === "production_ai" || key === "support_bar") && (role === "personel" || role === "production")) {
+    return false;
+  }
+  if (key === "view_prices" && (role === "personel" || role === "production")) return false;
+  if ((key === "account_companies" || key === "export_personal_data") && role === "personel") return false;
+  return true;
 }
 
 export function moduleOn(license: License, path: string): boolean {
@@ -105,10 +114,12 @@ export function canOpenStockCard(user: SessionUser): boolean {
   return can(user, "/stock", "edit");
 }
 
-/** AI Üretim & Reçete: yalnızca yönetici (admin/müdür); personel kaydı bağlı girişte gizli. */
+/** AI Üretim & Reçete: yalnızca yönetici (admin/müdür). Personel / üretim rolü ve personel kartı bağlı girişte gizli (özellik bayrağı açık olsa bile). */
 export function showProductionAiAdvisor(user: SessionUser): boolean {
+  if (!user) return false;
   if (hasSelfPersonnelRecord(user)) return false;
-  const role = String(user?.role || "").toLowerCase();
+  const role = String(user.role || "").trim().toLowerCase();
+  if (role === "personel" || role === "production") return false;
   return role === "admin" || role === "manager";
 }
 
