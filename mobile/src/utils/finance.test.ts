@@ -39,6 +39,7 @@ import {
   partnerCardTone,
   partnerInitials,
   filterPartnerTxs,
+  sortBankTransactions,
 } from "./finance";
 import { emptyExpenseDraft } from "./finance";
 
@@ -339,15 +340,31 @@ describe("finance drafts", () => {
     expect(partnerMovementNotice({ id: "p5", type: "withdrawal", amount: 40, expense_id: "e1" }).detail).toMatch(/Çıkış/);
   });
 
+  it("sorts bank/cash movements newest date first across ISO and DMY", () => {
+    expect(sortBankTransactions([
+      { id: "1", date: "2026-09-01" },
+      { id: "2", date: "2026-10-03" },
+      { id: "3", date: "2026-10-02", created_at: "2026-10-02T12:00:00Z" },
+      { id: "4", date: "2026-10-02", created_at: "2026-10-02T18:00:00Z" },
+    ]).map((t) => t.id)).toEqual(["2", "4", "3", "1"]);
+    expect(sortBankTransactions([
+      { id: "sep", date: "22.09.2026" },
+      { id: "oct3", date: "2026-10-03" },
+      { id: "oct15", date: "15.10.2026" },
+      { id: "oct3b", date: "03/10/2026", created_at: "2026-10-03T20:00:00Z" },
+    ]).map((t) => t.id)).toEqual(["oct15", "oct3b", "oct3", "sep"]);
+  });
+
   it("gives partners stable colors and filters their movements", () => {
     expect(partnerInitials("Ali BAL")).toBe("AB");
     expect(partnerInitials("Mustafa Bal")).toBe("MB");
     expect(partnerCardTone("ali")).toEqual(partnerCardTone("ali"));
     expect(partnerCardTone("ali").accent).not.toBe(partnerCardTone("mustafa").accent);
     expect(filterPartnerTxs([
-      { id: "1", partner_id: "a", amount: 1 },
-      { id: "2", partner_id: "b", amount: 2 },
-    ], "a").map((t) => t.id)).toEqual(["1"]);
+      { id: "1", partner_id: "a", amount: 1, date: "2026-01-01" },
+      { id: "2", partner_id: "b", amount: 2, date: "2026-09-22" },
+      { id: "3", partner_id: "a", amount: 3, date: "22.09.2026" },
+    ], "a").map((t) => t.id)).toEqual(["3", "1"]);
   });
 
   it("partner balance meta matches web Alacaklı/Borçlu display", () => {

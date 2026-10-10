@@ -9,7 +9,7 @@ import { Card, ErrorBanner, Field, H1, ListRow, Muted, PrimaryButton, Row, Scree
 import { go } from "../nav";
 import { colors } from "../theme";
 import type { Contact } from "../types";
-import { accountBalance, accountCashTxRequest, accountTypeTr, normalizeAccountType, txTypeTr, type BankAccount, type BankTx } from "../utils/finance";
+import { accountBalance, accountCashTxRequest, accountTypeTr, normalizeAccountType, sortBankTransactions, txTypeTr, type BankAccount, type BankTx } from "../utils/finance";
 import { fmtDate, fmtMoney, idOf, todayIso } from "../utils/money";
 
 export function BankingAccountScreen() {
@@ -163,7 +163,7 @@ export function BankingAccountScreen() {
         </Card>
       ) : isCard ? <Muted>Kredi kartında tahsilat kapalı; masraf veya ekstre kullanın.</Muted> : null}
       <Text style={{ fontWeight: "800", color: colors.text }}>Hareketler</Text>
-      {!txs.length ? <Muted>Hareket yok.</Muted> : txs.slice(0, 40).map((tx) => (
+      {!txs.length ? <Muted>Hareket yok.</Muted> : sortBankTransactions(txs).slice(0, 40).map((tx) => (
         <ListRow
           key={idOf(tx)}
           title={`${txTypeTr(tx.type)} · ${fmtDate(tx.date)}`}

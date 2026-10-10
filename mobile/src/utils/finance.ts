@@ -1,3 +1,4 @@
+import { dateSortKey } from "./calendar";
 import { collectableAccounts } from "./contactDraft";
 import { fmtMoney, idOf } from "./money";
 
@@ -323,10 +324,26 @@ export function partnerInitials(name?: string | null): string {
   return (parts[0] || "O").slice(0, 2).toLocaleUpperCase("tr-TR");
 }
 
+/** Yeni → eski. ISO ve gg.aa.yyyy karışık gelse de doğru sıralar (web sortBankTransactions). */
+export function sortBankTransactions<T extends { date?: string | null; created_at?: string | null; matched_at?: string | null; id?: string; _id?: string }>(
+  txs: T[] | null | undefined,
+): T[] {
+  const rows = Array.isArray(txs) ? [...txs] : [];
+  return rows.sort((a, b) => {
+    const da = dateSortKey(a?.date);
+    const db = dateSortKey(b?.date);
+    if (da !== db) return db.localeCompare(da);
+    const ca = String(a?.created_at || a?.matched_at || "");
+    const cb = String(b?.created_at || b?.matched_at || "");
+    if (ca !== cb) return cb.localeCompare(ca);
+    return String(b?.id || b?._id || "").localeCompare(String(a?.id || a?._id || ""));
+  });
+}
+
 export function filterPartnerTxs(txs: PartnerTx[] | null | undefined, partnerId?: string | null): PartnerTx[] {
   const list = txs || [];
-  if (!partnerId) return list;
-  return list.filter((tx) => String(tx.partner_id || "") === partnerId);
+  const filtered = !partnerId ? list : list.filter((tx) => String(tx.partner_id || "") === partnerId);
+  return sortBankTransactions(filtered);
 }
 
 /** Masraf satırı (expense_id / source=expense) — web isPartnerExpenseTx. */
@@ -894,11 +911,6 @@ export function partnerTxTr(v?: string | null): string {
   return PARTNER_TX_TR[v] || v;
 }
 
-function dateMs(value?: string | null): number {
-  const t = Date.parse(value || "");
-  return Number.isFinite(t) ? t : 0;
-}
-
 export type GroupMovementNotice = {
   id: string;
   title: string;
@@ -910,14 +922,13 @@ export type GroupMovementNotice = {
 /** Grup kartı için hesapların en yeni hareketleri (varsayılan 3). */
 export function recentTxForAccounts(txs: BankTx[], accounts: { id?: string; _id?: string }[], limit = 3): BankTx[] {
   const ids = new Set((accounts || []).map((a) => idOf(a)).filter(Boolean));
-  return (txs || [])
-    .filter((tx) => ids.has(String(tx.account_id || "")) || ids.has(String(tx.target_account_id || "")))
-    .sort((a, b) => dateMs(b.date) - dateMs(a.date))
-    .slice(0, limit);
+  return sortBankTransactions(
+    (txs || []).filter((tx) => ids.has(String(tx.account_id || "")) || ids.has(String(tx.target_account_id || ""))),
+  ).slice(0, limit);
 }
 
 export function recentPartnerTx(txs: PartnerTx[], limit = 3): PartnerTx[] {
-  return [...(txs || [])].sort((a, b) => dateMs(b.date) - dateMs(a.date)).slice(0, limit);
+  return sortBankTransactions(txs || []).slice(0, limit);
 }
 
 export function signedTxForGroup(tx: BankTx, accountIds: Set<string>): number {
