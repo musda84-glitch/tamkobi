@@ -77,11 +77,11 @@ export function contactPayModalMeta(formOrOpts = {}) {
     title,
     lockMethod: locked,
     lockType: menuId === "promissory_in" || menuId === "promissory_out" || menuId === "balance_fix" || menuId === "contactless",
-    lockSlip: menuId === "balance_fix",
+    lockSlip: false,
     showTypeToggle: !locked || (menuId === "cash" || menuId === "cheque" || hybridLedger),
     showMethodTabs: !locked,
-    // Hybrid menüde fiş butonları her zaman (cash'e geçince geri dönmek için)
-    showSlipToggle: (method === "ledger" && menuId !== "balance_fix") || hybridLedger,
+    // Bakiye düzelt + borç-alacak: fiş seçimi; hybrid menüde cash'e geçince geri dönmek için de açık
+    showSlipToggle: method === "ledger" || hybridLedger || menuId === "balance_fix",
     hybridLedger,
   };
 }
@@ -114,10 +114,11 @@ export function contactPayCashTypePatch(form, type, accounts = []) {
 
 /** Borç/Alacak fişi → ledger (kasa hedefi kapanır). */
 export function contactPayLedgerSlipPatch(form, slip) {
+  const balanceFix = !!(form?.balanceFix || form?.menuId === "balance_fix");
   return {
     method: "ledger",
     slip,
-    description: slip === "credit" ? "Alacak fişi" : "Borç fişi",
+    description: contactLedgerSlipDescription(slip, { balanceFix }),
   };
 }
 
@@ -155,7 +156,9 @@ export function buildContactPayForm(contact, accounts, opts = {}) {
     amount = Math.abs(balance).toFixed(2);
     // Artı bakiye (alacak) → alacak fişi ile düşür; eksi bakiye (borç) → borç fişi ile dengele.
     slip = balance >= 0 ? "credit" : "debit";
-    description = "Bakiye düzeltme";
+    description = slip === "credit"
+      ? "Cari bakiye düzeltme (Alacak fişi)"
+      : "Cari bakiye düzeltme (Borç fişi)";
   }
   if (opts.preferPos || menuId === "contactless") {
     description = type === "inflow" ? "Temassız tahsilat" : "Temassız ödeme";
@@ -176,4 +179,50 @@ export function buildContactPayForm(contact, accounts, opts = {}) {
     preferPos: !!opts.preferPos || menuId === "contactless",
     balanceFix,
   };
+}
+
+/** Ledger / bakiye düzeltme fişi mi? (kasa hareketi değil) */
+export function isContactLedgerPay(p) {
+  if (!p) return false;
+  if (p.source === "ledger") return true;
+  if (p.purpose === "balance_fix" || p.purpose === "ledger_slip") return true;
+  const cat = String(p.category || "");
+  return /fi[sş]i/i.test(cat) || /cari bakiye düzeltme/i.test(cat);
+}
+
+export function contactLedgerSlipKind(p) {
+  if (p?.slip_kind === "credit" || p?.slip_kind === "debit") return p.slip_kind;
+  const hay = `${p?.category || ""} ${p?.account_name || ""} ${p?.description || ""}`;
+  if (/alacak/i.test(hay)) return "credit";
+  if (/bor[cç]/i.test(hay)) return "debit";
+  return p?.type === "inflow" ? "credit" : "debit";
+}
+
+export function isContactBalanceFixPay(p) {
+  if (!p) return false;
+  if (p.purpose === "balance_fix") return true;
+  const hay = `${p.category || ""} ${p.description || ""}`;
+  return /cari bakiye düzeltme/i.test(hay) || /bakiye\s*düzelt/i.test(hay);
+}
+
+/** Ekstre / ödeme listesi satır başlığı — tahsilat yerine borç/alacak fişi. */
+export function contactPaymentDocLabel(p) {
+  if (isContactLedgerPay(p)) {
+    const kind = contactLedgerSlipKind(p);
+    const slip = kind === "credit" ? "Alacak fişi" : "Borç fişi";
+    if (isContactBalanceFixPay(p)) return `Cari bakiye düzeltme • ${slip}`;
+    return slip;
+  }
+  const dir = p?.type === "inflow" ? "Tahsilat" : "Ödeme";
+  const acc = p?.account_name ? ` • ${p.account_name}` : "";
+  return `${dir}${acc}`;
+}
+
+export function contactLedgerSlipDescription(slip, { balanceFix = false } = {}) {
+  if (balanceFix) {
+    return slip === "credit"
+      ? "Cari bakiye düzeltme (Alacak fişi)"
+      : "Cari bakiye düzeltme (Borç fişi)";
+  }
+  return slip === "credit" ? "Alacak fişi" : "Borç fişi";
 }

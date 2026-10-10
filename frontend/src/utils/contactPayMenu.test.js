@@ -4,7 +4,10 @@ import {
   buildContactPayForm,
   contactPayCashTypePatch,
   contactPayLedgerSlipPatch,
+  contactPaymentDocLabel,
   contactPayModalMeta,
+  isContactBalanceFixPay,
+  isContactLedgerPay,
   pickPayAccount,
 } from "./contactPayMenu";
 
@@ -61,11 +64,15 @@ test("bakiye düzelt chooses slip and amount from contact balance", () => {
     method: "ledger",
     slip: "credit",
     amount: "250.50",
-    description: "Bakiye düzeltme",
+    description: "Cari bakiye düzeltme (Alacak fişi)",
     menuId: "balance_fix",
   });
   const payable = buildContactPayForm({ balance: -80 }, accounts, { method: "ledger", balanceFix: true });
-  expect(payable).toMatchObject({ slip: "debit", amount: "80.00", description: "Bakiye düzeltme" });
+  expect(payable).toMatchObject({
+    slip: "debit",
+    amount: "80.00",
+    description: "Cari bakiye düzeltme (Borç fişi)",
+  });
 });
 
 test("contactPayModalMeta locks fields per menu item", () => {
@@ -82,8 +89,8 @@ test("contactPayModalMeta locks fields per menu item", () => {
   });
   expect(contactPayModalMeta({ menuId: "balance_fix" })).toMatchObject({
     title: "Bakiye düzelt",
-    showSlipToggle: false,
-    lockSlip: true,
+    showSlipToggle: true,
+    lockSlip: false,
   });
   expect(contactPayModalMeta({ menuId: "ledger_slips" })).toMatchObject({
     title: "Borç-Alacak Fişi",
@@ -114,6 +121,27 @@ test("ledger_slips Tahsilat/Ödeme switches to cash with account target", () => 
 
   const back = contactPayLedgerSlipPatch({ ...form, ...cashOut }, "credit");
   expect(back).toMatchObject({ method: "ledger", slip: "credit", description: "Alacak fişi" });
+});
+
+test("ledger / bakiye düzeltme payments label as borç or alacak not tahsilat", () => {
+  const fix = {
+    source: "ledger",
+    purpose: "balance_fix",
+    slip_kind: "credit",
+    type: "inflow",
+    category: "Cari Bakiye Düzeltme",
+    account_name: "Alacak Fişi",
+    description: "ŞABAN: Cari bakiye düzeltme (Alacak fişi)",
+  };
+  expect(isContactLedgerPay(fix)).toBe(true);
+  expect(isContactBalanceFixPay(fix)).toBe(true);
+  expect(contactPaymentDocLabel(fix)).toBe("Cari bakiye düzeltme • Alacak fişi");
+
+  const debitSlip = { source: "ledger", purpose: "ledger_slip", slip_kind: "debit", type: "outflow", category: "Borç Fişi" };
+  expect(contactPaymentDocLabel(debitSlip)).toBe("Borç fişi");
+
+  const cash = { type: "inflow", account_name: "Kasa", source: "manual" };
+  expect(contactPaymentDocLabel(cash)).toBe("Tahsilat • Kasa");
 });
 
 test("pickPayAccount prefers POS when requested and skips credit cards on inflow", () => {
