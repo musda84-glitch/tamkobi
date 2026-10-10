@@ -1,10 +1,16 @@
 """Ethernet yazıcı host/port doğrulama birim testleri (TCP yok)."""
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from network_printers import is_allowed_printer_host, validate_port  # noqa: E402
+from network_printers import (  # noqa: E402
+    _sync_discover,
+    is_allowed_printer_host,
+    resolve_scan_network,
+    validate_port,
+)
 import pytest  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
@@ -38,3 +44,29 @@ def test_validate_port_serial_baud_message():
         validate_port(9600)
     assert "seri baud" in ei.value.detail.lower() or "9100" in ei.value.detail
     assert "9600" in ei.value.detail
+
+
+def test_resolve_scan_network_from_host_hint():
+    net = resolve_scan_network(None, "192.168.1.50")
+    assert str(net) == "192.168.1.0/24"
+
+
+def test_resolve_scan_network_rejects_public():
+    with pytest.raises(ValueError):
+        resolve_scan_network("8.8.8.0/24", None)
+
+
+def test_sync_discover_finds_open_hosts():
+    open_hosts = {"192.168.1.10", "192.168.1.200"}
+
+    def fake_open(host: str, port: int) -> bool:
+        assert port == 9100
+        return host in open_hosts
+
+    with patch("network_printers._sync_port_open", side_effect=fake_open):
+        result = _sync_discover("192.168.1.0/24", None, 9100)
+    assert result["ok"] is True
+    assert result["subnet"] == "192.168.1.0/24"
+    assert result["scanned"] == 254
+    hosts = [row["host"] for row in result["printers"]]
+    assert hosts == ["192.168.1.10", "192.168.1.200"]

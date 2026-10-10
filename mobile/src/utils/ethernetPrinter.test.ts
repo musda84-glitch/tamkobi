@@ -1,6 +1,7 @@
 import {
   buildTsplLabel,
   defaultEthernetPrinter,
+  discoverEthernetPrinters,
   escapeTsplText,
   ethernetPrinterConfigError,
   isBridgeUrlOnPrinterHost,
@@ -57,5 +58,14 @@ describe("ethernetPrinter (mobile)", () => {
     expect(isSerialBaudPort(9600)).toBe(true);
     expect(normalizeEthernetPort(9600)).toBe(9100);
     expect(ethernetPrinterConfigError({ host: "192.168.1.117", port: 9600, mode: "api" })).toMatch(/9100|seri baud/i);
+  });
+
+  it("discoverEthernetPrinters requires bridge URL or API client", async () => {
+    await expect(
+      discoverEthernetPrinters({ mode: "bridge", bridgeUrl: "", host: "" }),
+    ).rejects.toThrow(/Köprü URL/i);
+    await expect(
+      discoverEthernetPrinters({ mode: "api", host: "192.168.1.10" }, null),
+    ).rejects.toThrow(/API istemcisi/i);
   });
 });

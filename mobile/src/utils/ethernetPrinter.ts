@@ -305,6 +305,71 @@ export async function probeEthernetPrinter(
   return post(client, "/network-printers/probe", { host: settings.host, port: settings.port });
 }
 
+export type DiscoveredPrinter = { host: string; port: number };
+
+export type DiscoverEthernetResult = {
+  ok?: boolean;
+  printers: DiscoveredPrinter[];
+  scanned?: number;
+  subnet?: string;
+  port?: number;
+};
+
+/** LAN'da :9100 açık özel IP'leri tara (köprü veya API). */
+export async function discoverEthernetPrinters(
+  settings: Partial<EthernetPrinterSettings>,
+  client?: ApiClient | null,
+  opts?: { subnet?: string },
+): Promise<DiscoverEthernetResult> {
+  const cfg = { ...defaultEthernetPrinter(), ...settings };
+  const port = normalizeEthernetPort(cfg.port);
+  const body: { host?: string; port: number; subnet?: string } = { port };
+  const host = String(cfg.host || "").trim();
+  if (host) body.host = host;
+  const subnet = String(opts?.subnet || "").trim();
+  if (subnet) body.subnet = subnet;
+
+  const normalize = (raw: unknown): DiscoverEthernetResult => {
+    const data = (raw || {}) as {
+      ok?: boolean;
+      printers?: Array<{ host?: string; port?: number }>;
+      scanned?: number;
+      subnet?: string;
+      port?: number;
+      detail?: string;
+    };
+    const printers = (Array.isArray(data.printers) ? data.printers : [])
+      .map((row) => ({
+        host: String(row?.host || "").trim(),
+        port: normalizeEthernetPort(row?.port ?? port),
+      }))
+      .filter((row) => !!row.host);
+    return {
+      ok: data.ok !== false,
+      printers,
+      scanned: data.scanned,
+      subnet: data.subnet,
+      port: data.port ?? port,
+    };
+  };
+
+  if (cfg.mode === "bridge") {
+    if (!cfg.bridgeUrl) {
+      throw new Error("Köprü URL gerekli. PC'de python3 scripts/ethernet_print_bridge.py → http://PC-IP:19100");
+    }
+    try {
+      return normalize(await bridgePost(cfg.bridgeUrl, "/discover", body));
+    } catch (err) {
+      throw new Error(
+        `${err instanceof Error ? err.message : "Köprü hatası"}. `
+        + `PC'de python3 scripts/ethernet_print_bridge.py çalıştırın; URL http://PC-IP:19100.`,
+      );
+    }
+  }
+  if (!client) throw new Error("API istemcisi yok.");
+  return normalize(await post(client, "/network-printers/discover", body));
+}
+
 export async function sendEthernetRaw(
   payload: string,
   settings: EthernetPrinterSettings,
