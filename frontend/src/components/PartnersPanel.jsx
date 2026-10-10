@@ -13,14 +13,17 @@ import { formatTrAmount } from "../utils/money";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
 import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, todayIsoDate } from "../utils/partnerTx";
+import { sortBankTransactions } from "../utils/bankAccountTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = PARTNER_TX_LABEL;
 
-/** Filter partner ledger rows to one partner (or keep all when unselected). */
+/** Filter partner ledger rows to one partner (or keep all when unselected); en yeni tarih üstte. */
 export const filterPartnerTxs = (txs, partnerId) => {
-  if (!partnerId) return txs || [];
-  return (txs || []).filter((t) => t.partner_id === partnerId);
+  const rows = !partnerId
+    ? (Array.isArray(txs) ? txs : [])
+    : (txs || []).filter((t) => t.partner_id === partnerId);
+  return sortBankTransactions(rows);
 };
 
 const bal = (a) => Number(a?.current_balance ?? a?.balance ?? 0);

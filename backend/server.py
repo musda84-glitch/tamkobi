@@ -9254,7 +9254,8 @@ async def list_partner_transactions(company_id: Optional[str] = "comp_nexus_main
         live_ids = [p["_id"] for p in await db.partners.find({"company_id": company_id}, {"_id": 1}).to_list(100)]
         query["partner_id"] = {"$in": live_ids or ["__none__"]}
     # Sync ile aynı tavan — kart kasa neti eksik hareketle sapmasın
-    txs = await db.partner_transactions.find(query).sort("created_at", -1).to_list(20000)
+    # En yeni işlem tarihi üstte (UI banka/kasa listeleriyle aynı)
+    txs = await db.partner_transactions.find(query).sort([("date", -1), ("created_at", -1)]).to_list(20000)
     return clean_docs(txs)
 
 PARTNER_TX_LABELS = partner_pay.TX_LABELS

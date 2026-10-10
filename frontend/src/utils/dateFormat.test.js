@@ -1,4 +1,4 @@
-import { fmtDmy } from "./dateFormat";
+import { dateSortKey, fmtDmy } from "./dateFormat";
 import { fmtDate } from "./money";
 
 describe("fmtDmy", () => {
@@ -13,5 +13,15 @@ describe("fmtDmy", () => {
     expect(fmtDmy("22.09.2026")).toBe("22.09.2026");
     expect(fmtDmy("2.9.2026")).toBe("02.09.2026");
     expect(fmtDmy("22/09/2026")).toBe("22.09.2026");
+  });
+});
+
+describe("dateSortKey", () => {
+  it("normalizes ISO and DMY to YYYY-MM-DD for chronological compare", () => {
+    expect(dateSortKey("2026-10-03")).toBe("2026-10-03");
+    expect(dateSortKey("22.09.2026")).toBe("2026-09-22");
+    expect(dateSortKey("3.10.2026")).toBe("2026-10-03");
+    expect(dateSortKey("15/10/2026")).toBe("2026-10-15");
+    expect(dateSortKey("")).toBe("");
   });
 });
