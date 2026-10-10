@@ -21,6 +21,18 @@ export function isCriticalStock(p) {
   return p?.track_stock !== false && Number(p?.stock_quantity || 0) <= stockAlertMin(p);
 }
 
+/** Mevcut stok hücresi: takip kapalı olsa da adet (+ birim) gösterilir. */
+export function stockQuantityLabel(p) {
+  const qty = Number(p?.stock_quantity);
+  const n = Number.isFinite(qty) ? qty : 0;
+  const unit = String(p?.unit || "").trim();
+  return unit ? `${n} ${unit}` : String(n);
+}
+
+export function isStockUntracked(p) {
+  return p?.track_stock === false;
+}
+
 export function stockFiltersFromSearch(params) {
   const status = params?.get?.("status") || "";
   const next = { ...STOCK_FILTER_DEFAULTS };
