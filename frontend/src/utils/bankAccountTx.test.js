@@ -17,6 +17,16 @@ test("sortBankTransactions newest date first", () => {
   expect(sorted.map((t) => t.id)).toEqual(["2", "4", "3", "1"]);
 });
 
+test("sortBankTransactions mixes ISO and gg.aa.yyyy newest first", () => {
+  const sorted = sortBankTransactions([
+    { id: "sep", date: "22.09.2026" },
+    { id: "oct3", date: "2026-10-03" },
+    { id: "oct15", date: "15.10.2026" },
+    { id: "oct3b", date: "03/10/2026", created_at: "2026-10-03T20:00:00Z" },
+  ]);
+  expect(sorted.map((t) => t.id)).toEqual(["oct15", "oct3b", "oct3", "sep"]);
+});
+
 test("filterAccountTransactions keeps matched bank_sync rows", () => {
   const txs = [
     { id: "m1", account_id: "kuveyt", date: "2026-10-02", source: "bank_sync", match_status: "matched", contact_name: "Mustafa Bal" },

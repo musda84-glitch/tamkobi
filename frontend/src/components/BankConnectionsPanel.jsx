@@ -10,6 +10,7 @@ import { formatTrAmount, fmtDate } from "../utils/money";
 import { matchActorName, matchActorTitle, txDescriptionLabel } from "../utils/bankMatchLabel";
 import { downloadTextFile, generateJsencryptKeyPair } from "../utils/jsencryptKuveyt";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
+import { sortBankTransactions } from "../utils/bankAccountTx";
 
 /** İlk ekranda DOM'u hafif tut — her satırda eşleştirme kontrolleri var. */
 const UNMATCHED_PAGE_INITIAL = 25;
@@ -295,12 +296,13 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
         axios.get(`${API_URL}/banking/transactions/matched?company_id=${companyId}&limit=50`).catch(() => ({ data: [] })),
         axios.get(`${API_URL}/banking/match-rule-suggestions?company_id=${companyId}`).catch(() => ({ data: [] })),
       ]);
-      const unmatchedList = Array.isArray(u.data) ? u.data : [];
+      const unmatchedList = sortBankTransactions(Array.isArray(u.data) ? u.data : []);
+      const matchedList = sortBankTransactions(Array.isArray(m.data) ? m.data : []);
       setProviders(p.data);
       setConnections(c.data);
       setUnmatched(unmatchedList);
       setRules(r.data);
-      setMatched(m.data);
+      setMatched(matchedList);
       setSuggestions(sug.data);
       // Faturalar yalnızca eşleştirme için; büyük listede ilk boyayı bloklamasın.
       if (unmatchedList.length === 0) {

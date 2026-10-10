@@ -1,16 +1,18 @@
 /** Hesap hareketleri listesi: hesap filtresi + tarih sırası. Eşleşmiş bank_sync satırları asla elenmez. */
 
+import { dateSortKey } from "./dateFormat";
+
 export function matchesAccount(tx, id) {
   if (!id || !tx) return false;
   return tx.account_id === id || tx.target_account_id === id || tx.customer_card_account_id === id;
 }
 
-/** Yeni → eski (ekstre / hesap hareketleri). */
+/** Yeni → eski (ekstre / hesap hareketleri). ISO ve gg.aa.yyyy karışık gelse de doğru sıralar. */
 export function sortBankTransactions(txs) {
   const rows = Array.isArray(txs) ? [...txs] : [];
   return rows.sort((a, b) => {
-    const da = String(a?.date || "");
-    const db = String(b?.date || "");
+    const da = dateSortKey(a?.date);
+    const db = dateSortKey(b?.date);
     if (da !== db) return db.localeCompare(da);
     const ca = String(a?.created_at || a?.matched_at || "");
     const cb = String(b?.created_at || b?.matched_at || "");

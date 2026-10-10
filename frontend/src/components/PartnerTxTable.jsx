@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2, X, Check } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { formatTrAmount, fmtDate } from "../utils/money";
+import { dateSortKey } from "../utils/dateFormat";
 import { isPartnerExpenseTx, isPartnerLedgerType, partnerTxLabel, partnerTxIsCashInflow, partnerTxSign } from "../utils/partnerTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
@@ -22,9 +23,18 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
   const [busy, setBusy] = useState(false);
   const toggle = (key) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "amount" || key === "date" ? "desc" : "asc" }));
   const rows = useMemo(() => [...txs].sort((a, b) => {
-    const x = sort.key === "amount" ? Number(a.amount) : sort.key === "type" ? partnerTxLabel(a) : (a[sort.key] || "");
-    const y = sort.key === "amount" ? Number(b.amount) : sort.key === "type" ? partnerTxLabel(b) : (b[sort.key] || "");
-    const r = typeof x === "number" ? x - y : String(x).localeCompare(String(y), "tr") || (a.created_at || "").localeCompare(b.created_at || "");
+    let r;
+    if (sort.key === "amount") {
+      r = Number(a.amount) - Number(b.amount);
+    } else if (sort.key === "date") {
+      r = dateSortKey(a.date).localeCompare(dateSortKey(b.date))
+        || String(a.created_at || "").localeCompare(String(b.created_at || ""));
+    } else if (sort.key === "type") {
+      r = partnerTxLabel(a).localeCompare(partnerTxLabel(b), "tr");
+    } else {
+      r = String(a[sort.key] || "").localeCompare(String(b[sort.key] || ""), "tr")
+        || String(a.created_at || "").localeCompare(String(b.created_at || ""));
+    }
     return sort.dir === "asc" ? r : -r;
   }), [txs, sort]);
   const save = async () => {

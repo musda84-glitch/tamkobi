@@ -3,21 +3,21 @@ import { partnerLedgerBreakdown } from "../utils/partnerTx";
 
 test("filterPartnerTxs keeps all rows when no partner is selected", () => {
   const txs = [
-    { id: "1", partner_id: "a", amount: 10 },
-    { id: "2", partner_id: "b", amount: 20 },
+    { id: "1", partner_id: "a", amount: 10, date: "2026-10-01" },
+    { id: "2", partner_id: "b", amount: 20, date: "2026-10-02" },
   ];
-  expect(filterPartnerTxs(txs, null)).toEqual(txs);
-  expect(filterPartnerTxs(txs, "")).toEqual(txs);
+  expect(filterPartnerTxs(txs, null).map((t) => t.id)).toEqual(["2", "1"]);
+  expect(filterPartnerTxs(txs, "").map((t) => t.id)).toEqual(["2", "1"]);
   expect(filterPartnerTxs(null, null)).toEqual([]);
 });
 
-test("filterPartnerTxs returns only the selected partner ledger", () => {
+test("filterPartnerTxs returns only the selected partner ledger newest first", () => {
   const txs = [
-    { id: "1", partner_id: "ali", amount: 5000 },
-    { id: "2", partner_id: "veli", amount: 100 },
-    { id: "3", partner_id: "ali", amount: 2120 },
+    { id: "1", partner_id: "ali", amount: 5000, date: "22.09.2026" },
+    { id: "2", partner_id: "veli", amount: 100, date: "2026-10-01" },
+    { id: "3", partner_id: "ali", amount: 2120, date: "2026-10-03" },
   ];
-  expect(filterPartnerTxs(txs, "ali").map((t) => t.id)).toEqual(["1", "3"]);
+  expect(filterPartnerTxs(txs, "ali").map((t) => t.id)).toEqual(["3", "1"]);
   expect(filterPartnerTxs(txs, "missing")).toEqual([]);
 });
 
