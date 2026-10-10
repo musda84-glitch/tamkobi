@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Sparkles, Loader2, X, CreditCard, Landmark } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { useEscape } from "../utils/useEscape";
-import { formatTrAmount } from "../utils/money";
+import { formatTrAmount, fmtDate } from "../utils/money";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { PanelBoundary } from "./saas/PanelBoundary";
 import {
@@ -193,8 +193,8 @@ const CardStatementImportBody = ({ account, contacts = [], initialFile = null, o
           <>
             <div className={`grid grid-cols-2 ${isCard ? "md:grid-cols-5" : "md:grid-cols-4"} gap-2 text-xs`}>
               {(isCard
-                ? [["Banka", st.bank], ["Kart", st.card_last4 ? `**** ${st.card_last4}` : (acc.card_last4 ? `**** ${acc.card_last4}` : "-")], ["Son Ödeme", st.due_date], ["Toplam Borç", st.total_debt != null ? `${fmt(st.total_debt)} ₺` : "-"], ["Asgari", st.minimum_payment != null ? `${fmt(st.minimum_payment)} ₺` : "-"]]
-                : [["Banka", st.bank], ["Dönem", st.period_start && st.period_end ? `${st.period_start} – ${st.period_end}` : (st.statement_date || "-")], ["Açılış", st.opening_balance != null ? `${fmt(st.opening_balance)} ₺` : "-"], ["Kapanış", st.closing_balance != null ? `${fmt(st.closing_balance)} ₺` : "-"]]
+                ? [["Banka", st.bank], ["Kart", st.card_last4 ? `**** ${st.card_last4}` : (acc.card_last4 ? `**** ${acc.card_last4}` : "-")], ["Son Ödeme", st.due_date ? fmtDate(st.due_date) : "-"], ["Toplam Borç", st.total_debt != null ? `${fmt(st.total_debt)} ₺` : "-"], ["Asgari", st.minimum_payment != null ? `${fmt(st.minimum_payment)} ₺` : "-"]]
+                : [["Banka", st.bank], ["Dönem", st.period_start && st.period_end ? `${fmtDate(st.period_start)} – ${fmtDate(st.period_end)}` : (st.statement_date ? fmtDate(st.statement_date) : "-")], ["Açılış", st.opening_balance != null ? `${fmt(st.opening_balance)} ₺` : "-"], ["Kapanış", st.closing_balance != null ? `${fmt(st.closing_balance)} ₺` : "-"]]
               ).map(([l, v]) => (
                 <div key={l} className="bg-slate-50 rounded-lg p-2"><div className="text-[10px] text-slate-400">{l}</div><b>{v || "-"}</b></div>
               ))}
@@ -219,7 +219,7 @@ const CardStatementImportBody = ({ account, contacts = [], initialFile = null, o
                       <td className="p-2">
                         <input type="checkbox" checked={!!t.included && !t.duplicate} disabled={!!t.duplicate} onChange={(e) => patchRow(i, { included: e.target.checked })} data-testid={`${tid}-include-${i}`} />
                       </td>
-                      <td className="p-2 whitespace-nowrap">{t.date}</td>
+                      <td className="p-2 whitespace-nowrap">{fmtDate(t.date)}</td>
                       <td className="pr-2">
                         {t.description}
                         {t.installment && <span className="ml-1 text-[9px] bg-amber-100 text-amber-700 px-1 rounded">{t.installment}</span>}

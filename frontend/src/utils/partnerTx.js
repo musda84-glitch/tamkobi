@@ -3,6 +3,8 @@
  * Tip kovası (ledger) sapma kontrolü için; kart her zaman kasa netini gösterir.
  */
 
+import { fmtDmy } from "./dateFormat";
+
 export const PARTNER_TX_LABEL = {
   capital_in: "Giriş",
   withdrawal: "Çıkış",
@@ -231,9 +233,7 @@ export function partnerSalarySaveMessage(accrual, startDate) {
     || (accrual?.skipped || []).find((s) => s.reason === "not_due")?.due_date
     || (!accrual ? startDate : "");
   if (due) {
-    const [y, m, d] = String(due).slice(0, 10).split("-");
-    const label = d && m && y ? `${d}.${m}.${y}` : due;
-    return `Kaydedildi. ${label} tarihinde cebine yazılacak.`;
+    return `Kaydedildi. ${fmtDmy(due)} tarihinde cebine yazılacak.`;
   }
   return accrual?.message || "Aylık maaş kaydedildi.";
 }

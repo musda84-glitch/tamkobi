@@ -17,7 +17,7 @@ import { TxRowMenu } from "../components/TxRowMenu";
 import { SearchSelect } from "../components/SearchSelect";
 import { VirmanPartySelect } from "../components/VirmanPartySelect";
 
-import { formatTrAmount } from "../utils/money";
+import { formatTrAmount, fmtDate } from "../utils/money";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import {
   Landmark,
@@ -604,7 +604,7 @@ export default function BankingPage() {
                           : "Şirket kartı · tahsilat kapalı · masraf / ekstre"}
                       </div>
                     )}
-                    {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺` : "Limit —"}{acc.last_statement?.due_date ? ` · Son ödeme ${acc.last_statement.due_date}` : ""}</span><button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
+                    {isCard && <div className="mt-1 flex items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{acc.card_limit ? `Limit ${Number(acc.card_limit).toLocaleString("tr-TR")} ₺` : "Limit —"}{acc.last_statement?.due_date ? ` · Son ödeme ${fmtDate(acc.last_statement.due_date)}` : ""}</span><button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setStmtAccount({ ...acc, id: accId }); }} className="text-[10px] font-semibold text-fuchsia-700 bg-fuchsia-50 hover:bg-fuchsia-100 px-2 py-0.5 rounded-md" data-testid={`card-stmt-btn-${accId}`}>Ekstre Aktar (AI)</button></div>}
                     {canUploadBankStatement(acc) && (
                       <div className="mt-1 flex items-center justify-end">
                         <button
@@ -703,7 +703,7 @@ export default function BankingPage() {
               ) : (
                 pagedTx.map((tx) => (
                   <tr key={tx.id || tx._id} className="hover:bg-slate-50/70 transition [content-visibility:auto] [contain-intrinsic-size:auto_40px]" data-testid={`tx-row-${tx.id || tx._id}`}>
-                    <td className="px-4 py-2.5 text-slate-500 font-mono">{tx.date}</td>
+                    <td className="px-4 py-2.5 text-slate-500 font-mono" data-testid={`tx-date-${tx.id || tx._id}`}>{fmtDate(tx.date)}</td>
                     <td className="px-4 py-2.5 font-semibold text-slate-900">{txAccountLabel(tx)}</td>
                     <td className="px-4 py-2.5">
                       <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md font-semibold ${
