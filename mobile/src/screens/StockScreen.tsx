@@ -205,9 +205,6 @@ export function StockScreen() {
     <Screen
       onRefresh={() => load(true)}
       refreshing={refreshing}
-      stickyTop={(
-        <Field label="Ara" testID="stock-search" value={q} onChangeText={(v) => { setQ(v); setHit(null); }} placeholder="Ad, SKU, barkod" />
-      )}
     >
         <ActionTiles
           items={[
@@ -225,6 +222,7 @@ export function StockScreen() {
           onChange={(v) => { setCat(v || "all"); setHit(null); }}
           groups={catGroups}
         />
+        <Field label="Ara" testID="stock-search" value={q} onChangeText={(v) => { setQ(v); setHit(null); }} placeholder="Ad, SKU, barkod" />
         <ErrorBanner message={error} />
         {saleMsg ? <Muted testID="stock-retail-msg">{saleMsg}</Muted> : null}
         {hit && canInvoice ? (
