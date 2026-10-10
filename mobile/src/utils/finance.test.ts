@@ -371,19 +371,24 @@ describe("finance drafts", () => {
   });
 
   it("partner card cash flow uses tx kasa yönü like web ledger", () => {
-    const partner = { balance: 100, total_capital_in: 10, total_withdrawn: 20 };
+    const partner = { balance: -382340.22, total_capital_in: 267570, total_withdrawn: 1512300 };
     const fallback = partnerCardCashFlow(partner, [], "p1");
     expect(fallback.fromTx).toBe(false);
-    expect(fallback.giris).toBe(10);
-    expect(fallback.cikis).toBe(-20);
+    expect(fallback.giris).toBe(0);
+    expect(fallback.cikis).toBe(0);
+    expect(fallback.badge).toBe("Borçlu");
+    expect(fallback.display).toBe(382340.22);
     const flow = partnerCardCashFlow(partner, [
-      { id: "1", partner_id: "p1", type: "capital_in", amount: 267570 },
-      { id: "2", partner_id: "p1", type: "withdrawal", amount: 1512300 },
-      { id: "3", partner_id: "other", type: "capital_in", amount: 999 },
+      { id: "1", partner_id: "p1", type: "capital_in", amount: 50000 },
+      { id: "2", partner_id: "p1", type: "withdrawal", amount: 20000 },
+      { id: "3", partner_id: "p1", type: "credit", amount: 5000 },
+      { id: "4", partner_id: "other", type: "capital_in", amount: 999 },
     ], "p1");
     expect(flow.fromTx).toBe(true);
-    expect(flow.giris).toBe(267570);
-    expect(flow.cikis).toBe(-1512300);
-    expect(flow.display).toBe(267570 - 1512300);
+    // capital_in Giriş; withdrawal+credit Çıkış (web partnerTxIsCashInflow)
+    expect(flow.giris).toBe(50000);
+    expect(flow.cikis).toBe(-(20000 + 5000));
+    expect(flow.display).toBe(50000 - 25000);
+    expect(flow.badge).toBe("Borçlu");
   });
 });
