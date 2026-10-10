@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import React, { createElement, useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
-import { filterGroups, visibleSelectGroups, type SelectGroup, type SelectOption } from "../utils/groupedSelectFilter";
+import { visibleSelectGroups, type SelectGroup, type SelectOption } from "../utils/groupedSelectFilter";
 import { trUpper } from "../utils/labels";
 import { Muted } from "./kit";
 
