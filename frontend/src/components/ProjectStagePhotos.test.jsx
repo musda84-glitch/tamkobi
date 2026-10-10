@@ -39,7 +39,7 @@ const render = (node) => {
   return root;
 };
 
-test("stage photo show/hide controls sit outside the thumb (no overlay on image)", () => {
+test("stage photo visibility is a single toggle under the thumb", () => {
   render(
     <ProjectStagePhotos
       project={{
@@ -59,14 +59,16 @@ test("stage photo show/hide controls sit outside the thumb (no overlay on image)
   );
 
   expect(host.querySelectorAll('[data-testid="project-stage-thumb-PRJ-2026-0027"]')).toHaveLength(2);
-  expect(host.querySelectorAll('[data-testid="project-stage-vis-PRJ-2026-0027"]')).toHaveLength(2);
-  expect(host.querySelectorAll('[data-testid="project-stage-show-PRJ-2026-0027"]')).toHaveLength(2);
-  expect(host.querySelectorAll('[data-testid="project-stage-hide-PRJ-2026-0027"]')).toHaveLength(2);
+  const toggles = host.querySelectorAll('[data-testid="project-stage-vis-toggle-PRJ-2026-0027"]');
+  expect(toggles).toHaveLength(2);
+  expect(toggles[0].getAttribute("data-visible")).toBe("1");
+  expect(toggles[1].getAttribute("data-visible")).toBe("0");
+  // Eski çift buton yok
+  expect(host.querySelectorAll('[data-testid="project-stage-show-PRJ-2026-0027"]')).toHaveLength(0);
+  expect(host.querySelectorAll('[data-testid="project-stage-hide-PRJ-2026-0027"]')).toHaveLength(0);
   expect(host.querySelectorAll('[data-testid="project-stage-remove-PRJ-2026-0027"]')).toHaveLength(2);
 
-  // Thumb üzerinde absolute inset overlay yok; kontroller ayrı satırda
   const vis = host.querySelector('[data-testid="project-stage-vis-PRJ-2026-0027"]');
   expect(vis?.className).not.toMatch(/absolute|inset-0/);
-  expect(host.textContent).toMatch(/üzerine gelince önizleme/i);
-  expect(host.textContent).not.toMatch(/basılı tutun/i);
+  expect(host.textContent).toMatch(/göz düğmesi/i);
 });

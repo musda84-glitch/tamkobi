@@ -89,7 +89,7 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Aşama fotoğrafları</div>
       <p className="text-[10px] text-slate-400 leading-snug">
         Fotoğrafın üzerine gelince önizleme açılır; tıklayınca büyütülür.
-        Alttaki <b>göz</b> / <b>üstü çizili göz</b> müşteri görünürlüğünü ayarlar; silik foto müşteriye kapalıdır.
+        Alttaki göz düğmesi müşteri görünürlüğünü açar/kapatır; silik foto müşteriye kapalıdır.
       </p>
       {(() => {
         const current = (stages || []).find((s) => s.key === project.status) || (stages || [])[0];
@@ -111,6 +111,7 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
             <div className="flex items-start gap-1.5 flex-wrap min-w-0">
               {items.map((item) => {
                 const vis = photoVisibility(item);
+                const customerSees = vis === "show";
                 return (
                   <span key={item.url} className="inline-flex flex-col items-center gap-0.5 w-10">
                     <HoverImageThumb
@@ -118,25 +119,23 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
                       className={`w-10 h-10 rounded-lg object-cover border bg-white ${photoFaded(item) ? "opacity-35" : ""}`}
                       testId={`project-stage-thumb-${number}`}
                     />
-                    {/* Kontroller thumbnail dışında — hover önizlemeyi engellemez */}
+                    {/* Tek görünürlük anahtarı + sil — thumb dışında, önizlemeyi engellemez */}
                     <div className="flex items-center justify-center gap-0.5" data-testid={`project-stage-vis-${number}`}>
                       <button
                         type="button"
-                        onClick={() => setVisibility(item.url, true)}
-                        title="Müşteri görsün"
-                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${vis === "show" ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-white border-slate-200 text-slate-400 hover:text-emerald-700"}`}
-                        data-testid={`project-stage-show-${number}`}
+                        onClick={() => setVisibility(item.url, !customerSees)}
+                        title={customerSees ? "Müşteri görür — tıkla: gizle" : "Müşteri görmez — tıkla: göster"}
+                        aria-pressed={customerSees}
+                        aria-label={customerSees ? "Müşteri görür, gizle" : "Müşteri görmez, göster"}
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                          customerSees
+                            ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                            : "bg-rose-50 border-rose-300 text-rose-600"
+                        }`}
+                        data-testid={`project-stage-vis-toggle-${number}`}
+                        data-visible={customerSees ? "1" : "0"}
                       >
-                        <Eye className="w-2.5 h-2.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setVisibility(item.url, false)}
-                        title="Müşteri görmesin"
-                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${vis === "hide" || vis === "pending" ? "bg-rose-50 border-rose-300 text-rose-600" : "bg-white border-slate-200 text-slate-400 hover:text-rose-600"}`}
-                        data-testid={`project-stage-hide-${number}`}
-                      >
-                        <EyeOff className="w-2.5 h-2.5" />
+                        {customerSees ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
                       </button>
                       <button
                         type="button"
