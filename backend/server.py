@@ -5061,28 +5061,45 @@ async def create_contact_ledger_slip(contact_id: str, req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Fiş türü borç veya alacak olmalı.")
     is_debit = kind in ("debit", "borc")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    description = (req.get("description") or ("Borç fişi" if is_debit else "Alacak fişi")).strip()
+    purpose_raw = str(req.get("purpose") or req.get("menu_id") or "").strip().lower()
+    desc_in = str(req.get("description") or "").strip()
+    is_balance_fix = purpose_raw in ("balance_fix", "bakiye_duzelt", "bakiye-duzelt") or (
+        "bakiye düzelt" in desc_in.lower() or "cari bakiye düzeltme" in desc_in.lower()
+    )
+    if is_balance_fix:
+        description = desc_in or (
+            "Cari bakiye düzeltme (Borç fişi)" if is_debit else "Cari bakiye düzeltme (Alacak fişi)"
+        )
+        category = "Cari Bakiye Düzeltme"
+        purpose = "balance_fix"
+    else:
+        description = desc_in or ("Borç fişi" if is_debit else "Alacak fişi")
+        category = "Borç Fişi" if is_debit else "Alacak Fişi"
+        purpose = "ledger_slip"
     # Borç fişi cari borcunu artırır (bakiye +); alacak fişi düşürür (bakiye −). Kasa etkilenmez.
     tx_type = "outflow" if is_debit else "inflow"
+    slip_kind = "debit" if is_debit else "credit"
     doc = {
         "_id": str(uuid.uuid4()),
         "company_id": contact["company_id"],
         "account_id": None,
         "account_name": "Borç Fişi" if is_debit else "Alacak Fişi",
         "type": tx_type,
-        "category": "Borç Fişi" if is_debit else "Alacak Fişi",
+        "category": category,
         "amount": amount,
         "currency": "TRY",
         "description": f"{contact.get('name')}: {description}",
         "contact_id": contact_id,
         "contact_name": contact.get("name"),
         "source": "ledger",
+        "purpose": purpose,
+        "slip_kind": slip_kind,
         "date": req.get("date") or today,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.bank_transactions.insert_one(doc)
     await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": amount if is_debit else -amount}})
-    return {"status": "success", "id": doc["_id"], "kind": "debit" if is_debit else "credit"}
+    return {"status": "success", "id": doc["_id"], "kind": slip_kind, "purpose": purpose}
 
 # ----------------- STOK, ÜRÜNLER & BARKOD -----------------
 DEFAULT_UNITS = ["Adet", "Kg", "Gr", "Lt", "Ml", "Mt", "Cm", "M2", "M3", "Paket", "Koli", "Kutu", "Çift", "Takım", "Saat", "Gün", "Ton"]
@@ -9099,7 +9116,11 @@ async def list_partners(company_id: Optional[str] = "comp_nexus_main_01"):
 async def partners_summary(company_id: Optional[str] = "comp_nexus_main_01"):
     await partner_pay.sync_company_partners(db, company_id)
     partners = await db.partners.find({"company_id": company_id}).to_list(100)
-    txs = await db.partner_transactions.find({"company_id": company_id}).to_list(20000)
+    partner_ids = [p["_id"] for p in partners]
+    # Yalnızca mevcut ortakların hareketleri — silinmiş ortaktan kalan satırlar neti şişirmesin
+    txs = await db.partner_transactions.find(
+        {"company_id": company_id, "partner_id": {"$in": partner_ids or ["__none__"]}}
+    ).to_list(20000) if partner_ids else []
     cash = partner_pay.cash_card_totals(txs)
     ledger_balance = round(sum(float(p.get("balance") or 0) for p in partners), 2)
     # Kart / amber özet: hareket varsa kasa neti; yoksa kayıtlı ledger
@@ -9213,14 +9234,25 @@ async def delete_partner(partner_id: str):
         raise HTTPException(status_code=404, detail="Ortak bulunamadı.")
     if abs(p.get("balance", 0)) > 0.01:
         raise HTTPException(status_code=400, detail="Bakiyesi sıfır olmayan ortak silinemez.")
-    await trash.soft_delete("partners", p, "partner", p.get("name"))
+    orphan_txs = await db.partner_transactions.find({"partner_id": partner_id}).to_list(20000)
+    await trash.soft_delete(
+        "partners",
+        p,
+        "partner",
+        p.get("name"),
+        related=[{"collection": "partner_transactions", "docs": orphan_txs}] if orphan_txs else None,
+    )
     return {"status": "success", "message": "Ortak çöp kutusuna taşındı."}
 
 @api_router.get("/banking/partners/transactions")
 async def list_partner_transactions(company_id: Optional[str] = "comp_nexus_main_01", partner_id: Optional[str] = None):
-    query = {"company_id": company_id}
+    query: Dict[str, Any] = {"company_id": company_id}
     if partner_id:
         query["partner_id"] = partner_id
+    else:
+        # Silinmiş ortaktan kalan satırları listeye alma
+        live_ids = [p["_id"] for p in await db.partners.find({"company_id": company_id}, {"_id": 1}).to_list(100)]
+        query["partner_id"] = {"$in": live_ids or ["__none__"]}
     # Sync ile aynı tavan — kart kasa neti eksik hareketle sapmasın
     txs = await db.partner_transactions.find(query).sort("created_at", -1).to_list(20000)
     return clean_docs(txs)

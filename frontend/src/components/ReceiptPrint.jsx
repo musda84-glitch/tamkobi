@@ -1,15 +1,21 @@
 import React from "react";
 import { X, Printer } from "lucide-react";
-import { fmtMoney } from "../utils/money";
+import { fmtMoney, fmtDate } from "../utils/money";
 
 export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
-  const isCollection = tx.type === "inflow";
+  const isLedger = tx?.source === "ledger" || tx?.purpose === "balance_fix" || tx?.purpose === "ledger_slip";
+  const isCreditSlip = isLedger && (tx?.slip_kind === "credit" || tx?.type === "inflow");
+  const isCollection = !isLedger && tx.type === "inflow";
   const isTransfer = tx.type === "transfer";
-  const title = isCollection ? "Tahsilat Makbuzu" : isTransfer ? "Virman Makbuzu" : "Tediye (Ödeme) Makbuzu";
-  const titleUpper = isCollection ? "TAHSİLAT MAKBUZU" : isTransfer ? "VİRMAN MAKBUZU" : "TEDİYE MAKBUZU";
-  const partyLabel = isCollection ? "Sayın (Ödeyen)" : isTransfer ? "Karşı hesap / cari" : "Sayın (Alan)";
+  const title = isLedger
+    ? (tx?.purpose === "balance_fix" || /bakiye\s*düzelt/i.test(tx?.description || "") || /cari bakiye düzeltme/i.test(tx?.category || "")
+      ? (isCreditSlip ? "Cari Bakiye Düzeltme (Alacak)" : "Cari Bakiye Düzeltme (Borç)")
+      : (isCreditSlip ? "Alacak Fişi" : "Borç Fişi"))
+    : isCollection ? "Tahsilat Makbuzu" : isTransfer ? "Virman Makbuzu" : "Tediye (Ödeme) Makbuzu";
+  const titleUpper = title.toLocaleUpperCase("tr-TR");
+  const partyLabel = isLedger ? "Cari" : isCollection ? "Sayın (Ödeyen)" : isTransfer ? "Karşı hesap / cari" : "Sayın (Alan)";
   const partyName = contact?.name || tx.contact_name || tx.target_account_name || "—";
-  const totalLabel = isCollection ? "Yalnız tahsil edilen" : isTransfer ? "Yalnız virman tutarı" : "Yalnız ödenen";
+  const totalLabel = isLedger ? "Yalnız fiş tutarı" : isCollection ? "Yalnız tahsil edilen" : isTransfer ? "Yalnız virman tutarı" : "Yalnız ödenen";
   const ccy = tx.currency || contact?.currency || company?.currency || "TRY";
   const money = (n) => fmtMoney(n, ccy);
   return (
@@ -26,7 +32,7 @@ export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
           <div className="border-2 border-slate-900 rounded-lg p-6 space-y-4">
             <div className="flex justify-between items-start border-b-2 border-slate-900 pb-3">
               <div><div className="text-base font-black">{company?.name}</div><div className="text-slate-500">{company?.address} {company?.city}</div><div className="text-slate-500">VD: {company?.tax_office} • VKN: {company?.tax_number} • {company?.phone}</div></div>
-              <div className="text-right"><div className="text-lg font-black uppercase">{titleUpper}</div><div className="font-mono">No: MKB-{(tx.id || tx._id || "").slice(0, 8).toUpperCase()}</div><div className="text-slate-500">Tarih: {tx.date}</div></div>
+              <div className="text-right"><div className="text-lg font-black uppercase">{titleUpper}</div><div className="font-mono">No: MKB-{(tx.id || tx._id || "").slice(0, 8).toUpperCase()}</div><div className="text-slate-500">Tarih: {fmtDate(tx.date)}</div></div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div><div className="text-[10px] uppercase text-slate-400 font-bold">{partyLabel}</div><div className="font-bold text-sm">{partyName}</div><div className="text-slate-500">VKN/TCKN: {contact?.tax_number_or_id || "—"}</div><div className="text-slate-500">{contact?.address} {contact?.city}</div></div>

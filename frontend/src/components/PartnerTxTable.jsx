@@ -5,7 +5,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { ArrowUp, ArrowDown, ArrowUpDown, Pencil, Trash2, X, Check } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { formatTrAmount } from "../utils/money";
+import { formatTrAmount, fmtDate } from "../utils/money";
 import { isPartnerExpenseTx, isPartnerLedgerType, partnerTxLabel, partnerTxIsCashInflow, partnerTxSign } from "../utils/partnerTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
@@ -79,7 +79,7 @@ export const PartnerTxTable = ({ txs, accounts, companyId, onChanged }) => {
           </tr>
         ) : (
           <tr key={t.id} className="hover:bg-slate-50/70 group" data-testid={`partner-tx-row-${t.id}`}>
-            <td className="px-4 py-2 font-mono text-slate-500">{t.date}</td>
+            <td className="px-4 py-2 font-mono text-slate-500">{fmtDate(t.date)}</td>
             <td className="px-4 py-2 font-semibold text-slate-900">{t.partner_name}</td>
             <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-md font-semibold ${typeBadge(t)}`}>{partnerTxLabel(t)}</span></td>
             <td className="px-4 py-2 text-slate-600">{t.account_name ? <span className="font-semibold text-slate-700">{t.account_name} • </span> : ""}{t.description}</td>
