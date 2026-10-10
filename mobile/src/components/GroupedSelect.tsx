@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { createElement, useState } from "react";
-import { Platform, Pressable, Text, View } from "react-native";
+import React, { createElement, useMemo, useState } from "react";
+import { Platform, Pressable, Text, TextInput, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
 import { Muted } from "./kit";
@@ -45,6 +45,123 @@ function StatusSwatch({ color, testID }: { color: string; testID?: string }) {
 
 function Chevron({ dense }: { dense?: boolean }) {
   return <Ionicons name="chevron-down" size={dense ? 18 : 20} color={colors.indigo} />;
+}
+
+function filterGroups(groups: SelectGroup[], q: string): SelectGroup[] {
+  const needle = q.trim().toLocaleLowerCase("tr-TR");
+  if (!needle) return groups;
+  return groups
+    .map((g) => ({
+      ...g,
+      options: g.options.filter((o) => {
+        const hay = `${g.label} ${o.label}`.toLocaleLowerCase("tr-TR");
+        return hay.includes(needle);
+      }),
+    }))
+    .filter((g) => g.options.length > 0);
+}
+
+function SearchableGroupedSelect({
+  value,
+  onChange,
+  groups,
+  emptyLabel,
+  testID,
+  dense,
+  swatchColor,
+  searchPlaceholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  groups: SelectGroup[];
+  emptyLabel?: string;
+  testID?: string;
+  dense?: boolean;
+  swatchColor?: string;
+  searchPlaceholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const all = groups.flatMap((g) => g.options);
+  const selected = all.find((o) => o.value === value);
+  const title = selected?.label || emptyLabel || "Seçin";
+  const filtered = useMemo(() => filterGroups(groups, q), [groups, q]);
+
+  const close = () => {
+    setOpen(false);
+    setQ("");
+  };
+
+  return (
+    <View>
+      <Pressable
+        testID={testID}
+        accessibilityRole="button"
+        accessibilityHint="Açılır menü"
+        onPress={() => setOpen((v) => !v)}
+        style={{
+          ...triggerBox(dense, swatchColor),
+          paddingLeft: dense ? 10 : 12,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        {swatchColor ? <StatusSwatch color={swatchColor} testID={testID ? `${testID}-swatch` : undefined} /> : null}
+        <Text numberOfLines={1} style={{ flex: 1, fontWeight: "700", color: colors.text, fontSize: dense ? 14 : 15 }}>{title}</Text>
+        <Chevron dense={dense} />
+      </Pressable>
+      {open ? (
+        <View
+          testID={testID ? `${testID}-menu` : undefined}
+          style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, marginTop: 6, backgroundColor: "#fff", maxHeight: 320, overflow: "hidden" }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+            <Ionicons name="search" size={16} color={colors.muted} />
+            <TextInput
+              testID={testID ? `${testID}-search` : undefined}
+              value={q}
+              onChangeText={setQ}
+              placeholder={searchPlaceholder || "Ara…"}
+              placeholderTextColor={colors.muted}
+              autoFocus
+              style={{ flex: 1, minHeight: 36, fontSize: 14, fontWeight: "600", color: colors.text, padding: 0 }}
+            />
+            {q ? (
+              <Pressable onPress={() => setQ("")} hitSlop={8} testID={testID ? `${testID}-search-clear` : undefined}>
+                <Ionicons name="close-circle" size={18} color={colors.muted} />
+              </Pressable>
+            ) : null}
+          </View>
+          <View style={{ maxHeight: 260 }}>
+            {emptyLabel != null && !q ? (
+              <Pressable onPress={() => { onChange(""); close(); }} style={{ padding: 12 }}>
+                <Text style={{ fontWeight: "700", color: colors.muted }}>{emptyLabel}</Text>
+              </Pressable>
+            ) : null}
+            {!filtered.length ? (
+              <Text style={{ padding: 12, fontWeight: "600", color: colors.muted, fontSize: 13 }}>Sonuç yok</Text>
+            ) : filtered.map((g) => (
+              <View key={g.label}>
+                <Text style={{ paddingHorizontal: 12, paddingTop: 10, fontSize: 11, fontWeight: "800", color: colors.muted }}>{trUpper(g.label)}</Text>
+                {g.options.map((o) => (
+                  <Pressable
+                    key={o.value}
+                    testID={testID ? `${testID}-opt-${o.value}` : undefined}
+                    onPress={() => { if (o.disabled) return; onChange(o.value); close(); }}
+                    style={{ paddingHorizontal: 12, paddingVertical: 10, backgroundColor: o.value === value ? colors.emerald50 : "#fff", opacity: o.disabled ? 0.5 : 1 }}
+                  >
+                    <Text style={{ fontWeight: "700", color: o.disabled ? colors.muted : colors.text }}>{o.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 function NativeGroupedSelect({
@@ -125,6 +242,8 @@ export function GroupedSelect({
   testID,
   dense,
   swatchColor,
+  searchable,
+  searchPlaceholder,
 }: {
   label?: string;
   value: string;
@@ -134,12 +253,26 @@ export function GroupedSelect({
   testID?: string;
   dense?: boolean;
   swatchColor?: string;
+  /** Açılır listede ara kutusu (cari / uzun listeler). */
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }) {
+  const useSearch = !!searchable;
   return (
     <View style={{ marginBottom: dense ? 4 : spacing.md }} testID={testID ? `${testID}-wrap` : undefined}>
       {label ? <Muted>{label}</Muted> : null}
-      {Platform.OS === "web"
-        ? (
+      {useSearch ? (
+        <SearchableGroupedSelect
+          value={value}
+          onChange={onChange}
+          groups={groups}
+          emptyLabel={emptyLabel}
+          testID={testID}
+          dense={dense}
+          swatchColor={swatchColor}
+          searchPlaceholder={searchPlaceholder}
+        />
+      ) : Platform.OS === "web" ? (
           <View style={{ position: "relative", justifyContent: "center" }}>
             {swatchColor ? (
               <View pointerEvents="none" style={{ position: "absolute", left: 12, top: 0, bottom: 0, justifyContent: "center", zIndex: 1 }}>
