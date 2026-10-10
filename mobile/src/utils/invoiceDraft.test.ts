@@ -143,7 +143,8 @@ describe("invoiceDraft", () => {
     expect(canEditInvoiceItems({ status: "approved" })).toBe(false);
     expect(canEditInvoice({ status: "draft", invoice_type: "sales", e_type: "paper" })).toBe(true);
     expect(canEditInvoice({ status: "approved", invoice_type: "sales", e_type: "paper" })).toBe(true);
-    expect(canEditInvoice({ status: "approved", invoice_type: "sales", e_type: "e_archive", invoice_number: "POS2026100900038" })).toBe(false);
+    expect(canEditInvoice({ status: "approved", invoice_type: "sales", e_type: "e_archive", invoice_number: "POS2026100900038", gib_status: "Onaylandı" })).toBe(true);
+    expect(canEditInvoice({ status: "approved", invoice_type: "sales", e_type: "e_archive", invoice_number: "POS2026100900038", gib_tracking_id: "uuid-1" })).toBe(false);
     expect(looksLikeOfficialGibInvoiceNumber("POS2026100900038")).toBe(true);
     expect(canEditInvoice({ status: "cancelled", invoice_type: "sales" })).toBe(false);
     expect(canEditInvoice({ status: "approved", invoice_type: "dispatch" })).toBe(false);
