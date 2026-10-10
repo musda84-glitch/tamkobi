@@ -43,7 +43,16 @@ test("bulk menu lists the order actions and only refresh works with an empty sel
     expect(orderBulkHandlerKind(id)).toBeTruthy();
   }
   expect(orderBulkHandlerKind("kargola")).toBe("loop");
+  expect(orderBulkHandlerKind("einvoice_create")).toBe("modal_einvoice");
   expect(orderBulkHandlerKind("einvoice_send")).toBe("modal_einvoice");
+  expect(orderBulkHandlerKind("mini_10x15")).toBe("immediate");
+  expect(orderBulkHandlerKind("mini_8x20")).toBe("immediate");
+  expect(orderBulkHandlerKind("xml")).toBe("immediate");
+  expect(orderBulkHandlerKind("efatura_pdf")).toBe("immediate");
+  expect(orderBulkHandlerKind("cargo_mini")).toBe("immediate");
+  expect(orderBulkHandlerKind("approve")).toBe("loop");
+  expect(orderBulkHandlerKind("cancel")).toBe("loop");
+  expect(orderBulkHandlerKind("navlungo")).toBeNull();
 });
 
 test("order bulk helpers resolve row id and skip issued e-invoices", () => {
