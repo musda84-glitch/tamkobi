@@ -10,6 +10,7 @@ import { BankConnectionsPanel } from "../components/BankConnectionsPanel";
 import { CardStatementImport } from "../components/CardStatementImport";
 import { asContactList, canUploadBankStatement } from "../utils/bankStatementUpload";
 import { matchActorTitle, matchStatusLabel, txCreatedByLabel, txDescriptionLabel } from "../utils/bankMatchLabel";
+import { filterAccountTransactions } from "../utils/bankAccountTx";
 import { CashApprovalsBanner } from "../components/CashApprovalsBanner";
 import { AccountStatementPrint } from "../components/AccountStatementPrint";
 import { TxRowMenu } from "../components/TxRowMenu";
@@ -190,7 +191,22 @@ export default function BankingPage() {
     return loadBankingData({ silent: true });
   }, [loadBankingData]);
   useDataRefresh(refreshCashSilent, { companyId, scopes: ["cash"] });
-  const bumpCashData = useCallback(async () => {
+  const bumpCashData = useCallback(async (matchedTx) => {
+    // Eşleşince satır listeden düşmesin: hemen matched durumunu yerelde yaz.
+    if (matchedTx && (matchedTx.id || matchedTx._id)) {
+      const mid = matchedTx.id || matchedTx._id;
+      setTransactions((prev) => {
+        const rows = Array.isArray(prev) ? prev : [];
+        let found = false;
+        const next = rows.map((t) => {
+          const id = t.id || t._id;
+          if (id !== mid) return t;
+          found = true;
+          return { ...t, ...matchedTx, id: t.id || mid, match_status: matchedTx.match_status || "matched" };
+        });
+        return found ? next : [{ ...matchedTx, id: mid }, ...rows];
+      });
+    }
     setCashTick((n) => n + 1);
     await notifyDataChanged({ companyId, scopes: ["cash"] });
   }, [companyId]);
@@ -350,14 +366,11 @@ export default function BankingPage() {
   }).filter((g) => g.items.length > 0);
   const openGroup = grouped.find((g) => g.type === selectedGroup) || null;
   const groupIds = openGroup ? openGroup.items.map((a) => a.id || a._id) : null;
-  const matchesAccount = (tx, id) => (
-    tx.account_id === id || tx.target_account_id === id || tx.customer_card_account_id === id
-  );
-  const visibleTx = selectedAccountId
-    ? transactions.filter((tx) => matchesAccount(tx, selectedAccountId))
-    : groupIds
-      ? transactions.filter((tx) => groupIds.some((id) => matchesAccount(tx, id)))
-      : transactions;
+  // Eşleşmiş bank_sync satırları da hesap hareketlerinde kalır (match_status filtresi yok).
+  const visibleTx = filterAccountTransactions(transactions, {
+    accountId: selectedAccountId || null,
+    groupIds: selectedAccountId ? null : groupIds,
+  });
   const simulatedVisible = visibleTx.filter((tx) => tx.source === "bank_sync" && tx.is_simulated);
   const txInflow = visibleTx.filter(tx => tx.type === 'inflow' || (tx.type === 'transfer' && tx.target_account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
   const txOutflow = visibleTx.filter(tx => tx.type === 'outflow' || (tx.type === 'transfer' && tx.account_id === selectedAccountId)).reduce((s, tx) => s + (tx.amount || 0), 0);
