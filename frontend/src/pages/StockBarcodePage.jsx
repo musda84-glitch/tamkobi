@@ -4,7 +4,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { API_URL, useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { StockCountPanel } from "../components/StockCountPanel";
-import { StockToolbar, applyStockFilters, stockFiltersFromSearch, isCriticalStock } from "../components/StockToolbar";
+import { StockToolbar, applyStockFilters, stockFiltersFromSearch, isCriticalStock, isStockUntracked, stockQuantityLabel } from "../components/StockToolbar";
 import { ProductionOrderModal } from "../components/ProductionOrderModal";
 import { ProductProfitPanel } from "../components/ProductProfitPanel";
 import { LabelDesigner, LabelQuickPrint } from "../components/LabelDesigner";
@@ -921,13 +921,21 @@ export default function StockBarcodePage() {
                         onSave={(n) => saveInlinePrice(prod, "sale_price", n)}
                       />
                     </td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
-                        isCritical ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
-                      }`}>
-                        {isCritical && <AlertTriangle className="w-3 h-3 text-rose-600" />}
-                        {prod.track_stock === false ? "Takip yok" : `${prod.stock_quantity} ${prod.unit}`}
-                      </span>
+                    <td className="px-4 py-3 text-center" data-testid={`stock-qty-${prod.sku}`}>
+                      {(() => {
+                        const untracked = isStockUntracked(prod);
+                        return (
+                          <div className="inline-flex flex-col items-center gap-0.5">
+                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
+                              isCritical ? "bg-rose-100 text-rose-800" : untracked ? "bg-slate-100 text-slate-700" : "bg-emerald-100 text-emerald-800"
+                            }`}>
+                              {isCritical && <AlertTriangle className="w-3 h-3 text-rose-600" />}
+                              {stockQuantityLabel(prod)}
+                            </span>
+                            {untracked && <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400" data-testid={`stock-untracked-${prod.sku}`}>Takip yok</span>}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
