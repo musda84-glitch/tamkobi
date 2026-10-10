@@ -276,7 +276,7 @@ export function TxRowMenu({ tx, accounts = [], company, contacts = [], onChanged
           accounts={accounts}
           companyId={companyId}
           onClose={() => setMatchTx(null)}
-          onDone={() => onChanged?.()}
+          onDone={(matched) => onChanged?.(matched)}
         />
       )}
     </>

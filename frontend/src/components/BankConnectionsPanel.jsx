@@ -252,7 +252,8 @@ export const BankConnectionsPanel = ({ companyId, accounts, contacts, onSynced }
   const [newRule, setNewRule] = useState({ pattern: "", contact_id: "", category: "", target_account_id: "" });
   const [invoices, setInvoices] = useState([]);
   const [matched, setMatched] = useState([]);
-  const [showMatched, setShowMatched] = useState(false);
+  // Eşleşenler varsayılan açık — eşleşince satır kaybolmuş gibi görünmesin.
+  const [showMatched, setShowMatched] = useState(true);
   const [genKeyBusy, setGenKeyBusy] = useState(false);
   const [ktPublicPem, setKtPublicPem] = useState("");
   const [ktCrtPem, setKtCrtPem] = useState("");

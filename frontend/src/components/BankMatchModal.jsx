@@ -70,11 +70,12 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
         target_account_id: mode === "transfer" ? targetId : null,
         as_expense: mode === "expense",
       };
-      await axios.post(`${API_URL}/banking/transactions/${txId}/match`, body);
+      const { data: matched } = await axios.post(`${API_URL}/banking/transactions/${txId}/match`, body);
       toast.success(mode === "expense"
         ? (learn ? "Masraf kaydedildi ve kural olarak öğrenildi." : "Masraf kaydedildi.")
         : (learn ? "Eşleştirildi ve kural olarak öğrenildi." : "Eşleştirildi."));
-      onDone?.();
+      // Eşleşmiş satır hesap hareketlerinde kalsın — önce yerel güncelleme, sonra yenileme.
+      onDone?.(matched || { ...(tx || {}), id: txId, match_status: "matched" });
       onClose?.();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Eşleştirilemedi.");
