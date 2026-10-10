@@ -1,9 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { punchLabelColor, trUpper } from "../utils/labels";
-import { formatHm, hourOptions, minuteOptions, parseHm, resolveNowHm } from "../utils/clock";
+import { formatHm, hourOptions, minuteOptions, parseHm, pickerHm, resolveNowHm } from "../utils/clock";
+
+const ROW_H = 36;
 
 type TimeFieldProps = {
   label: string;
@@ -20,17 +22,27 @@ type TimeFieldProps = {
 
 export function TimeField({ label, value, onChangeText, testID, optional, autoOpen, nowLabel, nowValue, nowKind, onNow }: TimeFieldProps) {
   const [open, setOpen] = useState(false);
-  const parsed = parseHm(value);
-  const [hour, setHour] = useState(parsed?.hour ?? 16);
-  const [minute, setMinute] = useState(parsed?.minute ?? 0);
+  const initial = pickerHm(value, nowValue);
+  const [hour, setHour] = useState(initial.hour);
+  const [minute, setMinute] = useState(initial.minute);
+  const hourRef = useRef<ScrollView>(null);
+  const minuteRef = useRef<ScrollView>(null);
+
+  const scrollToSelection = (h: number, m: number) => {
+    requestAnimationFrame(() => {
+      hourRef.current?.scrollTo({ y: Math.max(0, h * ROW_H - ROW_H), animated: false });
+      minuteRef.current?.scrollTo({ y: Math.max(0, (m / 5) * ROW_H - ROW_H), animated: false });
+    });
+  };
 
   const openPicker = () => {
-    const now = parseHm(value);
-    if (now) {
-      setHour(now.hour);
-      setMinute(now.minute - (now.minute % 5));
-    }
+    const next = pickerHm(value, nowValue);
+    setHour(next.hour);
+    setMinute(next.minute);
+    // Boş değerde o anki saati alana da yaz — Seç / Kaydet hemen kullanılabilsin.
+    if (!parseHm(value)) onChangeText(formatHm(next.hour, next.minute));
     setOpen(true);
+    scrollToSelection(next.hour, next.minute);
   };
 
   useEffect(() => {
@@ -38,6 +50,10 @@ export function TimeField({ label, value, onChangeText, testID, optional, autoOp
     // Open once when the confirm row mounts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoOpen]);
+
+  useEffect(() => {
+    if (open) scrollToSelection(hour, minute);
+  }, [open, hour, minute]);
 
   const confirm = () => {
     onChangeText(formatHm(hour, minute));
@@ -48,8 +64,9 @@ export function TimeField({ label, value, onChangeText, testID, optional, autoOp
     const hm = resolveNowHm(nowValue);
     const parsed = parseHm(hm);
     if (parsed) {
+      const snapped = parsed.minute - (parsed.minute % 5);
       setHour(parsed.hour);
-      setMinute(parsed.minute);
+      setMinute(snapped);
     }
     onChangeText(hm);
     setOpen(false);
@@ -99,25 +116,25 @@ export function TimeField({ label, value, onChangeText, testID, optional, autoOp
               </Pressable>
             ) : null}
             <View style={{ flexDirection: "row", gap: 12, height: 168 }}>
-              <ScrollView style={{ flex: 1 }} testID={testID ? `${testID}-hours` : undefined}>
+              <ScrollView ref={hourRef} style={{ flex: 1 }} testID={testID ? `${testID}-hours` : undefined}>
                 {hourOptions().map((h) => (
                   <Pressable
                     key={h}
                     testID={testID ? `${testID}-hour-${h}` : undefined}
                     onPress={() => setHour(h)}
-                    style={{ paddingVertical: 8, borderRadius: 8, backgroundColor: h === hour ? colors.emerald100 : "transparent" }}
+                    style={{ height: ROW_H, justifyContent: "center", borderRadius: 8, backgroundColor: h === hour ? colors.emerald100 : "transparent" }}
                   >
                     <Text style={{ textAlign: "center", fontWeight: "700", color: colors.text }}>{String(h).padStart(2, "0")}</Text>
                   </Pressable>
                 ))}
               </ScrollView>
-              <ScrollView style={{ flex: 1 }} testID={testID ? `${testID}-minutes` : undefined}>
+              <ScrollView ref={minuteRef} style={{ flex: 1 }} testID={testID ? `${testID}-minutes` : undefined}>
                 {minuteOptions(5).map((m) => (
                   <Pressable
                     key={m}
                     testID={testID ? `${testID}-minute-${m}` : undefined}
                     onPress={() => setMinute(m)}
-                    style={{ paddingVertical: 8, borderRadius: 8, backgroundColor: m === minute ? colors.emerald100 : "transparent" }}
+                    style={{ height: ROW_H, justifyContent: "center", borderRadius: 8, backgroundColor: m === minute ? colors.emerald100 : "transparent" }}
                   >
                     <Text style={{ textAlign: "center", fontWeight: "700", color: colors.text }}>{String(m).padStart(2, "0")}</Text>
                   </Pressable>

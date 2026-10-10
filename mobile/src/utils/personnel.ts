@@ -1,3 +1,4 @@
+import { formatHm, pickerHm } from "./clock";
 import { splitPaymentTarget } from "./finance";
 import { fmtDate, fmtMoney, idOf } from "./money";
 import { hoursFromTimeRange } from "./overtimeRange";
@@ -181,10 +182,14 @@ export function absentConfirmMessage(name?: string): string {
 export function cardPunchDraftTime(
   action: "check_in" | "check_out",
   today?: { check_in?: string | null; check_out?: string | null } | null,
+  now: Date = new Date(),
 ): string {
   const raw = action === "check_in" ? today?.check_in : today?.check_out;
   const t = String(raw || "").trim();
-  return /^\d{1,2}:\d{2}$/.test(t) ? t.slice(0, 5) : "";
+  if (/^\d{1,2}:\d{2}$/.test(t)) return t.slice(0, 5);
+  // Kayıt yoksa puantaj saati seçici o anki saatle açılsın.
+  const p = pickerHm("", null, 5, now);
+  return formatHm(p.hour, p.minute);
 }
 
 export function cardPunchAttempts(

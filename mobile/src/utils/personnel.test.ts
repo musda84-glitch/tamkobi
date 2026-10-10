@@ -487,7 +487,8 @@ describe("payroll helpers", () => {
     expect(cardPunchConfirmMessage("absent", "Davut")).toMatch(/devamsız/);
     expect(cardPunchConfirmMessage("absent", "Davut")).toMatch(/Giriş\/çıkış silinir/);
     expect(cardPunchDraftTime("check_in", { check_in: "09:13" })).toBe("09:13");
-    expect(cardPunchDraftTime("check_out", { check_out: "--:--" })).toBe("");
+    expect(cardPunchDraftTime("check_out", { check_out: "--:--" }, new Date(2026, 8, 24, 14, 17))).toBe("14:15");
+    expect(cardPunchDraftTime("check_in", null, new Date(2026, 8, 24, 9, 2))).toBe("09:00");
     expect(cardPunchRequiresTime("")).toMatch(/Saat/);
     expect(cardPunchRequiresTime("09:13")).toBeNull();
     expect(cardPunchPayload("check_in", "09:13")).toEqual({ action: "check_in", check_in: "09:13" });
