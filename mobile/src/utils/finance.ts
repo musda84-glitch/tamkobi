@@ -512,7 +512,12 @@ export function isBankingCashAccount(a?: { type?: string } | null): boolean {
 }
 
 export type PaymentTargetOption = { value: string; label: string; disabled?: boolean };
-export type PaymentTargetGroup = { label: string; options: PaymentTargetOption[] };
+export type PaymentTargetGroup = {
+  label: string;
+  options: PaymentTargetOption[];
+  /** true: seçenekler yalnız arama yazılınca listelenir (cari gibi uzun listeler). */
+  searchOnly?: boolean;
+};
 
 /** Web PaymentTargetSelect karşılığı: tür bazlı gruplar + opsiyonel ortaklar. */
 function partnerTargetGroup(partners: Partner[]): PaymentTargetGroup {
@@ -557,6 +562,7 @@ export function virmanSelectGroups(
   if ((contacts || []).length) {
     groups.push({
       label: "Cariler",
+      searchOnly: true,
       options: contacts.map((c) => ({
         value: `contact:${idOf(c)}`,
         label: `${c.name || c.company_title || "Cari"} · ${fmtMoney(c.balance)}`,

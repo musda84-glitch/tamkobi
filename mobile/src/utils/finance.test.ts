@@ -197,7 +197,10 @@ describe("finance drafts", () => {
       [{ id: "c9", name: "Acme Ltd", type: "customer", balance: 1200 }],
     );
     expect(withCari.map((g) => g.label)).toContain("Cariler");
-    expect(withCari.find((g) => g.label === "Cariler")?.options[0].value).toBe("contact:c9");
+    expect(withCari.find((g) => g.label === "Cariler")).toMatchObject({
+      searchOnly: true,
+      options: [{ value: "contact:c9" }],
+    });
     expect(groups.find((g) => g.label === "Entegre banka")?.options[0]).toMatchObject({
       value: "integrated:b1",
       disabled: true,
