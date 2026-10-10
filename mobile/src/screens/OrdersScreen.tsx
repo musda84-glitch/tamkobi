@@ -90,7 +90,10 @@ export function OrdersScreen() {
           />
           {invLabel && invTone && !held ? (
             <Row style={{ paddingHorizontal: 4, paddingBottom: 2 }}>
-              <Badge label={invLabel} tone={invTone === "green" ? "green" : "amber"} />
+              <Badge
+                label={invLabel}
+                tone={invTone === "green" ? "green" : invTone === "red" ? "red" : "amber"}
+              />
             </Row>
           ) : null}
           <OrderActions order={o} compact onMessage={setMessage} onError={setError} onChanged={load} />

@@ -11,6 +11,8 @@ import {
   payrollBreakdown,
   payrollStatusTr,
   remainingDue,
+  employeePayButtonDue,
+  bonusPaidDate,
   employeeCompRows,
   remainingLeaveDays,
   unpaidPayrollTotal,
@@ -410,6 +412,12 @@ describe("payroll helpers", () => {
     expect(unpaidPayrollTotal("e2", pays)).toBe(8000);
     expect(remainingDue({ remaining: 15400 }, 12000)).toBe(15400);
     expect(remainingDue(null, 12000)).toBe(12000);
+    expect(remainingDue({ remaining: -2500 })).toBe(-2500);
+    // Öde butonu: kalan alacak (mesai bakiyeye dahil — çift sayım yok)
+    expect(employeePayButtonDue({ balance: { remaining: 41500, overtime_due: 1500 } })).toBe(41500);
+    expect(bonusPaidDate({ status: "paid", paid_at: "2026-10-10", date: "2026-10-09", created_at: "2026-10-08T12:00:00Z" })).toBe("2026-10-10");
+    expect(bonusPaidDate({ status: "paid", date: "2026-10-09", created_at: "2026-10-08T12:00:00Z" })).toBe("2026-10-09");
+    expect(bonusPaidDate({ status: "pending", date: "2026-10-09" })).toBe("");
     expect(employeeCompRows({ salary: 30000, meal_allowance: 1750, transport_allowance: 850 }).map((r) => [r.label, r.value])).toEqual([
       ["Yemek", 1750],
       ["Yol", 850],
@@ -721,11 +729,13 @@ describe("employee card actions", () => {
         { id: "p2", period: "2026-09", status: "pending", final_payable: 28100 },
       ],
       bonuses: [
-        { id: "b1", type: "advance", amount: 3750, period: "2026-09", status: "paid", created_at: "2026-09-10", note: "Avans" },
+        { id: "b1", type: "advance", amount: 3750, period: "2026-09", status: "paid", paid_at: "2026-09-12", created_at: "2026-09-10", note: "Avans" },
       ],
     });
     expect(rows.map((r) => r.title)).toEqual(["Avans", "Maaş", "Maaş"]);
     expect(rows[0].amount).toBe(3750);
+    expect(rows[0].date).toBe("2026-09-12");
+    expect(rows[0].subtitle).toMatch(/Ödendi/);
     expect(rows[1].subtitle).toContain("Ödeme bekliyor");
     expect(rows[1].payable).toBe(true);
     expect(rows[0].payable).toBe(false);

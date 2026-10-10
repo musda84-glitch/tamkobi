@@ -111,7 +111,7 @@ export function OrderDetailScreen() {
           const invTone = orderInvoiceBadgeTone(order);
           const invLabel = orderInvoiceBadgeLabel(order);
           if (!invLabel || !invTone) return null;
-          return <Badge label={invLabel} tone={invTone === "green" ? "green" : "amber"} />;
+          return <Badge label={invLabel} tone={invTone === "green" ? "green" : invTone === "red" ? "red" : "amber"} />;
         })()}
         {order.marketplace_status ? <Badge label={marketplaceStatusTr(order.marketplace_status)} tone="slate" /> : null}
         {order.cargo_carrier_name || order.cargo_carrier ? <Badge label={String(order.cargo_carrier_name || order.cargo_carrier)} tone="teal" /> : null}

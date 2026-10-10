@@ -14,7 +14,9 @@ import {
   expenseCategoryGroups,
   expensePayload,
   filterPartnerTxs,
+  partnerBalanceMeta,
   partnerCardTone,
+  partnerSummaryCardMeta,
   partnerTxLabel,
   validateExpenseDraft,
   type BankAccount,
@@ -96,10 +98,17 @@ function PartnerCard({
             <Muted>{[partner.email, partner.phone, `%${partner.share_percent || 0}`].filter(Boolean).join(" · ")}</Muted>
           </View>
         </View>
-        <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }}>
-          {fmtMoney(Number(partner.balance) > 0 ? -Math.abs(Number(partner.balance)) : Math.abs(Number(partner.balance) || 0))}
-        </Text>
-        <Muted>Giriş {fmtMoney(partner.total_capital_in)} · çıkış {fmtMoney(partner.total_withdrawn)}</Muted>
+        {(() => {
+          const bal = partnerBalanceMeta(partner.balance);
+          return (
+            <>
+              <Text style={{ fontSize: 20, fontWeight: "800", color: tone.amount }} testID={`partner-balance-${pid}`}>
+                {fmtMoney(bal.display)}
+              </Text>
+              <Muted>{bal.badge} · giriş {fmtMoney(partner.total_capital_in)} · çıkış {fmtMoney(partner.total_withdrawn)}</Muted>
+            </>
+          );
+        })()}
       </Pressable>
       {canExp ? (
         <PrimaryButton
@@ -220,16 +229,19 @@ export function BankingPartnersPanel({
       <Muted>Ortak bakiyesi ve hareketler (giriş/çıkış). Ortak ekleme ve maaş web panelinden yapılır.</Muted>
       <ErrorBanner message={error} />
       {message ? <Muted>{message}</Muted> : null}
-      {summary ? (
-        <StatRows
-          testID="partners-summary"
-          items={[
-            { key: "balance", label: Number(summary.total_balance) > 0 ? "Alacaklı" : Number(summary.total_balance) < 0 ? "Borçlu" : "Denk", value: fmtMoney(Number(summary.total_balance) > 0 ? -Math.abs(Number(summary.total_balance)) : Math.abs(Number(summary.total_balance) || 0)) },
-            { key: "capital", label: "Giriş", value: fmtMoney(summary.total_capital_in) },
-            { key: "withdrawn", label: "Çıkış", value: fmtMoney(summary.total_withdrawn) },
-          ]}
-        />
-      ) : null}
+      {summary ? (() => {
+        const card = partnerSummaryCardMeta(summary);
+        return (
+          <StatRows
+            testID="partners-summary"
+            items={[
+              { key: "balance", label: card.badge, value: fmtMoney(card.display) },
+              { key: "capital", label: "Giriş", value: fmtMoney(card.fromCash ? card.cashIn : summary.total_capital_in) },
+              { key: "withdrawn", label: "Çıkış", value: fmtMoney(card.fromCash ? card.cashOut : summary.total_withdrawn) },
+            ]}
+          />
+        );
+      })() : null}
 
       {!partners.length ? (
         <Empty icon="people-outline" title="Henüz ortak yok" hint="Ortak eklemek için web panelini kullanın." />

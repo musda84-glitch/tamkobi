@@ -33,6 +33,8 @@ import {
   bankMovementNotice,
   partnerMovementNotice,
   partnerTxLabel,
+  partnerBalanceMeta,
+  partnerSummaryCardMeta,
   partnerCardTone,
   partnerInitials,
   filterPartnerTxs,
@@ -345,5 +347,25 @@ describe("finance drafts", () => {
       { id: "1", partner_id: "a", amount: 1 },
       { id: "2", partner_id: "b", amount: 2 },
     ], "a").map((t) => t.id)).toEqual(["1"]);
+  });
+
+  it("partner balance meta matches web Alacaklı/Borçlu display", () => {
+    const credit = partnerBalanceMeta(1200);
+    expect(credit.badge).toBe("Alacaklı");
+    expect(credit.display).toBe(-1200);
+    const debit = partnerBalanceMeta(-500);
+    expect(debit.badge).toBe("Borçlu");
+    expect(debit.display).toBe(500);
+    expect(partnerBalanceMeta(0).badge).toBe("Denk");
+    const card = partnerSummaryCardMeta({
+      total_card_pocket: 800,
+      total_cash_net: -800,
+      total_cash_in: 1000,
+      total_cash_out: 1800,
+      total_balance: 50,
+    });
+    expect(card.fromCash).toBe(true);
+    expect(card.display).toBe(-800);
+    expect(card.badge).toBe("Alacaklı");
   });
 });
