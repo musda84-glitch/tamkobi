@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import ipaddress
 import socket
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -23,6 +24,9 @@ ALLOWED_PORTS = frozenset(range(9100, 9110)) | {515, 631}
 MAX_PAYLOAD = 512_000
 CONNECT_TIMEOUT = 4.0
 SEND_TIMEOUT = 8.0
+SCAN_CONNECT_TIMEOUT = 0.35
+SCAN_MAX_HOSTS = 256
+SCAN_WORKERS = 48
 
 
 def init(current_user_dep):
@@ -50,6 +54,91 @@ class SendBody(PrinterTarget):
     data: Optional[str] = None
     data_b64: Optional[str] = None
     encoding: str = "utf-8"
+
+
+class DiscoverBody(BaseModel):
+    """LAN'da :9100 (veya verilen port) açık özel IP'leri tara."""
+    subnet: Optional[str] = Field(None, max_length=32)  # örn. 192.168.1.0/24
+    host: Optional[str] = Field(None, max_length=253)  # alt ağ ipucu
+    port: int = Field(DEFAULT_PORT, ge=1, le=65535)
+
+
+def local_ipv4() -> Optional[str]:
+    """Çıkış arayüzünün IPv4 adresi (UDP connect; paket gitmez)."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("192.168.0.1", 80))
+            ip = sock.getsockname()[0]
+        finally:
+            sock.close()
+        parsed = ipaddress.ip_address(ip)
+        if parsed.version == 4 and parsed.is_private and not parsed.is_loopback:
+            return str(parsed)
+    except OSError:
+        pass
+    return None
+
+
+def resolve_scan_network(subnet: Optional[str], host_hint: Optional[str]) -> ipaddress.IPv4Network:
+    """Yalnızca özel /24 (veya daha dar) tarama ağı."""
+    raw_subnet = (subnet or "").strip()
+    if raw_subnet:
+        try:
+            net = ipaddress.ip_network(raw_subnet, strict=False)
+        except ValueError as e:
+            raise ValueError(f"Geçersiz subnet: {e}") from e
+        if not isinstance(net, ipaddress.IPv4Network):
+            raise ValueError("Yalnızca IPv4 subnet.")
+        if not net.is_private:
+            raise ValueError("Yalnızca özel ağ taranabilir.")
+        if net.num_addresses > SCAN_MAX_HOSTS + 2:
+            # /23 ve daha genişleri /24'e sıkıştır (ağ adresi tarafı)
+            net = ipaddress.ip_network(f"{net.network_address}/24", strict=False)
+        return net
+
+    hint = (host_hint or "").strip() or (local_ipv4() or "")
+    if not hint:
+        raise ValueError("Alt ağ bulunamadı. Yazıcı IP veya subnet (192.168.1.0/24) verin.")
+    ok, resolved = is_allowed_printer_host(hint)
+    if not ok:
+        raise ValueError(resolved)
+    return ipaddress.ip_network(f"{resolved}/24", strict=False)
+
+
+def _sync_port_open(host: str, port: int) -> bool:
+    try:
+        sock = socket.create_connection((host, port), timeout=SCAN_CONNECT_TIMEOUT)
+        sock.close()
+        return True
+    except OSError:
+        return False
+
+
+def _sync_discover(subnet: Optional[str], host_hint: Optional[str], port: int) -> Dict[str, Any]:
+    port = int(port)
+    if port not in ALLOWED_PORTS:
+        raise ValueError(f"Port {port} desteklenmiyor.")
+    net = resolve_scan_network(subnet, host_hint)
+    hosts = [str(ip) for ip in net.hosts()]
+    found: List[Dict[str, Any]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
+        futures = {pool.submit(_sync_port_open, h, port): h for h in hosts}
+        for fut in concurrent.futures.as_completed(futures):
+            host = futures[fut]
+            try:
+                if fut.result():
+                    found.append({"host": host, "port": port})
+            except Exception:
+                continue
+    found.sort(key=lambda row: tuple(int(part) for part in str(row["host"]).split(".")))
+    return {
+        "ok": True,
+        "printers": found,
+        "scanned": len(hosts),
+        "subnet": str(net),
+        "port": port,
+    }
 
 
 def is_allowed_printer_host(host: str) -> tuple[bool, str]:
@@ -184,6 +273,24 @@ async def probe_printer(request: Request, body: ProbeBody):
             detail=f"Yazıcıya ulaşılamadı ({body.host}:{body.port}): {e}. "
             "API sunucusu ile yazıcı aynı yerel ağda olmalı; değilse yerel köprü kullanın.",
         ) from e
+
+
+@router.post("/discover")
+async def discover_printers(request: Request, body: DiscoverBody):
+    """LAN'da açık :9100 (veya verilen port) özel IP'leri tara."""
+    await _require_user(request)
+    try:
+        port = validate_port(body.port)
+        return await asyncio.to_thread(
+            _sync_discover,
+            (body.subnet or "").strip() or None,
+            (body.host or "").strip() or None,
+            port,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/send")

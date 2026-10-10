@@ -30,10 +30,12 @@ import { DEFAULT_STOCK_UNIT, mergeUnitOptions, unitNamesFromApi, unitSelectGroup
 import {
   PRINTER_PRESETS,
   defaultEthernetPrinter,
+  discoverEthernetPrinters,
   loadEthernetPrinter,
   printLabelEthernet,
   probeEthernetPrinter,
   saveEthernetPrinter,
+  type DiscoveredPrinter,
   type EthernetPrinterSettings,
 } from "../utils/ethernetPrinter";
 
@@ -126,9 +128,41 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
   const [savedUnits, setSavedUnits] = useState<string[] | null>(null);
   const [eth, setEth] = useState<EthernetPrinterSettings | null>(null);
   const [ethBusy, setEthBusy] = useState(false);
+  const [discovered, setDiscovered] = useState<DiscoveredPrinter[]>([]);
+  const [discoverHint, setDiscoverHint] = useState<string | null>(null);
   /** null | menu (Etiket yazdır) | pick (yazıcı seç) | settings (yazıcı ayarları) */
   const [labelSheet, setLabelSheet] = useState<"menu" | "pick" | "settings" | null>(null);
   const ethCfg = eth || defaultEthernetPrinter();
+
+  const runDiscover = async () => {
+    setEthBusy(true);
+    setDiscoverHint(null);
+    try {
+      const r = await discoverEthernetPrinters(ethCfg, client);
+      setDiscovered(r.printers);
+      const subnet = r.subnet ? ` (${r.subnet})` : "";
+      if (!r.printers.length) {
+        setDiscoverHint(`Açık yazıcı bulunamadı${subnet}. Aynı Wi‑Fi/LAN ve köprü/API gerekir.`);
+      } else {
+        setDiscoverHint(`${r.printers.length} yazıcı bulundu${subnet}.`);
+        setError(null);
+      }
+    } catch (err) {
+      setDiscovered([]);
+      setError(apiErrorMessage(err, "Ağ taraması başarısız."));
+      setDiscoverHint(null);
+    } finally {
+      setEthBusy(false);
+    }
+  };
+
+  const pickDiscoveredHost = (row: DiscoveredPrinter) => {
+    const next = { ...ethCfg, host: row.host, port: row.port || ethCfg.port, enabled: true };
+    setEth(next);
+    void saveEthernetPrinter(next).then(setEth);
+    setMessage(`Yazıcı seçildi: ${row.host}:${row.port || ethCfg.port}`);
+    setError(null);
+  };
 
   const set = <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) => {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -438,7 +472,25 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
           }}
           groups={[{ label: "Yazıcılar", options: PRINTER_PRESETS.map((p) => ({ value: p.id, label: `${p.brand} ${p.model}` })) }]}
         />
-        <Muted>{ethCfg.host ? `IP ${ethCfg.host}:${ethCfg.port}` : "Önce yazıcı ayarlarından IP girin."}</Muted>
+        <PrimaryButton
+          title={ethBusy ? "Taranıyor…" : "Ağdaki yazıcıları bul"}
+          testID="eth-discover"
+          color={colors.secondary}
+          disabled={ethBusy}
+          loading={ethBusy}
+          onPress={runDiscover}
+        />
+        {discoverHint ? <Muted testID="eth-discover-hint">{discoverHint}</Muted> : null}
+        {discovered.map((row) => (
+          <PrimaryButton
+            key={`${row.host}:${row.port}`}
+            title={`${row.host}:${row.port}`}
+            testID={`eth-found-${row.host.replace(/\./g, "-")}`}
+            color={ethCfg.host === row.host ? colors.primary : colors.indigo}
+            onPress={() => pickDiscoveredHost(row)}
+          />
+        ))}
+        <Muted>{ethCfg.host ? `IP ${ethCfg.host}:${ethCfg.port}` : "Önce yazıcı ayarlarından IP girin veya ağdan bulun."}</Muted>
         <PrimaryButton
           title={ethBusy ? "Gönderiliyor…" : "Bu yazıcıya yazdır"}
           testID="eth-print"
@@ -512,6 +564,24 @@ export function ProductFormScreen({ productId }: { productId?: string }) {
           autoCapitalize="none"
           keyboardType="numbers-and-punctuation"
         />
+        <PrimaryButton
+          title={ethBusy ? "Taranıyor…" : "Ağdaki yazıcıları bul"}
+          testID="eth-settings-discover"
+          color={colors.secondary}
+          disabled={ethBusy}
+          loading={ethBusy}
+          onPress={runDiscover}
+        />
+        {discoverHint ? <Muted testID="eth-settings-discover-hint">{discoverHint}</Muted> : null}
+        {discovered.map((row) => (
+          <PrimaryButton
+            key={`settings-${row.host}:${row.port}`}
+            title={`${row.host}:${row.port}`}
+            testID={`eth-settings-found-${row.host.replace(/\./g, "-")}`}
+            color={ethCfg.host === row.host ? colors.primary : colors.indigo}
+            onPress={() => pickDiscoveredHost(row)}
+          />
+        ))}
         <Field
           label="Port"
           testID="eth-port"
