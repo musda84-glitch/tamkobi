@@ -131,14 +131,17 @@ export function orderInvoiceBadge(ord) {
   return null;
 }
 
-/** Menü kimliği: panel_einvoice | integration_einvoice | integration_draft | panel_draft | panel_invoiced | held_cart | default */
+/** Menü kimliği: panel_einvoice | integration_einvoice | integration_invoiced | integration_draft | panel_draft | panel_invoiced | held_cart | default */
 export function orderMoreMenuKind(ord) {
   if (ord?.is_held_cart || ord?.order_status === "held_cart" || ord?.is_active_cart || ord?.order_status === "active_cart") return "held_cart";
   if (isPanelOrder(ord) && orderHasEInvoiceIssued(ord)) return "panel_einvoice";
   if (isIntegrationOrder(ord) && orderHasEInvoiceIssued(ord)) return "integration_einvoice";
-  // Cariye faturalaştı, henüz GİB e-belgesi yok → yeşil Faturalaştı / E-Fatura Oluştur
-  // (panel + pazaryeri; e_type tek başına kırmızı rozet üretmez)
-  if (ord?.is_invoiced) return "panel_invoiced";
+  // Cariye faturalaştı, henüz GİB e-belgesi yok
+  if (ord?.is_invoiced) {
+    // Pazaryeri Faturalaştı → referans fulfillment + E-Fatura Oluştur
+    if (isIntegrationOrder(ord)) return "integration_invoiced";
+    return "panel_invoiced";
+  }
   // Pazaryeri henüz faturalaşmamış → referans fulfillment menüsü
   if (isIntegrationOrder(ord)) return "integration_draft";
   if (isPanelOrder(ord) && !ord?.is_invoiced) return "panel_draft";
@@ -169,6 +172,24 @@ export function integrationDraftMoreItems() {
     item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
     item("invoice_date", "Fatura Tarihi Değiştir", History, { color: "text-amber-600" }),
+    item("cargo_track_notify", "Kargo Takip Kodu Bildir", History, { color: "text-sky-500" }),
+    item("digital_code_notify", "Dijital Kod Bildir", Upload, { color: "text-rose-600" }),
+    item("warehouse_update", "Depo Bilgisi Güncelle", ArrowLeftRight, { color: "text-emerald-600" }),
+    item("kargola", "Kargola", Truck, { color: "text-rose-600" }),
+    item("cargo_change", "Paketli Siparişin Kargo Firmasını Değiştir", Truck, { color: "text-sky-500" }),
+  ];
+}
+
+/**
+ * Pazaryeri Faturalaştı (cariye işlendi, henüz GİB e-belgesi yok).
+ * Referans: durum getir + E-Fatura Oluştur + kargo / bildirim / depo.
+ */
+export function integrationInvoicedMoreItems() {
+  return [
+    item("refresh_status", "Siparişin Güncel Durumunu Getir", RefreshCw, { color: "text-emerald-600" }),
+    item("efatura_olustur", "E-Fatura Oluştur", Zap, { color: "text-rose-500", testId: "efatura-olustur" }),
+    item("cargo_mini", "Mini Kargo Etiketi Yazdır", Truck, { color: "text-sky-500" }),
+    item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", Truck, { color: "text-sky-500" }),
     item("cargo_track_notify", "Kargo Takip Kodu Bildir", History, { color: "text-sky-500" }),
     item("digital_code_notify", "Dijital Kod Bildir", Upload, { color: "text-rose-600" }),
     item("warehouse_update", "Depo Bilgisi Güncelle", ArrowLeftRight, { color: "text-emerald-600" }),
@@ -307,10 +328,14 @@ export function orderMoreMenuItems(ord, opts = {}) {
     // Pazaryeri fulfillment menüsü (Excel/PDF / sil yok — referans ekran)
     return { kind, items: integrationDraftMoreItems() };
   }
+  if (kind === "integration_invoiced") {
+    // Pazaryeri Faturalaştı: E-Fatura Oluştur + fulfillment (Excel/PDF yok)
+    return { kind, items: integrationInvoicedMoreItems() };
+  }
   if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems(ord);
   else if (kind === "panel_invoiced") {
-    // Faturalaştı: E-Fatura Oluştur + kargo (Excel/PDF yok — referans menü)
+    // B2B Faturalaştı: E-Fatura Oluştur + kargo (Excel/PDF yok)
     return { kind, items: panelInvoicedMoreItems(ord) };
   } else items = defaultMoreItems(ord, opts);
   const allowDelete = opts.canDelete !== false;

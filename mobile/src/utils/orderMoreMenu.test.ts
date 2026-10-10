@@ -9,6 +9,7 @@ import {
   orderMoreMenuKind,
   integrationEInvoiceMoreItems,
   integrationDraftMoreItems,
+  integrationInvoicedMoreItems,
   panelDraftMoreItems,
   panelEInvoiceMoreItems,
   isYmd,
@@ -127,16 +128,24 @@ describe("orderMoreMenu web variants", () => {
     expect(mobilePrimaryAction(ord)?.label).toBe("E-Fatura");
   });
 
-  it("integration invoiced without GİB shows Faturalaştı menu", () => {
-    const ord = { channel: "trendyol", is_invoiced: true, e_type: "e_archive", order_number: "908188687" };
-    expect(orderMoreMenuKind(ord)).toBe("panel_invoiced");
+  it("integration invoiced without GİB shows Faturalaştı fulfillment menu", () => {
+    const ord = { channel: "trendyol", is_invoiced: true, e_type: "e_archive", order_number: "11693105570" };
+    expect(orderMoreMenuKind(ord)).toBe("integration_invoiced");
     expect(orderInvoiceBadge(ord)?.label).toBe("Faturalaştı");
-    expect(orderMoreMenuItems(ord).items.map((i) => i.label)).toEqual([
+    const labels = orderMoreMenuItems(ord).items.map((i) => i.label);
+    expect(labels).toEqual(integrationInvoicedMoreItems().map((i) => i.label));
+    expect(labels).toEqual([
+      "Siparişin Güncel Durumunu Getir",
       "E-Fatura Oluştur",
       "Mini Kargo Etiketi Yazdır",
       "Mini Kargo Etiketi Yazdır 10X10",
+      "Kargo Takip Kodu Bildir",
+      "Dijital Kod Bildir",
+      "Depo Bilgisi Güncelle",
       "Kargola",
+      "Paketli Siparişin Kargo Firmasını Değiştir",
     ]);
+    expect(mobilePrimaryAction(ord)).toEqual({ id: "efatura_olustur", label: "E-Fatura" });
   });
 
   it("integration + GİB e-invoice uses marketplace fulfillment menu", () => {
