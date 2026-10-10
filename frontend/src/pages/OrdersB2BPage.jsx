@@ -369,6 +369,7 @@ export default function OrdersB2BPage() {
     const hit = list.filter((o) => String(o.cargo_carrier || "").toLowerCase().includes(needle));
     if (!hit.length) { toast.error(`Seçili siparişlerde ${title} gönderisi yok.`); return; }
     if (printThermalLabels(hit, activeCompany)) toast.success(`${hit.length} ${title} etiketi yazdırmaya gönderildi.`);
+    else toast.error(`${title} etiketi yazdırılamadı (açılır pencere engellenmiş olabilir).`);
   };
   /** Kamyon ikonu / mini etiket: entegrasyon etiketi tercih. */
   const printOrderCargoLabel = async (ord, size = "100x150") => {
@@ -387,161 +388,204 @@ export default function OrdersB2BPage() {
     }
   };
   const bulk = async (action) => {
-    if (action === "refresh") {
-      // Menü «Yenile» = pazaryeri sync (nav / F5 / mount tetiklemez)
-      await syncMarketplaceOrdersRef.current();
-      return;
-    }
-    const list = selectedOrders();
-    if (!list.length) { toast.error("Sipariş seçin."); return; }
-    if (action === "einvoice_create") {
-      const eligible = list.filter(orderBulkEInvoiceEligible);
-      if (!eligible.length) {
-        toast.info("E-Fatura yalnızca faturalaşmış siparişlerden kesilir. Önce Faturalaştırın.");
+    try {
+      if (action === "refresh") {
+        // Menü «Yenile» = pazaryeri sync (nav / F5 / mount tetiklemez)
+        await syncMarketplaceOrdersRef.current();
         return;
       }
-      setBulkEInvoiceConfirm({ orders: eligible });
-      return;
-    }
-    if (action === "labels" || action === "cargo_label" || action === "cargo_label_alt") { setBulkLabels(list); return; }
-    if (action === "thermal" || action === "cargo_mini" || action === "cargo_10x10") {
-      const size = action === "cargo_10x10" ? "100x100" : "100x150";
-      // Entegrasyon siparişleri → pazaryeri/kargo sağlayıcı etiketi; yoksa yerel termal
-      const r = await printCargoLabelsPreferIntegrator(list, activeCompany, {
-        apiUrl: API_URL,
-        axiosClient: axios,
-        size,
-      });
-      if (r.ok || r.thermal) {
-        axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: list.map((o) => orderRowId(o)).filter(Boolean) }).catch(() => {});
-        toast.success(r.message || `${list.length} etiket yazdırmaya gönderildi.`);
-      } else {
-        toast.error(r.message || "Etiket yazdırılamadı (açılır pencere engellenmiş olabilir).");
-      }
-      return;
-    }
-    if (action === "hepsijet") { carrierLabels(list, "hepsijet", "HepsiJet"); return; }
-    if (action === "navlungo") { carrierLabels(list, "navlungo", "Navlungo"); return; }
-    if (action === "einvoice_print" || action === "invoice_print") { openInvoicePdfs(list); return; }
-    if (action === "mini_10x15" || action === "mini_8x20") {
-      const size = action === "mini_8x20" ? "8x20" : "10x15";
-      // GİB e-belgesi kesilmiş siparişler → entegratör PDF; aksi halde yerel mini fiş
-      const issued = list.filter((o) => o.invoice_id && (o.einvoice_state === "sent" || o.einvoice_state === "queued" || o.gib_uuid || o.is_invoiced));
-      if (issued.length) {
-        const r = await printMiniInvoicesFromIntegrator(issued, { apiUrl: API_URL, axiosClient: axios });
-        if (r.ok) toast.success(r.message || `${r.ok} entegratör PDF yazdırmaya açıldı.`);
-        if (r.fail) toast.error(r.message || "Entegratör PDF yazdırılamadı.");
-        if (!r.ok && !r.fail) toast.error(r.message || "Yazdırılacak e-fatura yok.");
-        return;
-      }
-      if (!printMiniInvoices(list, activeCompany, size)) toast.error("Seçili siparişlerde yazdırılacak fatura yok veya açılır pencere engellendi.");
-      else toast.success("Mini fatura fişi yazdırmaya gönderildi.");
-      return;
-    }
-    if (action === "xml") { await downloadInvoiceXml(list); return; }
-    if (action === "efatura_pdf") { await downloadInvoicePdf(list); return; }
-    if (action === "delete") {
-      const deletable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
-      if (!deletable.length) { toast.error("Faturalanmış siparişler silinemez."); return; }
-      if (!window.confirm(`${deletable.length} sipariş silinsin mi? (Çöp Kutusu'ndan 30 gün içinde geri getirebilirsiniz.)`)) return;
-      try {
-        const r = await axios.post(`${API_URL}/orders/bulk-delete`, { ids: deletable.map((o) => orderRowId(o)).filter(Boolean) });
-        toast.success(r.data.message);
-        setSelected([]);
-        loadData();
-      } catch (err) {
-        toast.error(bulkApiErrorDetail(err) || "Silinemedi.");
-      }
-      return;
-    }
-    if (action === "invoice_date") {
-      const date = window.prompt("Yeni fatura tarihi (YYYY-AA-GG)", new Date().toISOString().slice(0, 10));
-      if (!date) return;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast.error("Tarih YYYY-AA-GG olmalı."); return; }
-      const withInv = list.filter((o) => o.invoice_id);
-      if (!withInv.length) { toast.error("Seçili siparişlerde fatura yok."); return; }
-      let ok = 0, fail = 0, firstErr = "";
-      for (const o of withInv) {
-        try { await axios.put(`${API_URL}/invoices/${o.invoice_id}`, { issue_date: date }); ok++; }
-        catch (err) { fail++; if (!firstErr) firstErr = bulkApiErrorDetail(err); }
-      }
-      toast[fail ? "error" : "success"](`${ok} faturanın tarihi güncellendi${fail ? `, ${fail} kesilmiş fatura değiştirilemedi${firstErr ? `: ${firstErr}` : ""}` : ""}.`);
-      loadData();
-      return;
-    }
-    if (action === "invoice_link") {
-      const ready = list.filter((o) => o.invoice_id && o.customer_email);
-      if (!ready.length) { toast.error("Faturalı ve e-posta adresi olan sipariş seçin."); return; }
-      let ok = 0, fail = 0, firstErr = "";
-      for (const o of ready) {
-        try {
-          const fd = new FormData();
-          const link = `${window.location.origin}/api/invoices/${o.invoice_id}/pdf`;
-          fd.append("company_id", companyId);
-          fd.append("to", o.customer_email);
-          fd.append("subject", `Faturanız ${o.invoice_number || o.order_number}`);
-          fd.append("body", `Sayın ${o.customer_name || ""},\n\n${o.invoice_number || o.order_number} numaralı faturanız: ${link}`);
-          fd.append("context", "invoice");
-          fd.append("ref_id", o.invoice_id);
-          fd.append("contact_id", o.contact_id || "");
-          fd.append("contact_name", o.customer_name || "");
-          await axios.post(`${API_URL}/comm/mail/send`, fd);
-          ok++;
-        } catch (err) { fail++; if (!firstErr) firstErr = bulkApiErrorDetail(err); }
-      }
-      toast[fail ? "error" : "success"](`${ok} fatura linki gönderildi${fail ? `, ${fail} hata${firstErr ? `: ${firstErr}` : ""}` : ""}.`);
-      return;
-    }
-    if (action === "cancel") {
-      const open = list.filter((o) => o.order_status !== "cancelled");
-      if (!open.length) { toast.info("Seçili siparişler zaten iptal."); return; }
-      if (!window.confirm(`${open.length} sipariş iptal edilsin mi?`)) return;
-    }
-
-    setBulkBusy(true);
-    let ok = 0, fail = 0, skipped = 0, firstErr = "";
-    for (const o of list) {
-      const oid = orderRowId(o);
-      try {
-        if (action === "invoice" || action === "invoice_create") {
-          if (o.is_invoiced || o.invoice_id) { skipped++; continue; }
-          await axios.post(`${API_URL}/orders/${oid}/convert-to-invoice`, { e_type: "e_archive", as_draft: true });
-        } else if (action === "einvoice_send") {
-          if (!orderBulkEInvoiceEligible(o) || !o.invoice_id) { skipped++; continue; }
-          const eType = o.e_type || orderEBelgeType(o, contacts);
-          await axios.post(`${API_URL}/invoices/${o.invoice_id}/send-to-gib`, { e_type: eType });
-        } else if (action === "approve") {
-          if (o.order_status !== "pending") { skipped++; continue; }
-          await axios.post(`${API_URL}/orders/${oid}/approve`, { cargo_carrier: o.cargo_carrier || "geliver" });
-        } else if (action === "cargo_create") {
-          if (o.cargo_tracking_number) { skipped++; continue; }
-          await axios.post(`${API_URL}/cargo/create-shipment`, {
-            carrier_code: o.cargo_carrier || "geliver",
-            order_id: oid,
-            customer_name: o.customer_name,
-            address: o.shipping_address || o.address,
-            city: o.city,
-            customer_phone: o.customer_phone,
-            company_id: companyId,
-          });
-        } else if (action === "cancel") {
-          if (o.order_status === "cancelled") { skipped++; continue; }
-          await axios.put(`${API_URL}/orders/${oid}/status`, { status: "cancelled" });
-        } else {
-          skipped++;
-          continue;
+      const list = selectedOrders();
+      if (!list.length) { toast.error("Sipariş seçin."); return; }
+      // Oluştur + Gönder → aynı GİB onay modalı (sessiz send-to-gib döngüsü hata üretiyordu)
+      if (action === "einvoice_create" || action === "einvoice_send") {
+        const eligible = list.filter(orderBulkEInvoiceEligible);
+        if (!eligible.length) {
+          toast.info(
+            action === "einvoice_send"
+              ? "Gönderilecek e-fatura yok. Faturalaşmış ve henüz GİB'e kesilmemiş sipariş seçin."
+              : "E-Fatura yalnızca faturalaşmış siparişlerden kesilir. Önce Faturalaştırın.",
+          );
+          return;
         }
-        ok++;
-      } catch (err) {
-        fail++;
-        if (!firstErr) firstErr = bulkApiErrorDetail(err);
+        setBulkEInvoiceConfirm({ orders: eligible });
+        return;
       }
+      if (action === "labels" || action === "cargo_label" || action === "cargo_label_alt") { setBulkLabels(list); return; }
+      if (action === "thermal" || action === "cargo_mini" || action === "cargo_10x10") {
+        const size = action === "cargo_10x10" ? "100x100" : "100x150";
+        setBulkBusy(true);
+        try {
+          const r = await printCargoLabelsPreferIntegrator(list, activeCompany, {
+            apiUrl: API_URL,
+            axiosClient: axios,
+            size,
+          });
+          if (r.ok || r.thermal) {
+            axios.post(`${API_URL}/orders/mark-labels-printed`, { ids: list.map((o) => orderRowId(o)).filter(Boolean) }).catch(() => {});
+            toast.success(r.message || `${list.length} etiket yazdırmaya gönderildi.`);
+          } else {
+            toast.error(r.message || "Etiket yazdırılamadı (açılır pencere engellenmiş olabilir).");
+          }
+        } finally {
+          setBulkBusy(false);
+        }
+        return;
+      }
+      if (action === "hepsijet") { carrierLabels(list, "hepsijet", "HepsiJet"); return; }
+      if (action === "einvoice_print" || action === "invoice_print") { openInvoicePdfs(list); return; }
+      if (action === "mini_10x15" || action === "mini_8x20") {
+        const size = action === "mini_8x20" ? "8x20" : "10x15";
+        // Yalnızca gerçek GİB e-belgesi → entegratör PDF; Faturalaştı (cari) → yerel mini fiş
+        const issued = list.filter((o) => o.invoice_id && orderHasEInvoiceIssued(o));
+        const localRows = list.filter((o) => o.invoice_id && !orderHasEInvoiceIssued(o));
+        setBulkBusy(true);
+        try {
+          let printed = false;
+          if (issued.length) {
+            const r = await printMiniInvoicesFromIntegrator(issued, { apiUrl: API_URL, axiosClient: axios });
+            if (r.ok) {
+              toast.success(r.message || `${r.ok} entegratör PDF yazdırmaya açıldı.`);
+              printed = true;
+            }
+            if (r.fail) toast.error(r.message || "Entegratör PDF yazdırılamadı.");
+          }
+          if (localRows.length) {
+            if (printMiniInvoices(localRows, activeCompany, size)) {
+              toast.success(`${localRows.length} mini fatura fişi yazdırmaya gönderildi.`);
+              printed = true;
+            } else if (!printed) {
+              toast.error("Mini fatura yazdırılamadı (açılır pencere engellenmiş olabilir).");
+            }
+          } else if (!issued.length) {
+            toast.error("Seçili siparişlerde yazdırılacak fatura yok.");
+          }
+        } finally {
+          setBulkBusy(false);
+        }
+        return;
+      }
+      if (action === "xml") { await downloadInvoiceXml(list); return; }
+      if (action === "efatura_pdf") { await downloadInvoicePdf(list); return; }
+      if (action === "delete") {
+        const deletable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
+        if (!deletable.length) { toast.error("Faturalanmış siparişler silinemez."); return; }
+        if (!window.confirm(`${deletable.length} sipariş silinsin mi? (Çöp Kutusu'ndan 30 gün içinde geri getirebilirsiniz.)`)) return;
+        try {
+          const r = await axios.post(`${API_URL}/orders/bulk-delete`, { ids: deletable.map((o) => orderRowId(o)).filter(Boolean) });
+          toast.success(r.data.message);
+          setSelected([]);
+          loadData();
+        } catch (err) {
+          toast.error(bulkApiErrorDetail(err) || "Silinemedi.");
+        }
+        return;
+      }
+      if (action === "invoice_date") {
+        const date = window.prompt("Yeni fatura tarihi (YYYY-AA-GG)", new Date().toISOString().slice(0, 10));
+        if (!date) return;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast.error("Tarih YYYY-AA-GG olmalı."); return; }
+        const withInv = list.filter((o) => o.invoice_id);
+        if (!withInv.length) { toast.error("Seçili siparişlerde fatura yok."); return; }
+        let ok = 0, fail = 0, firstErr = "";
+        for (const o of withInv) {
+          try { await axios.put(`${API_URL}/invoices/${o.invoice_id}`, { issue_date: date }); ok++; }
+          catch (err) { fail++; if (!firstErr) firstErr = bulkApiErrorDetail(err); }
+        }
+        toast[fail ? "error" : "success"](`${ok} faturanın tarihi güncellendi${fail ? `, ${fail} kesilmiş fatura değiştirilemedi${firstErr ? `: ${firstErr}` : ""}` : ""}.`);
+        loadData();
+        return;
+      }
+      if (action === "invoice_link") {
+        const ready = list.filter((o) => o.invoice_id && o.customer_email);
+        if (!ready.length) { toast.error("Faturalı ve e-posta adresi olan sipariş seçin."); return; }
+        let ok = 0, fail = 0, firstErr = "";
+        for (const o of ready) {
+          try {
+            const fd = new FormData();
+            const link = `${window.location.origin}/api/invoices/${o.invoice_id}/pdf`;
+            fd.append("company_id", companyId);
+            fd.append("to", o.customer_email);
+            fd.append("subject", `Faturanız ${o.invoice_number || o.order_number}`);
+            fd.append("body", `Sayın ${o.customer_name || ""},\n\n${o.invoice_number || o.order_number} numaralı faturanız: ${link}`);
+            fd.append("context", "invoice");
+            fd.append("ref_id", o.invoice_id);
+            fd.append("contact_id", o.contact_id || "");
+            fd.append("contact_name", o.customer_name || "");
+            await axios.post(`${API_URL}/comm/mail/send`, fd);
+            ok++;
+          } catch (err) { fail++; if (!firstErr) firstErr = bulkApiErrorDetail(err); }
+        }
+        toast[fail ? "error" : "success"](`${ok} fatura linki gönderildi${fail ? `, ${fail} hata${firstErr ? `: ${firstErr}` : ""}` : ""}.`);
+        return;
+      }
+      if (action === "invoice" || action === "invoice_create") {
+        const creatable = list.filter((o) => !o.is_invoiced && !o.invoice_id);
+        if (!creatable.length) { toast.info("Taslak fatura oluşturulacak sipariş yok (zaten faturalı veya taslaklı)."); return; }
+        if (!window.confirm(`${creatable.length} sipariş için taslak fatura oluşturulsun mu?`)) return;
+      } else if (action === "approve") {
+        const pending = list.filter((o) => o.order_status === "pending");
+        if (!pending.length) { toast.info("Onaylanacak bekleyen (pending) sipariş yok."); return; }
+        if (!window.confirm(`${pending.length} sipariş onaylansın mı?`)) return;
+      } else if (action === "kargola" || action === "cargo_create") {
+        const shippable = list.filter((o) => !o.cargo_tracking_number);
+        if (!shippable.length) { toast.info("Seçili siparişlerin hepsinde kargo takip numarası var."); return; }
+        if (!window.confirm(`${shippable.length} sipariş kargolansın mı?`)) return;
+      } else if (action === "cancel") {
+        const open = list.filter((o) => o.order_status !== "cancelled");
+        if (!open.length) { toast.info("Seçili siparişler zaten iptal."); return; }
+        if (!window.confirm(`${open.length} sipariş iptal edilsin mi?`)) return;
+      } else {
+        toast.error("Bu toplu işlem henüz bağlanmadı.");
+        return;
+      }
+
+      setBulkBusy(true);
+      let ok = 0, fail = 0, skipped = 0, firstErr = "";
+      for (const o of list) {
+        const oid = orderRowId(o);
+        try {
+          if (action === "invoice" || action === "invoice_create") {
+            if (o.is_invoiced || o.invoice_id) { skipped++; continue; }
+            await axios.post(`${API_URL}/orders/${oid}/convert-to-invoice`, {
+              e_type: orderEBelgeType(o, contacts) || "e_archive",
+              as_draft: true,
+            });
+          } else if (action === "approve") {
+            if (o.order_status !== "pending") { skipped++; continue; }
+            await axios.post(`${API_URL}/orders/${oid}/approve`, { cargo_carrier: o.cargo_carrier || "geliver" });
+          } else if (action === "kargola" || action === "cargo_create") {
+            if (o.cargo_tracking_number) { skipped++; continue; }
+            await axios.post(`${API_URL}/cargo/create-shipment`, {
+              carrier_code: o.cargo_carrier || "geliver",
+              order_id: oid,
+              customer_name: o.customer_name,
+              address: o.shipping_address || o.address,
+              city: o.city,
+              customer_phone: o.customer_phone,
+              company_id: companyId,
+            });
+          } else if (action === "cancel") {
+            if (o.order_status === "cancelled") { skipped++; continue; }
+            await axios.put(`${API_URL}/orders/${oid}/status`, { status: "cancelled" });
+          } else {
+            skipped++;
+            continue;
+          }
+          ok++;
+        } catch (err) {
+          fail++;
+          if (!firstErr) firstErr = bulkApiErrorDetail(err);
+        }
+      }
+      setBulkBusy(false);
+      if (!ok && !fail) toast.info(skipped ? "Seçili siparişlerde bu işlem için uygun kayıt yok." : "İşlenecek sipariş yok.");
+      else toast[fail ? "error" : "success"](`${ok} sipariş işlendi${fail ? `, ${fail} hata${firstErr ? `: ${firstErr}` : ""}` : ""}${skipped ? `, ${skipped} atlandı` : ""}.`);
+      setSelected([]);
+      loadData();
+    } catch (err) {
+      setBulkBusy(false);
+      toast.error(bulkApiErrorDetail(err) || "Toplu işlem başarısız.");
     }
-    setBulkBusy(false);
-    if (!ok && !fail) toast.info(skipped ? "Seçili siparişlerde bu işlem için uygun kayıt yok." : "İşlenecek sipariş yok.");
-    else toast[fail ? "error" : "success"](`${ok} sipariş işlendi${fail ? `, ${fail} hata${firstErr ? `: ${firstErr}` : ""}` : ""}${skipped ? `, ${skipped} atlandı` : ""}.`);
-    setSelected([]);
-    loadData();
   };
   const [returnReason, setReturnReason] = useState("");
   const [autoBusy, setAutoBusy] = useState(false);

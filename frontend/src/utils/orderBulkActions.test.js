@@ -1,6 +1,8 @@
 import { buildMiniInvoiceHtml, miniInvoiceSize } from "./miniInvoicePrint";
 import {
   ORDER_BULK_ACTIONS,
+  ORDER_BULK_ACTION_IDS,
+  orderBulkHandlerKind,
   bulkActionNeedsSelection,
   orderBulkEInvoiceEligible,
   orderDocumentDate,
@@ -24,17 +26,24 @@ test("bulk menu lists the order actions and only refresh works with an empty sel
     "Toplu Mini Kargo Etiketi Yazdır 10X10",
     "Toplu Fatura Tarihi Değiştir",
     "Toplu Sipariş Onayla",
-    "Toplu Kargo Siparişi Oluştur",
+    "Toplu Kargola",
     "Toplu E-Fatura XML'i İndir",
     "Toplu E-Fatura PDF İndir",
     "Toplu Fatura Linki gönder",
     "Siparişlerin Güncel Durumlarını Getir",
-    "Toplu Navlungo Kargo Etiketi Yazdır",
     "Seçili Siparişleri İptal Et",
   ]);
   expect(ORDER_BULK_ACTIONS.map((a) => a.id)).not.toContain("hepsijet");
+  expect(ORDER_BULK_ACTIONS.map((a) => a.id)).not.toContain("navlungo");
+  expect(ORDER_BULK_ACTIONS.map((a) => a.id)).toContain("kargola");
   expect(bulkActionNeedsSelection("refresh")).toBe(false);
   expect(bulkActionNeedsSelection("cancel")).toBe(true);
+  // Her menü satırının handler yönlendirmesi tanımlı
+  for (const id of ORDER_BULK_ACTION_IDS) {
+    expect(orderBulkHandlerKind(id)).toBeTruthy();
+  }
+  expect(orderBulkHandlerKind("kargola")).toBe("loop");
+  expect(orderBulkHandlerKind("einvoice_send")).toBe("modal_einvoice");
 });
 
 test("order bulk helpers resolve row id and skip issued e-invoices", () => {
