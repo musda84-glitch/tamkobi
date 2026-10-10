@@ -88,8 +88,8 @@ export function H1({ children }: { children: React.ReactNode }) {
   return <Text style={styles.h1}>{children}</Text>;
 }
 
-export function Muted({ children, testID }: { children: React.ReactNode; testID?: string }) {
-  return <Text testID={testID} style={styles.muted}>{children}</Text>;
+export function Muted({ children, testID, numberOfLines }: { children: React.ReactNode; testID?: string; numberOfLines?: number }) {
+  return <Text testID={testID} numberOfLines={numberOfLines} style={styles.muted}>{children}</Text>;
 }
 
 export function Row({ children, style }: ViewProps) {

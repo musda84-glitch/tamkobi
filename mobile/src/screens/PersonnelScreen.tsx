@@ -318,6 +318,7 @@ export function PersonnelScreen() {
   const [busy, setBusy] = useState(false);
   const [workplaceOpen, setWorkplaceOpen] = useState<Record<string, boolean>>({});
   const [requestsOpen, setRequestsOpen] = useState<Record<string, boolean>>({});
+  const [cardOpen, setCardOpen] = useState<Record<string, boolean>>({});
   const [punchConfirm, setPunchConfirm] = useState<{ id: string; action: "check_in" | "check_out"; name: string; time: string } | null>(null);
   const [listPunch, setListPunch] = useState<{ id: string; action: "check_in" | "check_out" | "absent"; name: string; time: string } | null>(null);
   const [punchBusy, setPunchBusy] = useState<string | null>(null);
@@ -1511,353 +1512,302 @@ export function PersonnelScreen() {
               yevmiyeAmount: Math.max(Number(emp.yevmiye_due) || 0, fromPays.amount),
             });
             return (
-              <Card key={eid} testID={`employee-card-${emp.tc_kimlik || eid}`} style={employeeCardChrome(emp)}>
+              <Card
+                key={eid}
+                testID={`employee-card-${emp.tc_kimlik || eid}`}
+                style={{
+                  backgroundColor: "#fff",
+                  borderColor: employeeCardChrome(emp).borderColor,
+                  borderWidth: 1.5,
+                  overflow: "hidden",
+                }}
+              >
                 <View
                   testID={`emp-card-pay-${employeeCardPayKind(emp)}-${eid}`}
-                  style={{ height: 6, marginHorizontal: -12, marginTop: -12, marginBottom: 8, backgroundColor: employeeCardChrome(emp).borderColor, borderTopLeftRadius: 16, borderTopRightRadius: 16 }}
+                  style={{ height: 4, marginHorizontal: -12, marginTop: -12, marginBottom: 8, backgroundColor: employeeCardChrome(emp).borderColor, borderTopLeftRadius: 16, borderTopRightRadius: 16 }}
                 />
-                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
-                  <EmployeeAvatar
-                    name={emp.full_name}
-                    photoUrl={emp.photo_url}
-                    size={40}
-                    testID={`emp-card-photo-${eid}`}
-                    onLongPress={canEdit ? () => setPhotoEmp(emp) : undefined}
-                  />
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                      <Text style={{ fontWeight: "800", color: colors.text }}>{emp.full_name}</Text>
-                      <Text
-                        testID={`emp-status-${eid}`}
-                        style={{ fontSize: 10, fontWeight: "800", color: emp.status === "terminated" ? "#BE123C" : colors.primaryHover, backgroundColor: emp.status === "terminated" ? colors.rose50 : colors.emerald50, overflow: "hidden", borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 }}
-                      >
-                        {employeeStatusLabel(emp.status)}
-                      </Text>
-                      {presence ? (
+                <View testID={`emp-card-strip-${eid}`} style={{ gap: 8 }}>
+                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }} testID={`emp-card-identity-${eid}`}>
+                    <EmployeeAvatar
+                      name={emp.full_name}
+                      photoUrl={emp.photo_url}
+                      size={36}
+                      testID={`emp-card-photo-${eid}`}
+                      onLongPress={canEdit ? () => setPhotoEmp(emp) : undefined}
+                    />
+                    <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 5 }}>
+                        <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13 }} numberOfLines={1}>{emp.full_name}</Text>
                         <Text
-                          testID={`emp-presence-${eid}`}
-                          style={{
-                            fontSize: 10,
-                            fontWeight: "800",
-                            color: presence.color,
-                            backgroundColor: presence.bg,
-                            overflow: "hidden",
-                            borderRadius: 999,
-                            paddingHorizontal: 7,
-                            paddingVertical: 2,
-                            borderWidth: 1,
-                            borderColor: presence.border,
-                          }}
+                          testID={`emp-status-${eid}`}
+                          style={{ fontSize: 9, fontWeight: "800", color: emp.status === "terminated" ? "#BE123C" : colors.primaryHover, backgroundColor: emp.status === "terminated" ? colors.rose50 : colors.emerald50, overflow: "hidden", borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1 }}
                         >
-                          {presence.label}
+                          {employeeStatusLabel(emp.status)}
                         </Text>
-                      ) : null}
-                      {isDailyWage(emp) ? (
-                        <Text
-                          testID={`emp-yevmiye-badge-${eid}`}
-                          style={{ fontSize: 10, fontWeight: "800", color: "#B45309", backgroundColor: "#FFFBEB", overflow: "hidden", borderRadius: 999, paddingHorizontal: 7, paddingVertical: 2 }}
-                        >
-                          Yevmiye
-                        </Text>
-                      ) : null}
-                    </View>
-                    <Muted>{[emp.position, emp.department].filter(Boolean).join(" · ")}</Muted>
-                    <Muted>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
-                    <Muted testID={`emp-leave-${eid}`}>
-                      Kalan izin: {cards[eid]?.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {cards[eid]?.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
-                      {cards[eid]?.performance?.overall != null ? ` · performans %${cards[eid].performance.overall}` : ""}
-                    </Muted>
-                  </View>
-                </View>
-                {(() => {
-                  const today = (attendance?.summary || []).find((s) => s.employee_id === eid)?.today || null;
-                  const punch = todayAttendanceParts(today);
-                  const otCap = assignedOvertimeCellCaption(today);
-                  const otOn = otCap !== "--:--";
-                  const otColor = otOn ? "#4F46E5" : colors.muted;
-                  return (
-                    <View
-                      testID={`emp-card-loc-${eid}`}
-                      style={{
-                        padding: 2,
-                        borderRadius: 8,
-                        backgroundColor: colors.slate50,
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                      }}
-                    >
-                      <Row style={{ alignItems: "stretch", gap: 3 }}>
-                        <View
-                          testID={`emp-card-assigned-ot-${eid}`}
-                          accessibilityLabel={otOn ? `Atanan fazla mesai ${otCap}` : "Atanan fazla mesai yok"}
-                          style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: "#fff" }}
-                        >
-                          <Text style={{ fontSize: 9, fontWeight: "800", color: otColor, letterSpacing: 0.3 }}>MESAİ</Text>
-                          <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: otColor }}>
-                            {otCap}
+                        {presence ? (
+                          <Text
+                            testID={`emp-presence-${eid}`}
+                            style={{ fontSize: 9, fontWeight: "800", color: presence.color, backgroundColor: presence.bg, overflow: "hidden", borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1, borderWidth: 1, borderColor: presence.border }}
+                          >
+                            {presence.label}
                           </Text>
-                        </View>
-                        <View testID={`emp-card-today-${eid}`} style={{ flex: 2, minWidth: 0, flexDirection: "row", gap: 3 }}>
+                        ) : null}
+                        {isDailyWage(emp) ? (
+                          <Text testID={`emp-yevmiye-badge-${eid}`} style={{ fontSize: 9, fontWeight: "800", color: "#B45309", backgroundColor: "#FFFBEB", overflow: "hidden", borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1 }}>Yevmiye</Text>
+                        ) : null}
+                      </View>
+                      {emp.position ? <Text style={{ fontSize: 11, fontWeight: "700", color: "#4F46E5" }} numberOfLines={1}>{emp.position}</Text> : null}
+                      {emp.department ? <Muted numberOfLines={1}>{emp.department}</Muted> : null}
+                      <Muted testID={`emp-leave-${eid}`} numberOfLines={1}>
+                        Kalan izin: {cards[eid]?.leave_balance?.remaining ?? remainingLeaveDays(emp)} / {cards[eid]?.leave_balance?.annual ?? emp.annual_leave_days ?? 14} gün
+                        {cards[eid]?.performance?.overall != null ? ` · %${cards[eid].performance.overall}` : ""}
+                      </Muted>
+                      <Text testID={`emp-receivable-${emp.tc_kimlik || eid}`} style={{ fontSize: 11 }} numberOfLines={1}>
+                        <Text style={{ color: colors.muted }}>Kalan alacak: </Text>
+                        <Text style={{ fontWeight: "800", color: due < 0 ? colors.warning : due > 0 ? colors.danger : colors.primaryHover }}>{fmtMoney(due)}</Text>
+                        {bal?.advances ? <Text style={{ fontWeight: "800", color: "#B45309" }}>{` · Avans ${fmtMoney(bal.advances)}`}</Text> : null}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {(() => {
+                    const today = (attendance?.summary || []).find((s) => s.employee_id === eid)?.today || null;
+                    const punch = todayAttendanceParts(today);
+                    const otCap = assignedOvertimeCellCaption(today);
+                    const otOn = otCap !== "--:--";
+                    const otColor = otOn ? "#4F46E5" : colors.muted;
+                    return (
+                      <View
+                        testID={`emp-card-loc-${eid}`}
+                        style={{ padding: 2, borderRadius: 8, backgroundColor: colors.slate50, borderWidth: 1, borderColor: colors.border }}
+                      >
+                        <Row style={{ alignItems: "stretch", gap: 3 }}>
+                          <View
+                            testID={`emp-card-assigned-ot-${eid}`}
+                            accessibilityLabel={otOn ? `Atanan fazla mesai ${otCap}` : "Atanan fazla mesai yok"}
+                            style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6, backgroundColor: "#fff", justifyContent: "center" }}
+                          >
+                            <Text style={{ fontSize: 8, fontWeight: "800", color: otColor, letterSpacing: 0.3 }}>MESAİ</Text>
+                            <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: otColor }}>{otCap}</Text>
+                          </View>
                           <Pressable
                             testID={`emp-card-today-in-${eid}`}
                             disabled={!canEdit || punchBusy === eid}
                             accessibilityRole="button"
                             accessibilityLabel="Unutulan giriş kaydı"
                             onPress={() => setPunchConfirm({ id: eid, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", today) })}
-                            style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 3, paddingHorizontal: 4, borderRadius: 8, backgroundColor: punchConfirm?.id === eid && punchConfirm.action === "check_in" ? "#D1FAE5" : "#fff" }}
+                            style={{ flex: 1, minWidth: 0, gap: 1, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6, backgroundColor: punchConfirm?.id === eid && punchConfirm.action === "check_in" ? "#D1FAE5" : "#fff", justifyContent: "center" }}
                           >
-                            <Text style={{ fontSize: 9, fontWeight: "800", color: PUNCH_IN_COLOR, letterSpacing: 0.3 }}>GİRİŞ</Text>
+                            <Text style={{ fontSize: 8, fontWeight: "800", color: PUNCH_IN_COLOR, letterSpacing: 0.3 }}>GİRİŞ</Text>
                             <Text numberOfLines={1} style={{ fontWeight: "800", fontSize: 12, color: PUNCH_IN_COLOR }}>
                               {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
                             </Text>
                           </Pressable>
-                        </View>
-                      </Row>
-                      {punchConfirm?.id === eid && punchConfirm.action === "check_in" ? (
-                        <View testID={`emp-card-punch-confirm-${eid}`} style={{ paddingTop: 4, gap: 6 }}>
-                          <TimeField
-                            key={`${eid}-${punchConfirm.action}`}
-                            label="Giriş saati"
-                            testID={`emp-card-punch-time-${eid}`}
-                            value={punchConfirm.time}
-                            autoOpen
-                            onChangeText={(time) => setPunchConfirm((cur) => (cur ? { ...cur, time } : cur))}
-                          />
-                          <Text style={{ fontSize: 11, color: colors.text }}>{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</Text>
-                          <Text testID={`emp-card-punch-hint-${eid}`} style={{ fontSize: 11, color: "#B45309" }}>{cardPunchTimeHint(cardPunchAttempts(today, punchConfirm.action), punchConfirm.action)}</Text>
-                          <Row style={{ gap: 6 }}>
-                            <PrimaryButton
-                              title={punchBusy === eid ? "Kaydediliyor…" : "Kaydet"}
-                              color={colors.primary}
-                              testID={`emp-card-punch-yes-${eid}`}
-                              onPress={() => {
-                                const invalid = cardPunchRequiresTime(punchConfirm.time);
-                                if (invalid) { setError(invalid); return; }
-                                attAct(eid, cardPunchPayload(punchConfirm.action, punchConfirm.time));
-                              }}
+                        </Row>
+                        {punchConfirm?.id === eid && punchConfirm.action === "check_in" ? (
+                          <View testID={`emp-card-punch-confirm-${eid}`} style={{ paddingTop: 4, gap: 6 }}>
+                            <TimeField
+                              key={`${eid}-${punchConfirm.action}`}
+                              label="Giriş saati"
+                              testID={`emp-card-punch-time-${eid}`}
+                              value={punchConfirm.time}
+                              autoOpen
+                              onChangeText={(time) => setPunchConfirm((cur) => (cur ? { ...cur, time } : cur))}
                             />
-                            <PrimaryButton title="Vazgeç" color={colors.secondary} testID={`emp-card-punch-no-${eid}`} onPress={() => setPunchConfirm(null)} />
-                          </Row>
-                        </View>
-                      ) : null}
-                    </View>
-                  );
-                })()}
-                {emp.workplace?.kind === "task" || openEmployeeTasks(cards[eid]).length ? (
-                  <View
-                    testID={`emp-card-workplace-${eid}`}
-                    style={{ padding: 10, borderRadius: 12, backgroundColor: "#EEF2FF", borderWidth: 1, borderColor: "#C7D2FE", gap: 2 }}
-                  >
-                    <Pressable
-                      testID={`emp-card-workplace-toggle-${eid}`}
-                      onPress={() => setWorkplaceOpen((cur) => ({ ...cur, [eid]: !cur[eid] }))}
-                      accessibilityLabel={workplaceDetailsToggleLabel(!!workplaceOpen[eid])}
-                      style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
-                    >
-                      <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 12, flex: 1 }}>Görev / çalıştığı yer</Text>
-                      <View
-                        testID={`emp-card-workplace-toggle-icon-${eid}`}
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 14,
-                          backgroundColor: "#C7D2FE",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                        <Ionicons
-                          name={workplaceDetailsToggleIcon(!!workplaceOpen[eid])}
-                          size={16}
-                          color="#3730A3"
+                            <Text style={{ fontSize: 11, color: colors.text }}>{cardPunchConfirmMessage(punchConfirm.action, punchConfirm.name)}</Text>
+                            <Text testID={`emp-card-punch-hint-${eid}`} style={{ fontSize: 11, color: "#B45309" }}>{cardPunchTimeHint(cardPunchAttempts(today, punchConfirm.action), punchConfirm.action)}</Text>
+                            <Row style={{ gap: 6 }}>
+                              <PrimaryButton
+                                title={punchBusy === eid ? "Kaydediliyor…" : "Kaydet"}
+                                color={colors.primary}
+                                testID={`emp-card-punch-yes-${eid}`}
+                                onPress={() => {
+                                  const invalid = cardPunchRequiresTime(punchConfirm.time);
+                                  if (invalid) { setError(invalid); return; }
+                                  attAct(eid, cardPunchPayload(punchConfirm.action, punchConfirm.time));
+                                }}
+                              />
+                              <PrimaryButton title="Vazgeç" color={colors.secondary} testID={`emp-card-punch-no-${eid}`} onPress={() => setPunchConfirm(null)} />
+                            </Row>
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  })()}
+
+                  <View testID={`emp-card-actions-${eid}`} style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                    <StripChip title="Hareketler" icon={employeeCardActionIcon("moves")} color={colors.secondary} bg="#F8FAFC" testID={`emp-card-moves-btn-${eid}`} onPress={() => openMoves(emp)} />
+                    {canEdit ? (
+                      <StripChip
+                        title={employeePayButtonLabel({ balance: bal }, bal)}
+                        icon={employeeCardActionIcon("salary")}
+                        color={colors.primaryHover}
+                        bg={colors.emerald50}
+                        testID={`employee-pay-btn-${emp.tc_kimlik || eid}`}
+                        onPress={() => setSettleEmp(emp)}
+                      />
+                    ) : null}
+                    {canEdit ? EMPLOYEE_CARD_WORK_ACTIONS.map((action) => {
+                      const tone = EMP_ACTION_TONE[action.key] || { color: colors.text, bg: colors.slate50 };
+                      return (
+                        <StripChip
+                          key={action.key}
+                          title={employeeCardActionTitle(action, emp)}
+                          icon={employeeCardActionIcon(action.key)}
+                          color={tone.color}
+                          bg={tone.bg}
+                          testID={`emp-card-${action.key}-btn-${eid}`}
+                          onPress={() => empActionHandlers[action.key]?.(emp)}
                         />
-                      </View>
-                    </Pressable>
-                    {workplaceOpen[eid] ? (
-                      <>
-                        {emp.workplace?.kind === "task" ? (
-                          <>
-                            <Text style={{ fontWeight: "700", color: "#312E81", fontSize: 13 }}>Dış görev · {workplaceShort(emp.workplace)}</Text>
-                            <Muted>{workplaceHint(emp.workplace, true)}</Muted>
-                          </>
-                        ) : null}
-                        {openEmployeeTasks(cards[eid]).slice(0, 6).map((t) => (
-                          <Muted key={t.id || t.title} testID={`emp-card-task-${eid}-${t.id || t.title}`}>
-                            {t.title || "Görev"}
-                            {t.project_number || t.project_name ? ` · ${t.project_number || t.project_name}` : ""}
-                            {t.kind === "office" ? ` · iç görev${t.park_name ? ` · ${t.park_name}` : ""}` : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${fmtDmy(t.due_date)}` : ""}
-                          </Muted>
-                        ))}
-                        {pendingDutyPhotoCount(cards[eid]?.tasks as AssignedDuty[]) ? (
-                          <Muted testID={`emp-card-photo-pending-${eid}`}>
-                            {pendingDutyPhotoCount(cards[eid]?.tasks as AssignedDuty[])} iş fotoğrafı müşteri onayı bekliyor
-                          </Muted>
-                        ) : null}
-                      </>
-                    ) : (
-                      <Muted testID={`emp-card-workplace-summary-${eid}`}>
-                        {[
-                          workplaceDetailsSummary({
-                            hasFieldDuty: emp.workplace?.kind === "task",
-                            fieldLabel: emp.workplace?.kind === "task" ? workplaceShort(emp.workplace) : "",
-                            taskCount: openEmployeeTasks(cards[eid]).length,
-                          }),
-                          pendingDutyPhotoCount(cards[eid]?.tasks as AssignedDuty[])
-                            ? `${pendingDutyPhotoCount(cards[eid]?.tasks as AssignedDuty[])} foto onay bekliyor`
-                            : "",
-                        ].filter(Boolean).join(" · ")}
-                      </Muted>
-                    )}
+                      );
+                    }) : null}
                   </View>
-                ) : null}
-                {(() => {
-                  const empRows = mergeSettledRequests(
-                    requestsForEmployee(pendingReqs, eid),
-                    settledReqs.filter((row) => String(row.item.employee_id || "") === eid),
-                  );
-                  const empReqs = empRows.map((row) => row.item);
-                  const reqOpen = !!requestsOpen[eid];
-                  return (
-                    <View testID={`emp-card-requests-${eid}`} style={{ paddingVertical: 4, paddingHorizontal: 6, borderRadius: 8, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A", gap: 4 }}>
-                      <Pressable
-                        testID={`emp-card-requests-toggle-${eid}`}
-                        onPress={() => setRequestsOpen((cur) => ({ ...cur, [eid]: !cur[eid] }))}
-                        accessibilityLabel={requestsDetailsToggleLabel(reqOpen)}
-                        style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 28 }}
-                      >
-                        <Text style={{ fontWeight: "800", color: "#92400E", fontSize: 12 }}>Talepler ({requestsForEmployee(pendingReqs, eid).length})</Text>
-                        <Text numberOfLines={1} style={{ flex: 1, fontSize: 11, color: colors.muted }}>{requestsDetailsSummary(empReqs)}</Text>
-                        <View
-                          testID={`emp-card-requests-toggle-icon-${eid}`}
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: 14,
-                            backgroundColor: "#FDE68A",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          <Ionicons name={requestsDetailsToggleIcon(reqOpen)} size={16} color="#92400E" />
-                        </View>
-                      </Pressable>
-                      {reqOpen ? (
-                        empRows.length ? (
-                          empRows.slice(0, 3).map(({ item: it, decision }) => (
-                            <View key={`${it.kind}-${it.id}`} style={{ gap: 4 }}>
-                              <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
-                              {canEdit ? (
-                                <RequestDecisionButtons
-                                  item={it}
-                                  settled={decision}
-                                  busy={busy}
-                                  testIDFor={(btn) => `card-${btn.key}-${it.kind}-${it.id}`}
-                                  onDecide={(next) => decideRequest(it, next)}
-                                >
-                                  {it.kind === "dispute" ? (
-                                    <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`card-view-dispute-${it.id}`} onPress={() => setTab("attendance")} />
-                                  ) : null}
-                                </RequestDecisionButtons>
+
+                  {cardOpen[eid] ? (
+                    <View testID={`emp-card-details-${emp.tc_kimlik || eid}`} style={{ gap: 8, paddingTop: 4, borderTopWidth: 1, borderTopColor: colors.border }}>
+                      <Muted numberOfLines={2}>{[emp.phone, emp.email].filter(Boolean).join(" · ") || "İletişim yok"}</Muted>
+
+                      {(() => {
+                        const empRows = mergeSettledRequests(
+                          requestsForEmployee(pendingReqs, eid),
+                          settledReqs.filter((row) => String(row.item.employee_id || "") === eid),
+                        );
+                        const empReqs = empRows.map((row) => row.item);
+                        const reqOpen = !!requestsOpen[eid];
+                        return (
+                          <View testID={`emp-card-requests-${eid}`} style={{ paddingVertical: 4, paddingHorizontal: 6, borderRadius: 8, backgroundColor: "#FFFBEB", borderWidth: 1, borderColor: "#FDE68A", gap: 4 }}>
+                            <Pressable
+                              testID={`emp-card-requests-toggle-${eid}`}
+                              onPress={() => setRequestsOpen((cur) => ({ ...cur, [eid]: !cur[eid] }))}
+                              accessibilityLabel={requestsDetailsToggleLabel(reqOpen)}
+                              style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 28 }}
+                            >
+                              <Text style={{ fontWeight: "800", color: "#92400E", fontSize: 12 }}>Talepler ({requestsForEmployee(pendingReqs, eid).length})</Text>
+                              <Text numberOfLines={1} style={{ flex: 1, fontSize: 11, color: colors.muted }}>{requestsDetailsSummary(empReqs)}</Text>
+                              <Ionicons name={requestsDetailsToggleIcon(reqOpen)} size={16} color="#92400E" />
+                            </Pressable>
+                            {reqOpen ? (
+                              empRows.length ? (
+                                empRows.slice(0, 3).map(({ item: it, decision }) => (
+                                  <View key={`${it.kind}-${it.id}`} style={{ gap: 4 }}>
+                                    <Muted>{requestKindLabel(it.kind)} · {it.title || "Talep"}</Muted>
+                                    {canEdit ? (
+                                      <RequestDecisionButtons
+                                        item={it}
+                                        settled={decision}
+                                        busy={busy}
+                                        testIDFor={(btn) => `card-${btn.key}-${it.kind}-${it.id}`}
+                                        onDecide={(next) => decideRequest(it, next)}
+                                      >
+                                        {it.kind === "dispute" ? (
+                                          <PrimaryButton title="Puantajda aç" color={colors.secondary} testID={`card-view-dispute-${it.id}`} onPress={() => setTab("attendance")} />
+                                        ) : null}
+                                      </RequestDecisionButtons>
+                                    ) : null}
+                                  </View>
+                                ))
+                              ) : (
+                                <Muted testID={`emp-card-requests-empty-${eid}`}>Bekleyen talep yok</Muted>
+                              )
+                            ) : null}
+                          </View>
+                        );
+                      })()}
+
+                      {emp.workplace?.kind === "task" || openEmployeeTasks(cards[eid]).length ? (
+                        <View testID={`emp-card-workplace-${eid}`} style={{ padding: 10, borderRadius: 12, backgroundColor: "#EEF2FF", borderWidth: 1, borderColor: "#C7D2FE", gap: 2 }}>
+                          <Pressable
+                            testID={`emp-card-workplace-toggle-${eid}`}
+                            onPress={() => setWorkplaceOpen((cur) => ({ ...cur, [eid]: !cur[eid] }))}
+                            accessibilityLabel={workplaceDetailsToggleLabel(!!workplaceOpen[eid])}
+                            style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+                          >
+                            <Text style={{ fontWeight: "800", color: "#3730A3", fontSize: 12, flex: 1 }}>Görev / çalıştığı yer</Text>
+                            <Ionicons name={workplaceDetailsToggleIcon(!!workplaceOpen[eid])} size={16} color="#3730A3" />
+                          </Pressable>
+                          {workplaceOpen[eid] ? (
+                            <>
+                              {emp.workplace?.kind === "task" ? (
+                                <>
+                                  <Text style={{ fontWeight: "700", color: "#312E81", fontSize: 13 }}>Dış görev · {workplaceShort(emp.workplace)}</Text>
+                                  <Muted>{workplaceHint(emp.workplace, true)}</Muted>
+                                </>
                               ) : null}
-                            </View>
-                          ))
-                        ) : (
-                          <Muted testID={`emp-card-requests-empty-${eid}`}>Bekleyen talep yok</Muted>
-                        )
+                              {openEmployeeTasks(cards[eid]).slice(0, 6).map((t) => (
+                                <Muted key={t.id || t.title} testID={`emp-card-task-${eid}-${t.id || t.title}`}>
+                                  {t.title || "Görev"}
+                                  {t.project_number || t.project_name ? ` · ${t.project_number || t.project_name}` : ""}
+                                  {t.kind === "office" ? ` · iç görev${t.park_name ? ` · ${t.park_name}` : ""}` : t.duration_days ? ` · ${t.duration_days} gün` : t.due_date ? ` · ${fmtDmy(t.due_date)}` : ""}
+                                </Muted>
+                              ))}
+                            </>
+                          ) : (
+                            <Muted testID={`emp-card-workplace-summary-${eid}`}>
+                              {workplaceDetailsSummary({
+                                hasFieldDuty: emp.workplace?.kind === "task",
+                                fieldLabel: emp.workplace?.kind === "task" ? workplaceShort(emp.workplace) : "",
+                                taskCount: openEmployeeTasks(cards[eid]).length,
+                              })}
+                            </Muted>
+                          )}
+                        </View>
+                      ) : null}
+
+                      <View testID={`emp-comp-${eid}`} style={{ gap: 6 }}>
+                        {employeeCompGroups(comp).map((group) => (
+                          <View key={group.key} testID={`emp-comp-group-${group.key}-${eid}`} style={{ gap: 2, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: colors.slate50 }}>
+                            <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.4, textTransform: "uppercase" }}>{group.title}</Text>
+                            {group.rows.map((row) => (
+                              <View key={row.key} style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                                <Text
+                                  numberOfLines={1}
+                                  testID={row.key === "bonus" && row.days != null ? `emp-comp-bonus-days-${eid}` : undefined}
+                                  style={{ fontSize: 11, color: colors.muted, flex: 1 }}
+                                >
+                                  {employeeCompRowCaption(row, isDailyWage(emp))}
+                                </Text>
+                                <Text
+                                  testID={row.key === "total" ? `emp-remaining-${eid}` : `emp-comp-${row.key}-${eid}`}
+                                  style={{ fontWeight: "800", fontSize: 12, color: row.key === "total" ? colors.primaryHover : colors.text }}
+                                >
+                                  {fmtMoney(row.value)}
+                                </Text>
+                              </View>
+                            ))}
+                          </View>
+                        ))}
+                      </View>
+
+                      {canEdit ? (
+                        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                          <StripChip title="Atanan görevler" icon={employeeCardActionIcon("duties")} color="#4338CA" bg="#EEF2FF" testID={`emp-card-duties-btn-${eid}`} onPress={() => setDutiesEmp(emp)} />
+                          <StripChip title={EMPLOYEE_MESSAGE_TITLE} icon={employeeCardActionIcon("message")} color="#128C7E" bg="#ECFDF5" testID={`emp-card-message-btn-${eid}`} onPress={() => openEmployeeMessage(emp)} />
+                          <StripChip title="Masraf" icon={employeeCardActionIcon("expense")} color="#9A3412" bg="#FFF7ED" testID={`emp-card-expense-btn-${eid}`} onPress={() => { setExpenseEmp(emp); setExpenseAmount(""); setExpenseNote(""); }} />
+                        </View>
                       ) : null}
                     </View>
-                  );
-                })()}
-                <Row testID={`emp-comp-${eid}`} style={{ alignItems: "stretch", gap: 4, paddingTop: 4, borderTopWidth: 1, borderTopColor: colors.border }}>
-                  {employeeCompGroups(comp).map((group) => (
-                    <View key={group.key} testID={`emp-comp-group-${group.key}-${eid}`} style={{ flex: 1, minWidth: 0, gap: 2, padding: 4, borderRadius: 8, backgroundColor: colors.slate50 }}>
-                      <Text style={{ fontSize: 9, fontWeight: "800", color: colors.muted, letterSpacing: 0.3 }}>{group.title}</Text>
-                      {group.rows.map((row) => (
-                        <View key={row.key} style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 4 }}>
-                          <Text
-                            numberOfLines={1}
-                            testID={row.key === "bonus" && row.days != null ? `emp-comp-bonus-days-${eid}` : undefined}
-                            style={{ fontSize: 10, color: colors.muted, flex: 1 }}
-                          >
-                            {employeeCompRowCaption(row, isDailyWage(emp))}
-                          </Text>
-                          <Text
-                            testID={row.key === "total" ? `emp-remaining-${eid}` : `emp-comp-${row.key}-${eid}`}
-                            style={{ fontWeight: "800", fontSize: 11, color: row.key === "total" ? colors.primary : colors.text }}
-                          >
-                            {fmtMoney(row.value)}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  ))}
-                </Row>
-                {due !== (comp.find((r) => r.key === "total")?.value ?? 0) || bal?.advances ? (
-                  <Row style={{ justifyContent: "space-between" }}>
-                    {due !== (comp.find((r) => r.key === "total")?.value ?? 0) ? (
-                      <View>
-                        <Muted>Kalan alacak</Muted>
-                        <Text style={{ fontWeight: "700", color: due < 0 ? colors.warning : due > 0 ? colors.danger : colors.text }}>{fmtMoney(due)}</Text>
-                      </View>
-                    ) : null}
-                    {bal?.advances ? (
-                      <View style={{ alignItems: "flex-end" }}>
-                        <Muted>Avans</Muted>
-                        <Text style={{ fontWeight: "700", color: colors.warning }}>{fmtMoney(bal.advances)}</Text>
-                      </View>
-                    ) : null}
-                  </Row>
-                ) : null}
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }} testID={`emp-card-actions-${eid}`}>
-                  <PayChip
-                    title="Hareketler"
-                    icon={employeeCardActionIcon("moves")}
-                    color={colors.secondary}
-                    bg="#F1F5F9"
-                    testID={`emp-card-moves-btn-${eid}`}
-                    onPress={() => openMoves(emp)}
-                  />
-                  {canEdit ? (
-                    <PayChip
-                      title={employeePayButtonLabel({ balance: bal }, bal)}
-                      icon={employeeCardActionIcon("salary")}
-                      color={colors.primaryHover}
-                      bg={colors.emerald50}
-                      testID={`employee-pay-btn-${emp.tc_kimlik || eid}`}
-                      onPress={() => setSettleEmp(emp)}
-                    />
                   ) : null}
-                  {canEdit ? (
-                    <>
-                      {EMPLOYEE_CARD_WORK_ACTIONS.map((action) => (
-                        <EmpActionChip key={action.key} action={action} emp={emp} eid={eid} handlers={empActionHandlers} />
-                      ))}
-                      <PayChip
-                        title="Atanan görevler"
-                        icon={employeeCardActionIcon("duties")}
-                        color="#4338CA"
-                        bg="#EEF2FF"
-                        testID={`emp-card-duties-btn-${eid}`}
-                        onPress={() => setDutiesEmp(emp)}
-                      />
-                      <PayChip
-                        title={EMPLOYEE_MESSAGE_TITLE}
-                        icon={employeeCardActionIcon("message")}
-                        color="#128C7E"
-                        bg="#ECFDF5"
-                        testID={`emp-card-message-btn-${eid}`}
-                        onPress={() => openEmployeeMessage(emp)}
-                      />
-                      <PayChip
-                        title="Masraf"
-                        icon={employeeCardActionIcon("expense")}
-                        color="#9A3412"
-                        bg="#FFF7ED"
-                        testID={`emp-card-expense-btn-${eid}`}
-                        onPress={() => { setExpenseEmp(emp); setExpenseAmount(""); setExpenseNote(""); }}
-                      />
-                    </>
-                  ) : null}
+
+                  <Pressable
+                    testID={`emp-card-expand-${emp.tc_kimlik || eid}`}
+                    onPress={() => setCardOpen((cur) => ({ ...cur, [eid]: !cur[eid] }))}
+                    accessibilityState={{ expanded: !!cardOpen[eid] }}
+                    style={({ pressed }) => ({
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      paddingVertical: 8,
+                      marginHorizontal: -12,
+                      marginBottom: -12,
+                      borderTopWidth: 1,
+                      borderTopColor: colors.border,
+                      backgroundColor: pressed ? colors.slate50 : "#fff",
+                    })}
+                  >
+                    <Ionicons name={cardOpen[eid] ? "chevron-up" : "chevron-down"} size={14} color={colors.muted} />
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: colors.muted }}>{cardOpen[eid] ? "Daralt" : "Genişlet"}</Text>
+                  </Pressable>
                 </View>
               </Card>
             );
@@ -3385,6 +3335,46 @@ function PayChip({
     >
       {icon ? <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={16} color={color} /> : null}
       <Text style={{ fontWeight: "700", fontSize: 10, color, textAlign: "center" }} numberOfLines={2}>{title}</Text>
+    </Pressable>
+  );
+}
+
+/** Web şeridine yakın yatay aksiyon chip’i (mobil kart üst satırı). */
+function StripChip({
+  title,
+  icon,
+  color,
+  bg,
+  onPress,
+  testID,
+}: {
+  title: string;
+  icon?: string;
+  color: string;
+  bg: string;
+  onPress: () => void;
+  testID: string;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+        minHeight: 36,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 10,
+        backgroundColor: bg,
+        borderWidth: 1,
+        borderColor: colors.border,
+        opacity: pressed ? 0.75 : 1,
+      })}
+    >
+      {icon ? <Ionicons name={icon as keyof typeof Ionicons.glyphMap} size={14} color={color} /> : null}
+      <Text style={{ fontWeight: "700", fontSize: 11, color }} numberOfLines={1}>{title}</Text>
     </Pressable>
   );
 }
