@@ -400,7 +400,11 @@ export function looksLikeOfficialGibInvoiceNumber(no?: string | null): boolean {
   return /^[A-Z0-9]{3}\d{13}$/.test(s);
 }
 
-/** GİB'e iletilmemiş satış/alış belgesi düzenlenir (web InvoiceContextMenu ile aynı). */
+/**
+ * GİB'e iletilmemiş satış/alış belgesi düzenlenir.
+ * POS… gibi resmi görünen seriler tek başına engellemez; iletim
+ * isGibIssued / gib_invoice_id ile kapanır (GİB'e kes açıksa Düzenle de açık).
+ */
 export function canEditInvoice(inv?: Invoice | null): boolean {
   if (!inv) return false;
   if (inv.status === "cancelled") return false;
@@ -412,13 +416,6 @@ export function canEditInvoice(inv?: Invoice | null): boolean {
   if (gibNo && gibNo !== invNo) return false;
   const eType = String(inv.e_type || "");
   if (["e_invoice", "e_archive", "e_export"].includes(eType) && gibNo) return false;
-  if (
-    inv.status !== "draft"
-    && ["e_invoice", "e_archive", "e_export"].includes(eType)
-    && looksLikeOfficialGibInvoiceNumber(invNo)
-  ) {
-    return false;
-  }
   return true;
 }
 
