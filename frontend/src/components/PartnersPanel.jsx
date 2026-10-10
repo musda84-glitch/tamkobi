@@ -12,7 +12,7 @@ import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
 import { formatTrAmount } from "../utils/money";
 import { resolveImageUrl } from "../utils/imageUrl";
 import { compressImageFile } from "../utils/compressImage";
-import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryCardText, partnerSalarySaveMessage, todayIsoDate } from "../utils/partnerTx";
+import { isPartnerCashType, isPartnerLedgerType, PARTNER_TX_LABEL, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, todayIsoDate } from "../utils/partnerTx";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const TX_LABEL = PARTNER_TX_LABEL;
@@ -320,27 +320,36 @@ export const PartnersPanel = ({ companyId, accounts, onCashChanged }) => {
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
           {(() => {
-            // Net = tüm ortakların kart tutarı (Giriş+Çıkış); hareket yoksa kayıtlı bakiye
-            let cashNet = 0;
-            let usedCash = false;
-            for (const p of partners) {
-              const br = partnerLedgers[p.id];
-              if (br && br.count > 0) {
-                cashNet += br.cardDisplay;
-                usedCash = true;
-              } else {
-                cashNet += partnerBalanceMeta(p.balance).display;
+            // Önce API kasa neti (tam hareket seti); yoksa istemci kırılımı / ledger
+            let net;
+            let netAmount;
+            if (summary.total_card_pocket != null || summary.total_cash_net != null) {
+              net = partnerSummaryCardMeta(summary);
+              netAmount = net.display;
+            } else {
+              let cashNet = 0;
+              let usedCash = false;
+              for (const p of partners) {
+                const br = partnerLedgers[p.id];
+                if (br && br.count > 0) {
+                  cashNet += br.cardDisplay;
+                  usedCash = true;
+                } else {
+                  cashNet += partnerBalanceMeta(p.balance).display;
+                }
               }
+              cashNet = Math.round(cashNet * 100) / 100;
+              net = usedCash
+                ? partnerBalanceMeta(-cashNet)
+                : partnerBalanceMeta(summary.total_balance);
+              netAmount = usedCash ? cashNet : net.display;
             }
-            cashNet = Math.round(cashNet * 100) / 100;
-            const net = usedCash
-              ? partnerBalanceMeta(-cashNet)
-              : partnerBalanceMeta(summary.total_balance);
-            const netAmount = usedCash ? cashNet : net.display;
+            const giris = summary.total_cash_in != null ? summary.total_cash_in : summary.total_capital_in;
+            const cikis = summary.total_cash_out != null ? summary.total_cash_out : summary.total_withdrawn;
             return [
               ["net", net.side === "zero" ? "Net bakiye" : `Net ${net.label}`, netAmount, net.amountCls],
-              ["capital", "Toplam Giriş", summary.total_capital_in, "text-emerald-700"],
-              ["withdrawn", "Toplam Çıkış", summary.total_withdrawn, "text-rose-700"],
+              ["capital", "Toplam Giriş", giris, "text-emerald-700"],
+              ["withdrawn", "Toplam Çıkış", cikis, "text-rose-700"],
             ].map(([id, l, v, c]) => (
             <div key={id} className="bg-white border border-slate-200 rounded-xl p-3" data-testid={`partner-summary-${id}`}>
               <div className="text-[10px] uppercase font-semibold text-slate-400">{l}</div>

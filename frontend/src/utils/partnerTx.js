@@ -96,6 +96,28 @@ export function partnerBalanceMeta(balance) {
     side: "zero",
   };
 }
+
+/**
+ * Amber kart / net özet: API kasa neti (total_card_pocket / total_cash_net) öncelikli.
+ * Eski yanıtta yalnızca total_balance varsa ledger cebi kullanılır.
+ */
+export function partnerSummaryCardMeta(summary) {
+  if (!summary) return partnerBalanceMeta(0);
+  const pocketRaw = summary.total_card_pocket;
+  if (pocketRaw != null && pocketRaw !== "") {
+    const meta = partnerBalanceMeta(pocketRaw);
+    const cashNet = Number(summary.total_cash_net);
+    return {
+      ...meta,
+      display: Number.isFinite(cashNet) ? cashNet : meta.display,
+      cashIn: Number(summary.total_cash_in) || 0,
+      cashOut: Number(summary.total_cash_out) || 0,
+      fromCash: true,
+    };
+  }
+  const meta = partnerBalanceMeta(summary.total_balance);
+  return { ...meta, cashIn: 0, cashOut: 0, fromCash: false };
+}
 /** Artı: ortak alacağı artar (para koy / alacak fişi / maaş / tahakkuk kâr payı). */
 export function partnerTxIncreasesBalance(type, tx) {
   // Eski masraf satırı withdrawal yazılmış olsa bile alacak (bakiye artar)

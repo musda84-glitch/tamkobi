@@ -9099,10 +9099,21 @@ async def list_partners(company_id: Optional[str] = "comp_nexus_main_01"):
 async def partners_summary(company_id: Optional[str] = "comp_nexus_main_01"):
     await partner_pay.sync_company_partners(db, company_id)
     partners = await db.partners.find({"company_id": company_id}).to_list(100)
+    txs = await db.partner_transactions.find({"company_id": company_id}).to_list(20000)
+    cash = partner_pay.cash_card_totals(txs)
+    ledger_balance = round(sum(float(p.get("balance") or 0) for p in partners), 2)
+    # Kart / amber özet: hareket varsa kasa neti; yoksa kayıtlı ledger
+    card_pocket = cash["card_pocket"] if cash["tx_count"] > 0 else ledger_balance
+    cash_net = cash["cash_net"] if cash["tx_count"] > 0 else round(-ledger_balance, 2)
     return {
         "partner_count": len(partners),
         "total_share_percent": sum(p.get("share_percent", 0) for p in partners),
-        "total_balance": sum(p.get("balance", 0) for p in partners),
+        "total_balance": ledger_balance,
+        "total_card_pocket": card_pocket,
+        "total_cash_net": cash_net,
+        "total_cash_in": cash["cash_in"],
+        "total_cash_out": cash["cash_out"],
+        "tx_count": cash["tx_count"],
         "total_capital_in": sum(p.get("total_capital_in", 0) for p in partners),
         "total_withdrawn": sum(p.get("total_withdrawn", 0) for p in partners),
         "total_profit_share": sum(p.get("total_profit_share", 0) for p in partners),
@@ -9210,7 +9221,8 @@ async def list_partner_transactions(company_id: Optional[str] = "comp_nexus_main
     query = {"company_id": company_id}
     if partner_id:
         query["partner_id"] = partner_id
-    txs = await db.partner_transactions.find(query).sort("created_at", -1).to_list(500)
+    # Sync ile aynı tavan — kart kasa neti eksik hareketle sapmasın
+    txs = await db.partner_transactions.find(query).sort("created_at", -1).to_list(20000)
     return clean_docs(txs)
 
 PARTNER_TX_LABELS = partner_pay.TX_LABELS

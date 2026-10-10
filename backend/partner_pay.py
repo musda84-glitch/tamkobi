@@ -270,6 +270,63 @@ def ledger_totals(txs: List[Dict[str, Any]]) -> Dict[str, float]:
     }
 
 
+def _tx_increases_balance(tx: Dict[str, Any]) -> bool:
+    """Frontend partnerTxIncreasesBalance ile aynı (kasa yönü yedek yolu)."""
+    t = tx.get("type")
+    if tx.get("expense_id") or tx.get("source") == "expense":
+        return True
+    if t in ("capital_in", "credit", "salary"):
+        return True
+    if t == "profit_share":
+        return not tx.get("is_paid")
+    return False
+
+
+def tx_is_cash_inflow(tx: Optional[Dict[str, Any]]) -> bool:
+    """Kart Giriş/Çıkış yönü — frontend partnerTxIsCashInflow ile birebir."""
+    if not tx:
+        return False
+    if tx.get("expense_id") or tx.get("source") == "expense":
+        return False
+    t = tx.get("type")
+    if t in ("credit", "salary"):
+        return False
+    if tx.get("contact_id") and t == "withdrawal":
+        return True
+    if tx.get("contact_id") and t == "capital_in":
+        return False
+    if tx.get("source") == "bank_match" or tx.get("related_bank_tx_id"):
+        bank_type = str(tx.get("bank_tx_type") or "").lower()
+        if bank_type in ("outflow", "debit"):
+            return True
+        if bank_type in ("inflow", "credit"):
+            return False
+    return _tx_increases_balance(tx)
+
+
+def cash_card_totals(txs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Kart tutarı = Giriş − Çıkış; card_pocket = Alacaklı/Borçlu rozeti kaynağı."""
+    cash_in = 0.0
+    cash_out = 0.0
+    for tx in txs or []:
+        try:
+            amt = float(tx.get("amount") or 0)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if tx_is_cash_inflow(tx):
+            cash_in += amt
+        else:
+            cash_out += amt
+    cash_net = round(cash_in - cash_out, 2)
+    return {
+        "tx_count": len(txs or []),
+        "cash_in": round(cash_in, 2),
+        "cash_out": round(cash_out, 2),
+        "cash_net": cash_net,
+        "card_pocket": round(-cash_net, 2),
+    }
+
+
 def is_legacy_expense_withdrawal(tx: Optional[Dict[str, Any]]) -> bool:
     """Eski masraf ödemesi yanlışlıkla withdrawal yazılmış mı? (doğrusu credit)."""
     if not tx or tx.get("type") != "withdrawal":
