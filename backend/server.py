@@ -1813,6 +1813,22 @@ async def read_notification(notif_id: str):
     await db.notifications.update_one({"_id": notif_id}, {"$set": {"is_read": True}})
     return {"status": "success"}
 
+@api_router.post("/notifications/clear")
+async def clear_notifications(request: Request, company_id: Optional[str] = "comp_nexus_main_01"):
+    """Kullanıcının görebileceği tüm bildirimleri (okunmuş + okunmamış) siler."""
+    try:
+        user = await get_current_user(request)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Oturum gerekli.")
+    import notify as _notify
+    rows = await db.notifications.find({"company_id": company_id}).to_list(500)
+    visible = _notify.filter_notifications(rows, user)
+    ids = [n["_id"] for n in visible if n.get("_id")]
+    if not ids:
+        return {"status": "success", "deleted": 0, "message": "Silinecek bildirim yok."}
+    r = await db.notifications.delete_many({"_id": {"$in": ids}})
+    return {"status": "success", "deleted": int(getattr(r, "deleted_count", 0) or len(ids)), "message": "Bildirimler silindi."}
+
 @api_router.delete("/notifications/{notif_id}")
 async def delete_notification(notif_id: str, request: Request):
     rec = await db.notifications.find_one({"_id": notif_id})

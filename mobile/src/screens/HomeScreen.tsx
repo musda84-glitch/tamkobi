@@ -27,7 +27,16 @@ import {
   serializeHiddenTileIds,
 } from "../utils/homeQuickHidden";
 import { fmtMoney, idOf } from "../utils/money";
-import { latestNotifications, notificationDeletePath, notificationRoute, tileBadges, unreadCount, visibleNotifications } from "../utils/notifications";
+import {
+  latestNotifications,
+  NOTIFICATIONS_CLEAR_PATH,
+  notificationClearableCount,
+  notificationDeletePath,
+  notificationRoute,
+  tileBadges,
+  unreadCount,
+  visibleNotifications,
+} from "../utils/notifications";
 import { hasSelfPersonnelRecord, showHomeApprovals, showHomeFinanceSummary, showHomeRefreshTile } from "../utils/permissions";
 import { resolveMobilePath, splitNotificationsTile, visibleQuickTiles, type QuickTile } from "../utils/quickMenu";
 
@@ -42,6 +51,7 @@ export function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
   const [extraIds, setExtraIds] = useState<string[]>([]);
+  const [clearingNotes, setClearingNotes] = useState(false);
 
   const showFinance = showHomeFinanceSummary(user);
   const showRefresh = showHomeRefreshTile(user);
@@ -160,6 +170,28 @@ export function HomeScreen() {
     }
   }, [client, refreshBadges]);
 
+  const clearAllNotifications = useCallback(async () => {
+    if (!companyId || !notificationClearableCount(notes) || clearingNotes) return;
+    const ok = await requestConfirm(
+      "Tümünü sil",
+      "Görünen tüm bildirimler silinecek. Bu işlem geri alınamaz.",
+      "Tümünü sil",
+    );
+    if (!ok) return;
+    setClearingNotes(true);
+    const prev = notes;
+    setNotes([]);
+    try {
+      await post(client, NOTIFICATIONS_CLEAR_PATH, {}, { company_id: companyId });
+      refreshBadges();
+    } catch (err) {
+      setNotes(prev);
+      setError(apiErrorMessage(err, "Bildirimler silinemedi."));
+    } finally {
+      setClearingNotes(false);
+    }
+  }, [clearingNotes, client, companyId, notes, refreshBadges]);
+
   const profitRow = netProfitRow(stats);
 
   return (
@@ -197,9 +229,12 @@ export function HomeScreen() {
             <NotificationsPanel
               items={latestNotifications(notes)}
               unread={unreadCount(notes)}
+              totalCount={notes.length}
+              clearing={clearingNotes}
               onOpenAll={() => goHref(notifications.href)}
               onOpenItem={openNotification}
               onDeleteItem={(n) => { void deleteNotification(n); }}
+              onClearAll={() => { void clearAllNotifications(); }}
             />
           </View>
         ) : null}

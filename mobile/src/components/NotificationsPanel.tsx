@@ -22,18 +22,26 @@ import { SwipeRevealRow } from "./SwipeRevealRow";
 export function NotificationsPanel({
   items,
   unread,
+  totalCount,
+  clearing,
   onOpenAll,
   onOpenItem,
   onDeleteItem,
+  onClearAll,
 }: {
   items: Notification[];
   unread: number;
+  /** Liste toplamı (önizleme dışı dahil); Tümünü sil görünürlüğü için. */
+  totalCount?: number;
+  clearing?: boolean;
   onOpenAll: () => void;
   onOpenItem: (n: Notification) => void;
   onDeleteItem?: (n: Notification) => void;
+  onClearAll?: () => void;
 }) {
   const tone = QUICK_TONE_COLORS.rose;
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const canClear = Boolean(onClearAll) && (totalCount ?? items.length) > 0 && !clearing;
   return (
     <View
       testID="home-notifications-panel"
@@ -56,34 +64,58 @@ export function NotificationsPanel({
         }),
       }}
     >
-      <Pressable
-        testID="home-notifications-all"
-        onPress={onOpenAll}
-        style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 8, opacity: pressed ? 0.7 : 1 })}
-      >
-        <View
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: 10,
-            backgroundColor: tone.solid,
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Pressable
+          testID="home-notifications-all"
+          onPress={onOpenAll}
+          style={({ pressed }) => ({ flex: 1, flexDirection: "row", alignItems: "center", gap: 8, opacity: pressed ? 0.7 : 1 })}
         >
-          <Ionicons name="notifications" size={16} color="#fff" />
-        </View>
-        <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13, flex: 1 }}>Bildirimler</Text>
-        {unread ? (
-          <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, backgroundColor: colors.danger }}>
-            <Text testID="home-notifications-unread" style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>
-              {unread} yeni
-            </Text>
+          <View
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: 10,
+              backgroundColor: tone.solid,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Ionicons name="notifications" size={16} color="#fff" />
           </View>
+          <Text style={{ fontWeight: "800", color: colors.text, fontSize: 13, flex: 1 }}>Bildirimler</Text>
+          {unread ? (
+            <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, backgroundColor: colors.danger }}>
+              <Text testID="home-notifications-unread" style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>
+                {unread} yeni
+              </Text>
+            </View>
+          ) : null}
+          <Text style={{ color: tone.fg, fontSize: 11, fontWeight: "800" }}>Tümü</Text>
+          <Ionicons name="chevron-forward" size={14} color={tone.fg} />
+        </Pressable>
+        {onClearAll ? (
+          <Pressable
+            testID="home-notifications-clear-all"
+            onPress={onClearAll}
+            disabled={!canClear}
+            accessibilityRole="button"
+            accessibilityLabel="Tümünü sil"
+            style={({ pressed }) => ({
+              paddingHorizontal: 8,
+              paddingVertical: 5,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: canClear ? colors.danger : tone.border,
+              backgroundColor: canClear ? "#fff" : "transparent",
+              opacity: !canClear ? 0.45 : pressed ? 0.7 : 1,
+            })}
+          >
+            <Text style={{ color: canClear ? colors.danger : colors.muted, fontSize: 10, fontWeight: "800" }}>
+              {clearing ? "Siliniyor…" : "Tümünü sil"}
+            </Text>
+          </Pressable>
         ) : null}
-        <Text style={{ color: tone.fg, fontSize: 11, fontWeight: "800" }}>Tümü</Text>
-        <Ionicons name="chevron-forward" size={14} color={tone.fg} />
-      </Pressable>
+      </View>
 
       {!items.length ? (
         <View style={{ backgroundColor: colors.surface, borderRadius: 14, paddingVertical: 14, alignItems: "center" }}>
