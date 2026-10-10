@@ -222,9 +222,9 @@ function bonusTypeTr(type, fallback) {
   return BONUS_TYPE_TR[String(type || "")] || fallback || "Ödeme";
 }
 
-function bonusStatusTr(status) {
+function bonusStatusTr(status, paidDate) {
   const key = String(status || "");
-  if (key === "paid") return "Ödendi";
+  if (key === "paid") return paidDate ? `Ödendi (${formatTrDate(paidDate)})` : "Ödendi";
   if (key === "pending") return "Bekliyor";
   if (key === "approved") return "Onaylı";
   if (key === "rejected") return "Reddedildi";
@@ -260,13 +260,14 @@ export function employeePayMoves(card) {
   }
   for (const b of card?.bonuses || []) {
     const days = yevmiyeDaysFromBonus(b);
+    const paidDate = b.paid_at || b.date || (b.status === "paid" ? b.created_at : "");
     rows.push({
       id: idOf(b) || `bonus-${b.created_at || b.period || ""}`,
       kind: "bonus",
       title: bonusTypeTr(b.type, b.type_label),
-      subtitle: [b.period, days ? `${days} gün` : "", bonusStatusTr(b.status), b.account_name, b.note].filter(Boolean).join(" · "),
+      subtitle: [b.period, days ? `${days} gün` : "", bonusStatusTr(b.status, paidDate), b.account_name, b.note].filter(Boolean).join(" · "),
       amount: Number(b.amount) || 0,
-      date: String(b.created_at || b.period || ""),
+      date: String(paidDate || b.created_at || b.period || ""),
       status: b.status,
     });
   }

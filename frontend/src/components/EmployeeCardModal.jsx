@@ -29,7 +29,17 @@ const LEAVE = { annual: "Yıllık", sick: "Hastalık", unpaid: "Ücretsiz", othe
 const ST = { pending: ["Bekliyor", "bg-amber-100 text-amber-700"], approved: ["Onaylı", "bg-emerald-100 text-emerald-700"], rejected: ["Red", "bg-rose-100 text-rose-700"], cancelled: ["İptal", "bg-slate-100 text-slate-600"], paid: ["Ödendi", "bg-emerald-100 text-emerald-700"], unpaid: ["Ödenmedi", "bg-slate-100 text-slate-600"] };
 const TONE = { emerald: "text-emerald-700", amber: "text-amber-700", rose: "text-rose-700", slate: "text-slate-900" };
 const BAR = { emerald: "bg-emerald-500", amber: "bg-amber-500", rose: "bg-rose-500", slate: "bg-slate-400" };
-const Badge = ({ s }) => { const [l, c] = ST[s] || [s, "bg-slate-100 text-slate-600"]; return <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${c}`}>{l}</span>; };
+const Badge = ({ s, date }) => {
+  const [l, c] = ST[s] || [s, "bg-slate-100 text-slate-600"];
+  return (
+    <span className="inline-flex flex-col items-end gap-0.5">
+      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${c}`}>{l}</span>
+      {s === "paid" && date ? (
+        <span className="text-[10px] font-medium text-slate-500" data-testid="emp-bonus-paid-date">{formatTrDate(date)}</span>
+      ) : null}
+    </span>
+  );
+};
 const Stat = ({ label, value, sub, testid, valueClass }) => <div className="bg-slate-50 rounded-xl p-3"><div className="text-[10px] uppercase font-semibold text-slate-400">{label}</div><div className={`text-sm font-bold ${valueClass || "text-slate-900"}`} data-testid={testid}>{value}</div>{sub && <div className="text-[10px] text-slate-500">{sub}</div>}</div>;
 const PerfBar = ({ label, pct, sub, testid }) => {
   const tone = performanceTone(pct);
@@ -528,7 +538,7 @@ export const EmployeeCardModal = ({ employee, companyId, accounts: accountsProp,
                 <div>
                   <div className="text-[10px] uppercase font-semibold text-slate-400 mb-1">Avans / prim / masraf</div>
                   <table className="w-full" data-testid="emp-bonus-table"><thead className="text-slate-500 uppercase text-[10px] border-b"><tr><th className="text-left py-1.5">Tür</th><th className="text-left">Dönem</th><th className="text-left">Hesap</th><th className="text-right">Tutar</th><th className="text-right">Durum</th></tr></thead>
-                    <tbody className="divide-y">{!(card.bonuses || []).length && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Avans veya prim yok.</td></tr>}{(card.bonuses || []).map((b) => <tr key={b.id}><td className="py-1.5 font-semibold">{b.type_label || b.type}{b.type === "yevmiye" && b.worked_days ? <div className="text-[10px] font-medium text-amber-700">{b.worked_days} gün{b.daily_wage ? ` × ${fmt(b.daily_wage)} ₺` : ""}</div> : null}</td><td>{b.period || "—"}</td><td className="text-slate-500">{b.account_name || b.note || "—"}</td><td className="text-right font-bold">{fmt(b.amount)} ₺</td><td className="text-right"><Badge s={b.status} />{b.type === "yevmiye" && b.status !== "paid" ? <div className="flex justify-end gap-2 mt-0.5"><button type="button" className="text-[10px] text-indigo-700 font-semibold" onClick={() => setYevmiyeOpen({ editId: b.id, haveDays: 0, initialDays: String(b.worked_days || ""), initialWage: String(b.daily_wage || e.daily_wage || ""), initialNote: b.note || "" })}>düzenle</button><button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-yevmiye-row-del-${b.id}`} onClick={async () => { if (!window.confirm("Bu yevmiye kaydı silinsin mi?")) return; try { await axios.delete(`${API_URL}/personnel/bonuses/${b.id}`); toast.success("Yevmiye kaydı silindi."); afterMoney(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }}>sil</button></div> : null}</td></tr>)}</tbody></table>
+                    <tbody className="divide-y">{!(card.bonuses || []).length && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Avans veya prim yok.</td></tr>}{(card.bonuses || []).map((b) => <tr key={b.id}><td className="py-1.5 font-semibold">{b.type_label || b.type}{b.type === "yevmiye" && b.worked_days ? <div className="text-[10px] font-medium text-amber-700">{b.worked_days} gün{b.daily_wage ? ` × ${fmt(b.daily_wage)} ₺` : ""}</div> : null}</td><td>{b.period || "—"}</td><td className="text-slate-500">{b.account_name || b.note || "—"}</td><td className="text-right font-bold">{fmt(b.amount)} ₺</td><td className="text-right"><Badge s={b.status} date={b.paid_at || b.date || b.created_at} />{b.type === "yevmiye" && b.status !== "paid" ? <div className="flex justify-end gap-2 mt-0.5"><button type="button" className="text-[10px] text-indigo-700 font-semibold" onClick={() => setYevmiyeOpen({ editId: b.id, haveDays: 0, initialDays: String(b.worked_days || ""), initialWage: String(b.daily_wage || e.daily_wage || ""), initialNote: b.note || "" })}>düzenle</button><button type="button" className="text-[10px] text-rose-700 font-semibold" data-testid={`emp-yevmiye-row-del-${b.id}`} onClick={async () => { if (!window.confirm("Bu yevmiye kaydı silinsin mi?")) return; try { await axios.delete(`${API_URL}/personnel/bonuses/${b.id}`); toast.success("Yevmiye kaydı silindi."); afterMoney(); } catch (err) { toast.error(err.response?.data?.detail || "Silinemedi."); } }}>sil</button></div> : null}</td></tr>)}</tbody></table>
                 </div>
               </div>
             )}

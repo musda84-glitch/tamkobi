@@ -117,9 +117,11 @@ describe("personnelCard", () => {
   test("builds pay and location move lines like mobile", () => {
     const moves = employeePayMoves({
       payrolls: [{ id: "p1", period: "2026-09", status: "pending", final_payable: 30000 }],
-      bonuses: [{ id: "b1", type: "advance", status: "paid", period: "2026-09", amount: 2000, created_at: "2026-09-10" }],
+      bonuses: [{ id: "b1", type: "advance", status: "paid", period: "2026-09", amount: 2000, paid_at: "2026-09-10", created_at: "2026-09-10T12:00:00" }],
     });
     expect(moves.map((m) => m.title)).toEqual(["Avans", "Maaş"]);
+    expect(moves[0].subtitle).toContain("Ödendi (10.09.2026)");
+    expect(moves[0].date).toBe("2026-09-10");
     expect(payMovesPeriodHint(1, 2, "30d")).toBe("1 / 2 hareket");
     expect(filterPayMoves([{ id: "1", date: "2026-07-01" }], "30d", new Date("2026-09-22"), "2026-09")).toHaveLength(0);
     expect(locationMoveDidLabel("enter")).toBe("İş yerine giriş yaptı");
