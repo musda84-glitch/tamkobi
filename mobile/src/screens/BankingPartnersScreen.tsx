@@ -18,6 +18,7 @@ import {
   partnerCardTone,
   partnerSummaryCardMeta,
   partnerTxLabel,
+  sortBankTransactions,
   validateExpenseDraft,
   type BankAccount,
   type ExpenseCategory,
@@ -265,7 +266,7 @@ export function BankingPartnersPanel({
       {!openPartner ? (
         <>
           <Text style={{ fontWeight: "800", color: colors.text }}>Ortak hareketleri</Text>
-          {!txs.length ? <Muted>Hareket yok.</Muted> : txs.slice(0, 40).map((tx) => (
+          {!txs.length ? <Muted>Hareket yok.</Muted> : sortBankTransactions(txs).slice(0, 40).map((tx) => (
             <ListRow
               key={idOf(tx)}
               title={`${partnerTxLabel(tx)} · ${tx.partner_name || ""}`}

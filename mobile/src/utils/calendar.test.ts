@@ -1,4 +1,4 @@
-import { fmtDmy, monthGrid, normalizeYm, normalizeYmd, parseYm, parseYmd, shiftMonth, toYm, toYmd, weekdayLabels, ymOrThisMonth, ymdOrToday } from "./calendar";
+import { dateSortKey, fmtDmy, monthGrid, normalizeYm, normalizeYmd, parseYm, parseYmd, shiftMonth, toYm, toYmd, weekdayLabels, ymOrThisMonth, ymdOrToday } from "./calendar";
 
 describe("calendar", () => {
   it("parses and formats YYYY-MM-DD", () => {
@@ -34,7 +34,16 @@ describe("calendar", () => {
   it("prints days as gün.ay.yıl", () => {
     expect(fmtDmy("2026-09-23")).toBe("23.09.2026");
     expect(fmtDmy("2026-09-23T12:38:00")).toBe("23.09.2026");
+    expect(fmtDmy("22.09.2026")).toBe("22.09.2026");
     expect(fmtDmy("")).toBe("—");
+  });
+
+  it("builds lexicographic dateSortKey for ISO and DMY", () => {
+    expect(dateSortKey("2026-10-03")).toBe("2026-10-03");
+    expect(dateSortKey("22.09.2026")).toBe("2026-09-22");
+    expect(dateSortKey("3.10.2026")).toBe("2026-10-03");
+    expect(dateSortKey("15/10/2026")).toBe("2026-10-15");
+    expect(dateSortKey("")).toBe("");
   });
 
   it("shifts months across years", () => {

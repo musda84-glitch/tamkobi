@@ -76,15 +76,42 @@ export function ymTitle(year: number, month0: number): string {
   return monthTitle(year, month0);
 }
 
-/** YYYY-MM-DD → 23.09.2026 (gün.ay.yıl). */
+const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})/;
+const DMY_DOT = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/;
+const DMY_SLASH = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+
+function pad2(n: number | string): string {
+  return String(n).padStart(2, "0");
+}
+
+/**
+ * Sıralama anahtarı: YYYY-MM-DD (lexicographic = kronolojik).
+ * ISO, gg.aa.yyyy, gg/aa/yyyy ve ISO datetime destekler.
+ */
+export function dateSortKey(value?: string | null): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const iso = ISO_DAY.exec(raw);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dmy = DMY_DOT.exec(raw) || DMY_SLASH.exec(raw);
+  if (dmy) return `${dmy[3]}-${pad2(dmy[2])}-${pad2(dmy[1])}`;
+  const t = Date.parse(raw);
+  if (!Number.isNaN(t)) {
+    const d = new Date(t);
+    return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+  }
+  return raw.slice(0, 10);
+}
+
+/** YYYY-MM-DD / ISO / gg.aa.yyyy / gg/aa/yyyy → 23.09.2026 */
 export function fmtDmy(value?: string | null): string {
   const raw = String(value || "").trim();
   if (!raw) return "—";
-  const parsed = parseYmd(raw.slice(0, 10));
-  if (!parsed) return raw.slice(0, 10);
-  const day = String(parsed.getDate()).padStart(2, "0");
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  return `${day}.${month}.${parsed.getFullYear()}`;
+  const iso = ISO_DAY.exec(raw);
+  if (iso) return `${iso[3]}.${iso[2]}.${iso[1]}`;
+  const dmy = DMY_DOT.exec(raw) || DMY_SLASH.exec(raw);
+  if (dmy) return `${pad2(dmy[1])}.${pad2(dmy[2])}.${dmy[3]}`;
+  return raw.slice(0, 10);
 }
 
 export function shiftMonth(year: number, month0: number, delta: number): { year: number; month0: number } {

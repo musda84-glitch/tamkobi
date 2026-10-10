@@ -1,3 +1,4 @@
+import { dateSortKey } from "./calendar";
 import { collectableAccounts } from "./contactDraft";
 import { fmtMoney, idOf } from "./money";
 
@@ -47,33 +48,6 @@ export const PARTNER_TX_TR: Record<string, string> = {
   salary: "Çıkış",
 };
 
-/** Ortak işlem: Giriş/Çıkış = kasa yönü (masraf/alacak/maaş=Çıkış, cari tahsilat=Giriş). */
-export function partnerTxLabel(tx?: {
-  type?: string;
-  expense_id?: string;
-  source?: string;
-  is_paid?: boolean;
-  contact_id?: string;
-  related_bank_tx_id?: string;
-  bank_tx_type?: string;
-} | null): string {
-  if (!tx) return "";
-  const t = tx.type || "";
-  if (tx.expense_id || tx.source === "expense") return "Çıkış";
-  if (t === "credit" || t === "salary") return "Çıkış";
-  if (tx.contact_id && t === "withdrawal") return "Giriş";
-  if (tx.contact_id && t === "capital_in") return "Çıkış";
-  if (tx.source === "bank_match" || tx.related_bank_tx_id) {
-    const bankType = String(tx.bank_tx_type || "").toLowerCase();
-    // Etiket: bankanın karşı tarafı (Vadesiz çıkışı → Giriş); bakiye tipi withdrawal
-    if (bankType === "outflow" || bankType === "debit") return "Giriş";
-    if (bankType === "inflow" || bankType === "credit") return "Çıkış";
-    // bank_tx_type yoksa tip geçerli (outflow→withdrawal)
-  }
-  if (t === "withdrawal" || t === "debit") return "Çıkış";
-  if (t === "profit_share" && tx.is_paid) return "Çıkış";
-  return "Giriş";
-}
 export type BankAccount = {
   id?: string;
   _id?: string;
@@ -229,6 +203,9 @@ export type PartnerTx = {
   is_paid?: boolean;
   expense_id?: string;
   source?: string;
+  contact_id?: string;
+  related_bank_tx_id?: string;
+  bank_tx_type?: string;
 };
 
 export type AccountDraft = {
@@ -347,15 +324,98 @@ export function partnerInitials(name?: string | null): string {
   return (parts[0] || "O").slice(0, 2).toLocaleUpperCase("tr-TR");
 }
 
+/** Yeni → eski. ISO ve gg.aa.yyyy karışık gelse de doğru sıralar (web sortBankTransactions). */
+export function sortBankTransactions<T extends { date?: string | null; created_at?: string | null; matched_at?: string | null; id?: string; _id?: string }>(
+  txs: T[] | null | undefined,
+): T[] {
+  const rows = Array.isArray(txs) ? [...txs] : [];
+  return rows.sort((a, b) => {
+    const da = dateSortKey(a?.date);
+    const db = dateSortKey(b?.date);
+    if (da !== db) return db.localeCompare(da);
+    const ca = String(a?.created_at || a?.matched_at || "");
+    const cb = String(b?.created_at || b?.matched_at || "");
+    if (ca !== cb) return cb.localeCompare(ca);
+    return String(b?.id || b?._id || "").localeCompare(String(a?.id || a?._id || ""));
+  });
+}
+
 export function filterPartnerTxs(txs: PartnerTx[] | null | undefined, partnerId?: string | null): PartnerTx[] {
   const list = txs || [];
-  if (!partnerId) return list;
-  return list.filter((tx) => String(tx.partner_id || "") === partnerId);
+  const filtered = !partnerId ? list : list.filter((tx) => String(tx.partner_id || "") === partnerId);
+  return sortBankTransactions(filtered);
+}
+
+/** Masraf satırı (expense_id / source=expense) — web isPartnerExpenseTx. */
+export function isPartnerExpenseTx(tx?: PartnerTx | null): boolean {
+  return Boolean(tx?.expense_id || tx?.source === "expense");
+}
+
+/** Ortak bakiyesini artırır mı (web partnerTxIncreasesBalance). */
+export function partnerTxIncreasesBalance(type?: string | null, tx?: PartnerTx | null): boolean {
+  if (tx && isPartnerExpenseTx(tx)) return true;
+  if (type === "capital_in" || type === "credit" || type === "salary") return true;
+  if (type === "profit_share") return !(tx && tx.is_paid);
+  return false;
+}
+
+/** Kasa yönü Giriş mi (web partnerTxIsCashInflow). */
+export function partnerTxIsCashInflow(tx?: PartnerTx | null): boolean {
+  if (!tx) return false;
+  if (isPartnerExpenseTx(tx)) return false;
+  if (tx.type === "credit" || tx.type === "salary") return false;
+  if (tx.contact_id && tx.type === "withdrawal") return true;
+  if (tx.contact_id && tx.type === "capital_in") return false;
+  if (tx.source === "bank_match" || tx.related_bank_tx_id) {
+    const bankType = String(tx.bank_tx_type || "").toLowerCase();
+    if (bankType === "outflow" || bankType === "debit") return true;
+    if (bankType === "inflow" || bankType === "credit") return false;
+  }
+  return partnerTxIncreasesBalance(tx.type, tx);
+}
+
+/** Ortak işlem: Giriş/Çıkış = kasa yönü (web partnerTxIsCashInflow). */
+export function partnerTxLabel(tx?: PartnerTx | null): string {
+  if (!tx) return "";
+  return partnerTxIsCashInflow(tx) ? "Giriş" : "Çıkış";
 }
 
 /**
- * Ortak kartı Giriş/Çıkış = web partnerLedgerBreakdown kasa yönü.
- * Hareket yoksa API capital_in / withdrawn alanına düşer.
+ * Web partnerLedgerBreakdown — kart = Giriş + Çıkış (kasa neti).
+ * count=0 iken giriş/çıkış 0; tutar kayıtlı bakiyeden (capital_in kullanılmaz).
+ */
+export function partnerLedgerBreakdown(
+  txs: PartnerTx[] | null | undefined,
+  storedBalance?: number | null,
+): {
+  count: number;
+  girisDisplay: number;
+  cikisDisplay: number;
+  cardDisplay: number;
+  cardPocket: number;
+} {
+  const rows = Array.isArray(txs) ? txs : [];
+  let cashIn = 0;
+  let cashOut = 0;
+  for (const tx of rows) {
+    const amt = Number(tx.amount);
+    const n = Number.isFinite(amt) ? amt : 0;
+    if (partnerTxIsCashInflow(tx)) cashIn += n;
+    else cashOut += n;
+  }
+  cashIn = Math.round(cashIn * 100) / 100;
+  cashOut = Math.round(cashOut * 100) / 100;
+  const girisDisplay = cashIn;
+  const cikisDisplay = Math.round(-cashOut * 100) / 100;
+  const cardDisplay = Math.round((girisDisplay + cikisDisplay) * 100) / 100;
+  const cardPocket = Math.round(-cardDisplay * 100) / 100;
+  void storedBalance;
+  return { count: rows.length, girisDisplay, cikisDisplay, cardDisplay, cardPocket };
+}
+
+/**
+ * Ortak kartı satırı — web PartnersPanel ile aynı kaynak.
+ * Hareket varsa kasa neti; yoksa kayıtlı bakiye + giriş/çıkış 0.
  */
 export function partnerCardCashFlow(
   partner: Pick<Partner, "balance" | "total_capital_in" | "total_withdrawn"> | null | undefined,
@@ -369,28 +429,21 @@ export function partnerCardCashFlow(
   fromTx: boolean;
 } {
   const mine = filterPartnerTxs(txs, partnerId);
-  if (mine.length) {
-    let cashIn = 0;
-    let cashOut = 0;
-    for (const tx of mine) {
-      const amt = Number(tx.amount);
-      const n = Number.isFinite(amt) ? amt : 0;
-      if (partnerTxLabel(tx) === "Giriş") cashIn += n;
-      else cashOut += n;
-    }
-    cashIn = Math.round(cashIn * 100) / 100;
-    cashOut = Math.round(cashOut * 100) / 100;
-    const giris = cashIn;
-    const cikis = Math.round(-cashOut * 100) / 100;
-    const net = Math.round((giris + cikis) * 100) / 100;
-    const pocket = Math.round(-net * 100) / 100;
-    const bm = partnerBalanceMeta(pocket);
-    return { giris, cikis, badge: bm.badge, display: net, fromTx: true };
+  const br = partnerLedgerBreakdown(mine, partner?.balance);
+  if (br.count > 0) {
+    const bm = partnerBalanceMeta(br.cardPocket);
+    return {
+      giris: br.girisDisplay,
+      cikis: br.cikisDisplay,
+      badge: bm.badge,
+      display: br.cardDisplay,
+      fromTx: true,
+    };
   }
   const bm = partnerBalanceMeta(partner?.balance);
   return {
-    giris: Number(partner?.total_capital_in) || 0,
-    cikis: -(Number(partner?.total_withdrawn) || 0),
+    giris: 0,
+    cikis: 0,
     badge: bm.badge,
     display: bm.display,
     fromTx: false,
@@ -858,11 +911,6 @@ export function partnerTxTr(v?: string | null): string {
   return PARTNER_TX_TR[v] || v;
 }
 
-function dateMs(value?: string | null): number {
-  const t = Date.parse(value || "");
-  return Number.isFinite(t) ? t : 0;
-}
-
 export type GroupMovementNotice = {
   id: string;
   title: string;
@@ -874,14 +922,13 @@ export type GroupMovementNotice = {
 /** Grup kartı için hesapların en yeni hareketleri (varsayılan 3). */
 export function recentTxForAccounts(txs: BankTx[], accounts: { id?: string; _id?: string }[], limit = 3): BankTx[] {
   const ids = new Set((accounts || []).map((a) => idOf(a)).filter(Boolean));
-  return (txs || [])
-    .filter((tx) => ids.has(String(tx.account_id || "")) || ids.has(String(tx.target_account_id || "")))
-    .sort((a, b) => dateMs(b.date) - dateMs(a.date))
-    .slice(0, limit);
+  return sortBankTransactions(
+    (txs || []).filter((tx) => ids.has(String(tx.account_id || "")) || ids.has(String(tx.target_account_id || ""))),
+  ).slice(0, limit);
 }
 
 export function recentPartnerTx(txs: PartnerTx[], limit = 3): PartnerTx[] {
-  return [...(txs || [])].sort((a, b) => dateMs(b.date) - dateMs(a.date)).slice(0, limit);
+  return sortBankTransactions(txs || []).slice(0, limit);
 }
 
 export function signedTxForGroup(tx: BankTx, accountIds: Set<string>): number {
