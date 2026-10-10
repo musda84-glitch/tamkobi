@@ -8614,6 +8614,17 @@ async def delete_bank_transaction(tx_id: str):
             f"{pair.get('description')} · {float(pair.get('amount') or 0):,.2f} ₺",
             note=f"{pair.get('account_name')} · {pair.get('date')} · virman eş satır",
         )
+    # Silinen hareketten sonra kasa bakiyesini hareket toplamına kilitle (kalan bakiye kalmasın).
+    cash_ids = {tx.get("account_id"), tx.get("target_account_id"), (pair or {}).get("account_id"), (pair or {}).get("target_account_id")}
+    cash_accs = []
+    for aid in cash_ids:
+        if not aid:
+            continue
+        acc = await db.bank_accounts.find_one({"_id": aid})
+        if acc and str(acc.get("type") or "") == "cash_box":
+            cash_accs.append(acc)
+    if cash_accs:
+        await account_balance.sync_cash_box_balances(db, cash_accs)
     sync_ids = {tx.get("contact_id"), tx.get("owner_contact_id"), (pair or {}).get("contact_id")}
     for cid in sync_ids:
         if cid:
@@ -19143,6 +19154,15 @@ trade.init(db, create_invoice)
 
 async def _restore_bank_tx(doc, _related):
     await _reverse_tx_effects(doc, +1)
+    # Kasa kartı bakiyesini hareket toplamına sabitle (orphan / kayma yok).
+    aid = doc.get("account_id")
+    if aid:
+        acc = await db.bank_accounts.find_one({"_id": aid}, {"type": 1, "current_balance": 1})
+        if acc and str(acc.get("type") or "") == "cash_box":
+            await account_balance.sync_cash_box_balances(db, [{**acc, "_id": aid}])
+    for cid in {doc.get("contact_id"), doc.get("owner_contact_id")}:
+        if cid:
+            await contact_balance.sync_contact_balance(db, cid)
 
 async def _restore_partner_tx(doc, _related):
     amount = float(doc.get("amount") or 0)

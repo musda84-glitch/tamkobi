@@ -1,4 +1,4 @@
-import { matchActorTitle, matchStatusLabel, matchTargetLabel, txCreatedByLabel, txDescriptionLabel } from "./bankMatchLabel";
+import { matchActorTitle, matchStatusLabel, matchTargetLabel, sanitizeActorLabel, txCreatedByLabel, txDescriptionLabel } from "./bankMatchLabel";
 
 describe("bankMatchLabel", () => {
   it("txDescriptionLabel prefers real description and counterparty over generic Banka Hareketi", () => {
@@ -59,5 +59,13 @@ describe("bankMatchLabel", () => {
     expect(txCreatedByLabel({ source: "bank_sync", is_simulated: true })).toBe("Simüle");
     expect(txCreatedByLabel({ source: "ledger" })).toBe("Sistem");
     expect(txCreatedByLabel({})).toBe("");
+  });
+
+  it("hides site brand / bare domain as actor (tamkobi.com)", () => {
+    expect(sanitizeActorLabel("tamkobi.com")).toBe("");
+    expect(sanitizeActorLabel("TamKobi")).toBe("");
+    expect(sanitizeActorLabel("Ayşe")).toBe("Ayşe");
+    expect(txCreatedByLabel({ created_by_name: "tamkobi.com", matched_by_name: "Ali" })).toBe("Ali");
+    expect(txCreatedByLabel({ created_by_name: "tamkobi.com", source: "bank_sync" })).toBe("Banka");
   });
 });

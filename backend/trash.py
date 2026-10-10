@@ -96,21 +96,47 @@ async def get_trash_item(trash_id: str):
     return {**_summary(rec), "doc": doc}
 
 
+async def _clear_sync_tombstones(collection: str, doc_ids: List[Any]) -> None:
+    """Geri alınan kayıtların eski tombstone'larını sil — artımlı sync tekrar 'silindi' demesin."""
+    ids = [str(i) for i in doc_ids if i is not None]
+    if not ids or collection in ("sync_tombstones", "trash"):
+        return
+    try:
+        await _db.sync_tombstones.delete_many({"collection": collection, "doc_id": {"$in": ids}})
+    except Exception:
+        pass
+
+
 @router.post("/trash/{trash_id}/restore")
 async def restore_trash_item(trash_id: str):
     rec = await _db.trash.find_one({"_id": trash_id})
     if not rec:
         raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
-    coll, doc = rec["collection"], rec["doc"]
+    coll, doc = rec["collection"], dict(rec["doc"] or {})
+    if not doc.get("_id"):
+        raise HTTPException(status_code=400, detail="Çöp kaydında belge kimliği yok; geri getirilemez.")
     if await _db[coll].find_one({"_id": doc["_id"]}):
         raise HTTPException(status_code=409, detail="Aynı kimlikte bir kayıt zaten mevcut; geri getirilemez.")
+    now = _now().isoformat()
+    doc["restored_at"] = now
+    # Artımlı sync'in restored satırı görmesi için (JSON içinde de iz).
+    doc["updated_at"] = now
     await _db[coll].insert_one(doc)
     restored_related = 0
+    related_ids: List[tuple] = [(coll, doc["_id"])]
     for r in rec.get("related") or []:
         for d in r.get("docs") or []:
-            if not await _db[r["collection"]].find_one({"_id": d["_id"]}):
-                await _db[r["collection"]].insert_one(d)
+            rd = dict(d)
+            if not rd.get("_id"):
+                continue
+            if not await _db[r["collection"]].find_one({"_id": rd["_id"]}):
+                rd["restored_at"] = now
+                rd["updated_at"] = now
+                await _db[r["collection"]].insert_one(rd)
                 restored_related += 1
+                related_ids.append((r["collection"], rd["_id"]))
+    for cname, did in related_ids:
+        await _clear_sync_tombstones(cname, [did])
     hook = _hooks.get(rec["entity_type"])
     if hook:
         try:
