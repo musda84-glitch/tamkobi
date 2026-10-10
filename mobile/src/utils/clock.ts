@@ -31,3 +31,11 @@ export function resolveNowHm(clockNow?: string | null, now: Date = new Date()): 
   const parsed = parseHm(String(clockNow || "").trim().slice(0, 8));
   return parsed ? formatHm(parsed.hour, parsed.minute) : nowHm(now);
 }
+
+/** Saat tekerleği (5 dk): dolu değer varsa onu, yoksa şimdiki saati (adımlı) aç. */
+export function pickerHm(value?: string | null, clockNow?: string | null, step = 5, now: Date = new Date()): { hour: number; minute: number } {
+  const parsed = parseHm(String(value || "").trim()) || parseHm(resolveNowHm(clockNow, now));
+  const hour = parsed?.hour ?? 0;
+  const minute = parsed ? parsed.minute - (parsed.minute % step) : 0;
+  return { hour, minute };
+}
