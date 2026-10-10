@@ -10,6 +10,7 @@ import { API_URL, useAuth } from "../context/AuthContext";
 import { SearchSelect } from "../components/SearchSelect";
 import { fmtDate, formatTrAmount } from "../utils/money";
 import { INBOX_STATUS_FILTERS, inboxItemsOfKind, inboxKindFromQuery, inboxStatusKey, processStockChoice } from "../utils/edocInbox";
+import { EINVOICE_INBOX_BACKFILL_DAYS, einvoiceInboxSyncParams } from "../utils/einvoiceInboxPull";
 
 const fmt = (n) => formatTrAmount((Number(n) || 0));
 const STATUS = {
@@ -117,12 +118,13 @@ export default function EdocInboxPage() {
 
   const pullInbox = () => act(() => axios.post(`${API_URL}/einvoice/incoming/sync`, null, {
     // Çekim yalnızca Bekleyen'e yazar; onay/stok eşleme olmadan içeri alma yok
-    params: { company_id: companyId, days: 14, auto_process: false },
+    params: einvoiceInboxSyncParams(companyId),
+    timeout: 180000,
   }).then((r) => {
     setStatus("pending");
     setPullNote(r.data);
     return r;
-  }), `${integrator} gelen kutusu çekildi.`);
+  }), `${integrator} gelen kutusu (son ${EINVOICE_INBOX_BACKFILL_DAYS} gün) çekildi.`);
 
   const cleanup = () => {
     if (!window.confirm("Tedarikçisi, kalemi ve tutarı okunamamış bekleyen kayıtlar silinecek. Faturaları entegratörden yeniden çekebilirsiniz. Devam edilsin mi?")) return;
@@ -293,8 +295,8 @@ export default function EdocInboxPage() {
           >
             <Settings className="w-4 h-4" /> E-Fatura bağlantısı
           </Link>
-          <button type="button" onClick={pullInbox} disabled={busy === "act"} className="px-4 py-2 border rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="edoc-inbox-pull">
-            <RefreshCw className={`w-4 h-4 ${busy === "act" ? "animate-spin" : ""}`} /> {integrator} gelen kutusu
+          <button type="button" onClick={pullInbox} disabled={busy === "act"} className="px-4 py-2 border rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="edoc-inbox-pull" title={`Son ${EINVOICE_INBOX_BACKFILL_DAYS} gün e-Fatura / e-İrsaliye`}>
+            <RefreshCw className={`w-4 h-4 ${busy === "act" ? "animate-spin" : ""}`} /> {integrator} gelen kutusu (son {EINVOICE_INBOX_BACKFILL_DAYS} gün)
           </button>
           {status === "pending" && (data?.counts?.pending || 0) > 0 && (
             <button type="button" onClick={processPending} disabled={busy === "act"} className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-60" data-testid="edoc-process-pending">

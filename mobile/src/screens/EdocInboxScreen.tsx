@@ -75,7 +75,7 @@ export function EdocInboxScreen() {
     }
   };
 
-  const syncInbox = () => run("sync", () => post(client, "/einvoice/incoming/sync", {}, { company_id: companyId, days: 14 }), "Gelen kutu çekildi.");
+  const syncInbox = () => run("sync", () => post(client, "/einvoice/incoming/sync", {}, { company_id: companyId, days: 30 }), "Gelen kutu (son 30 gün) çekildi.");
 
   const processPending = () => confirmAction(
     "Bekleyenleri içeri al",
