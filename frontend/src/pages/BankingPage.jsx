@@ -18,6 +18,7 @@ import { SearchSelect } from "../components/SearchSelect";
 import { VirmanPartySelect } from "../components/VirmanPartySelect";
 
 import { formatTrAmount, fmtDate } from "../utils/money";
+import { partnerSummaryCardMeta } from "../utils/partnerTx";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import {
   Landmark,
@@ -474,20 +475,17 @@ export default function BankingPage() {
               </div>
               <div>
                 <h3 className="font-bold text-slate-900 text-sm">{partnerSummary.partner_count} Ortak</h3>
-                <div className="text-xs text-slate-500">Giriş: {partnerSummary.total_capital_in.toLocaleString('tr-TR')} ₺ • Çıkış: {partnerSummary.total_withdrawn.toLocaleString('tr-TR')} ₺</div>
+                <div className="text-xs text-slate-500">Giriş: {(partnerSummary.total_cash_in ?? partnerSummary.total_capital_in).toLocaleString('tr-TR')} ₺ • Çıkış: {(partnerSummary.total_cash_out ?? partnerSummary.total_withdrawn).toLocaleString('tr-TR')} ₺</div>
               </div>
             </div>
             <div className="pt-3 border-t border-amber-200/60">
               {(() => {
-                const n = Number(partnerSummary.total_balance) || 0;
-                const label = n > 0 ? "Alacaklı" : n < 0 ? "Borçlu" : "Denk";
-                const cls = n > 0 ? "text-amber-800" : n < 0 ? "text-rose-700" : "text-slate-900";
-                // Alacaklı → kasa eksi (−); Borçlu → mutlak tutar
-                const shown = n > 0 ? -Math.abs(n) : Math.abs(n);
+                // Ortak kartlarıyla aynı kaynak: kasa neti (API total_card_pocket / total_cash_net)
+                const meta = partnerSummaryCardMeta(partnerSummary);
                 return (
                   <>
-                    <div className="text-[10px] text-slate-400 uppercase font-semibold">{label}</div>
-                    <div className={`text-xl font-bold tracking-tight ${cls}`}>{formatTrAmount(shown)} ₺</div>
+                    <div className="text-[10px] text-slate-400 uppercase font-semibold" data-testid="partners-account-badge">{meta.label}</div>
+                    <div className={`text-xl font-bold tracking-tight ${meta.amountCls}`} data-testid="partners-account-balance">{formatTrAmount(meta.display)} ₺</div>
                   </>
                 );
               })()}

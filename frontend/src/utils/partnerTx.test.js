@@ -1,4 +1,4 @@
-import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerTxBalanceDelta, partnerTxIncreasesBalance, partnerTxIsCashInflow, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
+import { isPartnerCashType, isPartnerExpenseTx, isPartnerLedgerType, partnerBalanceMeta, partnerLedgerBreakdown, partnerSalaryActionLabel, partnerSalaryCardText, partnerSalarySaveMessage, partnerSummaryCardMeta, partnerTxBalanceDelta, partnerTxIncreasesBalance, partnerTxIsCashInflow, partnerTxLabel, partnerTxSign, salaryDayOf, PARTNER_TX_LABEL } from "./partnerTx";
 
 describe("partnerTx", () => {
   it("labels txs by cash direction (masraf=Çıkış, tahsilat=Giriş)", () => {
@@ -112,6 +112,25 @@ describe("partnerTx", () => {
     expect(br.netMatchesCard).toBe(true);
     expect(partnerBalanceMeta(br.cardPocket).badge).toBe("Alacaklı");
     expect(br.drift).toBe(false); // tip kovası = kayıtlı (ikisi de eski)
+  });
+
+  it("amber card prefers API cash net over ledger total_balance", () => {
+    // Ledger −199822.37 → eski amber BORÇLU 199822; kasa neti −776059.78 → Alacaklı −776059.78
+    const legacy = partnerSummaryCardMeta({ total_balance: -199822.37 });
+    expect(legacy.badge).toBe("Borçlu");
+    expect(legacy.display).toBeCloseTo(199822.37, 2);
+    expect(legacy.fromCash).toBe(false);
+
+    const cash = partnerSummaryCardMeta({
+      total_balance: -199822.37,
+      total_card_pocket: 776059.78,
+      total_cash_net: -776059.78,
+      total_cash_in: 173100,
+      total_cash_out: 949159.78,
+    });
+    expect(cash.fromCash).toBe(true);
+    expect(cash.badge).toBe("Alacaklı");
+    expect(cash.display).toBeCloseTo(-776059.78, 2);
   });
 
   it("shows only Alacaklı or Borçlu; Alacaklı display is negative", () => {

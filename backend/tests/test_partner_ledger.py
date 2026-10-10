@@ -10,9 +10,11 @@ from partner_pay import (  # noqa: E402
     LEDGER_TYPES,
     MUTABLE_TYPES,
     balance_inc,
+    cash_card_totals,
     ledger_totals,
     profit_share_inc,
     tx_balance_delta,
+    tx_is_cash_inflow,
 )
 
 
@@ -62,3 +64,30 @@ class TestProfitShareBalance:
         assert totals["total_capital_in"] == 10000
         assert totals["total_withdrawn"] == 1500
         assert totals["total_profit_share"] == 5000
+
+
+class TestPartnerCashCardTotals:
+    def test_cash_net_differs_from_ledger_when_credit_and_bank_outflow(self):
+        # Ledger: credit +909959.78 − withdrawal 39200 − bank withdrawal 173100 = 697659.78
+        # Kasa: Giriş 173100 (bank outflow etiketi) − Çıkış (credit+withdrawal) = −776059.78
+        shaped = [
+            {"type": "credit", "amount": 909959.78},
+            {"type": "withdrawal", "amount": 39200},
+            {
+                "type": "withdrawal",
+                "amount": 173100,
+                "source": "bank_match",
+                "bank_tx_type": "outflow",
+            },
+        ]
+        assert tx_is_cash_inflow(shaped[0]) is False
+        assert tx_is_cash_inflow(shaped[1]) is False
+        assert tx_is_cash_inflow(shaped[2]) is True
+        cash = cash_card_totals(shaped)
+        assert cash["cash_in"] == 173100
+        assert cash["cash_out"] == pytest.approx(909959.78 + 39200)
+        assert cash["cash_net"] == pytest.approx(-776059.78)
+        assert cash["card_pocket"] == pytest.approx(776059.78)
+        ledger = ledger_totals(shaped)
+        assert ledger["balance"] == pytest.approx(697659.78)
+        assert cash["cash_net"] != ledger["balance"]
