@@ -1,6 +1,8 @@
 /** Mobil sipariş faturalama: taslak (#476) + cari onay + e-belge. */
 
-export type OrderInvoiceFlags = {
+import { orderInvoiceBadge, type OrderMoreOrder } from "./orderMoreMenu";
+
+export type OrderInvoiceFlags = OrderMoreOrder & {
   is_invoiced?: boolean;
   invoice_id?: string;
   invoice_number?: string;
@@ -30,17 +32,19 @@ export function canIssueOrderEBelge(o: OrderInvoiceFlags | null | undefined): bo
 }
 
 export function orderInvoiceBadgeLabel(o: OrderInvoiceFlags | null | undefined): string | null {
-  if (!o) return null;
-  if (o.is_invoiced) return o.invoice_number ? `Faturalandı · ${o.invoice_number}` : "Faturalandı";
-  if (o.invoice_id) return o.invoice_number ? `Taslak · ${o.invoice_number}` : "Taslak fatura";
-  return null;
+  const badge = orderInvoiceBadge(o);
+  if (!badge) return null;
+  if (badge.testId === "invoiced" && o?.invoice_number) return `Faturalaştı · ${o.invoice_number}`;
+  if (badge.testId === "draft" && o?.invoice_number) return `Taslak · ${o.invoice_number}`;
+  return badge.label;
 }
 
-export function orderInvoiceBadgeTone(o: OrderInvoiceFlags | null | undefined): "amber" | "green" | null {
-  if (!o) return null;
-  if (o.is_invoiced) return "green";
-  if (o.invoice_id) return "amber";
-  return null;
+export function orderInvoiceBadgeTone(o: OrderInvoiceFlags | null | undefined): "amber" | "green" | "red" | null {
+  const badge = orderInvoiceBadge(o);
+  if (!badge) return null;
+  if (badge.tone === "rose") return "red";
+  if (badge.tone === "green") return "green";
+  return "amber";
 }
 
 export type DraftInvoiceEType = "e_invoice" | "e_archive" | "paper";

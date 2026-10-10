@@ -154,7 +154,66 @@ export type PartnerSummary = {
   total_capital_in?: number;
   total_withdrawn?: number;
   total_profit_share?: number;
+  /** Kasa neti (web PartnersPanel ile aynı kaynak) */
+  total_card_pocket?: number;
+  total_cash_net?: number;
+  total_cash_in?: number;
+  total_cash_out?: number;
 };
+
+/**
+ * Ortak bakiyesi = cebindeki para (yazma):
+ *   artı → Alacaklı (ortağa yazılan / çekilebilir)
+ *   eksi → Borçlu (fazla çekmiş)
+ * Kartta Alacaklı tutar kasa eksi (−) gösterilir.
+ */
+export function partnerBalanceMeta(balance?: number | null): {
+  amount: number;
+  abs: number;
+  display: number;
+  label: string;
+  badge: string;
+  side: "credit" | "debit" | "zero";
+} {
+  const n = Number(balance);
+  const amount = Number.isFinite(n) ? n : 0;
+  if (amount > 0) {
+    return { amount, abs: amount, display: -amount, label: "Alacaklı", badge: "Alacaklı", side: "credit" };
+  }
+  if (amount < 0) {
+    return { amount, abs: Math.abs(amount), display: Math.abs(amount), label: "Borçlu", badge: "Borçlu", side: "debit" };
+  }
+  return { amount: 0, abs: 0, display: 0, label: "Denk", badge: "Denk", side: "zero" };
+}
+
+/** Amber kart / net özet: API kasa neti (total_card_pocket / total_cash_net) öncelikli. */
+export function partnerSummaryCardMeta(summary?: PartnerSummary | null): {
+  amount: number;
+  abs: number;
+  display: number;
+  label: string;
+  badge: string;
+  side: "credit" | "debit" | "zero";
+  cashIn: number;
+  cashOut: number;
+  fromCash: boolean;
+} {
+  if (!summary) return { ...partnerBalanceMeta(0), cashIn: 0, cashOut: 0, fromCash: false };
+  const pocketRaw = summary.total_card_pocket;
+  if (pocketRaw != null && pocketRaw !== ("" as unknown)) {
+    const meta = partnerBalanceMeta(pocketRaw);
+    const cashNet = Number(summary.total_cash_net);
+    return {
+      ...meta,
+      display: Number.isFinite(cashNet) ? cashNet : meta.display,
+      cashIn: Number(summary.total_cash_in) || 0,
+      cashOut: Number(summary.total_cash_out) || 0,
+      fromCash: true,
+    };
+  }
+  const meta = partnerBalanceMeta(summary.total_balance);
+  return { ...meta, cashIn: 0, cashOut: 0, fromCash: false };
+}
 
 export type PartnerTx = {
   id?: string;

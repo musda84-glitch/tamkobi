@@ -20,6 +20,7 @@ import {
   isBankingCashAccount,
   isBankingPosAccount,
   partnerMovementNotice,
+  partnerSummaryCardMeta,
   recentPartnerTx,
   recentTxForAccounts,
   totalLiquidity,
@@ -247,7 +248,7 @@ export function BankingScreen() {
               <Pressable onPress={() => setTab("partners")} testID="partners-account-card" style={{ paddingTop: 6, borderTopWidth: 1, borderTopColor: colors.border }}>
                 <Row style={{ justifyContent: "space-between" }}>
                   <Muted>Ortaklar · {partnerSummary.partner_count} ortak</Muted>
-                  <Text style={{ fontWeight: "700", color: colors.text }}>{fmtMoney(partnerSummary.total_balance)}</Text>
+                  <Text style={{ fontWeight: "700", color: colors.text }}>{fmtMoney(partnerSummaryCardMeta(partnerSummary).display)}</Text>
                 </Row>
               </Pressable>
             ) : null}
@@ -302,7 +303,7 @@ export function BankingScreen() {
                   }}
                 >
                   <Text style={{ fontSize: 10, fontWeight: "800", color: accountGroupTone("partners").label, textTransform: "uppercase" }}>Ortaklar</Text>
-                  <Text style={{ fontWeight: "800", color: accountGroupTone("partners").amount, fontSize: 18 }}>{fmtMoney(partnerSummary?.total_balance)}</Text>
+                  <Text style={{ fontWeight: "800", color: accountGroupTone("partners").amount, fontSize: 18 }}>{fmtMoney(partnerSummaryCardMeta(partnerSummary).display)}</Text>
                   <Text style={{ fontSize: 11, color: accountGroupTone("partners").label, opacity: 0.8 }}>{activePartners.length} ortak</Text>
                   <MovementNotices items={partnerNotices} testID="account-group-partners-moves" />
                 </Pressable>

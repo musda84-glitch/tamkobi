@@ -23,6 +23,7 @@ export type Employee = {
   used_leave_days?: number;
   leave_carry_days?: number;
   leave_balance?: { remaining?: number; annual?: number; used?: number; carry?: number };
+  balance?: EmployeeBalance;
   photo_url?: string | null;
   workplace?: Workplace | null;
   yevmiye_days?: number;
@@ -275,6 +276,8 @@ export type EmployeeBonus = {
   account_name?: string;
   status?: string;
   created_at?: string;
+  date?: string;
+  paid_at?: string;
   worked_days?: number;
   daily_wage?: number;
 };
@@ -952,9 +955,15 @@ export function bonusTypeTr(type?: string | null, fallback?: string | null): str
   return BONUS_TYPE_TR[key] || fallback || "Ödeme";
 }
 
-export function bonusStatusTr(status?: string | null): string {
+/** Ödenen avans/prim satırının ödeme tarihi (paid_at → date → created_at). */
+export function bonusPaidDate(b?: EmployeeBonus | null): string {
+  if (!b || String(b.status || "") !== "paid") return "";
+  return String(b.paid_at || b.date || b.created_at || "").trim();
+}
+
+export function bonusStatusTr(status?: string | null, paidDate?: string | null): string {
   const key = String(status || "");
-  if (key === "paid") return "Ödendi";
+  if (key === "paid") return paidDate ? `Ödendi (${fmtDate(paidDate)})` : "Ödendi";
   if (key === "pending") return "Bekliyor";
   if (key === "approved") return "Onaylı";
   if (key === "rejected") return "Reddedildi";
@@ -979,13 +988,14 @@ export function employeePayMoves(card?: EmployeeCard | null): EmployeePayMove[] 
   }
   for (const b of card?.bonuses || []) {
     const days = yevmiyeDaysFromBonus(b);
+    const paidDate = bonusPaidDate(b);
     rows.push({
       id: idOf(b) || `bonus-${b.created_at || b.period || ""}`,
       kind: "bonus",
       title: bonusTypeTr(b.type, b.type_label),
-      subtitle: [b.period, days ? `${days} gün` : "", bonusStatusTr(b.status), b.account_name, b.note].filter(Boolean).join(" · "),
+      subtitle: [b.period, days ? `${days} gün` : "", bonusStatusTr(b.status, paidDate), b.account_name, b.note].filter(Boolean).join(" · "),
       amount: Number(b.amount) || 0,
-      date: String(b.created_at || b.period || ""),
+      date: String(paidDate || b.created_at || b.period || ""),
       status: b.status,
       type: b.type,
       worked_days: days || undefined,
@@ -2055,10 +2065,10 @@ export function remainingDue(balance?: EmployeeBalance | null, unpaidFallback = 
   return unpaidFallback;
 }
 
-/** Liste / kart Öde butonu: kalan alacak + fazla mesai. */
+/** Liste / kart Öde butonu: kalan alacak (mesai bakiyeye dahil). */
 export function employeePayButtonDue(emp?: { balance?: EmployeeBalance | null } | null, balance?: EmployeeBalance | null): number {
   const bal = balance || emp?.balance || null;
-  return remainingDue(bal) + overtimeDue(bal);
+  return remainingDue(bal);
 }
 
 export function employeePayButtonLabel(emp?: { balance?: EmployeeBalance | null } | null, balance?: EmployeeBalance | null): string {

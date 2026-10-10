@@ -762,6 +762,30 @@ export function OrderActions({
     }
   };
 
+  const downloadEFaturaPdf = async () => {
+    setMoreOpen(false);
+    if (!order.invoice_id) {
+      onError?.("Bu siparişte e-fatura yok.");
+      return;
+    }
+    setBusy("pdf");
+    try {
+      const base = client.baseUrl.replace(/\/+$/, "");
+      const href = `${base}/api/e-invoice/${order.invoice_id}/pdf?download=1`;
+      const opened = await Linking.openURL(href).then(() => true).catch(() => false);
+      if (!opened) {
+        const fallback = `${base}/api/invoices/${order.invoice_id}/pdf?download=1`;
+        const ok = await Linking.openURL(fallback).then(() => true).catch(() => false);
+        if (!ok) throw new Error("PDF açılamadı.");
+      }
+      onMessage?.("E-Fatura PDF indiriliyor.");
+    } catch (err) {
+      onError?.(apiErrorMessage(err, "PDF indirilemedi."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const sendInvoiceLink = async () => {
     setMoreOpen(false);
     if (!order.invoice_id || !order.customer_email) {
@@ -865,6 +889,15 @@ export function OrderActions({
         return;
       case "xml":
         downloadXml();
+        return;
+      case "efatura_pdf":
+        downloadEFaturaPdf();
+        return;
+      case "download_pdf":
+        printForm();
+        return;
+      case "download_xlsx":
+        onMessage?.("Excel indirme web panelinden yapılabilir; PDF için «Siparişi PDF İndir» kullanın.");
         return;
       case "invoice_link":
         sendInvoiceLink();

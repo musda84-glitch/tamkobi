@@ -420,18 +420,24 @@ export function PersonnelScreen() {
       setPendingReqs(Array.isArray(reqs?.items) ? reqs.items : []);
       setBonuses(Array.isArray(bonusRows) ? bonusRows : []);
       // Avoid N× /card on list focus (was freezing Personel). Cards load on demand (Hareketler / Öde).
+      // Bakiye: API `/personnel/employees` → emp.balance (web ile aynı; yerel Math.max(0) yeniden hesaplama yok).
       setCards({});
       const balMap: Record<string, EmployeeBalance> = {};
       for (const e of emps || []) {
         const eid = idOf(e);
+        if (e.balance && typeof e.balance === "object") {
+          balMap[eid] = { ...e.balance };
+          continue;
+        }
+        // Eski API yanıtı: ödenmiş avans borcu dahil negatif kalan mümkün
         const empPays = (pays || []).filter((p) => p.employee_id === eid);
         const empBonuses = (bonusRows || []).filter((b) => String(b.employee_id || "") === eid);
         const unpaid = empPays.filter((p) => p.status !== "paid").reduce((s, p) => s + (Number(p.final_payable ?? p.net_salary) || 0), 0);
-        const advances = empBonuses.filter((b) => b.type === "advance" && b.status !== "paid").reduce((s, b) => s + (Number(b.amount) || 0), 0);
+        const advances = empBonuses.filter((b) => b.type === "advance" && b.status === "paid").reduce((s, b) => s + (Number(b.amount) || 0), 0);
         const bonusPending = empBonuses.filter((b) => (b.type === "bonus" || !b.type) && b.status !== "paid").reduce((s, b) => s + (Number(b.amount) || 0), 0);
         const otDue = empBonuses.filter((b) => b.type === "overtime" && b.status !== "paid").reduce((s, b) => s + (Number(b.amount) || 0), 0);
         balMap[eid] = {
-          remaining: Math.max(0, unpaid + bonusPending + otDue - advances),
+          remaining: unpaid + bonusPending + otDue - advances,
           advances,
           bonus_pending: bonusPending,
           overtime_due: otDue,
@@ -1791,7 +1797,7 @@ export function PersonnelScreen() {
                     {due !== (comp.find((r) => r.key === "total")?.value ?? 0) ? (
                       <View>
                         <Muted>Kalan alacak</Muted>
-                        <Text style={{ fontWeight: "700", color: due > 0 ? colors.danger : colors.text }}>{fmtMoney(due)}</Text>
+                        <Text style={{ fontWeight: "700", color: due < 0 ? colors.warning : due > 0 ? colors.danger : colors.text }}>{fmtMoney(due)}</Text>
                       </View>
                     ) : null}
                     {bal?.advances ? (

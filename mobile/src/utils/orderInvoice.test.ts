@@ -63,10 +63,21 @@ describe("orderInvoice draft / post / e-belge", () => {
     });
   });
 
-  it("badge label/tone for draft vs posted", () => {
+  it("badge label/tone for draft vs posted vs GİB e-belge", () => {
     expect(orderInvoiceBadgeTone({ invoice_id: "d" })).toBe("amber");
     expect(orderInvoiceBadgeLabel({ invoice_id: "d", invoice_number: "SF-1" })).toMatch(/Taslak/);
-    expect(orderInvoiceBadgeTone({ is_invoiced: true, invoice_number: "SF-2" })).toBe("green");
+    expect(orderInvoiceBadgeTone({ is_invoiced: true, invoice_number: "SF-2", e_type: "e_archive" })).toBe("green");
+    expect(orderInvoiceBadgeLabel({ is_invoiced: true, invoice_number: "SF-2" })).toMatch(/Faturalaştı/);
+    expect(orderInvoiceBadgeTone({
+      is_invoiced: true,
+      e_type: "e_archive",
+      einvoice_state: "sent",
+    })).toBe("red");
+    expect(orderInvoiceBadgeLabel({
+      is_invoiced: true,
+      e_type: "e_archive",
+      einvoice_state: "sent",
+    })).toMatch(/Faturalaşmış/);
     expect(orderInvoiceBadgeLabel(null)).toBeNull();
   });
 
