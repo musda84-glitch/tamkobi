@@ -2,11 +2,11 @@ import { Ionicons } from "@expo/vector-icons";
 import React, { createElement, useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
+import { visibleSelectGroups, type SelectGroup, type SelectOption } from "../utils/groupedSelectFilter";
 import { trUpper } from "../utils/labels";
 import { Muted } from "./kit";
 
-export type SelectOption = { value: string; label: string; disabled?: boolean };
-export type SelectGroup = { label: string; options: SelectOption[] };
+export type { SelectGroup, SelectOption };
 
 function triggerBox(dense?: boolean, swatchColor?: string) {
   return {
@@ -47,18 +47,36 @@ function Chevron({ dense }: { dense?: boolean }) {
   return <Ionicons name="chevron-down" size={dense ? 18 : 20} color={colors.indigo} />;
 }
 
-function filterGroups(groups: SelectGroup[], q: string): SelectGroup[] {
-  const needle = q.trim().toLocaleLowerCase("tr-TR");
-  if (!needle) return groups;
-  return groups
-    .map((g) => ({
-      ...g,
-      options: g.options.filter((o) => {
-        const hay = `${g.label} ${o.label}`.toLocaleLowerCase("tr-TR");
-        return hay.includes(needle);
-      }),
-    }))
-    .filter((g) => g.options.length > 0);
+function SearchField({
+  q,
+  setQ,
+  testID,
+  placeholder,
+}: {
+  q: string;
+  setQ: (v: string) => void;
+  testID?: string;
+  placeholder?: string;
+}) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+      <Ionicons name="search" size={16} color={colors.muted} />
+      <TextInput
+        testID={testID}
+        value={q}
+        onChangeText={setQ}
+        placeholder={placeholder || "Ara…"}
+        placeholderTextColor={colors.muted}
+        autoFocus
+        style={{ flex: 1, minHeight: 36, fontSize: 14, fontWeight: "600", color: colors.text, padding: 0 }}
+      />
+      {q ? (
+        <Pressable onPress={() => setQ("")} hitSlop={8} testID={testID ? `${testID}-clear` : undefined}>
+          <Ionicons name="close-circle" size={18} color={colors.muted} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
 }
 
 function SearchableGroupedSelect({
@@ -85,7 +103,9 @@ function SearchableGroupedSelect({
   const all = groups.flatMap((g) => g.options);
   const selected = all.find((o) => o.value === value);
   const title = selected?.label || emptyLabel || "Seçin";
-  const filtered = useMemo(() => filterGroups(groups, q), [groups, q]);
+  const hasSearchOnly = groups.some((g) => g.searchOnly);
+  const filtered = useMemo(() => visibleSelectGroups(groups, q, value), [groups, q, value]);
+  const cariHint = q.trim().length < 2;
 
   const close = () => {
     setOpen(false);
@@ -117,23 +137,14 @@ function SearchableGroupedSelect({
           testID={testID ? `${testID}-menu` : undefined}
           style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, marginTop: 6, backgroundColor: "#fff", maxHeight: 320, overflow: "hidden" }}
         >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-            <Ionicons name="search" size={16} color={colors.muted} />
-            <TextInput
+          {!hasSearchOnly ? (
+            <SearchField
+              q={q}
+              setQ={setQ}
               testID={testID ? `${testID}-search` : undefined}
-              value={q}
-              onChangeText={setQ}
-              placeholder={searchPlaceholder || "Ara…"}
-              placeholderTextColor={colors.muted}
-              autoFocus
-              style={{ flex: 1, minHeight: 36, fontSize: 14, fontWeight: "600", color: colors.text, padding: 0 }}
+              placeholder={searchPlaceholder}
             />
-            {q ? (
-              <Pressable onPress={() => setQ("")} hitSlop={8} testID={testID ? `${testID}-search-clear` : undefined}>
-                <Ionicons name="close-circle" size={18} color={colors.muted} />
-              </Pressable>
-            ) : null}
-          </View>
+          ) : null}
           <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={{ maxHeight: 260 }}>
             {emptyLabel != null && !q ? (
               <Pressable onPress={() => { onChange(""); close(); }} style={{ padding: 12 }}>
@@ -143,8 +154,29 @@ function SearchableGroupedSelect({
             {!filtered.length ? (
               <Text style={{ padding: 12, fontWeight: "600", color: colors.muted, fontSize: 13 }}>Sonuç yok</Text>
             ) : filtered.map((g) => (
-              <View key={g.label}>
+              <View key={g.label} testID={testID && g.searchOnly ? `${testID}-cari-section` : undefined}>
                 <Text style={{ paddingHorizontal: 12, paddingTop: 10, fontSize: 11, fontWeight: "800", color: colors.muted }}>{trUpper(g.label)}</Text>
+                {g.searchOnly ? (
+                  <View style={{ borderBottomWidth: 0 }}>
+                    <SearchField
+                      q={q}
+                      setQ={setQ}
+                      testID={testID ? `${testID}-search` : undefined}
+                      placeholder={searchPlaceholder || "Cari ara…"}
+                    />
+                    {cariHint && !g.options.length ? (
+                      <Text
+                        testID={testID ? `${testID}-cari-hint` : undefined}
+                        style={{ paddingHorizontal: 12, paddingBottom: 8, fontWeight: "600", color: colors.muted, fontSize: 12 }}
+                      >
+                        Cari adı yazın — tüm liste gösterilmez
+                      </Text>
+                    ) : null}
+                    {!cariHint && !g.options.length ? (
+                      <Text style={{ paddingHorizontal: 12, paddingBottom: 8, fontWeight: "600", color: colors.muted, fontSize: 12 }}>Cari bulunamadı</Text>
+                    ) : null}
+                  </View>
+                ) : null}
                 {g.options.map((o) => (
                   <Pressable
                     key={o.value}

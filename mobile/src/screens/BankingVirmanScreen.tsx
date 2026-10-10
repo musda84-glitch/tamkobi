@@ -75,7 +75,7 @@ export function BankingVirmanScreen() {
         emptyLabel="Hesap / ortak / cari seçin"
         groups={pool}
         searchable
-        searchPlaceholder="Cari / hesap / ortak ara…"
+        searchPlaceholder="Cari ara…"
       />
       <GroupedSelect
         label="Hedef hesap"
@@ -85,7 +85,7 @@ export function BankingVirmanScreen() {
         emptyLabel="Hesap / ortak / cari seçin"
         groups={pool}
         searchable
-        searchPlaceholder="Cari / hesap / ortak ara…"
+        searchPlaceholder="Cari ara…"
       />
       <Field label="Tutar" testID="virman-amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" />
       <Field label="Açıklama" testID="virman-desc" value={desc} onChangeText={setDesc} />
