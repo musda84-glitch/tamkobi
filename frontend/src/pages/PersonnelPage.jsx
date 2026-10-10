@@ -676,21 +676,22 @@ export default function PersonnelPage() {
             return (
           <div
             key={empKey}
-            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_120px]"}`}
+            className={`bg-white rounded-2xl border border-slate-200/90 shadow-sm flex flex-col overflow-hidden [content-visibility:auto] ${cardOpen ? "[contain-intrinsic-size:auto_480px]" : "[contain-intrinsic-size:auto_88px]"}`}
             data-testid={`employee-card-${emp.tc_kimlik}`}
             data-expanded={cardOpen ? "1" : "0"}
           >
-          <div className="px-4 pt-3 pb-2 flex flex-col gap-2">
-            <div className="flex flex-wrap items-start gap-3 justify-between">
-              <div className="flex items-start gap-2.5 min-w-0 sm:max-w-[260px] sm:shrink-0">
-                <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 text-[11px] font-black text-slate-500" data-testid={`employee-photo-${emp.tc_kimlik || empKey}`}>
+          <div className="px-3 py-2 flex flex-col gap-1.5" data-testid={`employee-card-strip-${empKey}`}>
+            {/* Tek satır şerit: kimlik | aksiyonlar | mesai+düzenle — yükseklik ~88px */}
+            <div className="flex flex-row flex-nowrap items-center gap-2.5 min-h-[72px]">
+              <div className="flex items-center gap-2 min-w-0 w-[200px] xl:w-[220px] shrink-0" data-testid={`employee-card-identity-${empKey}`}>
+                <div className="w-9 h-9 rounded-lg overflow-hidden bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 text-[10px] font-black text-slate-500" data-testid={`employee-photo-${emp.tc_kimlik || empKey}`}>
                   {emp.photo_url ? <img src={resolveImageUrl(emp.photo_url)} alt="" className="w-full h-full object-cover" /> : (emp.full_name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
                 </div>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <h3 className="font-bold text-slate-900 text-sm">{emp.full_name}</h3>
-                    {isDailyWage(emp) ? <span className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`employee-yevmiye-badge-${empKey}`}>Yevmiye</span> : null}
-                    <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-semibold">Aktif</span>
+                <div className="min-w-0 leading-tight">
+                  <div className="flex items-center gap-1 min-w-0">
+                    <h3 className="font-bold text-slate-900 text-[13px] truncate">{emp.full_name}</h3>
+                    {isDailyWage(emp) ? <span className="shrink-0 text-[9px] font-bold px-1 py-px rounded-full bg-amber-50 text-amber-800 border border-amber-200" data-testid={`employee-yevmiye-badge-${empKey}`}>Yevmiye</span> : null}
+                    <span className="shrink-0 text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-px rounded-full font-semibold">Aktif</span>
                     {(() => {
                       const presence = employeePresenceChip({
                         status: emp.status,
@@ -703,7 +704,7 @@ export default function PersonnelPage() {
                       return presence ? (
                         <span
                           data-testid={`emp-presence-${empKey}`}
-                          className="text-[10px] px-2 py-0.5 rounded-full font-semibold border"
+                          className="shrink-0 text-[9px] px-1.5 py-px rounded-full font-semibold border"
                           style={{ color: presence.color, backgroundColor: presence.bg, borderColor: presence.border }}
                         >
                           {presence.label}
@@ -711,13 +712,13 @@ export default function PersonnelPage() {
                       ) : null;
                     })()}
                   </div>
-                  <div className="text-xs text-indigo-600 font-semibold">{emp.position}</div>
-                  <div className="text-[11px] text-slate-400">{emp.department}</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5" data-testid={`employee-leave-${empKey}`}>
+                  <div className="text-[11px] text-indigo-600 font-semibold truncate">{emp.position || "—"}</div>
+                  <div className="text-[10px] text-slate-400 truncate">{emp.department || ""}</div>
+                  <div className="text-[10px] text-slate-500 truncate" data-testid={`employee-leave-${empKey}`}>
                     {formatLeaveRemainingLine(emp)}
-                    {emp.performance?.overall != null ? ` · performans %${emp.performance.overall}` : ""}
+                    {emp.performance?.overall != null ? ` · %${emp.performance.overall}` : ""}
                   </div>
-                  <div className="text-[11px] mt-0.5" data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
+                  <div className="text-[10px] truncate" data-testid={`employee-receivable-${emp.tc_kimlik || empKey}`}>
                     <span className="text-slate-400">Kalan alacak: </span>
                     <span className={`font-extrabold ${(Number(emp.balance?.remaining) || 0) < 0 ? "text-rose-700" : "text-emerald-700"}`}>
                       {fmtCardMoney(remainingDue(emp.balance))}
@@ -727,14 +728,14 @@ export default function PersonnelPage() {
                     ) : null}
                   </div>
                   {emp.workplace?.kind === "task" ? (
-                    <div className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1 mt-0.5" data-testid={`employee-workplace-${empKey}`}>
+                    <div className="text-[10px] font-semibold text-indigo-700 truncate" data-testid={`employee-workplace-${empKey}`}>
                       Görev · {workplaceShort(emp.workplace)}
                     </div>
                   ) : null}
                 </div>
               </div>
 
-              <div className="flex flex-row flex-wrap items-center gap-1.5 min-w-0 flex-1 max-w-2xl" data-testid={`employee-card-mid-${empKey}`}>
+              <div className="flex flex-row flex-nowrap items-center gap-1.5 min-w-0 flex-1 overflow-x-auto" data-testid={`employee-card-mid-${empKey}`}>
             <EmployeeRequestChips
               items={empReqs}
               compact
@@ -753,11 +754,11 @@ export default function PersonnelPage() {
               onViewDispute={() => setTab("attendance")}
             />
 
-            <div className="flex flex-wrap items-center gap-1.5 h-10" data-testid={`employee-card-actions-${empKey}`}>
+            <div className="flex flex-nowrap items-center gap-1.5 h-9 shrink-0" data-testid={`employee-card-actions-${empKey}`}>
               <button
                 type="button"
                 onClick={() => setMovesEmp(emp)}
-                className="inline-flex h-10 items-center justify-center gap-1 px-2.5 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200"
+                className="inline-flex h-9 items-center justify-center gap-1 px-2 rounded-lg text-[11px] font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-200 whitespace-nowrap"
                 data-testid={`emp-card-moves-btn-${empKey}`}
               >
                 <Receipt className="w-3.5 h-3.5" /> Hareketler
@@ -765,17 +766,17 @@ export default function PersonnelPage() {
               <button
                 type="button"
                 onClick={() => openSettleFor(emp)}
-                className="inline-flex h-10 items-center justify-center gap-1 px-2.5 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200"
+                className="inline-flex h-9 items-center justify-center gap-1 px-2 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 whitespace-nowrap"
                 title="Maaş, mesai, prim, yemek, yol, masraf ve avans"
                 data-testid={`employee-pay-btn-${emp.tc_kimlik || empKey}`}
               >
                 <Banknote className="w-3.5 h-3.5" /> {employeePayButtonLabel(emp)}
               </button>
-              <span className="flex flex-wrap items-center gap-1.5 h-10" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
+              <span className="flex flex-nowrap items-center gap-1.5 h-9" data-testid={`employee-work-actions-${emp.tc_kimlik || empKey}`}>
                 <button
                   type="button"
                   onClick={() => setTaskEmp(emp)}
-                  className="inline-flex h-10 items-center justify-center gap-1 px-2.5 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200"
+                  className="inline-flex h-9 items-center justify-center gap-1 px-2 rounded-lg text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 whitespace-nowrap"
                   data-testid={`employee-task-btn-${emp.tc_kimlik || empKey}`}
                 >
                   <ClipboardList className="w-3.5 h-3.5" /> Görev
@@ -783,7 +784,7 @@ export default function PersonnelPage() {
                 <button
                   type="button"
                   onClick={() => openOvertimeFor(emp)}
-                  className="inline-flex h-10 items-center justify-center gap-1 px-2.5 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200"
+                  className="inline-flex h-9 items-center justify-center gap-1 px-2 rounded-lg text-[11px] font-semibold bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 whitespace-nowrap"
                   data-testid={`employee-overtime-btn-${emp.tc_kimlik || empKey}`}
                 >
                   <Timer className="w-3.5 h-3.5" /> F. Mesai
@@ -792,7 +793,7 @@ export default function PersonnelPage() {
               <button
                 type="button"
                 onClick={() => setCardEmp(emp)}
-                className="inline-flex h-10 items-center justify-center px-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold"
+                className="inline-flex h-9 items-center justify-center px-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-semibold whitespace-nowrap"
                 data-testid={`employee-card-btn-${emp.tc_kimlik}`}
               >
                 Personel Kartı
@@ -800,7 +801,7 @@ export default function PersonnelPage() {
             </div>
               </div>
 
-              <div className="flex flex-row flex-wrap items-center justify-end gap-1.5 shrink-0" data-testid={`employee-card-right-${empKey}`}>
+              <div className="flex flex-row flex-nowrap items-center justify-end gap-1.5 shrink-0" data-testid={`employee-card-right-${empKey}`}>
               {(() => {
                 const punch = todayAttendanceParts(attToday[empKey]);
                 const otCap = assignedOvertimeCellCaption(attToday[empKey]);
@@ -808,17 +809,17 @@ export default function PersonnelPage() {
                 const punchOpen = punchConfirm?.id === empKey && punchConfirm.action === "check_in";
                 return (
                   <div
-                    className={`w-[148px] max-w-full rounded-lg border p-0.5 bg-slate-50 border-slate-200 ${punchOpen ? "h-auto" : "h-10"}`}
+                    className={`w-[132px] max-w-full rounded-lg border p-0.5 bg-slate-50 border-slate-200 ${punchOpen ? "h-auto" : "h-9"}`}
                     data-testid={`employee-card-loc-${empKey}`}
                   >
                     <div className={`grid grid-cols-2 gap-0.5 ${punchOpen ? "" : "h-full"}`}>
                       <div
-                        className={`min-w-0 h-full rounded-md px-1.5 py-0.5 text-left bg-white flex flex-col justify-center ${otOn ? "text-indigo-700" : "text-slate-400"}`}
+                        className={`min-w-0 h-full rounded-md px-1 py-0.5 text-left bg-white flex flex-col justify-center ${otOn ? "text-indigo-700" : "text-slate-400"}`}
                         data-testid={`employee-card-assigned-ot-${empKey}`}
                         title={otOn ? `Atanan fazla mesai ${otCap}` : "Atanan fazla mesai yok"}
                       >
-                        <div className={`text-[9px] font-bold uppercase tracking-wide leading-none ${otOn ? "text-indigo-600" : "text-slate-400"}`}>Mesai</div>
-                        <div className={`text-[12px] font-black leading-tight ${otOn ? "text-indigo-800" : "text-slate-400"}`}>
+                        <div className={`text-[8px] font-bold uppercase tracking-wide leading-none ${otOn ? "text-indigo-600" : "text-slate-400"}`}>Mesai</div>
+                        <div className={`text-[11px] font-black leading-tight ${otOn ? "text-indigo-800" : "text-slate-400"}`}>
                           {otCap}
                         </div>
                       </div>
@@ -827,12 +828,12 @@ export default function PersonnelPage() {
                         type="button"
                         onClick={() => setPunchConfirm({ id: empKey, action: "check_in", name: emp.full_name || "", time: cardPunchDraftTime("check_in", attToday[empKey]) })}
                         disabled={punchBusyId === empKey}
-                        className={`w-full h-full min-w-0 rounded-md px-1.5 py-0.5 text-left disabled:opacity-50 flex flex-col justify-center ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "bg-emerald-100" : "bg-white"}`}
+                        className={`w-full h-full min-w-0 rounded-md px-1 py-0.5 text-left disabled:opacity-50 flex flex-col justify-center ${punchConfirm?.id === empKey && punchConfirm.action === "check_in" ? "bg-emerald-100" : "bg-white"}`}
                         data-testid={`employee-card-today-in-${empKey}`}
                         title="Unutulan giriş kaydı"
                       >
-                        <div className="text-[9px] font-bold uppercase tracking-wide leading-none text-emerald-700">Giriş</div>
-                        <div className="text-[12px] font-black text-emerald-800 leading-tight">
+                        <div className="text-[8px] font-bold uppercase tracking-wide leading-none text-emerald-700">Giriş</div>
+                        <div className="text-[11px] font-black text-emerald-800 leading-tight">
                           {punch.checkIn}{punch.late ? ` · ${punch.late}dk` : ""}
                         </div>
                       </button>
@@ -877,7 +878,7 @@ export default function PersonnelPage() {
                   </div>
                 );
               })()}
-              <div className="flex items-center flex-wrap justify-end gap-1 shrink-0 h-10">
+              <div className="flex items-center justify-end gap-1 shrink-0 h-9">
                 {empReqs.length > 0 && (
                   <span className="relative mr-0.5" title={`${empReqs.length} bekleyen talep`}>
                     <Bell className="w-3.5 h-3.5 text-amber-600" />
@@ -889,7 +890,7 @@ export default function PersonnelPage() {
                 <button
                   type="button"
                   onClick={() => openEditEmployee(emp)}
-                  className="inline-flex h-10 w-10 items-center justify-center border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                  className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-800"
                   title="Düzenle"
                   data-testid={`employee-edit-${emp.tc_kimlik || emp.id || emp._id}`}
                 >
@@ -899,7 +900,7 @@ export default function PersonnelPage() {
                 <button
                   type="button"
                   onClick={() => handleDeleteEmployee(emp)}
-                  className="inline-flex h-10 w-10 items-center justify-center border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50"
+                  className="inline-flex h-9 w-9 items-center justify-center border border-rose-200 text-rose-600 rounded-lg hover:bg-rose-50"
                   title="Sil"
                   data-testid={`employee-delete-${emp.tc_kimlik || emp.id || emp._id}`}
                 >
