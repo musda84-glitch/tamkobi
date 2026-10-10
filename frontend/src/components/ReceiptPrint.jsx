@@ -1,6 +1,6 @@
 import React from "react";
 import { X, Printer } from "lucide-react";
-import { fmtMoney } from "../utils/money";
+import { fmtMoney, fmtDate } from "../utils/money";
 
 export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
   const isCollection = tx.type === "inflow";
@@ -26,7 +26,7 @@ export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
           <div className="border-2 border-slate-900 rounded-lg p-6 space-y-4">
             <div className="flex justify-between items-start border-b-2 border-slate-900 pb-3">
               <div><div className="text-base font-black">{company?.name}</div><div className="text-slate-500">{company?.address} {company?.city}</div><div className="text-slate-500">VD: {company?.tax_office} • VKN: {company?.tax_number} • {company?.phone}</div></div>
-              <div className="text-right"><div className="text-lg font-black uppercase">{titleUpper}</div><div className="font-mono">No: MKB-{(tx.id || tx._id || "").slice(0, 8).toUpperCase()}</div><div className="text-slate-500">Tarih: {tx.date}</div></div>
+              <div className="text-right"><div className="text-lg font-black uppercase">{titleUpper}</div><div className="font-mono">No: MKB-{(tx.id || tx._id || "").slice(0, 8).toUpperCase()}</div><div className="text-slate-500">Tarih: {fmtDate(tx.date)}</div></div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div><div className="text-[10px] uppercase text-slate-400 font-bold">{partyLabel}</div><div className="font-bold text-sm">{partyName}</div><div className="text-slate-500">VKN/TCKN: {contact?.tax_number_or_id || "—"}</div><div className="text-slate-500">{contact?.address} {contact?.city}</div></div>

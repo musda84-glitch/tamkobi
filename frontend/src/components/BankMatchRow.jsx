@@ -3,7 +3,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Loader2, Sparkles } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { formatTrAmount } from "../utils/money";
+import { formatTrAmount, fmtDate } from "../utils/money";
 import { txDescriptionLabel } from "../utils/bankMatchLabel";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { SearchSelect } from "./SearchSelect";
@@ -75,7 +75,7 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices, companyId, onDo
   };
   return (
     <tr data-testid={`unmatched-tx-${tx.id}`} className="align-top">
-      <td className="px-4 py-2 font-mono text-slate-500 whitespace-nowrap">{tx.date}</td>
+      <td className="px-4 py-2 font-mono text-slate-500 whitespace-nowrap">{fmtDate(tx.date)}</td>
       <td className="px-4 py-2 font-semibold text-slate-900">{tx.account_name}</td>
       <td className="px-4 py-2 max-w-[260px]">
         <span className="font-medium text-slate-800">{txDescriptionLabel(tx)}</span>

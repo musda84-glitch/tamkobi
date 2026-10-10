@@ -4,7 +4,7 @@ import axios from "axios";
 import { toast } from "sonner";
 import { Loader2, Link2, X } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
-import { formatTrAmount } from "../utils/money";
+import { formatTrAmount, fmtDate } from "../utils/money";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 
@@ -99,7 +99,7 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
               <Link2 className="w-4 h-4 text-violet-600 shrink-0" /> Eşleşme
             </h3>
             <p className="text-[11px] text-slate-500 mt-0.5 truncate" title={tx.description}>
-              {tx.date} · {isIn ? "+" : "-"}{fmt(tx.amount)} ₺ · {tx.description}
+              {fmtDate(tx.date)} · {isIn ? "+" : "-"}{fmt(tx.amount)} ₺ · {tx.description}
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700" data-testid="tx-match-close">
