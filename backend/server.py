@@ -5061,28 +5061,45 @@ async def create_contact_ledger_slip(contact_id: str, req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Fiş türü borç veya alacak olmalı.")
     is_debit = kind in ("debit", "borc")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    description = (req.get("description") or ("Borç fişi" if is_debit else "Alacak fişi")).strip()
+    purpose_raw = str(req.get("purpose") or req.get("menu_id") or "").strip().lower()
+    desc_in = str(req.get("description") or "").strip()
+    is_balance_fix = purpose_raw in ("balance_fix", "bakiye_duzelt", "bakiye-duzelt") or (
+        "bakiye düzelt" in desc_in.lower() or "cari bakiye düzeltme" in desc_in.lower()
+    )
+    if is_balance_fix:
+        description = desc_in or (
+            "Cari bakiye düzeltme (Borç fişi)" if is_debit else "Cari bakiye düzeltme (Alacak fişi)"
+        )
+        category = "Cari Bakiye Düzeltme"
+        purpose = "balance_fix"
+    else:
+        description = desc_in or ("Borç fişi" if is_debit else "Alacak fişi")
+        category = "Borç Fişi" if is_debit else "Alacak Fişi"
+        purpose = "ledger_slip"
     # Borç fişi cari borcunu artırır (bakiye +); alacak fişi düşürür (bakiye −). Kasa etkilenmez.
     tx_type = "outflow" if is_debit else "inflow"
+    slip_kind = "debit" if is_debit else "credit"
     doc = {
         "_id": str(uuid.uuid4()),
         "company_id": contact["company_id"],
         "account_id": None,
         "account_name": "Borç Fişi" if is_debit else "Alacak Fişi",
         "type": tx_type,
-        "category": "Borç Fişi" if is_debit else "Alacak Fişi",
+        "category": category,
         "amount": amount,
         "currency": "TRY",
         "description": f"{contact.get('name')}: {description}",
         "contact_id": contact_id,
         "contact_name": contact.get("name"),
         "source": "ledger",
+        "purpose": purpose,
+        "slip_kind": slip_kind,
         "date": req.get("date") or today,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.bank_transactions.insert_one(doc)
     await db.contacts.update_one({"_id": contact_id}, {"$inc": {"balance": amount if is_debit else -amount}})
-    return {"status": "success", "id": doc["_id"], "kind": "debit" if is_debit else "credit"}
+    return {"status": "success", "id": doc["_id"], "kind": slip_kind, "purpose": purpose}
 
 # ----------------- STOK, ÜRÜNLER & BARKOD -----------------
 DEFAULT_UNITS = ["Adet", "Kg", "Gr", "Lt", "Ml", "Mt", "Cm", "M2", "M3", "Paket", "Koli", "Kutu", "Çift", "Takım", "Saat", "Gün", "Ton"]

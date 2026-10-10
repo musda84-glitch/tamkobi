@@ -3,13 +3,19 @@ import { X, Printer } from "lucide-react";
 import { fmtMoney, fmtDate } from "../utils/money";
 
 export const ReceiptPrint = ({ tx, contact, company, onClose }) => {
-  const isCollection = tx.type === "inflow";
+  const isLedger = tx?.source === "ledger" || tx?.purpose === "balance_fix" || tx?.purpose === "ledger_slip";
+  const isCreditSlip = isLedger && (tx?.slip_kind === "credit" || tx?.type === "inflow");
+  const isCollection = !isLedger && tx.type === "inflow";
   const isTransfer = tx.type === "transfer";
-  const title = isCollection ? "Tahsilat Makbuzu" : isTransfer ? "Virman Makbuzu" : "Tediye (Ödeme) Makbuzu";
-  const titleUpper = isCollection ? "TAHSİLAT MAKBUZU" : isTransfer ? "VİRMAN MAKBUZU" : "TEDİYE MAKBUZU";
-  const partyLabel = isCollection ? "Sayın (Ödeyen)" : isTransfer ? "Karşı hesap / cari" : "Sayın (Alan)";
+  const title = isLedger
+    ? (tx?.purpose === "balance_fix" || /bakiye\s*düzelt/i.test(tx?.description || "") || /cari bakiye düzeltme/i.test(tx?.category || "")
+      ? (isCreditSlip ? "Cari Bakiye Düzeltme (Alacak)" : "Cari Bakiye Düzeltme (Borç)")
+      : (isCreditSlip ? "Alacak Fişi" : "Borç Fişi"))
+    : isCollection ? "Tahsilat Makbuzu" : isTransfer ? "Virman Makbuzu" : "Tediye (Ödeme) Makbuzu";
+  const titleUpper = title.toLocaleUpperCase("tr-TR");
+  const partyLabel = isLedger ? "Cari" : isCollection ? "Sayın (Ödeyen)" : isTransfer ? "Karşı hesap / cari" : "Sayın (Alan)";
   const partyName = contact?.name || tx.contact_name || tx.target_account_name || "—";
-  const totalLabel = isCollection ? "Yalnız tahsil edilen" : isTransfer ? "Yalnız virman tutarı" : "Yalnız ödenen";
+  const totalLabel = isLedger ? "Yalnız fiş tutarı" : isCollection ? "Yalnız tahsil edilen" : isTransfer ? "Yalnız virman tutarı" : "Yalnız ödenen";
   const ccy = tx.currency || contact?.currency || company?.currency || "TRY";
   const money = (n) => fmtMoney(n, ccy);
   return (

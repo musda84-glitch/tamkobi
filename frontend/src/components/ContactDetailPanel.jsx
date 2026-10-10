@@ -27,7 +27,14 @@ import { ContactPayMenu } from "./ContactPayMenu";
 import { ContactStatementMenu } from "./ContactStatementMenu";
 import { StatementShareBar, StatementPrint, buildStatementRows } from "./StatementShare";
 import { shareStatementLink } from "../utils/statementShare";
-import { buildContactPayForm, contactPayModalMeta } from "../utils/contactPayMenu";
+import {
+  buildContactPayForm,
+  contactLedgerSlipDescription,
+  contactPaymentDocLabel,
+  contactPayModalMeta,
+  isContactBalanceFixPay,
+  isContactLedgerPay,
+} from "../utils/contactPayMenu";
 import { isLockedContactPay, isPartnerContactPay, lockedContactPayTitle } from "../utils/contactPayLock";
 import { applyReceiptDraft, receiptScanHint } from "../utils/receiptScan";
 import { openChequeBalance } from "../utils/chequeBalance";
@@ -252,7 +259,9 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
   const lockedTxTitle = lockedContactPayTitle;
   const deletePay = async (p) => {
     const chequeId = p.cheque_id;
-    const label = p.type === "inflow" ? "tahsilat" : "ödeme";
+    const label = isContactLedgerPay(p)
+      ? (isContactBalanceFixPay(p) ? "cari bakiye düzeltme fişi" : "borç/alacak fişi")
+      : (p.type === "inflow" ? "tahsilat" : "ödeme");
     if (chequeId) {
       if (!window.confirm(`${fmt(p.amount)} çek/senet kaydı silinsin mi? Cari bakiyesi geri alınır.`)) return;
       try {
@@ -319,6 +328,12 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         });
       } else if (editPay.partner || editPay.source === "partner") {
         await axios.put(`${API_URL}/banking/partners/transactions/${editPay.id}`, {
+          amount: Number(editPay.amount),
+          date: editPay.date,
+          description: editPay.description,
+        });
+      } else if (isContactLedgerPay(editPay)) {
+        await axios.put(`${API_URL}/banking/transactions/${editPay.id}`, {
           amount: Number(editPay.amount),
           date: editPay.date,
           description: editPay.description,
@@ -424,12 +439,19 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
       const amount = Number(payForm.amount);
       if (!(amount > 0)) { toast.error("Tutar sıfırdan büyük olmalı."); return; }
       if (payForm.method === "ledger") {
+        const balanceFix = !!(payForm.balanceFix || payForm.menuId === "balance_fix");
         await axios.post(`${API_URL}/contacts/${c.id}/ledger-slip`, {
           kind: payForm.slip === "credit" ? "credit" : "debit",
           amount,
           description: payForm.description,
+          purpose: balanceFix ? "balance_fix" : "ledger_slip",
+          menu_id: payForm.menuId || "",
         });
-        toast.success(payForm.slip === "credit" ? "Alacak fişi kaydedildi." : "Borç fişi kaydedildi.");
+        toast.success(
+          balanceFix
+            ? (payForm.slip === "credit" ? "Cari bakiye düzeltme (alacak) kaydedildi." : "Cari bakiye düzeltme (borç) kaydedildi.")
+            : (payForm.slip === "credit" ? "Alacak fişi kaydedildi." : "Borç fişi kaydedildi."),
+        );
       } else if (payForm.method === "cheque" || payForm.method === "promissory") {
         await axios.post(`${API_URL}/cheques`, {
           company_id: c.company_id,
@@ -797,8 +819,8 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 {data.payments.map((p) => (
                   <tr key={p.id} data-testid={`detail-pay-${p.id}`}>
                     <td className="py-2 font-mono text-slate-500">{p.date}</td>
-                    <td className="py-2 font-semibold">{p.account_name} {isPartnerPay(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-indigo-500 font-semibold ml-1" title="Ortaklar hesabı — düzenlenebilir / silinebilir">Ortak</span>}{isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td>
-                    <td className="py-2 text-slate-600">{p.category} • {p.description}</td>
+                    <td className="py-2 font-semibold">{isContactLedgerPay(p) ? contactPaymentDocLabel(p) : p.account_name} {isPartnerPay(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-indigo-500 font-semibold ml-1" title="Ortaklar hesabı — düzenlenebilir / silinebilir">Ortak</span>}{isLockedTx(p) && <span className="inline-flex items-center gap-0.5 text-[9px] text-slate-400 font-semibold ml-1" title={lockedTxTitle(p)}><Lock className="w-2.5 h-2.5" /> {lockedTxLabel(p)}</span>}</td>
+                    <td className="py-2 text-slate-600">{isContactLedgerPay(p) ? (p.description || p.category) : `${p.category} • ${p.description}`}</td>
                     <td className={`py-2 text-right font-bold ${p.type === "inflow" ? "text-emerald-600" : "text-rose-600"}`}>{p.type === "inflow" ? "+" : "-"}{fmt(p.amount)}</td>
                     <td className="py-2 text-right">
                       <div className="flex justify-end gap-1">
@@ -1135,12 +1157,16 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
         {editPay && (
           <div className="fixed inset-0 z-[60] bg-slate-900/50 flex items-center justify-center p-4" {...backdropDismissProps(() => setEditPay(null))}>
             <form onSubmit={savePayEdit} className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3 text-xs shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="pay-edit-modal">
-              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editPay.cheque ? "Çek / Senet Düzenle" : editPay.type === "inflow" ? "Tahsilat Düzenle" : "Ödeme Düzenle"}</h3><button type="button" onClick={() => setEditPay(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
+              <div className="flex justify-between border-b pb-2"><h3 className="text-sm font-bold">{editPay.cheque ? "Çek / Senet Düzenle" : isContactLedgerPay(editPay) ? (isContactBalanceFixPay(editPay) ? "Cari Bakiye Düzeltme" : "Borç / Alacak Fişi") : editPay.type === "inflow" ? "Tahsilat Düzenle" : "Ödeme Düzenle"}</h3><button type="button" onClick={() => setEditPay(null)} className="text-slate-400"><X className="w-5 h-5" /></button></div>
               <div><label className="block font-semibold mb-1">{editPay.cheque ? "Vade" : "Tarih"}</label><input type="date" value={editPay.date || ""} onChange={(e) => setEditPay({ ...editPay, date: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-date" /></div>
               {editPay.cheque ? (
                 <div className="grid grid-cols-2 gap-2">
                   <div><label className="block font-semibold mb-1">Seri no</label><input value={editPay.serial_no || ""} onChange={(e) => setEditPay({ ...editPay, serial_no: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-serial" /></div>
                   <div><label className="block font-semibold mb-1">Banka</label><input value={editPay.bank_name || ""} onChange={(e) => setEditPay({ ...editPay, bank_name: e.target.value })} className="w-full bg-slate-50 border rounded-lg p-2" data-testid="pay-edit-bank" /></div>
+                </div>
+              ) : isContactLedgerPay(editPay) ? (
+                <div className="rounded-lg border border-sky-100 bg-sky-50/60 px-3 py-2 text-[11px] text-sky-900" data-testid="pay-edit-ledger-note">
+                  {contactPaymentDocLabel(editPay)} — kasa/banka etkilenmez; cari bakiye hareketi olarak kalır.
                 </div>
               ) : editPay.partner || editPay.source === "partner" ? (
                 <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-[11px] text-indigo-800" data-testid="pay-edit-partner-note">
@@ -1189,15 +1215,15 @@ export const ContactDetailPanel = ({ contactId, onClose, onMessage }) => {
                 <>
                   {meta.showSlipToggle ? (
                     <div className="grid grid-cols-2 gap-2">
-                      <button type="button" onClick={() => setPayForm({ ...payForm, slip: "debit", description: "Borç fişi" })} className={`p-2 rounded-lg border font-semibold ${payForm.slip !== "credit" ? "bg-rose-50 border-rose-300 text-rose-800" : ""}`} data-testid="collect-slip-debit">Borç fişi</button>
-                      <button type="button" onClick={() => setPayForm({ ...payForm, slip: "credit", description: "Alacak fişi" })} className={`p-2 rounded-lg border font-semibold ${payForm.slip === "credit" ? "bg-emerald-50 border-emerald-300 text-emerald-800" : ""}`} data-testid="collect-slip-credit">Alacak fişi</button>
+                      <button type="button" onClick={() => setPayForm({ ...payForm, slip: "debit", description: contactLedgerSlipDescription("debit", { balanceFix: !!payForm.balanceFix }) })} className={`p-2 rounded-lg border font-semibold ${payForm.slip !== "credit" ? "bg-rose-50 border-rose-300 text-rose-800" : ""}`} data-testid="collect-slip-debit">Borç fişi</button>
+                      <button type="button" onClick={() => setPayForm({ ...payForm, slip: "credit", description: contactLedgerSlipDescription("credit", { balanceFix: !!payForm.balanceFix }) })} className={`p-2 rounded-lg border font-semibold ${payForm.slip === "credit" ? "bg-emerald-50 border-emerald-300 text-emerald-800" : ""}`} data-testid="collect-slip-credit">Alacak fişi</button>
                     </div>
                   ) : (
                     <div className={`rounded-lg border px-3 py-2 font-semibold ${payForm.slip === "credit" ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-rose-50 border-rose-200 text-rose-800"}`} data-testid="collect-slip-locked">
                       {payForm.slip === "credit" ? "Alacak fişi (bakiye düzeltme)" : "Borç fişi (bakiye düzeltme)"}
                     </div>
                   )}
-                  <p className="text-[10px] text-slate-500">{payForm.balanceFix ? "Açık bakiyeyi sıfırlamak için tutar ve fiş türü otomatik dolduruldu. Kasa/banka bakiyesi değişmez." : "Borç fişi cari borcunu artırır, alacak fişi düşürür. Kasa ve banka bakiyesi değişmez."}</p>
+                  <p className="text-[10px] text-slate-500" data-testid="collect-ledger-hint">{payForm.balanceFix ? "Cari bakiye düzeltme: tutar otomatik dolduruldu; borç veya alacak fişi seçin. Kasa/banka bakiyesi değişmez." : "Borç fişi cari borcunu artırır, alacak fişi düşürür. Kasa ve banka bakiyesi değişmez."}</p>
                 </>
               ) : payForm.method === "cheque" || payForm.method === "promissory" ? (
                 <div className="space-y-2">
