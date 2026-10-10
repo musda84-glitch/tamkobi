@@ -204,6 +204,14 @@ describe("permissions", () => {
     expect(showProductionAiAdvisor({ role: "manager" })).toBe(true);
     expect(showProductionAiAdvisor({ role: "admin", employee_id: "e1" })).toBe(false);
     expect(showProductionAiAdvisor({ role: "personel", employee_id: "e2" })).toBe(false);
+    expect(showProductionAiAdvisor({ role: "personel" })).toBe(false);
+    expect(showProductionAiAdvisor({ role: "production" })).toBe(false);
     expect(showProductionAiAdvisor({ role: "warehouse" })).toBe(false);
+    expect(showProductionAiAdvisor(null)).toBe(false);
+    // Özellik bayrağı açık olsa bile personel/üretim görmez
+    expect(feature({ role: "personel", features: {} }, "production_ai")).toBe(false);
+    expect(feature({ role: "production", features: {} }, "production_ai")).toBe(false);
+    expect(feature({ role: "personel", features: { production_ai: true } }, "production_ai")).toBe(true);
+    expect(showProductionAiAdvisor({ role: "personel", features: { production_ai: true } })).toBe(false);
   });
 });

@@ -8,6 +8,7 @@ import {
   personelMenuPathAllowed,
   selfPersonnelNavAllowed,
   showHomeFinanceSummary,
+  showProductionAiAdvisor,
 } from "./selfPersonnelNav";
 
 describe("selfPersonnelNav", () => {
@@ -64,5 +65,14 @@ describe("selfPersonnelNav", () => {
     expect(personelAccountTabs(p, 1)).toEqual(["profil"]);
     expect(personelAccountTabs(p, 2)).toEqual(["profil", "sirketler"]);
     expect(personelAccountTabs({ role: "admin" }, 1)).toContain("ayarlar");
+  });
+
+  test("hides production AI advisor from personel and production roles", () => {
+    expect(showProductionAiAdvisor({ role: "admin" })).toBe(true);
+    expect(showProductionAiAdvisor({ role: "manager" })).toBe(true);
+    expect(showProductionAiAdvisor({ role: "admin", employee_id: "e1" })).toBe(false);
+    expect(showProductionAiAdvisor({ role: "personel" })).toBe(false);
+    expect(showProductionAiAdvisor({ role: "production" })).toBe(false);
+    expect(showProductionAiAdvisor(null)).toBe(false);
   });
 });

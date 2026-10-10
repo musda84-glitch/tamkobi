@@ -61,6 +61,15 @@ export function showHomeFinanceSummary(user) {
   return !hasSelfPersonnelRecord(user);
 }
 
+/** AI Üretim & Reçete: yalnızca yönetici (admin/müdür). Personel / üretim ve personel kartı bağlı girişte gizli. */
+export function showProductionAiAdvisor(user) {
+  if (!user) return false;
+  if (hasSelfPersonnelRecord(user)) return false;
+  const role = String(user.role || "").trim().toLowerCase();
+  if (role === "personel" || role === "production") return false;
+  return role === "admin" || role === "manager";
+}
+
 /** Hesap sayfası sekmeleri — personel yalnız profil (+ çoklu şirkette geçiş). */
 export function personelAccountTabs(user, companyCount = 1) {
   if (!isPersonelRole(user)) {
