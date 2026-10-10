@@ -8,6 +8,7 @@ import {
   orderMoreMenuKind,
   orderMoreMenuItems,
   integrationEInvoiceMoreItems,
+  integrationDraftMoreItems,
 } from "./orderMoreMenu";
 import { INVOICE_PRINT_SHARE_HINT } from "./invoicePrintShare";
 
@@ -114,11 +115,34 @@ describe("orderMoreMenu", () => {
     expect(labels).toContain("E-Fatura XML'i İndir");
     expect(labels).toContain("E-Fatura PDF İndir");
     expect(labels).toContain("Kargola");
+    expect(labels).toContain("Depo Bilgisi Güncelle");
     expect(labels).not.toContain("Navlungo Siparişi Oluştur");
-    expect(labels).toContain("Pazaryeri Kargo Firmasını Değiştir");
+    expect(labels).toContain("Paketli Siparişin Kargo Firmasını Değiştir");
     expect(labels).toContain("Siparişi Excel İndir");
     expect(labels).toContain("Siparişi PDF İndir");
     expect(items.find((i) => i.id === "earsiv_send")?.hint).toBe(INVOICE_PRINT_SHARE_HINT);
+  });
+
+  it("uninvoiced marketplace uses reference fulfillment menu", () => {
+    const ord = { channel: "trendyol", is_invoiced: false, order_number: "11693105570" };
+    expect(orderMoreMenuKind(ord)).toBe("integration_draft");
+    const labels = orderMoreMenuItems(ord).items.map((i) => i.label);
+    expect(labels).toEqual(integrationDraftMoreItems().map((i) => i.label));
+    expect(labels).toEqual([
+      "Siparişin Güncel Durumunu Getir",
+      "Faturalaştır",
+      "Mini Kargo Etiketi Yazdır",
+      "Mini Kargo Etiketi Yazdır 10X10",
+      "Fatura Tarihi Değiştir",
+      "Kargo Takip Kodu Bildir",
+      "Dijital Kod Bildir",
+      "Depo Bilgisi Güncelle",
+      "Kargola",
+      "Paketli Siparişin Kargo Firmasını Değiştir",
+    ]);
+    expect(labels).not.toContain("Siparişi Düzenle");
+    expect(labels).not.toContain("Siparişi Excel İndir");
+    expect(labels).not.toContain("Siparişi Sil");
   });
 
   it("panel draft (B2B/manual) hides mini cargo labels until shipment", () => {
@@ -166,14 +190,15 @@ describe("orderMoreMenu", () => {
     expect(items.map((i) => i.label)).not.toContain("Siparişi Excel İndir");
   });
 
-  it("default uninvoiced marketplace menu hides E-Fatura / E-Arşiv kes", () => {
+  it("uninvoiced marketplace menu hides E-Fatura / E-Arşiv kes and edit", () => {
     const ord = { channel: "trendyol", is_invoiced: false, order_number: "TY-2" };
     const labels = orderMoreMenuItems(ord, {
       eBelgeItems: [{ eType: "e_archive", label: "E-Arşiv kes (GİB)", testIdSuffix: "earsiv" }],
     }).items.map((i) => i.label);
     expect(labels).not.toContain("E-Arşiv kes (GİB)");
     expect(labels).not.toContain("E-Fatura kes (GİB)");
-    expect(labels).toContain("Siparişi Düzenle");
+    expect(labels).not.toContain("Siparişi Düzenle");
+    expect(labels).toContain("Faturalaştır");
   });
 
   it("panel invoiced ignores eBelgeItems — tek E-Fatura Oluştur satırı", () => {

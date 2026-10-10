@@ -11412,11 +11412,20 @@ async def update_order(order_id: str, req: Dict[str, Any]):
     o = await db.orders.find_one({"_id": order_id})
     if not o:
         raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    # Yalnızca depo alanları → e-belge kilidinden muaf (pazaryeri «Depo Bilgisi Güncelle»)
+    warehouse_only = (
+        ("warehouse_id" in req or "warehouse_name" in req)
+        and "items" not in req
+        and "notes" not in req
+        and "customer_order_number" not in req
+        and "po_number" not in req
+    )
     invoice = await db.invoices.find_one({"_id": o["invoice_id"]}) if o.get("invoice_id") else None
     dispatch = await db.invoices.find_one({"_id": o["dispatch_id"]}) if o.get("dispatch_id") else None
-    blocked = order_edit_block_reason(o, invoice, dispatch)
-    if blocked:
-        raise HTTPException(status_code=400, detail=blocked)
+    if not warehouse_only:
+        blocked = order_edit_block_reason(o, invoice, dispatch)
+        if blocked:
+            raise HTTPException(status_code=400, detail=blocked)
     marketplace = str(o.get("channel") or "").lower() in _MARKETPLACE_EDIT_BLOCK
     if marketplace and "items" in req:
         raise HTTPException(status_code=400, detail="Pazaryeri sipariş kalemleri düzenlenemez.")
@@ -11426,6 +11435,18 @@ async def update_order(order_id: str, req: Dict[str, Any]):
         update["notes"] = req.get("notes") or ""
     if "customer_order_number" in req or "po_number" in req:
         update["customer_order_number"] = str(req.get("customer_order_number") or req.get("po_number") or "").strip()[:80]
+    # Depo bilgisi güncelle (pazaryeri menüsü)
+    if "warehouse_id" in req or "warehouse_name" in req:
+        wid = str(req.get("warehouse_id") or "").strip()
+        wname = str(req.get("warehouse_name") or "").strip()
+        if wid:
+            update["warehouse_id"] = wid[:80]
+        if wname:
+            update["warehouse_name"] = wname[:120]
+        elif wid:
+            wh = await db.warehouses.find_one({"_id": wid})
+            if wh:
+                update["warehouse_name"] = str(wh.get("name") or "")[:120]
     if "items" in req:
         rows = await _staff_rebuild_order_items(o.get("company_id"), req.get("items") or [])
         if not rows:

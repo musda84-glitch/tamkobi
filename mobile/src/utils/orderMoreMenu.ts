@@ -4,7 +4,7 @@ import { isWarehouseShipped } from "./orderCargo";
 
 export type OrderMoreIcon = string;
 
-export type OrderMoreKind = "panel_einvoice" | "integration_einvoice" | "panel_draft" | "panel_invoiced" | "held_cart" | "default";
+export type OrderMoreKind = "panel_einvoice" | "integration_einvoice" | "integration_draft" | "panel_draft" | "panel_invoiced" | "held_cart" | "default";
 
 export type OrderMoreItem = {
   id: string;
@@ -167,6 +167,7 @@ export function orderMoreMenuKind(ord?: OrderMoreOrder | null): OrderMoreKind {
   if (isIntegrationOrder(ord) && orderHasEInvoiceIssued(ord)) return "integration_einvoice";
   // Cariye faturalaştı, henüz GİB e-belgesi yok → yeşil Faturalaştı / E-Fatura Oluştur
   if (ord?.is_invoiced) return "panel_invoiced";
+  if (isIntegrationOrder(ord)) return "integration_draft";
   if (isPanelOrder(ord) && !ord?.is_invoiced) return "panel_draft";
   return "default";
 }
@@ -195,6 +196,22 @@ export const INVOICE_PRINT_SHARE_HINT = "Yazdırma, e-posta ve WhatsApp";
 export const INVOICE_PRINT_SHARE_NOTE =
   "GİB gönderimi değildir. Yalnızca yazdırma, e-posta ve WhatsApp paylaşımı için kullanılır.";
 
+/** Pazaryeri henüz faturalaşmamış — referans fulfillment menüsü. */
+export function integrationDraftMoreItems(): OrderMoreItem[] {
+  return [
+    item("refresh_status", "Siparişin Güncel Durumunu Getir", "refresh", { color: "#059669" }),
+    item("faturalastir", "Faturalaştır", "document-text", { color: "#059669" }),
+    item("cargo_mini", "Mini Kargo Etiketi Yazdır", "car", { color: "#0EA5E9" }),
+    item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", "car", { color: "#0EA5E9" }),
+    item("invoice_date", "Fatura Tarihi Değiştir", "time", { color: "#D97706" }),
+    item("cargo_track_notify", "Kargo Takip Kodu Bildir", "time", { color: "#0EA5E9" }),
+    item("digital_code_notify", "Dijital Kod Bildir", "cloud-upload", { color: "#E11D48" }),
+    item("warehouse_update", "Depo Bilgisi Güncelle", "swap-horizontal", { color: "#059669" }),
+    item("kargola", "Kargola", "car", { color: "#E11D48" }),
+    item("cargo_change", "Paketli Siparişin Kargo Firmasını Değiştir", "car", { color: "#0EA5E9" }),
+  ];
+}
+
 export function integrationEInvoiceMoreItems(): OrderMoreItem[] {
   return [
     item("refresh_status", "Siparişin Güncel Durumunu Getir", "refresh", { color: "#059669" }),
@@ -204,9 +221,10 @@ export function integrationEInvoiceMoreItems(): OrderMoreItem[] {
     item("cargo_10x10", "Mini Kargo Etiketi Yazdır 10X10", "car", { color: "#0EA5E9" }),
     item("earsiv_send", "E-Arşiv Yazdır & Gönder", "mail", { color: "#059669", hint: INVOICE_PRINT_SHARE_HINT, title: INVOICE_PRINT_SHARE_HINT }),
     item("cargo_track_notify", "Kargo Takip Kodu Bildir", "time", { color: "#0EA5E9" }),
-    item("digital_code_notify", "Dijital Kod Bildir", "download", { color: "#E11D48" }),
+    item("digital_code_notify", "Dijital Kod Bildir", "cloud-upload", { color: "#E11D48" }),
+    item("warehouse_update", "Depo Bilgisi Güncelle", "swap-horizontal", { color: "#059669" }),
     item("kargola", "Kargola", "car", { color: "#E11D48" }),
-    item("cargo_change", "Pazaryeri Kargo Firmasını Değiştir", "car", { color: "#0EA5E9" }),
+    item("cargo_change", "Paketli Siparişin Kargo Firmasını Değiştir", "car", { color: "#0EA5E9" }),
     item("invoice_link", "Fatura Linki Gönder", "link", { color: "#F43F5E" }),
     item("xml", "E-Fatura XML'i İndir", "code-slash", { color: "#0EA5E9" }),
     item("efatura_pdf", "E-Fatura PDF İndir", "download", { color: "#4F46E5", testId: "efatura-pdf" }),
@@ -325,6 +343,10 @@ export function orderMoreMenuItems(
   if (kind === "panel_einvoice") {
     return { kind, items: panelEInvoiceMoreItems(ord) };
   }
+  if (kind === "integration_draft") {
+    // Pazaryeri fulfillment menüsü (Excel/PDF / sil yok — referans ekran)
+    return { kind, items: integrationDraftMoreItems() };
+  }
   if (kind === "integration_einvoice") items = integrationEInvoiceMoreItems();
   else if (kind === "panel_draft") items = panelDraftMoreItems(ord);
   else if (kind === "panel_invoiced") {
@@ -340,6 +362,7 @@ export function mobilePrimaryAction(ord?: OrderMoreOrder | null): { id: string; 
   const kind = orderMoreMenuKind(ord);
   if (kind === "held_cart") return null;
   if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır" };
+  if (kind === "integration_draft") return { id: "faturalastir", label: "Faturalaştır" };
   if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura" };
   if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv" };
   if (kind === "integration_einvoice") return { id: "cargo_mini", label: "Etiket" };

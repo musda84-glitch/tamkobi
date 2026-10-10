@@ -189,6 +189,7 @@ function mobilePrimaryAction(ord) {
   const kind = orderMoreMenuKind(ord);
   if (kind === "held_cart") return null;
   if (kind === "panel_draft") return { id: "faturalastir", label: "Faturalaştır", className: "bg-emerald-600 text-white" };
+  if (kind === "integration_draft") return { id: "faturalastir", label: "Faturalaştır", className: "bg-emerald-600 text-white" };
   if (kind === "panel_invoiced") return { id: "efatura_olustur", label: "E-Fatura Oluştur", className: "bg-rose-500 text-white" };
   if (kind === "panel_einvoice") return { id: "mini_10x15", label: "E-Arşiv", className: "bg-sky-600 text-white" };
   if (kind === "integration_einvoice") return { id: "cargo_mini", label: "Etiket", className: "bg-sky-600 text-white" };
@@ -1027,10 +1028,6 @@ export default function OrdersB2BPage() {
         setEFaturaOrder(ord);
         return;
       case "invoice_date": {
-        if (!ord.invoice_id) {
-          toast.error("Önce fatura oluşturun.");
-          return;
-        }
         const date = window.prompt("Yeni fatura tarihi (YYYY-AA-GG)", new Date().toISOString().slice(0, 10));
         if (!date) return;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -1038,7 +1035,19 @@ export default function OrdersB2BPage() {
           return;
         }
         try {
-          await axios.put(`${API_URL}/invoices/${ord.invoice_id}`, { issue_date: date });
+          let invoiceId = ord.invoice_id;
+          if (!invoiceId) {
+            const draft = await axios.post(`${API_URL}/orders/${ord.id || ord._id}/convert-to-invoice`, {
+              e_type: orderEBelgeType(ord, contacts) || "e_archive",
+              as_draft: true,
+            });
+            invoiceId = draft.data?.invoice_id;
+            if (!invoiceId) {
+              toast.error("Fatura oluşturulamadı; tarih değiştirilemedi.");
+              return;
+            }
+          }
+          await axios.put(`${API_URL}/invoices/${invoiceId}`, { issue_date: date });
           toast.success("Fatura tarihi güncellendi.");
           loadData();
         } catch (err) {
@@ -1062,14 +1071,76 @@ export default function OrdersB2BPage() {
         return;
       case "cargo_track_notify":
         if (!ord.cargo_tracking_number) {
-          toast.error("Bu siparişte kargo takip kodu yok.");
+          toast.error("Bu siparişte kargo takip kodu yok. Önce Kargola veya takip kodunu kaydedin.");
           return;
         }
-        setNotifyOrder(ord);
+        setNotifyOrder({
+          ...ord,
+          _notifySubject: `Kargo takip kodunuz - ${ord.order_number}`,
+          _notifyMessage: [
+            `Sayın ${ord.customer_name || "Müşterimiz"},`,
+            "",
+            `${ord.order_number} numaralı siparişiniz kargoya verildi.`,
+            `Takip kodu: ${ord.cargo_tracking_number}`,
+            ord.cargo_tracking_url ? `Takip linki: ${ord.cargo_tracking_url}` : "",
+            ord.cargo_carrier_name || ord.cargo_carrier ? `Kargo: ${ord.cargo_carrier_name || ord.cargo_carrier}` : "",
+            "",
+            "İyi günler.",
+          ].filter(Boolean).join("\n"),
+        });
         return;
-      case "digital_code_notify":
-        toast.message("Dijital kod bildirimi bu kanalda henüz bağlanmadı.");
+      case "digital_code_notify": {
+        const code = window.prompt("Müşteriye bildirilecek dijital / aktivasyon kodu:");
+        if (code == null) return;
+        const trimmed = String(code).trim();
+        if (!trimmed) {
+          toast.error("Dijital kod boş olamaz.");
+          return;
+        }
+        setNotifyOrder({
+          ...ord,
+          _notifySubject: `Dijital kodunuz - ${ord.order_number}`,
+          _notifyMessage: [
+            `Sayın ${ord.customer_name || "Müşterimiz"},`,
+            "",
+            `${ord.order_number} numaralı siparişinizin dijital kodu:`,
+            "",
+            trimmed,
+            "",
+            "İyi günler.",
+          ].join("\n"),
+        });
         return;
+      }
+      case "warehouse_update": {
+        try {
+          const r = await axios.get(`${API_URL}/warehouses`, { params: { company_id: companyId } });
+          const list = Array.isArray(r.data) ? r.data : [];
+          if (!list.length) {
+            toast.error("Tanımlı depo yok. Önce Stok → Depolar ekleyin.");
+            return;
+          }
+          const lines = list.map((w, i) => `${i + 1}) ${w.name || w.account_name || w.id || w._id}`).join("\n");
+          const curIdx = Math.max(0, list.findIndex((w) => (w.id || w._id) === (ord.warehouse_id)));
+          const pick = window.prompt(`Depo seçin (numara):\n${lines}`, String(curIdx + 1));
+          if (pick == null) return;
+          const idx = Math.trunc(Number(pick)) - 1;
+          if (!Number.isFinite(idx) || idx < 0 || idx >= list.length) {
+            toast.error("Geçersiz depo seçimi.");
+            return;
+          }
+          const wh = list[idx];
+          await axios.put(`${API_URL}/orders/${ord.id || ord._id}`, {
+            warehouse_id: wh.id || wh._id,
+            warehouse_name: wh.name || wh.account_name || "",
+          });
+          toast.success(`Depo güncellendi: ${wh.name || wh.id || wh._id}`);
+          loadData();
+        } catch (err) {
+          toast.error(err.response?.data?.detail || "Depo bilgisi güncellenemedi.");
+        }
+        return;
+      }
       case "cargo_change":
         setCargoChangeOrder(ord);
         return;
@@ -1414,10 +1485,10 @@ export default function OrdersB2BPage() {
         <QuickMessageModal
           companyId={activeCompany?.id || activeCompany?._id || "comp_nexus_main_01"}
           recipient={{ name: notifyOrder.customer_name, phone: notifyOrder.customer_phone, email: notifyOrder.customer_email }}
-          defaultSubject={`Siparişiniz Yola Çıktı - ${notifyOrder.order_number}`}
-          defaultMessage={TEMPLATES.order(notifyOrder)}
+          defaultSubject={notifyOrder._notifySubject || `Siparişiniz Yola Çıktı - ${notifyOrder.order_number}`}
+          defaultMessage={notifyOrder._notifyMessage || TEMPLATES.order(notifyOrder)}
           context="order"
-          refId={notifyOrder.id}
+          refId={notifyOrder.id || notifyOrder._id}
           onClose={() => setNotifyOrder(null)}
         />
       )}
