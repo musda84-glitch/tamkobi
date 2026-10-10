@@ -17,14 +17,54 @@ export const ORDER_BULK_ACTIONS = [
   { id: "cargo_10x10", label: "Toplu Mini Kargo Etiketi Yazdır 10X10", icon: Truck },
   { id: "invoice_date", label: "Toplu Fatura Tarihi Değiştir", icon: History },
   { id: "approve", label: "Toplu Sipariş Onayla", icon: ThumbsUp },
-  { id: "cargo_create", label: "Toplu Kargo Siparişi Oluştur", icon: Truck },
+  { id: "kargola", label: "Toplu Kargola", icon: Truck },
   { id: "xml", label: "Toplu E-Fatura XML'i İndir", icon: Code2 },
   { id: "efatura_pdf", label: "Toplu E-Fatura PDF İndir", icon: FileText },
   { id: "invoice_link", label: "Toplu Fatura Linki gönder", icon: Link2 },
   { id: "refresh", label: "Siparişlerin Güncel Durumlarını Getir", icon: RefreshCw },
-  { id: "navlungo", label: "Toplu Navlungo Kargo Etiketi Yazdır", icon: Truck },
   { id: "cancel", label: "Seçili Siparişleri İptal Et", icon: Trash2 },
 ];
+
+/** Menüdeki her aksiyon id'si — handler bu kümede olmalı. */
+export const ORDER_BULK_ACTION_IDS = ORDER_BULK_ACTIONS.map((a) => a.id);
+
+/**
+ * Handler yönlendirmesi (OrdersB2BPage.bulk ile senkron).
+ * modal_einvoice → BulkEInvoiceConfirm + ElektronikFaturaOnay
+ * loop → seçili satırlarda API döngüsü
+ * immediate → tek adımlı yazdır/indir/prompt
+ */
+export const ORDER_BULK_HANDLER_KIND = {
+  refresh: "immediate",
+  einvoice_create: "modal_einvoice",
+  einvoice_send: "modal_einvoice",
+  cargo_label: "immediate",
+  cargo_label_alt: "immediate",
+  labels: "immediate",
+  thermal: "immediate",
+  cargo_mini: "immediate",
+  cargo_10x10: "immediate",
+  hepsijet: "immediate",
+  einvoice_print: "immediate",
+  invoice_print: "immediate",
+  mini_10x15: "immediate",
+  mini_8x20: "immediate",
+  xml: "immediate",
+  efatura_pdf: "immediate",
+  delete: "immediate",
+  invoice_date: "immediate",
+  invoice_link: "immediate",
+  invoice: "loop",
+  invoice_create: "loop",
+  approve: "loop",
+  kargola: "loop",
+  cargo_create: "loop", // eski id — kargola ile aynı
+  cancel: "loop",
+};
+
+export function orderBulkHandlerKind(actionId) {
+  return ORDER_BULK_HANDLER_KIND[actionId] || null;
+}
 
 export const bulkActionNeedsSelection = (id) => id !== "refresh";
 
