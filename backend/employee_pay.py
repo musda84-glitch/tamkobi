@@ -27,6 +27,65 @@ def today_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _amt(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v if v is not None and v != "" else default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def extra_advance_due(
+    bonuses: Optional[List[dict]],
+    payrolls: Optional[List[dict]],
+    *,
+    counts_as_advance,
+) -> float:
+    """Açık avans / borç tutarı — kalan alacaktan düşülür (eksi bakiyeye izin).
+
+    Dönem filtresi yok: gelecek dönem için erken ödenen avans da hemen borç yazar.
+    Bordrodaki `advance_payment` (ödenen + bekleyen) mahsup edilir; böylece
+    hakediş/bordro avansı bağladığında çift sayım olmaz.
+    """
+    advances = round(
+        sum(_amt(b.get("amount")) for b in (bonuses or []) if counts_as_advance(b)),
+        2,
+    )
+    recovered = round(
+        sum(
+            _amt(p.get("advance_payment"))
+            for p in (payrolls or [])
+            if p.get("status") != "rejected"
+        ),
+        2,
+    )
+    return round(max(0.0, advances - recovered), 2)
+
+
+def compose_remaining(
+    *,
+    unpaid_payroll: float = 0,
+    unpaid_expenses: float = 0,
+    meal_due: float = 0,
+    transport_due: float = 0,
+    bonus_pending: float = 0,
+    overtime_due: float = 0,
+    extra_advance: float = 0,
+    bakiye_paid: float = 0,
+) -> float:
+    """Kalan alacak: hak edişler − açık avans/bakiye ödemesi."""
+    return round(
+        unpaid_payroll
+        + unpaid_expenses
+        + meal_due
+        + transport_due
+        + bonus_pending
+        + overtime_due
+        - extra_advance
+        - bakiye_paid,
+        2,
+    )
+
+
 def prepare_employee_pay(doc: Dict[str, Any], *, fill_start: bool = False) -> Dict[str, Any]:
     """pay_start_date / pay_day / pay_recurring doğrula."""
     out = dict(doc)

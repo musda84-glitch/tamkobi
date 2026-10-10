@@ -11540,7 +11540,9 @@ async def create_bonus(req: Dict[str, Any]):
         account_name, status_val = acc.get("account_name"), "paid"
     doc = {"_id": bonus_id, "company_id": emp["company_id"], "employee_id": emp["_id"], "employee_name": emp["full_name"], "type": b_type, "type_label": labels[b_type],
            "period": period, "amount": amount, "note": req.get("note", ""), "is_official": False, "account_id": account_id, "partner_id": partner_id, "account_name": account_name,
-           "status": status_val, "created_at": datetime.now(timezone.utc).isoformat()}
+           "status": status_val, "date": today, "created_at": datetime.now(timezone.utc).isoformat()}
+    if status_val == "paid":
+        doc["paid_at"] = today
     if req.get("worked_days") not in (None, ""):
         try:
             doc["worked_days"] = max(0, int(float(req.get("worked_days"))))
@@ -11599,7 +11601,7 @@ async def update_bonus(bonus_id: str, req: Dict[str, Any]):
     period = upd.get("period") or rec.get("period")
     if partner_id:
         pname = await partner_pay.withdraw(db, emp["company_id"], partner_id, amount, f"{emp['full_name']} - {period} {label}", today, extra={"bonus_id": bonus_id})
-        upd.update({"partner_id": partner_id, "account_id": None, "account_name": f"{pname} (Ortak)", "status": "paid"})
+        upd.update({"partner_id": partner_id, "account_id": None, "account_name": f"{pname} (Ortak)", "status": "paid", "date": today, "paid_at": today})
     elif account_id:
         acc = await db.bank_accounts.find_one({"_id": account_id})
         if not acc:
@@ -11610,7 +11612,7 @@ async def update_bonus(bonus_id: str, req: Dict[str, Any]):
                                                "type": "outflow", "category": f"Personel {label} (Gayri Resmi)", "amount": amount, "currency": "TRY",
                                                "description": f"{emp['full_name']} - {period} {label}", "source": "manual",
                                                "date": today, "created_at": datetime.now(timezone.utc).isoformat()})
-        upd.update({"account_id": account_id, "partner_id": None, "account_name": acc.get("account_name"), "status": "paid"})
+        upd.update({"account_id": account_id, "partner_id": None, "account_name": acc.get("account_name"), "status": "paid", "date": today, "paid_at": today})
     await db.bonus_payments.update_one({"_id": bonus_id}, {"$set": upd})
     return clean_doc(await db.bonus_payments.find_one({"_id": bonus_id}))
 
@@ -17447,9 +17449,9 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
     meal_due = employee_pay.entitlement_allowance_due(emp, meal, MEAL_CAT, expenses, month)
     transport_due = employee_pay.entitlement_allowance_due(emp, transport, TRANSPORT_CAT, expenses, month)
     bonus_pending = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") not in ("advance", "borc", "bakiye", "overtime") and b.get("status") != "paid"), 2)
-    payroll_adv = round(sum(_emp_num(p.get("advance_payment")) for p in payrolls if p.get("status") != "paid"), 2)
-    advances = round(sum(_emp_num(b.get("amount")) for b in bonuses if attendance.bonus_counts_as_advance(b) and str(b.get("period") or "").startswith(month)), 2)
-    extra_advance = round(max(0.0, advances - payroll_adv), 2)
+    extra_advance = employee_pay.extra_advance_due(
+        bonuses, payrolls, counts_as_advance=attendance.bonus_counts_as_advance,
+    )
     bakiye_paid = round(sum(_emp_num(b.get("amount")) for b in bonuses if b.get("type") == "bakiye" and b.get("status") != "rejected"), 2)
     if unpaid_payroll <= 0.004 and emp.get("pay_start_date") and str(emp.get("pay_type") or "monthly") != "daily":
         month_paid = any(str(p.get("period") or "") == month and p.get("status") == "paid" for p in payrolls)
@@ -17472,11 +17474,16 @@ async def _employee_receivable(emp: dict, payrolls: list, bonuses: list, month: 
         if str(p.get("period") or "").startswith(month) and p.get("status") != "rejected"
     ), 2)
     overtime_due = round(max(0.0, ot_earned - ot_paid - ot_in_payroll), 2)
-    # Mesai hesaplanınca alacağa yazılır; avans/erken ödeme kalanı eksiye çekebilir.
-    remaining = round(
-        unpaid_payroll + unpaid_expenses + meal_due + transport_due + bonus_pending + overtime_due
-        - extra_advance - bakiye_paid,
-        2,
+    # Mesai/hakediş alacağa yazılır; avans erken ödendiyse kalan eksiye (borçlu) düşebilir.
+    remaining = employee_pay.compose_remaining(
+        unpaid_payroll=unpaid_payroll,
+        unpaid_expenses=unpaid_expenses,
+        meal_due=meal_due,
+        transport_due=transport_due,
+        bonus_pending=bonus_pending,
+        overtime_due=overtime_due,
+        extra_advance=extra_advance,
+        bakiye_paid=bakiye_paid,
     )
     return {
         "remaining": remaining, "unpaid_payroll": unpaid_payroll, "unpaid_expenses": unpaid_expenses,
