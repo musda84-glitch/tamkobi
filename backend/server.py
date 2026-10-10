@@ -9786,10 +9786,13 @@ async def sync_bank_connection(conn_id: str, request: Request, days: int = 7):
         raise HTTPException(status_code=502, detail=msg)
 
     def _generic_bank_desc(s: Optional[str]) -> bool:
-        t = (s or "").strip().casefold()
-        return (not t) or t in {
-            "banka hareketi", "gelen havale/eft", "giden ödeme", "giden odeme", "gelen", "giden",
-        }
+        try:
+            return bank_providers.is_weak_bank_desc(s or "")
+        except Exception:
+            t = (s or "").strip().casefold()
+            return (not t) or t in {
+                "banka hareketi", "gelen havale/eft", "giden ödeme", "giden odeme", "gelen", "giden", "gelen eft",
+            }
 
     inserted, skipped, balance_delta = 0, 0, 0.0
     new_txs = []
