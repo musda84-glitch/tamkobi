@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Eye, EyeOff, ImagePlus, X } from "lucide-react";
-import { photoFaded } from "../utils/assignedDuty";
+import { photoFaded, photoVisibility } from "../utils/assignedDuty";
 import { API_URL } from "../context/AuthContext";
 import { compressImageFile } from "../utils/compressImage";
 import { HoverImageThumb } from "../utils/HoverImageThumb";
@@ -52,9 +52,9 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
       onUpdated?.();
     } catch (err) {
       const status = err.response?.status;
-      const raw = err.response?.data;
-      const detail = typeof raw === "string" ? "" : raw?.detail;
-      const tooBig = status === 413 || (typeof raw === "string" && raw.includes("413"));
+      const rawBody = err.response?.data;
+      const detail = typeof rawBody === "string" ? "" : rawBody?.detail;
+      const tooBig = status === 413 || (typeof rawBody === "string" && rawBody.includes("413"));
       toast.error(tooBig ? "Fotoğraf çok büyük. Daha küçük bir görsel seçin." : (detail || "Yüklenemedi."));
     } finally {
       setBusy("");
@@ -87,7 +87,10 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
   return (
     <div className="space-y-1.5 border border-slate-200 rounded-xl p-2 bg-slate-50/70" data-testid={`project-stage-photos-${number}`}>
       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Aşama fotoğrafları</div>
-      <p className="text-[10px] text-slate-400 leading-snug">Personel yükleri silik durur. Fotoğrafa basılı tutun (veya üzerine gelin): <b>göz</b> görsün, <b>üstü çizili göz</b> görmesin.</p>
+      <p className="text-[10px] text-slate-400 leading-snug">
+        Fotoğrafın üzerine gelince önizleme açılır; tıklayınca büyütülür.
+        Alttaki <b>göz</b> / <b>üstü çizili göz</b> müşteri görünürlüğünü ayarlar; silik foto müşteriye kapalıdır.
+      </p>
       {(() => {
         const current = (stages || []).find((s) => s.key === project.status) || (stages || [])[0];
         if (!current) return null;
@@ -103,29 +106,55 @@ export function ProjectStagePhotos({ project, stages, onUpdated }) {
           ? [...(byStage.other || []), ...loose.map((url) => ({ url, loose: true }))]
           : (byStage[stage.key] || []);
         return (
-          <div key={stage.key} className="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-1.5" data-testid={`project-stage-row-${number}-${stage.key}`}>
+          <div key={stage.key} className="grid grid-cols-[8rem_minmax(0,1fr)] items-start gap-1.5" data-testid={`project-stage-row-${number}-${stage.key}`}>
             <span title={stage.label} className={`h-10 flex items-center whitespace-nowrap text-[10px] font-semibold px-1.5 rounded ${stage.key === project.status ? "bg-emerald-100 text-emerald-800" : "bg-white text-slate-500 border border-slate-200"}`}>{stage.label}</span>
-            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-            {items.map((item) => (
-              <span key={item.url} className="relative inline-flex group">
-                <HoverImageThumb src={item.url} className={`w-10 h-10 rounded-lg object-cover border bg-white ${photoFaded(item) ? "opacity-35" : ""}`} testId={`project-stage-thumb-${number}`} />
-                <button type="button" onClick={() => remove(item.url)} className="absolute -top-1 -right-1 bg-white border border-slate-200 rounded-full p-0.5 text-slate-400 hover:text-rose-600" title="Kaldır" data-testid={`project-stage-remove-${number}`}>
-                  <X className="w-2.5 h-2.5" />
-                </button>
-                <div className="absolute inset-0 rounded-lg bg-slate-900/55 hidden group-hover:flex group-focus-within:flex items-center justify-center gap-1">
-                  <button type="button" onClick={() => setVisibility(item.url, true)} title="Görsün" className="w-5 h-5 rounded-full bg-white text-emerald-700 flex items-center justify-center" data-testid={`project-stage-show-${number}`}>
-                    <Eye className="w-3 h-3" />
-                  </button>
-                  <button type="button" onClick={() => setVisibility(item.url, false)} title="Görmesin" className="w-5 h-5 rounded-full bg-white text-rose-600 flex items-center justify-center" data-testid={`project-stage-hide-${number}`}>
-                    <EyeOff className="w-3 h-3" />
-                  </button>
-                </div>
-              </span>
-            ))}
-            <label className={`w-10 h-10 rounded-lg border-2 border-dashed flex items-center justify-center cursor-pointer shrink-0 ${busy === stage.key ? "opacity-50 border-slate-200" : "border-slate-300 hover:border-emerald-500 text-slate-400 bg-white"}`} title={`${stage.label} aşamasına fotoğraf yükle`}>
-              {busy === stage.key ? <span className="text-[9px]">…</span> : <ImagePlus className="w-4 h-4" />}
-              <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" capture="environment" className="hidden" disabled={!!busy} onChange={(e) => upload(stage, e)} data-testid={`project-stage-upload-${number}-${stage.key}`} />
-            </label>
+            <div className="flex items-start gap-1.5 flex-wrap min-w-0">
+              {items.map((item) => {
+                const vis = photoVisibility(item);
+                return (
+                  <span key={item.url} className="inline-flex flex-col items-center gap-0.5 w-10">
+                    <HoverImageThumb
+                      src={item.url}
+                      className={`w-10 h-10 rounded-lg object-cover border bg-white ${photoFaded(item) ? "opacity-35" : ""}`}
+                      testId={`project-stage-thumb-${number}`}
+                    />
+                    {/* Kontroller thumbnail dışında — hover önizlemeyi engellemez */}
+                    <div className="flex items-center justify-center gap-0.5" data-testid={`project-stage-vis-${number}`}>
+                      <button
+                        type="button"
+                        onClick={() => setVisibility(item.url, true)}
+                        title="Müşteri görsün"
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${vis === "show" ? "bg-emerald-50 border-emerald-300 text-emerald-700" : "bg-white border-slate-200 text-slate-400 hover:text-emerald-700"}`}
+                        data-testid={`project-stage-show-${number}`}
+                      >
+                        <Eye className="w-2.5 h-2.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVisibility(item.url, false)}
+                        title="Müşteri görmesin"
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center ${vis === "hide" || vis === "pending" ? "bg-rose-50 border-rose-300 text-rose-600" : "bg-white border-slate-200 text-slate-400 hover:text-rose-600"}`}
+                        data-testid={`project-stage-hide-${number}`}
+                      >
+                        <EyeOff className="w-2.5 h-2.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => remove(item.url)}
+                        title="Kaldır"
+                        className="w-4 h-4 rounded-full border border-slate-200 bg-white text-slate-400 hover:text-rose-600 flex items-center justify-center"
+                        data-testid={`project-stage-remove-${number}`}
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  </span>
+                );
+              })}
+              <label className={`w-10 h-10 rounded-lg border-2 border-dashed flex items-center justify-center cursor-pointer shrink-0 ${busy === stage.key ? "opacity-50 border-slate-200" : "border-slate-300 hover:border-emerald-500 text-slate-400 bg-white"}`} title={`${stage.label} aşamasına fotoğraf yükle`}>
+                {busy === stage.key ? <span className="text-[9px]">…</span> : <ImagePlus className="w-4 h-4" />}
+                <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" capture="environment" className="hidden" disabled={!!busy} onChange={(e) => upload(stage, e)} data-testid={`project-stage-upload-${number}-${stage.key}`} />
+              </label>
             </div>
           </div>
         );
