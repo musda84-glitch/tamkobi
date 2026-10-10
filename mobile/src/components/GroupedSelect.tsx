@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { createElement, useMemo, useState } from "react";
-import { Platform, Pressable, Text, TextInput, View } from "react-native";
+import { Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { colors, radius, spacing } from "../theme";
 import { trUpper } from "../utils/labels";
 import { Muted } from "./kit";
@@ -134,7 +134,7 @@ function SearchableGroupedSelect({
               </Pressable>
             ) : null}
           </View>
-          <View style={{ maxHeight: 260 }}>
+          <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={{ maxHeight: 260 }}>
             {emptyLabel != null && !q ? (
               <Pressable onPress={() => { onChange(""); close(); }} style={{ padding: 12 }}>
                 <Text style={{ fontWeight: "700", color: colors.muted }}>{emptyLabel}</Text>
@@ -157,7 +157,7 @@ function SearchableGroupedSelect({
                 ))}
               </View>
             ))}
-          </View>
+          </ScrollView>
         </View>
       ) : null}
     </View>
