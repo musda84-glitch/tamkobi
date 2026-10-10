@@ -34,6 +34,7 @@ import { WITHHOLDING_OPTIONS } from "../utils/invoiceWithholding";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 import { InvoiceGibBar } from "../components/InvoiceGibBar";
 import { isEinvoiceConfigured, supportsEDispatch } from "../utils/einvoiceIntegrator";
+import { einvoiceInboxSyncParams } from "../utils/einvoiceInboxPull";
 import { findRetailContact, invoiceFormPatchForRetail, retailContactCreatePayload } from "../utils/barcodeSale";
 import { paymentAskMessage, shouldAskPaymentAfterSave } from "../utils/invoiceAskPayment";
 
@@ -335,8 +336,11 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
     if (!cid) { toast.error("Firma seçin."); return; }
     setGibBusy("pull");
     try {
-      const r = await axios.post(`${API_URL}/einvoice/incoming/sync`, null, { params: { company_id: cid, days: 14 } });
-      toast.success(r.data?.message || "Gelen GİB kutusu çekildi.");
+      const r = await axios.post(`${API_URL}/einvoice/incoming/sync`, null, {
+        params: einvoiceInboxSyncParams(cid),
+        timeout: 180000,
+      });
+      toast.success(r.data?.message || "Gelen GİB kutusu (son 30 gün) çekildi.");
       navigate("/edoc-inbox");
     } catch (err) {
       toast.error(err.response?.data?.detail || "Gelen kutu çekilemedi.");
