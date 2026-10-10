@@ -25,6 +25,17 @@ describe("bankMatchLabel", () => {
       description: "Havale · Mustafa Bal",
       contact_name: "Mustafa Bal",
     })).toBe("Havale · Mustafa Bal");
+    expect(txDescriptionLabel({
+      description: "Gelen EFT",
+      counterparty: "MUSTAFA BAL",
+      type: "inflow",
+      external_id: "1890005877722151",
+    })).toBe("MUSTAFA BAL");
+    expect(txDescriptionLabel({
+      description: "Gelen · ref 1890005877722151",
+      counterparty: "ACME A.Ş.",
+      type: "inflow",
+    })).toBe("ACME A.Ş.");
   });
 
   it("shows contact, then actor who matched", () => {

@@ -91,3 +91,21 @@ def test_normalize_scans_unknown_narrative_field():
     assert "MUSTAFA BAL" in rows[0]["description"]
     assert rows[0]["description"] != "Banka Hareketi"
     assert "Giden ödeme" not in rows[0]["description"] or "MUSTAFA" in rows[0]["description"]
+
+
+def test_weak_gelen_eft_becomes_tip_with_counterparty():
+    rows = bp._normalize_tx_rows({
+        "value": {
+            "accountActivities": [{
+                "date": "2026-10-09",
+                "description": "Gelen EFT",
+                "amount": 100,
+                "transactionReference": "R1",
+                "senderName": "ACME LOJISTIK A.S.",
+                "fxCode": "TRY",
+            }],
+        },
+    })
+    assert rows[0]["counterparty"] == "ACME LOJISTIK A.S."
+    assert "ACME" in rows[0]["description"]
+    assert "Gelen EFT" != rows[0]["description"] or "ACME" in rows[0]["description"]

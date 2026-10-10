@@ -1,16 +1,25 @@
 /** Banka hareketi eşleşme rozeti: hedef cari/hesap + işlemi yapan kullanıcı. */
 
-const GENERIC_DESC = /^(banka\s*hareketi|gelen\s*havale\/?eft|giden\s*ödeme|giden\s*odeme)$/i;
+const GENERIC_DESC = /^(banka\s*hareketi|gelen(\s*havale)?(\s*\/?\s*eft)?|giden(\s*(ödeme|odeme|eft|havale))?|havale(\s*\/?\s*eft)?|eft|fast)(\s*[·•\-]\s*ref\s+\S+)?$/i;
 
 function _clean(s) {
   return String(s || "").trim();
+}
+
+function _isGenericDesc(desc) {
+  const d = _clean(desc);
+  if (!d) return true;
+  if (GENERIC_DESC.test(d)) return true;
+  // "Gelen · ref 189…" / "Gelen havale/EFT · ref …"
+  if (/^(gelen|giden)(\s+\S+){0,3}\s*[·•]\s*ref\s+\S+$/i.test(d)) return true;
+  return false;
 }
 
 /** Liste hücresi: bankadan gelen açıklama / karşı taraf; jenerik "Banka Hareketi" gizlenir. */
 export function txDescriptionLabel(tx) {
   const desc = _clean(tx?.description);
   const cp = _clean(tx?.counterparty);
-  const generic = !desc || GENERIC_DESC.test(desc);
+  const generic = _isGenericDesc(desc);
   const parts = [];
   if (!generic) parts.push(desc);
   if (cp && !parts.some((p) => p.toLocaleLowerCase("tr").includes(cp.toLocaleLowerCase("tr")))) {
@@ -18,7 +27,7 @@ export function txDescriptionLabel(tx) {
   }
   if (!parts.length) {
     const tip = tx?.type === "inflow" ? "Gelen" : tx?.type === "outflow" ? "Giden" : "Hareket";
-    const who = _clean(tx?.suggested_contact_name) || _clean(tx?.contact_name);
+    const who = cp || _clean(tx?.suggested_contact_name) || _clean(tx?.contact_name);
     if (who) parts.push(`${tip} · ${who}`);
     else if (_clean(tx?.external_id)) parts.push(`${tip} · ref ${tx.external_id}`);
     else parts.push(tip);

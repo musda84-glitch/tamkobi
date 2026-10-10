@@ -1824,28 +1824,87 @@ _DESC_KEYS = (
     "description", "explanation", "narrative", "aciklama", "Aciklama", "Açıklama",
     "islemAciklama", "islemAciklamasi", "hareketAciklama", "hareketAciklamasi",
     "accountTransactionExplanation", "transactionExplanation", "transactionDescription",
-    "trxDescription", "detail", "details", "memo", "remittanceInformation",
-    "unstructured", "paymentDetail", "islemOzeti", "ozet",
+    "trxDescription", "transactionCodeDescription", "detail", "details", "memo",
+    "remittanceInformation", "unstructured", "paymentDetail", "islemOzeti", "ozet",
+    "resourceCode",
 )
 _CP_KEYS = (
     "counterpartyName", "senderName", "receiverName", "counterparty", "counterParty",
     "karsiHesapAdi", "karsiTaraf", "karsiHesapUnvan", "gonderenAdi", "aliciAdi",
     "gonderenUnvan", "aliciUnvan", "debtorName", "creditorName", "oppositeName",
     "oppositeAccountName", "ibanHolder", "customerName", "unvan", "title",
+    "senderTitle", "receiverTitle", "gonderen", "alici",
 )
+
+# Kuveyt vb. sıkça yalnızca işlem tipi döner; gönderen adı yok.
+_WEAK_BANK_DESC_RE = re.compile(
+    r"^(?:"
+    r"banka\s*hareketi|"
+    r"gelen(?:\s*havale)?(?:\s*/?\s*eft)?|"
+    r"giden(?:\s*(?:ödeme|odeme|eft|havale))?|"
+    r"havale(?:\s*/?\s*eft)?|"
+    r"eft|"
+    r"fast|"
+    r"gelen\s*havale/?eft|"
+    r"giden\s*ödeme"
+    r")"
+    r"(?:\s*[·•\-]\s*ref\s+\S+)?$",
+    re.I,
+)
+
+
+def is_weak_bank_desc(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return True
+    if _WEAK_BANK_DESC_RE.match(t):
+        return True
+    if re.match(r"^(gelen|giden)(?:\s+\S+){0,2}\s*[·•]\s*ref\s+\S+$", t, re.I):
+        return True
+    return False
+
+
+def extract_counterparty_from_text(text: str) -> str:
+    """Açıklama içinden gönderen/alıcı adı (EFT/havale kalıpları)."""
+    t = (text or "").strip()
+    if not t or is_weak_bank_desc(t):
+        return ""
+    # "MUSTAFA BAL - GELEN EFT" / "GELEN EFT MUSTAFA BAL"
+    cleaned = re.sub(
+        r"\b(gelen|giden|havale|eft|fast|virman|ödeme|odeme|transfer|pos|maas|maaş|ref\.?|referans)\b",
+        " ",
+        t,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"\s*[·•/\-|]+\s*", " ", cleaned)
+    cleaned = re.sub(r"\bref\s*\S+\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -·/.,;")
+    if len(cleaned) < 3:
+        return ""
+    if re.fullmatch(r"[\d\s.,]+", cleaned):
+        return ""
+    if not re.search(r"[A-Za-zÇĞİÖŞÜçğıöşü]{2,}", cleaned):
+        return ""
+    return cleaned[:120]
 
 
 def _tx_counterparty(row: dict) -> str:
     direct = _textish(_ci_get(row, *_CP_KEYS))
-    if direct:
+    if direct and not is_weak_bank_desc(direct):
         return direct
     # Tek seviye iç içe (transactionDetail.senderName vb.)
     for v in row.values():
         if isinstance(v, dict):
             nested = _textish(_ci_get(v, *_CP_KEYS))
-            if nested:
+            if nested and not is_weak_bank_desc(nested):
                 return nested
-    return ""
+    # Açıklama / bilinmeyen alanlardan isim çıkar
+    for key in _DESC_KEYS:
+        name = extract_counterparty_from_text(_textish(_ci_get(row, key)))
+        if name:
+            return name
+    scanned = _tx_narrative_scan(row)
+    return extract_counterparty_from_text(scanned)
 
 
 _SKIP_NARRATIVE_KEYS = frozenset({
@@ -1903,22 +1962,30 @@ def _tx_description(row: dict, *, counterparty: str = "", direction: str = "", e
     parts: List[str] = []
     for key in _DESC_KEYS:
         t = _textish(_ci_get(row, key))
-        if t and t not in parts and _norm_key(t) != _norm_key("Banka Hareketi"):
-            parts.append(t)
+        if not t or t in parts:
+            continue
+        if is_weak_bank_desc(t) and counterparty:
+            continue
+        if _norm_key(t) == _norm_key("Banka Hareketi"):
+            continue
+        parts.append(t)
     if not parts:
         for v in row.values():
             if isinstance(v, dict):
                 for key in _DESC_KEYS:
                     t = _textish(_ci_get(v, key))
-                    if t and t not in parts and _norm_key(t) != _norm_key("Banka Hareketi"):
+                    if t and t not in parts and not is_weak_bank_desc(t):
                         parts.append(t)
                         break
             if parts:
                 break
     if not parts:
         scanned = _tx_narrative_scan(row)
-        if scanned and _norm_key(scanned) != _norm_key(counterparty or ""):
+        if scanned and not is_weak_bank_desc(scanned) and _norm_key(scanned) != _norm_key(counterparty or ""):
             parts.append(scanned)
+    # Zayıf tek parça (yalnız "Gelen EFT") → karşı taraf varsa onu kullan
+    if parts and all(is_weak_bank_desc(p) for p in parts):
+        parts = []
     desc = " · ".join(parts[:2]).strip()
     if desc:
         if counterparty and _norm_key(counterparty) not in _norm_key(desc):
@@ -2127,6 +2194,126 @@ def _normalize_tx_rows(raw: Any) -> List[Dict[str, Any]]:
             "is_simulated": False,
         })
     return txs
+
+
+_KUVEYT_RECEIPT_CP_KEYS = (
+    "gonderen", "gönderen", "gonderen adi", "gönderen adı", "gonderen unvan",
+    "sender", "sender name", "sendername", "debtor", "debtor name",
+    "alici", "alıcı", "alici adi", "alıcı adı", "receiver", "receiver name",
+    "creditor", "karsi taraf", "karşı taraf", "unvan", "title", "isim", "ad soyad",
+)
+
+
+def _kuveyt_parse_receipt_counterparty(data: Any, *, direction: str = "credit") -> str:
+    """Dekont slipList / title içinden gönderen veya alıcı adı."""
+    if not isinstance(data, dict):
+        return ""
+    root = data.get("value") if isinstance(data.get("value"), dict) else data
+    prefer_sender = direction == "credit"
+    prefer = (
+        ("gonderen", "gönderen", "sender", "debtor")
+        if prefer_sender
+        else ("alici", "alıcı", "receiver", "creditor")
+    )
+    slips = root.get("slipList") or root.get("SlipList") or []
+    if not isinstance(slips, list):
+        slips = []
+    best = ""
+    for item in slips:
+        if not isinstance(item, dict):
+            continue
+        key = str(_ci_get(item, "key", "name", "label", "title") or "").strip().lower()
+        val = _textish(_ci_get(item, "value", "text", "description", "val"))
+        if not val or is_weak_bank_desc(val):
+            continue
+        kn = _norm_key(key)
+        if any(_norm_key(p) in kn or kn in _norm_key(p) for p in prefer):
+            return val[:120]
+        if any(_norm_key(p) in kn for p in _KUVEYT_RECEIPT_CP_KEYS) and not best:
+            best = val[:120]
+    # Body satırları (key/value benzeri)
+    for section in ("body", "leftHeader", "rightHeader", "footer"):
+        block = root.get(section)
+        if isinstance(block, list):
+            for item in block:
+                if not isinstance(item, dict):
+                    continue
+                key = str(_ci_get(item, "key", "name", "label") or "").strip().lower()
+                val = _textish(_ci_get(item, "value", "text"))
+                if not val or is_weak_bank_desc(val):
+                    continue
+                kn = _norm_key(key)
+                if any(_norm_key(p) in kn for p in prefer):
+                    return val[:120]
+                if any(_norm_key(p) in kn for p in _KUVEYT_RECEIPT_CP_KEYS) and not best:
+                    best = val[:120]
+    if best:
+        return best
+    title = _textish(_ci_get(root, "title", "description"))
+    extracted = extract_counterparty_from_text(title)
+    return extracted or ("" if is_weak_bank_desc(title) else title[:120])
+
+
+async def _kuveyt_enrich_rows_from_receipts(
+    conn: dict,
+    token: str,
+    rows: List[Dict[str, Any]],
+    *,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    """Açıklaması zayıf hareketler için Dekont V3 ile gönderen/alıcı doldur (abonelik varsa)."""
+    need = [
+        r for r in rows
+        if not (r.get("counterparty") or "").strip() or is_weak_bank_desc(r.get("description") or "")
+    ]
+    if not need:
+        return rows
+    pem = _kuveyt_private_key_pem(conn)
+    if not pem:
+        return rows
+    bases = _kuveyt_gateway_urls(conn)
+    path = "/v3/accounts/transactions/receipts"
+    enriched = 0
+    failures = 0
+    async with httpx.AsyncClient(timeout=httpx.Timeout(25.0, connect=10.0)) as client:
+        for row in need[:limit]:
+            if failures >= 3 and enriched == 0:
+                # Dekont ucu abone değil / yetkisiz — sessizce vazgeç.
+                break
+            ref = str(row.get("external_id") or "").strip()
+            if not ref:
+                continue
+            body = {"transactionReference": ref}
+            raw = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+            got = False
+            for base in bases[:2]:
+                try:
+                    headers = _kuveyt_headers(token, conn, json_body=raw)
+                    resp = await client.post(f"{base.rstrip('/')}{path}", headers=headers, content=raw.encode("utf-8"))
+                    if resp.status_code >= 400:
+                        continue
+                    data = resp.json()
+                    if _kuveyt_business_error(data):
+                        continue
+                    got = True
+                    cp = _kuveyt_parse_receipt_counterparty(data, direction=row.get("direction") or "credit")
+                    if not cp:
+                        break
+                    row["counterparty"] = cp
+                    if is_weak_bank_desc(row.get("description") or ""):
+                        tip = "Gelen" if row.get("direction") == "credit" else "Giden"
+                        row["description"] = f"{tip} · {cp}"[:300]
+                    elif _norm_key(cp) not in _norm_key(row.get("description") or ""):
+                        row["description"] = f"{row.get('description')} · {cp}"[:300]
+                    enriched += 1
+                    break
+                except Exception as e:
+                    logger.debug("Kuveyt dekont zenginleştirme atlandı (%s): %s", ref[:24], _err_text(e)[:120])
+            if not got:
+                failures += 1
+    if enriched:
+        logger.info("Kuveyt dekont: %s harekette gönderen/alıcı dolduruldu", enriched)
+    return rows
 
 
 def _extract_balance(raw: Any, prefer_iban: str = "") -> Optional[float]:
@@ -3098,6 +3285,10 @@ async def _fetch_kuveyt_transactions(conn: dict, since: datetime) -> Dict[str, A
                         balance = bal
                     rows = _normalize_tx_rows(data)
                     if rows:
+                        try:
+                            rows = await _kuveyt_enrich_rows_from_receipts(conn, token, rows)
+                        except Exception as e:
+                            logger.warning("Kuveyt dekont zenginleştirme atlandı: %s", _err_text(e)[:160])
                         return {"transactions": rows, "balance": balance, "access_token": None}
                     saw_ok_empty = True
                     if not params:

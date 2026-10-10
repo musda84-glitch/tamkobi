@@ -308,11 +308,53 @@ def test_normalize_kuveyt_account_transactions_v3_envelope():
     assert len(rows) == 1
     assert rows[0]["external_id"] == "KT-REF-1"
     assert rows[0]["amount"] == 150.25
-    assert rows[0]["description"] == "Gelen EFT"
+    # Yalnız "Gelen EFT" zayıf; gönderen yoksa ref ile gösterilir
+    assert "Gelen" in rows[0]["description"]
+    assert "KT-REF-1" in rows[0]["description"] or rows[0]["description"] == "Gelen EFT"
     assert rows[0]["date"] == "2025-08-01"
     assert rows[0]["currency"] == "TRY"
     assert bp._extract_balance(payload) == 8800.5
     assert bp._has_explicit_empty_tx_list({"success": True, "value": {"accountActivities": []}}) is True
+
+
+def test_normalize_kuveyt_description_with_sender_name():
+    rows = bp._normalize_tx_rows({
+        "value": {
+            "accountActivities": [{
+                "date": "2026-10-09",
+                "description": "MUSTAFA BAL GELEN EFT",
+                "amount": 260,
+                "transactionReference": "1890005877722151",
+                "fxCode": "TRY",
+            }],
+        },
+    })
+    assert rows[0]["counterparty"] == "MUSTAFA BAL"
+    assert "MUSTAFA BAL" in rows[0]["description"]
+    assert "1890005877722151" not in rows[0]["description"] or "MUSTAFA" in rows[0]["description"]
+
+
+def test_kuveyt_parse_receipt_slip_sender():
+    data = {
+        "success": True,
+        "value": {
+            "title": "Havale Dekontu",
+            "description": "Gelen EFT",
+            "slipList": [
+                {"key": "Gönderen", "value": "MUSTAFA BAL"},
+                {"key": "Tutar", "value": "260,00"},
+            ],
+        },
+    }
+    assert bp._kuveyt_parse_receipt_counterparty(data, direction="credit") == "MUSTAFA BAL"
+
+
+def test_is_weak_bank_desc():
+    assert bp.is_weak_bank_desc("Gelen EFT")
+    assert bp.is_weak_bank_desc("Gelen havale/EFT · ref 189")
+    assert bp.is_weak_bank_desc("Banka Hareketi")
+    assert not bp.is_weak_bank_desc("MUSTAFA BAL GELEN EFT")
+    assert bp.extract_counterparty_from_text("MUSTAFA BAL - GELEN EFT") == "MUSTAFA BAL"
 
 
 def test_has_credentials_kuveyt_client_pair():
@@ -842,9 +884,20 @@ def test_fetch_kuveyt_signed_transactions():
         "currentBalance": 8800.5,
     }
 
+    receipt_miss = MagicMock()
+    receipt_miss.status_code = 404
+    receipt_miss.text = "not found"
+    receipt_miss.json.return_value = {"message": "not found"}
+
+    async def _post_side_effect(*args, **kwargs):
+        url = args[0] if args else ""
+        if "receipts" in str(url):
+            return receipt_miss
+        return token_resp
+
     mock_client = AsyncMock()
     mock_client.cookies = MagicMock()
-    mock_client.post = AsyncMock(return_value=token_resp)
+    mock_client.post = AsyncMock(side_effect=_post_side_effect)
     mock_client.get = AsyncMock(side_effect=[tx_resp])
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -859,8 +912,8 @@ def test_fetch_kuveyt_signed_transactions():
     assert out["transactions"][0]["amount"] == 150.25
     assert out["balance"] == 8800.5
     # Token: hesap hareketi CC scope=accounts önce
-    post_kwargs = mock_client.post.await_args.kwargs
-    assert post_kwargs["data"].get("scope") == "accounts"
+    token_posts = [c for c in mock_client.post.await_args_list if (c.kwargs or {}).get("data")]
+    assert token_posts[0].kwargs["data"].get("scope") == "accounts"
     get_calls = mock_client.get.await_args_list
     tx_url = get_calls[0].args[0]
     assert tx_url == "https://gateway.kuveytturk.com.tr/v3/accounts/6/transactions"
@@ -899,9 +952,20 @@ def test_fetch_kuveyt_invalid_scope_retries_next_tx_scope():
         ],
     }
 
+    receipt_miss = MagicMock()
+    receipt_miss.status_code = 404
+    receipt_miss.text = "not found"
+    receipt_miss.json.return_value = {"message": "not found"}
+
+    async def _post_side_effect(*args, **kwargs):
+        url = args[0] if args else ""
+        if "receipts" in str(url):
+            return receipt_miss
+        return token_resp
+
     mock_client = AsyncMock()
     mock_client.cookies = MagicMock()
-    mock_client.post = AsyncMock(return_value=token_resp)
+    mock_client.post = AsyncMock(side_effect=_post_side_effect)
     mock_client.get = AsyncMock(side_effect=[denied, ok])
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -912,10 +976,14 @@ def test_fetch_kuveyt_invalid_scope_retries_next_tx_scope():
 
     out = asyncio.run(_run())
     assert out["transactions"][0]["external_id"] == "R1"
-    scopes = [c.kwargs["data"].get("scope") for c in mock_client.post.await_args_list]
+    scopes = [
+        c.kwargs["data"].get("scope")
+        for c in mock_client.post.await_args_list
+        if (c.kwargs or {}).get("data")
+    ]
     assert scopes[0] == "accounts"
     assert "accounts" in scopes
-    assert mock_client.post.call_count >= 2
+    assert len(scopes) >= 2
     urls = [c.args[0] for c in mock_client.get.await_args_list]
     assert urls[0] == "https://gateway.kuveytturk.com.tr/v3/accounts/2/transactions"
     assert all("/v3/accounts/2/transactions" in u for u in urls)
