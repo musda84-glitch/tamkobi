@@ -32,6 +32,28 @@ def test_actor_fields_rejects_site_brand_name():
     assert bank_tx._looks_like_site_brand("Ayşe Yılmaz") is False
 
 
+def test_actor_fields_rejects_platform_crm_email():
+    """tamkobi.crm@gmail.com şirket kullanıcısı değil — hareket aktörü olamaz."""
+    assert bank_tx._is_platform_actor_email("tamkobi.crm@gmail.com") is True
+    assert bank_tx._is_platform_actor_email("destek@tamkobi.com") is True
+    assert bank_tx._is_platform_actor_email("mustafa@matek.com") is False
+    fields = bank_tx.actor_fields({
+        "id": "plat1",
+        "name": "TamKobi",
+        "email": "tamkobi.crm@gmail.com",
+        "is_super_admin": True,
+    })
+    assert fields == {"created_by_id": None, "created_by_name": None}
+    # Süper admin olmasa bile platform e-posta yazılmaz
+    fields2 = bank_tx.actor_fields({
+        "id": "plat2",
+        "name": "tamkobi.com",
+        "email": "tamkobi.crm@gmail.com",
+    })
+    assert fields2["created_by_name"] == "Kullanıcı"
+    assert fields2["created_by_name"] != "tamkobi.crm@gmail.com"
+
+
 def test_stamp_uses_context_actor():
     tok = bank_tx.set_current_actor({"id": "u9", "name": "Mehmet"})
     try:
@@ -64,11 +86,70 @@ def test_stamp_replaces_brand_created_by():
         bank_tx.reset_current_actor(tok)
 
 
+def test_stamp_bank_sync_clears_platform_crm_actor():
+    tok = bank_tx.set_current_actor({
+        "id": "plat1",
+        "name": "TamKobi",
+        "email": "tamkobi.crm@gmail.com",
+        "is_super_admin": True,
+    })
+    try:
+        doc = {
+            "source": "bank_sync",
+            "created_by_name": "tamkobi.crm@gmail.com",
+            "amount": 100,
+        }
+        bank_tx.stamp(doc)
+        assert not doc.get("created_by_name")
+        assert not doc.get("created_by_id")
+    finally:
+        bank_tx.reset_current_actor(tok)
+
+
 def test_stamp_explicit_user_name_on_doc():
     doc = {"user_name": "Ali Veli", "amount": 5}
     bank_tx.stamp(doc)
     assert doc["created_by_name"] == "Ali Veli"
     assert "user_name" not in doc
+
+
+def test_scrub_platform_actors_clears_crm_email():
+    class Coll:
+        def __init__(self):
+            self.docs = [
+                {"_id": "t1", "company_id": "matek", "created_by_name": "tamkobi.crm@gmail.com", "created_by_id": "p1"},
+                {"_id": "t2", "company_id": "matek", "created_by_name": "Mustafa BAL"},
+                {"_id": "t3", "company_id": "matek", "matched_by_name": "destek@tamkobi.com", "matched_by_id": "p2"},
+            ]
+            self.updates = []
+
+        def find(self, q):
+            class Cur:
+                def __init__(self, rows):
+                    self._rows = rows
+
+                async def to_list(self, n):
+                    return self._rows
+
+            # Basit filtre: company_id (motor tarzı sync find → async to_list)
+            return Cur([d for d in self.docs if d.get("company_id") == "matek"])
+
+        async def update_one(self, filt, op):
+            self.updates.append((filt, op))
+            tid = filt["_id"]
+            for d in self.docs:
+                if d["_id"] == tid:
+                    for k in (op.get("$unset") or {}):
+                        d.pop(k, None)
+
+    coll = Coll()
+    db = MagicMock()
+    db.bank_transactions = coll
+    n = _run(bank_tx.scrub_platform_actors(db, "matek"))
+    assert n == 2
+    assert not coll.docs[0].get("created_by_name")
+    assert coll.docs[1].get("created_by_name") == "Mustafa BAL"
+    assert not coll.docs[2].get("matched_by_name")
 
 
 def test_install_wraps_insert_one():

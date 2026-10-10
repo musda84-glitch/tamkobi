@@ -9895,6 +9895,12 @@ async def sync_bank_connection(conn_id: str, request: Request, days: int = 7):
             ref_type="bank",
             ref_id=str(acc.get("_id") or ""),
         ))
+    # Platform CRM e-postası şirket hareketine yazılmışsa temizle (Matek vb.)
+    try:
+        import bank_tx as _bank_tx
+        await _bank_tx.scrub_platform_actors(db, doc["company_id"])
+    except Exception:
+        logger.exception("platform actor scrub failed for %s", doc.get("company_id"))
     return {
         "status": "success",
         "simulated": result["simulated"],

@@ -79,4 +79,20 @@ describe("bankMatchLabel", () => {
     expect(txCreatedByLabel({ created_by_name: "tamkobi.com", matched_by_name: "Ali" })).toBe("Ali");
     expect(txCreatedByLabel({ created_by_name: "tamkobi.com", source: "bank_sync" })).toBe("Banka");
   });
+
+  it("hides platform CRM emails that are not company users", () => {
+    expect(sanitizeActorLabel("tamkobi.crm@gmail.com")).toBe("");
+    expect(sanitizeActorLabel("destek@tamkobi.com")).toBe("");
+    expect(sanitizeActorLabel("mustafa@matek.com")).toBe("mustafa@matek.com");
+    expect(txCreatedByLabel({ created_by_name: "tamkobi.crm@gmail.com", source: "bank_sync" })).toBe("Banka");
+    expect(txCreatedByLabel({
+      created_by_name: "tamkobi.crm@gmail.com",
+      matched_by_name: "Mustafa BAL",
+      source: "bank_sync",
+    })).toBe("Mustafa BAL");
+    expect(matchStatusLabel({
+      contact_name: "Mustafa Bal",
+      matched_by_name: "tamkobi.crm@gmail.com",
+    })).toBe("EŞLEŞTİ: Mustafa Bal");
+  });
 });
