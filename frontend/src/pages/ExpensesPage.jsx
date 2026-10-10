@@ -12,14 +12,16 @@ import { BudgetPanel } from "../components/BudgetPanel";
 import { FxPicker, fmtMoney } from "../components/FxPicker";
 import { PaymentTargetSelect, splitPaymentTarget } from "../components/PaymentTargetSelect";
 import { notifyDataChanged, useDataRefresh } from "../utils/dataRefresh";
-import { formatTrAmount } from "../utils/money";
+import { formatTrAmount, fmtDate } from "../utils/money";
+import { expenseListDateLines, fmtDmyTime } from "../utils/dateFormat";
 import { applyExpenseScan, EXPENSE_SCAN_IDLE_HINT, expenseScanHint } from "../utils/expenseScan";
 import { expenseDateRange } from "../utils/expenseDateRange";
 import { backdropDismissProps } from "../utils/modalBackdrop";
 import { useInfiniteRows } from "../hooks/useInfiniteRows";
 const EXP_COLS = [
   { key: "expense_number", label: "Masraf No" },
-  { key: "date", label: "Tarih" },
+  { label: "Tarih", value: (r) => fmtDate(r.date) },
+  { label: "İşlem", value: (r) => fmtDmyTime(r.created_at) },
   { key: "category", label: "Kategori" },
   { key: "description", label: "Açıklama" },
   { key: "contact_name", label: "Tedarikçi" },
@@ -345,15 +347,30 @@ export default function ExpensesPage() {
           <thead className="bg-slate-50 border-b text-slate-500 uppercase font-semibold"><tr><th className="px-4 py-3">Masraf No / Tarih</th><th className="px-4 py-3">Kategori</th><th className="px-4 py-3">Açıklama</th><th className="px-4 py-3">Tedarikçi / Personel / Not</th><th className="px-4 py-3 text-right">Net / KDV</th><th className="px-4 py-3 text-right">Toplam</th><th className="px-4 py-3">Ödeme</th><th className="px-4 py-3 text-center">İşlemler</th></tr></thead>
           <tbody className="divide-y divide-slate-100">
             {rows.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400" data-testid="exp-empty">Bu filtrede masraf yok. "Yeni Masraf" ile ekleyin.</td></tr>}
-            {pagedRows.map((x) => (
-              <tr key={x.id} className="hover:bg-slate-50/70 [content-visibility:auto] [contain-intrinsic-size:auto_48px]" data-testid={`exp-row-${x.expense_number}`}>
-                <td className="px-4 py-2.5"><div className="font-mono font-semibold text-slate-900">{x.expense_number}</div><div className="text-slate-400">{x.date}{x.is_recurring && <span className="ml-1 text-[9px] bg-violet-100 text-violet-700 px-1 rounded" title={`Sonraki: ${x.next_date}`}>AYLIK</span>}</div></td>
+            {pagedRows.map((x) => {
+              const dateLines = expenseListDateLines(x);
+              return (
+              <tr key={x.id} className="hover:bg-slate-50/70 [content-visibility:auto] [contain-intrinsic-size:auto_64px]" data-testid={`exp-row-${x.expense_number}`}>
+                <td className="px-4 py-2.5">
+                  <div className="font-mono font-semibold text-slate-900">{x.expense_number}</div>
+                  <div className="text-slate-500" data-testid={`exp-date-${x.expense_number}`}>
+                    {dateLines.date}
+                    {x.is_recurring && (
+                      <span className="ml-1 text-[9px] bg-violet-100 text-violet-700 px-1 rounded" title={`Sonraki: ${fmtDate(x.next_date)}`}>AYLIK</span>
+                    )}
+                  </div>
+                  {dateLines.txn ? (
+                    <div className="text-[10px] text-slate-400" data-testid={`exp-txn-${x.expense_number}`} title="Kayıt / işlem anı">
+                      {dateLines.txnLabel}: {dateLines.txn}
+                    </div>
+                  ) : null}
+                </td>
                 <td className="px-4 py-2.5"><span className="bg-slate-100 px-2 py-0.5 rounded-md font-semibold">{x.category}</span></td>
                 <td className="px-4 py-2.5 text-slate-800 max-w-[260px]"><div className="truncate" title={x.description}>{x.description}</div>{x.document_no && <div className="text-[10px] text-slate-400">Belge: {x.document_no}</div>}</td>
                 <ExpensePartyCell x={x} />
                 <td className="px-4 py-2.5 text-right text-slate-500">{fmt(x.amount)} <span className="text-[10px]">/ {fmt(x.vat_amount)}</span></td>
                 <td className="px-4 py-2.5 text-right font-bold text-rose-600">{fmtMoney(x.total, x.currency || "TRY")}{(x.currency || "TRY") !== "TRY" && x.local_total != null && <div className="text-[10px] font-normal text-slate-400">{fmtMoney(x.local_total, "TRY")}</div>}</td>
-                <td className="px-4 py-2.5">{x.payment_status === "paid" ? <button onClick={() => unpay(x)} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700" title={`${x.account_name} · ${x.paid_date} — geri almak için tıkla`} data-testid={`exp-paid-${x.expense_number}`}><CheckCircle2 className="w-3 h-3" /> Ödendi</button> : <button onClick={async () => {
+                <td className="px-4 py-2.5">{x.payment_status === "paid" ? <button onClick={() => unpay(x)} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700" title={`${x.account_name} · ${fmtDate(x.paid_date)} — geri almak için tıkla`} data-testid={`exp-paid-${x.expense_number}`}><CheckCircle2 className="w-3 h-3" /> Ödendi</button> : <button onClick={async () => {
                   setPayFor(x);
                   try {
                     const r = await axios.get(`${API_URL}/banking/accounts?company_id=${companyId}`);
@@ -370,7 +387,8 @@ export default function ExpensesPage() {
                   <button onClick={() => del(x)} className="p-1.5 text-slate-500 hover:text-rose-600" title="Sil" data-testid={`exp-del-${x.expense_number}`}><Trash2 className="w-3.5 h-3.5" /></button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         {expensesHasMore && (

@@ -1,4 +1,4 @@
-import { dateSortKey, fmtDmy } from "./dateFormat";
+import { dateSortKey, expenseListDateLines, fmtDmy, fmtDmyTime } from "./dateFormat";
 import { fmtDate } from "./money";
 
 describe("fmtDmy", () => {
@@ -13,6 +13,32 @@ describe("fmtDmy", () => {
     expect(fmtDmy("22.09.2026")).toBe("22.09.2026");
     expect(fmtDmy("2.9.2026")).toBe("02.09.2026");
     expect(fmtDmy("22/09/2026")).toBe("22.09.2026");
+  });
+});
+
+describe("fmtDmyTime", () => {
+  it("formats ISO datetime with local clock", () => {
+    expect(fmtDmyTime("2026-10-26")).toBe("26.10.2026");
+    expect(fmtDmyTime("")).toBe("");
+    // Sabit offset: yerel saate çevrilir; gün + HH:mm formu korunur
+    const out = fmtDmyTime("2026-10-26T14:05:00+03:00");
+    expect(out).toMatch(/^\d{2}\.\d{2}\.2026 \d{2}:\d{2}$/);
+  });
+});
+
+describe("expenseListDateLines", () => {
+  it("shows belge tarihi dmy and işlem with time", () => {
+    const lines = expenseListDateLines({
+      date: "2026-10-26",
+      created_at: "2026-10-26T14:05:00+03:00",
+    });
+    expect(lines.date).toBe("26.10.2026");
+    expect(lines.txn).toMatch(/\d{2}\.\d{2}\.2026 \d{2}:\d{2}/);
+    expect(lines.txnLabel).toBe("İşlem");
+  });
+
+  it("omits txn when created_at missing", () => {
+    expect(expenseListDateLines({ date: "2026-10-26" }).txn).toBe("");
   });
 });
 
