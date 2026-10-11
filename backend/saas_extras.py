@@ -243,10 +243,14 @@ async def paytr_conf() -> Dict[str, Any]:
     return {"merchant_id": p.get("merchant_id", ""), "merchant_key": comm_service.decrypt(p["merchant_key_enc"]) if p.get("merchant_key_enc") else "", "merchant_salt": comm_service.decrypt(p["merchant_salt_enc"]) if p.get("merchant_salt_enc") else "", "test_mode": "1" if p.get("test_mode", True) else "0", "enabled": bool(p.get("enabled")), "max_installment": str(p.get("max_installment", 0) or 0)}
 
 
-@router.get("/system/paytr")
-async def get_paytr(_: dict = Depends(saas.require_super_admin)):
+async def _paytr_public() -> Dict[str, Any]:
     st = await saas_billing.settings(); p = st.get("paytr") or {}
     return {"enabled": bool(p.get("enabled")), "merchant_id": p.get("merchant_id", ""), "has_key": bool(p.get("merchant_key_enc")), "has_salt": bool(p.get("merchant_salt_enc")), "test_mode": p.get("test_mode", True), "max_installment": p.get("max_installment", 0), "last_test": p.get("last_test")}
+
+
+@router.get("/system/paytr")
+async def get_paytr(_: dict = Depends(saas.require_super_admin)):
+    return await _paytr_public()
 
 
 @router.put("/system/paytr")
@@ -266,7 +270,7 @@ async def put_paytr(req: Dict[str, Any], _: dict = Depends(saas.require_super_ad
     if p.get("enabled") and not (p.get("merchant_id") and p.get("merchant_key_enc") and p.get("merchant_salt_enc")):
         raise HTTPException(status_code=400, detail="PayTR'ı aktif etmek için merchant_id, merchant_key ve merchant_salt gerekli.")
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"paytr": p, "updated_at": _now()}}, upsert=True)
-    return await get_paytr(_)
+    return await _paytr_public()
 
 
 @router.post("/system/paytr/test")
@@ -382,11 +386,15 @@ def _ai_key_payload(raw) -> str:
     return key
 
 
-@router.get("/system/ai")
-async def get_system_ai(_: dict = Depends(saas.require_super_admin)):
+async def _system_ai_public() -> Dict[str, Any]:
     import ai_service
     cfg = await ai_service.load_ai_settings()
     return _ai_public(cfg)
+
+
+@router.get("/system/ai")
+async def get_system_ai(_: dict = Depends(saas.require_super_admin)):
+    return await _system_ai_public()
 
 
 @router.put("/system/ai")
@@ -434,7 +442,7 @@ async def put_system_ai(req: Dict[str, Any], _: dict = Depends(saas.require_supe
     if cur.get("last_test"):
         stored["last_test"] = cur["last_test"]
     await _db.platform_settings.update_one({"_id": "platform"}, {"$set": {"ai": stored, "updated_at": _now()}}, upsert=True)
-    return await get_system_ai(_)
+    return await _system_ai_public()
 
 
 @router.post("/system/ai/test")

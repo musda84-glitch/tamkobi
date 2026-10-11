@@ -31,8 +31,8 @@ def test_approve_invoice_marks_order_invoiced_and_applies_effects():
             server, "_apply_invoice_effects", AsyncMock()
         ) as apply, patch.object(
             server, "_post_marketplace_settlement", AsyncMock(return_value=None)
-        ) as settle:
-            out = await server.approve_invoice("inv_1")
+        ) as settle, patch("tenant_access.get_tenant_doc", AsyncMock(return_value=inv)):
+            out = await server.approve_invoice("inv_1", user={"is_super_admin": True})
             assert out["status"] == "success"
             apply.assert_awaited_once()
             settle.assert_awaited_once()

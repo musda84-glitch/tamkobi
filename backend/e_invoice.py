@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
@@ -1189,12 +1189,63 @@ async def api_refresh_einvoice_status(invoice_id: str):
     }
 
 
+async def _require_einvoice_access(request, invoice_id: str, kind: str):
+    from auth_utils import session_token, get_user_from_token
+    import signed_links
+    import tenant_access
+
+    inv = await _db.invoices.find_one({"_id": invoice_id})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    share_t = request.query_params.get("t")
+    # Geçerli t varsa oturuma hiç bakmadan izin (e-fatura → yerel PDF düşüşü için invoices-pdf de kabul)
+    alt = (kind, "invoices-pdf") if kind == "e-invoice-pdf" else (kind,)
+    if share_t and any(signed_links.verify_doc_share_token(invoice_id, k, share_t) for k in alt):
+        return inv, None
+    tok = session_token(request)
+    if tok:
+        user = await get_user_from_token(tok, _db)
+        if not tenant_access.user_may_access_company(user, inv.get("company_id")):
+            raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+        return inv, user
+    raise HTTPException(status_code=401, detail="Giriş yapmanız veya geçerli paylaşım linki gerekli.")
+
+
+@router.get("/e-invoice/{invoice_id}/share-link")
+async def einvoice_share_link(
+    invoice_id: str,
+    request: Request,
+    kind: str = Query("pdf"),
+    ttl_hours: int = Query(2160, ge=1, le=2160),
+):
+    from auth_utils import session_token, get_user_from_token
+    import signed_links
+    import tenant_access
+    import os
+
+    tok = session_token(request)
+    if not tok:
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+    user = await get_user_from_token(tok, _db)
+    await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    ext = "pdf" if kind in ("pdf", "e-invoice-pdf") else "xml" if kind in ("xml", "e-invoice-xml") else None
+    if not ext:
+        raise HTTPException(status_code=400, detail="kind pdf veya xml olmalı.")
+    k = f"e-invoice-{ext}"
+    ttl_sec = int(ttl_hours) * 3600
+    token = signed_links.make_doc_share_token(invoice_id, k, ttl_sec=ttl_sec)
+    st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
+    base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or str(request.base_url)).rstrip("/")
+    url = signed_links.build_doc_share_url(base, f"/api/e-invoice/{invoice_id}/{ext}", token)
+    return {"url": url, "token": token, "expires_in": ttl_sec, "invoice_id": invoice_id, "kind": ext}
+
+
 @router.get("/e-invoice/{invoice_id}/xml")
-async def api_einvoice_xml(invoice_id: str):
+async def api_einvoice_xml(invoice_id: str, request: Request, t: Optional[str] = Query(None)):
+    inv, _user = await _require_einvoice_access(request, invoice_id, "e-invoice-xml")
     try:
         remote = await fetch_integrator_xml(invoice_id)
         if remote:
-            inv = await _db.invoices.find_one({"_id": invoice_id}) or {}
             name = ubl_export.invoice_filename(inv or {"invoice_number": invoice_id}, "xml")
             return Response(
                 remote,
@@ -1218,11 +1269,9 @@ async def api_einvoice_xml(invoice_id: str):
 
 
 @router.get("/e-invoice/{invoice_id}/pdf")
-async def api_einvoice_pdf(invoice_id: str, download: bool = True):
+async def api_einvoice_pdf(invoice_id: str, request: Request, download: bool = True, t: Optional[str] = Query(None)):
     """Sipariş menüsü «E-Fatura PDF İndir» — önce entegratör (İşNet), yoksa yerel PDF."""
-    inv = await _db.invoices.find_one({"_id": invoice_id})
-    if not inv:
-        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    inv, _user = await _require_einvoice_access(request, invoice_id, "e-invoice-pdf")
     disp = "attachment" if download else "inline"
     name = ubl_export.invoice_filename(inv, "pdf")
     try:
@@ -1244,7 +1293,9 @@ async def api_einvoice_pdf(invoice_id: str, download: bool = True):
     # Yerel şablon (entegratör PDF henüz yoksa menü kırılmasın)
     import saas_docs
 
-    return await saas_docs.invoice_pdf(invoice_id, download=download, require_integrator=False)
+    return await saas_docs.invoice_pdf(
+        invoice_id, request=request, download=download, require_integrator=False, t=t
+    )
 
 
 def _is_n11_document_url(url: str) -> bool:

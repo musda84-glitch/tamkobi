@@ -69,9 +69,12 @@ describe("invoicePrintShare", () => {
     expect(whatsappMeUrl("", "x")).toBe("");
   });
 
-  it("builds public invoice PDF url", () => {
+  it("builds public invoice PDF url with optional share token", () => {
     expect(invoicePdfPublicUrl("https://app.example/", "inv-1")).toBe(
       "https://app.example/api/invoices/inv-1/pdf",
+    );
+    expect(invoicePdfPublicUrl("https://app.example/", "inv-1", "123.abc")).toBe(
+      "https://app.example/api/invoices/inv-1/pdf?t=123.abc",
     );
   });
 

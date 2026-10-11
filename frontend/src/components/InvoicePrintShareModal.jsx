@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { Mail, Phone, Printer, X } from "lucide-react";
@@ -9,6 +9,7 @@ import { QuickMessageModal } from "./QuickMessageModal";
 import {
   INVOICE_PRINT_SHARE_NOTE,
   fetchInvoicePdfFile,
+  fetchInvoicePdfShareUrl,
   invoicePdfPublicUrl,
   invoicePrintShareDocFromOrder,
   invoicePrintShareKindLabel,
@@ -45,10 +46,30 @@ export function InvoicePrintShareModal({
     phone,
     email,
   };
-  const pdfUrl = invoicePdfPublicUrl(
-    typeof window !== "undefined" ? window.location.origin : "",
-    order?.invoice_id,
+  const [pdfUrl, setPdfUrl] = useState(() =>
+    invoicePdfPublicUrl(
+      typeof window !== "undefined" ? window.location.origin : "",
+      order?.invoice_id,
+    ),
   );
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!order?.invoice_id) return;
+      try {
+        const url = await fetchInvoicePdfShareUrl(axios, API_URL, order.invoice_id, {
+          origin: typeof window !== "undefined" ? window.location.origin : "",
+        });
+        if (!cancelled && url) setPdfUrl(url);
+      } catch {
+        if (!cancelled) {
+          setPdfUrl("");
+          toast.error("İmzalı fatura linki alınamadı; imzasız link kullanılmaz.");
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [order?.invoice_id]);
   const message = invoicePrintShareMessage(order, { pdfUrl, companyName });
   const subject = invoicePrintShareSubject(order);
 

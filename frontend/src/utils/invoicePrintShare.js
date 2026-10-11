@@ -75,11 +75,31 @@ export function invoicePrintShareMessage(ord, { pdfUrl, companyName } = {}) {
   return lines.join("\n");
 }
 
-export function invoicePdfPublicUrl(origin, invoiceId) {
+/** Public PDF URL. `shareToken` (?t= HMAC) yoksa oturumsuz açılmaz — paylaşım için fetchInvoicePdfShareUrl kullanın. */
+export function invoicePdfPublicUrl(origin, invoiceId, shareToken) {
   const base = String(origin || "").replace(/\/+$/, "");
   const id = String(invoiceId || "").trim();
   if (!base || !id) return "";
-  return `${base}/api/invoices/${id}/pdf`;
+  const url = `${base}/api/invoices/${id}/pdf`;
+  const t = String(shareToken || "").trim();
+  return t ? `${url}?t=${encodeURIComponent(t)}` : url;
+}
+
+/** Oturumlu istek: imzalı paylaşım URL'si (90 gün varsayılan). Başarısızsa hata fırlatır — imzasız link dönmez. */
+export async function fetchInvoicePdfShareUrl(axiosClient, apiUrl, invoiceId, { origin } = {}) {
+  const id = String(invoiceId || "").trim();
+  if (!axiosClient || !apiUrl || !id) throw new Error("Fatura paylaşım linki alınamadı.");
+  const r = await axiosClient.get(`${apiUrl}/invoices/${id}/share-link`, {
+    params: { kind: "pdf" },
+  });
+  const url = r?.data?.url || "";
+  if (url) return url;
+  const token = r?.data?.token || "";
+  if (!token) throw new Error("İmzalı fatura linki alınamadı.");
+  const base = String(origin || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/+$/, "");
+  const built = invoicePdfPublicUrl(base, id, token);
+  if (!built || !built.includes("t=")) throw new Error("İmzalı fatura linki alınamadı.");
+  return built;
 }
 
 /** TR cep → WhatsApp uluslararası (90…). */

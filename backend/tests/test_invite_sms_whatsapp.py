@@ -3,6 +3,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import asyncio
 
 
+def _actor():
+    return {
+        "is_super_admin": True,
+        "company_ids": ["co"],
+        "active_company_id": "co",
+        "role": "admin",
+        "email": "admin@t.com",
+        "name": "Admin",
+    }
+
+
 def test_invite_requires_phone_for_sms():
     import rbac
     from fastapi import HTTPException
@@ -14,15 +25,16 @@ def test_invite_requires_phone_for_sms():
     async def run():
         req = MagicMock()
         req.headers = {"origin": "http://localhost"}
-        try:
-            await rbac.invite_user(
-                {"email": "a@t.com", "role": "sales", "channels": ["sms"], "company_id": "co"},
-                req,
-            )
-            assert False, "expected HTTPException"
-        except HTTPException as e:
-            assert e.status_code == 400
-            assert "telefon" in e.detail.lower()
+        with patch.object(rbac, "_current_user", AsyncMock(return_value=_actor())):
+            try:
+                await rbac.invite_user(
+                    {"email": "a@t.com", "role": "sales", "channels": ["sms"], "company_id": "co"},
+                    req,
+                )
+                assert False, "expected HTTPException"
+            except HTTPException as e:
+                assert e.status_code == 400
+                assert "telefon" in e.detail.lower()
 
     asyncio.run(run())
 
@@ -52,7 +64,9 @@ def test_invite_sends_sms_and_whatsapp_channels():
              patch("saas.check_user_limit", AsyncMock()), \
              patch("server._send_sms_to", AsyncMock(side_effect=fake_sms)), \
              patch("server.wa_send", AsyncMock(side_effect=fake_wa)):
+            # server import may rebind rbac._current_user — set after patches
             rbac._db = db
+            rbac._current_user = AsyncMock(return_value=_actor())
             req = MagicMock()
             req.headers = {"origin": "https://app.test"}
             out = await rbac.invite_user(

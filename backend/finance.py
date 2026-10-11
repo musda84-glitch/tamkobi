@@ -5,21 +5,33 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from bank_guard import assert_manual_allowed
 from ai_service import make_chat
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from card_match import match_statement_contact, sanitize_card_fields
 import expenses as expenses_mod
 import partner_pay
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+_current_user = None
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Finance auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _now():
@@ -257,7 +269,8 @@ async def _insert_statement_line(acc: Dict[str, Any], t: Dict[str, Any]) -> Dict
 
 # ---------------- Loans ----------------
 @router.get("/loans")
-async def list_loans(company_id: str = "comp_nexus_main_01"):
+async def list_loans(company_id: Optional[str] = None, user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, company_id)
     loans = [_clean(x) for x in await _db.loans.find({"company_id": company_id}).sort("start_date", -1).to_list(200)]
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     for l in loans:
@@ -290,8 +303,8 @@ async def extract_loan(file: UploadFile = File(...)):
 
 
 @router.post("/loans")
-async def create_loan(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def create_loan(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     ins = req.get("installments") or []
     if not ins:
         raise HTTPException(status_code=400, detail="Ödeme planı (taksitler) gerekli.")
@@ -317,10 +330,8 @@ async def create_loan(req: Dict[str, Any]):
 
 
 @router.post("/loans/{loan_id}/installments/{no}/pay")
-async def pay_installment(loan_id: str, no: int, req: Dict[str, Any]):
-    loan = await _db.loans.find_one({"_id": loan_id})
-    if not loan:
-        raise HTTPException(status_code=404, detail="Kredi bulunamadı.")
+async def pay_installment(loan_id: str, no: int, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    loan = await tenant_access.get_tenant_doc(_db, "loans", loan_id, user, not_found="Kredi bulunamadı.")
     ins = next((i for i in loan["installments"] if int(i["no"]) == no), None)
     if not ins or ins.get("paid"):
         raise HTTPException(status_code=400, detail="Taksit bulunamadı veya zaten ödendi.")
@@ -359,10 +370,8 @@ async def pay_installment(loan_id: str, no: int, req: Dict[str, Any]):
 
 
 @router.delete("/loans/{loan_id}")
-async def delete_loan(loan_id: str):
-    loan = await _db.loans.find_one({"_id": loan_id})
-    if not loan:
-        raise HTTPException(status_code=404, detail="Kredi bulunamadı.")
+async def delete_loan(loan_id: str, user: dict = Depends(_user_dep)):
+    loan = await tenant_access.get_tenant_doc(_db, "loans", loan_id, user, not_found="Kredi bulunamadı.")
     import trash
     await trash.soft_delete("loans", loan, "loan", loan.get("name") or loan_id, note=f"{loan.get('bank_name') or ''} · {float(loan.get('principal') or loan.get('amount') or 0):,.2f} ₺")
     return {"status": "success", "message": "Kredi çöp kutusuna taşındı."}
@@ -381,10 +390,8 @@ def _normalize_tx_rows(raw_txs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 @router.post("/banking/accounts/{account_id}/import-statement")
-async def import_statement(account_id: str, file: UploadFile = File(...), dry_run: bool = Query(True)):
-    acc = await _db.bank_accounts.find_one({"_id": account_id})
-    if not acc:
-        raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+async def import_statement(account_id: str, file: UploadFile = File(...), dry_run: bool = Query(True), user: dict = Depends(_user_dep)):
+    acc = await tenant_access.get_tenant_doc(_db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
     is_card = _is_card(acc)
     if not is_card:
         await assert_manual_allowed(_db, account_id)
@@ -421,10 +428,8 @@ async def import_statement(account_id: str, file: UploadFile = File(...), dry_ru
 
 
 @router.post("/banking/accounts/{account_id}/import-statement/confirm")
-async def confirm_statement(account_id: str, req: Dict[str, Any]):
-    acc = await _db.bank_accounts.find_one({"_id": account_id})
-    if not acc:
-        raise HTTPException(status_code=404, detail="Hesap bulunamadı.")
+async def confirm_statement(account_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    acc = await tenant_access.get_tenant_doc(_db, "bank_accounts", account_id, user, not_found="Hesap bulunamadı.")
     is_card = _is_card(acc)
     if not is_card:
         await assert_manual_allowed(_db, account_id)

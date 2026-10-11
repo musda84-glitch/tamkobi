@@ -7,18 +7,36 @@ from typing import Optional, Any
 
 JWT_ALGORITHM = "HS256"
 
-_JWT_FALLBACK = "nexus_default_secret_key_99482910"
-_INSECURE_JWT = frozenset({"", "change-me", _JWT_FALLBACK, "secret", "jwt-secret"})
+# Bilinen güvensiz değerler — asla üretimde kullanılmamalı.
+_JWT_LEGACY_DEFAULT = "nexus_default_secret_key_99482910"
+_INSECURE_JWT = frozenset({"", "change-me", _JWT_LEGACY_DEFAULT, "secret", "jwt-secret"})
 
-
-def get_jwt_secret() -> str:
-    secret = (os.environ.get("JWT_SECRET") or "").strip() or _JWT_FALLBACK
-    return secret
+JWT_SECRET_REQUIRED_MSG = (
+    "JWT_SECRET tanımlı değil veya güvensiz varsayılan bir değer. "
+    "backend/.env içinde uzun, rastgele bir JWT_SECRET ayarlayın "
+    "(ör. openssl rand -hex 32). Uygulama bu olmadan başlamaz."
+)
 
 
 def jwt_secret_is_insecure(secret: Optional[str] = None) -> bool:
-    value = get_jwt_secret() if secret is None else (secret or "").strip()
+    if secret is None:
+        value = (os.environ.get("JWT_SECRET") or "").strip()
+    else:
+        value = (secret or "").strip()
     return value in _INSECURE_JWT
+
+
+def require_secure_jwt_secret() -> str:
+    """JWT_SECRET yoksa veya bilinen varsayılansa RuntimeError (açılışta fail-closed)."""
+    secret = (os.environ.get("JWT_SECRET") or "").strip()
+    if jwt_secret_is_insecure(secret):
+        raise RuntimeError(JWT_SECRET_REQUIRED_MSG)
+    return secret
+
+
+def get_jwt_secret() -> str:
+    """İmza için gizli anahtar. Güvensizse RuntimeError — sessiz fallback yok."""
+    return require_secure_jwt_secret()
 
 
 def session_token(request: Any) -> Optional[str]:
@@ -72,6 +90,8 @@ async def get_user_from_token(token: str, db: Any) -> dict:
             user = await db.users.find_one({"email": payload.get("email")})
         if not user:
             raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
+        if user.get("is_active") is False:
+            raise HTTPException(status_code=401, detail="Hesabınız pasifleştirilmiş.")
         user["id"] = str(user.get("_id", user.get("id")))
         user.pop("password_hash", None)
         return user

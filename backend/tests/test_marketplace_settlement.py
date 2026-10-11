@@ -15,7 +15,7 @@ from marketplace_settlement import (
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_marketplace_contact_name():
@@ -311,8 +311,8 @@ def test_approve_invoice_posts_marketplace_settlement():
         server, "_apply_invoice_effects", AsyncMock()
     ), patch.object(
         server, "_post_marketplace_settlement", AsyncMock(return_value=settlement)
-    ) as settle:
-        out = _run(server.approve_invoice("inv_ap"))
+    ) as settle, patch("tenant_access.get_tenant_doc", AsyncMock(return_value=inv)):
+        out = _run(server.approve_invoice("inv_ap", user={"is_super_admin": True}))
 
     settle.assert_awaited_once()
     assert out["settlement"]["net"] == 400.0

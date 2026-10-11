@@ -70,7 +70,8 @@ _SKIP_ON_COMPANY_DELETE = frozenset({
     "saas_plans", "platform_settings", "platform_announcements", "users", "companies", "company_licenses", "login_attempts",
     "platform_mail_servers", "platform_mailboxes", "platform_mail_logs",
 })
-PROTECTED_USER_EMAILS = frozenset({"admin@nexus.com"})
+# Korunan hesaplar — sabit demo süper-admin e-postası yok (admin@nexus.com kaldırıldı).
+PROTECTED_USER_EMAILS = frozenset()
 
 
 def init(db, current_user_dep):
@@ -278,10 +279,12 @@ def user_company_ids(user: Optional[dict]) -> list:
 
 
 def user_may_access_company(user: Optional[dict], company_id: str) -> bool:
-    """Tenant isolation: a signed-in non-platform user may only touch assigned companies."""
-    if not user or user.get("is_super_admin"):
+    """Tenant isolation: oturumsuz erişemez; süper admin hariç yalnızca atanmış şirketler."""
+    if not user:
+        return False
+    if user.get("is_super_admin"):
         return True
-    return company_id in user_company_ids(user)
+    return bool(company_id) and company_id in user_company_ids(user)
 
 
 async def seed():
@@ -339,19 +342,32 @@ async def seed():
         if lid != c["_id"]:
             continue
         await _db.company_licenses.update_one({"_id": c["_id"]}, {"$setOnInsert": {"plan_id": "plan_enterprise", "status": "active", "started_at": _now(), "expires_at": None, "trial_ends_at": None, "module_overrides": {}, "user_limit": None, "company_limit": None, "notes": "Mevcut müşteri (otomatik)", "created_at": _now()}}, upsert=True)
-    for email, name in ((os.environ.get("SUPER_ADMIN_EMAIL", "").strip().lower(), "Platform Yöneticisi"), ("admin@nexus.com", None)):
-        if not email:
-            continue
+    # Yalnızca SUPER_ADMIN_EMAIL — sabit admin@nexus.com oluşturulmaz / yükseltilmez.
+    # login_attempts her açılışta silinmez (kilit açma ayrı onaylı işlemdir).
+    email = (os.environ.get("SUPER_ADMIN_EMAIL") or "").strip().lower()
+    if email:
         u = await _db.users.find_one({"email": email})
         pwd = os.environ.get("SUPER_ADMIN_PASSWORD")
         if u:
             upd = {"is_super_admin": True}
-            if pwd and name and not verify_password(pwd, u.get("password_hash", "")):
+            if pwd and not verify_password(pwd, u.get("password_hash", "")):
                 upd["password_hash"] = hash_password(pwd)
             await _db.users.update_one({"_id": u["_id"]}, {"$set": upd})
         elif pwd:
-            await _db.users.insert_one({"_id": f"usr_{uuid.uuid4().hex[:8]}", "email": email, "password_hash": hash_password(pwd), "name": name, "role": "admin", "is_super_admin": True, "company_ids": ["comp_nexus_main_01"], "active_company_id": "comp_nexus_main_01", "is_active": True, "preferences": {}, "user_number": await user_numbers.next_user_number(_db), "created_at": _now()})
-    await _db.login_attempts.delete_many({"identifier": {"$regex": f":{os.environ.get('SUPER_ADMIN_EMAIL', 'x@x').strip().lower()}$"}})
+            await _db.users.insert_one({
+                "_id": f"usr_{uuid.uuid4().hex[:8]}",
+                "email": email,
+                "password_hash": hash_password(pwd),
+                "name": "Platform Yöneticisi",
+                "role": "admin",
+                "is_super_admin": True,
+                "company_ids": ["comp_nexus_main_01"],
+                "active_company_id": "comp_nexus_main_01",
+                "is_active": True,
+                "preferences": {},
+                "user_number": await user_numbers.next_user_number(_db),
+                "created_at": _now(),
+            })
     st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
     site = {"brand_name": "TamKobi", "public_url": "https://tamkobi.com"}
     if not st:
@@ -1446,8 +1462,6 @@ async def system_update_user(user_id: str, req: Dict[str, Any], admin: dict = De
         upd["email"] = email
     if "is_active" in req:
         active = bool(req["is_active"])
-        if not active and u.get("email") == "admin@nexus.com":
-            raise HTTPException(status_code=400, detail="Ana yönetici pasifleştirilemez.")
         if not active and await _super_admin_count() <= 1:
             raise HTTPException(status_code=400, detail="Son platform yöneticisi pasifleştirilemez.")
         upd["is_active"] = active
@@ -1468,8 +1482,6 @@ async def system_delete_user(user_id: str, admin: dict = Depends(require_super_a
     u = await _db.users.find_one({"_id": user_id})
     if not u or not u.get("is_super_admin"):
         raise HTTPException(status_code=404, detail="Panel yöneticisi bulunamadı.")
-    if u.get("email") == "admin@nexus.com":
-        raise HTTPException(status_code=400, detail="Ana yönetici silinemez.")
     if (admin.get("_id") or admin.get("id")) == user_id:
         raise HTTPException(status_code=400, detail="Kendi hesabınızı silemezsiniz.")
     if u.get("is_super_admin") and await _super_admin_count() <= 1:
