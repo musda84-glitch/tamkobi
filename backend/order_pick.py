@@ -3,12 +3,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 import attendance
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user = None
 _create_production_order = None
 _push_order_to_shopphp = None
 _create_draft_invoice_for_order = None
@@ -42,13 +44,21 @@ def is_pick_session_closed(order: Optional[dict] = None) -> bool:
     return False
 
 
-def init(db, deps: Optional[dict] = None):
-    global _db, _create_production_order, _push_order_to_shopphp, _create_draft_invoice_for_order
+def init(db, deps: Optional[dict] = None, get_current_user=None):
+    global _db, _current_user, _create_production_order, _push_order_to_shopphp, _create_draft_invoice_for_order
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
     if deps:
         _create_production_order = deps.get("create_production_order")
         _push_order_to_shopphp = deps.get("push_order_to_shopphp")
         _create_draft_invoice_for_order = deps.get("create_draft_invoice_for_order")
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Order pick auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _now() -> str:
@@ -378,10 +388,8 @@ async def list_pickable(company_id: Optional[str] = "comp_nexus_main_01"):
 
 
 @router.get("/order-picks/{order_id}")
-async def open_pick(order_id: str):
-    o = await _db.orders.find_one({"_id": order_id})
-    if not o:
-        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+async def open_pick(order_id: str, user: dict = Depends(_user_dep)):
+    o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     if is_pick_session_closed(o):
         raise HTTPException(status_code=400, detail="Bu sipariş sevk/iptal durumunda, toplanamaz.")
     ses = await _session_for(o, create=True)
@@ -411,10 +419,8 @@ def _match_line(items: list, code: str, product: Optional[dict]) -> Optional[dic
 
 
 @router.post("/order-picks/{order_id}/scan")
-async def scan_pick(order_id: str, req: Dict[str, Any]):
-    o = await _db.orders.find_one({"_id": order_id})
-    if not o:
-        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+async def scan_pick(order_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     ses = await _session_for(o, create=True)
     code = str(req.get("barcode") or "").strip()
     qty = float(req.get("quantity") or 1)
@@ -453,10 +459,8 @@ async def scan_pick(order_id: str, req: Dict[str, Any]):
 
 
 @router.post("/order-picks/{order_id}/adjust")
-async def adjust_pick(order_id: str, req: Dict[str, Any]):
-    o = await _db.orders.find_one({"_id": order_id})
-    if not o:
-        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+async def adjust_pick(order_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     ses = await _session_for(o, create=True)
     pid = str(req.get("product_id") or "")
     name = str(req.get("product_name") or "")
@@ -482,10 +486,8 @@ async def adjust_pick(order_id: str, req: Dict[str, Any]):
 
 
 @router.post("/order-picks/{order_id}/notify-missing")
-async def notify_missing(order_id: str):
-    o = await _db.orders.find_one({"_id": order_id})
-    if not o:
-        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+async def notify_missing(order_id: str, user: dict = Depends(_user_dep)):
+    o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     ses = await _session_for(o, create=True)
     missing = [i for i in ses["items"] if float(i.get("picked_qty") or 0) + 1e-9 < float(i.get("ordered_qty") or 0)]
     if not missing:
@@ -543,12 +545,10 @@ async def notify_missing(order_id: str):
 
 
 @router.post("/order-picks/{order_id}/to-production")
-async def send_missing_to_production(order_id: str):
+async def send_missing_to_production(order_id: str, user: dict = Depends(_user_dep)):
     if not _create_production_order:
         raise HTTPException(status_code=500, detail="Üretim bağlantısı yok.")
-    o = await _db.orders.find_one({"_id": order_id})
-    if not o:
-        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     ses = await _session_for(o, create=True)
     created, skipped = [], []
     existing = list(ses.get("production_orders") or [])
@@ -611,14 +611,12 @@ async def send_missing_to_production(order_id: str):
 
 
 @router.post("/order-picks/{order_id}/complete")
-async def complete_pick(order_id: str, req: Dict[str, Any] = None):
+async def complete_pick(order_id: str, req: Dict[str, Any] = None, user: dict = Depends(_user_dep)):
     req = req or {}
     mode = (req.get("mode") or "ready").strip()  # ready | partial | ship | deliver
     if mode not in ("ready", "partial", "ship", "deliver"):
         raise HTTPException(status_code=400, detail="mode ready, partial, ship veya deliver olmalı.")
-    o = await _db.orders.find_one({"_id": order_id})
-    if not o:
-        raise HTTPException(status_code=404, detail="Sipariş bulunamadı.")
+    o = await tenant_access.get_tenant_doc(_db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
 
     if mode == "deliver":
         if not can_mark_delivered(o):

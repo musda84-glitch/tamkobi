@@ -75,6 +75,63 @@ async def get_tenant_doc(
     return doc
 
 
+def assert_doc_company(user: dict, doc: Optional[dict], *, not_found: str = "Kayıt bulunamadı.", status_on_deny: int = 404) -> dict:
+    """Yüklenmiş kaydın company_id erişimini doğrula (yoksa 404)."""
+    if not doc:
+        raise HTTPException(status_code=404, detail=not_found)
+    cid = doc.get("company_id")
+    if cid is not None and not user_may_access_company(user, str(cid)):
+        raise HTTPException(status_code=status_on_deny, detail=not_found if status_on_deny == 404 else "Bu kayıt için yetkiniz yok.")
+    return doc
+
+
+def assert_same_company(user: dict, *docs: Optional[dict], not_found: str = "Kayıt bulunamadı.") -> None:
+    """Dönüşüm/bağlama: tüm kayıtlar kullanıcının erişebildiği aynı şirkette olmalı."""
+    cids = []
+    for d in docs:
+        if not d:
+            raise HTTPException(status_code=404, detail=not_found)
+        cid = str(d.get("company_id") or "").strip()
+        if not cid:
+            raise HTTPException(status_code=404, detail=not_found)
+        if not user_may_access_company(user, cid):
+            raise HTTPException(status_code=404, detail=not_found)
+        cids.append(cid)
+    if len(set(cids)) > 1:
+        raise HTTPException(status_code=404, detail=not_found)
+
+
+async def get_tenant_child(
+    db: Any,
+    collection: str,
+    doc_id: str,
+    user: dict,
+    *,
+    parent_collection: str,
+    parent_id_field: str,
+    not_found: str = "Kayıt bulunamadı.",
+) -> dict:
+    """Alt kayıt (company_id yoksa) üst kaydın şirketi üzerinden doğrulanır."""
+    doc = await db[collection].find_one({"_id": doc_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail=not_found)
+    cid = doc.get("company_id")
+    if cid is not None:
+        if not user_may_access_company(user, str(cid)):
+            raise HTTPException(status_code=404, detail=not_found)
+        return doc
+    parent_id = doc.get(parent_id_field)
+    if not parent_id:
+        raise HTTPException(status_code=404, detail=not_found)
+    await get_tenant_doc(db, parent_collection, parent_id, user, not_found=not_found)
+    return doc
+
+
+def filter_tenant_ids(docs: list, user: dict) -> list:
+    """Toplu işlem: yalnızca kullanıcının şirketindeki kayıtları bırak."""
+    return [d for d in docs if d and user_may_access_company(user, d.get("company_id"))]
+
+
 async def require_company_admin(user: dict, company_id: str) -> None:
     """Demo yükleme/silme gibi işlemler için şirket yöneticisi zorunlu."""
     if not user:

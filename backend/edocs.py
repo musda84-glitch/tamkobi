@@ -7,14 +7,16 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
 import saas
+import tenant_access
 from auth_utils import session_token
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user = None
 _deps: Dict[str, Any] = {}
 # Belgeyi UBL yapan kök etiketler. Entegratör bunların dışında bir şey döndürdüğünde
 # (SOAP zarfı, hata sayfası, imza dosyası) fatura diye kaydetmek yerine reddediyoruz.
@@ -22,10 +24,18 @@ UBL_ROOTS = {"Invoice": "invoice", "DespatchAdvice": "dispatch"}
 MAX_XML_BYTES = 4 * 1024 * 1024
 
 
-def init(db, deps):
-    global _db
+def init(db, deps, get_current_user=None):
+    global _db, _current_user
     _db = db
-    _deps.update(deps)
+    _deps.update(deps or {})
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Edocs auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _now():
@@ -654,9 +664,9 @@ async def cleanup_inbox_route(request: Request, company_id: Optional[str] = None
 
 
 @router.put("/edocs/inbox/{doc_id}/lines")
-async def set_lines(doc_id: str, req: Dict[str, Any]):
-    d = await _db.incoming_edocs.find_one({"_id": doc_id})
-    if not d or d["status"] != "pending":
+async def set_lines(doc_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    d = await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
+    if d["status"] != "pending":
         raise HTTPException(status_code=400, detail="Belge bulunamadı ya da işlenmiş.")
     for m in req.get("lines") or []:
         i = int(m.get("idx", -1))
@@ -675,10 +685,10 @@ async def set_lines(doc_id: str, req: Dict[str, Any]):
 
 
 @router.post("/edocs/inbox/{doc_id}/create-product")
-async def create_product_from_line(doc_id: str, req: Dict[str, Any]):
-    d = await _db.incoming_edocs.find_one({"_id": doc_id})
+async def create_product_from_line(doc_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    d = await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
     i = int(req.get("idx", -1))
-    if not d or not (0 <= i < len(d["lines"])):
+    if not (0 <= i < len(d["lines"])):
         raise HTTPException(status_code=404, detail="Satır bulunamadı.")
     ln = d["lines"][i]
     p = await _deps["create_product"]({
@@ -693,7 +703,7 @@ async def create_product_from_line(doc_id: str, req: Dict[str, Any]):
         "channel": "edoc",
         "show_in_b2b": False,
     })
-    return await set_lines(doc_id, {"lines": [{"idx": i, "product_id": p["product"]["id"]}]})
+    return await set_lines(doc_id, {"lines": [{"idx": i, "product_id": p["product"]["id"]}]}, user)
 
 
 async def ensure_products_for_unmatched(doc: dict, *, markup: float = 1.4) -> int:
@@ -745,11 +755,11 @@ async def ensure_products_for_unmatched(doc: dict, *, markup: float = 1.4) -> in
 
 
 @router.post("/edocs/inbox/{doc_id}/create-missing-products")
-async def create_missing_products(doc_id: str, req: Dict[str, Any] = None):
+async def create_missing_products(doc_id: str, req: Dict[str, Any] = None, user: dict = Depends(_user_dep)):
     """Bekleyen belgede eşleşmeyen tüm satırlar için stok kartı oluştur."""
     req = req or {}
-    d = await _db.incoming_edocs.find_one({"_id": doc_id})
-    if not d or d.get("status") != "pending":
+    d = await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
+    if d.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Belge bulunamadı ya da işlenmiş.")
     n = await ensure_products_for_unmatched(d, markup=float(req.get("markup") or 1.4))
     d = await _db.incoming_edocs.find_one({"_id": doc_id})
@@ -783,10 +793,8 @@ async def ensure_supplier(doc: dict, overrides: Optional[Dict[str, Any]] = None)
 
 
 @router.post("/edocs/inbox/{doc_id}/create-supplier")
-async def create_supplier(doc_id: str, req: Dict[str, Any]):
-    d = await _db.incoming_edocs.find_one({"_id": doc_id})
-    if not d:
-        raise HTTPException(status_code=404, detail="Belge bulunamadı.")
+async def create_supplier(doc_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    d = await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
     d = await ensure_supplier(d, req)
     return {
         "status": "success",
@@ -797,10 +805,9 @@ async def create_supplier(doc_id: str, req: Dict[str, Any]):
 
 
 @router.put("/edocs/inbox/{doc_id}/supplier")
-async def link_supplier(doc_id: str, req: Dict[str, Any]):
-    c = await _db.contacts.find_one({"_id": req.get("contact_id")})
-    if not c:
-        raise HTTPException(status_code=404, detail="Cari bulunamadı.")
+async def link_supplier(doc_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
+    c = await tenant_access.get_tenant_doc(_db, "contacts", req.get("contact_id"), user, not_found="Cari bulunamadı.")
     await _db.incoming_edocs.update_one({"_id": doc_id}, {"$set": {"contact_id": c["_id"], "contact_name": c["name"]}})
     return {"status": "success", "contact_name": c["name"]}
 
@@ -853,16 +860,17 @@ async def approve_inbox_document(doc_id: str, req: Optional[Dict[str, Any]] = No
 
 
 @router.post("/edocs/inbox/{doc_id}/approve")
-async def approve_edoc(doc_id: str, req: Dict[str, Any]):
+async def approve_edoc(doc_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
     return await approve_inbox_document(doc_id, req)
 
 
 @router.post("/edocs/inbox/{doc_id}/process")
-async def process_edoc(doc_id: str, req: Dict[str, Any] = None):
+async def process_edoc(doc_id: str, req: Dict[str, Any] = None, user: dict = Depends(_user_dep)):
     """Tek tık: tedarikçi yoksa oluştur, isteğe bağlı stok kartı aç, alış faturasını içeri al."""
     req = dict(req or {})
-    d = await _db.incoming_edocs.find_one({"_id": doc_id})
-    if not d or d["status"] != "pending":
+    d = await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
+    if d["status"] != "pending":
         raise HTTPException(status_code=400, detail="Belge bulunamadı ya da zaten işlenmiş.")
     if is_blank(d):
         raise HTTPException(status_code=400, detail="Belge okunamamış (tedarikçi/kalem/tutar boş). Ham XML'den yeniden okuyun veya entegratörden tekrar çekin.")
@@ -915,7 +923,8 @@ async def process_pending_edocs(request: Request, company_id: Optional[str] = No
 
 
 @router.post("/edocs/inbox/{doc_id}/reject")
-async def reject_edoc(doc_id: str, req: Dict[str, Any]):
+async def reject_edoc(doc_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
     r = await _db.incoming_edocs.update_one({"_id": doc_id, "status": "pending"}, {"$set": {"status": "rejected", "rejected_at": _now(), "reject_reason": (req.get("reason") or "").strip()[:300]}})
     if not r.matched_count:
         raise HTTPException(status_code=400, detail="Belge bulunamadı ya da zaten işlenmiş.")
@@ -923,9 +932,10 @@ async def reject_edoc(doc_id: str, req: Dict[str, Any]):
 
 
 @router.post("/edocs/inbox/{doc_id}/ignore")
-async def ignore_edoc(doc_id: str, req: Dict[str, Any] = None):
+async def ignore_edoc(doc_id: str, req: Dict[str, Any] = None, user: dict = Depends(_user_dep)):
     """Dikkate alma: alış faturası oluşturmadan bekleyenlerden çıkar."""
     req = req or {}
+    await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
     reason = (req.get("reason") or "Dikkate alınmadı").strip()[:300]
     r = await _db.incoming_edocs.update_one(
         {"_id": doc_id, "status": "pending"},
@@ -937,7 +947,8 @@ async def ignore_edoc(doc_id: str, req: Dict[str, Any] = None):
 
 
 @router.delete("/edocs/inbox/{doc_id}")
-async def delete_edoc(doc_id: str):
+async def delete_edoc(doc_id: str, user: dict = Depends(_user_dep)):
+    await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
     r = await _db.incoming_edocs.delete_one({"_id": doc_id, "status": {"$ne": "approved"}})
     if not r.deleted_count:
         raise HTTPException(status_code=400, detail="Onaylanmış belge silinemez.")

@@ -95,13 +95,15 @@ def test_set_lines_closes_b2b_on_match():
         "matched_lines": 0,
     }
     prod = {"_id": "p1", "name": "Somun", "supplier_codes": []}
+    user = {"id": "u1", "company_ids": ["c1"], "active_company_id": "c1"}
     fake_db = MagicMock()
     fake_db.incoming_edocs.find_one = AsyncMock(return_value=doc)
     fake_db.products.find_one = AsyncMock(return_value=prod)
     fake_db.products.update_one = AsyncMock()
     fake_db.incoming_edocs.update_one = AsyncMock()
     edocs.init(fake_db, {})
-    out = _run(edocs.set_lines("ed2", {"lines": [{"idx": 0, "product_id": "p1"}]}))
+    with patch.object(edocs.tenant_access, "get_tenant_doc", AsyncMock(return_value=doc)):
+        out = _run(edocs.set_lines("ed2", {"lines": [{"idx": 0, "product_id": "p1"}]}, user))
     assert out["lines"][0]["product_id"] == "p1"
     upd = fake_db.products.update_one.await_args.args[1]
     assert upd["$set"]["show_in_b2b"] is False
