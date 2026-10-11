@@ -4,15 +4,22 @@ import { Helmet } from "react-helmet-async";
 const DEFAULT_URL = "https://tamkobi.com";
 const DEFAULT_IMAGE = `${DEFAULT_URL}/brand/og-image.jpg`;
 
+export function defaultSeoDescription(trialDays = 14) {
+  const days = Number(trialDays) > 0 ? Number(trialDays) : 14;
+  return `TamKobi — fatura, stok, e-ticaret ve üretim için bulut ERP. Paketinizi seçin, ${days} gün ücretsiz deneyin; kredi kartı gerekmez.`;
+}
+
 /** Sayfa başlığı + meta + Open Graph / Twitter. */
 export function Seo({
   title = "KOBİ'ler için Bulut ERP ve e-Fatura Programı | TamKobi",
-  description = "TamKobi — fatura, stok, e-ticaret ve üretim için bulut ERP. Paketinizi seçin, 14 gün ücretsiz deneyin; kredi kartı gerekmez.",
+  description,
+  trialDays = 14,
   path = "/",
   image = DEFAULT_IMAGE,
   noindex = false,
   jsonLd = null,
 }) {
+  const resolvedDescription = description || defaultSeoDescription(trialDays);
   const origin = typeof window !== "undefined" ? window.location.origin : DEFAULT_URL;
   const url = `${(origin || DEFAULT_URL).replace(/\/$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
   const absImage = image.startsWith("http") ? image : `${(origin || DEFAULT_URL).replace(/\/$/, "")}${image}`;
@@ -21,21 +28,21 @@ export function Seo({
     <Helmet>
       <html lang="tr" />
       <title>{title}</title>
-      <meta name="description" content={description} />
+      <meta name="description" content={resolvedDescription} />
       {noindex ? <meta name="robots" content="noindex,nofollow" /> : <meta name="robots" content="index,follow" />}
       <link rel="canonical" href={url} />
       <meta property="og:type" content="website" />
       <meta property="og:locale" content="tr_TR" />
       <meta property="og:site_name" content="TamKobi" />
       <meta property="og:title" content={title} />
-      <meta property="og:description" content={description} />
+      <meta property="og:description" content={resolvedDescription} />
       <meta property="og:url" content={url} />
       <meta property="og:image" content={absImage} />
       <meta property="og:image:width" content="1200" />
       <meta property="og:image:height" content="630" />
       <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content={title} />
-      <meta name="twitter:description" content={description} />
+      <meta name="twitter:description" content={resolvedDescription} />
       <meta name="twitter:image" content={absImage} />
       {blocks.map((b, i) => (
         <script key={i} type="application/ld+json">{JSON.stringify(b)}</script>

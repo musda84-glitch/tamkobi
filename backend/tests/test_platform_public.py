@@ -54,6 +54,21 @@ def test_platform_seller_ignores_demo_company_name():
     assert s["tax_number"] == "—"
 
 
+def test_platform_doc_ignores_demo_legal_texts():
+    from legal_docs import render_platform_doc
+
+    demo = {
+        "_id": "comp_nexus_main_01",
+        "name": "Demo Nexus A.Ş.",
+        "legal_texts": {"kvkk": "DEMO ÖZEL METİN ASLA GÖRÜNMEMELİ"},
+    }
+    doc = render_platform_doc("kvkk", demo, "TamKobi", {"brand_name": "TamKobi", "legal_name": "Resmi Ünvan A.Ş."})
+    assert doc["customized"] is False
+    assert "DEMO ÖZEL METİN" not in doc["text"]
+    assert "Resmi Ünvan A.Ş." in doc["text"]
+    assert doc["seller"]["name"] == "Resmi Ünvan A.Ş."
+
+
 def test_public_contact_whatsapp_no_phone_fallback():
     c = pp.public_contact({"support_email": "a@b.com", "support_phone": "05321112233", "support_whatsapp": ""})
     assert c["support_email"] == "a@b.com"

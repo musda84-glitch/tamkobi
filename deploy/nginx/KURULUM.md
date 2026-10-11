@@ -6,7 +6,7 @@ Bu klasör canlı `tamkobi.com` için önerilen nginx şablonlarını içerir.
 |--------|----------|
 | `security-headers.conf` | Her ortamda snippet olarak |
 | `tamkobi.conf` | Sertifika yokken / HTTP; `nginx -t` her zaman geçer |
-| `tamkobi-ssl.conf.example` | Sertifika sonrası HTTPS + www→apex referansı |
+| `tamkobi-ssl.conf.example` | Sertifika sonrası HTTPS + www→apex (tam location’lı) |
 | `../nginx-vps.conf` | Geriye dönük HTTP-only + XFF notları |
 
 ## Hedefler (canlı, SSL sonrası)
@@ -19,7 +19,7 @@ Bu klasör canlı `tamkobi.com` için önerilen nginx şablonlarını içerir.
 
 ## Önemli: canlı vhost’u ezmeyin
 
-Certbot’un yönettiği `/etc/nginx/sites-enabled/…` dosyasını `cp tamkobi.conf` ile **üzerine yazmayın** — sertifika satırları ve yenileme kancaları kaybolur. Yeni kurulumda şablonu kopyalayın; mevcut canlıda **snippet + location’ları birleştirin**.
+Certbot’un yönettiği `/etc/nginx/sites-enabled/…` dosyasını `cp tamkobi.conf` ile **üzerine yazmayın**. Yeni kurulumda şablonu kopyalayın; mevcut canlıda **snippet + blokları birleştirin**.
 
 ## Adımlar
 
@@ -33,30 +33,39 @@ sudo cp deploy/nginx/security-headers.conf /etc/nginx/snippets/tamkobi-security-
 ### B) Sertifika yok (HTTP-only, `nginx -t` geçer)
 
 ```bash
-# Yalnızca henüz sites-available yoksa / yeni sunucu
 sudo cp deploy/nginx/tamkobi.conf /etc/nginx/sites-available/tamkobi.com
 sudo ln -sf /etc/nginx/sites-available/tamkobi.com /etc/nginx/sites-enabled/tamkobi.com
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-`server_name` içine genel IP eklemeyin. API proxy’de `X-Forwarded-For` / `X-Real-IP` yalnızca `$remote_addr` olmalı (login kilidi).
+`server_name` içine genel IP eklemeyin. API proxy’de `X-Forwarded-For` / `X-Real-IP` yalnızca `$remote_addr`.
 
-### C) Sertifika (certbot) — mevcut vhost’u koruyarak
+### C) Sertifika sonrası — :80’i yönlendirmeye çevirin
 
 ```bash
-# Tercihen mevcut HTTP vhost üzerinde (certbot dosyayı kendisi günceller)
 sudo certbot --nginx -d tamkobi.com -d www.tamkobi.com
-
-# veya yalnızca sertifika:
-# sudo certbot certonly --nginx -d tamkobi.com -d www.tamkobi.com
+# veya: sudo certbot certonly --nginx -d tamkobi.com -d www.tamkobi.com
 ```
 
-Sonra:
+**`tamkobi.conf` içindeki mevcut `:80` server bloğunu şöyle değiştirin:**
 
-1. `:80` sunucusunu `return 301 https://tamkobi.com$request_uri;` yapın (apex).
-2. `www` için 443’te apex’e 301 ekleyin — örnek: `tamkobi-ssl.conf.example`.
-3. Her `add_header` içeren `location` bloğuna `include snippets/tamkobi-security-headers.conf;` koyun (üst bloktakiler miras alınmaz).
+1. Bloktaki `root`, `gzip`, tüm `location` ve `include` satırlarını **silin**.
+2. Yalnızca şunu bırakın:
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name tamkobi.com www.tamkobi.com;
+    return 301 https://tamkobi.com$request_uri;
+}
+```
+
+3. `deploy/nginx/tamkobi-ssl.conf.example` içindeki **443** bloklarını (www→apex + ana site + tüm location’lar) aynı vhost dosyasına ekleyin.
+   - Dinleme: `listen 443 ssl;` ve ayrı satırda `http2 on;` (eski `listen 443 ssl http2` yerine).
 4. `sudo nginx -t && sudo systemctl reload nginx`
+
+Özet: HTTP içeriği artık yalnızca 443’te; 80 her zaman apex HTTPS’e 301 atar.
 
 ## Firewall
 
@@ -66,13 +75,11 @@ sudo ufw allow 443/tcp
 sudo ufw status
 ```
 
-`http://tamkobi.com` zaman aşımı → genelde **80 kapalı** veya nginx dinlemiyor.
-
 ## Brotli (isteğe bağlı)
 
 ```bash
-sudo apt install libnginx-mod-brotli   # paket adına göre değişir
-# tamkobi.conf içindeki brotli satırlarının yorumunu kaldırın
+sudo apt install libnginx-mod-brotli
+# conf içindeki brotli satırlarının yorumunu kaldırın
 sudo nginx -t && sudo systemctl reload nginx
 ```
 

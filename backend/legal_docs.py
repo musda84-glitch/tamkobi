@@ -204,16 +204,15 @@ async def platform_company() -> tuple:
 def render_platform_doc(slug: str, company: dict, brand: str, settings: Optional[dict] = None) -> dict:
     if slug not in SLUGS:
         raise HTTPException(status_code=404, detail="Yasal metin bulunamadı.")
-    # Vitrin: demo şirket ünvanı/adresi legal_* boşken sızmasın
+    # Vitrin: demo şirket ünvanı/legal_texts (comp_nexus_main_01) okunmaz
     party = party_from_company(company, brand, settings, use_company_party=False)
-    custom = ((company or {}).get("legal_texts") or {}).get(slug)
-    text = custom.strip() if isinstance(custom, str) and custom.strip() else TEMPLATES[slug](party)
+    text = TEMPLATES[slug](party)
     return {
         "slug": slug,
         "title": TITLES[slug],
         "version": VERSION,
         "seller": {k: party[k] for k in ("name", "address", "city", "tax_number", "email", "phone", "mersis", "iban", "bank_name", "website")},
-        "customized": bool(isinstance(custom, str) and custom.strip()),
+        "customized": False,
         "text": text,
         "html": text_to_html(text),
     }

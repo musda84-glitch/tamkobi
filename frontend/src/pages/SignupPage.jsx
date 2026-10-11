@@ -43,6 +43,7 @@ export default function SignupPage() {
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100" data-testid="signup-page">
       <Seo
         title="Ücretsiz Deneme Kaydı | TamKobi"
+        trialDays={Number(d?.trial_days) > 0 ? d.trial_days : 14}
         description={`TamKobi bulut ERP'yi ${Number(d?.trial_days) > 0 ? d.trial_days : 14} gün ücretsiz deneyin. Kredi kartı gerekmez.`}
         path="/kayit"
       />

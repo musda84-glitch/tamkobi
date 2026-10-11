@@ -72,7 +72,7 @@ export default function PricingPage() {
         title={pathname === "/web" || pathname === "/fiyatlar"
           ? "Fiyatlar ve Paketler | TamKobi Bulut ERP"
           : "KOBİ'ler için Bulut ERP ve e-Fatura Programı | TamKobi"}
-        description="TamKobi — fatura, stok, e-ticaret ve üretim için bulut ERP. Paketinizi seçin, 14 gün ücretsiz deneyin; kredi kartı gerekmez."
+        trialDays={trialDays}
         path={pathname === "/web" || pathname === "/fiyatlar" ? "/web" : "/"}
         jsonLd={jsonLd}
       />
