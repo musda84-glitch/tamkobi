@@ -46,14 +46,13 @@ test("defaultSeoDescription uses trial_days", () => {
   expect(defaultSeoDescription(0)).toContain("14 gün");
 });
 
-test("index.html keeps static data-rh defaults for non-JS bots", () => {
-  expect((INDEX_HTML.match(/rel="canonical"/g) || []).length).toBe(1);
+test("index.html keeps static data-rh defaults without canonical/og:url", () => {
+  expect((INDEX_HTML.match(/rel="canonical"/g) || []).length).toBe(0);
+  expect(INDEX_HTML).not.toContain('property="og:url"');
   expect(INDEX_HTML).toContain('data-rh="true"');
-  expect(INDEX_HTML).toContain('href="https://tamkobi.com/"');
   expect(INDEX_HTML).toContain("og:title");
   expect(INDEX_HTML).toContain("og:description");
   expect(INDEX_HTML).toContain("og:image");
-  expect(INDEX_HTML).toContain("og:url");
   expect(INDEX_HTML).toContain("og:locale");
   expect(INDEX_HTML).toContain("twitter:card");
   expect(INDEX_HTML).toContain("KOBİ'ler için Bulut ERP ve e-Fatura Programı | TamKobi");

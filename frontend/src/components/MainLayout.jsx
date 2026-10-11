@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
+import { Helmet } from "react-helmet-async";
 import axios from "axios";
 import { toast } from "sonner";
 import { useAuth, API_URL } from "../context/AuthContext";
@@ -212,18 +213,29 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const publicSite = isPublicPath(location.pathname);
   if (publicSite) return <>{children}</>;
 
+  // Vitrin title’ı panelde kalmasın; sayfa özel title yoksa bu varsayılan kullanılır.
+  const panelTitle = (
+    <Helmet>
+      <title>Panel | TamKobi</title>
+      <meta name="robots" content="noindex,nofollow" />
+    </Helmet>
+  );
+
   // Do not paint sidebar/header until session + (when needed) Mesaim gate are ready.
   // Otherwise role-hidden / license-locked items flash on refresh and mobile back.
   if (!erpShellReady({ loading, authenticated, user, mesaimReady })) {
     if (loading || (authenticated && user?.employee_id && !mesaimReady)) {
       return (
-        <div className="min-h-screen bg-slate-50 text-slate-400 flex items-center justify-center text-xs" data-testid="erp-auth-loading">
-          Yükleniyor…
-        </div>
+        <>
+          {panelTitle}
+          <div className="min-h-screen bg-slate-50 text-slate-400 flex items-center justify-center text-xs" data-testid="erp-auth-loading">
+            Yükleniyor…
+          </div>
+        </>
       );
     }
     // Auth finished but no session — let ProtectedRoute redirect without ERP chrome.
-    return <>{children}</>;
+    return <>{panelTitle}{children}</>;
   }
 
   const routeKey = (permPath || ((p) => p))(location.pathname);
@@ -257,6 +269,8 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   };
 
   return (
+    <>
+    {panelTitle}
     <div className="min-h-screen bg-slate-50 flex text-slate-900 font-sans antialiased">
       {mobileMenuOpen ? (
         <button
@@ -414,5 +428,6 @@ export default function MainLayout({ children, onOpenQuickAction }) {
         </main>
       </div>
     </div>
+    </>
   );
 }

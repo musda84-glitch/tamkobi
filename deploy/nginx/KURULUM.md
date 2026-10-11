@@ -28,7 +28,16 @@ Certbot’un yönettiği `/etc/nginx/sites-enabled/…` dosyasını `cp tamkobi.
 ```bash
 sudo mkdir -p /etc/nginx/snippets
 sudo cp deploy/nginx/security-headers.conf /etc/nginx/snippets/tamkobi-security-headers.conf
+sudo cp deploy/nginx/spa-routes.map.conf /etc/nginx/snippets/tamkobi-spa-routes.map.conf
 ```
+
+**http {} bloğuna** (ör. `/etc/nginx/nginx.conf` veya `conf.d/tamkobi-map.conf` — `server` içinde değil):
+
+```nginx
+include /etc/nginx/snippets/tamkobi-spa-routes.map.conf;
+```
+
+Bu map, bilinmeyen adreslerde gerçek **HTTP 404** (`404.html`) döndürmek için gerekir. Bilinen vitrin/ERP yolları `index.html` alır.
 
 ### B) Sertifika yok (HTTP-only, `nginx -t` geçer)
 
@@ -83,6 +92,27 @@ sudo apt install libnginx-mod-brotli
 # conf içindeki brotli satırlarının yorumunu kaldırın
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+## Canlı vhost’a soft-404 düzeltmesi (elle)
+
+Canlı nginx elle yönetiliyor; şablonu ezmeden şu satırları ekleyin:
+
+1. Snippet kopyalayın (yukarı §A) ve **http {}** içine map include ekleyin.
+2. Ana `server` bloğunda `error_page 404 /404.html;` ve `location = /404.html { internal; … }` olduğundan emin olun.
+3. SPA fallback named location’ını şöyle güncelleyin:
+
+```nginx
+location @spa_or_404 {
+    include snippets/tamkobi-security-headers.conf;
+    if ($tamkobi_spa = 0) { return 404; }
+    rewrite ^ /index.html last;
+}
+```
+
+4. `sudo nginx -t && sudo systemctl reload nginx`
+5. Doğrulama: `curl -sI https://tamkobi.com/bu-yol-yok` → `404`; `curl -sI https://tamkobi.com/panel` → `200` (SPA).
+
+Yeni ERP yolu eklerseniz `spa-routes.map.conf` regex listesine ekleyin.
 
 ## Notlar
 
