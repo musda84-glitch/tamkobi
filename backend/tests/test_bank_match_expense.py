@@ -81,6 +81,60 @@ def test_apply_match_as_expense_rejects_inflow():
     assert "çıkış" in ei.value.detail.lower() or "Masraf" in ei.value.detail
 
 
+def test_apply_match_as_expense_with_employee():
+    import server
+
+    tx = {
+        "_id": "tx_out",
+        "company_id": "c1",
+        "account_id": "acc1",
+        "account_name": "Vadesiz",
+        "type": "outflow",
+        "amount": 500.0,
+        "description": "PERSONEL ODEME",
+        "date": "2026-10-09",
+        "currency": "TRY",
+        "match_status": "unmatched",
+        "source": "bank_sync",
+    }
+    emp = {"_id": "emp1", "company_id": "c1", "full_name": "Ayşe Yılmaz"}
+    mock_db = MagicMock()
+    mock_db.contacts.find_one = AsyncMock(return_value=None)
+    mock_db.contacts.update_one = AsyncMock()
+    mock_db.employees.find_one = AsyncMock(return_value=emp)
+    mock_db.bank_transactions.update_one = AsyncMock()
+    mock_db.bank_transactions.find_one = AsyncMock(
+        return_value={**tx, "match_status": "matched", "expense_id": "exp1", "category": "Masraf: Personel Masrafı"}
+    )
+
+    with patch.object(server, "db", mock_db), patch.object(
+        server.expenses, "record_card_spend", AsyncMock(return_value={"id": "exp1", "category": "Personel Masrafı", "employee_id": "emp1"})
+    ) as rec, patch.object(server, "_learn_rule", AsyncMock()):
+        out = _run(server._apply_match(tx, None, None, "Personel Masrafı", learn=False, as_expense=True, employee_id="emp1"))
+
+    rec.assert_awaited_once()
+    assert rec.await_args.kwargs["employee_id"] == "emp1"
+    assert out["expense_id"] == "exp1"
+
+
+def test_apply_match_personel_category_requires_employee():
+    import server
+    from fastapi import HTTPException
+
+    tx = {
+        "_id": "tx_out",
+        "company_id": "c1",
+        "type": "outflow",
+        "amount": 100.0,
+        "description": "PERSONEL",
+        "date": "2026-10-09",
+    }
+    with pytest.raises(HTTPException) as ei:
+        _run(server._apply_match(tx, None, None, "Personel Masrafı", learn=False, as_expense=True))
+    assert ei.value.status_code == 400
+    assert "personel" in ei.value.detail.lower()
+
+
 def test_unmatch_deletes_bank_match_expense():
     import server
 

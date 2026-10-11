@@ -206,6 +206,7 @@ async def record_card_spend(
     account_name: Optional[str] = None,
     contact_id: Optional[str] = None,
     contact_name: Optional[str] = None,
+    employee_id: Optional[str] = None,
     bank_tx_id: Optional[str] = None,
     source: str = "card_statement",
 ) -> dict:
@@ -214,6 +215,7 @@ async def record_card_spend(
     if calc["total"] <= 0:
         return {}
     contact = await _db.contacts.find_one({"_id": contact_id}) if contact_id else None
+    emp = await _db.employees.find_one({"_id": employee_id, "company_id": company_id}) if employee_id else None
     cat = (category or "Diğer").strip() or "Diğer"
     src = source or "card_statement"
     if src == "bank_match":
@@ -240,8 +242,8 @@ async def record_card_spend(
         "paid_date": date,
         "contact_id": contact["_id"] if contact else None,
         "contact_name": contact["name"] if contact else (contact_name or None),
-        "employee_id": None,
-        "employee_name": None,
+        "employee_id": emp["_id"] if emp else None,
+        "employee_name": emp["full_name"] if emp else None,
         "document_no": "",
         "notes": note,
         "is_recurring": False,

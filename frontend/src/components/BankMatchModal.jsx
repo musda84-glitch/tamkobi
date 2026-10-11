@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import axios from "axios";
 import { toast } from "sonner";
@@ -7,36 +7,26 @@ import { API_URL } from "../context/AuthContext";
 import { formatTrAmount, fmtDate } from "../utils/money";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { backdropDismissProps } from "../utils/modalBackdrop";
+import { BANK_MATCH_MODES, isPersonnelExpenseCategory } from "../utils/bankMatchModes";
 
 const fmt = (n) => formatTrAmount(n || 0);
 const sel = "w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs";
-const MODES = [
-  ["contact", "Cari"],
-  ["invoice", "Cari + Fatura"],
-  ["transfer", "Kasa / Hesap (Virman)"],
-  ["category", "Sadece Kategori"],
-  ["expense", "Masraf"],
-];
 
 /** Banka hareketi eşleştirme / düzeltme modalı — hareketler listesi ve entegrasyon paneli ortak. */
 export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, onClose, onDone }) {
   const txId = tx?.id || tx?._id;
   const isIn = tx?.type === "inflow";
-  const modes = MODES;
   const [mode, setMode] = useState("contact");
   const [contactId, setContactId] = useState(tx?.suggested_contact_id || tx?.contact_id || "");
-  const [invoiceId, setInvoiceId] = useState("");
   const [targetId, setTargetId] = useState(tx?.suggested_target_account_id || "");
   const [category, setCategory] = useState(tx?.category || "");
   const [expenseCats, setExpenseCats] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [employeeId, setEmployeeId] = useState("");
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [invoices, setInvoices] = useState([]);
 
-  useEffect(() => {
-    if (!companyId) return;
-    axios.get(`${API_URL}/invoices?company_id=${companyId}&type=all`).then((r) => setInvoices(r.data || [])).catch(() => setInvoices([]));
-  }, [companyId]);
+  const needEmployee = mode === "expense" && isPersonnelExpenseCategory(category);
 
   useEffect(() => {
     if (mode !== "expense" || !companyId) return;
@@ -45,17 +35,26 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
       .catch(() => setExpenseCats([]));
   }, [mode, companyId]);
 
-  const openInvoices = useMemo(() => invoices
-    .filter((i) => i.contact_id === contactId && i.payment_status !== "paid" && i.status !== "draft" && i.invoice_type === (isIn ? "sales" : "purchase"))
-    .sort((a, b) => Math.abs((a.grand_total - a.paid_amount) - (tx?.amount || 0)) - Math.abs((b.grand_total - b.paid_amount) - (tx?.amount || 0))),
-  [invoices, contactId, isIn, tx?.amount]);
+  useEffect(() => {
+    if (!needEmployee || !companyId) return;
+    axios.get(`${API_URL}/personnel/employees`, { params: { company_id: companyId } })
+      .then((r) => setEmployees((r.data || []).filter((e) => e.is_active !== false)))
+      .catch(() => setEmployees([]));
+  }, [needEmployee, companyId]);
 
   const targets = accounts.filter((a) => (a.id || a._id) !== tx?.account_id && !a.is_integrated);
   const canSubmit = mode === "category" || mode === "expense"
-    ? !!category.trim()
+    ? !!category.trim() && (!needEmployee || !!employeeId)
     : mode === "transfer" ? !!targetId
-    : mode === "invoice" ? !!invoiceId
     : true;
+
+  const onModeChange = (next) => {
+    setMode(next);
+    if (next !== "contact") setContactId("");
+    if (next !== "expense" && next !== "category") setCategory("");
+    if (next !== "expense") setEmployeeId("");
+    if (next !== "transfer") setTargetId(tx?.suggested_target_account_id || "");
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -64,11 +63,12 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
     try {
       const body = {
         learn,
-        category: category || null,
-        contact_id: mode === "contact" || mode === "invoice" || mode === "expense" ? contactId || null : null,
-        invoice_id: mode === "invoice" ? invoiceId : null,
+        category: mode === "category" || mode === "expense" ? (category || null) : null,
+        contact_id: mode === "contact" ? contactId || null : null,
+        invoice_id: null,
         target_account_id: mode === "transfer" ? targetId : null,
         as_expense: mode === "expense",
+        employee_id: mode === "expense" && needEmployee ? employeeId || null : null,
       };
       const { data: matched } = await axios.post(`${API_URL}/banking/transactions/${txId}/match`, body);
       toast.success(mode === "expense"
@@ -109,39 +109,25 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
 
         <div>
           <label className="block font-semibold mb-1">Eşleşme türü</label>
-          <select value={mode} onChange={(e) => setMode(e.target.value)} className={sel} data-testid={`tx-match-mode-${txId}`}>
-            {modes.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          <select value={mode} onChange={(e) => onModeChange(e.target.value)} className={sel} data-testid={`tx-match-mode-${txId}`}>
+            {BANK_MATCH_MODES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </div>
 
-        {(mode === "contact" || mode === "invoice" || mode === "expense") && (
+        {mode === "contact" && (
           <div>
-            <label className="block font-semibold mb-1">Cari {mode === "expense" ? "(ops.)" : ""}</label>
+            <label className="block font-semibold mb-1">Cari</label>
             <select
               value={contactId}
-              onChange={(e) => { setContactId(e.target.value); setInvoiceId(""); }}
+              onChange={(e) => setContactId(e.target.value)}
               className={sel}
               data-testid={`tx-match-contact-${txId}`}
             >
-              <option value="">{mode === "expense" ? "Cari yok" : mode === "contact" ? "Cari seçin (boş = sadece onayla)" : "Cari seçin"}</option>
+              <option value="">Cari seçin (boş = sadece onayla)</option>
               {contacts.map((c) => {
                 const id = c.id || c._id;
                 return <option key={id} value={id}>{c.name}</option>;
               })}
-            </select>
-          </div>
-        )}
-
-        {mode === "invoice" && (
-          <div>
-            <label className="block font-semibold mb-1">Açık fatura</label>
-            <select value={invoiceId} onChange={(e) => setInvoiceId(e.target.value)} className={sel} disabled={!contactId} data-testid={`tx-match-invoice-${txId}`}>
-              <option value="">{contactId ? (openInvoices.length ? "Açık fatura seçin" : "Açık fatura yok") : "Önce cari seçin"}</option>
-              {openInvoices.map((i) => (
-                <option key={i.id || i._id} value={i.id || i._id}>
-                  {`${i.invoice_number} · kalan ${fmt(i.grand_total - (i.paid_amount || 0))} ₺`}
-                </option>
-              ))}
             </select>
           </div>
         )}
@@ -159,22 +145,49 @@ export function BankMatchModal({ tx, contacts = [], accounts = [], companyId, on
               includePartners
               collectableOnly={isIn}
               emptyLabel="Hesap / ortak seçin"
-            />          </div>
+            />
+          </div>
         )}
 
-        <div>
-          <label className="block font-semibold mb-1">
-            {mode === "expense" ? "Masraf kategorisi (zorunlu)" : `Kategori ${mode === "category" ? "(zorunlu)" : "(ops.)"}`}
-          </label>
-          {mode === "expense" ? (
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className={sel} data-testid={`tx-match-expense-cat-${txId}`}>
+        {mode === "category" && (
+          <div>
+            <label className="block font-semibold mb-1">Kategori (zorunlu)</label>
+            <input value={category} onChange={(e) => setCategory(e.target.value)} className={sel} data-testid={`tx-match-category-${txId}`} />
+          </div>
+        )}
+
+        {mode === "expense" && (
+          <div>
+            <label className="block font-semibold mb-1">Masraf kategorisi (zorunlu)</label>
+            <select
+              value={category}
+              onChange={(e) => { setCategory(e.target.value); setEmployeeId(""); }}
+              className={sel}
+              data-testid={`tx-match-expense-cat-${txId}`}
+            >
               <option value="">Kategori seçin…</option>
               {expenseCats.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
-          ) : (
-            <input value={category} onChange={(e) => setCategory(e.target.value)} className={sel} data-testid={`tx-match-category-${txId}`} />
-          )}
-        </div>
+          </div>
+        )}
+
+        {needEmployee && (
+          <div>
+            <label className="block font-semibold mb-1">Personel (zorunlu)</label>
+            <select
+              value={employeeId}
+              onChange={(e) => setEmployeeId(e.target.value)}
+              className={sel}
+              data-testid={`tx-match-employee-${txId}`}
+            >
+              <option value="">Personel seçin…</option>
+              {employees.map((e) => {
+                const id = e.id || e._id;
+                return <option key={id} value={id}>{e.full_name || e.name || id}</option>;
+              })}
+            </select>
+          </div>
+        )}
 
         <label className="flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer">
           <input type="checkbox" checked={learn} onChange={(e) => setLearn(e.target.checked)} data-testid={`tx-match-learn-${txId}`} />
