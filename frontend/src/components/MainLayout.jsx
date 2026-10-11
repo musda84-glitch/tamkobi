@@ -9,7 +9,7 @@ import { NotificationBell } from "./NotificationBell";
 import { ModuleLockedPanel, LicenseBadge } from "./saas/LicenseWidgets";
 import { HeaderQuickActions } from "./HeaderQuickActions";
 import { RadialQuickMenu } from "./RadialQuickMenu";
-import { isPublicPath } from "../utils/publicPath";
+import { isPublicPath, requiresSession } from "../utils/publicPath";
 import { mesaimExclusivePathAllowed } from "../utils/attendanceSelf";
 import { isPersonelRole, personelCanUseErpShortcuts, personelMenuPathAllowed } from "../utils/selfPersonnelNav";
 import { erpShellReady } from "../utils/authAccess";
@@ -213,13 +213,13 @@ export default function MainLayout({ children, onOpenQuickAction }) {
   const publicSite = isPublicPath(location.pathname);
   if (publicSite) return <>{children}</>;
 
-  // Vitrin title’ı panelde kalmasın; sayfa özel title yoksa bu varsayılan kullanılır.
-  const panelTitle = (
+  // Yalnızca bilinen ERP yolları — NotFound (bilinmeyen adres) "Panel | TamKobi" almasın.
+  const panelTitle = requiresSession(location.pathname) ? (
     <Helmet>
       <title>Panel | TamKobi</title>
       <meta name="robots" content="noindex,nofollow" />
     </Helmet>
-  );
+  ) : null;
 
   // Do not paint sidebar/header until session + (when needed) Mesaim gate are ready.
   // Otherwise role-hidden / license-locked items flash on refresh and mobile back.
