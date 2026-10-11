@@ -380,6 +380,12 @@ def init(db, mail_account_fn, current_user_dep):
     _db, _mail_account, _current_user = db, mail_account_fn, current_user_dep
 
 
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="RBAC auth bağlanmadı.")
+    return await _current_user(request)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -698,8 +704,8 @@ async def list_roles(company_id: str = "comp_nexus_main_01"):
 
 
 @router.put("/roles/policies")
-async def update_company_policies(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def update_company_policies(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     company = await _db.companies.find_one({"_id": company_id})
     if not company:
         raise HTTPException(status_code=404, detail="Şirket bulunamadı.")
@@ -713,8 +719,8 @@ async def update_company_policies(req: Dict[str, Any]):
 
 
 @router.post("/roles")
-async def create_role(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+async def create_role(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     name = (req.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Rol adı boş olamaz.")
@@ -740,10 +746,8 @@ async def create_role(req: Dict[str, Any]):
 
 
 @router.put("/roles/{role_id}")
-async def update_role(role_id: str, req: Dict[str, Any]):
-    r = await _db.roles.find_one({"_id": role_id})
-    if not r:
-        raise HTTPException(status_code=404, detail="Rol bulunamadı.")
+async def update_role(role_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    r = await tenant_access.get_tenant_doc(_db, "roles", role_id, user, not_found="Rol bulunamadı.")
     upd: Dict[str, Any] = {}
     if req.get("name") and not r.get("is_system"):
         upd["name"] = req["name"].strip()
@@ -763,10 +767,8 @@ async def update_role(role_id: str, req: Dict[str, Any]):
 
 
 @router.delete("/roles/{role_id}")
-async def delete_role(role_id: str):
-    r = await _db.roles.find_one({"_id": role_id})
-    if not r:
-        raise HTTPException(status_code=404, detail="Rol bulunamadı.")
+async def delete_role(role_id: str, user: dict = Depends(_user_dep)):
+    r = await tenant_access.get_tenant_doc(_db, "roles", role_id, user, not_found="Rol bulunamadı.")
     if r.get("is_system"):
         raise HTTPException(status_code=400, detail="Sistem rolleri silinemez.")
     if await _db.users.count_documents({"role": r["code"], "company_ids": r["company_id"], "is_super_admin": {"$ne": True}}):
@@ -866,9 +868,9 @@ async def update_user(user_id: str, req: Dict[str, Any], request: Request):
 
 
 @router.post("/users")
-async def create_company_user(req: Dict[str, Any]):
+async def create_company_user(req: Dict[str, Any], user: dict = Depends(_user_dep)):
     """Create a company user immediately with a password (no e-mail invite)."""
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     email = (req.get("email") or "").strip().lower()
     name = (req.get("name") or "").strip() or (email.split("@")[0] if email else "")
     pwd = req.get("password") or ""

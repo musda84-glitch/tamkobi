@@ -364,10 +364,8 @@ async def unpay_tax_obligation(oid: str, user: dict = Depends(_user_dep)):
 
 
 @router.delete("/tax-obligations/{oid}")
-async def delete_tax_obligation(oid: str):
-    ob = await _db.tax_obligations.find_one({"_id": oid})
-    if not ob:
-        raise HTTPException(status_code=404, detail="Yükümlülük bulunamadı.")
+async def delete_tax_obligation(oid: str, user: dict = Depends(_user_dep)):
+    ob = await tenant_access.get_tenant_doc(_db, "tax_obligations", oid, user, not_found="Yükümlülük bulunamadı.")
     if ob.get("payment_status") == "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş kayıt silinemez. Önce ödemeyi geri alın.")
     await _delete_linked_expense(ob)
@@ -376,11 +374,9 @@ async def delete_tax_obligation(oid: str):
 
 
 @router.delete("/tax-documents/{doc_id}")
-async def delete_tax_document(doc_id: str):
+async def delete_tax_document(doc_id: str, user: dict = Depends(_user_dep)):
     """Yüklenen bordro/mizan/tahakkuk belgesini ve ödenmemiş satırlarını siler."""
-    doc = await _db.tax_documents.find_one({"_id": doc_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Belge bulunamadı.")
+    doc = await tenant_access.get_tenant_doc(_db, "tax_documents", doc_id, user, not_found="Belge bulunamadı.")
     obs = await _db.tax_obligations.find({"document_id": doc_id}).to_list(500)
     if any(o.get("payment_status") == "paid" for o in obs):
         raise HTTPException(status_code=400, detail="Ödenmiş satırı olan belge silinemez. Önce ödemeleri geri alın.")

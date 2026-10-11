@@ -6,12 +6,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+import tenant_access
 import trash
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user = None
 
 STATUSES = ("active", "inactive", "maintenance")
 STATUS_LABELS = {
@@ -21,9 +23,17 @@ STATUS_LABELS = {
 }
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Vehicles auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _now() -> str:
@@ -120,7 +130,8 @@ def summarize(rows: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 @router.get("/vehicles")
-async def list_vehicles(company_id: str = "comp_nexus_main_01", status: Optional[str] = None, q: Optional[str] = None):
+async def list_vehicles(company_id: Optional[str] = None, status: Optional[str] = None, q: Optional[str] = None, user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, company_id)
     rows = await _db.vehicles.find({"company_id": company_id}).sort("plate", 1).to_list(500)
     filtered = filter_vehicles(rows, status=status, q=q)
     all_clean = [_clean(r) for r in rows]
@@ -132,16 +143,14 @@ async def list_vehicles(company_id: str = "comp_nexus_main_01", status: Optional
 
 
 @router.get("/vehicles/{vehicle_id}")
-async def get_vehicle(vehicle_id: str):
-    doc = await _db.vehicles.find_one({"_id": vehicle_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Araç bulunamadı.")
+async def get_vehicle(vehicle_id: str, user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "vehicles", vehicle_id, user, not_found="Araç bulunamadı.")
     return _clean(doc)
 
 
 @router.post("/vehicles")
-async def create_vehicle(req: Dict[str, Any]):
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+async def create_vehicle(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     fields = validate_vehicle(req)
     dup = await _db.vehicles.find_one({"company_id": company_id, "plate_key": fields["plate_key"]})
     if dup:
@@ -159,10 +168,8 @@ async def create_vehicle(req: Dict[str, Any]):
 
 
 @router.put("/vehicles/{vehicle_id}")
-async def update_vehicle(vehicle_id: str, req: Dict[str, Any]):
-    doc = await _db.vehicles.find_one({"_id": vehicle_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Araç bulunamadı.")
+async def update_vehicle(vehicle_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "vehicles", vehicle_id, user, not_found="Araç bulunamadı.")
     fields = validate_vehicle(req, partial=True)
     if "plate_key" in fields and fields["plate_key"] != doc.get("plate_key"):
         dup = await _db.vehicles.find_one({
@@ -179,9 +186,7 @@ async def update_vehicle(vehicle_id: str, req: Dict[str, Any]):
 
 
 @router.delete("/vehicles/{vehicle_id}")
-async def delete_vehicle(vehicle_id: str):
-    doc = await _db.vehicles.find_one({"_id": vehicle_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Araç bulunamadı.")
+async def delete_vehicle(vehicle_id: str, user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "vehicles", vehicle_id, user, not_found="Araç bulunamadı.")
     await trash.soft_delete("vehicles", doc, "vehicle", vehicle_label(doc), note=doc.get("plate") or "")
     return {"status": "success", "message": f"{doc.get('plate') or 'Araç'} çöp kutusuna taşındı."}

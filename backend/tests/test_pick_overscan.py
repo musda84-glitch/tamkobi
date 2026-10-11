@@ -32,6 +32,7 @@ def test_scan_rejects_overscan(monkeypatch):
         }],
     }
 
+    user = {"id": "u1", "company_ids": ["c1"], "active_company_id": "c1"}
     db = MagicMock()
     db.orders.find_one = AsyncMock(return_value=order)
     db.order_pick_sessions.find_one = AsyncMock(return_value=ses)
@@ -44,9 +45,10 @@ def test_scan_rejects_overscan(monkeypatch):
 
     monkeypatch.setattr(op, "_session_for", fake_session)
     monkeypatch.setattr(op, "_product_by_code", AsyncMock(return_value={"_id": "p1", "barcode": "DRD_35_BYZ"}))
+    monkeypatch.setattr(op.tenant_access, "get_tenant_doc", AsyncMock(return_value=order))
 
     with pytest.raises(HTTPException) as ei:
-        asyncio.run(op.scan_pick("ord_os", {"barcode": "DRD_35_BYZ", "quantity": 1}))
+        asyncio.run(op.scan_pick("ord_os", {"barcode": "DRD_35_BYZ", "quantity": 1}, user))
 
     assert ei.value.status_code == 409
     detail = ei.value.detail

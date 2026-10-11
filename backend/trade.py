@@ -182,7 +182,8 @@ def _doc_from_req(req: Dict[str, Any], existing: Optional[dict] = None) -> Dict[
 
 
 @router.get("/trade-files/meta")
-async def trade_meta(company_id: Optional[str] = "comp_nexus_main_01", date: Optional[str] = None):
+async def trade_meta(company_id: Optional[str] = None, date: Optional[str] = None, user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, company_id)
     defaults = await fx.defaults_map(company_id, date, fetch=True)
     return {
         "incoterms": INCOTERMS,
@@ -196,7 +197,8 @@ async def trade_meta(company_id: Optional[str] = "comp_nexus_main_01", date: Opt
 
 
 @router.get("/trade-files")
-async def list_trade_files(company_id: Optional[str] = "comp_nexus_main_01", kind: Optional[str] = None):
+async def list_trade_files(company_id: Optional[str] = None, kind: Optional[str] = None, user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, company_id)
     q: Dict[str, Any] = {"company_id": company_id}
     if kind in ("import", "export"):
         q["kind"] = kind
@@ -205,9 +207,10 @@ async def list_trade_files(company_id: Optional[str] = "comp_nexus_main_01", kin
 
 
 @router.post("/trade-files")
-async def create_trade_file(req: Dict[str, Any]):
+async def create_trade_file(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    req = {**req, "company_id": company_id}
     doc = _doc_from_req(req)
-    company_id = req.get("company_id") or "comp_nexus_main_01"
     stamp = await fx.stamp(company_id, req.get("currency") or "USD", req.get("file_date"), fx.typed_rate(req.get("currency") or "USD", req.get("fx_rate"), req.get("fx_source")))
     doc = _doc_from_req({**req, **stamp})
     if not doc["contact_name"] and not doc["contact_id"]:
@@ -223,21 +226,17 @@ async def create_trade_file(req: Dict[str, Any]):
 
 
 @router.get("/trade-files/{file_id}")
-async def get_trade_file(file_id: str):
-    d = await _db.trade_files.find_one({"_id": file_id})
-    if not d:
-        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+async def get_trade_file(file_id: str, user: dict = Depends(_user_dep)):
+    d = await tenant_access.get_tenant_doc(_db, "trade_files", file_id, user, not_found="Dosya bulunamadı.")
     return _clean(d)
 
 
 @router.put("/trade-files/{file_id}")
-async def update_trade_file(file_id: str, req: Dict[str, Any]):
-    cur = await _db.trade_files.find_one({"_id": file_id})
-    if not cur:
-        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+async def update_trade_file(file_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    cur = await tenant_access.get_tenant_doc(_db, "trade_files", file_id, user, not_found="Dosya bulunamadı.")
     if cur.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="İptal dosya düzenlenemez.")
-    merged = {**cur, **req, "items": req.get("items", cur.get("items"))}
+    merged = {**cur, **req, "company_id": cur.get("company_id"), "items": req.get("items", cur.get("items"))}
     doc = _doc_from_req(merged, cur)
     stamp = await fx.stamp(merged.get("company_id") or cur["company_id"], merged.get("currency") or "USD", merged.get("file_date"), fx.typed_rate(merged.get("currency"), merged.get("fx_rate"), merged.get("fx_source")))
     doc = _doc_from_req({**merged, **stamp}, cur)
@@ -247,11 +246,9 @@ async def update_trade_file(file_id: str, req: Dict[str, Any]):
 
 
 @router.delete("/trade-files/{file_id}")
-async def delete_trade_file(file_id: str):
+async def delete_trade_file(file_id: str, user: dict = Depends(_user_dep)):
     import trash
-    d = await _db.trade_files.find_one({"_id": file_id})
-    if not d:
-        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+    d = await tenant_access.get_tenant_doc(_db, "trade_files", file_id, user, not_found="Dosya bulunamadı.")
     if d.get("invoice_id"):
         raise HTTPException(status_code=400, detail="Faturalanmış dosya silinemez; iptal edin.")
     tid = await trash.soft_delete("trade_files", d, "trade_file", f"{d.get('file_number')} · {d.get('contact_name')}", note=d.get("kind"))
@@ -259,10 +256,8 @@ async def delete_trade_file(file_id: str):
 
 
 @router.post("/trade-files/{file_id}/status")
-async def set_trade_status(file_id: str, req: Dict[str, Any]):
-    d = await _db.trade_files.find_one({"_id": file_id})
-    if not d:
-        raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
+async def set_trade_status(file_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    d = await tenant_access.get_tenant_doc(_db, "trade_files", file_id, user, not_found="Dosya bulunamadı.")
     status = (req.get("status") or "").strip()
     allowed = {s[0] for s in STATUSES}
     if status not in allowed:

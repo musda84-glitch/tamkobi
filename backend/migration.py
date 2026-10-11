@@ -8,13 +8,15 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import openpyxl
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 import comm_service
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user = None
 BIZIMHESAP_BASE = "https://bizimhesap.com/api/b2b"
 BIZIMHESAP_KEY = "BZMHB2B724018943908D0B82491F203F"
 
@@ -99,9 +101,17 @@ SOURCE_HINTS: Dict[str, Dict[str, Dict[str, str]]] = {
 }
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Migration auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _now() -> str:
@@ -432,10 +442,8 @@ async def migration_batches(company_id: str = "comp_nexus_main_01"):
 
 
 @router.get("/migration/batches/{batch_id}/errors.csv")
-async def migration_batch_errors(batch_id: str):
-    b = await _db.migration_batches.find_one({"_id": batch_id})
-    if not b:
-        raise HTTPException(status_code=404, detail="Parti bulunamadı.")
+async def migration_batch_errors(batch_id: str, user: dict = Depends(_user_dep)):
+    b = await tenant_access.get_tenant_doc(_db, "migration_batches", batch_id, user, not_found="Parti bulunamadı.")
     buf = io.StringIO(); w = csv.writer(buf, delimiter=";")
     w.writerow(["Satır", "Kayıt", "Hatalar"])
     for e in b.get("errors") or []:
@@ -444,10 +452,8 @@ async def migration_batch_errors(batch_id: str):
 
 
 @router.post("/migration/batches/{batch_id}/rollback")
-async def migration_rollback(batch_id: str):
-    b = await _db.migration_batches.find_one({"_id": batch_id})
-    if not b:
-        raise HTTPException(status_code=404, detail="Parti bulunamadı.")
+async def migration_rollback(batch_id: str, user: dict = Depends(_user_dep)):
+    b = await tenant_access.get_tenant_doc(_db, "migration_batches", batch_id, user, not_found="Parti bulunamadı.")
     if b.get("status") == "rolled_back":
         raise HTTPException(status_code=400, detail="Bu parti zaten geri alınmış.")
     coll = _db[ENTITIES[b["entity"]]["collection"]]

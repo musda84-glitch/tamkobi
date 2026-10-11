@@ -96,6 +96,11 @@ def test_known_cores_exist():
             "_create_invoice_core", "_create_quote_core", "_create_project_core",
             "_record_invoice_payment_core", "_create_match_rule_core",
             "_delete_order_core", "_sync_bank_connection_core",
+            "_pay_payroll_core", "_update_bonus_core", "_sync_ecommerce_channel_core",
+            "_complete_production_order_core", "_create_expense_slip_from_invoice_core",
+            "_match_invoice_item_product_core",
+            "_create_product_from_invoice_item_core",
+            "_create_missing_products_for_invoice_core",
         )),
         (expenses, ("_pay_expense_core", "_unpay_expense_core")),
         (cheques, ("_cancel_cheque_core",)),
@@ -103,3 +108,5 @@ def test_known_cores_exist():
     ):
         for n in names:
             assert callable(getattr(mod, n, None)), f"{mod.__name__}.{n} yok"
+    import edocs
+    assert callable(getattr(edocs, "_set_lines_core", None)), "edocs._set_lines_core yok"

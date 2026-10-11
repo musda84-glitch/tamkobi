@@ -476,3 +476,247 @@ class TestSecurityP0Http:
             timeout=30,
         )
         assert tx.status_code == 200, tx.text
+
+    def test_idor_employee_survey_quote_order(self):
+        """B, A'nın personel/keşif/teklif/sipariş id'siyle PUT/DELETE/convert yapamaz (404)."""
+        admin = _super_session()
+        a, a_email, a_pass = _create_tenant(admin, "idora")
+        b, b_email, b_pass = _create_tenant(admin, "idorb")
+        sa, _ = _login(a_email, a_pass)
+        sb, _ = _login(b_email, b_pass)
+        cid = _mk_contact(sa, a["id"])
+
+        # --- Personel ---
+        emp = sa.post(
+            f"{API}/personnel/employees",
+            json={
+                "company_id": a["id"],
+                "full_name": "P0 Personel",
+                "tc_kimlik": "11111111110",
+                "department": "Üretim",
+                "position": "Operatör",
+                "phone": "5550000000",
+                "email": f"emp_{uuid.uuid4().hex[:6]}@p0.test",
+                "salary": 1000,
+                "start_date": "2026-01-01",
+            },
+            timeout=30,
+        )
+        assert emp.status_code == 200, emp.text
+        eid = emp.json().get("id") or emp.json().get("_id")
+        assert sb.put(f"{API}/personnel/employees/{eid}", json={"full_name": "HACK"}, timeout=15).status_code == 404
+        assert sb.delete(f"{API}/personnel/employees/{eid}", timeout=15).status_code == 404
+        ok = sa.put(f"{API}/personnel/employees/{eid}", json={"full_name": "P0 Personel OK"}, timeout=15)
+        assert ok.status_code == 200, ok.text
+        assert (ok.json().get("full_name") or "") == "P0 Personel OK"
+        card = sa.get(f"{API}/personnel/employees/{eid}/card", timeout=15)
+        assert card.status_code == 200, card.text
+
+        # --- Keşif ---
+        sv = sa.post(
+            f"{API}/surveys",
+            json={"company_id": a["id"], "contact_id": cid, "contact_name": "C", "address": "Adr"},
+            timeout=30,
+        )
+        assert sv.status_code == 200, sv.text
+        sid = sv.json().get("id") or sv.json().get("_id")
+        assert sb.put(f"{API}/surveys/{sid}", json={"notes": "hack"}, timeout=15).status_code == 404
+        assert sb.delete(f"{API}/surveys/{sid}", timeout=15).status_code == 404
+        ok_sv = sa.put(f"{API}/surveys/{sid}", json={"notes": "ok"}, timeout=15)
+        assert ok_sv.status_code == 200, ok_sv.text
+
+        # --- Teklif → fatura (B A adına fatura açamaz) ---
+        admin.post(f"{API}/system/companies/{a['id']}/modules/quotes", json={"enabled": True}, timeout=20)
+        q = sa.post(
+            f"{API}/quotes",
+            json={
+                "company_id": a["id"],
+                "contact_id": cid,
+                "contact_name": "Q",
+                "title": "P0 IDOR teklif",
+                "items": [{"name": "Hizmet", "quantity": 1, "unit_price": 50, "vat_rate": 20, "unit": "Adet"}],
+            },
+            timeout=30,
+        )
+        assert q.status_code == 200, q.text
+        qid = q.json().get("id") or q.json().get("_id")
+        before_inv = sa.get(f"{API}/invoices", params={"company_id": a["id"]}, timeout=20)
+        before_n = len(before_inv.json() if isinstance(before_inv.json(), list) else before_inv.json().get("items") or [])
+        assert sb.post(f"{API}/quotes/{qid}/convert-to-invoice", json={}, timeout=30).status_code == 404
+        after_inv = sa.get(f"{API}/invoices", params={"company_id": a["id"]}, timeout=20)
+        after_n = len(after_inv.json() if isinstance(after_inv.json(), list) else after_inv.json().get("items") or [])
+        assert after_n == before_n, "B'nin convert denemesi A'da fatura oluşturmamalı"
+        ok_q = sa.post(f"{API}/quotes/{qid}/convert-to-invoice", json={}, timeout=30)
+        assert ok_q.status_code == 200, ok_q.text
+
+        # --- Sipariş status (B A'nın taslak faturasını silemez) ---
+        o = sa.post(
+            f"{API}/orders",
+            json={
+                "company_id": a["id"],
+                "customer_name": "P0 IDOR Sip",
+                "shipping_address": "Adr",
+                "city": "Istanbul",
+                "total_amount": 10,
+                "items": [{"product_name": "X", "quantity": 1, "unit_price": 10}],
+                "channel": "manual",
+                "contact_id": cid,
+            },
+            timeout=30,
+        )
+        assert o.status_code == 200, o.text
+        oid = o.json().get("id") or o.json().get("_id")
+        inv_id = o.json().get("invoice_id")
+        leak = sb.put(f"{API}/orders/{oid}/status", json={"status": "pending"}, timeout=20)
+        assert leak.status_code == 404, leak.text
+        if inv_id:
+            still = sa.get(f"{API}/invoices/{inv_id}", timeout=15)
+            assert still.status_code == 200, still.text
+        ok_o = sa.put(f"{API}/orders/{oid}/status", json={"status": "approved"}, timeout=20)
+        assert ok_o.status_code == 200, ok_o.text
+
+    def test_idor_product_and_regression_flows(self):
+        admin = _super_session()
+        a, a_email, a_pass = _create_tenant(admin, "idorp")
+        b, b_email, b_pass = _create_tenant(admin, "idorq")
+        sa, _ = _login(a_email, a_pass)
+        sb, _ = _login(b_email, b_pass)
+        prod = sa.post(
+            f"{API}/products",
+            json={
+                "company_id": a["id"],
+                "name": f"P0 Ürün {uuid.uuid4().hex[:6]}",
+                "sku": f"SKU{uuid.uuid4().hex[:6]}",
+                "unit": "Adet",
+                "sale_price": 10,
+                "purchase_price": 5,
+                "vat_rate": 20,
+            },
+            timeout=30,
+        )
+        assert prod.status_code == 200, prod.text
+        pid = prod.json().get("id") or prod.json().get("_id")
+        assert sb.get(f"{API}/products/{pid}", timeout=15).status_code == 404
+        assert sb.put(f"{API}/products/{pid}", json={"name": "HACK"}, timeout=15).status_code == 404
+        assert sb.delete(f"{API}/products/{pid}", timeout=15).status_code == 404
+        ok = sa.get(f"{API}/products/{pid}", timeout=15)
+        assert ok.status_code == 200, ok.text
+        assert (sa.get(f"{API}/products/{pid}", timeout=15).json().get("name") or "").startswith("P0 Ürün")
+
+        # Edocs / üretim path-id: B A'nın id'siyle okuyamaz
+        fake = "missing_" + uuid.uuid4().hex[:12]
+        for path in (
+            f"/edocs/incoming/{fake}",
+            f"/production/orders/{fake}",
+            f"/work-orders/{fake}",
+            f"/recipes/{fake}",
+        ):
+            assert sb.get(f"{API}{path}", timeout=15).status_code in (404, 405)
+
+        # Regresyon: fatura kopyala + toplu sipariş silme + imzalı PDF
+        cid = _mk_contact(sa, a["id"])
+        inv_id, _ = _mk_invoice(sa, a["id"], cid)
+        assert sb.get(f"{API}/invoices/{inv_id}", timeout=15).status_code == 404
+        cp = sa.post(f"{API}/invoices/{inv_id}/copy", json={"mode": "same_contact"}, timeout=30)
+        assert cp.status_code == 200, cp.text
+        share = sa.get(f"{API}/invoices/{inv_id}/share-link", params={"kind": "pdf"}, timeout=15)
+        assert share.status_code == 200, share.text
+        assert "t=" in share.json().get("url", "")
+        o = sa.post(
+            f"{API}/orders",
+            json={
+                "company_id": a["id"],
+                "customer_name": "Bulk",
+                "shipping_address": "A",
+                "city": "Istanbul",
+                "total_amount": 0,
+                "items": [],
+                "channel": "manual",
+            },
+            timeout=30,
+        )
+        assert o.status_code == 200, o.text
+        oid = o.json().get("id") or o.json().get("_id")
+        # B'nin bulk-delete'i A'nın siparişini silmemeli
+        bd_b = sb.post(f"{API}/orders/bulk-delete", json={"ids": [oid]}, timeout=30)
+        assert bd_b.status_code == 200, bd_b.text
+        assert (bd_b.json().get("deleted") or 0) == 0
+        still_o = sa.get(f"{API}/orders/{oid}", timeout=15)
+        assert still_o.status_code == 200, still_o.text
+        bd = sa.post(f"{API}/orders/bulk-delete", json={"ids": [oid]}, timeout=30)
+        assert bd.status_code == 200, bd.text
+        assert bd.json().get("deleted", 0) >= 1
+
+    def test_settle_employee_salary_and_bonus_core(self):
+        """Depends regresyonu: settle → pay_payroll/update_bonus core ile 200."""
+        admin = _super_session()
+        a, a_email, a_pass = _create_tenant(admin, "settle")
+        sa, _ = _login(a_email, a_pass)
+        bank = sa.post(
+            f"{API}/banking/accounts",
+            json={
+                "company_id": a["id"],
+                "bank_name": "P0 Bank",
+                "account_name": "P0 Maaş Hesabı",
+                "type": "bank",
+                "currency": "TRY",
+                "current_balance": 50000,
+            },
+            timeout=20,
+        )
+        assert bank.status_code == 200, bank.text
+        aid = bank.json().get("id") or bank.json().get("_id")
+        emp = sa.post(
+            f"{API}/personnel/employees",
+            json={
+                "company_id": a["id"],
+                "full_name": "P0 Settle Personel",
+                "tc_kimlik": "22222222220",
+                "department": "Muhasebe",
+                "position": "Uzman",
+                "phone": "5551112233",
+                "email": f"settle_{uuid.uuid4().hex[:6]}@p0.test",
+                "salary": 12000,
+                "start_date": "2026-01-01",
+            },
+            timeout=30,
+        )
+        assert emp.status_code == 200, emp.text
+        eid = emp.json().get("id") or emp.json().get("_id")
+        settle = sa.post(
+            f"{API}/personnel/employees/{eid}/settle",
+            json={"mode": "split", "kinds": ["salary"], "account_id": aid, "date": "2026-10-01"},
+            timeout=40,
+        )
+        assert settle.status_code == 200, settle.text
+        assert settle.json().get("status") == "success", settle.text
+        assert "salary" in (settle.json().get("paid") or []), settle.json()
+
+        bonus = sa.post(
+            f"{API}/personnel/bonuses",
+            json={
+                "employee_id": eid,
+                "type": "bonus",
+                "amount": 250,
+                "period": "2026-10",
+                "note": "P0 prim",
+            },
+            timeout=20,
+        )
+        assert bonus.status_code == 200, bonus.text
+        bid = bonus.json().get("id") or bonus.json().get("_id")
+        settle_b = sa.post(
+            f"{API}/personnel/employees/{eid}/settle",
+            json={"mode": "split", "kinds": ["bonus"], "account_id": aid, "date": "2026-10-05"},
+            timeout=40,
+        )
+        assert settle_b.status_code == 200, settle_b.text
+        assert settle_b.json().get("status") == "success", settle_b.text
+        assert "bonus" in (settle_b.json().get("paid") or []), settle_b.json()
+        paid_bonus = sa.get(f"{API}/personnel/bonuses", params={"company_id": a["id"]}, timeout=20)
+        assert paid_bonus.status_code == 200, paid_bonus.text
+        rows = paid_bonus.json() if isinstance(paid_bonus.json(), list) else paid_bonus.json().get("items") or []
+        match = next((r for r in rows if (r.get("id") or r.get("_id")) == bid), None)
+        assert match is not None, paid_bonus.text
+        assert match.get("status") == "paid", match
+
