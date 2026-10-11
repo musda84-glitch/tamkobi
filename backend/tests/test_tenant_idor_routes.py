@@ -21,6 +21,7 @@ GUARD_NAMES = {
     "resolve_company_id",
     "_require_company_member",
     "_require_company_access",
+    "_require_member",
     "require_company_admin",
 }
 
@@ -68,11 +69,11 @@ def _auto_skip(path: str) -> bool:
 
 
 def _path_ids(path: str) -> list[str]:
-    return [i for i in PATH_ID.findall(path) if i != "company_id"]
+    """Tüm path parametreleri (company_id dahil) — middleware-only uçlar allowlist'te."""
+    return PATH_ID.findall(path)
 
 
 def test_path_id_routes_have_tenant_guard_or_allowlist():
-    allow = {(_norm_path(m) if False else m, _norm_path(p)) for m, p in allowlist.TENANT_IDOR_ALLOWLIST}
     # normalize allowlist paths
     allow = {(m, _norm_path(p)) for m, p in allowlist.TENANT_IDOR_ALLOWLIST}
 

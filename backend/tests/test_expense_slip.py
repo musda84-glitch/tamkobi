@@ -10,6 +10,10 @@ def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 
 
+def _user(company_id="comp"):
+    return {"id": "u1", "company_ids": [company_id], "active_company_id": company_id}
+
+
 def test_expense_slip_block_reason():
     import server
 
@@ -55,9 +59,11 @@ def test_create_expense_slip_from_issued_sales_invoice():
     mock_db.invoices.update_one = AsyncMock()
 
     with patch.object(server, "db", mock_db), patch.object(
+        server.tenant_access, "get_tenant_doc", AsyncMock(return_value=inv)
+    ), patch.object(
         server, "_next_number", AsyncMock(return_value="GP-2026-0007")
     ), patch.object(server, "_apply_invoice_effects", AsyncMock()) as effects:
-        result = _run(server.create_expense_slip_from_invoice("inv_nx"))
+        result = _run(server._create_expense_slip_from_invoice_core("inv_nx", _user()))
 
     assert result["status"] == "success"
     assert "GP-2026-0007" in result["message"]
@@ -103,9 +109,11 @@ def test_create_expense_slip_copies_withholding():
     mock_db.invoices.update_one = AsyncMock()
 
     with patch.object(server, "db", mock_db), patch.object(
+        server.tenant_access, "get_tenant_doc", AsyncMock(return_value=inv)
+    ), patch.object(
         server, "_next_number", AsyncMock(return_value="GP-2026-0008")
     ), patch.object(server, "_apply_invoice_effects", AsyncMock()):
-        result = _run(server.create_expense_slip_from_invoice("inv_wh"))
+        result = _run(server._create_expense_slip_from_invoice_core("inv_wh", _user()))
 
     inserted = mock_db.invoices.insert_one.await_args.args[0]
     assert result["status"] == "success"
@@ -118,10 +126,13 @@ def test_create_expense_slip_copies_withholding():
 def test_expense_slip_rejects_draft():
     import server
 
+    draft = {"_id": "d1", "company_id": "comp", "status": "draft", "contact_id": "c", "items": [{}]}
     mock_db = MagicMock()
-    mock_db.invoices.find_one = AsyncMock(return_value={"_id": "d1", "status": "draft", "contact_id": "c", "items": [{}]})
-    with patch.object(server, "db", mock_db):
+    mock_db.invoices.find_one = AsyncMock(return_value=draft)
+    with patch.object(server, "db", mock_db), patch.object(
+        server.tenant_access, "get_tenant_doc", AsyncMock(return_value=draft)
+    ):
         with pytest.raises(HTTPException) as ei:
-            _run(server.create_expense_slip_from_invoice("d1"))
+            _run(server._create_expense_slip_from_invoice_core("d1", _user()))
     assert ei.value.status_code == 400
     assert "Taslak" in ei.value.detail

@@ -2385,13 +2385,15 @@ def performance_scores(att_rows: list, leaves: list, tasks: list, work_orders: l
 
 # ---------- Çalışma saatleri ----------
 @router.get("/companies/{company_id}/work-schedule")
-async def get_work_schedule(company_id: str):
+async def get_work_schedule(company_id: str, user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, company_id)
     company = await _db.companies.find_one({"_id": company_id}) or {}
     return {"schedule": merge_schedule(company), "day_labels": DAY_LABELS, "defaults": DEFAULT_SCHEDULE, "overtime_methods": OVERTIME_METHODS}
 
 
 @router.put("/companies/{company_id}/work-schedule")
-async def put_work_schedule(company_id: str, req: Dict[str, Any]):
+async def put_work_schedule(company_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    company_id = tenant_access.resolve_company_id(user, company_id)
     company = await _db.companies.find_one({"_id": company_id}) or {}
     s = merge_schedule(company)
     for k in ("start", "end"):

@@ -46,8 +46,17 @@ EXPECTED = {
 
 def _guarded(fn: ast.AST) -> bool:
     for n in ast.walk(fn):
+        if isinstance(n, ast.Name) and n.id in GUARDS:
+            return True
         if isinstance(n, ast.Attribute) and n.attr in GUARDS:
             return True
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Await) and isinstance(n.value, ast.Call):
+            f = n.value.func
+            if isinstance(f, ast.Name) and f.id.endswith("_core"):
+                return True
+            if isinstance(f, ast.Attribute) and f.attr.endswith("_core"):
+                return True
     return False
 
 

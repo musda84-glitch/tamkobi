@@ -6959,8 +6959,7 @@ async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None, us
     }
 
 
-@api_router.post("/invoices/{invoice_id}/expense-slip")
-async def create_expense_slip_from_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
+async def _create_expense_slip_from_invoice_core(invoice_id: str, user: dict):
     """Kesilmiş belgeden aynı cari ve kalemlerle alış gider pusulası düzenler."""
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if inv.get("expense_slip_id"):
@@ -7009,6 +7008,11 @@ async def create_expense_slip_from_invoice(invoice_id: str, user: dict = Depends
     await _apply_invoice_effects(doc)
     await db.invoices.update_one({"_id": invoice_id}, {"$set": {"expense_slip_id": doc["_id"], "expense_slip_number": number}})
     return {"status": "success", "invoice": clean_doc(doc), "message": f"{number} gider pusulası kesildi."}
+
+
+@api_router.post("/invoices/{invoice_id}/expense-slip")
+async def create_expense_slip_from_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
+    return await _create_expense_slip_from_invoice_core(invoice_id, user)
 
 
 @api_router.post("/invoices/{dispatch_id}/convert-to-invoice")
@@ -11616,8 +11620,7 @@ async def create_bonus(req: Dict[str, Any]):
     return clean_doc(doc)
 
 
-@api_router.put("/personnel/bonuses/{bonus_id}")
-async def update_bonus(bonus_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+async def _update_bonus_core(bonus_id: str, req: Dict[str, Any], user: dict):
     """Ödenmemiş prim/yevmiye kaydını düzenle; hesap seçilirse o anda ödenir."""
     rec = await tenant_access.get_tenant_doc(db, "bonus_payments", bonus_id, user, not_found="Kayıt bulunamadı.")
     if rec.get("status") == "paid":
@@ -11672,6 +11675,11 @@ async def update_bonus(bonus_id: str, req: Dict[str, Any], user: dict = Depends(
         upd.update({"account_id": account_id, "partner_id": None, "account_name": acc.get("account_name"), "status": "paid", "date": today, "paid_at": today})
     await db.bonus_payments.update_one({"_id": bonus_id}, {"$set": upd})
     return clean_doc(await db.bonus_payments.find_one({"_id": bonus_id}))
+
+
+@api_router.put("/personnel/bonuses/{bonus_id}")
+async def update_bonus(bonus_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    return await _update_bonus_core(bonus_id, req, user)
 
 @api_router.post("/personnel/bonuses/{bonus_id}/decide")
 async def decide_bonus(bonus_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
@@ -13153,9 +13161,19 @@ async def remove_ecommerce_channel(channel_id: str, user: dict = Depends(get_cur
     await db.integration_configs.delete_one({"_id": channel_id})
     return {"status": "success", "message": f"{cfg.get('channel_name')} kanalı kaldırıldı."}
 
-@api_router.post("/integrations/ecommerce/{channel_id}/sync-now")
-async def sync_ecommerce_channel(channel_id: str, days: Optional[int] = None, user: dict = Depends(get_current_user)):
-    config = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Entegrasyon bulunamadı.")
+async def _sync_ecommerce_channel_core(
+    channel_id: str,
+    days: Optional[int] = None,
+    *,
+    user: Optional[dict] = None,
+):
+    """Pazaryeri senkronu. HTTP route kullanıcı doğrular; arka plan kullanıcı olmadan çağırır."""
+    if user is not None:
+        config = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Entegrasyon bulunamadı.")
+    else:
+        config = await db.integration_configs.find_one({"_id": channel_id})
+        if not config:
+            raise HTTPException(status_code=404, detail="Entegrasyon bulunamadı.")
     company_id = config.get("company_id", "comp_nexus_main_01")
     channel = config.get("channel", "trendyol")
     now = datetime.now(timezone.utc).isoformat()
@@ -13217,6 +13235,10 @@ async def sync_ecommerce_channel(channel_id: str, days: Optional[int] = None, us
     await db.integration_configs.update_one({"_id": channel_id}, {"$set": {"last_synced_at": now, "live": False}})
     return {"status": "success", "live": False, "days": sync_days, **res, "message": f"[SİMÜLE] {config.get('channel_name')} için API bilgisi eksik; {res['inserted']} örnek sipariş oluşturuldu. Gerçek siparişler için API Key/Secret ve Satıcı ID girin."}
 
+@api_router.post("/integrations/ecommerce/{channel_id}/sync-now")
+async def sync_ecommerce_channel(channel_id: str, days: Optional[int] = None, user: dict = Depends(get_current_user)):
+    return await _sync_ecommerce_channel_core(channel_id, days=days, user=user)
+
 async def _marketplace_auto_sync_loop(interval_s: int = 600):
     """Canlı kimlik bilgisi olan pazaryeri kanallarını 10 dakikada bir otomatik senkronize eder.
 
@@ -13234,7 +13256,7 @@ async def _marketplace_auto_sync_loop(interval_s: int = 600):
                     auto_on = cfg.get("auto_sync", True)
                 if marketplace_providers.has_live_credentials(cfg) and auto_on:
                     try:
-                        await sync_ecommerce_channel(cfg["_id"], days=3)
+                        await _sync_ecommerce_channel_core(cfg["_id"], days=3)
                     except HTTPException:
                         pass
         except Exception:
@@ -14122,7 +14144,7 @@ async def expense_slip_for_marketplace_claim(claim_id: str, user: dict = Depends
     inv_id = (linked or {}).get("invoice_id")
     if not inv_id:
         raise HTTPException(status_code=400, detail="Bu iadeye bağlı fatura bulunamadı. Önce sipariş faturasını kesin.")
-    result = await create_expense_slip_from_invoice(inv_id, user)
+    result = await _create_expense_slip_from_invoice_core(inv_id, user)
     slip = (result or {}).get("invoice") or {}
     slip_id = slip.get("id") or slip.get("_id")
     if slip_id:
@@ -16728,7 +16750,7 @@ async def finish_work_order(wo_id: str, req: Dict[str, Any] = None, user: dict =
             stock_qty = float(o.get("planned_quantity") or 0) if is_material_step else produced
             stock_scrap = 0.0 if is_material_step else scrap
             try:
-                r = await complete_production_order(
+                r = await _complete_production_order_core(
                     w["order_id"],
                     {
                         "quantity": stock_qty,
@@ -17141,8 +17163,7 @@ async def cancel_production_order(order_id: str, user: dict = Depends(get_curren
         msg = f"Üretim emri iptal edildi; {len(wos)} iş emri atölyeden kaldırıldı."
     return {"status": "success", "message": msg, "trashed_work_orders": len(wos)}
 
-@api_router.post("/production/orders/{order_id}/complete")
-async def complete_production_order(order_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+async def _complete_production_order_core(order_id: str, req: Dict[str, Any] = None, user: dict = None):
     req = req or {}
     p_order = await tenant_access.get_tenant_doc(db, "production_orders", order_id, user, not_found="Üretim emri bulunamadı.")
     if p_order.get("status") in ("completed", "cancelled"):
@@ -17255,6 +17276,10 @@ async def complete_production_order(order_id: str, req: Dict[str, Any] = None, u
     if recipe_deleted:
         msg += " Tek seferlik reçete silindi."
     return {"status": "success", "finished": finished, "consumed": consumed, "recipe_deleted": recipe_deleted, "message": msg}
+
+@api_router.post("/production/orders/{order_id}/complete")
+async def complete_production_order(order_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+    return await _complete_production_order_core(order_id, req, user)
 
 # ----------------- PERSONEL & BORDRO -----------------
 @api_router.get("/personnel/role-options")
@@ -17760,7 +17785,7 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], user: dict = Depends
             payrolls = await db.payrolls.find({"employee_id": emp_id}).to_list(60)
             pending = [p for p in payrolls if p.get("status") != "paid"]
         for p in pending:
-            await pay_payroll(p["_id"], pay_req)
+            await _pay_payroll_core(p["_id"], pay_req, user)
             paid.append("salary")
 
     if "expense" in kinds:
@@ -17802,7 +17827,7 @@ async def settle_employee(emp_id: str, req: Dict[str, Any], user: dict = Depends
                 continue
             if b.get("type") in ("advance", "borc", "bakiye", "overtime"):
                 continue
-            await update_bonus(b["_id"], pay_req)
+            await _update_bonus_core(b["_id"], pay_req, user)
             paid.append("bonus")
 
     try:
@@ -18466,8 +18491,7 @@ async def generate_payroll(req: Dict[str, Any]):
     total_ot = round(sum(g["overtime_pay"] for g in generated), 2)
     return {"status": "success", "message": f"{period} dönemi için {len(generated)} personelin bordrosu hesaplandı." + (f" Toplam {total_ot:,.2f} ₺ fazla mesai ücreti eklendi." if total_ot else ""), "payrolls": generated}
 
-@api_router.post("/personnel/payrolls/{payroll_id}/pay")
-async def pay_payroll(payroll_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+async def _pay_payroll_core(payroll_id: str, req: Dict[str, Any], user: dict):
     account_id = req.get("account_id") or req.get("bank_account_id")
     partner_id = req.get("partner_id")
     payroll = await tenant_access.get_tenant_doc(db, "payrolls", payroll_id, user, not_found="Bordro kaydı bulunamadı.")
@@ -18515,6 +18539,10 @@ async def pay_payroll(payroll_id: str, req: Dict[str, Any], user: dict = Depends
     )
 
     return {"status": "success", "message": f"{payroll.get('employee_name')} için maaş ödemesi gerçekleştirildi."}
+
+@api_router.post("/personnel/payrolls/{payroll_id}/pay")
+async def pay_payroll(payroll_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    return await _pay_payroll_core(payroll_id, req, user)
 
 @api_router.delete("/personnel/payrolls/{payroll_id}")
 async def delete_payroll(payroll_id: str, user: dict = Depends(get_current_user)):

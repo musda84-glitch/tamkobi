@@ -45,6 +45,18 @@ TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
     ("GET", "/payments/status/{session_id}"),
     # Platform silme onayı (süper-admin / support akışı)
     ("POST", "/companies/{company_id}/deletion-confirmations/{req_id}/reply"),
+    # /api/companies/{company_id}/… — PermissionAndAuditMiddleware path'ten cid alır,
+    # üye değilse 403. Handler'da ek resolve yoksa burada belgelenir.
+    ("GET", "/companies/{company_id}"),
+    ("PUT", "/companies/{company_id}"),
+    ("GET", "/companies/{company_id}/project-stages"),
+    ("GET", "/companies/{company_id}/work-parks"),
+    ("GET", "/companies/{company_id}/office-task-types"),
+    ("GET", "/companies/{company_id}/workshop-zones"),
+    ("GET", "/companies/{company_id}/b2b-settings"),
+    ("PUT", "/companies/{company_id}/b2b-settings"),
+    ("GET", "/companies/{company_id}/print-templates"),
+    ("PUT", "/companies/{company_id}/location"),
 }
 
 ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
@@ -55,4 +67,7 @@ ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
     ("GET", "/support/tickets/{ticket_id}"): "Müşteri kendi ticket'ı",
     ("GET", "/payments/status/{session_id}"): "Ödeme oturumu token'ı",
     ("POST", "/companies/{company_id}/deletion-confirmations/{req_id}/reply"): "Platform silme onay akışı",
+    ("GET", "/companies/{company_id}"): "RBAC middleware path company_id üyeliği",
+    ("PUT", "/companies/{company_id}/b2b-settings"): "RBAC middleware path company_id üyeliği",
+    ("PUT", "/companies/{company_id}/location"): "RBAC middleware path company_id üyeliği",
 }

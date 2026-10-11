@@ -663,8 +663,7 @@ async def cleanup_inbox_route(request: Request, company_id: Optional[str] = None
     return await cleanup_inbox(await require_inbox_company(request, company_id))
 
 
-@router.put("/edocs/inbox/{doc_id}/lines")
-async def set_lines(doc_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+async def _set_lines_core(doc_id: str, req: Dict[str, Any], user: dict):
     d = await tenant_access.get_tenant_doc(_db, "incoming_edocs", doc_id, user, not_found="E-belge bulunamadı.")
     if d["status"] != "pending":
         raise HTTPException(status_code=400, detail="Belge bulunamadı ya da işlenmiş.")
@@ -682,6 +681,11 @@ async def set_lines(doc_id: str, req: Dict[str, Any], user: dict = Depends(_user
     d["matched_lines"] = sum(1 for l in d["lines"] if l.get("product_id"))
     await _db.incoming_edocs.update_one({"_id": doc_id}, {"$set": {"lines": d["lines"], "matched_lines": d["matched_lines"]}})
     return _clean(d)
+
+
+@router.put("/edocs/inbox/{doc_id}/lines")
+async def set_lines(doc_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    return await _set_lines_core(doc_id, req, user)
 
 
 @router.post("/edocs/inbox/{doc_id}/create-product")
@@ -703,7 +707,7 @@ async def create_product_from_line(doc_id: str, req: Dict[str, Any], user: dict 
         "channel": "edoc",
         "show_in_b2b": False,
     })
-    return await set_lines(doc_id, {"lines": [{"idx": i, "product_id": p["product"]["id"]}]}, user)
+    return await _set_lines_core(doc_id, {"lines": [{"idx": i, "product_id": p["product"]["id"]}]}, user)
 
 
 async def ensure_products_for_unmatched(doc: dict, *, markup: float = 1.4) -> int:

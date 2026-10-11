@@ -646,3 +646,77 @@ class TestSecurityP0Http:
         bd = sa.post(f"{API}/orders/bulk-delete", json={"ids": [oid]}, timeout=30)
         assert bd.status_code == 200, bd.text
         assert bd.json().get("deleted", 0) >= 1
+
+    def test_settle_employee_salary_and_bonus_core(self):
+        """Depends regresyonu: settle → pay_payroll/update_bonus core ile 200."""
+        admin = _super_session()
+        a, a_email, a_pass = _create_tenant(admin, "settle")
+        sa, _ = _login(a_email, a_pass)
+        bank = sa.post(
+            f"{API}/banking/accounts",
+            json={
+                "company_id": a["id"],
+                "bank_name": "P0 Bank",
+                "account_name": "P0 Maaş Hesabı",
+                "type": "bank",
+                "currency": "TRY",
+                "current_balance": 50000,
+            },
+            timeout=20,
+        )
+        assert bank.status_code == 200, bank.text
+        aid = bank.json().get("id") or bank.json().get("_id")
+        emp = sa.post(
+            f"{API}/personnel/employees",
+            json={
+                "company_id": a["id"],
+                "full_name": "P0 Settle Personel",
+                "tc_kimlik": "22222222220",
+                "department": "Muhasebe",
+                "position": "Uzman",
+                "phone": "5551112233",
+                "email": f"settle_{uuid.uuid4().hex[:6]}@p0.test",
+                "salary": 12000,
+                "start_date": "2026-01-01",
+            },
+            timeout=30,
+        )
+        assert emp.status_code == 200, emp.text
+        eid = emp.json().get("id") or emp.json().get("_id")
+        settle = sa.post(
+            f"{API}/personnel/employees/{eid}/settle",
+            json={"mode": "split", "kinds": ["salary"], "account_id": aid, "date": "2026-10-01"},
+            timeout=40,
+        )
+        assert settle.status_code == 200, settle.text
+        assert settle.json().get("status") == "success", settle.text
+        assert "salary" in (settle.json().get("paid") or []), settle.json()
+
+        bonus = sa.post(
+            f"{API}/personnel/bonuses",
+            json={
+                "employee_id": eid,
+                "type": "bonus",
+                "amount": 250,
+                "period": "2026-10",
+                "note": "P0 prim",
+            },
+            timeout=20,
+        )
+        assert bonus.status_code == 200, bonus.text
+        bid = bonus.json().get("id") or bonus.json().get("_id")
+        settle_b = sa.post(
+            f"{API}/personnel/employees/{eid}/settle",
+            json={"mode": "split", "kinds": ["bonus"], "account_id": aid, "date": "2026-10-05"},
+            timeout=40,
+        )
+        assert settle_b.status_code == 200, settle_b.text
+        assert settle_b.json().get("status") == "success", settle_b.text
+        assert "bonus" in (settle_b.json().get("paid") or []), settle_b.json()
+        paid_bonus = sa.get(f"{API}/personnel/bonuses", params={"company_id": a["id"]}, timeout=20)
+        assert paid_bonus.status_code == 200, paid_bonus.text
+        rows = paid_bonus.json() if isinstance(paid_bonus.json(), list) else paid_bonus.json().get("items") or []
+        match = next((r for r in rows if (r.get("id") or r.get("_id")) == bid), None)
+        assert match is not None, paid_bonus.text
+        assert match.get("status") == "paid", match
+
