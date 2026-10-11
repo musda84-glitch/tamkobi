@@ -249,7 +249,8 @@ async def perform_install(req: InstallRequest) -> dict:
                 "created_at": _now(),
             }
         )
-        public_url = (os.environ.get("PUBLIC_APP_URL") or "http://127.0.0.1").rstrip("/")
+        import public_url as pu
+        public_url = pu.resolve_public_base_url()
         await local.platform_settings.insert_one(
             {
                 "_id": "platform",

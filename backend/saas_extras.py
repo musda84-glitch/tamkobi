@@ -281,7 +281,8 @@ async def test_paytr(request: Request, _: dict = Depends(saas.require_super_admi
     oid, email, minor, ip = "NXTEST" + uuid.uuid4().hex[:16], "test@tamkobi.com", "100", "127.0.0.1"
     basket = base64.b64encode(json.dumps([["Bağlantı testi", "1.00", 1]], separators=(",", ":")).encode()).decode()
     token = _hash(c["merchant_key"], c["merchant_id"] + ip + oid + email + minor + basket + "0" + "0" + "TL" + "1" + c["merchant_salt"])
-    origin = str(request.base_url).rstrip("/")
+    import public_url as pu
+    origin = await pu.public_base_url(_db, request=request)
     form = {"merchant_id": c["merchant_id"], "user_ip": ip, "merchant_oid": oid, "email": email, "payment_amount": minor, "paytr_token": token, "user_basket": basket, "debug_on": "1", "test_mode": "1", "no_installment": "0", "max_installment": "0", "currency": "TL", "merchant_ok_url": f"{origin}/odeme/basarili", "merchant_fail_url": f"{origin}/odeme/iptal", "timeout_limit": "30", "lang": "tr", "user_name": "Test", "user_address": "-", "user_phone": "-"}
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -322,7 +323,8 @@ async def paytr_session(req: Dict[str, Any], request: Request):
     basket = base64.b64encode(json.dumps([[item["label"], f"{amount:.2f}", 1]], ensure_ascii=False, separators=(",", ":")).encode()).decode()
     no_inst, max_inst, cur = "0", c["max_installment"], "TL"
     token = _hash(c["merchant_key"], c["merchant_id"] + ip + oid + email + minor + basket + no_inst + max_inst + cur + c["test_mode"] + c["merchant_salt"])
-    origin = (req.get("origin_url") or str(request.headers.get("origin") or "")).rstrip("/")
+    import public_url as pu
+    origin = await pu.public_base_url(_db, explicit=req.get("origin_url") or "", request=request)
     form = {"merchant_id": c["merchant_id"], "user_ip": ip, "merchant_oid": oid, "email": email, "payment_amount": minor, "paytr_token": token, "user_basket": basket, "debug_on": "1", "test_mode": c["test_mode"], "no_installment": no_inst, "max_installment": max_inst, "currency": cur,
             "merchant_ok_url": f"{origin}/odeme/basarili?merchant_oid={oid}", "merchant_fail_url": f"{origin}/odeme/iptal", "timeout_limit": "30", "lang": "tr", "user_name": (admin.get("name") or company.get("name") or "")[:60], "user_address": (company.get("address") or company.get("city") or "-")[:200], "user_phone": (company.get("phone") or admin.get("phone") or "-")[:20]}
     await _db.payment_transactions.insert_one({"_id": str(uuid.uuid4()), "provider": "paytr", "merchant_oid": oid, "session_id": oid, "company_id": cid, "plan_id": item["plan_id"], "plan_name": item["plan_name"], "period": item["period"], "amount": amount, "currency": "try", "product_type": item["product_type"], "pack_id": item.get("pack_id"), "credits": item.get("credits") or 0, "status": "initiated", "payment_status": "pending", "applied": False, "created_at": _now(), "updated_at": _now()})

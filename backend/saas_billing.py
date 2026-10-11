@@ -70,8 +70,10 @@ async def settings() -> Dict[str, Any]:
     return {**DEFAULT_SETTINGS, **s}
 
 
-def _checkout(request: Request) -> StripeCheckout:
-    return StripeCheckout(api_key=os.environ["STRIPE_API_KEY"], webhook_url=f"{str(request.base_url).rstrip('/')}/api/webhook/stripe")
+def _checkout(public_base: str) -> StripeCheckout:
+    import public_url as pu
+    base = pu.normalize_public_base(public_base) or pu.DEFAULT_PUBLIC_BASE_URL
+    return StripeCheckout(api_key=os.environ["STRIPE_API_KEY"], webhook_url=f"{base}/api/webhook/stripe")
 
 
 async def resolve_checkout_item(req: Dict[str, Any]) -> Dict[str, Any]:
@@ -98,10 +100,14 @@ async def resolve_checkout_item(req: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------- Payments ----------------
 @router.post("/payments/checkout")
 async def create_checkout(req: Dict[str, Any], request: Request):
+    import public_url as pu
     item = await resolve_checkout_item(req)
-    origin = (req.get("origin_url") or str(request.headers.get("origin") or "")).rstrip("/")
     st = await settings()
-    sc = _checkout(request)
+    origin = pu.resolve_public_base_url(
+        platform_public_url=st.get("public_url"),
+        explicit=req.get("origin_url") or None,
+    )
+    sc = _checkout(origin)
     meta = {"company_id": item["company_id"], "plan_id": item["plan_id"], "period": item["period"], "product_type": item["product_type"], "pack_id": item.get("pack_id") or "", "credits": str(item.get("credits") or 0)}
     session = await sc.create_checkout_session(CheckoutSessionRequest(amount=item["amount"], currency=st.get("currency", "try"), success_url=f"{origin}/odeme/basarili?session_id={{CHECKOUT_SESSION_ID}}", cancel_url=f"{origin}/odeme/iptal", metadata=meta))
     await _db.payment_transactions.insert_one({"_id": str(uuid.uuid4()), "session_id": session.session_id, "company_id": item["company_id"], "plan_id": item["plan_id"], "plan_name": item["plan_name"], "period": item["period"], "amount": item["amount"], "currency": st.get("currency", "try"), "product_type": item["product_type"], "pack_id": item.get("pack_id"), "credits": item.get("credits") or 0, "status": "initiated", "payment_status": "pending", "applied": False, "created_at": _now(), "updated_at": _now()})
@@ -168,7 +174,10 @@ async def payment_status(session_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Ödeme kaydı bulunamadı.")
     if tx.get("payment_status") != "paid" and tx.get("provider", "stripe") == "stripe":
         try:
-            s = await _checkout(request).get_checkout_status(session_id)
+            import public_url as pu
+            st = await settings()
+            base = pu.resolve_public_base_url(platform_public_url=st.get("public_url"))
+            s = await _checkout(base).get_checkout_status(session_id)
             tx = await _mark_paid(session_id, s.payment_status, s.status) or tx
         except Exception as e:  # noqa: BLE001
             logger.warning(f"stripe status: {e}")
@@ -184,9 +193,12 @@ async def payment_status(session_id: str, request: Request):
 
 @router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
+    import public_url as pu
     body = await request.body()
     try:
-        ev = await _checkout(request).handle_webhook(body, request.headers.get("Stripe-Signature"))
+        st = await settings()
+        base = pu.resolve_public_base_url(platform_public_url=st.get("public_url"))
+        ev = await _checkout(base).handle_webhook(body, request.headers.get("Stripe-Signature"))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Webhook doğrulanamadı: {str(e)[:120]}")
     if ev.session_id:
@@ -272,12 +284,11 @@ async def _send_reminder(company: dict, lic: dict, kind: str, st: dict) -> Dict[
         body = f"Sayın {company.get('name')}, {lic['plan_name']} paketinizin {'deneme süresi' if lic['status'] == 'trial' else 'lisansı'} {end[:10]} tarihinde sona erecek ({lic['days_left']} gün kaldı). Kesintisiz kullanım için Hesap → Paketim ekranından yenileyebilirsiniz."
     if st.get("support_email") or st.get("support_phone"):
         body += f" Destek: {st.get('support_email', '')} {st.get('support_phone', '')}".rstrip()
-    base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
-    link = ""
-    if base:
-        import saas_docs
-        link = f"{base}/yenile/{saas_docs.make_renew_token(company['_id'], lic.get('plan_id'))}"
-        body += f" Tek tıkla yenilemek için: {link}"
+    import public_url as pu
+    import saas_docs
+    base = pu.resolve_public_base_url(platform_public_url=st.get("public_url"))
+    link = f"{base}/yenile/{saas_docs.make_renew_token(company['_id'], lic.get('plan_id'))}"
+    body += f" Tek tıkla yenilemek için: {link}"
     res = {"notification": True, "email": [], "whatsapp": [], "renew_link": bool(link)}
     import notify as _notify
     await _notify.insert_notification(_db, {"_id": str(uuid.uuid4()), "company_id": company["_id"], "type": "license", "title": title, "message": body, "ref_type": "license", "ref_id": company["_id"], "is_read": False, "created_at": _now()})

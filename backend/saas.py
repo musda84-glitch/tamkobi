@@ -374,8 +374,13 @@ async def seed():
         await _db.platform_settings.insert_one({"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "currency": "try", **site, "created_at": _now()})
     else:
         patch = {}
+        import public_url as pu
         url = (st.get("public_url") or "").strip()
-        if not url or "takibi.com" in url.lower():
+        if (
+            not url
+            or "takibi.com" in url.lower()
+            or pu.is_invalid_public_base(url)
+        ):
             patch["public_url"] = site["public_url"]
         if (st.get("brand_name") or "") in ("", "NexusHesap", "Nexus", "Nexus ERP", "Takibi", "Takip"):
             patch["brand_name"] = "TamKobi"
@@ -1110,10 +1115,8 @@ async def send_company_password_reset(company_id: str, req: Dict[str, Any], requ
         "created_at": now.isoformat(),
         "requested_by": "system_panel",
     })
-    st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
-    base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
-    if not base:
-        base = str(request.headers.get("origin") or "").rstrip("/")
+    import public_url as pu
+    base = await pu.public_base_url(_db, request=request)
     link = password_reset.reset_link(base, token, "login")
     brand = company.get("name") or "TamKobi"
     subject = f"{brand} şifre sıfırlama"
