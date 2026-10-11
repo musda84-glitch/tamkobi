@@ -3,12 +3,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 import fx
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
 _create_invoice = None
+_current_user = None
 
 INCOTERMS = ["EXW", "FCA", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"]
 REGIMES_IMPORT = [
@@ -36,9 +38,17 @@ STATUSES = [
 ]
 
 
-def init(db, create_invoice_fn=None):
-    global _db, _create_invoice
+def init(db, create_invoice_fn=None, get_current_user=None):
+    global _db, _create_invoice, _current_user
     _db, _create_invoice = db, create_invoice_fn
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Trade auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _now():
@@ -274,9 +284,9 @@ async def set_trade_status(file_id: str, req: Dict[str, Any]):
 
 
 @router.post("/trade-files/{file_id}/convert-to-invoice")
-async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None):
+async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None, user: dict = Depends(_user_dep)):
     req = req or {}
-    d = await _db.trade_files.find_one({"_id": file_id})
+    d = await tenant_access.get_tenant_doc(_db, "trade_files", file_id, user, not_found="Dosya bulunamadı.")
     if not d:
         raise HTTPException(status_code=404, detail="Dosya bulunamadı.")
     if d.get("invoice_id"):
@@ -289,7 +299,6 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None)
         raise HTTPException(status_code=500, detail="Fatura servisi hazır değil.")
     from models import Invoice, InvoiceItem
     kind = d.get("kind")
-    fx = _num(d.get("fx_rate"), 1) or 1.0
     rate = _num(d.get("fx_rate"), 1) or 1.0
     items = []
     for it in d.get("items") or []:
@@ -339,7 +348,7 @@ async def convert_trade_file(file_id: str, req: Optional[Dict[str, Any]] = None)
         status="draft",
         source_channel="trade",
     )
-    created = await _create_invoice(inv)
+    created = await _create_invoice(inv, user)
     extra_inv = {
         "trade_file_id": d["_id"], "trade_file_number": d.get("file_number"),
         "trade_kind": kind, "incoterm": d.get("incoterm"), "country": d.get("country"),

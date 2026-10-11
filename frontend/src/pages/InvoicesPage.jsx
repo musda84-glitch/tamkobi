@@ -936,11 +936,9 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           const to = inv.contact_email || c.email;
           const fd = new FormData();
           const invId = inv.id || inv._id;
-          let link = `${window.location.origin}/api/invoices/${invId}/pdf`;
-          try {
-            const sr = await axios.get(`${API_URL}/invoices/${invId}/share-link`, { params: { kind: "pdf" } });
-            if (sr.data?.url) link = sr.data.url;
-          } catch { /* */ }
+          const sr = await axios.get(`${API_URL}/invoices/${invId}/share-link`, { params: { kind: "pdf" } });
+          const link = sr.data?.url;
+          if (!link) throw new Error("İmzalı link yok");
           fd.append("company_id", companyId);
           fd.append("to", to);
           fd.append("subject", `Faturanız ${inv.invoice_number}`);

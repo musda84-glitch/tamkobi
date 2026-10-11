@@ -751,7 +751,9 @@ export function OrderActions({
     }
     setBusy("xml");
     try {
-      const href = `${client.baseUrl.replace(/\/+$/, "")}/api/e-invoice/${order.invoice_id}/xml`;
+      const sr = await get(client, `/e-invoice/${order.invoice_id}/share-link`, { kind: "xml" });
+      const href = sr?.url;
+      if (!href) throw new Error("Paylaşım linki alınamadı.");
       const opened = await Linking.openURL(href).then(() => true).catch(() => false);
       if (!opened) throw new Error("XML açılamadı.");
       onMessage?.("E-Fatura XML indiriliyor.");
@@ -770,14 +772,11 @@ export function OrderActions({
     }
     setBusy("pdf");
     try {
-      const base = client.baseUrl.replace(/\/+$/, "");
-      const href = `${base}/api/e-invoice/${order.invoice_id}/pdf?download=1`;
+      const sr = await get(client, `/e-invoice/${order.invoice_id}/share-link`, { kind: "pdf" });
+      const href = sr?.url;
+      if (!href) throw new Error("Paylaşım linki alınamadı.");
       const opened = await Linking.openURL(href).then(() => true).catch(() => false);
-      if (!opened) {
-        const fallback = `${base}/api/invoices/${order.invoice_id}/pdf?download=1`;
-        const ok = await Linking.openURL(fallback).then(() => true).catch(() => false);
-        if (!ok) throw new Error("PDF açılamadı.");
-      }
+      if (!opened) throw new Error("PDF açılamadı.");
       onMessage?.("E-Fatura PDF indiriliyor.");
     } catch (err) {
       onError?.(apiErrorMessage(err, "PDF indirilemedi."));
@@ -794,12 +793,12 @@ export function OrderActions({
     }
     setBusy("notify");
     try {
-      const base = client.baseUrl.replace(/\/+$/, "");
-      let link = `${base}/api/invoices/${order.invoice_id}/pdf`;
-      try {
-        const sr = await get(client, `/invoices/${order.invoice_id}/share-link`, { kind: "pdf" });
-        if (sr?.url) link = sr.url;
-      } catch { /* */ }
+      const sr = await get(client, `/invoices/${order.invoice_id}/share-link`, { kind: "pdf" });
+      const link = sr?.url;
+      if (!link) {
+        onError?.("İmzalı fatura linki alınamadı; imzasız link gönderilmez.");
+        return;
+      }
       await post(client, "/comm/mail/send", {
         company_id: companyId,
         to: order.customer_email,
@@ -1225,20 +1224,22 @@ export function OrderActions({
           title="E-posta"
           testID={`invoice-print-share-email-${num}`}
           onPress={async () => {
-            const base = client.baseUrl.replace(/\/+$/, "");
-            let pdfUrl = order.invoice_id ? `${base}/api/invoices/${order.invoice_id}/pdf` : "";
-            if (order.invoice_id) {
-              try {
-                const sr = await get(client, `/invoices/${order.invoice_id}/share-link`, { kind: "pdf" });
-                if (sr?.url) pdfUrl = sr.url;
-              } catch { /* */ }
+            if (!order.invoice_id) {
+              onError?.("Fatura yok.");
+              return;
             }
-            setPrintShareOpen(false);
-            setNotifyPhone(order.customer_phone || "");
-            setNotifyEmail(order.customer_email || "");
-            setNotifyBody(invoicePrintShareMessage(order, pdfUrl));
-            setNotifyChannel("email");
-            setNotifyOpen(true);
+            try {
+              const sr = await get(client, `/invoices/${order.invoice_id}/share-link`, { kind: "pdf" });
+              if (!sr?.url) throw new Error("İmzalı link alınamadı");
+              setPrintShareOpen(false);
+              setNotifyPhone(order.customer_phone || "");
+              setNotifyEmail(order.customer_email || "");
+              setNotifyBody(invoicePrintShareMessage(order, sr.url));
+              setNotifyChannel("email");
+              setNotifyOpen(true);
+            } catch (err) {
+              onError?.(apiErrorMessage(err, "İmzalı fatura linki alınamadı; imzasız link gönderilmez."));
+            }
           }}
         />
         <View style={{ height: 8 }} />
@@ -1246,20 +1247,22 @@ export function OrderActions({
           title="WhatsApp"
           testID={`invoice-print-share-whatsapp-${num}`}
           onPress={async () => {
-            const base = client.baseUrl.replace(/\/+$/, "");
-            let pdfUrl = order.invoice_id ? `${base}/api/invoices/${order.invoice_id}/pdf` : "";
-            if (order.invoice_id) {
-              try {
-                const sr = await get(client, `/invoices/${order.invoice_id}/share-link`, { kind: "pdf" });
-                if (sr?.url) pdfUrl = sr.url;
-              } catch { /* */ }
+            if (!order.invoice_id) {
+              onError?.("Fatura yok.");
+              return;
             }
-            setPrintShareOpen(false);
-            setNotifyPhone(order.customer_phone || "");
-            setNotifyEmail(order.customer_email || "");
-            setNotifyBody(invoicePrintShareMessage(order, pdfUrl));
-            setNotifyChannel("whatsapp");
-            setNotifyOpen(true);
+            try {
+              const sr = await get(client, `/invoices/${order.invoice_id}/share-link`, { kind: "pdf" });
+              if (!sr?.url) throw new Error("İmzalı link alınamadı");
+              setPrintShareOpen(false);
+              setNotifyPhone(order.customer_phone || "");
+              setNotifyEmail(order.customer_email || "");
+              setNotifyBody(invoicePrintShareMessage(order, sr.url));
+              setNotifyChannel("whatsapp");
+              setNotifyOpen(true);
+            } catch (err) {
+              onError?.(apiErrorMessage(err, "İmzalı fatura linki alınamadı; imzasız link gönderilmez."));
+            }
           }}
         />
       </B2BSheet>

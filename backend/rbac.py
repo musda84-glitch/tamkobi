@@ -1045,7 +1045,14 @@ async def invite_user(req: Dict[str, Any], request: Request):
 
 
 @router.delete("/users/invite/{token}")
-async def cancel_invite(token: str):
+async def cancel_invite(token: str, request: Request):
+    inv = await _db.user_invites.find_one({"_id": token})
+    if not inv:
+        return {"status": "success"}
+    user = await _current_user(request) if _current_user else None
+    import tenant_access
+    if not user or not tenant_access.user_may_access_company(user, inv.get("company_id")):
+        raise HTTPException(status_code=404, detail="Davet bulunamadı.")
     await _db.user_invites.delete_one({"_id": token})
     return {"status": "success"}
 

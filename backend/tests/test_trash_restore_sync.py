@@ -69,7 +69,8 @@ def test_restore_clears_tombstone_and_stamps_updated_at():
     trash.init(db)
     trash._hooks.clear()
 
-    out = _run(trash.restore_trash_item("trash1"))
+    user = {"is_super_admin": True, "company_ids": ["co1"], "active_company_id": "co1"}
+    out = _run(trash.restore_trash_item("trash1", user=user))
     assert out["status"] == "success"
     assert out["id"] == "tx_restore_1"
     inserted = bank_coll.insert_one.await_args.args[0]

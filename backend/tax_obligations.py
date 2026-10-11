@@ -4,10 +4,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
 import expenses
 import partner_pay
+import tenant_access
 from tax_obligation_extract import (
     SOURCE_KINDS,
     extract_tax_file,
@@ -16,12 +17,21 @@ from tax_obligation_extract import (
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user = None
 _PERIOD_RE = re.compile(r"^20\d{2}-(0[1-9]|1[0-2])$")
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Tax obligations auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _now():
@@ -300,11 +310,9 @@ async def list_tax_obligations(
 
 
 @router.post("/tax-obligations/{oid}/pay")
-async def pay_tax_obligation(oid: str, req: Dict[str, Any]):
+async def pay_tax_obligation(oid: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     """Ödemeyi Masraflar (Vergi / Harç / SGK) üzerinden kasa/bankaya işler."""
-    ob = await _db.tax_obligations.find_one({"_id": oid})
-    if not ob:
-        raise HTTPException(status_code=404, detail="Yükümlülük bulunamadı.")
+    ob = await tenant_access.get_tenant_doc(_db, "tax_obligations", oid, user, not_found="Yükümlülük bulunamadı.")
     if ob.get("payment_status") == "paid":
         raise HTTPException(status_code=400, detail="Bu yükümlülük zaten ödendi.")
     if not req.get("account_id") and not req.get("partner_id"):
@@ -313,7 +321,7 @@ async def pay_tax_obligation(oid: str, req: Dict[str, Any]):
     partner_id = req.get("partner_id") or None
     account_id = None if partner_id else req.get("account_id")
     eid = await _ensure_expense(ob)
-    paid_exp = await expenses.pay_expense(eid, {"account_id": account_id, "partner_id": partner_id, "date": pay_date})
+    paid_exp = await expenses._pay_expense_core(eid, {"account_id": account_id, "partner_id": partner_id, "date": pay_date}, user)
     await _db.tax_obligations.update_one(
         {"_id": oid},
         {"$set": {
@@ -330,12 +338,12 @@ async def pay_tax_obligation(oid: str, req: Dict[str, Any]):
 
 
 @router.post("/tax-obligations/{oid}/unpay")
-async def unpay_tax_obligation(oid: str):
-    ob = await _db.tax_obligations.find_one({"_id": oid})
-    if not ob or ob.get("payment_status") != "paid":
+async def unpay_tax_obligation(oid: str, user: dict = Depends(_user_dep)):
+    ob = await tenant_access.get_tenant_doc(_db, "tax_obligations", oid, user, not_found="Yükümlülük bulunamadı.")
+    if ob.get("payment_status") != "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş yükümlülük bulunamadı.")
     if ob.get("expense_id"):
-        await expenses.unpay_expense(ob["expense_id"])
+        await expenses._unpay_expense_core(ob["expense_id"], user)
     else:
         await _reverse_legacy_bank(ob)
     await _db.tax_obligations.update_one(

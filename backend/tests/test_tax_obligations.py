@@ -77,6 +77,9 @@ class FakeDb:
         self.contacts = FakeCollection()
         self.employees = FakeCollection()
 
+    def __getitem__(self, name):
+        return getattr(self, name)
+
 
 def test_payroll_from_uploaded_bordro():
     docs = [{
@@ -134,8 +137,9 @@ def test_import_creates_expense_and_pay_as_masraf():
     assert db.expenses.docs[0]["vat_rate"] == 0
     assert imported["obligations"][0]["expense_id"]
     oid = imported["obligations"][0]["id"]
+    admin = {"is_super_admin": True, "company_ids": ["c1"], "active_company_id": "c1"}
     with patch("expenses.assert_manual_allowed", new_callable=AsyncMock):
-        paid = asyncio.run(tax_obligations.pay_tax_obligation(oid, {"account_id": "acc1"}))
+        paid = asyncio.run(tax_obligations.pay_tax_obligation(oid, {"account_id": "acc1"}, user=admin))
     assert paid["payment_status"] == "paid"
     assert paid["expense_number"]
     assert db.bank_accounts.docs[0]["current_balance"] == 100000 - 58500

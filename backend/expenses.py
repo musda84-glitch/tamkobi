@@ -408,8 +408,7 @@ async def update_expense(expense_id: str, req: Dict[str, Any], user: dict = Depe
     return _clean(await _db.expenses.find_one({"_id": expense_id}))
 
 
-@router.post("/expenses/{expense_id}/pay")
-async def pay_expense(expense_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+async def _pay_expense_core(expense_id: str, req: Dict[str, Any], user: dict):
     exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
     if exp.get("payment_status") == "paid":
         raise HTTPException(status_code=400, detail="Bu masraf zaten ödendi.")
@@ -424,8 +423,12 @@ async def pay_expense(expense_id: str, req: Dict[str, Any], user: dict = Depends
     return _clean(await _db.expenses.find_one({"_id": expense_id}))
 
 
-@router.post("/expenses/{expense_id}/unpay")
-async def unpay_expense(expense_id: str, user: dict = Depends(_user_dep)):
+@router.post("/expenses/{expense_id}/pay")
+async def pay_expense(expense_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    return await _pay_expense_core(expense_id, req, user)
+
+
+async def _unpay_expense_core(expense_id: str, user: dict):
     exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
     if exp.get("payment_status") != "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş masraf bulunamadı.")
@@ -434,6 +437,11 @@ async def unpay_expense(expense_id: str, user: dict = Depends(_user_dep)):
     await _reverse_payment(exp)
     await _db.expenses.update_one({"_id": expense_id}, {"$set": {"payment_status": "unpaid", "account_id": None, "partner_id": None, "account_name": None, "paid_date": None, "paid_by_name": None}})
     return _clean(await _db.expenses.find_one({"_id": expense_id}))
+
+
+@router.post("/expenses/{expense_id}/unpay")
+async def unpay_expense(expense_id: str, user: dict = Depends(_user_dep)):
+    return await _unpay_expense_core(expense_id, user)
 
 
 @router.delete("/expenses/{expense_id}")

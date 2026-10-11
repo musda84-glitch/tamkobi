@@ -10,8 +10,8 @@ from urllib.parse import quote
 
 from auth_utils import get_jwt_secret
 
-# Paylaşım linki varsayılan ömrü (72 saat)
-DOC_SHARE_TTL_SEC = 72 * 3600
+# Paylaşım linki varsayılan ömrü (90 gün)
+DOC_SHARE_TTL_SEC = 90 * 24 * 3600
 
 _DOC_PATH_RE = re.compile(r"^/api/(invoices|e-invoice)/([^/]+)/(pdf|xml)$")
 

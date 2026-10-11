@@ -98,9 +98,12 @@ async def list_trash(company_id: str = "comp_nexus_main_01", entity_type: Option
 
 
 @router.get("/trash/{trash_id}")
-async def get_trash_item(trash_id: str):
+async def get_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
     rec = await _db.trash.find_one({"_id": trash_id})
     if not rec:
+        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
+    cid = rec.get("company_id") or (rec.get("doc") or {}).get("company_id")
+    if cid is not None and not tenant_access.user_may_access_company(user, str(cid)):
         raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
     doc = dict(rec.get("doc") or {})
     doc["id"] = doc.pop("_id", None)
@@ -166,7 +169,13 @@ async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
 
 
 @router.delete("/trash/{trash_id}")
-async def purge_trash_item(trash_id: str):
+async def purge_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
+    rec = await _db.trash.find_one({"_id": trash_id})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
+    cid = rec.get("company_id") or (rec.get("doc") or {}).get("company_id")
+    if cid is not None and not tenant_access.user_may_access_company(user, str(cid)):
+        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
     r = await _db.trash.delete_one({"_id": trash_id})
     if not r.deleted_count:
         raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")

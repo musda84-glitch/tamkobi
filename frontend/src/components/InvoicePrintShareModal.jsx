@@ -61,7 +61,12 @@ export function InvoicePrintShareModal({
           origin: typeof window !== "undefined" ? window.location.origin : "",
         });
         if (!cancelled && url) setPdfUrl(url);
-      } catch { /* oturumlu indirme yine çalışır */ }
+      } catch {
+        if (!cancelled) {
+          setPdfUrl("");
+          toast.error("İmzalı fatura linki alınamadı; imzasız link kullanılmaz.");
+        }
+      }
     })();
     return () => { cancelled = true; };
   }, [order?.invoice_id]);

@@ -242,10 +242,8 @@ async def list_cheques(
 
 
 @router.get("/cheques/{cheque_id}")
-async def get_cheque(cheque_id: str):
-    doc = await _db.cheques.find_one({"_id": cheque_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
+async def get_cheque(cheque_id: str, user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
     return _annotate(doc, _today())
 
 

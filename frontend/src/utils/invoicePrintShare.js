@@ -85,18 +85,21 @@ export function invoicePdfPublicUrl(origin, invoiceId, shareToken) {
   return t ? `${url}?t=${encodeURIComponent(t)}` : url;
 }
 
-/** Oturumlu istek: imzalı paylaşım URL'si (72 saat varsayılan). */
+/** Oturumlu istek: imzalı paylaşım URL'si (90 gün varsayılan). Başarısızsa hata fırlatır — imzasız link dönmez. */
 export async function fetchInvoicePdfShareUrl(axiosClient, apiUrl, invoiceId, { origin } = {}) {
   const id = String(invoiceId || "").trim();
-  if (!axiosClient || !apiUrl || !id) return "";
+  if (!axiosClient || !apiUrl || !id) throw new Error("Fatura paylaşım linki alınamadı.");
   const r = await axiosClient.get(`${apiUrl}/invoices/${id}/share-link`, {
     params: { kind: "pdf" },
   });
   const url = r?.data?.url || "";
   if (url) return url;
   const token = r?.data?.token || "";
+  if (!token) throw new Error("İmzalı fatura linki alınamadı.");
   const base = String(origin || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/+$/, "");
-  return invoicePdfPublicUrl(base, id, token);
+  const built = invoicePdfPublicUrl(base, id, token);
+  if (!built || !built.includes("t=")) throw new Error("İmzalı fatura linki alınamadı.");
+  return built;
 }
 
 /** TR cep → WhatsApp uluslararası (90…). */

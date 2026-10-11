@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_cancel_block_reason_draft_paper_and_e_doc():
@@ -62,6 +62,9 @@ def test_cancel_invoice_reverses_and_marks_cancelled():
     mock_db.installments.update_many = AsyncMock()
     mock_db.incoming_edocs = MagicMock()
     mock_db.incoming_edocs.update_one = AsyncMock()
+    empty_cur = MagicMock(to_list=AsyncMock(return_value=[]))
+    mock_db.bank_transactions.find = MagicMock(return_value=empty_cur)
+    mock_db.partner_transactions.find = MagicMock(return_value=empty_cur)
 
     with patch.object(server, "db", mock_db), patch.object(
         server, "_reverse_invoice_effects", AsyncMock()
@@ -69,8 +72,8 @@ def test_cancel_invoice_reverses_and_marks_cancelled():
         server, "_unlink_orders_from_invoice", AsyncMock()
     ) as unlink, patch.object(
         server, "_cancel_promissory_for_query", AsyncMock()
-    ):
-        result = _run(server.cancel_invoice("inv_c1", {}))
+    ), patch("tenant_access.get_tenant_doc", AsyncMock(return_value=inv)):
+        result = _run(server.cancel_invoice("inv_c1", {}, user={"is_super_admin": True}))
 
     rev.assert_awaited_once()
     unlink.assert_awaited_once()
@@ -89,18 +92,20 @@ def test_cancel_invoice_rejects_draft_and_paper():
     mock_db = MagicMock()
     mock_db.invoices.find_one = AsyncMock(return_value={"_id": "d1", "status": "draft", "invoice_number": "T-1"})
 
-    with patch.object(server, "db", mock_db):
+    draft = {"_id": "d1", "status": "draft", "invoice_number": "T-1"}
+    with patch.object(server, "db", mock_db), patch("tenant_access.get_tenant_doc", AsyncMock(return_value=draft)):
         with pytest.raises(HTTPException) as ei:
-            _run(server.cancel_invoice("d1", {}))
+            _run(server.cancel_invoice("d1", {}, user={"is_super_admin": True}))
     assert ei.value.status_code == 400
     assert "Taslak" in ei.value.detail
 
-    mock_db.invoices.find_one = AsyncMock(return_value={
+    paper = {
         "_id": "p1", "status": "approved", "e_type": "paper", "invoice_number": "K-1",
-    })
-    with patch.object(server, "db", mock_db):
+    }
+    mock_db.invoices.find_one = AsyncMock(return_value=paper)
+    with patch.object(server, "db", mock_db), patch("tenant_access.get_tenant_doc", AsyncMock(return_value=paper)):
         with pytest.raises(HTTPException) as ei2:
-            _run(server.cancel_invoice("p1", {}))
+            _run(server.cancel_invoice("p1", {}, user={"is_super_admin": True}))
     assert ei2.value.status_code == 400
     assert "e-Fatura" in ei2.value.detail
 
@@ -123,6 +128,9 @@ def test_cancel_issued_dispatch_unlinks_refs():
     mock_db.invoices.find_one = AsyncMock(return_value=inv)
     mock_db.invoices.update_one = AsyncMock()
     mock_db.installments.update_many = AsyncMock()
+    empty_cur = MagicMock(to_list=AsyncMock(return_value=[]))
+    mock_db.bank_transactions.find = MagicMock(return_value=empty_cur)
+    mock_db.partner_transactions.find = MagicMock(return_value=empty_cur)
 
     with patch.object(server, "db", mock_db), patch.object(
         server, "_reverse_invoice_effects", AsyncMock()
@@ -132,8 +140,8 @@ def test_cancel_issued_dispatch_unlinks_refs():
         server, "_unlink_dispatch_refs", AsyncMock()
     ) as un_disp, patch.object(
         server, "_cancel_promissory_for_query", AsyncMock()
-    ):
-        result = _run(server.cancel_invoice("d_irs", {}))
+    ), patch("tenant_access.get_tenant_doc", AsyncMock(return_value=inv)):
+        result = _run(server.cancel_invoice("d_irs", {}, user={"is_super_admin": True}))
 
     un_disp.assert_awaited_once_with("d_irs")
     assert result["status"] == "success"
