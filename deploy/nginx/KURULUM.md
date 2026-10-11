@@ -62,7 +62,8 @@ server {
 ```
 
 3. `deploy/nginx/tamkobi-ssl.conf.example` içindeki **443** bloklarını (www→apex + ana site + tüm location’lar) aynı vhost dosyasına ekleyin.
-   - Dinleme: `listen 443 ssl;` ve ayrı satırda `http2 on;` (eski `listen 443 ssl http2` yerine).
+   - Canlı **nginx 1.24**: `listen 443 ssl http2;` (örnek dosyadaki gibi).
+   - **nginx 1.25.1+**: `listen 443 ssl;` + ayrı satırda `http2 on;` tercih edilir (`listen … http2` uyarı verebilir).
 4. `sudo nginx -t && sudo systemctl reload nginx`
 
 Özet: HTTP içeriği artık yalnızca 443’te; 80 her zaman apex HTTPS’e 301 atar.

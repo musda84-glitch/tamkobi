@@ -7,6 +7,8 @@ import App from "@/App";
 import { canonicalizeLocalOrigin } from "@/canonicalizeLocal";
 
 canonicalizeLocalOrigin();
+// React 19 + react-helmet-async 3 data-rh kaldırmıyor; bot meta’sını JS ortamında sil.
+document.querySelectorAll('head [data-rh="true"]:not(title)').forEach((n) => n.remove());
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
