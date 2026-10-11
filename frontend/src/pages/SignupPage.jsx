@@ -10,6 +10,7 @@ import { SiteHeader, siteBrand } from "../components/saas/SiteChrome";
 import ModulePackBuilder from "../components/saas/ModulePackBuilder";
 import { parseModuleKeys, packQuote } from "../utils/modulePack";
 import { LegalConsent, LegalFooterLinks, emptyLegalConsent, legalPayload } from "../components/LegalConsent";
+import { Seo } from "../components/Seo";
 
 const inputCls = "w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50 placeholder:text-slate-600";
 
@@ -40,10 +41,16 @@ export default function SignupPage() {
       <a href="/panel" className="inline-flex px-5 py-3 bg-emerald-500 text-slate-900 rounded-xl font-bold text-sm" data-testid="signup-go-app">Uygulamaya Git</a></div></div>);
   return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100" data-testid="signup-page">
+      <Seo
+        title="Ücretsiz Deneme Kaydı | TamKobi"
+        trialDays={Number(d?.trial_days) > 0 ? d.trial_days : 14}
+        description={`TamKobi bulut ERP'yi ${Number(d?.trial_days) > 0 ? d.trial_days : 14} gün ücretsiz deneyin. Kredi kartı gerekmez.`}
+        path="/kayit"
+      />
       <SiteHeader brand={siteBrand(d?.brand_name)} right={<Link to="/login" className="text-xs text-slate-300 hover:text-white">Zaten hesabım var</Link>} />
       <div className="max-w-5xl mx-auto px-6 pb-16 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-8">
         <form onSubmit={submit} className="space-y-5">
-          <div><h1 className="text-3xl sm:text-4xl font-black">{d?.trial_days || 14} gün ücretsiz deneyin</h1><p className="text-sm text-slate-400 mt-2">Kredi kartı gerekmez. Deneme bitiminde dilediğiniz pakete geçebilirsiniz.</p></div>
+          <div><h1 className="text-3xl sm:text-4xl font-black">{Number(d?.trial_days) > 0 ? d.trial_days : 14} gün ücretsiz deneyin</h1><p className="text-sm text-slate-400 mt-2">Kredi kartı gerekmez. Deneme bitiminde dilediğiniz pakete geçebilirsiniz.</p></div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div className="sm:col-span-2"><label className="block font-semibold text-slate-300 mb-1">Şirket Ünvanı *</label><input required value={f.company_name} onChange={set("company_name")} className={inputCls} placeholder="Örn. Yıldız Mobilya Ltd. Şti." data-testid="signup-company" /></div>
             <div><label className="block font-semibold text-slate-300 mb-1">VKN / TCKN</label><input value={f.tax_number} onChange={set("tax_number")} className={inputCls} data-testid="signup-tax" /></div>

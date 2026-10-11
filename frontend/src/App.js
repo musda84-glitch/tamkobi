@@ -59,6 +59,7 @@ const WebsiteAdminPage = page(() => import("./pages/WebsiteAdminPage"));
 const PricingPage = page(() => import("./pages/PricingPage"));
 const SignupPage = page(() => import("./pages/SignupPage"));
 const LegalPage = page(() => import("./pages/LegalPage"));
+const NotFoundPage = page(() => import("./pages/NotFoundPage"));
 const PaymentResultPage = page(() => import("./pages/PaymentResultPage"));
 const RenewPage = page(() => import("./pages/RenewPage"));
 const B2BLoginPage = page(() => import("./pages/B2BLoginPage"));
@@ -169,7 +170,7 @@ export default function App() {
                   <Route path="/sifre/:token" element={<ResetPasswordPage />} />
                   <Route path="/b2b-yonetim" element={<B2BAdminPage />} />
                   <Route path="/login" element={<LoginPage />} />
-                  <Route path="*" element={<Navigate to="/" replace />} />
+                  <Route path="*" element={<NotFoundPage />} />
                 </Routes>
               </Suspense>
             </ProtectedRoute>

@@ -1,0 +1,25 @@
+# TamKobi — herkese açık vitrin
+User-agent: *
+Allow: /
+Allow: /web
+Allow: /fiyatlar
+Allow: /kayit
+Allow: /yasal/
+Allow: /b2b/giris
+
+# Uygulama / yönetim (dizine eklenmez)
+Disallow: /panel
+Disallow: /login
+Disallow: /sistem
+Disallow: /sistem/
+Disallow: /api/
+Disallow: /kurulum
+Disallow: /hesap
+Disallow: /settings
+Disallow: /trash
+Disallow: /portal/
+Disallow: /davet/
+Disallow: /odeme/
+Disallow: /yenile/
+
+Sitemap: https://tamkobi.com/sitemap.xml

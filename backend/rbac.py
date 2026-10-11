@@ -89,7 +89,7 @@ MODULE_HELP = {
     "/production": "Reçete (BOM), üretim emirleri ve eksik malzeme planı.",
     "/atolye": "Tablet/mobil atölye ekranı, iş emri ve PIN ile operatör.",
     "/personnel": "İK: personel kartı, bordro, vardiya, izin (yönetici).",
-    "/mesai": "Puantaj, giriş-çıkış, fazla mesai. Benim Sayfam (/personelim) de bu yetkiye bağlıdır.",
+    "/mesai": "Puantaj, giriş-çıkış ve fazla mesai takibi.",
     "/communication": "SMS, e-posta, WhatsApp Business merkezleri.",
     "/support": "Destek talepleri, ekler, yönetim paneli erişim ve silme onayı.",
     "/ai-advisor": "AI finans danışmanı (sohbet ve nakit tahmini). Fatura, fiş, çek ve ekstre AI aktarımı ilgili modül yetkisiyle çalışır.",

@@ -2,7 +2,7 @@
 import React from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { isPublicPath } from "../utils/publicPath";
+import { isPublicPath, requiresSession } from "../utils/publicPath";
 
 export { isPublicPath };
 
@@ -10,7 +10,7 @@ export { isPublicPath };
 export default function ProtectedRoute({ children }) {
   const { authenticated, loading } = useAuth();
   const location = useLocation();
-  if (isPublicPath(location.pathname)) return children;
+  if (!requiresSession(location.pathname)) return children;
   if (loading) {
     return <div className="min-h-screen bg-slate-50 text-slate-400 flex items-center justify-center text-xs">Yükleniyor…</div>;
   }

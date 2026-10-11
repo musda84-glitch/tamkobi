@@ -20,7 +20,35 @@ logger = logging.getLogger("TamKobiERP")
 _db = None
 _deps: Dict[str, Any] = {}
 PERIOD_DAYS = {"monthly": 30, "yearly": 365}
-DEFAULT_SETTINGS = {"_id": "platform", "reminder_days": [7, 1], "email_enabled": True, "whatsapp_enabled": True, "sender_company_id": "comp_nexus_main_01", "trial_days": 14, "trial_plan_id": "plan_pro", "support_email": "", "support_phone": "", "brand_name": "TamKobi", "currency": "try", "public_url": "https://tamkobi.com", "gib_packs": None, "gib_credits_sales": False}
+DEFAULT_SETTINGS = {
+    "_id": "platform",
+    "reminder_days": [7, 1],
+    "email_enabled": True,
+    "whatsapp_enabled": True,
+    "sender_company_id": "comp_nexus_main_01",
+    "trial_days": 14,
+    "trial_plan_id": "plan_pro",
+    "support_email": "",
+    "support_phone": "",
+    "support_whatsapp": "",
+    "brand_name": "TamKobi",
+    "currency": "try",
+    "public_url": "https://tamkobi.com",
+    "gib_packs": None,
+    "gib_credits_sales": False,
+    # Yasal satıcı bilgisi (vitrin /yasal sayfaları) — uydurma değer yok; admin/env ile doldurulur
+    "legal_name": "",
+    "legal_address": "",
+    "legal_city": "",
+    "legal_tax_number": "",
+    "legal_tax_office": "",
+    "legal_mersis": "",
+    "legal_iban": "",
+    "legal_bank_name": "",
+    "legal_phone": "",
+    "legal_email": "",
+    "legal_website": "",
+}
 
 
 def init(db, deps):
@@ -190,7 +218,20 @@ async def get_settings(_: dict = Depends(saas.require_super_admin)):
 
 @router.put("/system/settings")
 async def put_settings(req: Dict[str, Any], _: dict = Depends(saas.require_super_admin)):
-    upd = {k: req[k] for k in ("email_enabled", "whatsapp_enabled", "sender_company_id", "support_email", "support_phone", "brand_name", "trial_plan_id", "public_url") if k in req}
+    _keys = (
+        "email_enabled", "whatsapp_enabled", "sender_company_id", "support_email", "support_phone",
+        "support_whatsapp", "brand_name", "trial_plan_id", "public_url",
+        "legal_name", "legal_address", "legal_city", "legal_tax_number", "legal_tax_office",
+        "legal_mersis", "legal_iban", "legal_bank_name", "legal_phone", "legal_email", "legal_website",
+    )
+    upd = {k: req[k] for k in _keys if k in req}
+    for k in (
+        "support_email", "support_phone", "support_whatsapp", "brand_name", "public_url", "sender_company_id",
+        "trial_plan_id", "legal_name", "legal_address", "legal_city", "legal_tax_number", "legal_tax_office",
+        "legal_mersis", "legal_iban", "legal_bank_name", "legal_phone", "legal_email", "legal_website",
+    ):
+        if k in upd and isinstance(upd[k], str):
+            upd[k] = upd[k].strip()[:500]
     if "gib_credits_sales" in req:
         upd["gib_credits_sales"] = bool(req["gib_credits_sales"])
     if "reminder_days" in req:
@@ -308,10 +349,27 @@ async def reminders_log(_: dict = Depends(saas.require_super_admin)):
 # ---------------- Public: plans & signup ----------------
 @router.get("/public/plans")
 async def public_plans():
+    import platform_public
     st = await settings()
+    contact = platform_public.public_contact(st)
     plans = [_clean(p) for p in await _db.saas_plans.find({"is_public": True}).sort("sort", 1).to_list(20)]
-    return {"plans": plans, "catalog": await saas.catalog_with_prices(), "trial_days": st["trial_days"], "brand_name": st["brand_name"], "currency": st.get("currency", "try"), "support_email": st.get("support_email"), "support_phone": st.get("support_phone"), "allow_custom_pack": True,
-            "legal": [{"slug": "mesafeli-satis", "title": "Mesafeli Satış Sözleşmesi", "path": "/yasal/mesafeli-satis"}, {"slug": "on-bilgilendirme", "title": "Ön Bilgilendirme Formu", "path": "/yasal/on-bilgilendirme"}, {"slug": "kvkk", "title": "KVKK Aydınlatma Metni", "path": "/yasal/kvkk"}]}
+    return {
+        "plans": plans,
+        "catalog": await saas.catalog_with_prices(),
+        "trial_days": st["trial_days"],
+        "brand_name": contact["brand_name"],
+        "currency": st.get("currency", "try"),
+        "support_email": contact["support_email"],
+        "support_phone": contact["support_phone"],
+        "support_whatsapp": contact["support_whatsapp"],
+        "public_url": contact["public_url"],
+        "allow_custom_pack": True,
+        "legal": [
+            {"slug": "mesafeli-satis", "title": "Mesafeli Satış Sözleşmesi", "path": "/yasal/mesafeli-satis"},
+            {"slug": "on-bilgilendirme", "title": "Ön Bilgilendirme Formu", "path": "/yasal/on-bilgilendirme"},
+            {"slug": "kvkk", "title": "KVKK Aydınlatma Metni", "path": "/yasal/kvkk"},
+        ],
+    }
 
 
 @router.post("/public/signup")

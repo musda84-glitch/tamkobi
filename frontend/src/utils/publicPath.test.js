@@ -1,5 +1,5 @@
 
-import { isPublicPath } from "./publicPath";
+import { isPublicPath, requiresSession } from "./publicPath";
 
 test("marketing, login and platform paths stay public", () => {
   expect(isPublicPath("/")).toBe(true);
@@ -22,4 +22,11 @@ test("ERP shell paths are not public", () => {
   expect(isPublicPath("/panel")).toBe(false);
   expect(isPublicPath("/invoices")).toBe(false);
   expect(isPublicPath("/b2b-yonetim")).toBe(false);
+});
+
+test("unknown paths skip login so SPA 404 can render", () => {
+  expect(requiresSession("/bu-yol-yok")).toBe(false);
+  expect(requiresSession("/panel")).toBe(true);
+  expect(requiresSession("/invoices")).toBe(true);
+  expect(requiresSession("/yasal/kvkk")).toBe(false);
 });
