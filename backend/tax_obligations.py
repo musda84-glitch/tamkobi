@@ -217,9 +217,8 @@ async def extract_tax_doc(
     }
 
 
-@router.post("/tax-obligations/import")
-async def import_tax_doc(req: Dict[str, Any]):
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+async def _import_tax_doc_core(req: Dict[str, Any], user: dict):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     draft = req.get("draft") or {}
     source_kind = draft.get("source_kind") if draft.get("source_kind") in SOURCE_KINDS else "tahakkuk"
     selected = req.get("selected")
@@ -283,6 +282,11 @@ async def import_tax_doc(req: Dict[str, Any]):
         "obligations": created,
         "message": f"{len(created)} satır Masraflar → {expenses.TAX_CATEGORY} altına düştü. Ödemeyi buradan veya Masraflar'dan yapabilirsiniz.",
     }
+
+
+@router.post("/tax-obligations/import")
+async def import_tax_doc(req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    return await _import_tax_doc_core(req, user)
 
 
 @router.get("/tax-obligations")

@@ -277,3 +277,202 @@ class TestSecurityP0Http:
         assert leak.status_code in (403, 404), leak.text
         ok = sa.post(f"{API}/invoices/{inv_id}/approve", timeout=20)
         assert ok.status_code == 200, ok.text
+
+    def test_pay_installment_via_record_payment_core(self):
+        """POST /installments/{id}/pay → _record_invoice_payment_core (Depends kırılmaz)."""
+        admin = _super_session()
+        a, a_email, a_pass = _create_tenant(admin, "instpay")
+        sa, _ = _login(a_email, a_pass)
+        cid = _mk_contact(sa, a["id"])
+        inv_id, _ = _mk_invoice(sa, a["id"], cid)
+        plan = sa.post(
+            f"{API}/invoices/{inv_id}/installments",
+            json={"count": 2, "interval": "month", "start_date": "2026-10-01"},
+            timeout=30,
+        )
+        assert plan.status_code == 200, plan.text
+        rows = plan.json() if isinstance(plan.json(), list) else plan.json().get("installments") or []
+        assert rows, plan.text
+        inst_id = rows[0].get("id") or rows[0].get("_id")
+        pay = sa.post(f"{API}/installments/{inst_id}/pay", json={"amount": 1}, timeout=30)
+        assert pay.status_code == 200, pay.text
+        assert pay.json().get("status") == "success"
+
+    def test_delete_installments_cancels_promissory_core(self):
+        """Taksit silince senet iptali _cancel_cheque_core üzerinden (kullanıcısız)."""
+        admin = _super_session()
+        a, a_email, a_pass = _create_tenant(admin, "promc")
+        sa, _ = _login(a_email, a_pass)
+        cid = _mk_contact(sa, a["id"])
+        inv_id, _ = _mk_invoice(sa, a["id"], cid)
+        plan = sa.post(
+            f"{API}/invoices/{inv_id}/installments",
+            json={
+                "count": 2,
+                "interval": "month",
+                "start_date": "2026-10-01",
+                "create_promissory": True,
+            },
+            timeout=30,
+        )
+        assert plan.status_code == 200, plan.text
+        body = plan.json()
+        notes = body.get("promissory_notes") if isinstance(body, dict) else None
+        assert notes, body
+        chid = notes[0].get("id") or notes[0].get("_id")
+        deleted = sa.delete(f"{API}/invoices/{inv_id}/installments", timeout=30)
+        assert deleted.status_code == 200, deleted.text
+        ch = sa.get(f"{API}/cheques/{chid}", timeout=15)
+        assert ch.status_code == 200, ch.text
+        assert ch.json().get("status") == "cancelled"
+
+    def test_accept_match_rule_suggestion_core(self):
+        admin = _super_session()
+        a, a_email, a_pass = _create_tenant(admin, "mrule")
+        sa, _ = _login(a_email, a_pass)
+        cid = _mk_contact(sa, a["id"])
+        r = sa.post(
+            f"{API}/banking/match-rule-suggestions/accept",
+            json={
+                "company_id": a["id"],
+                "pattern": f"p0rule{uuid.uuid4().hex[:6]}",
+                "contact_id": cid,
+                "apply_now": False,
+            },
+            timeout=30,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json().get("rule") or r.json().get("status") == "success"
+
+    def test_bulk_delete_orders_core(self):
+        admin = _super_session()
+        a, a_email, a_pass = _create_tenant(admin, "bdel")
+        sa, _ = _login(a_email, a_pass)
+        # Kalemsiz sipariş → taslak fatura yok → silinebilir
+        o = sa.post(
+            f"{API}/orders",
+            json={
+                "company_id": a["id"],
+                "customer_name": "P0 Bulk",
+                "shipping_address": "Adres",
+                "city": "Istanbul",
+                "total_amount": 0,
+                "items": [],
+                "channel": "manual",
+            },
+            timeout=30,
+        )
+        assert o.status_code == 200, o.text
+        oid = o.json().get("id") or o.json().get("_id")
+        r = sa.post(f"{API}/orders/bulk-delete", json={"ids": [oid]}, timeout=30)
+        assert r.status_code == 200, r.text
+        assert r.json().get("deleted", 0) >= 1, r.text
+
+    def test_installments_cross_tenant_404(self):
+        admin = _super_session()
+        a, a_email, a_pass = _create_tenant(admin, "insta")
+        b, b_email, b_pass = _create_tenant(admin, "instb")
+        sa, _ = _login(a_email, a_pass)
+        sb, _ = _login(b_email, b_pass)
+        cid = _mk_contact(sa, a["id"])
+        inv_id, _ = _mk_invoice(sa, a["id"], cid)
+        sa.post(
+            f"{API}/invoices/{inv_id}/installments",
+            json={"count": 2, "interval": "month", "start_date": "2026-10-01"},
+            timeout=30,
+        )
+        for method, path in (
+            ("get", f"{API}/invoices/{inv_id}/installments"),
+            ("post", f"{API}/invoices/{inv_id}/installments"),
+            ("delete", f"{API}/invoices/{inv_id}/installments"),
+            ("get", f"{API}/contacts/{cid}/installments"),
+            ("post", f"{API}/contacts/{cid}/installments"),
+            ("delete", f"{API}/contacts/{cid}/installments"),
+        ):
+            if method == "get":
+                r = sb.get(path, timeout=15)
+            elif method == "post":
+                r = sb.post(path, json={"count": 2, "total": 100, "interval": "month", "start_date": "2026-10-01"}, timeout=15)
+            else:
+                r = sb.delete(path, timeout=15)
+            assert r.status_code in (403, 404), f"{method} {path}: {r.status_code} {r.text}"
+
+    def test_create_project_survey_po_tax_resolve_company(self):
+        admin = _super_session()
+        a, a_email, a_pass = _create_tenant(admin, "rsc")
+        b, b_email, b_pass = _create_tenant(admin, "rsd")
+        sa, _ = _login(a_email, a_pass)
+        sb, _ = _login(b_email, b_pass)
+        cid = _mk_contact(sa, a["id"])
+
+        # Başka şirketin company_id'si gövdede → 403
+        for path, payload in (
+            (f"{API}/projects", {"company_id": b["id"], "name": "P0 Proje"}),
+            (f"{API}/surveys", {"company_id": b["id"], "contact_id": cid, "contact_name": "X"}),
+            (
+                f"{API}/purchase-orders",
+                {
+                    "company_id": b["id"],
+                    "supplier_name": "Tedarik",
+                    "items": [{"name": "Kalem", "quantity": 1, "unit_price": 10}],
+                },
+            ),
+            (
+                f"{API}/tax-obligations/import",
+                {
+                    "company_id": b["id"],
+                    "draft": {
+                        "source_kind": "tahakkuk",
+                        "period": "2026-10",
+                        "title": "P0",
+                        "obligations": [{"kind": "kdv", "title": "KDV", "amount": 10, "period": "2026-10"}],
+                    },
+                    "selected": [0],
+                },
+            ),
+        ):
+            r = sa.post(path, json=payload, timeout=30)
+            assert r.status_code == 403, f"{path}: {r.status_code} {r.text}"
+
+        # Kendi company_id ile başarılı
+        pr = sa.post(f"{API}/projects", json={"company_id": a["id"], "name": "P0 Proje OK"}, timeout=30)
+        assert pr.status_code == 200, pr.text
+        assert pr.json().get("company_id") == a["id"]
+
+        sv = sa.post(
+            f"{API}/surveys",
+            json={"company_id": a["id"], "contact_id": cid, "contact_name": "C"},
+            timeout=30,
+        )
+        assert sv.status_code == 200, sv.text
+        assert sv.json().get("company_id") == a["id"]
+
+        po = sa.post(
+            f"{API}/purchase-orders",
+            json={
+                "company_id": a["id"],
+                "supplier_name": "Tedarik OK",
+                "items": [{"name": "Kalem", "quantity": 1, "unit_price": 10}],
+            },
+            timeout=30,
+        )
+        assert po.status_code == 200, po.text
+        assert po.json().get("company_id") == a["id"]
+
+        tx = sa.post(
+            f"{API}/tax-obligations/import",
+            json={
+                "company_id": a["id"],
+                "draft": {
+                    "source_kind": "tahakkuk",
+                    "period": "2026-10",
+                    "title": "P0 vergi",
+                    "obligations": [
+                        {"kind": "kdv", "title": "KDV", "amount": 100, "period": "2026-10", "due_date": "2026-10-26"}
+                    ],
+                },
+                "selected": [0],
+            },
+            timeout=30,
+        )
+        assert tx.status_code == 200, tx.text

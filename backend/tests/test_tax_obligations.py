@@ -128,7 +128,8 @@ def test_import_creates_expense_and_pay_as_masraf():
             {"kind": "gelir_vergisi", "title": "Gelir vergisi", "amount": 12000, "period": "2026-09", "due_date": "2026-10-26"},
         ],
     }
-    imported = asyncio.run(tax_obligations.import_tax_doc({"company_id": "c1", "draft": draft}))
+    admin = {"is_super_admin": True, "company_ids": ["c1"], "active_company_id": "c1"}
+    imported = asyncio.run(tax_obligations._import_tax_doc_core({"company_id": "c1", "draft": draft}, admin))
     assert len(imported["obligations"]) == 2
     assert imported["document"]["filename"] == "matek bordro 2026-09.pdf"
     assert len(db.expenses.docs) == 2
@@ -137,7 +138,6 @@ def test_import_creates_expense_and_pay_as_masraf():
     assert db.expenses.docs[0]["vat_rate"] == 0
     assert imported["obligations"][0]["expense_id"]
     oid = imported["obligations"][0]["id"]
-    admin = {"is_super_admin": True, "company_ids": ["c1"], "active_company_id": "c1"}
     with patch("expenses.assert_manual_allowed", new_callable=AsyncMock):
         paid = asyncio.run(tax_obligations.pay_tax_obligation(oid, {"account_id": "acc1"}, user=admin))
     assert paid["payment_status"] == "paid"
@@ -171,7 +171,8 @@ def test_delete_document_removes_unpaid():
             {"kind": "kdv", "title": "KDV", "amount": 1000, "period": "2026-09", "due_date": "2026-10-26"},
         ],
     }
-    imported = asyncio.run(tax_obligations.import_tax_doc({"company_id": "c1", "draft": draft}))
+    admin = {"is_super_admin": True, "company_ids": ["c1"], "active_company_id": "c1"}
+    imported = asyncio.run(tax_obligations._import_tax_doc_core({"company_id": "c1", "draft": draft}, admin))
     doc_id = imported["document"]["id"]
     out = asyncio.run(tax_obligations.delete_tax_document(doc_id))
     assert out["deleted_obligations"] == 1
@@ -197,12 +198,13 @@ def test_extract_persists_draft_visible_any_month():
     listed = asyncio.run(tax_obligations.list_tax_obligations(company_id="c1", month="2026-10"))
     assert len(listed["documents"]) == 1
     assert listed["documents"][0]["status"] == "draft"
-    imported = asyncio.run(tax_obligations.import_tax_doc({
+    admin = {"is_super_admin": True, "company_ids": ["c1"], "active_company_id": "c1"}
+    imported = asyncio.run(tax_obligations._import_tax_doc_core({
         "company_id": "c1",
         "month": "2026-10",
         "draft": {**draft, "filename": "bordro.pdf"},
         "selected": [0],
-    }))
+    }, admin))
     assert imported["document"]["id"] == saved["id"]
     assert len(db.tax_documents.docs) == 1
     assert db.tax_documents.docs[0]["status"] == "imported"

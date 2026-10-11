@@ -1930,10 +1930,8 @@ def _quote_project_sync_fields(q: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @api_router.post("/quotes/{quote_id}/convert-to-project")
-async def convert_quote_to_project(quote_id: str):
-    q = await db.quotes.find_one({"_id": quote_id})
-    if not q:
-        raise HTTPException(status_code=404, detail="Teklif bulunamadı.")
+async def convert_quote_to_project(quote_id: str, user: dict = Depends(get_current_user)):
+    q = await tenant_access.get_tenant_doc(db, "quotes", quote_id, user, not_found="Teklif bulunamadı.")
     if q.get("project_id"):
         project = await db.projects.find_one({"_id": q["project_id"]})
         if not project:
@@ -1948,7 +1946,7 @@ async def convert_quote_to_project(quote_id: str):
         }
     survey = await db.surveys.find_one({"_id": q["survey_id"]}) if q.get("survey_id") else None
     name = (q.get("title") or "").strip() or f"{q['quote_number']} projesi"
-    project = await create_project({
+    project = await _create_project_core({
         "company_id": q["company_id"],
         "name": name,
         "contact_id": q.get("contact_id"),
@@ -1960,7 +1958,7 @@ async def convert_quote_to_project(quote_id: str):
         "latitude": (survey or {}).get("latitude"),
         "longitude": (survey or {}).get("longitude"),
         "location_url": (survey or {}).get("location_url"),
-    })
+    }, user)
     images = q.get("images") or (survey or {}).get("images") or []
     extra = {"quote_id": q["_id"], "quote_number": q.get("quote_number"), "survey_id": q.get("survey_id")}
     if images:
@@ -2107,11 +2105,10 @@ async def _project_production_order_fields(req: Dict[str, Any], company_id: Opti
 _project_recipe_fields = _project_production_order_fields
 
 
-@api_router.post("/projects")
-async def create_project(req: Dict[str, Any]):
+async def _create_project_core(req: Dict[str, Any], user: dict):
     track_token = uuid.uuid4().hex
     radius = _normalize_radius_m(req.get("radius_m"))
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     recipe_fields = await _project_recipe_fields(req, company_id)
     doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "project_number": await _next_number("PRJ", db.projects), "name": req.get("name"),
            "contact_id": req.get("contact_id"), "contact_name": req.get("contact_name"), "status": req.get("status", "planning"), "budget": float(req.get("budget", 0) or 0),
@@ -2131,6 +2128,11 @@ async def create_project(req: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Proje adı gerekli.")
     await db.projects.insert_one(doc)
     return clean_doc(doc)
+
+
+@api_router.post("/projects")
+async def create_project(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    return await _create_project_core(req, user)
 
 @api_router.get("/projects/{project_id}")
 async def get_project(project_id: str, user: dict = Depends(get_current_user)):
@@ -2481,9 +2483,10 @@ async def list_surveys(request: Request, company_id: Optional[str] = "comp_nexus
     return clean_docs(await db.surveys.find({"company_id": company_id}).sort("created_at", -1).to_list(500))
 
 @api_router.post("/surveys")
-async def create_survey(req: Dict[str, Any]):
+async def create_survey(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     radius = _normalize_radius_m(req.get("radius_m"))
-    doc = {"_id": str(uuid.uuid4()), "company_id": req.get("company_id", "comp_nexus_main_01"), "survey_number": await _next_number("KSF", db.surveys), "contact_id": req.get("contact_id"),
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    doc = {"_id": str(uuid.uuid4()), "company_id": company_id, "survey_number": await _next_number("KSF", db.surveys), "contact_id": req.get("contact_id"),
            "contact_name": req.get("contact_name"), "address": req.get("address", ""), "survey_date": req.get("survey_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
            "assigned_to": req.get("assigned_to", ""), "status": "planned", "notes": req.get("notes", ""), "measurements": req.get("measurements", []), "images": [],
            "latitude": req.get("latitude"), "longitude": req.get("longitude"), "location_url": req.get("location_url"),
@@ -4824,15 +4827,14 @@ async def apply_contact_terms(contact_id: str, req: Dict[str, Any]):
     return {"status": "success", "updated_invoices": updated, "message": f"Vade {days} gün olarak kaydedildi" + (f", {updated} açık faturanın vadesi güncellendi." if updated else ".")}
 
 @api_router.get("/contacts/{contact_id}/installments")
-async def list_contact_balance_installments(contact_id: str):
+async def list_contact_balance_installments(contact_id: str, user: dict = Depends(get_current_user)):
+    await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
     rows = await db.installments.find({"contact_id": contact_id, "invoice_id": None}).sort("no", 1).to_list(200)
     return [_decorate_installment(r) for r in rows]
 
 @api_router.post("/contacts/{contact_id}/installments")
-async def create_contact_balance_installments(contact_id: str, req: Dict[str, Any]):
-    c = await db.contacts.find_one({"_id": contact_id})
-    if not c:
-        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+async def create_contact_balance_installments(contact_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
     if await db.installments.count_documents({"contact_id": contact_id, "invoice_id": None, "status": {"$ne": "pending"}}) > 0:
         raise HTTPException(status_code=400, detail="Ödemesi başlamış bakiye taksit planı yeniden oluşturulamaz.")
     total = float(req.get("total") or abs(c.get("balance", 0)))
@@ -4849,7 +4851,8 @@ async def create_contact_balance_installments(contact_id: str, req: Dict[str, An
     return await _attach_promissory(docs, req)
 
 @api_router.delete("/contacts/{contact_id}/installments")
-async def delete_contact_balance_installments(contact_id: str):
+async def delete_contact_balance_installments(contact_id: str, user: dict = Depends(get_current_user)):
+    await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
     if await db.installments.count_documents({"contact_id": contact_id, "invoice_id": None, "status": {"$ne": "pending"}}) > 0:
         raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan silinemez.")
     await _cancel_promissory_for_query({"contact_id": contact_id, "invoice_id": None})
@@ -5446,8 +5449,8 @@ async def get_purchase_order(po_id: str):
 
 
 @api_router.post("/purchase-orders")
-async def create_purchase_order(req: Dict[str, Any]):
-    company_id = req.get("company_id") or "comp_nexus_main_01"
+async def create_purchase_order(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     contact_id = req.get("contact_id") or ""
     contact = None
     if contact_id:
@@ -7893,8 +7896,7 @@ async def reject_incoming_invoice(invoice_id: str, req: Dict[str, Any] = None):
         await db.incoming_edocs.update_one({"_id": inv["edoc_id"]}, {"$set": {"status": "rejected", "rejected_at": now, "reject_reason": reason}})
     return {"status": "success", "message": "Gelen e-fatura reddedildi. Ticari ret yanıtı GİB'e iletilir (entegratör bağlıysa; süre 8 gündür)."}
 
-@api_router.post("/invoices/{invoice_id}/record-payment")
-async def record_invoice_payment(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+async def _record_invoice_payment_core(invoice_id: str, req: Dict[str, Any], user: dict):
     amount = float(req.get("amount", 0))
     account_id = req.get("account_id")
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
@@ -7974,6 +7976,11 @@ async def record_invoice_payment(invoice_id: str, req: Dict[str, Any], user: dic
         await db.contacts.update_one({"_id": inv.get("contact_id")}, {"$inc": {"balance": balance_change}})
 
     return {"status": "success", "paid_amount": new_paid, "payment_status": payment_status}
+
+
+@api_router.post("/invoices/{invoice_id}/record-payment")
+async def record_invoice_payment(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    return await _record_invoice_payment_core(invoice_id, req, user)
 
 # ----------------- TAKSİT MODÜLÜ -----------------
 def _add_interval(d: date, interval: str, n: int, interval_days: int = 30) -> date:
@@ -8056,15 +8063,14 @@ async def preview_installments(req: Dict[str, Any]):
     return _build_plan(float(req.get("total", 0)), req)
 
 @api_router.get("/invoices/{invoice_id}/installments")
-async def list_invoice_installments(invoice_id: str):
+async def list_invoice_installments(invoice_id: str, user: dict = Depends(get_current_user)):
+    await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     rows = await db.installments.find({"invoice_id": invoice_id}).sort("no", 1).to_list(200)
     return [_decorate_installment(r) for r in rows]
 
 @api_router.post("/invoices/{invoice_id}/installments")
-async def create_invoice_installments(invoice_id: str, req: Dict[str, Any]):
-    inv = await db.invoices.find_one({"_id": invoice_id})
-    if not inv:
-        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+async def create_invoice_installments(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"}) > 0:
         raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan yeniden oluşturulamaz.")
     await _cancel_promissory_for_query({"invoice_id": invoice_id})
@@ -8074,7 +8080,8 @@ async def create_invoice_installments(invoice_id: str, req: Dict[str, Any]):
     return await _attach_promissory(raw, req)
 
 @api_router.delete("/invoices/{invoice_id}/installments")
-async def delete_invoice_installments(invoice_id: str):
+async def delete_invoice_installments(invoice_id: str, user: dict = Depends(get_current_user)):
+    await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if await db.installments.count_documents({"invoice_id": invoice_id, "status": "paid"}) > 0:
         raise HTTPException(status_code=400, detail="Ödenmiş taksiti olan plan silinemez.")
     await _cancel_promissory_for_query({"invoice_id": invoice_id})
@@ -8123,7 +8130,7 @@ async def pay_installment(inst_id: str, req: Dict[str, Any], user: dict = Depend
     if amount <= 0 or amount > remaining + 0.01:
         raise HTTPException(status_code=400, detail=f"Tutar 0 ile {remaining} arasında olmalı.")
     if inst.get("invoice_id"):
-        result = await record_invoice_payment(inst["invoice_id"], {"amount": amount, "account_id": req.get("account_id"), "partner_id": req.get("partner_id")})
+        result = await _record_invoice_payment_core(inst["invoice_id"], {"amount": amount, "account_id": req.get("account_id"), "partner_id": req.get("partner_id")}, user)
     else:
         is_recv = inst.get("direction") == "receivable"
         if req.get("partner_id"):
@@ -9786,9 +9793,16 @@ async def _suggest_contact(company_id: str, counterparty: str, description: str)
             return c
     return None
 
-@api_router.post("/banking/connections/{conn_id}/sync")
-async def sync_bank_connection(conn_id: str, request: Request, days: int = 7, user: dict = Depends(get_current_user)):
-    await tenant_access.get_tenant_doc(db, "bank_connections", conn_id, user, not_found="Bağlantı bulunamadı.")
+async def _sync_bank_connection_core(
+    conn_id: str,
+    days: int = 7,
+    *,
+    user: Optional[dict] = None,
+    request: Optional[Request] = None,
+):
+    """Banka senkronu. HTTP route kullanıcı doğrular; arka plan/sync-all kullanıcı olmadan çağırır."""
+    if user is not None:
+        await tenant_access.get_tenant_doc(db, "bank_connections", conn_id, user, not_found="Bağlantı bulunamadı.")
     doc = await db.bank_connections.find_one({"_id": conn_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Bağlantı bulunamadı.")
@@ -9880,7 +9894,8 @@ async def sync_bank_connection(conn_id: str, request: Request, days: int = 7, us
             "source": "bank_sync",
             "match_status": "unmatched",
         }).to_list(1000)
-        auto_matched, _ = await _auto_process_bank_txs(doc["company_id"], pending, via="auto", use_cari=True, actor=await _optional_actor(request))
+        actor = await _optional_actor(request) if request is not None else None
+        auto_matched, _ = await _auto_process_bank_txs(doc["company_id"], pending, via="auto", use_cari=True, actor=actor)
     now = datetime.now(timezone.utc).isoformat()
     conn_set: Dict[str, Any] = {
         "status": "simulated" if result["simulated"] else "connected",
@@ -9940,13 +9955,18 @@ async def sync_bank_connection(conn_id: str, request: Request, days: int = 7, us
         ),
     }
 
+
+@api_router.post("/banking/connections/{conn_id}/sync")
+async def sync_bank_connection(conn_id: str, request: Request, days: int = 7, user: dict = Depends(get_current_user)):
+    return await _sync_bank_connection_core(conn_id, days=days, user=user, request=request)
+
 @api_router.post("/banking/sync-all")
 async def sync_all_connections(company_id: Optional[str] = "comp_nexus_main_01"):
     conns = await db.bank_connections.find({"company_id": company_id, "auto_sync": True}).to_list(100)
     results = []
     for c in conns:
         try:
-            r = await sync_bank_connection(c["_id"])
+            r = await _sync_bank_connection_core(c["_id"])
             results.append({"connection_id": c["_id"], "provider_name": c.get("provider_name"), **r})
         except HTTPException as e:
             results.append({"connection_id": c["_id"], "provider_name": c.get("provider_name"), "status": "error", "message": e.detail})
@@ -10469,9 +10489,13 @@ async def match_rule_suggestions(company_id: Optional[str] = "comp_nexus_main_01
     return out
 
 @api_router.post("/banking/match-rule-suggestions/accept")
-async def accept_rule_suggestion(req: Dict[str, Any]):
-    company_id = req.get("company_id", "comp_nexus_main_01")
-    created = await create_match_rule({"company_id": company_id, "pattern": req.get("pattern"), "contact_id": req.get("contact_id"), "target_account_id": req.get("target_account_id"), "category": req.get("category")})
+async def accept_rule_suggestion(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
+    created = await _create_match_rule_core(
+        {"company_id": company_id, "pattern": req.get("pattern"), "contact_id": req.get("contact_id"),
+         "target_account_id": req.get("target_account_id"), "category": req.get("category")},
+        user,
+    )
     applied = 0
     if req.get("apply_now", True):
         txs = await db.bank_transactions.find({"company_id": company_id, "source": "bank_sync", "match_status": "unmatched"}).to_list(1000)
@@ -10479,8 +10503,7 @@ async def accept_rule_suggestion(req: Dict[str, Any]):
         applied, _ = await _auto_match_by_rules(company_id, [t for t in txs if _match_pattern(t.get("description", "")) == pattern])
     return {"status": "success", "rule": created, "applied": applied, "message": f"Kural oluşturuldu." + (f" Bekleyen {applied} hareket otomatik işlendi." if applied else "")}
 
-@api_router.post("/banking/match-rules")
-async def create_match_rule(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+async def _create_match_rule_core(req: Dict[str, Any], user: dict):
     company_id = tenant_access.resolve_company_id(user, req.get("company_id"))
     pattern = _match_pattern(req.get("pattern", "")) or (req.get("pattern") or "").lower().strip()
     if not pattern:
@@ -10509,6 +10532,11 @@ async def create_match_rule(req: Dict[str, Any], user: dict = Depends(get_curren
         upsert=True)
     saved = await db.bank_match_rules.find_one({"company_id": company_id, "pattern": pattern})
     return clean_doc(saved)
+
+
+@api_router.post("/banking/match-rules")
+async def create_match_rule(req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    return await _create_match_rule_core(req, user)
 
 @api_router.delete("/banking/match-rules/{rule_id}")
 async def delete_match_rule(rule_id: str, user: dict = Depends(get_current_user)):
@@ -11792,13 +11820,17 @@ async def unmapped_items(company_id: Optional[str] = "comp_nexus_main_01"):
             out.append({"channel": o.get("channel"), "marketplace_sku": it.get("sku") or "", "product_name": it.get("product_name"), "has_local_product": it.get("product_id") in products})
     return out
 
-@api_router.delete("/orders/{order_id}")
-async def delete_order(order_id: str, user: dict = Depends(get_current_user)):
+async def _delete_order_core(order_id: str, user: dict):
     o = await tenant_access.get_tenant_doc(db, "orders", order_id, user, not_found="Sipariş bulunamadı.")
     if o.get("is_invoiced") or o.get("invoice_id"):
         raise HTTPException(status_code=400, detail="Faturalanmış sipariş silinemez.")
     await trash.soft_delete("orders", o, "order", f"{o.get('order_number')} · {o.get('customer_name')}", note=f"{(o.get('channel') or 'manuel').title()} · {float(o.get('total_amount') or 0):,.2f} ₺")
     return {"status": "success", "message": "Sipariş çöp kutusuna taşındı."}
+
+
+@api_router.delete("/orders/{order_id}")
+async def delete_order(order_id: str, user: dict = Depends(get_current_user)):
+    return await _delete_order_core(order_id, user)
 
 @api_router.post("/orders/{order_id}/resolve-cancel-request")
 async def resolve_cancel_request(order_id: str, req: Dict[str, Any] = None):
@@ -13312,7 +13344,7 @@ async def _run_bank_auto_sync_tick():
         if not should_background_sync(c):
             continue
         try:
-            await sync_bank_connection(c["_id"])
+            await _sync_bank_connection_core(c["_id"])
         except HTTPException:
             pass
         except Exception:
@@ -14253,14 +14285,14 @@ async def answer_marketplace_question(question_id: str, req: Dict[str, Any]):
     return {**clean_doc(await db.marketplace_questions.find_one({"_id": question_id})), "message": "Cevap Trendyol'a gönderildi." if sent_live else "Cevap kaydedildi (canlı API bağlı değil)."}
 
 @api_router.post("/orders/bulk-delete")
-async def bulk_delete_orders(req: Dict[str, Any]):
+async def bulk_delete_orders(req: Dict[str, Any], user: dict = Depends(get_current_user)):
     ids = req.get("ids") or []
     if not ids:
         raise HTTPException(status_code=400, detail="Silinecek sipariş seçilmedi.")
     deleted = 0
     for oid in ids:
         try:
-            await delete_order(oid)
+            await _delete_order_core(oid, user)
             deleted += 1
         except HTTPException:
             continue

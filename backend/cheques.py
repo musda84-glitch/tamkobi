@@ -497,9 +497,12 @@ async def bounce_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depend
     return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
 
 
-@router.post("/cheques/{cheque_id}/cancel")
-async def cancel_cheque(cheque_id: str, req: Optional[Dict[str, Any]] = None, user: dict = Depends(_user_dep)):
-    doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
+async def _cancel_cheque_core(cheque_id: str, req: Optional[Dict[str, Any]] = None, *, doc: Optional[dict] = None):
+    """Senet/çek iptali. Sistem çağrıları (taksit planı silme) doc ile kullanıcı gerektirmeden kullanır."""
+    if doc is None:
+        doc = await _db.cheques.find_one({"_id": cheque_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
     _open_only(doc)
     amount = float(doc["amount"])
     await _unwind_bank(cheque_id)
@@ -509,6 +512,12 @@ async def cancel_cheque(cheque_id: str, req: Optional[Dict[str, Any]] = None, us
     await _append_event(cheque_id, "cancelled", (req or {}).get("reason") or "İptal")
     await _refresh_contact_cheque(doc.get("contact_id"))
     return _annotate(await _db.cheques.find_one({"_id": cheque_id}), _today())
+
+
+@router.post("/cheques/{cheque_id}/cancel")
+async def cancel_cheque(cheque_id: str, req: Optional[Dict[str, Any]] = None, user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
+    return await _cancel_cheque_core(cheque_id, req, doc=doc)
 
 
 @router.delete("/cheques/{cheque_id}")
@@ -579,6 +588,6 @@ async def cancel_promissory_for_installments(installment_ids: list) -> int:
         return 0
     n = 0
     async for ch in _db.cheques.find({"installment_id": {"$in": list(installment_ids)}, "status": "open", "instrument": "promissory"}):
-        await cancel_cheque(ch["_id"], {"reason": "Taksit planı kaldırıldı"})
+        await _cancel_cheque_core(ch["_id"], {"reason": "Taksit planı kaldırıldı"}, doc=ch)
         n += 1
     return n
