@@ -11,7 +11,7 @@ import server
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_is_incoming_product_matchable_purchase_and_dispatch():
@@ -68,12 +68,16 @@ def test_match_invoice_item_product_links_and_alias():
     server.db.invoices.update_one = AsyncMock()
     server.db.products.update_one = AsyncMock()
 
-    out = _run(server.match_invoice_item_product("inv1", {"idx": 0, "product_id": "p1"}))
+    out = _run(server._match_invoice_item_product_core("inv1", {"idx": 0, "product_id": "p1"}, {"id": "u1", "company_ids": ["c1"], "active_company_id": "c1"}))
     assert out["status"] == "success"
     assert out["invoice"]["items"][0]["product_id"] == "p1"
     assert out["invoice"]["items"][0]["matched_product_name"] == "Araç Kiralama"
-    # supplier_codes + marketplace_aliases
-    assert server.db.products.update_one.await_count >= 2
+    # tek update: show_in_b2b + supplier_codes + marketplace_aliases
+    assert server.db.products.update_one.await_count >= 1
+    upd = server.db.products.update_one.await_args.args[1]
+    assert upd["$set"]["show_in_b2b"] is False
+    assert "supplier_codes" in (upd.get("$addToSet") or {})
+    assert "marketplace_aliases" in (upd.get("$addToSet") or {})
 
 
 def test_create_missing_products_for_invoice():
@@ -89,7 +93,7 @@ def test_create_missing_products_for_invoice():
             {"name": "Kalem B", "quantity": 1, "unit_price": 5, "vat_rate": 20, "total": 5, "product_id": "p_exist"},
         ],
     }
-    created_ids = {"Kalem A": "p_new"}
+    user = {"id": "u1", "company_ids": ["c1"], "active_company_id": "c1"}
 
     async def _find_inv(q, *a, **k):
         return inv
@@ -114,8 +118,10 @@ def test_create_missing_products_for_invoice():
         server,
         "_find_product_for_invoice_line",
         AsyncMock(return_value=None),
+    ), patch.object(
+        server.tenant_access, "get_tenant_doc", AsyncMock(return_value=inv),
     ):
-        out = _run(server.create_missing_products_for_invoice("inv2", {}))
+        out = _run(server._create_missing_products_for_invoice_core("inv2", {}, user))
 
     assert out["created_products"] == 1
     assert out["invoice"]["items"][0]["product_id"] == "p_new"
@@ -124,14 +130,17 @@ def test_create_missing_products_for_invoice():
 
 
 def test_match_rejects_outgoing_sales():
-    server.db.invoices.find_one = AsyncMock(return_value={
+    inv = {
         "_id": "inv3",
+        "company_id": "c1",
         "invoice_type": "sales",
         "status": "approved",
         "items": [{"name": "X"}],
-    })
-    with pytest.raises(HTTPException) as e:
-        _run(server.match_invoice_item_product("inv3", {"idx": 0, "product_id": "p1"}))
+    }
+    server.db.invoices.find_one = AsyncMock(return_value=inv)
+    with patch.object(server.tenant_access, "get_tenant_doc", AsyncMock(return_value=inv)):
+        with pytest.raises(HTTPException) as e:
+            _run(server._match_invoice_item_product_core("inv3", {"idx": 0, "product_id": "p1"}, {"id": "u1", "company_ids": ["c1"], "active_company_id": "c1"}))
     assert e.value.status_code == 400
 
 
@@ -153,7 +162,7 @@ def test_match_invoice_item_clears_product():
     server.db.products.find_one = AsyncMock(return_value=None)
     server.db.invoices.update_one = AsyncMock()
     server.db.products.update_one = AsyncMock()
-    out = _run(server.match_invoice_item_product("inv_clear", {"idx": 0, "product_id": None}))
+    out = _run(server._match_invoice_item_product_core("inv_clear", {"idx": 0, "product_id": None}, {"id": "u1", "company_ids": ["c1"], "active_company_id": "c1"}))
     assert out["status"] == "success"
     assert out["invoice"]["items"][0]["product_id"] == ""
     assert out["invoice"]["items"][0].get("matched_product_name") is None

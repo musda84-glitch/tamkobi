@@ -7720,8 +7720,7 @@ async def _create_product_for_invoice_line(inv: dict, idx: int, *, markup: float
     return await _set_invoice_item_product(inv, idx, pid)
 
 
-@api_router.put("/invoices/{invoice_id}/items/match")
-async def match_invoice_item_product(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+async def _match_invoice_item_product_core(invoice_id: str, req: Dict[str, Any], user: dict):
     """Gelen fatura/irsaliye satırını stok kartına bağla."""
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if not _is_incoming_product_matchable(inv):
@@ -7735,8 +7734,12 @@ async def match_invoice_item_product(invoice_id: str, req: Dict[str, Any], user:
     }
 
 
-@api_router.post("/invoices/{invoice_id}/items/create-product")
-async def create_product_from_invoice_item(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+@api_router.put("/invoices/{invoice_id}/items/match")
+async def match_invoice_item_product(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    return await _match_invoice_item_product_core(invoice_id, req, user)
+
+
+async def _create_product_from_invoice_item_core(invoice_id: str, req: Dict[str, Any], user: dict):
     """Tek satırdan stok kartı oluştur ve bağla."""
     req = req or {}
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
@@ -7751,8 +7754,12 @@ async def create_product_from_invoice_item(invoice_id: str, req: Dict[str, Any] 
     }
 
 
-@api_router.post("/invoices/{invoice_id}/items/create-missing-products")
-async def create_missing_products_for_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+@api_router.post("/invoices/{invoice_id}/items/create-product")
+async def create_product_from_invoice_item(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+    return await _create_product_from_invoice_item_core(invoice_id, req or {}, user)
+
+
+async def _create_missing_products_for_invoice_core(invoice_id: str, req: Dict[str, Any], user: dict):
     """Eşleşmeyen tüm satırlara stok kartı aç (kısayol)."""
     req = req or {}
     inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
@@ -7781,6 +7788,11 @@ async def create_missing_products_for_invoice(invoice_id: str, req: Dict[str, An
             else "Oluşturulacak eşleşmeyen satır yok."
         ),
     }
+
+
+@api_router.post("/invoices/{invoice_id}/items/create-missing-products")
+async def create_missing_products_for_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
+    return await _create_missing_products_for_invoice_core(invoice_id, req or {}, user)
 
 
 @api_router.post("/invoices/{invoice_id}/accept-incoming")
