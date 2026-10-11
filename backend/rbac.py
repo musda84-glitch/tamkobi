@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from starlette.middleware.base import BaseHTTPMiddleware
 
 import comm_service
-from auth_utils import hash_password, create_access_token, create_refresh_token, get_user_from_token
+from auth_utils import hash_password, create_access_token, create_refresh_token, get_user_from_token, session_token
 from client_ip import request_ip
 
 router = APIRouter(prefix="/api")
@@ -302,8 +302,50 @@ API_MODULE_MAP = [("/api/production/work-orders", "/atolye"), ("/api/production"
                   ("/api/integrations/cargo", "/cargo"), ("/api/cargo", "/cargo"), ("/api/order-picks", "/sevk"), ("/api/orders", "/orders"), ("/api/vehicles", "/vehicles"), ("/api/pos", "/hizli-satis"), ("/api/stock-lots", "/stock"), ("/api/returns", "/orders"), ("/api/personnel", "/personnel"),
                   ("/api/comm", "/communication"), ("/api/ai", "/ai-advisor"), ("/api/accountant", "/accountant"), ("/api/fx", "/settings"), ("/api/companies", "/settings"), ("/api/users", "/settings"),
                   ("/api/roles", "/settings"), ("/api/activity-logs", "/settings"), ("/api/migration", "/settings"), ("/api/demo", "/settings"), ("/api/edocs", "/edoc-inbox"), ("/api/trade-files", "/dis-ticaret"), ("/api/support", "/support"), ("/api/trash", "/trash"), ("/api/dashboard", "/"), ("/api/sync", "/")]
+# Modül yetkisi (RBAC) kontrolü atlanır — yine de oturum gerekebilir.
 SKIP_PREFIXES = ("/api/auth", "/api/setup", "/api/public", "/api/files", "/api/notifications", "/api/health", "/api/version", "/api/mobile", "/api/system", "/api/license", "/api/payments", "/api/webhook", "/api/personnel/me", "/api/personnel/messages", "/api/personnel/attendance/self", "/api/personnel/attendance/me", "/api/personnel/attendance/geo", "/api/personnel/attendance/early-leave-request", "/api/personnel/attendance/intraday-leave-request", "/api/personnel/leaves/self", "/api/personnel/leaves/me", "/api/personnel/bonuses/self")
 SELF_SERVICE_SUFFIXES = ("/confirm", "/dispute", "/early-leave-cancel")
+
+# Tokensız /api isteklerine izin verilen tek allowlist (varsayılan reddet).
+# Önekler '/' ile biter; tam yollar birebir eşleşir.
+PUBLIC_API_ALLOWLIST = (
+    "/api/auth/login",
+    "/api/auth/register",
+    "/api/auth/forgot-password",
+    "/api/auth/reset/",
+    "/api/auth/logout",
+    "/api/public/",
+    "/api/setup/",
+    "/api/version",
+    "/api/health",
+    "/api/mobile/manifest",
+    "/api/webhook/",
+    "/api/payments/paytr/callback",
+    "/api/payments/status/",
+    "/api/comm/whatsapp/webhook",
+)
+
+# Yalnızca GET/HEAD ile tokensız (yükleme / silme oturum ister)
+_PUBLIC_GET_PREFIXES = ("/api/files/",)
+
+
+def is_public_api_path(path: str, method: str = "GET") -> bool:
+    """Allowlist: tokensız erişime açık /api yolları (tek kaynak)."""
+    if not path:
+        return False
+    p = path.split("?", 1)[0]
+    method_u = (method or "GET").upper()
+    if any(p == pref.rstrip("/") or p.startswith(pref) for pref in _PUBLIC_GET_PREFIXES):
+        return method_u in ("GET", "HEAD")
+    for rule in PUBLIC_API_ALLOWLIST:
+        if rule.endswith("/"):
+            if p == rule.rstrip("/") or p.startswith(rule):
+                return True
+        elif p == rule:
+            return True
+    return False
+
+
 _license_guard = None
 
 
@@ -512,16 +554,28 @@ def mutation_allowed(module: Optional[str], path: str, perms: Dict[str, str], me
 
 class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        from fastapi.responses import JSONResponse
+
         path = request.url.path
-        if not path.startswith("/api") or path.startswith(SKIP_PREFIXES) or request.method in ("OPTIONS", "HEAD"):
+        if not path.startswith("/api") or request.method in ("OPTIONS", "HEAD"):
             return await call_next(request)
-        token = request.cookies.get("access_token") or (request.headers.get("Authorization", "")[7:] if request.headers.get("Authorization", "").startswith("Bearer ") else None)
+
+        token = session_token(request)
         user = None
         if token:
             try:
                 user = await get_user_from_token(token, _db)
             except HTTPException:
                 user = None
+
+        # Varsayılan reddet: allowlist dışı tokensız /api → 401
+        if not user and not is_public_api_path(path, request.method):
+            return JSONResponse({"detail": "Giriş yapmanız gerekiyor."}, status_code=401)
+
+        skip_rbac = path.startswith(SKIP_PREFIXES) or is_public_api_path(path, request.method)
+        if skip_rbac and not user:
+            return await call_next(request)
+
         if user and not user.get("is_super_admin"):
             cid = request.query_params.get("company_id")
             if not cid:
@@ -537,8 +591,11 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                     q["company_id"] = cid
                     request.scope["query_string"] = urlencode(q).encode()
             if cid and cid not in (user.get("company_ids") or []):
-                from fastapi.responses import JSONResponse
                 return JSONResponse({"detail": "Bu şirket hesabına erişiminiz yok."}, status_code=403)
+
+        if skip_rbac:
+            return await call_next(request)
+
         module = module_for_path(path)
         # Mesaim self-service confirm/dispute is licensed under /mesai, not /personnel
         if path.startswith("/api/personnel/attendance/") and path.endswith(SELF_SERVICE_SUFFIXES):
@@ -560,7 +617,6 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
                 role = await role_for(user)
                 if not role_features(role)["view_prices"]:
                     import json as _json
-                    from fastapi.responses import JSONResponse
                     body = b"".join([chunk async for chunk in response.body_iterator])
                     try:
                         data = mask_money(_json.loads(body))
@@ -572,13 +628,11 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
             role = await role_for(user)
             perms = role.get("permissions", {})
             if not mutation_allowed(module, path, perms, request.method):
-                from fastapi.responses import JSONResponse
                 return JSONResponse({"detail": f"Bu işlem için yetkiniz yok ({role.get('name')} rolü: {module})."}, status_code=403)
         response = await call_next(request)
-        if response.status_code < 400:
+        if response.status_code < 400 and user:
             ip = request_ip(request)
-            u = user or {"id": "demo", "name": "Demo Yönetici", "active_company_id": request.query_params.get("company_id", "comp_nexus_main_01")}
-            await _db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": u.get("active_company_id") or "comp_nexus_main_01", "user_id": u.get("id"), "user_name": u.get("name"),
+            await _db.activity_logs.insert_one({"_id": str(uuid.uuid4()), "company_id": user.get("active_company_id") or "comp_nexus_main_01", "user_id": user.get("id"), "user_name": user.get("name"),
                                                 "method": request.method, "path": path, "module": module, "ip": ip, "status": response.status_code, "created_at": _now()})
         return response
 
@@ -756,8 +810,8 @@ async def update_user(user_id: str, req: Dict[str, Any]):
             await ensure_roles(company_id)
             if not await _db.roles.find_one({"company_id": company_id, "code": role_code}):
                 raise HTTPException(status_code=400, detail="Geçersiz rol.")
-        if u.get("email") == "admin@nexus.com" and role_code != "admin":
-            raise HTTPException(status_code=400, detail="Ana yönetici hesabının rolü değiştirilemez.")
+        if u.get("is_super_admin") and role_code != "admin":
+            raise HTTPException(status_code=400, detail="Platform yöneticisinin rolü değiştirilemez.")
     if req.get("password"):
         if len(req["password"]) < 6:
             raise HTTPException(status_code=400, detail="Şifre en az 6 karakter olmalı.")
@@ -826,7 +880,7 @@ async def delete_user(user_id: str):
     u = await _db.users.find_one({"_id": user_id})
     if not u:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
-    if u.get("is_super_admin") or u.get("email") == "admin@nexus.com":
+    if u.get("is_super_admin"):
         raise HTTPException(status_code=400, detail="Platform yöneticileri şirket kullanıcı listesinden silinemez.")
     await _db.users.delete_one({"_id": user_id})
     return {"status": "success"}

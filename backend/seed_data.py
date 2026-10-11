@@ -63,12 +63,13 @@ async def seed_all_data(db):
     users = [
         {
             "_id": "usr_admin_01",
-            "email": "admin@nexus.com",
+            "email": "admin@tamkobi.local",
             "password_hash": hash_password("admin123"),
             "name": "Sarp Yılmaz (Genel Müdür)",
             "role": "admin",
             "company_ids": [company_id, company_id_2],
             "active_company_id": company_id,
+            "is_super_admin": False,
             "created_at": datetime.now(timezone.utc).isoformat()
         },
         {

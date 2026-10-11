@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user: Optional[Callable[..., Awaitable[dict]]] = None
 
 COLLECTIONS = (
     "warehouses", "contacts", "products", "bank_accounts", "bank_transactions",
@@ -30,9 +33,23 @@ LEGACY_IDS = [
 ]
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Demo auth bağlanmadı.")
+    return await _current_user(request)
+
+
+async def _require_demo_admin(company_id: str, user: dict) -> str:
+    cid = tenant_access.resolve_company_id(user, company_id)
+    await tenant_access.require_company_admin(user, cid)
+    return cid
 
 
 def _now() -> str:
@@ -205,17 +222,20 @@ async def tag_legacy_seed() -> int:
 
 
 @router.get("/demo/status")
-async def demo_status(company_id: str = Query(...)):
-    return await demo_counts(company_id)
+async def demo_status(company_id: str = Query(...), user: dict = Depends(_user_dep)):
+    cid = tenant_access.resolve_company_id(user, company_id)
+    return await demo_counts(cid)
 
 
 @router.post("/demo/load")
-async def demo_load(company_id: str = Query(...)):
-    counts = await load_demo(company_id)
+async def demo_load(company_id: str = Query(...), user: dict = Depends(_user_dep)):
+    cid = await _require_demo_admin(company_id, user)
+    counts = await load_demo(cid)
     return {"status": "success", "message": "Demo içerik yüklendi. Genel bakış, cariler, stok, fatura ve siparişlerde örnek kayıtlar göreceksiniz.", **counts}
 
 
 @router.post("/demo/clear")
-async def demo_clear(company_id: str = Query(...)):
-    deleted = await clear_demo(company_id)
+async def demo_clear(company_id: str = Query(...), user: dict = Depends(_user_dep)):
+    cid = await _require_demo_admin(company_id, user)
+    deleted = await clear_demo(cid)
     return {"status": "success", "deleted": deleted, "message": f"{deleted} demo kayıt silindi. Kendi girdiğiniz veriler duruyor."}
