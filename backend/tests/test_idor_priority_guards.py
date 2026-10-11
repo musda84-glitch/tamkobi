@@ -19,12 +19,28 @@ EXPECTED = {
         "get_stock_count", "scan_stock_count", "set_stock_count_item", "complete_stock_count",
         "delete_stock_count", "send_project_tracking", "employee_create_user", "set_shopfloor_pin",
         "set_stage_photo_visibility",
+        # personnel / orders / production / integrations
+        "decide_leave", "cancel_leave", "delete_leave",
+        "update_bonus", "decide_bonus", "delete_bonus",
+        "pay_payroll", "delete_payroll",
+        "complete_my_assigned_task", "upload_my_task_photo",
+        "match_order_item_product", "create_dispatch", "warehouse_ship_order",
+        "push_order_to_shopphp", "get_order_cargo_label", "get_order_cargo_label_file",
+        "update_production_order", "delete_production_order", "copy_recipe",
+        "create_production_recipe_from_order", "decide_trash_work_order",
+        "update_ecommerce_integration", "remove_ecommerce_channel", "sync_ecommerce_channel",
+        "delete_mapping", "update_cargo_integration", "delete_cargo_integration",
+        "test_cargo_integration", "refresh_cargo_shipment",
+        "approve_marketplace_claim", "reject_marketplace_claim",
+        "expense_slip_for_marketplace_claim", "answer_marketplace_question",
+        "update_label_template", "delete_label_template",
     ],
     "vehicles.py": ["get_vehicle", "update_vehicle", "delete_vehicle"],
     "tax_obligations.py": ["delete_tax_obligation", "delete_tax_document"],
     "trade.py": ["get_trade_file", "update_trade_file", "delete_trade_file", "set_trade_status"],
     "rbac.py": ["update_role", "delete_role", "update_user", "delete_user"],
     "mobile_logs.py": ["delete_mobile_log"],
+    "migration.py": ["migration_batch_errors", "migration_rollback"],
 }
 
 
