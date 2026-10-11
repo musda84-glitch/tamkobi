@@ -7,7 +7,7 @@ export default function NotFoundPage() {
   return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100" data-testid="not-found-page">
       <Seo
-        title="Sayfa bulunamadı | TamKobi"
+        title="Sayfa bulunamadı"
         description="Aradığınız sayfa bulunamadı."
         path="/404"
         noindex

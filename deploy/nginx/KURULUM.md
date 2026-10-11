@@ -23,12 +23,18 @@ Certbot’un yönettiği `/etc/nginx/sites-enabled/…` dosyasını `cp tamkobi.
 
 ## Adımlar
 
-### A) Snippet (bir kez)
+### A) Snippet / map (bir kez)
 
 ```bash
-sudo mkdir -p /etc/nginx/snippets
+sudo mkdir -p /etc/nginx/snippets /etc/nginx/conf.d
 sudo cp deploy/nginx/security-headers.conf /etc/nginx/snippets/tamkobi-security-headers.conf
+# Map: conf.d altına koymak yeterli (çoğu distro http {} içinde conf.d/*.conf include eder)
+sudo cp deploy/nginx/spa-routes.map.conf /etc/nginx/conf.d/tamkobi-spa-routes.map.conf
 ```
+
+İsteğe bağlı alternatif: map’i `snippets/` altına koyup `nginx.conf` → `http { include …; }` ile yüklemek. `server` bloğunda `map` kullanılamaz.
+
+Bu map, bilinmeyen adreslerde gerçek **HTTP 404** (`404.html`) döndürmek için gerekir. Bilinen vitrin/ERP yolları `index.html` alır.
 
 ### B) Sertifika yok (HTTP-only, `nginx -t` geçer)
 
@@ -83,6 +89,54 @@ sudo apt install libnginx-mod-brotli
 # conf içindeki brotli satırlarının yorumunu kaldırın
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+## Canlı vhost’a soft-404 düzeltmesi (elle)
+
+Canlıda tipik SPA satırı şudur:
+
+```nginx
+location / {
+    try_files $uri $uri/ /index.html;
+}
+```
+
+Bunu bilinmeyen URI’lerde **HTTP 404** verecek şekilde değiştirin (vhost dosyasını tamamen ezmeyin):
+
+1. Map’i kopyalayın — **`/etc/nginx/conf.d/` altına koymak yeterli** (§A). Snippet include isteğe bağlı.
+2. Ana `server` bloğunda ekleyin (yoksa):
+
+```nginx
+error_page 404 /404.html;
+location = /404.html {
+    internal;
+    # güvenlik başlıkları kullanıyorsanız:
+    # include snippets/tamkobi-security-headers.conf;
+}
+```
+
+3. Mevcut `location /` içindeki `try_files` satırını değiştirin:
+
+```nginx
+location / {
+    # eski: try_files $uri $uri/ /index.html;
+    try_files $uri $uri/ @spa_or_404;
+}
+```
+
+4. Aynı `server` bloğuna named location ekleyin:
+
+```nginx
+location @spa_or_404 {
+    # include snippets/tamkobi-security-headers.conf;  # kullanıyorsanız
+    if ($tamkobi_spa = 0) { return 404; }
+    rewrite ^ /index.html last;
+}
+```
+
+5. `sudo nginx -t && sudo systemctl reload nginx`
+6. Doğrulama: `curl -sI https://tamkobi.com/bu-yol-yok` → `404`; `curl -sI https://tamkobi.com/panel` → `200` (SPA).
+
+Yeni ERP yolu eklerseniz `spa-routes.map.conf` regex listesine ekleyin (`frontend` jest: `spaRoutesMap.test.js`).
 
 ## Notlar
 

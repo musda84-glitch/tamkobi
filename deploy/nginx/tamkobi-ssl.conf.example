@@ -122,6 +122,8 @@ server {
 
     location @spa_or_404 {
         include snippets/tamkobi-security-headers.conf;
+        # $tamkobi_spa ← spa-routes.map.conf (http include). Bilinmeyen URI → HTTP 404.
+        if ($tamkobi_spa = 0) { return 404; }
         rewrite ^ /index.html last;
     }
 }

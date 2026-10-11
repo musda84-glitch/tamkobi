@@ -5,10 +5,11 @@ import "@/api/client";
 import "@/index.css";
 import App from "@/App";
 import { canonicalizeLocalOrigin } from "@/canonicalizeLocal";
+import { stripStaticRhTags } from "@/stripStaticRhTags";
 
 canonicalizeLocalOrigin();
-// React 19 + react-helmet-async 3 data-rh kaldırmıyor; bot meta’sını JS ortamında sil.
-document.querySelectorAll('head [data-rh="true"]:not(title)').forEach((n) => n.remove());
+// Bot meta index.html’de kalsın; JS ortamında çift etiket olmasın.
+stripStaticRhTags();
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
