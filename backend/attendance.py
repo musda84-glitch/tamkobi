@@ -5,14 +5,21 @@ from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 import location_consent
 import personnel_wage
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
 _current_user = None
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Attendance auth bağlanmadı.")
+    return await _current_user(request)
 
 DEFAULT_SCHEDULE = {"start": "09:00", "end": "18:00", "break_minutes": 60, "work_days": [0, 1, 2, 3, 4], "days": {}, "late_tolerance_minutes": 10, "exit_tolerance_minutes": 0, "overtime_tolerance_minutes": 15, "count_early_as_overtime": False, "require_geo": True, "timezone": "Europe/Istanbul",
                     "overtime_method": "legal", "overtime_multiplier": 1.5, "holiday_multiplier": 2.0, "monthly_hours_divisor": 225, "notify_missing_checkin": True, "notify_late_checkin": True}
@@ -2796,13 +2803,10 @@ async def open_geo_confirm_request(
 
 
 @router.post("/personnel/attendance/{att_id}/geo-confirm-decision")
-async def decide_geo_confirm(att_id: str, req: Dict[str, Any], request: Request):
-    user = await _current_user(request)
+async def decide_geo_confirm(att_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Yönetici teyitli girişi onaylamak için yönetici yetkisi gerekir.")
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     gcr = rec.get("geo_confirm_request") or {}
     if gcr.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bekleyen yönetici teyitli giriş/çıkış talebi yok.")
@@ -3527,13 +3531,10 @@ async def apply_location_exit_wage_deduction(emp: dict, rec: dict, ler: dict) ->
 
 
 @router.post("/personnel/attendance/{att_id}/location-exit-decision")
-async def decide_location_exit(att_id: str, req: Dict[str, Any], request: Request):
-    user = await _current_user(request)
+async def decide_location_exit(att_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Konum dışı çıkışı yanıtlamak için yönetici yetkisi gerekir.")
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     ler = rec.get("location_exit_request") or {}
     if ler.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bekleyen konum dışı çıkış yok.")
@@ -3586,14 +3587,11 @@ async def decide_location_exit(att_id: str, req: Dict[str, Any], request: Reques
 
 
 @router.post("/personnel/attendance/{att_id}/overtime-confirm-decision")
-async def decide_overtime_confirm(att_id: str, req: Dict[str, Any], request: Request):
+async def decide_overtime_confirm(att_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     """Yönetici: mesai bitişi sonrası konum devam ediyor — Evet → artı mesai, Hayır → yazma."""
-    user = await _current_user(request)
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Fazla mesai onayını yanıtlamak için yönetici yetkisi gerekir.")
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     ocr = rec.get("overtime_confirm_request") or {}
     if ocr.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bekleyen fazla mesai onayı yok.")
@@ -3676,12 +3674,9 @@ async def decide_overtime_confirm(att_id: str, req: Dict[str, Any], request: Req
 
 
 @router.get("/personnel/employees/{emp_id}/location-moves")
-async def list_employee_location_moves(emp_id: str, request: Request, period: str = "30d", month: Optional[str] = None):
+async def list_employee_location_moves(emp_id: str, period: str = "30d", month: Optional[str] = None, user: dict = Depends(_user_dep)):
     """Personel kartı: iş yerine giriş/çıkış ve gün içi konum kayıpları."""
-    user = await _current_user(request)
-    emp = await _db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    emp = await tenant_access.get_tenant_doc(_db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     self_emp = await employee_for_user(user)
     if user.get("role") not in ("admin", "manager", "accountant") and not (self_emp and self_emp.get("_id") == emp_id):
         raise HTTPException(status_code=403, detail="Konum hareketlerini görmek için yetki gerekir.")
@@ -3708,12 +3703,9 @@ async def list_employee_location_moves(emp_id: str, request: Request, period: st
 
 
 @router.get("/personnel/employees/{emp_id}/overtime-moves")
-async def list_employee_overtime_moves(emp_id: str, request: Request, period: str = "30d", month: Optional[str] = None):
+async def list_employee_overtime_moves(emp_id: str, period: str = "30d", month: Optional[str] = None, user: dict = Depends(_user_dep)):
     """Personel kartı: dönemsel fazla mesai hareketleri (atanan / hesaplanan)."""
-    user = await _current_user(request)
-    emp = await _db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    emp = await tenant_access.get_tenant_doc(_db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     self_emp = await employee_for_user(user)
     if user.get("role") not in ("admin", "manager", "accountant") and not (self_emp and self_emp.get("_id") == emp_id):
         raise HTTPException(status_code=403, detail="Mesai hareketlerini görmek için yetki gerekir.")
@@ -3736,14 +3728,11 @@ async def list_employee_overtime_moves(emp_id: str, request: Request, period: st
 
 
 @router.post("/personnel/attendance/{att_id}/location-moves/{move_id}/ignore")
-async def ignore_employee_location_move(att_id: str, move_id: str, request: Request):
+async def ignore_employee_location_move(att_id: str, move_id: str, user: dict = Depends(_user_dep)):
     """Gün içi konum kaybı / giriş-çıkış telafisi: görmezden gel (kesinti yok)."""
-    user = await _current_user(request)
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Konum hareketini görmezden gelmek için yönetici yetkisi gerekir.")
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     rec["id"] = rec.get("_id")
     moves = await ensure_location_moves(rec)
     try:
@@ -3869,13 +3858,10 @@ async def sync_yevmiye_adjustment(emp: dict, rec: dict, schedule: dict) -> Optio
 
 
 @router.post("/personnel/attendance/{att_id}/yevmiye-decision")
-async def decide_yevmiye_adjustment(att_id: str, req: Dict[str, Any], request: Request):
-    user = await _current_user(request)
+async def decide_yevmiye_adjustment(att_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Yevmiye onaylamak için yönetici yetkisi gerekir.")
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     adj = rec.get("yevmiye_adjustment_request") or {}
     if adj.get("status") != "pending":
         if str(adj.get("status") or "").strip().lower() in ("approved", "rejected"):
@@ -4013,13 +3999,10 @@ async def cancel_early_leave_request(request: Request):
 
 
 @router.post("/personnel/attendance/{att_id}/early-leave-decision")
-async def decide_early_leave(att_id: str, req: Dict[str, Any], request: Request):
-    user = await _current_user(request)
+async def decide_early_leave(att_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Erken çıkış onaylamak için yönetici yetkisi gerekir.")
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     elr = rec.get("early_leave_request") or {}
     if elr.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bekleyen erken çıkış talebi yok.")
@@ -4163,13 +4146,10 @@ async def cancel_intraday_leave_request(request: Request):
 
 
 @router.post("/personnel/attendance/{att_id}/intraday-leave-decision")
-async def decide_intraday_leave(att_id: str, req: Dict[str, Any], request: Request):
-    user = await _current_user(request)
+async def decide_intraday_leave(att_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="Gün içi izin onaylamak için yönetici yetkisi gerekir.")
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     ilr = rec.get("intraday_leave_request") or {}
     if ilr.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bekleyen gün içi izin talebi yok.")
@@ -4285,11 +4265,8 @@ async def assign_overtime(req: Dict[str, Any], request: Request):
 
 
 @router.post("/personnel/attendance/{att_id}/confirm")
-async def confirm_attendance(att_id: str, request: Request, req: Dict[str, Any] = None):
-    user = await _current_user(request)
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+async def confirm_attendance(att_id: str, req: Dict[str, Any] = None, user: dict = Depends(_user_dep)):
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     emp = await employee_for_user(user)
     if user.get("role") != "admin" and (not emp or emp["_id"] != rec["employee_id"]):
         raise HTTPException(status_code=403, detail="Yalnızca kendi puantaj kaydınızı onaylayabilirsiniz.")
@@ -4313,12 +4290,9 @@ async def confirm_attendance(att_id: str, request: Request, req: Dict[str, Any] 
 
 
 @router.post("/personnel/attendance/{att_id}/time-edit-decision")
-async def decide_time_edit(att_id: str, req: Dict[str, Any], request: Request):
+async def decide_time_edit(att_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     """Personel yönetici saat düzeltmesini onaylar veya reddeder (önceki saate döner)."""
-    user = await _current_user(request)
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     emp = await employee_for_user(user)
     if user.get("role") != "admin" and (not emp or emp["_id"] != rec["employee_id"]):
         raise HTTPException(status_code=403, detail="Yalnızca kendi puantaj kaydınızı yanıtlayabilirsiniz.")
@@ -4334,11 +4308,8 @@ async def decide_time_edit(att_id: str, req: Dict[str, Any], request: Request):
 
 
 @router.post("/personnel/attendance/{att_id}/dispute")
-async def dispute_attendance(att_id: str, req: Dict[str, Any], request: Request):
-    user = await _current_user(request)
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
+async def dispute_attendance(att_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     emp = await employee_for_user(user)
     if not emp or emp["_id"] != rec["employee_id"]:
         raise HTTPException(status_code=403, detail="Yalnızca kendi kaydınıza itiraz edebilirsiniz.")
@@ -4367,14 +4338,11 @@ async def dispute_attendance(att_id: str, req: Dict[str, Any], request: Request)
 
 
 @router.post("/personnel/attendance/{att_id}/dispute-decision")
-async def decide_attendance_dispute(att_id: str, req: Dict[str, Any], request: Request):
+async def decide_attendance_dispute(att_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
     """Yönetici puantaj itirazını sonlandırır: Düzeltildi (approve) veya Reddet."""
-    user = await _current_user(request)
+    rec = await tenant_access.get_tenant_doc(_db, "attendance", att_id, user, not_found="Puantaj kaydı bulunamadı.")
     if user.get("role") not in ("admin", "manager", "accountant"):
         raise HTTPException(status_code=403, detail="İtirazı yanıtlamak için yönetici yetkisi gerekir.")
-    rec = await _db.attendance.find_one({"_id": att_id})
-    if not rec:
-        raise HTTPException(status_code=404, detail="Puantaj kaydı bulunamadı.")
     note = (rec.get("dispute_note") or "").strip()
     if not note:
         raise HTTPException(status_code=400, detail="Bu kayıtta açık itiraz yok.")
@@ -4675,10 +4643,8 @@ async def put_shifts(req: Dict[str, Any]):
 
 
 @router.delete("/personnel/shifts/{shift_id}")
-async def delete_shift(shift_id: str):
-    sh = await _db.shift_plans.find_one({"_id": shift_id})
-    if not sh:
-        raise HTTPException(status_code=404, detail="Vardiya bulunamadı.")
+async def delete_shift(shift_id: str, user: dict = Depends(_user_dep)):
+    sh = await tenant_access.get_tenant_doc(_db, "shift_plans", shift_id, user, not_found="Vardiya bulunamadı.")
     import trash
     await trash.soft_delete("shift_plans", sh, "shift", f"{sh.get('employee_name')} · {sh.get('date')}", note=f"{sh.get('start') or ''}-{sh.get('end') or ''}" if sh.get("start") else "İzin/Off")
     return {"status": "success", "message": "Vardiya çöp kutusuna taşındı."}
@@ -4704,11 +4670,9 @@ async def copy_week(req: Dict[str, Any]):
 
 
 @router.get("/personnel/employees/{emp_id}/puantaj")
-async def employee_puantaj(emp_id: str, month: Optional[str] = None):
+async def employee_puantaj(emp_id: str, month: Optional[str] = None, user: dict = Depends(_user_dep)):
     """Personel kartı Puantaj sekmesi: ay günleri (giriş/çıkış/mesai/izin) + özet + izin yılı."""
-    emp = await _db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    emp = await tenant_access.get_tenant_doc(_db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     company = await _db.companies.find_one({"_id": emp.get("company_id")}) or {}
     schedule = merge_schedule(company, emp)
     month = (month or _today(schedule))[:7]
@@ -4759,22 +4723,18 @@ async def employee_puantaj(emp_id: str, month: Optional[str] = None):
 
 
 @router.get("/personnel/employees/{emp_id}/leave-years")
-async def list_leave_years(emp_id: str):
-    emp = await _db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+async def list_leave_years(emp_id: str, user: dict = Depends(_user_dep)):
+    emp = await tenant_access.get_tenant_doc(_db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     leaves = await _db.leave_requests.find({"employee_id": emp_id}).to_list(500)
     archives = await _db.leave_year_archives.find({"employee_id": emp_id}).sort("year", -1).to_list(50)
     return {"current": compute_leave_balance(emp, leaves), "archives": [_clean(a) for a in archives]}
 
 
 @router.post("/personnel/employees/{emp_id}/leave-years/rollover")
-async def rollover_leave_year(emp_id: str, req: Dict[str, Any] = None):
+async def rollover_leave_year(emp_id: str, req: Dict[str, Any] = None, user: dict = Depends(_user_dep)):
     """Yıllık izin dönemini kapat: arşivle, kalan günü (opsiyonel) devret, yeni yıla geç."""
     req = req or {}
-    emp = await _db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    emp = await tenant_access.get_tenant_doc(_db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     leaves = await _db.leave_requests.find({"employee_id": emp_id}).to_list(500)
     bal = compute_leave_balance(emp, leaves)
     year = int(req.get("year") or bal["year"])
@@ -4903,11 +4863,10 @@ async def request_my_advance(req: Dict[str, Any], request: Request):
 
 
 @router.delete("/personnel/bonuses/self/{bonus_id}")
-async def cancel_my_advance(bonus_id: str, request: Request):
-    user = await _current_user(request)
+async def cancel_my_advance(bonus_id: str, user: dict = Depends(_user_dep)):
+    rec = await tenant_access.get_tenant_doc(_db, "bonus_payments", bonus_id, user, not_found="Avans talebi bulunamadı.")
     emp = await employee_for_user(user)
-    rec = await _db.bonus_payments.find_one({"_id": bonus_id})
-    if not rec or not emp or rec.get("employee_id") != emp["_id"] or rec.get("source") != "self":
+    if not emp or rec.get("employee_id") != emp["_id"] or rec.get("source") != "self":
         raise HTTPException(status_code=404, detail="Avans talebi bulunamadı.")
     if rec.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Yalnızca bekleyen talepler iptal edilebilir.")
@@ -4955,11 +4914,10 @@ async def create_my_leave(req: Dict[str, Any], request: Request):
 
 
 @router.delete("/personnel/leaves/self/{leave_id}")
-async def cancel_my_leave(leave_id: str, request: Request):
-    user = await _current_user(request)
+async def cancel_my_leave(leave_id: str, user: dict = Depends(_user_dep)):
+    leave = await tenant_access.get_tenant_doc(_db, "leave_requests", leave_id, user, not_found="İzin talebi bulunamadı.")
     emp = await employee_for_user(user)
-    leave = await _db.leave_requests.find_one({"_id": leave_id})
-    if not leave or not emp or leave["employee_id"] != emp["_id"]:
+    if not emp or leave["employee_id"] != emp["_id"]:
         raise HTTPException(status_code=404, detail="İzin talebi bulunamadı.")
     if leave.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Yalnızca bekleyen talepler iptal edilebilir.")
@@ -5003,10 +4961,8 @@ async def create_shift_template(req: Dict[str, Any]):
 
 
 @router.delete("/personnel/shift-templates/{tpl_id}")
-async def delete_shift_template(tpl_id: str):
-    tpl = await _db.shift_templates.find_one({"_id": tpl_id})
-    if not tpl:
-        raise HTTPException(status_code=404, detail="Şablon bulunamadı.")
+async def delete_shift_template(tpl_id: str, user: dict = Depends(_user_dep)):
+    tpl = await tenant_access.get_tenant_doc(_db, "shift_templates", tpl_id, user, not_found="Şablon bulunamadı.")
     import trash
     await trash.soft_delete("shift_templates", tpl, "shift_template", tpl.get("name") or tpl_id)
     return {"status": "success", "message": "Şablon çöp kutusuna taşındı."}
