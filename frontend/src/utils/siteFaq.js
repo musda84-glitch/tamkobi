@@ -1,27 +1,37 @@
-/** Ana sayfa SSS — FAQPage JSON-LD ile paylaşılır. */
-export const SITE_FAQ = [
-  {
-    q: "TamKobi GİB e-Fatura ile entegre mi?",
-    a: "Evet. e-Fatura ve e-Arşiv gönderimi için entegratör (ör. İşNet) bağlantısı yapılandırılır; gelen e-belgeler kutuda toplanır. Kontör ve entegratör anlaşması firmanıza aittir.",
-  },
-  {
-    q: "Verilerim güvende mi, yedekleme var mı?",
-    a: "Verileriniz bulut sunucuda saklanır; erişim rol ve şirket izolasyonu ile kısıtlanır. Düzenli yedekleme ve erişim logları platform altyapısının parçasıdır. Detaylar KVKK aydınlatma metninde yer alır.",
-  },
-  {
-    q: "Logo veya Paraşüt'ten geçiş yapabilir miyim?",
-    a: "Cari, stok ve belge verilerinizi içe aktarma / aktarım araçlarıyla taşıyabilirsiniz. Geçiş adımları için destek ekibimizle iletişime geçin; birebir alan eşlemesi firmanıza göre planlanır.",
-  },
-  {
-    q: "14 günlük denemede kredi kartı ister misiniz?",
-    a: "Hayır. Deneme süresinde kredi kartı gerekmez. Süre bitiminde paketinizi seçerek devam edebilir veya hesabı kapatabilirsiniz.",
-  },
-  {
-    q: "İstediğim zaman iptal edebilir miyim?",
-    a: "Evet. Aboneliğinizi dönem sonunda iptal edebilirsiniz; zorunlu uzun süreli taahhüt yoktur. İptal sonrası verilerinizin dışa aktarımı için destek kanalını kullanın.",
-  },
-  {
-    q: "Destek nasıl çalışıyor?",
-    a: "Destek e-posta ve (tanımlıysa) WhatsApp üzerinden verilir. Uygulama içi destek talepleri de kullanılabilir. Yanıt süreleri iş günü içinde planlanır.",
-  },
-];
+/** Ana sayfa SSS — FAQPage JSON-LD ile paylaşılır. trial_days ayardan gelir. */
+export function buildSiteFaq(trialDays = 14) {
+  const days = Number(trialDays) > 0 ? Number(trialDays) : 14;
+  return [
+    {
+      q: "TamKobi GİB e-Fatura ile entegre mi?",
+      // Kodda birden fazla e-belge entegratörü / gelen kutusu var; belirli marka taahhüdü yok.
+      a: "Evet. e-Fatura ve e-Arşiv için şirket ayarlarından bir entegratör bağlantısı yapılandırılabilir; gelen e-belgeler uygulama içi kutuda listelenir. Kontör ve entegratör anlaşması firmanıza aittir.",
+    },
+    {
+      q: "Verilerim güvende mi?",
+      // Düzenli yedekleme / erişim logları altyapı iddiası — ürün kodunda garantilenmez.
+      a: "Verileriniz şirket bazında ayrılır; erişim rol ve yetki matrisine göre kısıtlanır. Kişisel veri işleme detayları KVKK aydınlatma metninde yer alır.",
+    },
+    {
+      q: "Başka bir programdan veri aktarabilir miyim?",
+      // Logo/Paraşüt’e özel geçiş sihirbazı yok; genel içe aktarma / destek süreci.
+      a: "Stok ve cari gibi alanlarda içe aktarma araçları bulunur. Toplu geçiş için destek kanalından planlama isteyebilirsiniz; alan eşlemesi firmanıza göre yapılır.",
+    },
+    {
+      q: `${days} günlük denemede kredi kartı ister misiniz?`,
+      a: `Hayır. ${days} günlük denemede kredi kartı gerekmez. Süre bitiminde bir paket seçerek devam edebilir veya hesabı kullanmayı bırakabilirsiniz.`,
+    },
+    {
+      q: "İstediğim zaman iptal edebilir miyim?",
+      // “Zorunlu taahhüt yok” yasal/sözleşme iddiası — kod doğrulamaz; genel süreç.
+      a: "Abonelik ve iptal koşulları mesafeli satış / ön bilgilendirme metinlerinde ve hesabınızdaki lisans durumuna göre uygulanır. İptal veya veri dışa aktarımı için destek kanalını kullanın.",
+    },
+    {
+      q: "Destek nasıl çalışıyor?",
+      a: "Tanımlıysa destek e-postası ve WhatsApp üzerinden ulaşabilirsiniz. Uygulama içinde de destek talebi açılabilir.",
+    },
+  ];
+}
+
+/** Geriye dönük: varsayılan deneme günü ile statik liste */
+export const SITE_FAQ = buildSiteFaq(14);

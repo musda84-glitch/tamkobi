@@ -46,9 +46,18 @@ def test_merge_seller_env_fallback():
         assert s["email"] == "env@ornek.example"
 
 
-def test_public_contact_whatsapp_optional():
-    c = pp.public_contact({"support_email": "a@b.com", "support_whatsapp": ""})
+def test_platform_seller_ignores_demo_company_name():
+    demo = {"_id": "comp_nexus_main_01", "name": "Demo Nexus A.Ş.", "tax_number": "111"}
+    s = pp.merge_seller(demo, {"brand_name": "TamKobi"}, use_company_party=False)
+    assert s["name"] == "TamKobi"
+    assert s["name"] != "Demo Nexus A.Ş."
+    assert s["tax_number"] == "—"
+
+
+def test_public_contact_whatsapp_no_phone_fallback():
+    c = pp.public_contact({"support_email": "a@b.com", "support_phone": "05321112233", "support_whatsapp": ""})
     assert c["support_email"] == "a@b.com"
+    assert c["support_phone"] == "05321112233"
     assert c["support_whatsapp"] == ""
     assert pp.normalize_whatsapp("0532 111 22 33").startswith("90")
     assert pp.normalize_whatsapp("") == ""
@@ -57,7 +66,6 @@ def test_public_contact_whatsapp_optional():
 def test_no_invented_placeholders_when_empty():
     """Boş ayarda uydurma şirket bilgisi yok; eksik alanlar '—' kalır."""
     with mock.patch.dict(os.environ, {}, clear=True):
-        # brand_name env yok → TamKobi adı; adres/VKN boşsa —
         s = pp.merge_seller({}, {"brand_name": "TamKobi"})
         assert s["name"] == "TamKobi"
         assert s["address"] == "—"

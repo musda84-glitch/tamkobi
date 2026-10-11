@@ -36,9 +36,15 @@ def _esc(s: Any) -> str:
     return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def party_from_company(company: Optional[dict], brand: str = "", settings: Optional[dict] = None) -> dict:
-    """Satıcı bilgisi: platform yasal ayarları + şirket kartı + ortam değişkeni."""
-    return platform_public.merge_seller(company, settings, brand)
+def party_from_company(
+    company: Optional[dict],
+    brand: str = "",
+    settings: Optional[dict] = None,
+    *,
+    use_company_party: bool = True,
+) -> dict:
+    """Satıcı bilgisi: platform yasal ayarları + (isteğe bağlı) şirket kartı + ortam değişkeni."""
+    return platform_public.merge_seller(company, settings, brand, use_company_party=use_company_party)
 
 
 def template_mesafeli(p: dict) -> str:
@@ -198,7 +204,8 @@ async def platform_company() -> tuple:
 def render_platform_doc(slug: str, company: dict, brand: str, settings: Optional[dict] = None) -> dict:
     if slug not in SLUGS:
         raise HTTPException(status_code=404, detail="Yasal metin bulunamadı.")
-    party = party_from_company(company, brand, settings)
+    # Vitrin: demo şirket ünvanı/adresi legal_* boşken sızmasın
+    party = party_from_company(company, brand, settings, use_company_party=False)
     custom = ((company or {}).get("legal_texts") or {}).get(slug)
     text = custom.strip() if isinstance(custom, str) and custom.strip() else TEMPLATES[slug](party)
     return {
@@ -218,7 +225,7 @@ async def list_platform_legal():
     return {
         "brand": brand,
         "docs": [{"slug": s, "title": TITLES[s], "path": f"/yasal/{s}"} for s in SLUGS],
-        "seller": party_from_company(company, brand, st),
+        "seller": party_from_company(company, brand, st, use_company_party=False),
     }
 
 

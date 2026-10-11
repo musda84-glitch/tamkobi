@@ -9,10 +9,11 @@ import ModulePackBuilder from "../components/saas/ModulePackBuilder";
 import { serializeModuleKeys } from "../utils/modulePack";
 import { LegalFooterLinks } from "../components/LegalConsent";
 import { Seo, buildFaqJsonLd, buildOrgSoftwareJsonLd } from "../components/Seo";
-import { SITE_FAQ } from "../utils/siteFaq";
+import { buildSiteFaq } from "../utils/siteFaq";
 import { billableCatalog, highlightModules } from "../utils/pricingHighlights";
 
 const tl = (n) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: 0 });
+const lim = (n, unit) => (Number(n) > 0 ? `${tl(n)} ${unit}` : `Sınırsız ${unit}`);
 
 function waDigits(raw) {
   let d = String(raw || "").replace(/\D/g, "");
@@ -21,6 +22,14 @@ function waDigits(raw) {
   if (d.length === 10) d = `90${d}`;
   return d;
 }
+
+const QUOTA_ROWS = [
+  { key: "user_limit", label: "Kullanıcı", fmt: (p) => lim(p.user_limit, "kullanıcı") },
+  { key: "company_limit", label: "Şirket", fmt: (p) => lim(p.company_limit, "şirket") },
+  { key: "product_limit", label: "Stok / ürün", fmt: (p) => lim(p.product_limit, "stok") },
+  { key: "contact_limit", label: "Cari", fmt: (p) => lim(p.contact_limit, "cari") },
+  { key: "storage_limit_mb", label: "Depolama", fmt: (p) => (Number(p.storage_limit_mb) > 0 ? `${tl(p.storage_limit_mb)} MB` : "Sınırsız depolama") },
+];
 
 export default function PricingPage() {
   const { authenticated } = useAuth() || {};
@@ -40,6 +49,8 @@ export default function PricingPage() {
   const brand = siteBrand(d?.brand_name);
   const plans = d?.plans || [];
   const catalog = d?.catalog || [];
+  const trialDays = Number(d?.trial_days) > 0 ? Number(d.trial_days) : 14;
+  const faq = useMemo(() => buildSiteFaq(trialDays), [trialDays]);
   const billable = useMemo(() => billableCatalog(catalog), [catalog]);
   const wa = waDigits(d?.support_whatsapp || "");
   const publicUrl = (d?.public_url || "https://tamkobi.com").replace(/\/$/, "");
@@ -50,10 +61,10 @@ export default function PricingPage() {
       email: d?.support_email,
       phone: d?.support_phone,
       plans,
-      trialDays: d?.trial_days || 14,
+      trialDays,
     }),
-    buildFaqJsonLd(SITE_FAQ),
-  ], [brand, publicUrl, d?.support_email, d?.support_phone, d?.trial_days, plans]);
+    buildFaqJsonLd(faq),
+  ], [brand, publicUrl, d?.support_email, d?.support_phone, trialDays, plans, faq]);
 
   return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100" data-testid="pricing-page">
@@ -88,7 +99,7 @@ export default function PricingPage() {
         <div className="max-w-2xl">
           <div className="text-[10px] uppercase tracking-[0.25em] text-emerald-400 font-semibold">{brand.toLocaleUpperCase("tr-TR")} · Bulut ERP</div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] mt-3">İşletmenizi tek panelden yönetin, <span className="text-emerald-400">ihtiyacınız kadar</span> ödeyin.</h1>
-          <p className="text-slate-400 text-sm sm:text-base mt-4">Fatura, cari, stok, e-ticaret, kargo, personel ve üretim. Hazır paketlerden birini seçin veya modülleri tek tek işaretleyerek kendi paketini oluşturun. {d?.trial_days || 14} gün ücretsiz deneyin, kredi kartı gerekmez.</p>
+          <p className="text-slate-400 text-sm sm:text-base mt-4">Fatura, cari, stok, e-ticaret, kargo, personel ve üretim. Hazır paketlerden birini seçin veya modülleri tek tek işaretleyerek kendi paketini oluşturun. {trialDays} gün ücretsiz deneyin, kredi kartı gerekmez.</p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-8 text-xs">
           {[[FileText, "e-Fatura & cari"], [Warehouse, "Stok ve depo"], [Factory, "Üretim & e-ticaret"]].map(([I, t]) => (
@@ -135,10 +146,19 @@ export default function PricingPage() {
                     <span className={`w-fit px-2 py-0.5 rounded-md text-[10px] font-bold ${PLAN_COLORS[p.color] || PLAN_COLORS.slate}`}>{p.name}</span>
                     <div className={`text-xs mt-3 min-h-[32px] ${p.is_popular ? "text-slate-500" : "text-slate-400"}`}>{p.tagline}</div>
                     <div className="mt-4"><span className="text-4xl font-black">{tl(yearly ? p.price_yearly / 12 : p.price_monthly)} ₺</span><span className={`text-xs ${p.is_popular ? "text-slate-500" : "text-slate-400"}`}> /ay{yearly ? ` · yıllık ${tl(p.price_yearly)} ₺` : ""}</span></div>
-                    <div className={`text-[11px] mt-1 flex flex-wrap items-center gap-x-1 ${p.is_popular ? "text-slate-500" : "text-slate-400"}`}>
-                      <Users className="w-3 h-3" /> {p.user_limit ? `${p.user_limit} kullanıcı` : "Sınırsız kullanıcı"}
+                    <div className={`text-[11px] mt-1 flex flex-wrap items-center gap-x-1 gap-y-0.5 ${p.is_popular ? "text-slate-500" : "text-slate-400"}`} data-testid={`pricing-limits-${p.id}`}>
+                      <Users className="w-3 h-3 shrink-0" />
+                      <span>{lim(p.user_limit, "kullanıcı")}</span>
                       <span>·</span>
-                      <Boxes className="w-3 h-3" /> {(p.modules || []).length} modül
+                      <span>{lim(p.company_limit, "şirket")}</span>
+                      <span>·</span>
+                      <span>{lim(p.product_limit, "stok")}</span>
+                      <span>·</span>
+                      <span>{lim(p.contact_limit, "cari")}</span>
+                      <span>·</span>
+                      <span>{Number(p.storage_limit_mb) > 0 ? `${tl(p.storage_limit_mb)} MB depolama` : "Sınırsız depolama"}</span>
+                      <span>·</span>
+                      <Boxes className="w-3 h-3 shrink-0" /> {(p.modules || []).length} modül
                     </div>
                     <ul className="mt-5 space-y-1.5 text-xs flex-1" data-testid={`pricing-highlights-${p.id}`}>
                       {highlights.map((m) => (
@@ -150,7 +170,7 @@ export default function PricingPage() {
                     <button type="button" onClick={() => setShowCompare(true)} className={`mt-3 text-[11px] font-semibold text-left ${p.is_popular ? "text-emerald-700" : "text-emerald-400"}`} data-testid={`pricing-compare-link-${p.id}`}>
                       Tüm özellikleri karşılaştır
                     </button>
-                    <Link to={`/kayit?plan=${p.id}`} className={`mt-4 w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition ${p.is_popular ? "bg-slate-900 text-white hover:bg-slate-800" : "bg-emerald-500 text-slate-900 hover:bg-emerald-400"}`} data-testid={`pricing-start-${p.id}`}>{d.trial_days} gün ücretsiz başla <ArrowRight className="w-4 h-4" /></Link>
+                    <Link to={`/kayit?plan=${p.id}`} className={`mt-4 w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition ${p.is_popular ? "bg-slate-900 text-white hover:bg-slate-800" : "bg-emerald-500 text-slate-900 hover:bg-emerald-400"}`} data-testid={`pricing-start-${p.id}`}>{trialDays} gün ücretsiz başla <ArrowRight className="w-4 h-4" /></Link>
                   </div>
                 );
               })}
@@ -170,6 +190,14 @@ export default function PricingPage() {
                     </tr>
                   </thead>
                   <tbody>
+                    {QUOTA_ROWS.map((row) => (
+                      <tr key={row.key} className="border-b border-white/5" data-testid={`compare-quota-${row.key}`}>
+                        <td className="p-3 text-slate-300 font-semibold">{row.label}</td>
+                        {plans.map((p) => (
+                          <td key={p.id} className="p-3 text-slate-300">{row.fmt(p)}</td>
+                        ))}
+                      </tr>
+                    ))}
                     {billable.map((m) => (
                       <tr key={m.key} className="border-b border-white/5">
                         <td className="p-3 text-slate-300">{m.label}</td>
@@ -199,7 +227,7 @@ export default function PricingPage() {
         <h2 className="text-xl font-bold mb-2">Sık sorulan sorular</h2>
         <p className="text-sm text-slate-400 mb-6">e-Fatura, güvenlik, geçiş, deneme ve destek hakkında kısa cevaplar.</p>
         <div className="space-y-2">
-          {SITE_FAQ.map((item, idx) => {
+          {faq.map((item, idx) => {
             const open = openFaq === idx;
             return (
               <div key={item.q} className="rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden" data-testid={`faq-item-${idx}`}>
@@ -223,7 +251,7 @@ export default function PricingPage() {
             to={picked.length ? `/kayit?modules=${serializeModuleKeys(picked)}` : "/kayit"}
             className={`mt-4 inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-bold text-sm ${picked.length ? "bg-emerald-500 text-slate-900 hover:bg-emerald-400" : "bg-white/10 text-slate-400 pointer-events-none"}`}
             data-testid="custom-pack-start"
-          >{d?.trial_days || 14} gün ücretsiz başla <ArrowRight className="w-4 h-4" /></Link>
+          >{trialDays} gün ücretsiz başla <ArrowRight className="w-4 h-4" /></Link>
           <div className="mt-10 text-[11px] text-slate-500 flex flex-wrap items-center gap-3">
             <ShieldCheck className="w-4 h-4 text-emerald-400" /> Fiyatlar KDV hariçtir.
             {d?.support_email ? <span>Destek: {d.support_email}{d.support_phone ? ` · ${d.support_phone}` : ""}</span> : null}

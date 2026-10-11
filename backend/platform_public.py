@@ -51,9 +51,18 @@ def _pick(*vals: Any) -> str:
     return ""
 
 
-def merge_seller(company: Optional[dict], settings: Optional[dict], brand: str = "") -> dict:
-    """Platform yasal ayarları > şirket kaydı > ortam değişkeni > marka adı."""
-    c = company or {}
+def merge_seller(
+    company: Optional[dict],
+    settings: Optional[dict],
+    brand: str = "",
+    *,
+    use_company_party: bool = True,
+) -> dict:
+    """Platform yasal ayarları > (isteğe bağlı şirket) > ortam değişkeni > marka adı.
+
+    use_company_party=False: vitrin /yasal — demo şirket (comp_nexus_main_01) ünvanı sızmaz.
+    """
+    c = company or {} if use_company_party else {}
     st = settings or {}
     brand = _pick(st.get("brand_name"), brand, _env("brand_name"), "TamKobi")
     name = _pick(st.get("legal_name"), c.get("name"), _env("legal_name"), brand)
@@ -88,10 +97,11 @@ def merge_seller(company: Optional[dict], settings: Optional[dict], brand: str =
 
 def public_contact(settings: Optional[dict]) -> Dict[str, str]:
     st = settings or {}
+    # WhatsApp yalnızca kendi alanı / env — support_phone’a düşmez (buton gizlensin).
     return {
         "support_email": _pick(st.get("support_email"), st.get("legal_email"), _env("support_email")),
         "support_phone": _pick(st.get("support_phone"), st.get("legal_phone"), _env("support_phone")),
-        "support_whatsapp": _pick(st.get("support_whatsapp"), st.get("support_phone"), _env("support_whatsapp")),
+        "support_whatsapp": _pick(st.get("support_whatsapp"), _env("support_whatsapp")),
         "public_url": _pick(st.get("public_url"), _env("public_url"), "https://tamkobi.com").rstrip("/"),
         "brand_name": _pick(st.get("brand_name"), _env("brand_name"), "TamKobi"),
     }
