@@ -10031,13 +10031,93 @@ async def _optional_actor(request: Optional[Request] = None):
         return None
 
 
-async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None, as_expense: bool = False, employee_id: Optional[str] = None) -> dict:
+async def _apply_personnel_bank_match(tx: dict, emp: dict, kind: str, amount: float, update: dict) -> Optional[str]:
+    """Personel ödemesini mevcut banka hareketine bağla — ikinci outflow yazma."""
+    labels = {"expense": "Masraf", "advance": "Avans", "overtime": "Mesai", "salary": "Maaş"}
+    if kind not in labels:
+        raise HTTPException(status_code=400, detail="Geçersiz personel ödeme türü (Masraf/Avans/Mesai/Maaş).")
+    today = (tx.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
+    period = today[:7]
+    update["employee_id"] = emp["_id"]
+    update["employee_name"] = emp.get("full_name")
+    update["personnel_pay_kind"] = kind
+    if kind == "expense":
+        exp = await expenses.record_card_spend(
+            tx["company_id"],
+            date=today,
+            category="Personel Masrafı",
+            description=(tx.get("description") or f"{emp.get('full_name')} personel masrafı")[:200],
+            amount=amount,
+            account_id=tx.get("account_id"),
+            account_name=tx.get("account_name"),
+            employee_id=emp["_id"],
+            bank_tx_id=tx.get("_id"),
+            source="bank_match",
+        )
+        if exp:
+            update["expense_id"] = exp.get("id")
+            update["category"] = "Personel Masraf"
+            return "Personel Masrafı"
+        return None
+    if kind in ("advance", "overtime"):
+        bonus_id = str(uuid.uuid4())
+        await db.bonus_payments.insert_one({
+            "_id": bonus_id,
+            "company_id": tx["company_id"],
+            "employee_id": emp["_id"],
+            "employee_name": emp.get("full_name"),
+            "type": kind,
+            "type_label": labels[kind],
+            "period": period,
+            "amount": float(amount),
+            "note": "Banka hareketi eşleştirmesi",
+            "is_official": False,
+            "account_id": tx.get("account_id"),
+            "account_name": tx.get("account_name"),
+            "status": "paid",
+            "date": today,
+            "paid_at": today,
+            "bank_transaction_id": tx.get("_id"),
+            "source": "bank_match",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        update["bonus_id"] = bonus_id
+        update["category"] = f"Personel {labels[kind]}"
+        return f"Personel {labels[kind]}"
+    # salary — ödenmemiş bordroyu işaretle veya oluştur (bakiye hareketine dokunma)
+    pending = await db.payrolls.find({"employee_id": emp["_id"], "status": {"$ne": "paid"}}).to_list(20)
+    if not pending:
+        await generate_payroll({"company_id": emp.get("company_id") or tx["company_id"], "period": period, "employee_id": emp["_id"]})
+        pending = await db.payrolls.find({"employee_id": emp["_id"], "status": {"$ne": "paid"}}).to_list(20)
+    if not pending:
+        raise HTTPException(status_code=400, detail="Ödenecek maaş bordrosu oluşturulamadı.")
+    payroll = min(pending, key=lambda p: abs(float(p.get("final_payable") or p.get("net_salary") or 0) - float(amount)))
+    await db.payrolls.update_one(
+        {"_id": payroll["_id"]},
+        {"$set": {
+            "status": "paid",
+            "paid_date": today,
+            "account_id": tx.get("account_id"),
+            "account_name": tx.get("account_name"),
+            "bank_transaction_id": tx.get("_id"),
+            "matched_via": "bank_match",
+        }},
+    )
+    update["payroll_id"] = payroll["_id"]
+    update["category"] = "Personel Maaş Ödemesi"
+    return "Personel Maaş Ödemesi"
+
+
+async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None, as_expense: bool = False, employee_id: Optional[str] = None, personnel_pay_kind: Optional[str] = None) -> dict:
     from bank_auto_match import match_actor_fields
     update = {"match_status": "matched", "matched_via": via, "matched_at": datetime.now(timezone.utc).isoformat(), **match_actor_fields(actor)}
     if category:
         update["category"] = category
     amount = tx.get("amount", 0)
     is_inflow = tx.get("type") == "inflow"
+    pay_kind = (personnel_pay_kind or "").strip().lower() or None
+    if pay_kind == "masraf":
+        pay_kind = "expense"
     if as_expense:
         if is_inflow:
             raise HTTPException(status_code=400, detail="Masraf eşleştirmesi yalnızca çıkış (ödeme) hareketlerinde yapılabilir.")
@@ -10065,30 +10145,38 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
     if as_expense:
         cat = (category or "").strip() or "Diğer"
         emp_id = (employee_id or "").strip() or None
+        is_personnel = bool(re.search(r"personel", cat, re.I)) or bool(pay_kind)
+        emp = None
         if emp_id:
             emp = await db.employees.find_one({"_id": emp_id, "company_id": tx["company_id"]})
             if not emp:
                 raise HTTPException(status_code=404, detail="Personel bulunamadı.")
-        elif re.search(r"personel", cat, re.I):
-            raise HTTPException(status_code=400, detail="Personel masrafı için personel seçimi zorunludur.")
-        exp = await expenses.record_card_spend(
-            tx["company_id"],
-            date=tx.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            category=cat,
-            description=(tx.get("description") or "Banka masrafı")[:200],
-            amount=amount,
-            account_id=tx.get("account_id"),
-            account_name=tx.get("account_name"),
-            contact_id=contact_id,
-            contact_name=contact_name,
-            employee_id=emp_id,
-            bank_tx_id=tx.get("_id"),
-            source="bank_match",
-        )
-        if exp:
-            update["expense_id"] = exp.get("id")
-            update["category"] = f"Masraf: {cat}"
-            category = cat
+        elif is_personnel:
+            raise HTTPException(status_code=400, detail="Personel ödemesi için personel seçimi zorunludur.")
+        if is_personnel and emp:
+            kind = pay_kind or "expense"
+            cat_label = await _apply_personnel_bank_match(tx, emp, kind, amount, update)
+            if cat_label:
+                category = cat_label
+        else:
+            exp = await expenses.record_card_spend(
+                tx["company_id"],
+                date=tx.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                category=cat,
+                description=(tx.get("description") or "Banka masrafı")[:200],
+                amount=amount,
+                account_id=tx.get("account_id"),
+                account_name=tx.get("account_name"),
+                contact_id=contact_id,
+                contact_name=contact_name,
+                employee_id=emp_id,
+                bank_tx_id=tx.get("_id"),
+                source="bank_match",
+            )
+            if exp:
+                update["expense_id"] = exp.get("id")
+                update["category"] = f"Masraf: {cat}"
+                category = cat
     target_name = None
     if target_account_id:
         if target_account_id == tx.get("account_id"):
@@ -10149,15 +10237,28 @@ async def _unmatch(tx: dict) -> dict:
             if counter:
                 await db.bank_accounts.update_one({"_id": counter["account_id"]}, {"$inc": {"current_balance": -amount if counter.get("type") == "inflow" else amount}})
                 await db.bank_transactions.delete_one({"_id": counter["_id"]})
-    # Eşleştirmeden oluşan masrafı kaldır (banka bakiyesine tekrar dokunma)
+    # Eşleştirmeden oluşan masrafı / personel ödemesini kaldır (banka bakiyesine tekrar dokunma)
     eid = tx.get("expense_id")
     if eid:
         exp = await db.expenses.find_one({"_id": eid})
         if exp and (exp.get("source") == "bank_match" or exp.get("bank_transaction_id") == tx.get("_id")):
             await db.expenses.delete_one({"_id": eid})
+    bid = tx.get("bonus_id")
+    if bid:
+        bonus = await db.bonus_payments.find_one({"_id": bid})
+        if bonus and (bonus.get("source") == "bank_match" or bonus.get("bank_transaction_id") == tx.get("_id")):
+            await db.bonus_payments.delete_one({"_id": bid})
+    pid = tx.get("payroll_id")
+    if pid:
+        payroll = await db.payrolls.find_one({"_id": pid})
+        if payroll and (payroll.get("matched_via") == "bank_match" or payroll.get("bank_transaction_id") == tx.get("_id")):
+            await db.payrolls.update_one(
+                {"_id": pid},
+                {"$set": {"status": "unpaid"}, "$unset": {"paid_date": "", "account_id": "", "account_name": "", "bank_transaction_id": "", "matched_via": "", "partner_id": ""}},
+            )
     await db.bank_transactions.update_one({"_id": tx["_id"]}, {
         "$set": {"match_status": "unmatched", "category": "Banka Gelen Havale/EFT" if is_inflow else "Banka Giden Ödeme"},
-        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": ""}})
+        "$unset": {"contact_id": "", "contact_name": "", "related_invoice_id": "", "related_invoice_number": "", "target_account_id": "", "target_account_name": "", "expense_id": "", "bonus_id": "", "payroll_id": "", "employee_id": "", "employee_name": "", "personnel_pay_kind": "", "matched_via": "", "matched_at": "", "matched_by_id": "", "matched_by_name": ""}})
     return clean_doc(await db.bank_transactions.find_one({"_id": tx["_id"]}))
 
 async def _prior_match_from_history(company_id: str, description: str, skip_id: Optional[str] = None):
@@ -10345,6 +10446,7 @@ async def match_bank_transaction(request: Request, tx_id: str, req: Dict[str, An
         actor=actor,
         as_expense=bool(req.get("as_expense")),
         employee_id=req.get("employee_id") or None,
+        personnel_pay_kind=req.get("personnel_pay_kind") or None,
     )
 
 @api_router.post("/banking/transactions/{tx_id}/unmatch")

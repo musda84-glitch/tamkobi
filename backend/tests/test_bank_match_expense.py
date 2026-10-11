@@ -104,13 +104,16 @@ def test_apply_match_as_expense_with_employee():
     mock_db.employees.find_one = AsyncMock(return_value=emp)
     mock_db.bank_transactions.update_one = AsyncMock()
     mock_db.bank_transactions.find_one = AsyncMock(
-        return_value={**tx, "match_status": "matched", "expense_id": "exp1", "category": "Masraf: Personel Masrafı"}
+        return_value={**tx, "match_status": "matched", "expense_id": "exp1", "category": "Personel Masraf"}
     )
 
     with patch.object(server, "db", mock_db), patch.object(
         server.expenses, "record_card_spend", AsyncMock(return_value={"id": "exp1", "category": "Personel Masrafı", "employee_id": "emp1"})
     ) as rec, patch.object(server, "_learn_rule", AsyncMock()):
-        out = _run(server._apply_match(tx, None, None, "Personel Masrafı", learn=False, as_expense=True, employee_id="emp1"))
+        out = _run(server._apply_match(
+            tx, None, None, "Personel Masrafı", learn=False, as_expense=True,
+            employee_id="emp1", personnel_pay_kind="expense",
+        ))
 
     rec.assert_awaited_once()
     assert rec.await_args.kwargs["employee_id"] == "emp1"
@@ -133,6 +136,92 @@ def test_apply_match_personel_category_requires_employee():
         _run(server._apply_match(tx, None, None, "Personel Masrafı", learn=False, as_expense=True))
     assert ei.value.status_code == 400
     assert "personel" in ei.value.detail.lower()
+
+
+def test_apply_match_personnel_advance_creates_bonus():
+    import server
+
+    tx = {
+        "_id": "tx_out",
+        "company_id": "c1",
+        "account_id": "acc1",
+        "account_name": "Vadesiz",
+        "type": "outflow",
+        "amount": 1500.0,
+        "description": "AVANS",
+        "date": "2026-10-09",
+        "currency": "TRY",
+        "match_status": "unmatched",
+        "source": "bank_sync",
+    }
+    emp = {"_id": "emp1", "company_id": "c1", "full_name": "Ayşe Yılmaz"}
+    mock_db = MagicMock()
+    mock_db.employees.find_one = AsyncMock(return_value=emp)
+    mock_db.bonus_payments.insert_one = AsyncMock()
+    mock_db.bank_transactions.update_one = AsyncMock()
+    mock_db.bank_transactions.find_one = AsyncMock(
+        return_value={**tx, "match_status": "matched", "bonus_id": "b1", "category": "Personel Avans"}
+    )
+
+    with patch.object(server, "db", mock_db), patch.object(server, "_learn_rule", AsyncMock()):
+        out = _run(server._apply_match(
+            tx, None, None, "Personel Masrafı", learn=False, as_expense=True,
+            employee_id="emp1", personnel_pay_kind="advance",
+        ))
+
+    mock_db.bonus_payments.insert_one.assert_awaited_once()
+    doc = mock_db.bonus_payments.insert_one.await_args.args[0]
+    assert doc["type"] == "advance"
+    assert doc["status"] == "paid"
+    assert doc["amount"] == 1500.0
+    assert doc["source"] == "bank_match"
+    assert doc["bank_transaction_id"] == "tx_out"
+    set_arg = mock_db.bank_transactions.update_one.await_args.args[1]["$set"]
+    assert set_arg["category"] == "Personel Avans"
+    assert set_arg.get("bonus_id")
+    assert out["bonus_id"] == "b1"
+
+
+def test_apply_match_personnel_salary_marks_payroll():
+    import server
+
+    tx = {
+        "_id": "tx_out",
+        "company_id": "c1",
+        "account_id": "acc1",
+        "account_name": "Vadesiz",
+        "type": "outflow",
+        "amount": 20000.0,
+        "description": "MAAS",
+        "date": "2026-10-09",
+        "currency": "TRY",
+        "match_status": "unmatched",
+        "source": "bank_sync",
+    }
+    emp = {"_id": "emp1", "company_id": "c1", "full_name": "Ayşe Yılmaz"}
+    payroll = {"_id": "pr1", "employee_id": "emp1", "status": "unpaid", "final_payable": 20000.0, "net_salary": 20000.0}
+    mock_db = MagicMock()
+    mock_db.employees.find_one = AsyncMock(return_value=emp)
+    mock_db.payrolls.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[payroll])))
+    mock_db.payrolls.update_one = AsyncMock()
+    mock_db.bank_transactions.update_one = AsyncMock()
+    mock_db.bank_transactions.find_one = AsyncMock(
+        return_value={**tx, "match_status": "matched", "payroll_id": "pr1", "category": "Personel Maaş Ödemesi"}
+    )
+
+    with patch.object(server, "db", mock_db), patch.object(server, "_learn_rule", AsyncMock()):
+        out = _run(server._apply_match(
+            tx, None, None, "Personel Masrafı", learn=False, as_expense=True,
+            employee_id="emp1", personnel_pay_kind="salary",
+        ))
+
+    mock_db.payrolls.update_one.assert_awaited_once()
+    assert mock_db.payrolls.update_one.await_args.args[1]["$set"]["status"] == "paid"
+    assert mock_db.payrolls.update_one.await_args.args[1]["$set"]["matched_via"] == "bank_match"
+    set_arg = mock_db.bank_transactions.update_one.await_args.args[1]["$set"]
+    assert set_arg["payroll_id"] == "pr1"
+    assert set_arg["category"] == "Personel Maaş Ödemesi"
+    assert out["payroll_id"] == "pr1"
 
 
 def test_unmatch_deletes_bank_match_expense():
