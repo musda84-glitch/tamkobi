@@ -6,7 +6,26 @@ export const BANK_MATCH_MODES = [
   ["expense", "Masraf"],
 ];
 
-/** Masraf kategorisi personel ödemesi mi? (Personel Masrafı vb.) */
+/** Varsayılan personel masraf kategorisi (API değeri; UI etiketi "Personel"). */
+export const PERSONNEL_EXPENSE_CATEGORY = "Personel Masrafı";
+
+/** Personel seçilince ödeme türleri. */
+export const PERSONNEL_PAY_KINDS = [
+  ["expense", "Masraf"],
+  ["advance", "Avans"],
+  ["overtime", "Mesai"],
+  ["salary", "Maaş"],
+];
+
+/** Masraf kategorisi personel ödemesi mi? (Personel / Personel Masrafı). */
 export function isPersonnelExpenseCategory(category) {
-  return /personel/i.test(String(category || "").trim());
+  return /^personel(\s+masraf[ıi])?$/i.test(String(category || "").trim())
+    || /personel/i.test(String(category || "").trim());
+}
+
+/** Kategori select etiketi — Personel Masrafı → Personel. */
+export function expenseCategoryOptionLabel(name) {
+  const n = String(name || "").trim();
+  if (/^personel(\s+masraf[ıi])?$/i.test(n)) return "Personel";
+  return n;
 }

@@ -7,7 +7,12 @@ import { formatTrAmount, fmtDate } from "../utils/money";
 import { txDescriptionLabel } from "../utils/bankMatchLabel";
 import { PaymentTargetSelect } from "./PaymentTargetSelect";
 import { SearchSelect } from "./SearchSelect";
-import { BANK_MATCH_MODES, isPersonnelExpenseCategory } from "../utils/bankMatchModes";
+import {
+  BANK_MATCH_MODES,
+  PERSONNEL_PAY_KINDS,
+  expenseCategoryOptionLabel,
+  isPersonnelExpenseCategory,
+} from "../utils/bankMatchModes";
 
 const fmt = (n) => formatTrAmount((n || 0));
 const sel = "bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-xs";
@@ -21,6 +26,7 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices: _invoices, comp
   const [expenseCats, setExpenseCats] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [employeeId, setEmployeeId] = useState("");
+  const [personnelPayKind, setPersonnelPayKind] = useState("expense");
   const [learn, setLearn] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -51,7 +57,7 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices: _invoices, comp
     return hit ? contactLabel(hit) : (tx.suggested_contact_name || "");
   })();
   const canSubmit = mode === "category" || mode === "expense"
-    ? !!category.trim() && (!needEmployee || !!employeeId)
+    ? !!category.trim() && (!needEmployee || (!!employeeId && !!personnelPayKind))
     : mode === "transfer" ? !!targetId
     : true;
 
@@ -59,7 +65,10 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices: _invoices, comp
     setMode(next);
     if (next !== "contact") setContactId("");
     if (next !== "expense" && next !== "category") setCategory("");
-    if (next !== "expense") setEmployeeId("");
+    if (next !== "expense") {
+      setEmployeeId("");
+      setPersonnelPayKind("expense");
+    }
   };
 
   const submit = async () => {
@@ -73,10 +82,14 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices: _invoices, comp
         target_account_id: mode === "transfer" ? targetId : null,
         as_expense: mode === "expense",
         employee_id: mode === "expense" && needEmployee ? employeeId || null : null,
+        personnel_pay_kind: mode === "expense" && needEmployee ? personnelPayKind || "expense" : null,
       };
       await axios.post(`${API_URL}/banking/transactions/${tx.id}/match`, body);
+      const kindLabel = PERSONNEL_PAY_KINDS.find(([k]) => k === personnelPayKind)?.[1];
       toast.success(mode === "expense"
-        ? (learn ? "Masraf kaydedildi ve kural olarak öğrenildi." : "Masraf kaydedildi.")
+        ? (needEmployee
+          ? (learn ? `Personel ${kindLabel || "ödeme"} kaydedildi ve öğrenildi.` : `Personel ${kindLabel || "ödeme"} kaydedildi.`)
+          : (learn ? "Masraf kaydedildi ve kural olarak öğrenildi." : "Masraf kaydedildi."))
         : (learn ? "Eşleştirildi ve kural olarak öğrenildi." : "Eşleştirildi."));
       onDone?.();
     } catch (err) { toast.error(err.response?.data?.detail || "Eşleştirilemedi."); } finally { setBusy(false); }
@@ -126,30 +139,40 @@ export const BankMatchRow = ({ tx, contacts, accounts, invoices: _invoices, comp
           {mode === "expense" && (
             <select
               value={category}
-              onChange={(e) => { setCategory(e.target.value); setEmployeeId(""); }}
+              onChange={(e) => { setCategory(e.target.value); setEmployeeId(""); setPersonnelPayKind("expense"); }}
               className={`${sel} w-40`}
               data-testid={`match-expense-cat-${tx.id}`}
             >
               <option value="">Masraf kategorisi…</option>
-              {expenseCats.map((c) => <option key={c} value={c}>{c}</option>)}
+              {expenseCats.map((c) => <option key={c} value={c}>{expenseCategoryOptionLabel(c)}</option>)}
             </select>
           )}
           {mode === "category" && (
             <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Kategori (zorunlu)" className={`${sel} w-36`} data-testid={`match-category-${tx.id}`} />
           )}
           {needEmployee && (
-            <select
-              value={employeeId}
-              onChange={(e) => setEmployeeId(e.target.value)}
-              className={`${sel} w-40`}
-              data-testid={`match-employee-${tx.id}`}
-            >
-              <option value="">Personel seçin…</option>
-              {employees.map((e) => {
-                const id = e.id || e._id;
-                return <option key={id} value={id}>{e.full_name || e.name || id}</option>;
-              })}
-            </select>
+            <>
+              <select
+                value={personnelPayKind}
+                onChange={(e) => setPersonnelPayKind(e.target.value)}
+                className={`${sel} w-28`}
+                data-testid={`match-pay-kind-${tx.id}`}
+              >
+                {PERSONNEL_PAY_KINDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+              <select
+                value={employeeId}
+                onChange={(e) => setEmployeeId(e.target.value)}
+                className={`${sel} w-40`}
+                data-testid={`match-employee-${tx.id}`}
+              >
+                <option value="">Personel seçin…</option>
+                {employees.map((e) => {
+                  const id = e.id || e._id;
+                  return <option key={id} value={id}>{e.full_name || e.name || id}</option>;
+                })}
+              </select>
+            </>
           )}
           <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" title="Bu açıklama tekrar gelirse aynı işlemi otomatik yap"><input type="checkbox" checked={learn} onChange={(e) => setLearn(e.target.checked)} data-testid={`match-learn-${tx.id}`} /> Öğren</label>
         </div>
