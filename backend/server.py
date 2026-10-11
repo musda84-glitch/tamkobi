@@ -10031,7 +10031,7 @@ async def _optional_actor(request: Optional[Request] = None):
         return None
 
 
-async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None, as_expense: bool = False) -> dict:
+async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional[str], category: Optional[str], learn: bool = True, target_account_id: Optional[str] = None, via: str = "manual", actor: Optional[dict] = None, as_expense: bool = False, employee_id: Optional[str] = None) -> dict:
     from bank_auto_match import match_actor_fields
     update = {"match_status": "matched", "matched_via": via, "matched_at": datetime.now(timezone.utc).isoformat(), **match_actor_fields(actor)}
     if category:
@@ -10064,6 +10064,13 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
         update["contact_name"] = contact_name
     if as_expense:
         cat = (category or "").strip() or "Diğer"
+        emp_id = (employee_id or "").strip() or None
+        if emp_id:
+            emp = await db.employees.find_one({"_id": emp_id, "company_id": tx["company_id"]})
+            if not emp:
+                raise HTTPException(status_code=404, detail="Personel bulunamadı.")
+        elif re.search(r"personel", cat, re.I):
+            raise HTTPException(status_code=400, detail="Personel masrafı için personel seçimi zorunludur.")
         exp = await expenses.record_card_spend(
             tx["company_id"],
             date=tx.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
@@ -10074,6 +10081,7 @@ async def _apply_match(tx: dict, contact_id: Optional[str], invoice_id: Optional
             account_name=tx.get("account_name"),
             contact_id=contact_id,
             contact_name=contact_name,
+            employee_id=emp_id,
             bank_tx_id=tx.get("_id"),
             source="bank_match",
         )
@@ -10336,6 +10344,7 @@ async def match_bank_transaction(request: Request, tx_id: str, req: Dict[str, An
         target_account_id=req.get("target_account_id") or None,
         actor=actor,
         as_expense=bool(req.get("as_expense")),
+        employee_id=req.get("employee_id") or None,
     )
 
 @api_router.post("/banking/transactions/{tx_id}/unmatch")
