@@ -575,11 +575,9 @@ async def put_workshop_zones(company_id: str, req: Dict[str, Any], user: dict = 
 
 
 @api_router.post("/personnel/employees/{emp_id}/office-tasks")
-async def assign_office_task(emp_id: str, req: Dict[str, Any]):
+async def assign_office_task(emp_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     import work_parks as wp
-    emp = await db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    emp = await tenant_access.get_tenant_doc(db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     company = await db.companies.find_one({"_id": emp.get("company_id")}) or {}
     types = wp.office_task_types_for_company(company)
     type_id = req.get("task_type_id") or req.get("office_task_type_id") or req.get("park_id")
@@ -613,11 +611,9 @@ async def assign_office_task(emp_id: str, req: Dict[str, Any]):
 
 
 @api_router.post("/personnel/employees/{emp_id}/active-duty")
-async def set_employee_active_duty(emp_id: str, req: Dict[str, Any]):
+async def set_employee_active_duty(emp_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """İç↔dış geçişte etkin iş yeri: dış görev kuralları / iş merkezine dönüşte ücret korunur."""
-    emp = await db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    emp = await tenant_access.get_tenant_doc(db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     kind = attendance.task_kind_of(req)
     if kind == "office":
         duty = attendance.build_active_duty(
@@ -2355,10 +2351,8 @@ async def _send_customer_link(company_id: str, channels: List[str], phone: Optio
 
 
 @api_router.post("/projects/{project_id}/send-tracking")
-async def send_project_tracking(project_id: str, req: Dict[str, Any], request: Request):
-    p = await db.projects.find_one({"_id": project_id})
-    if not p:
-        raise HTTPException(status_code=404, detail="Proje bulunamadı.")
+async def send_project_tracking(project_id: str, req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
+    p = await tenant_access.get_tenant_doc(db, "projects", project_id, user, not_found="Proje bulunamadı.")
     channels = [c for c in (req.get("channels") or []) if c in ("sms", "email", "whatsapp")]
     contact = await db.contacts.find_one({"_id": p.get("contact_id")}) if p.get("contact_id") else None
     company = await db.companies.find_one({"_id": p["company_id"]}) or {}
@@ -3369,10 +3363,8 @@ def _statement_pdf_response(view: dict):
 
 
 @api_router.post("/contacts/{contact_id}/statement-link")
-async def create_statement_link(contact_id: str, req: Dict[str, Any], request: Request):
-    contact = await db.contacts.find_one({"_id": contact_id})
-    if not contact:
-        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+async def create_statement_link(contact_id: str, req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
+    contact = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
     share = contact.get("statement_share") or {}
     token = share.get("token") or uuid.uuid4().hex
     if not share.get("token"):
@@ -3391,7 +3383,8 @@ async def create_statement_link(contact_id: str, req: Dict[str, Any], request: R
 
 
 @api_router.get("/contacts/{contact_id}/statement.pdf")
-async def download_contact_statement_pdf(contact_id: str):
+async def download_contact_statement_pdf(contact_id: str, user: dict = Depends(get_current_user)):
+    await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
     _contact, view = await _statement_bundle(contact_id)
     return _statement_pdf_response(view)
 
@@ -4792,10 +4785,8 @@ async def contact_flags(company_id: Optional[str] = "comp_nexus_main_01", days: 
     return flags
 
 @api_router.get("/contacts/{contact_id}/aging")
-async def contact_aging(contact_id: str):
-    c = await db.contacts.find_one({"_id": contact_id})
-    if not c:
-        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+async def contact_aging(contact_id: str, user: dict = Depends(get_current_user)):
+    c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
     today = date.fromisoformat(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     rate = float(c.get("late_fee_rate", 0) or 0)
     rows = []
@@ -4809,10 +4800,8 @@ async def contact_aging(contact_id: str):
             "total_remaining": round(sum(r["remaining"] for r in rows), 2), "total_overdue": round(sum(r["remaining"] for r in rows if r["overdue_days"] > 0), 2), "total_late_fee": round(sum(r["late_fee"] for r in rows), 2)}
 
 @api_router.post("/contacts/{contact_id}/apply-terms")
-async def apply_contact_terms(contact_id: str, req: Dict[str, Any]):
-    c = await db.contacts.find_one({"_id": contact_id})
-    if not c:
-        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+async def apply_contact_terms(contact_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    c = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
     days = int(req.get("payment_term_days", 0) or 0)
     rate = float(req.get("late_fee_rate", 0) or 0)
     await db.contacts.update_one({"_id": contact_id}, {"$set": {"payment_term_days": days, "late_fee_rate": rate}})
@@ -4858,10 +4847,8 @@ async def delete_contact_balance_installments(contact_id: str, user: dict = Depe
     return {"status": "success"}
 
 @api_router.get("/contacts/{contact_id}/overview")
-async def get_contact_overview(contact_id: str):
-    contact = await db.contacts.find_one({"_id": contact_id})
-    if not contact:
-        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+async def get_contact_overview(contact_id: str, user: dict = Depends(get_current_user)):
+    contact = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
     invoices = await db.invoices.find({"contact_id": contact_id, "status": {"$ne": "cancelled"}}).sort("issue_date", -1).to_list(200)
     payments = await db.bank_transactions.find({"contact_id": contact_id}).sort("date", -1).to_list(200)
     for ptx in await db.partner_transactions.find({"contact_id": contact_id}).to_list(200):
@@ -5013,11 +5000,9 @@ async def record_contact_payment(contact_id: str, req: Dict[str, Any], request: 
     return await _execute_contact_partner_payment(payload)
 
 @api_router.post("/contacts/{contact_id}/clear-opening-balance")
-async def clear_contact_opening_balance(contact_id: str):
+async def clear_contact_opening_balance(contact_id: str, user: dict = Depends(get_current_user)):
     """Aktarım / BizimHesap açılış bakiyesini sıfırlar; fatura ve kasa hareketleri kalır."""
-    contact = await db.contacts.find_one({"_id": contact_id})
-    if not contact:
-        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    contact = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
     await db.contacts.update_one(
         {"_id": contact_id},
         {"$set": {"opening_balance": 0.0}, "$unset": {"opening_balance_source": ""}},
@@ -5032,11 +5017,9 @@ async def clear_contact_opening_balance(contact_id: str):
 
 
 @api_router.post("/contacts/{contact_id}/ledger-slip")
-async def create_contact_ledger_slip(contact_id: str, req: Dict[str, Any]):
+async def create_contact_ledger_slip(contact_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Borç / alacak fişi — kasa veya banka hareketi olmadan cari bakiyesini düzeltir."""
-    contact = await db.contacts.find_one({"_id": contact_id})
-    if not contact:
-        raise HTTPException(status_code=404, detail="Cari hesap bulunamadı.")
+    contact = await tenant_access.get_tenant_doc(db, "contacts", contact_id, user, not_found="Cari hesap bulunamadı.")
     amount = round(float(req.get("amount") or 0), 2)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tutar sıfırdan büyük olmalıdır.")
@@ -5439,10 +5422,8 @@ async def list_purchase_orders(company_id: Optional[str] = "comp_nexus_main_01",
 
 
 @api_router.get("/purchase-orders/{po_id}")
-async def get_purchase_order(po_id: str):
-    doc = await db.purchase_orders.find_one({"_id": po_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Verilen sipariş bulunamadı.")
+async def get_purchase_order(po_id: str, user: dict = Depends(get_current_user)):
+    doc = await tenant_access.get_tenant_doc(db, "purchase_orders", po_id, user, not_found="Verilen sipariş bulunamadı.")
     return clean_doc(doc)
 
 
@@ -5838,10 +5819,8 @@ async def create_stock_lot(req: Dict[str, Any]):
 
 
 @api_router.put("/stock-lots/{lot_id}")
-async def update_stock_lot(lot_id: str, req: Dict[str, Any]):
-    lot = await db.stock_lots.find_one({"_id": lot_id})
-    if not lot:
-        raise HTTPException(status_code=404, detail="Lot bulunamadı.")
+async def update_stock_lot(lot_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    lot = await tenant_access.get_tenant_doc(db, "stock_lots", lot_id, user, not_found="Lot bulunamadı.")
     allowed = {k: v for k, v in req.items() if k in {
         "lot_number", "serial_number", "production_date", "expiry_date", "quantity",
         "warehouse_id", "notes", "is_active",
@@ -5858,10 +5837,8 @@ async def update_stock_lot(lot_id: str, req: Dict[str, Any]):
 
 
 @api_router.delete("/stock-lots/{lot_id}")
-async def delete_stock_lot(lot_id: str):
-    lot = await db.stock_lots.find_one({"_id": lot_id})
-    if not lot:
-        raise HTTPException(status_code=404, detail="Lot bulunamadı.")
+async def delete_stock_lot(lot_id: str, user: dict = Depends(get_current_user)):
+    lot = await tenant_access.get_tenant_doc(db, "stock_lots", lot_id, user, not_found="Lot bulunamadı.")
     qty = float(lot.get("quantity") or 0)
     if qty > 0:
         await db.products.update_one({"_id": lot["product_id"]}, {"$inc": {"stock_quantity": -qty}})
@@ -5870,10 +5847,8 @@ async def delete_stock_lot(lot_id: str):
 
 
 @api_router.get("/products/{product_id}/lots")
-async def product_lots(product_id: str, include_empty: bool = False):
-    product = await db.products.find_one({"_id": product_id})
-    if not product:
-        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+async def product_lots(product_id: str, include_empty: bool = False, user: dict = Depends(get_current_user)):
+    product = await tenant_access.get_tenant_doc(db, "products", product_id, user, not_found="Ürün bulunamadı.")
     return await list_stock_lots(company_id=product["company_id"], product_id=product_id, include_empty=include_empty)
 
 
@@ -6225,11 +6200,9 @@ async def pos_return(req: Dict[str, Any], request: Request):
 
 
 @api_router.get("/products/{product_id}/purchase-costs")
-async def product_purchase_costs(product_id: str, company_id: Optional[str] = None):
-    product = await db.products.find_one({"_id": product_id})
-    if not product:
-        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
-    cid = company_id or product.get("company_id")
+async def product_purchase_costs(product_id: str, company_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    product = await tenant_access.get_tenant_doc(db, "products", product_id, user, not_found="Ürün bulunamadı.")
+    cid = tenant_access.resolve_company_id(user, company_id or product.get("company_id"))
     hist = (await _purchase_costs_by_product(cid, limit_each=20)).get(product_id) or []
     return {
         "product_id": product_id,
@@ -6241,10 +6214,9 @@ async def product_purchase_costs(product_id: str, company_id: Optional[str] = No
 
 
 @api_router.get("/products/{product_id}/movements")
-async def list_product_movements(product_id: str, limit: int = 80):
+async def list_product_movements(product_id: str, limit: int = 80, user: dict = Depends(get_current_user)):
     product = await db.products.find_one({"$or": [{"_id": product_id}, {"id": product_id}]})
-    if not product:
-        raise HTTPException(status_code=404, detail="Ürün bulunamadı.")
+    product = tenant_access.assert_doc_company(user, product, not_found="Ürün bulunamadı.")
     cap = max(1, min(int(limit or 80), 200))
     company_id = product.get("company_id")
     pids = stock_moves.product_ids_of(product, product_id)
@@ -6765,10 +6737,8 @@ async def _send_dispatch_to_isnet_if_configured(doc: dict) -> Dict[str, Any]:
 
 
 @api_router.post("/invoices/{invoice_id}/create-dispatch")
-async def create_dispatch_from_invoice(invoice_id: str):
-    inv = await db.invoices.find_one({"_id": invoice_id})
-    if not inv:
-        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+async def create_dispatch_from_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
+    inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if inv.get("invoice_type") == "dispatch":
         raise HTTPException(status_code=400, detail="Bu belge zaten bir irsaliye.")
     if inv.get("dispatch_id"):
@@ -6990,11 +6960,9 @@ async def copy_invoice(invoice_id: str, req: Optional[Dict[str, Any]] = None, us
 
 
 @api_router.post("/invoices/{invoice_id}/expense-slip")
-async def create_expense_slip_from_invoice(invoice_id: str):
+async def create_expense_slip_from_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
     """Kesilmiş belgeden aynı cari ve kalemlerle alış gider pusulası düzenler."""
-    inv = await db.invoices.find_one({"_id": invoice_id})
-    if not inv:
-        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if inv.get("expense_slip_id"):
         existing = await db.invoices.find_one({"_id": inv["expense_slip_id"]})
         if existing and existing.get("status") != "cancelled":
@@ -7749,11 +7717,9 @@ async def _create_product_for_invoice_line(inv: dict, idx: int, *, markup: float
 
 
 @api_router.put("/invoices/{invoice_id}/items/match")
-async def match_invoice_item_product(invoice_id: str, req: Dict[str, Any]):
+async def match_invoice_item_product(invoice_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Gelen fatura/irsaliye satırını stok kartına bağla."""
-    inv = await db.invoices.find_one({"_id": invoice_id})
-    if not inv:
-        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if not _is_incoming_product_matchable(inv):
         raise HTTPException(status_code=400, detail="Ürün eşleştirme yalnızca gelen alış faturası / gelen irsaliye için.")
     idx = int(req.get("idx", -1))
@@ -7766,12 +7732,10 @@ async def match_invoice_item_product(invoice_id: str, req: Dict[str, Any]):
 
 
 @api_router.post("/invoices/{invoice_id}/items/create-product")
-async def create_product_from_invoice_item(invoice_id: str, req: Dict[str, Any] = None):
+async def create_product_from_invoice_item(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     """Tek satırdan stok kartı oluştur ve bağla."""
     req = req or {}
-    inv = await db.invoices.find_one({"_id": invoice_id})
-    if not inv:
-        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if not _is_incoming_product_matchable(inv):
         raise HTTPException(status_code=400, detail="Stok kartı oluşturma yalnızca gelen alış faturası / gelen irsaliye için.")
     idx = int(req.get("idx", -1))
@@ -7784,12 +7748,10 @@ async def create_product_from_invoice_item(invoice_id: str, req: Dict[str, Any] 
 
 
 @api_router.post("/invoices/{invoice_id}/items/create-missing-products")
-async def create_missing_products_for_invoice(invoice_id: str, req: Dict[str, Any] = None):
+async def create_missing_products_for_invoice(invoice_id: str, req: Dict[str, Any] = None, user: dict = Depends(get_current_user)):
     """Eşleşmeyen tüm satırlara stok kartı aç (kısayol)."""
     req = req or {}
-    inv = await db.invoices.find_one({"_id": invoice_id})
-    if not inv:
-        raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    inv = await tenant_access.get_tenant_doc(db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
     if not _is_incoming_product_matchable(inv):
         raise HTTPException(status_code=400, detail="Toplu stok kartı yalnızca gelen alış faturası / gelen irsaliye için.")
     markup = float(req.get("markup") or 1.4)
@@ -9525,9 +9487,7 @@ async def list_cash_approvals(request: Request, company_id: Optional[str] = "com
 @api_router.post("/banking/cash-approvals/{req_id}/approve")
 async def approve_cash_request(req_id: str, request: Request):
     user = await get_current_user(request)
-    doc = await db.cash_approval_requests.find_one({"_id": req_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Onay talebi bulunamadı.")
+    doc = await tenant_access.get_tenant_doc(db, "cash_approval_requests", req_id, user, not_found="Onay talebi bulunamadı.")
     if doc.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bu talep zaten sonuçlanmış.")
     if not await cash_approval.can_approve(db, user, doc["company_id"]):
@@ -9577,9 +9537,7 @@ async def approve_cash_request(req_id: str, request: Request):
 @api_router.post("/banking/cash-approvals/{req_id}/reject")
 async def reject_cash_request(req_id: str, request: Request):
     user = await get_current_user(request)
-    doc = await db.cash_approval_requests.find_one({"_id": req_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Onay talebi bulunamadı.")
+    doc = await tenant_access.get_tenant_doc(db, "cash_approval_requests", req_id, user, not_found="Onay talebi bulunamadı.")
     if doc.get("status") != "pending":
         raise HTTPException(status_code=400, detail="Bu talep zaten sonuçlanmış.")
     if not await cash_approval.can_approve(db, user, doc["company_id"]):
@@ -11012,16 +10970,14 @@ async def create_stock_count(req: Dict[str, Any]):
     return clean_doc(doc)
 
 @api_router.get("/warehouses/stock-counts/{count_id}")
-async def get_stock_count(count_id: str):
-    doc = await db.stock_counts.find_one({"_id": count_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Sayım bulunamadı.")
+async def get_stock_count(count_id: str, user: dict = Depends(get_current_user)):
+    doc = await tenant_access.get_tenant_doc(db, "stock_counts", count_id, user, not_found="Sayım bulunamadı.")
     return clean_doc(doc)
 
 @api_router.post("/warehouses/stock-counts/{count_id}/scan")
-async def scan_stock_count(count_id: str, req: Dict[str, Any]):
-    doc = await db.stock_counts.find_one({"_id": count_id})
-    if not doc or doc.get("status") != "open":
+async def scan_stock_count(count_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    doc = await tenant_access.get_tenant_doc(db, "stock_counts", count_id, user, not_found="Sayım bulunamadı.")
+    if doc.get("status") != "open":
         raise HTTPException(status_code=400, detail="Açık sayım bulunamadı.")
     barcode = (req.get("barcode") or "").strip()
     qty = float(req.get("quantity", 1))
@@ -11053,9 +11009,9 @@ async def scan_stock_count(count_id: str, req: Dict[str, Any]):
     return {"status": "success", "item": item, "message": f"{item['product_name']} → sayılan: {item['counted']}"}
 
 @api_router.put("/warehouses/stock-counts/{count_id}/items")
-async def set_stock_count_item(count_id: str, req: Dict[str, Any]):
-    doc = await db.stock_counts.find_one({"_id": count_id})
-    if not doc or doc.get("status") != "open":
+async def set_stock_count_item(count_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    doc = await tenant_access.get_tenant_doc(db, "stock_counts", count_id, user, not_found="Sayım bulunamadı.")
+    if doc.get("status") != "open":
         raise HTTPException(status_code=400, detail="Açık sayım bulunamadı.")
     items = doc.get("items", [])
     for i in items:
@@ -11066,9 +11022,9 @@ async def set_stock_count_item(count_id: str, req: Dict[str, Any]):
     return clean_doc(await db.stock_counts.find_one({"_id": count_id}))
 
 @api_router.post("/warehouses/stock-counts/{count_id}/complete")
-async def complete_stock_count(count_id: str, req: Dict[str, Any]):
-    doc = await db.stock_counts.find_one({"_id": count_id})
-    if not doc or doc.get("status") != "open":
+async def complete_stock_count(count_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    doc = await tenant_access.get_tenant_doc(db, "stock_counts", count_id, user, not_found="Sayım bulunamadı.")
+    if doc.get("status") != "open":
         raise HTTPException(status_code=400, detail="Açık sayım bulunamadı.")
     apply = bool(req.get("apply", True))
     only_scanned = bool(req.get("only_scanned", True))
@@ -11094,10 +11050,8 @@ async def complete_stock_count(count_id: str, req: Dict[str, Any]):
     return {"status": "success", "adjusted": adjusted, "message": f"Sayım tamamlandı. {adjusted} kalemde stok güncellendi." if apply else "Sayım kaydedildi (stok değiştirilmedi)."}
 
 @api_router.delete("/warehouses/stock-counts/{count_id}")
-async def delete_stock_count(count_id: str):
-    sc = await db.stock_counts.find_one({"_id": count_id})
-    if not sc:
-        raise HTTPException(status_code=404, detail="Sayım bulunamadı.")
+async def delete_stock_count(count_id: str, user: dict = Depends(get_current_user)):
+    sc = await tenant_access.get_tenant_doc(db, "stock_counts", count_id, user, not_found="Sayım bulunamadı.")
     await trash.soft_delete("stock_counts", sc, "stock_count", sc.get("name") or sc.get("title") or count_id, note=sc.get("status") or "")
     return {"status": "success", "message": "Sayım çöp kutusuna taşındı."}
 
@@ -18107,12 +18061,10 @@ async def complete_my_assigned_task(task_id: str, user: dict = Depends(get_curre
 
 
 @api_router.post("/personnel/employees/{emp_id}/tasks/trash-completed")
-async def trash_completed_employee_tasks(emp_id: str):
+async def trash_completed_employee_tasks(emp_id: str, user: dict = Depends(get_current_user)):
     """Personel kartı: tamamlanan (arşiv) görevleri çöp kutusuna taşı — 30 gün geri alınabilir."""
     import work_parks as wp
-    emp = await db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    emp = await tenant_access.get_tenant_doc(db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     now = datetime.now(timezone.utc).isoformat()
     company_id = emp.get("company_id")
     trashed_ids: set = set()
@@ -18193,12 +18145,10 @@ async def _find_assigned_project(company_id: str, emp_id: str, task_id: str):
 
 
 @api_router.put("/personnel/employees/{emp_id}/tasks/{task_id}")
-async def update_employee_assigned_task(emp_id: str, task_id: str, req: Dict[str, Any] = Body(default=None)):
+async def update_employee_assigned_task(emp_id: str, task_id: str, req: Dict[str, Any] = Body(default=None), user: dict = Depends(get_current_user)):
     """Hareketler → Görevler: atanan görevi düzenle (başlık, bitiş, süre, tamamlandı)."""
     import work_parks as wp
-    emp = await db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    emp = await tenant_access.get_tenant_doc(db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     fields = wp.task_patch_fields(req or {})
     if not fields:
         raise HTTPException(status_code=400, detail="Güncellenecek alan yok.")
@@ -18235,12 +18185,10 @@ async def update_employee_assigned_task(emp_id: str, task_id: str, req: Dict[str
 
 
 @api_router.delete("/personnel/employees/{emp_id}/tasks/{task_id}")
-async def delete_employee_assigned_task(emp_id: str, task_id: str):
+async def delete_employee_assigned_task(emp_id: str, task_id: str, user: dict = Depends(get_current_user)):
     """Hareketler → Görevler: atanan görevi çöp kutusuna taşı (açık veya tamamlanan)."""
     import work_parks as wp
-    emp = await db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+    emp = await tenant_access.get_tenant_doc(db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     now = datetime.now(timezone.utc).isoformat()
     office, found = wp.remove_office_task(emp.get("office_tasks") or [], task_id)
     if found:
@@ -18390,11 +18338,10 @@ async def upload_my_task_photo(
 
 
 @api_router.post("/projects/{project_id}/stage-photos/visibility")
-async def set_stage_photo_visibility(project_id: str, req: Dict[str, Any]):
+async def set_stage_photo_visibility(project_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
     """Yönetici: müşteri takip sayfasında görsün / görmesin."""
     proj = await db.projects.find_one({"$or": [{"_id": project_id}, {"id": project_id}]})
-    if not proj:
-        raise HTTPException(status_code=404, detail="Proje bulunamadı.")
+    proj = tenant_access.assert_doc_company(user, proj, not_found="Proje bulunamadı.")
     url = str(req.get("url") or "").strip()
     if not project_photos.is_photo_url(url):
         raise HTTPException(status_code=400, detail="Geçerli bir fotoğraf seçin.")
@@ -18435,10 +18382,8 @@ async def _notify_role_assigned(company_id: str, emp: Dict[str, Any], role: str,
 
 
 @api_router.post("/personnel/employees/{emp_id}/create-user")
-async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Request):
-    emp = await db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Request, user: dict = Depends(get_current_user)):
+    emp = await tenant_access.get_tenant_doc(db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     email = (req.get("email") or emp.get("email") or "").strip().lower()
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Personelin geçerli bir e-posta adresi olmalı.")
@@ -18464,10 +18409,8 @@ async def employee_create_user(emp_id: str, req: Dict[str, Any], request: Reques
     return {"status": "success", "mode": "invite", "invite": inv, "message": inv["mail"]["detail"]}
 
 @api_router.post("/personnel/employees/{emp_id}/shopfloor-pin")
-async def set_shopfloor_pin(emp_id: str, req: Dict[str, Any]):
-    emp = await db.employees.find_one({"_id": emp_id})
-    if not emp:
-        raise HTTPException(status_code=404, detail="Çalışan bulunamadı.")
+async def set_shopfloor_pin(emp_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    emp = await tenant_access.get_tenant_doc(db, "employees", emp_id, user, not_found="Çalışan bulunamadı.")
     pin = str(req.get("password") or req.get("pin") or "").strip()
     if len(pin) < 4:
         raise HTTPException(status_code=400, detail="Atölye şifresi en az 4 karakter olmalı.")
@@ -19371,7 +19314,7 @@ expenses.init(db, get_current_user)
 import bank_tx as _bank_tx
 _bank_tx.install(db)
 tax_obligations.init(db, get_current_user)
-vehicles.init(db)
+vehicles.init(db, get_current_user)
 fx.init(db)
 finance.init(db, get_current_user)
 cheques.init(db, get_current_user)

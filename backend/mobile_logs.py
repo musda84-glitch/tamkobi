@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+import tenant_access
+
 router = APIRouter(prefix="/api/mobile", tags=["mobile-logs"])
 _db = None
 _current_user = None
@@ -54,9 +56,7 @@ async def _require_company_user(request: Request, company_id: str) -> dict:
     if not _current_user:
         raise HTTPException(status_code=500, detail="Auth yapılandırılmadı.")
     user = await _current_user(request)
-    if user.get("is_super_admin"):
-        return user
-    if str(company_id) not in _user_companies(user):
+    if not tenant_access.user_may_access_company(user, company_id):
         raise HTTPException(status_code=403, detail="Bu şirketin loglarına erişim yok.")
     return user
 
@@ -133,9 +133,9 @@ async def create_mobile_log(req: Dict[str, Any], request: Request):
 
 @router.delete("/logs/{log_id}")
 async def delete_mobile_log(log_id: str, request: Request, company_id: str = "comp_nexus_main_01"):
-    await _require_company_user(request, company_id)
-    rec = await _db[COLLECTION].find_one({"_id": log_id})
-    if not rec or rec.get("company_id") != company_id:
+    user = await _require_company_user(request, company_id)
+    rec = await tenant_access.get_tenant_doc(_db, COLLECTION, log_id, user, not_found="Log bulunamadı.")
+    if rec.get("company_id") != company_id:
         raise HTTPException(status_code=404, detail="Log bulunamadı.")
     await _db[COLLECTION].delete_one({"_id": log_id})
     return {"status": "success", "message": "Log silindi."}
