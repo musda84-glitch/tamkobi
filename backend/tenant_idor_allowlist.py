@@ -1,0 +1,58 @@
+"""Kasıtlı olarak şirketler arası / genel erişimli path-id rotaları.
+
+AST testi (`tests/test_tenant_idor_routes.py`) bu listedekileri şirket
+kontrolü zorunluluğundan muaf tutar. Yeni muafiyet eklerken neden yazın.
+"""
+from __future__ import annotations
+
+# (METHOD, path) — decorator path; /api prefix'siz. Test normalize eder.
+
+TENANT_IDOR_ALLOWLIST: set[tuple[str, str]] = {
+    # Auth — token kimlik yerine geçer
+    ("GET", "/auth/reset/{token}"),
+    ("POST", "/auth/reset/{token}"),
+    ("GET", "/auth/invite/{token}"),
+    ("POST", "/auth/invite/{token}"),
+    # İmzalı / GİB belge (oturum veya ?t=)
+    ("GET", "/e-invoice/{invoice_id}/status"),
+    ("POST", "/e-invoice/{invoice_id}/refresh-status"),
+    ("GET", "/invoices/{invoice_id}/gib-document"),
+    ("GET", "/invoices/{invoice_id}/gib-document.json"),
+    # Bildirim — kullanıcıya özel
+    ("POST", "/notifications/{notif_id}/read"),
+    ("DELETE", "/notifications/{notif_id}"),
+    # İsim / kanal / belge türü anahtarı (UUID kayıt değil)
+    ("PUT", "/products/units/{name}"),
+    ("DELETE", "/products/units/{name}"),
+    ("DELETE", "/products/categories/{name}"),
+    ("PUT", "/pricing/rules/{channel}"),
+    ("PUT", "/companies/{company_id}/print-templates/{doc_type}"),
+    ("DELETE", "/companies/{company_id}/print-templates/{doc_type}"),
+    ("GET", "/reports/{kind}"),
+    ("GET", "/products/barcode/{barcode}"),
+    ("GET", "/pos/receipt/{invoice_number}"),
+    ("GET", "/storage/me/folders/{area_key}/files"),
+    # Mail IMAP uid
+    ("GET", "/comm/mail/messages/{uid}"),
+    ("POST", "/comm/mail/messages/{uid}/flag"),
+    # Migration şablon entity adı
+    ("GET", "/migration/template/{entity}"),
+    # Destek — müşteri kendi ticket'ı (email)
+    ("GET", "/support/tickets/{ticket_id}"),
+    ("POST", "/support/tickets/{ticket_id}/messages"),
+    ("POST", "/support/tickets/{ticket_id}/close"),
+    # SaaS ödeme oturumu
+    ("GET", "/payments/status/{session_id}"),
+    # Platform silme onayı (süper-admin / support akışı)
+    ("POST", "/companies/{company_id}/deletion-confirmations/{req_id}/reply"),
+}
+
+ALLOWLIST_REASONS: dict[tuple[str, str], str] = {
+    ("GET", "/auth/reset/{token}"): "Şifre sıfırlama token'ı",
+    ("GET", "/e-invoice/{invoice_id}/status"): "E-fatura durum; imzalı/entegratör",
+    ("POST", "/notifications/{notif_id}/read"): "Bildirim user-scoped",
+    ("PUT", "/products/units/{name}"): "Birim adı anahtarı",
+    ("GET", "/support/tickets/{ticket_id}"): "Müşteri kendi ticket'ı",
+    ("GET", "/payments/status/{session_id}"): "Ödeme oturumu token'ı",
+    ("POST", "/companies/{company_id}/deletion-confirmations/{req_id}/reply"): "Platform silme onay akışı",
+}

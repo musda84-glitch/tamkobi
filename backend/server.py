@@ -12590,9 +12590,9 @@ def resolve_cargo_name(code: str, fallback: str = "") -> str:
     return fallback or raw
 
 @api_router.put("/integrations/ecommerce/{channel_id}/rest-credentials")
-async def set_shopphp_rest_credentials(channel_id: str, req: Dict[str, Any]):
-    cfg = await db.integration_configs.find_one({"_id": channel_id})
-    if not cfg or cfg.get("channel") != "shopphp":
+async def set_shopphp_rest_credentials(channel_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    cfg = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="ShopPHP kanalı bulunamadı.")
+    if cfg.get("channel") != "shopphp":
         raise HTTPException(status_code=404, detail="ShopPHP kanalı bulunamadı.")
     upd: Dict[str, Any] = {"rest_email": (req.get("rest_email") or "").strip(), "rest_auto_push": bool(req.get("rest_auto_push", True))}
     if req.get("rest_password"):
@@ -12762,8 +12762,8 @@ async def push_order_to_shopphp(order_id: str, user: dict = Depends(get_current_
     return {"status": "success", "message": f"ShopPHP'ye bildirildi: durum {s.get('sdurum') or '-'}" + (f", kargo {s['kargoFirma']} {s['kargoSeriNo']}" if s.get("kargoSeriNo") else "") + (f", fatura {s['faturaNo']}" if s.get("faturaNo") else "") + ".", "sent": s, "status_via": log.get("status_via")}
 
 @api_router.post("/integrations/ecommerce/{channel_id}/rest-test")
-async def test_shopphp_rest(channel_id: str):
-    cfg = await db.integration_configs.find_one({"_id": channel_id})
+async def test_shopphp_rest(channel_id: str, user: dict = Depends(get_current_user)):
+    cfg = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Kanal bulunamadı.")
     client = _shopphp_rest_client(cfg or {})
     if not client:
         raise HTTPException(status_code=400, detail="REST kullanıcı e-postası ve parolası girilmemiş.")
@@ -12774,10 +12774,8 @@ async def test_shopphp_rest(channel_id: str):
     return {"status": "success", "message": "ShopPHP REST API bağlantısı başarılı; sipariş güncellemeleri (onay, kargo, fatura no) mağazaya iletilebilir.", "sample_type": type(res).__name__}
 
 @api_router.put("/integrations/ecommerce/{channel_id}/settlement-account")
-async def set_channel_settlement_account(channel_id: str, req: Dict[str, Any]):
-    cfg = await db.integration_configs.find_one({"_id": channel_id})
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Kanal bulunamadı.")
+async def set_channel_settlement_account(channel_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    cfg = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Kanal bulunamadı.")
     account_id = req.get("account_id") or None
     name = None
     if account_id:
@@ -13080,10 +13078,8 @@ async def _upsert_by_external(coll, company_id: str, docs: list) -> int:
     return n
 
 @api_router.post("/integrations/ecommerce/{channel_id}/test-connection")
-async def test_ecommerce_connection(channel_id: str):
-    config = await db.integration_configs.find_one({"_id": channel_id})
-    if not config:
-        raise HTTPException(status_code=404, detail="Entegrasyon yapılandırması bulunamadı.")
+async def test_ecommerce_connection(channel_id: str, user: dict = Depends(get_current_user)):
+    config = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Entegrasyon yapılandırması bulunamadı.")
     if config.get("channel") == "shopphp":
         if not marketplace_providers.has_shopphp_credentials(config):
             return {"status": "error", "message": "Mağaza adresi ve Sipariş XML kodu (xml.php?c=siparisler&xmlc=…) gerekli. Kodu ya da tam XML adresini yapıştırabilirsiniz."}
@@ -13279,10 +13275,8 @@ def _channel_fees(cfg: Optional[dict], channel: str) -> dict:
     return {**base, **((cfg or {}).get("fees") or {})}
 
 @api_router.put("/integrations/ecommerce/{channel_id}/fees")
-async def set_channel_fees(channel_id: str, req: Dict[str, Any]):
-    cfg = await db.integration_configs.find_one({"_id": channel_id})
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Kanal bulunamadı.")
+async def set_channel_fees(channel_id: str, req: Dict[str, Any], user: dict = Depends(get_current_user)):
+    cfg = await tenant_access.get_tenant_doc(db, "integration_configs", channel_id, user, not_found="Kanal bulunamadı.")
     fees = {}
     for k in ("commission_rate", "service_fee", "cargo_fee", "commission_vat_rate"):
         if req.get(k) not in (None, ""):
@@ -17363,7 +17357,8 @@ async def list_employees(company_id: Optional[str] = "comp_nexus_main_01"):
     return out
 
 @api_router.post("/personnel/employees")
-async def create_employee(emp: Employee):
+async def create_employee(emp: Employee, user: dict = Depends(get_current_user)):
+    emp.company_id = tenant_access.resolve_company_id(user, emp.company_id)
     doc = emp.to_mongo()
     sgk = str(doc.get("sgk_number") or "").strip()
     if sgk:
