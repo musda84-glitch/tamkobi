@@ -86,7 +86,7 @@ test("mode select has no Cari + Fatura; contact hidden until Cari", async () => 
   expect(document.querySelector('[data-testid="tx-match-expense-cat-tx1"]')).toBeFalsy();
 });
 
-test("expense category only for Masraf; Personel shows employee select", async () => {
+test("expense category only for Masraf; Personel shows pay kind + employee", async () => {
   await renderModal();
   const mode = document.querySelector('[data-testid="tx-match-mode-tx1"]');
   await act(async () => {
@@ -98,6 +98,8 @@ test("expense category only for Masraf; Personel shows employee select", async (
   expect(document.querySelector('[data-testid="tx-match-contact-tx1"]')).toBeFalsy();
   const cat = document.querySelector('[data-testid="tx-match-expense-cat-tx1"]');
   expect(cat).toBeTruthy();
+  expect([...cat.options].map((o) => o.textContent)).toContain("Personel");
+  expect([...cat.options].map((o) => o.textContent)).not.toContain("Personel Masrafı");
   expect(document.querySelector('[data-testid="tx-match-employee-tx1"]')).toBeFalsy();
 
   await act(async () => {
@@ -106,6 +108,9 @@ test("expense category only for Masraf; Personel shows employee select", async (
   });
   await act(async () => { await Promise.resolve(); });
 
+  const kind = document.querySelector('[data-testid="tx-match-pay-kind-tx1"]');
+  expect(kind).toBeTruthy();
+  expect([...kind.options].map((o) => o.textContent)).toEqual(["Masraf", "Avans", "Mesai", "Maaş"]);
   const emp = document.querySelector('[data-testid="tx-match-employee-tx1"]');
   expect(emp).toBeTruthy();
   expect([...emp.options].some((o) => o.textContent.includes("Ayşe"))).toBe(true);
