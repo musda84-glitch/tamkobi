@@ -10,6 +10,7 @@ import { SiteHeader, siteBrand } from "../components/saas/SiteChrome";
 import ModulePackBuilder from "../components/saas/ModulePackBuilder";
 import { parseModuleKeys, packQuote } from "../utils/modulePack";
 import { LegalConsent, LegalFooterLinks, emptyLegalConsent, legalPayload } from "../components/LegalConsent";
+import { Seo } from "../components/Seo";
 
 const inputCls = "w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50 placeholder:text-slate-600";
 
@@ -40,6 +41,11 @@ export default function SignupPage() {
       <a href="/panel" className="inline-flex px-5 py-3 bg-emerald-500 text-slate-900 rounded-xl font-bold text-sm" data-testid="signup-go-app">Uygulamaya Git</a></div></div>);
   return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100" data-testid="signup-page">
+      <Seo
+        title="Ücretsiz Deneme Kaydı | TamKobi"
+        description="TamKobi bulut ERP'yi 14 gün ücretsiz deneyin. Kredi kartı gerekmez."
+        path="/kayit"
+      />
       <SiteHeader brand={siteBrand(d?.brand_name)} right={<Link to="/login" className="text-xs text-slate-300 hover:text-white">Zaten hesabım var</Link>} />
       <div className="max-w-5xl mx-auto px-6 pb-16 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-8">
         <form onSubmit={submit} className="space-y-5">

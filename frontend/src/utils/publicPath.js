@@ -19,3 +19,52 @@ export function isPublicPath(pathname) {
     p.startsWith("/yasal")
   );
 }
+
+/** Bilinen ERP / özel paneller — oturum ister. Diğer bilinmeyen yollar 404’e düşer. */
+const SESSION_PREFIXES = [
+  "/panel",
+  "/invoices",
+  "/dis-ticaret",
+  "/contacts",
+  "/banking",
+  "/stock",
+  "/hizli-satis",
+  "/ecommerce",
+  "/cargo",
+  "/orders",
+  "/purchase-orders",
+  "/saha",
+  "/warehouses",
+  "/vehicles",
+  "/production",
+  "/personnel",
+  "/personelim",
+  "/mesai",
+  "/ai-advisor",
+  "/communication",
+  "/hesap",
+  "/settings",
+  "/quotes",
+  "/projects",
+  "/surveys",
+  "/support",
+  "/accountant",
+  "/installments",
+  "/atolye",
+  "/sayim",
+  "/sevk",
+  "/reports",
+  "/dispatches",
+  "/expenses",
+  "/loans",
+  "/cheques",
+  "/trash",
+  "/edoc-inbox",
+  "/b2b-yonetim",
+];
+
+export function requiresSession(pathname) {
+  const p = pathname || "/";
+  if (isPublicPath(p)) return false;
+  return SESSION_PREFIXES.some((x) => p === x || p.startsWith(`${x}/`));
+}

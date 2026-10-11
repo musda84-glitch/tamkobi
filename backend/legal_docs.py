@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+import platform_public
 import saas
 
 router = APIRouter(prefix="/api")
@@ -35,23 +36,9 @@ def _esc(s: Any) -> str:
     return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def party_from_company(company: Optional[dict], brand: str = "") -> dict:
-    c = company or {}
-    name = (c.get("name") or brand or "Satıcı").strip()
-    address = ", ".join(x for x in [(c.get("address") or "").strip(), (c.get("city") or "").strip()] if x) or "—"
-    return {
-        "name": name,
-        "address": address,
-        "city": (c.get("city") or "—").strip() or "—",
-        "tax_number": (c.get("tax_number") or c.get("tax_number_or_id") or "—").strip() or "—",
-        "tax_office": (c.get("tax_office") or "—").strip() or "—",
-        "email": (c.get("email") or "—").strip() or "—",
-        "phone": (c.get("phone") or "—").strip() or "—",
-        "mersis": (c.get("mersis") or "—").strip() or "—",
-        "website": (c.get("website") or "").strip(),
-        "iban": (c.get("iban") or "—").strip() or "—",
-        "bank_name": (c.get("bank_name") or "—").strip() or "—",
-    }
+def party_from_company(company: Optional[dict], brand: str = "", settings: Optional[dict] = None) -> dict:
+    """Satıcı bilgisi: platform yasal ayarları + şirket kartı + ortam değişkeni."""
+    return platform_public.merge_seller(company, settings, brand)
 
 
 def template_mesafeli(p: dict) -> str:
@@ -199,20 +186,46 @@ async def platform_company() -> tuple:
     st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
     brand = st.get("brand_name") or "TamKobi"
     cid = st.get("sender_company_id") or "comp_nexus_main_01"
-    company = await _db.companies.find_one({"_id": cid}) or {"name": brand, "email": st.get("support_email"), "phone": st.get("support_phone"), "website": st.get("public_url")}
-    return company, brand
+    company = await _db.companies.find_one({"_id": cid}) or {
+        "name": brand,
+        "email": st.get("support_email") or st.get("legal_email"),
+        "phone": st.get("support_phone") or st.get("legal_phone"),
+        "website": st.get("public_url"),
+    }
+    return company, brand, st
+
+
+def render_platform_doc(slug: str, company: dict, brand: str, settings: Optional[dict] = None) -> dict:
+    if slug not in SLUGS:
+        raise HTTPException(status_code=404, detail="Yasal metin bulunamadı.")
+    party = party_from_company(company, brand, settings)
+    custom = ((company or {}).get("legal_texts") or {}).get(slug)
+    text = custom.strip() if isinstance(custom, str) and custom.strip() else TEMPLATES[slug](party)
+    return {
+        "slug": slug,
+        "title": TITLES[slug],
+        "version": VERSION,
+        "seller": {k: party[k] for k in ("name", "address", "city", "tax_number", "email", "phone", "mersis", "iban", "bank_name", "website")},
+        "customized": bool(isinstance(custom, str) and custom.strip()),
+        "text": text,
+        "html": text_to_html(text),
+    }
 
 
 @router.get("/public/legal")
 async def list_platform_legal():
-    company, brand = await platform_company()
-    return {"brand": brand, "docs": [{"slug": s, "title": TITLES[s], "path": f"/yasal/{s}"} for s in SLUGS], "seller": party_from_company(company, brand)}
+    company, brand, st = await platform_company()
+    return {
+        "brand": brand,
+        "docs": [{"slug": s, "title": TITLES[s], "path": f"/yasal/{s}"} for s in SLUGS],
+        "seller": party_from_company(company, brand, st),
+    }
 
 
 @router.get("/public/legal/{slug}")
 async def get_platform_legal(slug: str):
-    company, brand = await platform_company()
-    return render_doc(slug, company, brand)
+    company, brand, st = await platform_company()
+    return render_platform_doc(slug, company, brand, st)
 
 
 @router.get("/public/b2b/{token}/legal")

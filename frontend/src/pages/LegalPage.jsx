@@ -6,6 +6,22 @@ import { FileText, Loader2 } from "lucide-react";
 import { API_URL } from "../context/AuthContext";
 import { LEGAL_DOCS } from "../components/LegalConsent";
 import { SiteHeader, siteBrand } from "../components/saas/SiteChrome";
+import { Seo } from "../components/Seo";
+
+const LEGAL_META = {
+  "on-bilgilendirme": {
+    title: "Ön Bilgilendirme Formu | TamKobi",
+    description: "TamKobi mesafeli satış ön bilgilendirme formu — satıcı bilgileri, hizmet ve cayma hakları.",
+  },
+  kvkk: {
+    title: "KVKK Aydınlatma Metni | TamKobi",
+    description: "TamKobi KVKK aydınlatma metni — kişisel verilerin işlenmesi, saklanması ve haklarınız.",
+  },
+  "mesafeli-satis": {
+    title: "Mesafeli Satış Sözleşmesi | TamKobi",
+    description: "TamKobi mesafeli satış sözleşmesi — abonelik ve bulut ERP hizmet koşulları.",
+  },
+};
 
 export default function LegalPage() {
   const { slug } = useParams();
@@ -18,8 +34,10 @@ export default function LegalPage() {
     axios.get(url).then((r) => setD(r.data)).catch((e) => setErr(e.response?.data?.detail || "Metin yüklenemedi."));
   }, [slug, token]);
   const extra = token ? `?b2b=${encodeURIComponent(token)}` : "";
+  const meta = LEGAL_META[slug] || { title: `${d?.title || "Yasal"} | TamKobi`, description: "TamKobi yasal bilgilendirme metni." };
   return (
     <div className="min-h-screen bg-[#0b0f1a] text-slate-100" data-testid="legal-page">
+      <Seo title={meta.title} description={meta.description} path={`/yasal/${slug}`} />
       <SiteHeader brand={siteBrand(d?.seller?.name)} right={<Link to={token ? `/portal/${token}` : "/fiyatlar"} className="text-xs text-slate-300 hover:text-white">Geri</Link>} />
       <div className="max-w-3xl mx-auto px-6 pb-16">
         <nav className="flex flex-wrap gap-2 mb-6" data-testid="legal-doc-nav">

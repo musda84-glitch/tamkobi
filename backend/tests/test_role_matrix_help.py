@@ -9,8 +9,9 @@ def test_module_help_covers_all_modules():
     for k in keys:
         assert k in rbac.MODULE_HELP, f"missing MODULE_HELP for {k}"
         assert len(rbac.MODULE_HELP[k]) >= 12, k
-    # Web/mobil self-service Benim Sayfam yetkisi Mesaim üzerinden
-    assert "personelim" in rbac.MODULE_HELP["/mesai"].lower() or "Benim Sayfam" in rbac.MODULE_HELP["/mesai"]
+    # Vitrinde admin iç notu göstermeyin; yardım metni kısa ve genel kalsın
+    assert "personelim" not in rbac.MODULE_HELP["/mesai"].lower()
+    assert "Benim Sayfam" not in rbac.MODULE_HELP["/mesai"]
 
 
 def test_features_have_help():
