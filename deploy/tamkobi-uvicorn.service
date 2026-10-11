@@ -11,7 +11,7 @@ WorkingDirectory=/var/www/tamkobi.com/backend
 EnvironmentFile=-/var/www/tamkobi.com/backend/.env
 EnvironmentFile=-/var/www/tamkobi.com/.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/var/www/tamkobi.com/backend/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8000
+ExecStart=/var/www/tamkobi.com/backend/venv/bin/uvicorn server:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

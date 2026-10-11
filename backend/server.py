@@ -1670,7 +1670,7 @@ async def send_quote_approval(quote_id: str, req: Dict[str, Any], request: Reque
     email = req.get("email") or (contact or {}).get("email")
     approval = q.get("approval") or {}
     token = approval.get("token") or uuid.uuid4().hex
-    base = (req.get("base_url") or "").rstrip("/") or await _public_base_url(request) or str(request.base_url).rstrip("/")
+    base = await _public_base_url(request, req.get("base_url") or "")
     link = f"{base}/teklif/{token}"
     total = f"{q.get('grand_total', 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     message = (req.get("message") or f"Sayın {q.get('contact_name')}, {company.get('name', 'firmamız')} olarak hazırladığımız {q.get('quote_number')} numaralı {total} ₺ (KDV dahil) tutarındaki teklifimizi incelemek ve onaylamak için: {link}").strip()
@@ -2360,7 +2360,7 @@ async def send_project_tracking(project_id: str, req: Dict[str, Any], request: R
     email = req.get("email") or (contact or {}).get("email")
     tracking = p.get("tracking") or {}
     token = tracking.get("token") or uuid.uuid4().hex
-    base = (req.get("base_url") or "").rstrip("/") or await _public_base_url(request) or str(request.base_url).rstrip("/")
+    base = await _public_base_url(request, req.get("base_url") or "")
     link = f"{base}/proje/{token}"
     message = (req.get("message") or f"Sayın {p.get('contact_name') or 'müşterimiz'}, {company.get('name') or 'firmamız'} olarak {p.get('project_number')} — {p.get('name')} projenizin güncel durumunu bu linkten takip edebilirsiniz (giriş gerekmez): {link}").strip()
     if link not in message:
@@ -3372,7 +3372,7 @@ async def create_statement_link(contact_id: str, req: Dict[str, Any], request: R
             {"_id": contact_id},
             {"$set": {"statement_share": {"token": token, "created_at": datetime.now(timezone.utc).isoformat()}}},
         )
-    base = (req.get("base_url") or "").rstrip("/") or await _public_base_url(request) or str(request.base_url).rstrip("/")
+    base = await _public_base_url(request, req.get("base_url") or "")
     link = f"{base}/ekstre/{token}"
     return {
         "status": "success",
@@ -3596,14 +3596,9 @@ async def _b2b_find_contact(ident: str) -> Optional[dict]:
 
 
 async def _public_base_url(request: Request, explicit: str = "") -> str:
-    base = (explicit or "").rstrip("/")
-    if base:
-        return base
-    st = await db.platform_settings.find_one({"_id": "platform"}) or {}
-    base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or "").rstrip("/")
-    if not base:
-        base = str(request.headers.get("origin") or "").rstrip("/")
-    return base
+    """Müşteri linkleri için kanonik site kökü — Host/base_url kullanılmaz."""
+    import public_url as pu
+    return await pu.public_base_url(db, explicit=explicit or "", request=request)
 
 
 @api_router.post("/public/b2b/login")
@@ -10911,8 +10906,6 @@ async def mail_send(request: Request, company_id: str = Form("comp_nexus_main_01
         attachments.append({"filename": f.filename, "content_type": f.content_type, "data": data})
     full_body = body + (f"\n\n--\n{a.get('signature')}" if a.get("signature") else "")
     base = await _public_base_url(request)
-    if not base:
-        base = str(request.base_url).rstrip("/")
     try:
         await _send_tracked_mail(
             company_id=company_id, to=to_list, subject=subject, body=full_body, account=a,

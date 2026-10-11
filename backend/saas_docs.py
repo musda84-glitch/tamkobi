@@ -210,8 +210,8 @@ async def invoice_share_link(
         raise HTTPException(status_code=400, detail="Bu uç yalnızca PDF paylaşımı üretir.")
     ttl_sec = int(ttl_hours) * 3600
     token = signed_links.make_doc_share_token(invoice_id, k, ttl_sec=ttl_sec)
-    st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
-    base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or str(request.base_url)).rstrip("/")
+    import public_url as pu
+    base = await pu.public_base_url(_db, request=request)
     url = signed_links.build_doc_share_url(base, f"/api/invoices/{invoice_id}/pdf", token)
     return {"url": url, "token": token, "expires_in": ttl_sec, "invoice_id": invoice_id}
 

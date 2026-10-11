@@ -946,7 +946,8 @@ async def invite_user(req: Dict[str, Any], request: Request):
         raise HTTPException(status_code=400, detail="Geçersiz rol.")
     company = await _db.companies.find_one({"_id": company_id}) or {}
     token = secrets.token_urlsafe(32)
-    base = (req.get("base_url") or str(request.headers.get("origin") or "")).rstrip("/")
+    import public_url as pu
+    base = await pu.public_base_url(_db, explicit=req.get("base_url") or "", request=request)
     link = f"{base}/davet/{token}"
     doc = {
         "_id": token,

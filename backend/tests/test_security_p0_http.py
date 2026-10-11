@@ -6,12 +6,22 @@ from __future__ import annotations
 
 import os
 import uuid
+from urllib.parse import urlparse
 
 import pytest
 import requests
 
 BASE = (os.environ.get("REACT_APP_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/")
 API = BASE + "/api"
+
+
+def _open_signed_share(url: str, timeout: int = 30):
+    """Share-link kanonik host döner; testi yerel API'ye yönlendir."""
+    u = urlparse(url)
+    assert u.path and "t=" in (u.query or "")
+    host = (u.hostname or "").lower()
+    assert host not in ("127.0.0.1", "localhost", "0.0.0.0"), url
+    return requests.get(f"{BASE}{u.path}?{u.query}", timeout=timeout)
 
 
 def _api_up() -> bool:
@@ -173,7 +183,7 @@ class TestSecurityP0Http:
         url = share.json()["url"]
         assert "t=" in url
         assert share.json().get("expires_in", 0) >= 90 * 24 * 3600 - 60
-        opened = requests.get(url, timeout=30)
+        opened = _open_signed_share(url)
         assert opened.status_code == 200
         assert "pdf" in (opened.headers.get("content-type") or "").lower() or opened.content[:4] == b"%PDF"
 
