@@ -1,14 +1,26 @@
 import type { Contact, Invoice } from "../types";
-import type { BankAccount, BankTx, Partner } from "./finance";
+import type { BankAccount, BankTx, ExpenseCategory, Partner } from "./finance";
 import { fmtMoney, idOf } from "./money";
 
 export const MATCH_MODES = [
   { key: "contact", label: "Cari" },
-  { key: "invoice", label: "Cari + Fatura" },
   { key: "transfer", label: "Kasa / Hesap (Virman)" },
   { key: "category", label: "Sadece Kategori" },
   { key: "expense", label: "Masraf" },
 ] as const;
+
+/** Varsayılan personel masraf kategorisi (API değeri; UI etiketi "Personel"). */
+export const PERSONNEL_EXPENSE_CATEGORY = "Personel Masrafı";
+
+/** Personel seçilince ödeme türleri. */
+export const PERSONNEL_PAY_KINDS = [
+  { key: "expense", label: "Masraf" },
+  { key: "advance", label: "Avans" },
+  { key: "overtime", label: "Mesai" },
+  { key: "salary", label: "Maaş" },
+] as const;
+
+export type PersonnelPayKind = (typeof PERSONNEL_PAY_KINDS)[number]["key"];
 
 /** Tüm eşleşme türleri (Masraf dahil). Girişte backend masrafı reddeder. */
 export function matchModesForTx(_tx?: { type?: string } | null) {
@@ -65,10 +77,25 @@ export type MatchDraft = {
   invoice_id: string;
   target_account_id: string;
   category: string;
+  employee_id: string;
+  personnel_pay_kind: PersonnelPayKind;
   learn: boolean;
 };
 
 export type SelectGroup = { label: string; options: { value: string; label: string }[] };
+
+/** Masraf kategorisi personel ödemesi mi? */
+export function isPersonnelExpenseCategory(category?: string | null): boolean {
+  const n = String(category || "").trim();
+  return /^personel(\s+masraf[ıi])?$/i.test(n) || /personel/i.test(n);
+}
+
+/** Kategori select etiketi — Personel Masrafı → Personel. */
+export function expenseCategoryOptionLabel(name?: string | null): string {
+  const n = String(name || "").trim();
+  if (/^personel(\s+masraf[ıi])?$/i.test(n)) return "Personel";
+  return n;
+}
 
 export function emptyMatchDraft(tx?: BankMatchTx | null): MatchDraft {
   return {
@@ -77,6 +104,8 @@ export function emptyMatchDraft(tx?: BankMatchTx | null): MatchDraft {
     invoice_id: "",
     target_account_id: "",
     category: "",
+    employee_id: "",
+    personnel_pay_kind: "expense",
     learn: true,
   };
 }
@@ -105,20 +134,29 @@ export function matchTargets(accounts: BankAccount[], tx: BankMatchTx): BankAcco
 }
 
 export function canSubmitMatch(d: MatchDraft): boolean {
-  if (d.mode === "category" || d.mode === "expense") return !!d.category.trim();
+  if (d.mode === "category") return !!d.category.trim();
+  if (d.mode === "expense") {
+    if (!d.category.trim()) return false;
+    if (isPersonnelExpenseCategory(d.category)) {
+      return !!d.employee_id && !!d.personnel_pay_kind;
+    }
+    return true;
+  }
   if (d.mode === "transfer") return !!d.target_account_id;
-  if (d.mode === "invoice") return !!d.invoice_id;
   return true;
 }
 
 export function matchPayload(d: MatchDraft) {
+  const personnel = d.mode === "expense" && isPersonnelExpenseCategory(d.category);
   return {
     learn: !!d.learn,
-    category: d.category.trim() || null,
-    contact_id: d.mode === "contact" || d.mode === "invoice" || d.mode === "expense" ? d.contact_id || null : null,
-    invoice_id: d.mode === "invoice" ? d.invoice_id || null : null,
+    category: d.mode === "category" || d.mode === "expense" ? (d.category.trim() || null) : null,
+    contact_id: d.mode === "contact" ? d.contact_id || null : null,
+    invoice_id: null as string | null,
     target_account_id: d.mode === "transfer" ? d.target_account_id || null : null,
     as_expense: d.mode === "expense",
+    employee_id: personnel ? d.employee_id || null : null,
+    personnel_pay_kind: personnel ? d.personnel_pay_kind || "expense" : null,
   };
 }
 
@@ -212,4 +250,29 @@ export function transferSelectGroups(accounts: BankAccount[], partners: Partner[
     });
   }
   return groups;
+}
+
+/** Masraf kategorileri — Personel Masrafı etiketi Personel. */
+export function matchExpenseCategoryGroups(rows: ExpenseCategory[] = []): SelectGroup[] {
+  const names = (rows || []).map((c) => String(c.name || c).trim()).filter(Boolean);
+  const options = names.map((name) => ({ value: name, label: expenseCategoryOptionLabel(name) }));
+  return options.length ? [{ label: "Kategoriler", options }] : [];
+}
+
+export function employeeSelectGroups(
+  employees: { id?: string; _id?: string; full_name?: string; name?: string; is_active?: boolean }[] = [],
+): SelectGroup[] {
+  const active = (employees || []).filter((e) => e.is_active !== false);
+  const options = active.map((e) => ({
+    value: idOf(e),
+    label: e.full_name || e.name || idOf(e),
+  }));
+  return options.length ? [{ label: "Personel", options }] : [];
+}
+
+export function personnelPayKindGroups(): SelectGroup[] {
+  return [{
+    label: "Ödeme türü",
+    options: PERSONNEL_PAY_KINDS.map((k) => ({ value: k.key, label: k.label })),
+  }];
 }

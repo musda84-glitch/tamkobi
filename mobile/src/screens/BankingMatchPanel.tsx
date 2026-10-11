@@ -8,20 +8,22 @@ import { Chip, confirmAction } from "../components/chips";
 import { GroupedSelect } from "../components/GroupedSelect";
 import { Badge, Card, Empty, ErrorBanner, Field, ListRow, Muted, PrimaryButton, Row } from "../components/kit";
 import { colors } from "../theme";
-import type { Contact, Invoice } from "../types";
+import type { Contact } from "../types";
 import {
   canSubmitMatch,
   connStatusTone,
   connStatusTr,
   contactSelectGroups,
+  employeeSelectGroups,
   emptyMatchDraft,
-  invoiceSelectGroups,
+  isPersonnelExpenseCategory,
+  matchExpenseCategoryGroups,
   matchModesForTx,
   matchPayload,
   matchResultLabel,
   matchTargets,
   matchedViaTr,
-  openInvoices,
+  personnelPayKindGroups,
   ruleLabel,
   suggestionLabel,
   transferSelectGroups,
@@ -30,8 +32,10 @@ import {
   type MatchDraft,
   type MatchRule,
   type MatchSuggestion,
+  type PersonnelPayKind,
 } from "../utils/bankMatch";
-import type { BankAccount, Partner } from "../utils/finance";
+import type { BankAccount, ExpenseCategory, Partner } from "../utils/finance";
+import type { Employee } from "../utils/personnel";
 import { fmtDate, fmtMoney, idOf } from "../utils/money";
 
 export function BankingMatchPanel({
@@ -47,7 +51,8 @@ export function BankingMatchPanel({
   const [unmatched, setUnmatched] = useState<BankMatchTx[]>([]);
   const [matched, setMatched] = useState<BankMatchTx[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [expenseCats, setExpenseCats] = useState<ExpenseCategory[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [rules, setRules] = useState<MatchRule[]>([]);
   const [suggestions, setSuggestions] = useState<MatchSuggestion[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -62,12 +67,13 @@ export function BankingMatchPanel({
 
   const load = useCallback(async () => {
     try {
-      const [conn, um, mt, ct, inv, rl, sg, pt] = await Promise.all([
+      const [conn, um, mt, ct, cats, emps, rl, sg, pt] = await Promise.all([
         get<BankConnection[]>(client, "/banking/connections", { company_id: companyId }).catch(() => []),
         get<BankMatchTx[]>(client, "/banking/transactions/unmatched", { company_id: companyId }).catch(() => []),
         get<BankMatchTx[]>(client, "/banking/transactions/matched", { company_id: companyId, limit: 50 }).catch(() => []),
         get<Contact[]>(client, "/contacts", { company_id: companyId, lite: true }).catch(() => []),
-        get<Invoice[]>(client, "/invoices", { company_id: companyId }).catch(() => []),
+        get<ExpenseCategory[]>(client, "/expenses/categories", { company_id: companyId }).catch(() => []),
+        get<Employee[]>(client, "/personnel/employees", { company_id: companyId }).catch(() => []),
         get<MatchRule[]>(client, "/banking/match-rules", { company_id: companyId }).catch(() => []),
         get<MatchSuggestion[]>(client, "/banking/match-rule-suggestions", { company_id: companyId }).catch(() => []),
         get<Partner[]>(client, "/banking/partners", { company_id: companyId }).catch(() => []),
@@ -76,7 +82,8 @@ export function BankingMatchPanel({
       setUnmatched(um || []);
       setMatched(mt || []);
       setContacts(ct || []);
-      setInvoices(inv || []);
+      setExpenseCats(cats || []);
+      setEmployees(emps || []);
       setRules(rl || []);
       setSuggestions(sg || []);
       setPartners(pt || []);
@@ -191,15 +198,14 @@ export function BankingMatchPanel({
     await del(client, `/banking/match-rules/${id}`);
   });
 
-  const openInv = useMemo(
-    () => (active ? openInvoices(invoices, draft.contact_id, active) : []),
-    [active, invoices, draft.contact_id]
-  );
   const targets = useMemo(
     () => (active ? matchTargets(accounts, active) : []),
     [active, accounts]
   );
   const cashTargets = useMemo(() => (accounts || []).filter((a) => !a.is_integrated), [accounts]);
+  const needPersonnel = draft.mode === "expense" && isPersonnelExpenseCategory(draft.category);
+  const expenseCatGroups = useMemo(() => matchExpenseCategoryGroups(expenseCats), [expenseCats]);
+  const employeeGroups = useMemo(() => employeeSelectGroups(employees), [employees]);
 
   const tiles = [
     canEdit && connections.length ? { key: "sync", label: "Tümünü senkronize", icon: "sync" as const, tone: "indigo" as const, testID: "sync-all-btn", busy: busy === "sync-all", onPress: syncAll } : null,
@@ -216,7 +222,7 @@ export function BankingMatchPanel({
 
       <Card>
         <Muted>Bağlı bankalar</Muted>
-        <Text style={{ fontWeight: "800", color: colors.text }}>Hareketleri çekip cari / fatura / kasa ile eşleştirin</Text>
+        <Text style={{ fontWeight: "800", color: colors.text }}>Hareketleri çekip cari / kasa / masraf ile eşleştirin</Text>
         <Muted>Kimlik bilgisi olan bağlantılar sunucuda her 2 dakikada arka planda çekilir; yeni hareket uygulama kapalıyken de push olarak gelir. Banka bağlama ve API anahtarları web’den yönetilir.</Muted>
       </Card>
 
@@ -393,28 +399,27 @@ export function BankingMatchPanel({
                   label={m.label}
                   active={draft.mode === m.key}
                   testID={`match-mode-${m.key}`}
-                  onPress={() => setDraft({ ...draft, mode: m.key, invoice_id: m.key === "invoice" ? draft.invoice_id : "" })}
+                  onPress={() => setDraft((d) => ({
+                    ...d,
+                    mode: m.key,
+                    contact_id: m.key === "contact" ? (d.contact_id || active.suggested_contact_id || "") : "",
+                    invoice_id: "",
+                    target_account_id: m.key === "transfer" ? d.target_account_id : "",
+                    category: m.key === "expense" || m.key === "category" ? d.category : "",
+                    employee_id: "",
+                    personnel_pay_kind: "expense",
+                  }))}
                 />
               ))}
             </Row>
-            {draft.mode === "contact" || draft.mode === "invoice" || draft.mode === "expense" ? (
+            {draft.mode === "contact" ? (
               <GroupedSelect
-                label={draft.mode === "expense" ? "Cari (ops.)" : "Cari"}
+                label="Cari"
                 testID={`match-contact-select-${idOf(active)}`}
                 value={draft.contact_id}
-                onChange={(v) => setDraft({ ...draft, contact_id: v, invoice_id: "" })}
+                onChange={(v) => setDraft({ ...draft, contact_id: v })}
                 groups={contactSelectGroups(contacts, active.suggested_contact_id)}
-                emptyLabel={draft.mode === "expense" ? "Cari yok" : draft.mode === "contact" ? "Cari seçin (boş = sadece onayla)" : "Cari seçin"}
-              />
-            ) : null}
-            {draft.mode === "invoice" ? (
-              <GroupedSelect
-                label="Açık fatura"
-                testID={`match-invoice-select-${idOf(active)}`}
-                value={draft.invoice_id}
-                onChange={(v) => setDraft({ ...draft, invoice_id: v })}
-                groups={invoiceSelectGroups(openInv)}
-                emptyLabel={!draft.contact_id ? "Önce cari seçin" : openInv.length ? "Açık fatura seçin" : "Açık fatura yok"}
+                emptyLabel="Cari seçin (boş = sadece onayla)"
               />
             ) : null}
             {draft.mode === "transfer" ? (
@@ -427,13 +432,45 @@ export function BankingMatchPanel({
                 emptyLabel={active.type === "inflow" ? "Para nereden geldi?" : "Para nereye gitti?"}
               />
             ) : null}
-            <Field
-              label={draft.mode === "expense" ? "Masraf kategorisi (zorunlu)" : draft.mode === "category" ? "Kategori (zorunlu)" : "Kategori (ops.)"}
-              testID={draft.mode === "expense" ? `match-expense-cat-${idOf(active)}` : `match-category-${idOf(active)}`}
-              value={draft.category}
-              onChangeText={(v) => setDraft({ ...draft, category: v })}
-              placeholder={draft.mode === "expense" ? "Örn. Yakıt, Kira" : draft.mode === "category" ? "Kategori" : "Kategori (ops.)"}
-            />
+            {draft.mode === "category" ? (
+              <Field
+                label="Kategori (zorunlu)"
+                testID={`match-category-${idOf(active)}`}
+                value={draft.category}
+                onChangeText={(v) => setDraft({ ...draft, category: v })}
+                placeholder="Kategori"
+              />
+            ) : null}
+            {draft.mode === "expense" ? (
+              <GroupedSelect
+                label="Masraf kategorisi (zorunlu)"
+                testID={`match-expense-cat-${idOf(active)}`}
+                value={draft.category}
+                onChange={(v) => setDraft({ ...draft, category: v, employee_id: "", personnel_pay_kind: "expense" })}
+                groups={expenseCatGroups}
+                emptyLabel="Kategori seçin…"
+              />
+            ) : null}
+            {needPersonnel ? (
+              <>
+                <GroupedSelect
+                  label="Ödeme türü (zorunlu)"
+                  testID={`match-pay-kind-${idOf(active)}`}
+                  value={draft.personnel_pay_kind}
+                  onChange={(v) => setDraft({ ...draft, personnel_pay_kind: (v || "expense") as PersonnelPayKind })}
+                  groups={personnelPayKindGroups()}
+                  emptyLabel="Ödeme türü"
+                />
+                <GroupedSelect
+                  label="Personel (zorunlu)"
+                  testID={`match-employee-${idOf(active)}`}
+                  value={draft.employee_id}
+                  onChange={(v) => setDraft({ ...draft, employee_id: v })}
+                  groups={employeeGroups}
+                  emptyLabel="Personel seçin…"
+                />
+              </>
+            ) : null}
             <Chip
               label={draft.learn ? "Öğren: açık" : "Öğren: kapalı"}
               active={draft.learn}

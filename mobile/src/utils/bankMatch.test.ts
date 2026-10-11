@@ -1,11 +1,16 @@
 import type { Invoice } from "../types";
 import {
+  MATCH_MODES,
+  PERSONNEL_PAY_KINDS,
   canSubmitMatch,
   connStatusTone,
   connStatusTr,
   contactSelectGroups,
   emptyMatchDraft,
+  expenseCategoryOptionLabel,
   invoiceRemaining,
+  isPersonnelExpenseCategory,
+  matchExpenseCategoryGroups,
   matchPayload,
   matchResultLabel,
   matchTargets,
@@ -67,19 +72,41 @@ describe("matchTargets / remaining", () => {
 });
 
 describe("match draft / payload", () => {
+  it("drops Cari + Fatura from modes", () => {
+    expect(MATCH_MODES.map((m) => m.key)).toEqual(["contact", "transfer", "category", "expense"]);
+    expect(MATCH_MODES.map((m) => m.label)).not.toContain("Cari + Fatura");
+  });
+
   it("prefills suggested contact and requires fields per mode", () => {
     const d = emptyMatchDraft({ suggested_contact_id: "c9" });
     expect(d.mode).toBe("contact");
     expect(d.contact_id).toBe("c9");
     expect(d.learn).toBe(true);
+    expect(d.employee_id).toBe("");
+    expect(d.personnel_pay_kind).toBe("expense");
     expect(canSubmitMatch(d)).toBe(true);
-    expect(canSubmitMatch({ ...d, mode: "invoice" })).toBe(false);
-    expect(canSubmitMatch({ ...d, mode: "invoice", invoice_id: "inv1" })).toBe(true);
     expect(canSubmitMatch({ ...d, mode: "transfer" })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "category", category: "  " })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "category", category: "Kira" })).toBe(true);
     expect(canSubmitMatch({ ...d, mode: "expense" })).toBe(false);
     expect(canSubmitMatch({ ...d, mode: "expense", category: "Yakıt" })).toBe(true);
+    expect(canSubmitMatch({ ...d, mode: "expense", category: "Personel Masrafı" })).toBe(false);
+    expect(canSubmitMatch({
+      ...d,
+      mode: "expense",
+      category: "Personel Masrafı",
+      employee_id: "e1",
+      personnel_pay_kind: "advance",
+    })).toBe(true);
+  });
+
+  it("labels Personel and lists pay kinds", () => {
+    expect(isPersonnelExpenseCategory("Personel Masrafı")).toBe(true);
+    expect(expenseCategoryOptionLabel("Personel Masrafı")).toBe("Personel");
+    expect(PERSONNEL_PAY_KINDS.map((k) => k.label)).toEqual(["Masraf", "Avans", "Mesai", "Maaş"]);
+    const groups = matchExpenseCategoryGroups([{ name: "Yakıt" }, { name: "Personel Masrafı" }]);
+    expect(groups[0].options.map((o) => o.label)).toEqual(["Yakıt", "Personel"]);
+    expect(groups[0].options.find((o) => o.label === "Personel")?.value).toBe("Personel Masrafı");
   });
 
   it("keeps partner cash in the virman target list", () => {
@@ -107,23 +134,33 @@ describe("match draft / payload", () => {
     const contact = matchPayload({ ...base, contact_id: "c1", category: "Aidat" });
     expect(contact).toEqual({
       learn: true,
-      category: "Aidat",
+      category: null,
       contact_id: "c1",
       invoice_id: null,
       target_account_id: null,
       as_expense: false,
+      employee_id: null,
+      personnel_pay_kind: null,
     });
-    const invoice = matchPayload({ ...base, mode: "invoice", contact_id: "c1", invoice_id: "inv1" });
-    expect(invoice.invoice_id).toBe("inv1");
-    expect(invoice.contact_id).toBe("c1");
-    expect(invoice.as_expense).toBe(false);
     const transfer = matchPayload({ ...base, mode: "transfer", contact_id: "c1", target_account_id: "acc2" });
     expect(transfer.contact_id).toBeNull();
     expect(transfer.target_account_id).toBe("acc2");
     const expense = matchPayload({ ...base, mode: "expense", contact_id: "c1", category: "Yakıt" });
     expect(expense.as_expense).toBe(true);
     expect(expense.category).toBe("Yakıt");
-    expect(expense.contact_id).toBe("c1");
+    expect(expense.contact_id).toBeNull();
+    expect(expense.employee_id).toBeNull();
+    const personnel = matchPayload({
+      ...base,
+      mode: "expense",
+      category: "Personel Masrafı",
+      employee_id: "e1",
+      personnel_pay_kind: "salary",
+    });
+    expect(personnel.as_expense).toBe(true);
+    expect(personnel.employee_id).toBe("e1");
+    expect(personnel.personnel_pay_kind).toBe("salary");
+    expect(personnel.contact_id).toBeNull();
   });
 });
 
