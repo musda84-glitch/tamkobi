@@ -3,21 +3,31 @@ import uuid
 from datetime import datetime, timezone, date, timedelta
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from bank_guard import assert_manual_allowed, apply_customer_card_owner_effect
 import partner_pay
 import fx
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user = None
 
 DEFAULT_CATEGORIES = ["Kira", "Elektrik / Su / Doğalgaz", "İnternet / Telefon", "Yakıt", "Yemek", "Yol / Ulaşım", "Ofis Malzemesi", "Personel Masrafı", "Vergi / Harç / SGK", "Bakım / Onarım", "Pazarlama / Reklam", "Yazılım / Abonelik", "Kargo / Nakliye", "Muhasebe / Danışmanlık", "Diğer"]
 TAX_CATEGORY = "Vergi / Harç / SGK"
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Expenses auth bağlanmadı.")
+    return await _current_user(request)
 
 
 async def create_tax_payable_expense(ob: dict) -> dict:
@@ -359,10 +369,8 @@ async def create_expense(req: Dict[str, Any]):
 
 
 @router.put("/expenses/{expense_id}")
-async def update_expense(expense_id: str, req: Dict[str, Any]):
-    exp = await _db.expenses.find_one({"_id": expense_id})
-    if not exp:
-        raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
+async def update_expense(expense_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
     upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "currency", "fx_rate", "fx_source") if k in req}
     upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id", "currency", "fx_rate", "fx_source") if k in req}
     upd = {k: req[k] for k in ("date", "category", "description", "document_no", "notes", "is_recurring", "recurrence", "receipt_url", "contact_name", "project_id") if k in req}
@@ -401,10 +409,8 @@ async def update_expense(expense_id: str, req: Dict[str, Any]):
 
 
 @router.post("/expenses/{expense_id}/pay")
-async def pay_expense(expense_id: str, req: Dict[str, Any]):
-    exp = await _db.expenses.find_one({"_id": expense_id})
-    if not exp:
-        raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
+async def pay_expense(expense_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
     if exp.get("payment_status") == "paid":
         raise HTTPException(status_code=400, detail="Bu masraf zaten ödendi.")
     if not req.get("account_id") and not req.get("partner_id"):
@@ -419,9 +425,9 @@ async def pay_expense(expense_id: str, req: Dict[str, Any]):
 
 
 @router.post("/expenses/{expense_id}/unpay")
-async def unpay_expense(expense_id: str):
-    exp = await _db.expenses.find_one({"_id": expense_id})
-    if not exp or exp.get("payment_status") != "paid":
+async def unpay_expense(expense_id: str, user: dict = Depends(_user_dep)):
+    exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
+    if exp.get("payment_status") != "paid":
         raise HTTPException(status_code=400, detail="Ödenmiş masraf bulunamadı.")
     if _from_statement(exp):
         raise HTTPException(status_code=400, detail="Ekstreden aktarılan masrafın ödemesi hesap hareketinden gelir; geri alınamaz.")
@@ -431,10 +437,8 @@ async def unpay_expense(expense_id: str):
 
 
 @router.delete("/expenses/{expense_id}")
-async def delete_expense(expense_id: str):
-    exp = await _db.expenses.find_one({"_id": expense_id})
-    if not exp:
-        raise HTTPException(status_code=404, detail="Masraf bulunamadı.")
+async def delete_expense(expense_id: str, user: dict = Depends(_user_dep)):
+    exp = await tenant_access.get_tenant_doc(_db, "expenses", expense_id, user, not_found="Masraf bulunamadı.")
     had_partner = bool(await _db.partner_transactions.find_one({"expense_id": expense_id}))
     if exp.get("payment_status") == "paid":
         await _reverse_payment(exp)  # ortak / kasa karşılığını siler, bakiyeleri geri alır

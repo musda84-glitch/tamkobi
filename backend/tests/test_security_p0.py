@@ -43,26 +43,29 @@ def test_get_current_user_demo_fallback_yok():
 # ---------- 2) Allowlist + varsayılan reddet ----------
 
 @pytest.mark.parametrize(
-    "path",
+    "path,method",
     [
-        "/api/auth/login",
-        "/api/auth/register",
-        "/api/auth/forgot-password",
-        "/api/auth/reset/abc",
-        "/api/public/plans",
-        "/api/public/legal",
-        "/api/public/b2b/login",
-        "/api/setup/status",
-        "/api/version",
-        "/api/health",
-        "/api/mobile/manifest",
-        "/api/webhook/stripe",
-        "/api/payments/paytr/callback",
-        "/api/comm/whatsapp/webhook",
+        ("/api/auth/login", "POST"),
+        ("/api/auth/register", "POST"),
+        ("/api/auth/forgot-password", "POST"),
+        ("/api/auth/reset/abc", "GET"),
+        ("/api/auth/me", "GET"),
+        ("/api/auth/impersonate/exit", "POST"),
+        ("/api/public/plans", "GET"),
+        ("/api/public/legal", "GET"),
+        ("/api/public/b2b/login", "POST"),
+        ("/api/setup/status", "GET"),
+        ("/api/version", "GET"),
+        ("/api/health", "GET"),
+        ("/api/mobile/manifest", "GET"),
+        ("/api/platform/notices", "GET"),
+        ("/api/webhook/stripe", "POST"),
+        ("/api/payments/paytr/callback", "POST"),
+        ("/api/comm/whatsapp/webhook", "GET"),
     ],
 )
-def test_public_allowlist_paths(path):
-    assert rbac.is_public_api_path(path, "POST" if "login" in path or "webhook" in path or "callback" in path or "forgot" in path or "register" in path else "GET")
+def test_public_allowlist_paths(path, method):
+    assert rbac.is_public_api_path(path, method)
 
 
 def test_files_get_public_post_not():
@@ -79,15 +82,39 @@ def test_files_get_public_post_not():
         "/api/demo/clear",
         "/api/system/companies",
         "/api/license/me",
-        "/api/auth/me",
         "/api/products",
         "/api/invoices",
         "/api/orders",
+        "/api/invoices/inv_x/pdf",
     ],
 )
 def test_protected_paths_not_public(path):
     assert rbac.is_public_api_path(path, "GET") is False
     assert rbac.is_public_api_path(path, "POST") is False
+
+
+def test_auth_me_and_notices_and_impersonate_exit_public():
+    assert rbac.is_public_api_path("/api/auth/me", "GET") is True
+    assert rbac.is_public_api_path("/api/platform/notices", "GET") is True
+    assert rbac.is_public_api_path("/api/auth/impersonate/exit", "POST") is True
+    assert rbac.is_public_api_path("/api/auth/impersonate/exit", "GET") is False
+
+
+def test_signed_pdf_allowlist_requires_valid_t(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "test-security-p0-jwt-secret-not-default-32b")
+    import signed_links
+    assert rbac.is_public_api_path("/api/invoices/inv1/pdf", "GET") is False
+    assert rbac.is_public_api_path("/api/invoices/inv1/pdf", "GET", "bad") is False
+    tok = signed_links.make_doc_share_token("inv1", "invoices-pdf")
+    assert rbac.is_public_api_path("/api/invoices/inv1/pdf", "GET", tok) is True
+    assert rbac.is_public_api_path("/api/invoices/inv1/pdf", "POST", tok) is False
+
+
+def test_user_allowed_company_ids_ignores_active_only():
+    user = {"company_ids": ["a"], "active_company_id": "b"}
+    assert tenant_access.user_allowed_company_ids(user) == {"a"}
+    assert tenant_access.user_may_access_company(user, "b") is False
+    assert tenant_access.user_may_access_company(user, "a") is True
 
 
 def test_allowlist_tek_kaynak():

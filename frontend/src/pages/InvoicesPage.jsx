@@ -935,7 +935,12 @@ export default function InvoicesPage({ initialType = "all", lockType = false }) 
           const c = contacts.find((x) => x.id === inv.contact_id) || {};
           const to = inv.contact_email || c.email;
           const fd = new FormData();
-          const link = `${window.location.origin}/api/invoices/${inv.id || inv._id}/pdf`;
+          const invId = inv.id || inv._id;
+          let link = `${window.location.origin}/api/invoices/${invId}/pdf`;
+          try {
+            const sr = await axios.get(`${API_URL}/invoices/${invId}/share-link`, { params: { kind: "pdf" } });
+            if (sr.data?.url) link = sr.data.url;
+          } catch { /* */ }
           fd.append("company_id", companyId);
           fd.append("to", to);
           fd.append("subject", `Faturanız ${inv.invoice_number}`);

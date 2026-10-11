@@ -160,15 +160,64 @@ def build_invoice_pdf(inv: Dict[str, Any], seller: Dict[str, Any], buyer: Dict[s
     return buf.getvalue()
 
 
-@router.get("/invoices/{invoice_id}/pdf")
-async def invoice_pdf(
-    invoice_id: str,
-    download: bool = Query(False),
-    require_integrator: bool = Query(False),
-):
+async def _require_invoice_doc_access(request: Request, invoice_id: str, kind: str):
+    """Oturum + şirket kontrolü veya geçerli imzalı ?t=."""
     inv = await _db.invoices.find_one({"_id": invoice_id})
     if not inv:
         raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+    from auth_utils import session_token, get_user_from_token
+    import signed_links
+    import tenant_access
+
+    tok = session_token(request)
+    share_t = request.query_params.get("t")
+    if tok:
+        user = await get_user_from_token(tok, _db)
+        if not tenant_access.user_may_access_company(user, inv.get("company_id")):
+            raise HTTPException(status_code=404, detail="Fatura bulunamadı.")
+        return inv, user
+    if signed_links.verify_doc_share_token(invoice_id, kind, share_t):
+        return inv, None
+    raise HTTPException(status_code=401, detail="Giriş yapmanız veya geçerli paylaşım linki gerekli.")
+
+
+@router.get("/invoices/{invoice_id}/share-link")
+async def invoice_share_link(
+    invoice_id: str,
+    request: Request,
+    kind: str = Query("pdf"),
+    ttl_hours: int = Query(72, ge=1, le=168),
+):
+    """İmzalı PDF paylaşım URL'si (oturum + şirket gerekir)."""
+    from auth_utils import session_token, get_user_from_token
+    import signed_links
+    import tenant_access
+    import os
+
+    tok = session_token(request)
+    if not tok:
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+    user = await get_user_from_token(tok, _db)
+    inv = await tenant_access.get_tenant_doc(_db, "invoices", invoice_id, user, not_found="Fatura bulunamadı.")
+    k = "invoices-pdf" if kind in ("pdf", "invoice-pdf", "invoices-pdf") else f"invoices-{kind}"
+    if k != "invoices-pdf":
+        raise HTTPException(status_code=400, detail="Bu uç yalnızca PDF paylaşımı üretir.")
+    token = signed_links.make_doc_share_token(invoice_id, k, ttl_sec=int(ttl_hours) * 3600)
+    st = await _db.platform_settings.find_one({"_id": "platform"}) or {}
+    base = (st.get("public_url") or os.environ.get("PUBLIC_APP_URL") or str(request.base_url)).rstrip("/")
+    url = signed_links.build_doc_share_url(base, f"/api/invoices/{invoice_id}/pdf", token)
+    return {"url": url, "token": token, "expires_in": int(ttl_hours) * 3600, "invoice_id": invoice_id}
+
+
+@router.get("/invoices/{invoice_id}/pdf")
+async def invoice_pdf(
+    invoice_id: str,
+    request: Request,
+    download: bool = Query(False),
+    require_integrator: bool = Query(False),
+    t: Optional[str] = Query(None),
+):
+    inv, _user = await _require_invoice_doc_access(request, invoice_id, "invoices-pdf")
     disp = "attachment" if download else "inline"
     et = inv.get("e_type") or ""
     gs = str(inv.get("gib_status") or "")

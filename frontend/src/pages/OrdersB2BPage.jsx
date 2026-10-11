@@ -514,7 +514,11 @@ export default function OrdersB2BPage() {
         for (const o of ready) {
           try {
             const fd = new FormData();
-            const link = `${window.location.origin}/api/invoices/${o.invoice_id}/pdf`;
+            let link = `${window.location.origin}/api/invoices/${o.invoice_id}/pdf`;
+            try {
+              const sr = await axios.get(`${API_URL}/invoices/${o.invoice_id}/share-link`, { params: { kind: "pdf" } });
+              if (sr.data?.url) link = sr.data.url;
+            } catch { /* oturumlu share-link yoksa ham URL (alıcıda 401 olabilir) */ }
             fd.append("company_id", companyId);
             fd.append("to", o.customer_email);
             fd.append("subject", `Faturanız ${o.invoice_number || o.order_number}`);
@@ -1311,7 +1315,11 @@ export default function OrdersB2BPage() {
         }
         try {
           const fd = new FormData();
-          const link = `${window.location.origin}/api/invoices/${ord.invoice_id}/pdf`;
+          let link = `${window.location.origin}/api/invoices/${ord.invoice_id}/pdf`;
+          try {
+            const sr = await axios.get(`${API_URL}/invoices/${ord.invoice_id}/share-link`, { params: { kind: "pdf" } });
+            if (sr.data?.url) link = sr.data.url;
+          } catch { /* */ }
           fd.append("company_id", companyId);
           fd.append("to", ord.customer_email);
           fd.append("subject", `Faturanız ${ord.invoice_number || ord.order_number}`);

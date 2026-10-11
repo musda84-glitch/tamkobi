@@ -794,7 +794,12 @@ export function OrderActions({
     }
     setBusy("notify");
     try {
-      const link = `${client.baseUrl.replace(/\/+$/, "")}/api/invoices/${order.invoice_id}/pdf`;
+      const base = client.baseUrl.replace(/\/+$/, "");
+      let link = `${base}/api/invoices/${order.invoice_id}/pdf`;
+      try {
+        const sr = await get(client, `/invoices/${order.invoice_id}/share-link`, { kind: "pdf" });
+        if (sr?.url) link = sr.url;
+      } catch { /* */ }
       await post(client, "/comm/mail/send", {
         company_id: companyId,
         to: order.customer_email,
@@ -1219,10 +1224,15 @@ export function OrderActions({
         <PrimaryButton
           title="E-posta"
           testID={`invoice-print-share-email-${num}`}
-          onPress={() => {
-            const pdfUrl = order.invoice_id
-              ? `${client.baseUrl.replace(/\/+$/, "")}/api/invoices/${order.invoice_id}/pdf`
-              : "";
+          onPress={async () => {
+            const base = client.baseUrl.replace(/\/+$/, "");
+            let pdfUrl = order.invoice_id ? `${base}/api/invoices/${order.invoice_id}/pdf` : "";
+            if (order.invoice_id) {
+              try {
+                const sr = await get(client, `/invoices/${order.invoice_id}/share-link`, { kind: "pdf" });
+                if (sr?.url) pdfUrl = sr.url;
+              } catch { /* */ }
+            }
             setPrintShareOpen(false);
             setNotifyPhone(order.customer_phone || "");
             setNotifyEmail(order.customer_email || "");
@@ -1235,10 +1245,15 @@ export function OrderActions({
         <PrimaryButton
           title="WhatsApp"
           testID={`invoice-print-share-whatsapp-${num}`}
-          onPress={() => {
-            const pdfUrl = order.invoice_id
-              ? `${client.baseUrl.replace(/\/+$/, "")}/api/invoices/${order.invoice_id}/pdf`
-              : "";
+          onPress={async () => {
+            const base = client.baseUrl.replace(/\/+$/, "");
+            let pdfUrl = order.invoice_id ? `${base}/api/invoices/${order.invoice_id}/pdf` : "";
+            if (order.invoice_id) {
+              try {
+                const sr = await get(client, `/invoices/${order.invoice_id}/share-link`, { kind: "pdf" });
+                if (sr?.url) pdfUrl = sr.url;
+              } catch { /* */ }
+            }
             setPrintShareOpen(false);
             setNotifyPhone(order.customer_phone || "");
             setNotifyEmail(order.customer_email || "");

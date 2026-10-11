@@ -39,10 +39,10 @@ async def main() -> int:
     except Exception:
         pass
 
-    from mysql_store import MySQLClient
+    from mysql_store import MySQLClient, mysql_settings_from_env
 
     client = MySQLClient()
-    db_name = (os.environ.get("DB_NAME") or os.environ.get("MYSQL_DATABASE") or "tamkobi").strip()
+    db_name = str(mysql_settings_from_env().get("db") or "tamkobi").strip()
     db = client[db_name]
     await db._ensure()
     user = await db.users.find_one({"email": email})

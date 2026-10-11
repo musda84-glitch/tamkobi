@@ -12,6 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import comm_service
 from auth_utils import hash_password, create_access_token, create_refresh_token, get_user_from_token, session_token
 from client_ip import request_ip
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
@@ -314,11 +315,14 @@ PUBLIC_API_ALLOWLIST = (
     "/api/auth/forgot-password",
     "/api/auth/reset/",
     "/api/auth/logout",
+    "/api/auth/me",
+    "/api/auth/impersonate/exit",
     "/api/public/",
     "/api/setup/",
     "/api/version",
     "/api/health",
     "/api/mobile/manifest",
+    "/api/platform/notices",
     "/api/webhook/",
     "/api/payments/paytr/callback",
     "/api/payments/status/",
@@ -329,15 +333,32 @@ PUBLIC_API_ALLOWLIST = (
 _PUBLIC_GET_PREFIXES = ("/api/files/",)
 
 
-def is_public_api_path(path: str, method: str = "GET") -> bool:
-    """Allowlist: tokensız erişime açık /api yolları (tek kaynak)."""
+def is_public_api_path(path: str, method: str = "GET", query_t: Optional[str] = None) -> bool:
+    """Allowlist: tokensız erişime açık /api yolları (tek kaynak).
+
+    Fatura PDF/XML için yalnızca GET + geçerli imza (?t=) kabul edilir.
+    """
     if not path:
         return False
     p = path.split("?", 1)[0]
     method_u = (method or "GET").upper()
     if any(p == pref.rstrip("/") or p.startswith(pref) for pref in _PUBLIC_GET_PREFIXES):
         return method_u in ("GET", "HEAD")
+    # İmzalı belge: allowlist'te sabit yol yok; geçerli HMAC zorunlu
+    try:
+        import signed_links
+        if signed_links.is_signed_public_doc(p, method_u, query_t):
+            return True
+    except Exception:
+        pass
+    # impersonate/exit yalnızca POST
+    if p == "/api/auth/impersonate/exit":
+        return method_u == "POST"
+    if p == "/api/platform/notices" or p == "/api/auth/me":
+        return method_u in ("GET", "HEAD")
     for rule in PUBLIC_API_ALLOWLIST:
+        if rule in ("/api/auth/impersonate/exit", "/api/platform/notices", "/api/auth/me"):
+            continue  # method-specific above
         if rule.endswith("/"):
             if p == rule.rstrip("/") or p.startswith(rule):
                 return True
@@ -568,11 +589,12 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
             except HTTPException:
                 user = None
 
+        query_t = request.query_params.get("t")
         # Varsayılan reddet: allowlist dışı tokensız /api → 401
-        if not user and not is_public_api_path(path, request.method):
+        if not user and not is_public_api_path(path, request.method, query_t):
             return JSONResponse({"detail": "Giriş yapmanız gerekiyor."}, status_code=401)
 
-        skip_rbac = path.startswith(SKIP_PREFIXES) or is_public_api_path(path, request.method)
+        skip_rbac = path.startswith(SKIP_PREFIXES) or is_public_api_path(path, request.method, query_t)
         if skip_rbac and not user:
             return await call_next(request)
 
@@ -790,12 +812,17 @@ async def list_users(company_id: str = "comp_nexus_main_01"):
 
 
 @router.put("/users/{user_id}")
-async def update_user(user_id: str, req: Dict[str, Any]):
+async def update_user(user_id: str, req: Dict[str, Any], request: Request):
+    actor = await _current_user(request) if _current_user else None
+    if not actor:
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
     u = await _db.users.find_one({"_id": user_id})
     if not u:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
     if u.get("is_super_admin"):
         raise HTTPException(status_code=400, detail="Platform yöneticileri şirket kullanıcı listesinden düzenlenemez.")
+    if not tenant_access.users_share_company(actor, u):
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
     upd = {k: req[k] for k in ("name", "role", "is_active", "phone", "employee_id") if k in req}
     if "role" in upd:
         role_code = normalize_role_code(upd["role"])
@@ -876,12 +903,17 @@ async def create_company_user(req: Dict[str, Any]):
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: str):
+async def delete_user(user_id: str, request: Request):
+    actor = await _current_user(request) if _current_user else None
+    if not actor:
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
     u = await _db.users.find_one({"_id": user_id})
     if not u:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
     if u.get("is_super_admin"):
         raise HTTPException(status_code=400, detail="Platform yöneticileri şirket kullanıcı listesinden silinemez.")
+    if not tenant_access.users_share_company(actor, u):
+        raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı.")
     await _db.users.delete_one({"_id": user_id})
     return {"status": "success"}
 
@@ -889,7 +921,10 @@ async def delete_user(user_id: str):
 # ---------------- Invitations ----------------
 @router.post("/users/invite")
 async def invite_user(req: Dict[str, Any], request: Request):
-    company_id = req.get("company_id", "comp_nexus_main_01")
+    actor = await _current_user(request) if _current_user else None
+    if not actor:
+        raise HTTPException(status_code=401, detail="Giriş yapmanız gerekiyor.")
+    company_id = tenant_access.resolve_company_id(actor, req.get("company_id"))
     email = (req.get("email") or "").strip().lower()
     phone = (req.get("phone") or "").strip()
     channels = [c for c in (req.get("channels") or ["email"]) if c in ("email", "sms", "whatsapp")]

@@ -3,10 +3,13 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user = None
 _hooks: Dict[str, Callable[[dict, list], Awaitable[None]]] = {}
 RETENTION_DAYS = 30
 
@@ -17,9 +20,17 @@ PREVIEW_FIELDS = ("name", "full_name", "customer_name", "contact_name", "partner
                   "invoice_number", "description", "category", "amount", "total", "total_amount", "grand_total", "stock_quantity", "sale_price", "status", "order_status", "payment_status", "date", "order_date", "start_date", "end_date", "channel", "type", "step_name", "station", "job_file_name", "plate", "brand", "model", "year")
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Trash auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def register_hook(entity_type: str, fn: Callable[[dict, list], Awaitable[None]]):
@@ -108,9 +119,12 @@ async def _clear_sync_tombstones(collection: str, doc_ids: List[Any]) -> None:
 
 
 @router.post("/trash/{trash_id}/restore")
-async def restore_trash_item(trash_id: str):
+async def restore_trash_item(trash_id: str, user: dict = Depends(_user_dep)):
     rec = await _db.trash.find_one({"_id": trash_id})
     if not rec:
+        raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
+    cid = rec.get("company_id") or (rec.get("doc") or {}).get("company_id")
+    if cid is not None and not tenant_access.user_may_access_company(user, str(cid)):
         raise HTTPException(status_code=404, detail="Kayıt çöp kutusunda bulunamadı.")
     coll, doc = rec["collection"], dict(rec["doc"] or {})
     if not doc.get("_id"):

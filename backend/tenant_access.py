@@ -7,13 +7,21 @@ from fastapi import HTTPException
 
 
 def user_allowed_company_ids(user: Optional[dict]) -> set:
+    """Yetki yalnızca company_ids listesinden; active_company_id tek başına yetki vermez."""
     if not user:
         return set()
-    out = {str(x) for x in (user.get("company_ids") or []) if x}
-    active = str(user.get("active_company_id") or "").strip()
-    if active:
-        out.add(active)
-    return out
+    return {str(x) for x in (user.get("company_ids") or []) if x}
+
+
+def users_share_company(actor: Optional[dict], target: Optional[dict]) -> bool:
+    """İki kullanıcı ortak şirket paylaşıyor mu (veya actor süper admin)."""
+    if not actor or not target:
+        return False
+    if actor.get("is_super_admin"):
+        return True
+    a = user_allowed_company_ids(actor)
+    t = user_allowed_company_ids(target)
+    return bool(a & t)
 
 
 def user_may_access_company(user: Optional[dict], company_id: Optional[str]) -> bool:

@@ -90,6 +90,8 @@ async def get_user_from_token(token: str, db: Any) -> dict:
             user = await db.users.find_one({"email": payload.get("email")})
         if not user:
             raise HTTPException(status_code=401, detail="Kullanıcı bulunamadı")
+        if user.get("is_active") is False:
+            raise HTTPException(status_code=401, detail="Hesabınız pasifleştirilmiş.")
         user["id"] = str(user.get("_id", user.get("id")))
         user.pop("password_hash", None)
         return user

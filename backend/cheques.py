@@ -3,13 +3,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from bank_guard import assert_manual_allowed, assert_collection_allowed
 import partner_pay
 import trash
+import tenant_access
 
 router = APIRouter(prefix="/api")
 _db = None
+_current_user = None
 
 OPEN_STATUSES = {"open"}
 STATUS_TR = {
@@ -22,9 +24,17 @@ STATUS_TR = {
 }
 
 
-def init(db):
-    global _db
+def init(db, get_current_user=None):
+    global _db, _current_user
     _db = db
+    if get_current_user is not None:
+        _current_user = get_current_user
+
+
+async def _user_dep(request: Request) -> dict:
+    if _current_user is None:
+        raise HTTPException(status_code=500, detail="Cheques auth bağlanmadı.")
+    return await _current_user(request)
 
 
 def _now():
@@ -255,10 +265,8 @@ def _sync_portfolio_tx(doc: dict):
 
 
 @router.put("/cheques/{cheque_id}")
-async def update_cheque(cheque_id: str, req: Dict[str, Any]):
-    doc = await _db.cheques.find_one({"_id": cheque_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
+async def update_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
     notes = (req.get("notes") if "notes" in req else doc.get("notes") or "") or ""
     serial = (req.get("serial_no") if "serial_no" in req else doc.get("serial_no") or "") or ""
     patch = {
@@ -386,8 +394,8 @@ async def _append_event(cheque_id: str, action: str, note: str = ""):
 
 
 @router.post("/cheques/{cheque_id}/collect")
-async def collect_cheque(cheque_id: str, req: Dict[str, Any]):
-    doc = await _db.cheques.find_one({"_id": cheque_id})
+async def collect_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
     _open_only(doc)
     if doc.get("direction") != "received":
         raise HTTPException(status_code=400, detail="Tahsil yalnızca alınan çek/senet için.")
@@ -418,8 +426,8 @@ async def collect_cheque(cheque_id: str, req: Dict[str, Any]):
 
 
 @router.post("/cheques/{cheque_id}/pay")
-async def pay_issued_cheque(cheque_id: str, req: Dict[str, Any]):
-    doc = await _db.cheques.find_one({"_id": cheque_id})
+async def pay_issued_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
     _open_only(doc)
     if doc.get("direction") != "issued":
         raise HTTPException(status_code=400, detail="Ödeme yalnızca verilen çek/senet için.")
@@ -449,8 +457,8 @@ async def pay_issued_cheque(cheque_id: str, req: Dict[str, Any]):
 
 
 @router.post("/cheques/{cheque_id}/endorse")
-async def endorse_cheque(cheque_id: str, req: Dict[str, Any]):
-    doc = await _db.cheques.find_one({"_id": cheque_id})
+async def endorse_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
     _open_only(doc)
     if doc.get("direction") != "received":
         raise HTTPException(status_code=400, detail="Ciro yalnızca alınan çek/senet için.")
@@ -472,10 +480,8 @@ async def endorse_cheque(cheque_id: str, req: Dict[str, Any]):
 
 
 @router.post("/cheques/{cheque_id}/bounce")
-async def bounce_cheque(cheque_id: str, req: Dict[str, Any]):
-    doc = await _db.cheques.find_one({"_id": cheque_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
+async def bounce_cheque(cheque_id: str, req: Dict[str, Any], user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
     st = doc.get("status")
     if st not in ("open", "collected", "paid", "endorsed"):
         raise HTTPException(status_code=400, detail=f"Bu kayıt {STATUS_TR.get(st, st)} durumunda; karşılıksız işlenemez.")
@@ -494,8 +500,8 @@ async def bounce_cheque(cheque_id: str, req: Dict[str, Any]):
 
 
 @router.post("/cheques/{cheque_id}/cancel")
-async def cancel_cheque(cheque_id: str, req: Optional[Dict[str, Any]] = None):
-    doc = await _db.cheques.find_one({"_id": cheque_id})
+async def cancel_cheque(cheque_id: str, req: Optional[Dict[str, Any]] = None, user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
     _open_only(doc)
     amount = float(doc["amount"])
     await _unwind_bank(cheque_id)
@@ -508,10 +514,8 @@ async def cancel_cheque(cheque_id: str, req: Optional[Dict[str, Any]] = None):
 
 
 @router.delete("/cheques/{cheque_id}")
-async def delete_cheque(cheque_id: str):
-    doc = await _db.cheques.find_one({"_id": cheque_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Çek/senet bulunamadı.")
+async def delete_cheque(cheque_id: str, user: dict = Depends(_user_dep)):
+    doc = await tenant_access.get_tenant_doc(_db, "cheques", cheque_id, user, not_found="Çek/senet bulunamadı.")
     if doc.get("status") not in ("open", "cancelled", "bounced"):
         raise HTTPException(status_code=400, detail="Tahsil/ödeme/ciro edilmiş kayıt silinemez. Banka hareketinden geri alın.")
     if doc.get("status") == "open" and not doc.get("skip_ledger"):
