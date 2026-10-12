@@ -11,6 +11,9 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+# DEPLOY_USER root değilse: update-native.sh için NOPASSWD sudo gerekir, örn.
+#   deploy ALL=(root) NOPASSWD: /bin/sh /var/www/tamkobi.com/deploy/update-native.sh
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -34,15 +37,9 @@ jobs:
             set -eu
             cd "$DEPLOY_PATH"
             git fetch origin +refs/heads/main:refs/remotes/origin/main
-            if ! git cat-file -e origin/main:deploy/update-native.sh; then
-              echo "HATA: origin/main'de deploy/update-native.sh yok." >&2
-              exit 1
-            fi
-            umask 077
-            SCRIPT=$(mktemp -p /root tamkobi-update-native.XXXXXX)
-            trap 'rm -f "$SCRIPT"' EXIT
-            git show origin/main:deploy/update-native.sh > "$SCRIPT"
-            sh "$SCRIPT"
+            git checkout main
+            git merge --ff-only origin/main
+            sudo sh deploy/update-native.sh
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
 
@@ -66,15 +63,9 @@ jobs:
             set -eu
             cd "$DEPLOY_PATH"
             git fetch origin +refs/heads/main:refs/remotes/origin/main
-            if ! git cat-file -e origin/main:deploy/update-native.sh; then
-              echo "HATA: origin/main'de deploy/update-native.sh yok." >&2
-              exit 1
-            fi
-            umask 077
-            SCRIPT=$(mktemp -p /root tamkobi-update-native.XXXXXX)
-            trap 'rm -f "$SCRIPT"' EXIT
-            git show origin/main:deploy/update-native.sh > "$SCRIPT"
-            sh "$SCRIPT"
+            git checkout main
+            git merge --ff-only origin/main
+            sudo sh deploy/update-native.sh
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
 
@@ -96,14 +87,8 @@ jobs:
             set -eu
             cd "$DEPLOY_PATH"
             git fetch origin +refs/heads/main:refs/remotes/origin/main
-            if ! git cat-file -e origin/main:deploy/update-native.sh; then
-              echo "HATA: origin/main'de deploy/update-native.sh yok." >&2
-              exit 1
-            fi
-            umask 077
-            SCRIPT=$(mktemp -p /root tamkobi-update-native.XXXXXX)
-            trap 'rm -f "$SCRIPT"' EXIT
-            git show origin/main:deploy/update-native.sh > "$SCRIPT"
-            sh "$SCRIPT"
+            git checkout main
+            git merge --ff-only origin/main
+            sudo sh deploy/update-native.sh
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}

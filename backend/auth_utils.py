@@ -76,6 +76,7 @@ def create_access_token(
     expires_delta: Optional[timedelta] = None,
     is_super_admin: bool = False,
     mfa: bool = False,
+    aud: Optional[str] = None,
 ) -> str:
     if expires_delta is None:
         seconds = SUPERADMIN_ACCESS_SECONDS if is_super_admin else TENANT_ACCESS_SECONDS
@@ -93,6 +94,8 @@ def create_access_token(
         payload["sa"] = True
     if mfa:
         payload["mfa"] = True
+    if aud:
+        payload["aud"] = aud
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
@@ -120,13 +123,65 @@ def cookie_secure_flag(request: Any) -> bool:
 
 
 def auth_cookie_kwargs(request: Any, *, max_age: Optional[int] = None) -> dict:
-    """access_token / refresh_token / sa_return ortak çerez bayrakları (SameSite=Lax)."""
+    """access_token / refresh_token / sa_return ortak çerez bayrakları (SameSite=Lax).
+
+    Domain ASLA set edilmez — host-only çerez (alt alan adları arası sızıntı yok).
+    """
     kw: dict = {"httponly": True, "samesite": "lax", "path": "/"}
     if cookie_secure_flag(request):
         kw["secure"] = True
     if max_age is not None:
         kw["max_age"] = int(max_age)
+    # Explicitly never set domain (host-only)
+    kw.pop("domain", None)
     return kw
+
+
+def decode_access_payload(token: str) -> dict:
+    """Decode access JWT without audience validation (caller enforces aud)."""
+    return jwt.decode(
+        token,
+        get_jwt_secret(),
+        algorithms=[JWT_ALGORITHM],
+        options={"verify_aud": False},
+    )
+
+
+def enforce_token_audience(payload: dict, request: Any, *, path: Optional[str] = None) -> None:
+    """Raise HTTPException if JWT aud does not match the request host kind."""
+    from host_audience import (
+        KIND_APP,
+        KIND_IK,
+        KIND_SITE,
+        AUD_APP,
+        AUD_IK,
+        host_kind,
+        is_ik_self_service_path,
+        is_super_admin_api_path,
+    )
+
+    kind = host_kind(request)
+    aud = payload.get("aud")
+    p = path or ""
+
+    if kind == KIND_APP:
+        if aud != AUD_APP:
+            raise HTTPException(status_code=401, detail="Bu oturum app.tamkobi.com için geçerli değil")
+        return
+
+    if kind == KIND_IK:
+        if aud != AUD_IK:
+            raise HTTPException(status_code=401, detail="Bu oturum ik.tamkobi.com için geçerli değil")
+        if p.startswith("/api") and not is_ik_self_service_path(p):
+            raise HTTPException(status_code=403, detail="Personel oturumu yalnızca self-servis uçlarında geçerli")
+        return
+
+    if kind == KIND_SITE:
+        # Legacy mobile tokens without aud are accepted on tamkobi.com/api.
+        # Süper admin API yalnızca site + aud site/None.
+        if is_super_admin_api_path(p) and aud not in (None, "site"):
+            raise HTTPException(status_code=401, detail="Süper admin uçları yalnızca site adresinde")
+        return
 
 
 def access_cookie_max_age(*, is_super_admin: bool, remember: bool) -> Optional[int]:
@@ -141,11 +196,19 @@ def refresh_cookie_max_age(*, is_super_admin: bool, remember: bool) -> Optional[
         return None
     return SUPERADMIN_REFRESH_SECONDS if is_super_admin else TENANT_REFRESH_SECONDS
 
-async def get_user_from_token(token: str, db: Any) -> dict:
+async def get_user_from_token(token: str, db: Any, *, request: Any = None, path: Optional[str] = None) -> dict:
     try:
-        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        # aud is enforced separately against Host (verify_aud=False here).
+        payload = jwt.decode(
+            token,
+            get_jwt_secret(),
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_aud": False},
+        )
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Geçersiz token türü")
+        if request is not None:
+            enforce_token_audience(payload, request, path=path or getattr(getattr(request, "url", None), "path", None))
         user = await db.users.find_one({"_id": payload["sub"]})
         if not user:
             # Try finding with id string or int if any
@@ -169,6 +232,8 @@ async def get_user_from_token(token: str, db: Any) -> dict:
             if enabled_ts is not None and (iat is None or int(float(iat)) < int(float(enabled_ts))):
                 raise HTTPException(status_code=401, detail="Oturum yenilenmeli, tekrar giriş yapın")
         user["id"] = str(user.get("_id", user.get("id")))
+        user["_token_aud"] = payload.get("aud")
+        user["_token_payload"] = payload
         user.pop("password_hash", None)
         return user
     except HTTPException:

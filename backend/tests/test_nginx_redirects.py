@@ -1,0 +1,393 @@
+"""nginx subdomain templates: nginx -t, 301 redirects, noindex, site_rewrite include untouched."""
+from __future__ import annotations
+
+import re
+import shutil
+import socket
+import subprocess
+import textwrap
+import time
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+NGINX_DIR = ROOT / "deploy" / "nginx"
+LIB = ROOT / "deploy" / "lib"
+REDIRECTS = (NGINX_DIR / "tamkobi-site-redirects.conf").read_text(encoding="utf-8")
+SUBDOMAINS = (NGINX_DIR / "tamkobi-subdomains.conf.example").read_text(encoding="utf-8")
+SITE_REWRITE = (LIB / "site_rewrite.py").read_text(encoding="utf-8")
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _have_nginx() -> bool:
+    return shutil.which("nginx") is not None
+
+
+@pytest.fixture(scope="module")
+def openssl_bin():
+    p = shutil.which("openssl")
+    if not p:
+        pytest.skip("openssl yok")
+    return p
+
+
+def test_site_rewrite_does_not_touch_include_lines(tmp_path: Path):
+    """site_rewrite.py must not alter include …tamkobi-site-redirects.conf lines."""
+    import sys
+
+    sys.path.insert(0, str(LIB))
+    from site_rewrite import rewrite_site_root_and_proxy
+
+    root = "/var/www/tamkobi.com"
+    site = tmp_path / "tamkobi.com"
+    include_line = "    include /etc/nginx/snippets/tamkobi-site-redirects.conf;\n"
+    site.write_text(
+        "server {\n"
+        "  listen 443 ssl;\n"
+        "  # managed by Certbot\n"
+        "  ssl_certificate /etc/letsencrypt/live/tamkobi.com/fullchain.pem;\n"
+        f"  root {root}/frontend/build;\n"
+        + include_line
+        + "  location /api {\n"
+        "      proxy_pass http://127.0.0.1:8000;\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    before = site.read_text()
+    assert "tamkobi-site-redirects.conf" in before
+    status, _, _ = rewrite_site_root_and_proxy(site, root)
+    assert status == "ok"
+    after = site.read_text()
+    assert include_line in after
+    assert after.count("tamkobi-site-redirects.conf") == before.count("tamkobi-site-redirects.conf")
+    # Only root/proxy lines change
+    assert "frontend-current" in after
+    assert "tamkobi_api" in after
+    # site_rewrite source never references the redirects include
+    assert "tamkobi-site-redirects" not in SITE_REWRITE
+
+
+def test_subdomain_templates_have_required_listen_and_noindex():
+    assert "listen 85.95.240.184:443 ssl http2;" in SUBDOMAINS
+    assert "listen 85.95.240.184:80;" in SUBDOMAINS
+    for host in ("app.tamkobi.com", "b2b.tamkobi.com", "ik.tamkobi.com"):
+        assert host in SUBDOMAINS
+    assert SUBDOMAINS.count('X-Robots-Tag "noindex, nofollow"') >= 3
+    assert "proxy_pass http://tamkobi_api;" in SUBDOMAINS
+    assert "root /var/www/tamkobi.com/frontend-current;" in SUBDOMAINS
+
+    ssl_ex = (NGINX_DIR / "tamkobi-ssl.conf.example").read_text(encoding="utf-8")
+    assert ssl_ex.count("listen 85.95.240.184:443 ssl http2;") >= 2
+    assert "tamkobi-site-redirects.conf" in ssl_ex
+
+
+def _redirect_target(path: str) -> str | None:
+    """Approximate nginx location matching for tamkobi-site-redirects.conf."""
+    # Exact then prefix then regex — mirror file order (regex locations are evaluated
+    # among themselves by first-match in file for our ~ patterns).
+    exact = {
+        "/personelim": "https://ik.tamkobi.com",
+        "/mesai": "https://ik.tamkobi.com",
+    }
+    if path.split("?", 1)[0] in exact:
+        return exact[path.split("?", 1)[0]] + path
+
+    if path.startswith("/b2b/") or path == "/b2b" or path.startswith("/b2b?"):
+        # ^~ /b2b/ requires trailing path after /b2b/
+        if path.startswith("/b2b/"):
+            return "https://b2b.tamkobi.com" + path
+    if path.startswith("/portal/"):
+        return "https://b2b.tamkobi.com" + path
+    if path.startswith("/personelim/") or path.startswith("/mesai/"):
+        host = "ik"
+        return f"https://{host}.tamkobi.com" + path
+
+    app_res = [
+        r"^/(panel|login|invoices|dis-ticaret|contacts|banking|stock|hizli-satis|ecommerce|cargo)(/|$)",
+        r"^/(orders|purchase-orders|saha|warehouses|vehicles|production|personnel|ai-advisor|communication)(/|$)",
+        r"^/(hesap|settings|quotes|projects|surveys|support|accountant|installments|reports|dispatches)(/|$)",
+        r"^/(expenses|loans|cheques|trash|edoc-inbox|b2b-yonetim|atolye|sayim|sevk)(/|$)",
+        r"^/(teklif|proje|ekstre|davet|odeme|yenile|sifre)(/|$)",
+    ]
+    path_only = path.split("?", 1)[0]
+    for pat in app_res:
+        if re.search(pat, path_only):
+            return "https://app.tamkobi.com" + path
+    return None
+
+
+@pytest.mark.parametrize(
+    "path,expected_prefix",
+    [
+        ("/panel?x=1", "https://app.tamkobi.com/panel?x=1"),
+        ("/invoices/abc", "https://app.tamkobi.com/invoices/abc"),
+        ("/portal/T", "https://b2b.tamkobi.com/portal/T"),
+        ("/b2b/giris", "https://b2b.tamkobi.com/b2b/giris"),
+        ("/personelim", "https://ik.tamkobi.com/personelim"),
+    ],
+)
+def test_redirect_rules_preserve_query(path, expected_prefix):
+    assert _redirect_target(path) == expected_prefix
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/api/version", "/sistem/giris", "/yasal/kvkk", "/web", "/kayit", "/kurulum", "/robots.txt", "/sitemap.xml"],
+)
+def test_never_redirect_paths(path):
+    assert _redirect_target(path) is None
+    # location satırlarında ASLA yönlendirilmeyecek yollar olmamalı (yorumlar hariç)
+    loc_lines = [
+        ln for ln in REDIRECTS.splitlines()
+        if ln.strip().startswith("location ")
+    ]
+    joined = "\n".join(loc_lines)
+    assert "location ^~ /api" not in joined
+    assert "/sistem" not in joined
+    assert "yasal" not in joined
+    assert "/web" not in joined
+    assert "/kayit" not in joined
+    assert "/kurulum" not in joined
+
+
+@pytest.mark.skipif(not _have_nginx(), reason="nginx binary required")
+def test_nginx_t_subdomain_and_site_templates(tmp_path: Path, openssl_bin):
+    """Real `nginx -t` against assembled configs with stub certs."""
+    conf_root = tmp_path / "nginx"
+    conf_d = conf_root / "conf.d"
+    snippets = conf_root / "snippets"
+    sites = conf_root / "sites"
+    certs = tmp_path / "certs"
+    html = tmp_path / "html"
+    for d in (conf_d, snippets, sites, certs, html):
+        d.mkdir(parents=True)
+
+    # Self-signed certs for each name
+    for name in ("tamkobi.com", "app.tamkobi.com", "b2b.tamkobi.com", "ik.tamkobi.com"):
+        cdir = certs / name
+        cdir.mkdir()
+        subprocess.run(
+            [
+                openssl_bin, "req", "-x509", "-nodes", "-newkey", "rsa:2048",
+                "-keyout", str(cdir / "privkey.pem"),
+                "-out", str(cdir / "fullchain.pem"),
+                "-days", "1",
+                "-subj", f"/CN={name}",
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    shutil.copy(NGINX_DIR / "security-headers.conf", snippets / "tamkobi-security-headers.conf")
+    shutil.copy(NGINX_DIR / "tamkobi-site-redirects.conf", snippets / "tamkobi-site-redirects.conf")
+    shutil.copy(NGINX_DIR / "spa-routes.map.conf", conf_d / "tamkobi-spa-routes.map.conf")
+    (conf_d / "tamkobi-upstream.conf").write_text(
+        "upstream tamkobi_api { server 127.0.0.1:18000; keepalive 2; }\n",
+        encoding="utf-8",
+    )
+    # Dummy letsencrypt options (included by SSL templates)
+    le = tmp_path / "letsencrypt"
+    (le / "options-ssl-nginx.conf").parent.mkdir(parents=True, exist_ok=True)
+    # options file at predictable path — rewrite subdomain/ssl templates
+    options = tmp_path / "options-ssl-nginx.conf"
+    options.write_text("ssl_protocols TLSv1.2 TLSv1.3;\n", encoding="utf-8")
+    dh = tmp_path / "ssl-dhparams.pem"
+    # minimal dhparam (reuse key gen is heavy) — skip include by rewriting
+
+    def _prep(text: str) -> str:
+        text = text.replace("/etc/nginx/snippets/", str(snippets) + "/")
+        text = text.replace("/etc/letsencrypt/live/", str(certs) + "/")
+        text = text.replace("/etc/letsencrypt/options-ssl-nginx.conf", str(options))
+        text = text.replace("ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;", "# ssl_dhparam stub;")
+        text = text.replace("/var/www/tamkobi.com/frontend-current", str(html))
+        # Unprivileged ports. Apex templates have both bare listen 443 and IP-bind;
+        # drop the IP-bind duplicate. Subdomain templates only have IP-bind — rewrite those.
+        if re.search(r"listen\s+443\b", text):
+            text = re.sub(r"^\s*listen\s+85\.95\.240\.184:443[^;]*;\s*\n", "", text, flags=re.M)
+            text = re.sub(r"listen\s+443\b", "listen 127.0.0.1:18443", text)
+        else:
+            text = re.sub(r"listen\s+85\.95\.240\.184:443\b", "listen 127.0.0.1:18443", text)
+        if re.search(r"(?m)^\s*listen\s+80\b", text):
+            text = re.sub(r"^\s*listen\s+85\.95\.240\.184:80[^;]*;\s*\n", "", text, flags=re.M)
+            text = re.sub(r"(?m)^\s*listen\s+80\b", "listen 127.0.0.1:18080", text)
+        else:
+            text = re.sub(r"listen\s+85\.95\.240\.184:80\b", "listen 127.0.0.1:18080", text)
+        text = re.sub(r"listen\s+\[::\]:443\b", "listen [::]:18444", text)
+        text = re.sub(r"listen\s+\[::\]:80\b", "listen [::]:18081", text)
+        return text
+
+    # Apex SSL example (listen IP + redirects include)
+    ssl_body = _prep((NGINX_DIR / "tamkobi-ssl.conf.example").read_text(encoding="utf-8"))
+    (sites / "apex.conf").write_text(ssl_body, encoding="utf-8")
+    sub_body = _prep(SUBDOMAINS)
+    (sites / "subdomains.conf").write_text(sub_body, encoding="utf-8")
+
+    for sub in ("body", "proxy", "fastcgi", "uwsgi", "scgi"):
+        (conf_root / sub).mkdir(exist_ok=True)
+    main = conf_root / "nginx.conf"
+    main.write_text(
+        textwrap.dedent(
+            f"""
+            worker_processes 1;
+            error_log {tmp_path}/error.log;
+            pid {tmp_path}/nginx.pid;
+            events {{ worker_connections 64; }}
+            http {{
+                client_body_temp_path {conf_root}/body;
+                proxy_temp_path {conf_root}/proxy;
+                fastcgi_temp_path {conf_root}/fastcgi;
+                uwsgi_temp_path {conf_root}/uwsgi;
+                scgi_temp_path {conf_root}/scgi;
+                include {conf_d}/*.conf;
+                include {sites}/*.conf;
+                access_log {tmp_path}/access.log;
+            }}
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    # Ensure spa map is loaded: conf.d include already has the map file
+    r = subprocess.run(
+        ["nginx", "-t", "-c", str(main), "-p", str(conf_root)],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, f"nginx -t failed:\n{r.stderr}\n{r.stdout}"
+
+
+@pytest.mark.skipif(not _have_nginx(), reason="nginx binary required")
+def test_live_redirects_and_robots_header(tmp_path: Path):
+    """Spin a minimal HTTP nginx with redirects + subdomain robots header; curl checks."""
+    port_site = _free_port()
+    port_app = _free_port()
+    port_b2b = _free_port()
+    port_ik = _free_port()
+    conf_root = tmp_path / "ngx"
+    snippets = conf_root / "snippets"
+    conf_d = conf_root / "conf.d"
+    html = tmp_path / "www"
+    for d in (snippets, conf_d, html):
+        d.mkdir(parents=True)
+    shutil.copy(NGINX_DIR / "security-headers.conf", snippets / "tamkobi-security-headers.conf")
+    shutil.copy(NGINX_DIR / "tamkobi-site-redirects.conf", snippets / "tamkobi-site-redirects.conf")
+    (html / "index.html").write_text("<!doctype html><title>ok</title>", encoding="utf-8")
+
+    for sub in ("body", "proxy", "fastcgi", "uwsgi", "scgi"):
+        (conf_root / sub).mkdir(exist_ok=True)
+    conf = textwrap.dedent(
+        f"""
+        worker_processes 1;
+        error_log {tmp_path}/e.log;
+        pid {tmp_path}/n.pid;
+        events {{ worker_connections 32; }}
+            http {{
+            access_log {tmp_path}/access.log;
+            error_log {tmp_path}/e.log;
+            client_body_temp_path {conf_root}/body;
+            proxy_temp_path {conf_root}/proxy;
+            fastcgi_temp_path {conf_root}/fastcgi;
+            uwsgi_temp_path {conf_root}/uwsgi;
+            scgi_temp_path {conf_root}/scgi;
+            server {{
+                listen 127.0.0.1:{port_site};
+                server_name tamkobi.com;
+                root {html};
+                include {snippets}/tamkobi-site-redirects.conf;
+                location /api/ {{ return 200 "api-ok"; add_header Content-Type text/plain; }}
+                location /sistem {{ return 200 "sistem-ok"; add_header Content-Type text/plain; }}
+                location /yasal/ {{ return 200 "yasal-ok"; add_header Content-Type text/plain; }}
+                location /web {{ return 200 "web-ok"; add_header Content-Type text/plain; }}
+                location / {{ try_files $uri /index.html; }}
+            }}
+            server {{
+                listen 127.0.0.1:{port_app};
+                server_name app.tamkobi.com;
+                root {html};
+                add_header X-Robots-Tag "noindex, nofollow" always;
+                location / {{ return 200 "app"; add_header X-Robots-Tag "noindex, nofollow" always; }}
+            }}
+            server {{
+                listen 127.0.0.1:{port_b2b};
+                server_name b2b.tamkobi.com;
+                add_header X-Robots-Tag "noindex, nofollow" always;
+                location / {{ return 200 "b2b"; add_header X-Robots-Tag "noindex, nofollow" always; }}
+            }}
+            server {{
+                listen 127.0.0.1:{port_ik};
+                server_name ik.tamkobi.com;
+                add_header X-Robots-Tag "noindex, nofollow" always;
+                location / {{ return 200 "ik"; add_header X-Robots-Tag "noindex, nofollow" always; }}
+            }}
+        }}
+        """
+    )
+    conf_path = conf_root / "nginx.conf"
+    conf_path.write_text(conf, encoding="utf-8")
+    proc = subprocess.Popen(
+        ["nginx", "-c", str(conf_path), "-p", str(conf_root), "-g", "daemon off;"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", port_site), timeout=0.2):
+                    break
+            except OSError:
+                time.sleep(0.05)
+                if proc.poll() is not None:
+                    err = proc.stderr.read().decode() if proc.stderr else ""
+                    pytest.fail(f"nginx exited early: {err}")
+        else:
+            pytest.fail("nginx did not start")
+
+        def curl(url: str, host: str | None = None):
+            cmd = ["curl", "-sS", "-D", "-", "-o", "/dev/null", "--max-redirs", "0"]
+            if host:
+                cmd += ["-H", f"Host: {host}"]
+            cmd.append(url)
+            out = subprocess.check_output(cmd, text=True)
+            return out
+
+        # Redirects from site
+        h = curl(f"http://127.0.0.1:{port_site}/panel?x=1", "tamkobi.com")
+        assert "301" in h.splitlines()[0]
+        assert "Location: https://app.tamkobi.com/panel?x=1" in h
+
+        h = curl(f"http://127.0.0.1:{port_site}/invoices/abc", "tamkobi.com")
+        assert "Location: https://app.tamkobi.com/invoices/abc" in h
+
+        h = curl(f"http://127.0.0.1:{port_site}/portal/T", "tamkobi.com")
+        assert "Location: https://b2b.tamkobi.com/portal/T" in h
+
+        h = curl(f"http://127.0.0.1:{port_site}/b2b/giris", "tamkobi.com")
+        assert "Location: https://b2b.tamkobi.com/b2b/giris" in h
+
+        h = curl(f"http://127.0.0.1:{port_site}/personelim", "tamkobi.com")
+        assert "Location: https://ik.tamkobi.com/personelim" in h
+
+        # Never redirect
+        for p in ("/api/version", "/sistem/giris", "/yasal/kvkk", "/web"):
+            h = curl(f"http://127.0.0.1:{port_site}{p}", "tamkobi.com")
+            assert "301" not in h.splitlines()[0], p
+            assert "Location:" not in h, p
+
+        # X-Robots-Tag on app/b2b/ik
+        for port, name in ((port_app, "app"), (port_b2b, "b2b"), (port_ik, "ik")):
+            h = curl(f"http://127.0.0.1:{port}/", f"{name}.tamkobi.com")
+            assert "X-Robots-Tag: noindex, nofollow" in h, name
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()

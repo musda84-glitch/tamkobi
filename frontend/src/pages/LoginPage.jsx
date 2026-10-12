@@ -8,6 +8,7 @@ import { BuildStamp } from "../components/BuildStamp";
 import TamKobiMark from "../components/TamKobiMark";
 import { LOGIN } from "../constants/testIds/auth";
 import { REMEMBER_ERP_KEY, clearRememberedEmail, loadRememberedEmail, saveRememberedEmail } from "../utils/rememberEmail";
+import { getHostKind } from "../utils/hosts";
 
 function LoginBrand({ subtitle }) {
   return (
@@ -54,12 +55,22 @@ export default function LoginPage() {
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
-    const ok = await login(form.email, form.password, remember);
+    const result = await login(form.email, form.password, remember);
     setBusy(false);
+    const ok = result === true || result?.ok;
     if (ok) {
       if (remember) saveRememberedEmail(REMEMBER_ERP_KEY, form.email);
       else clearRememberedEmail(REMEMBER_ERP_KEY);
-      navigate("/panel");
+      if (result?.redirect) {
+        if (String(result.redirect).startsWith("http")) {
+          window.location.href = result.redirect;
+          return;
+        }
+        navigate(result.redirect);
+        return;
+      }
+      const kind = getHostKind();
+      navigate(kind === "ik" ? "/personelim" : "/panel");
     }
   };
 

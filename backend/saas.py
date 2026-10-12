@@ -1122,7 +1122,8 @@ async def send_company_password_reset(company_id: str, req: Dict[str, Any], requ
         "requested_by": "system_panel",
     })
     import public_url as pu
-    base = await pu.public_base_url(_db, request=request)
+    _ctx = "ik" if user.get("employee_id") or (user.get("role") or "") == "personel" else "app"
+    base = await pu.public_base_url_for(_db, _ctx, request=request)
     link = password_reset.reset_link(base, token, "login")
     brand = company.get("name") or "TamKobi"
     subject = f"{brand} şifre sıfırlama"

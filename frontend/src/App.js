@@ -3,14 +3,15 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { AuthProvider } from "./context/AuthContext";
 import { MesaimGateProvider } from "./context/MesaimGateContext";
 import { Toaster } from "sonner";
-import MainLayout from "./components/MainLayout";
+import HostShell from "./components/HostShell";
+import HostRouteGuard from "./components/HostRouteGuard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SetupGuard from "./components/SetupGuard";
 import { PlatformNoticesHost } from "./components/PlatformNoticesHost";
 
 /** İlk boyamada gereken hafif sayfalar — geri kalanı route bazlı chunk. */
 import LoginPage from "./pages/LoginPage";
-import HomeOrApp from "./pages/HomeOrApp";
+import HostHome from "./pages/HostHome";
 import SetupPage from "./pages/SetupPage";
 
 const page = (loader) => lazy(loader);
@@ -69,6 +70,7 @@ const ResetPasswordPage = page(() => import("./pages/ResetPasswordPage"));
 const B2BAdminPage = page(() => import("./pages/B2BAdminPage"));
 const FieldSalesPage = page(() => import("./pages/FieldSalesPage"));
 const TradePage = page(() => import("./pages/TradePage"));
+const SsoHandoffPage = page(() => import("./pages/SsoHandoffPage"));
 
 const DispatchesPage = () => <InvoicesPage initialType="dispatch" lockType />;
 
@@ -98,11 +100,12 @@ export default function App() {
         <Toaster position="top-right" richColors closeButton />
         <NoticesGate />
         <SetupGuard>
-          <MainLayout>
+          <HostRouteGuard>
+          <HostShell>
             <ProtectedRoute>
               <Suspense fallback={<RouteFallback />}>
                 <Routes>
-                  <Route path="/" element={<HomeOrApp />} />
+                  <Route path="/" element={<HostHome />} />
                   <Route path="/kurulum" element={<SetupPage />} />
                   <Route path="/panel" element={<Dashboard />} />
                   <Route path="/invoices" element={<InvoicesPage />} />
@@ -172,11 +175,13 @@ export default function App() {
                   <Route path="/sifre/:token" element={<ResetPasswordPage />} />
                   <Route path="/b2b-yonetim" element={<B2BAdminPage />} />
                   <Route path="/login" element={<LoginPage />} />
+                  <Route path="/sso" element={<SsoHandoffPage />} />
                   <Route path="*" element={<NotFoundPage />} />
                 </Routes>
               </Suspense>
             </ProtectedRoute>
-          </MainLayout>
+          </HostShell>
+          </HostRouteGuard>
         </SetupGuard>
         </MesaimGateProvider>
       </AuthProvider>

@@ -321,6 +321,7 @@ PUBLIC_API_ALLOWLIST = (
     "/api/auth/me",
     "/api/auth/2fa/verify",
     "/api/auth/impersonate/exit",
+    "/api/auth/sso-exchange",
     "/api/public/",
     "/api/setup/",
     "/api/version",
@@ -595,8 +596,11 @@ class PermissionAndAuditMiddleware(BaseHTTPMiddleware):
         user = None
         if token:
             try:
-                user = await get_user_from_token(token, _db)
-            except HTTPException:
+                user = await get_user_from_token(token, _db, request=request, path=path)
+            except HTTPException as exc:
+                # Audience / auth failures for cookie-bearing requests → surface status
+                if exc.status_code in (401, 403) and not is_public_api_path(path, request.method, request.query_params.get("t")):
+                    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
                 user = None
 
         query_t = request.query_params.get("t")
@@ -951,7 +955,10 @@ async def invite_user(req: Dict[str, Any], request: Request):
     company = await _db.companies.find_one({"_id": company_id}) or {}
     token = secrets.token_urlsafe(32)
     import public_url as pu
-    base = await pu.public_base_url(_db, explicit=req.get("base_url") or "", request=request)
+    _inv_ctx = "ik" if req.get("employee_id") or role == "personel" else "app"
+    base = await pu.public_base_url_for(
+        _db, _inv_ctx, explicit=req.get("base_url") or "", request=request,
+    )
     link = f"{base}/davet/{token}"
     doc = {
         "_id": token,

@@ -27,9 +27,11 @@ server {
 
 # --- www → apex (443) ---
 # Not: canlı nginx 1.24 → listen … http2. 1.25.1+ için KURULUM.md’ye bakın.
+# ZORUNLU: listen 85.95.240.184:443 ssl http2;
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
+    listen 85.95.240.184:443 ssl http2;
     server_name www.tamkobi.com;
 
     ssl_certificate     /etc/letsencrypt/live/tamkobi.com/fullchain.pem;
@@ -41,9 +43,11 @@ server {
 }
 
 # --- Ana site (443) — location’lar tamkobi.conf ile aynı ---
+# ZORUNLU: listen 85.95.240.184:443 ssl http2;
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
+    listen 85.95.240.184:443 ssl http2;
     server_name tamkobi.com;
 
     ssl_certificate     /etc/letsencrypt/live/tamkobi.com/fullchain.pem;
@@ -59,6 +63,7 @@ server {
     index index.html;
 
     include snippets/tamkobi-security-headers.conf;
+    include /etc/nginx/snippets/tamkobi-site-redirects.conf;
 
     gzip on;
     gzip_vary on;
